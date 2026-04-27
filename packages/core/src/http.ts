@@ -12,6 +12,20 @@ interface HttpHandlerOptions {
   maxMessageSize?: number; // default: 1MB (1024 * 1024)
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  const BufferRef = (globalThis as { Buffer?: { from: (...args: unknown[]) => { toString(enc: string): string } } }).Buffer;
+  if (BufferRef) {
+    return BufferRef.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+  }
+  // Fallback: build a binary string in chunks (avoids stack overflow on large inputs).
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export class HttpHandler {
   private protocol: StreamProtocolInterface;
   private pathPrefix: string;
@@ -239,13 +253,21 @@ export class HttpHandler {
     const live = url.searchParams.get("live");
     const cursor = url.searchParams.get("cursor") ?? undefined;
 
-    // Validate offset format
-    if (offset !== undefined && offset !== "-1" && !/^\d+_\d+$/.test(offset)) {
+    const isLive = live === "long-poll" || live === "sse";
+
+    // Validate offset format. The `now` sentinel is only recognized in live
+    // modes (Section 6 / 5.8 of the protocol).
+    if (
+      offset !== undefined &&
+      offset !== "-1" &&
+      !/^\d+_\d+$/.test(offset) &&
+      !(isLive && offset === "now")
+    ) {
       return new Response("Invalid offset format", { status: 400 });
     }
 
     // Handle live modes
-    if (live === "long-poll" || live === "sse") {
+    if (isLive) {
       if (!offset) {
         return new Response("offset required for live modes", { status: 400 });
       }
@@ -397,17 +419,10 @@ export class HttpHandler {
       return new Response("Stream not found", { status: 404 });
     }
 
-    // SSE only valid for text/* or application/json
     const contentTypeLower = metadata.contentType!.toLowerCase();
     const isText = contentTypeLower.startsWith("text/");
     const isJson = contentTypeLower.startsWith("application/json");
-
-    if (!isText && !isJson) {
-      return new Response(
-        "SSE mode requires text/* or application/json content type",
-        { status: 400 },
-      );
-    }
+    const useBase64 = !isText && !isJson;
 
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -437,48 +452,86 @@ export class HttpHandler {
       return String(previousInterval + jitterIntervals);
     };
 
+    const concatBytes = (messages: { data: Uint8Array }[]): Uint8Array => {
+      const totalLength = messages.reduce(
+        (acc, msg) => acc + msg.data.length,
+        0,
+      );
+      const combined = new Uint8Array(totalLength);
+      let pos = 0;
+      for (const msg of messages) {
+        combined.set(msg.data, pos);
+        pos += msg.data.length;
+      }
+      return combined;
+    };
+
+    const writeDataEvent = (
+      controller: ReadableStreamDefaultController<Uint8Array>,
+      messages: { data: Uint8Array }[],
+    ) => {
+      controller.enqueue(encoder.encode("event: data\n"));
+      if (useBase64) {
+        const combined = concatBytes(messages);
+        const base64 = bytesToBase64(combined);
+        controller.enqueue(encoder.encode(`data:${base64}\n`));
+      } else if (isJson) {
+        const items = messages.map((msg) => decoder.decode(msg.data));
+        controller.enqueue(encoder.encode("data:[\n"));
+        for (let i = 0; i < items.length; i++) {
+          const suffix = i < items.length - 1 ? "," : "";
+          controller.enqueue(encoder.encode(`data:${items[i]}${suffix}\n`));
+        }
+        controller.enqueue(encoder.encode("data:]\n"));
+      } else {
+        // text/*: split on any line terminator (CR, LF, CRLF) so payload bytes
+        // can never inject SSE event boundaries; emit one data: line per logical
+        // line per the SSE spec.
+        const text = messages.map((msg) => decoder.decode(msg.data)).join("");
+        const lines = text.split(/\r\n|\r|\n/);
+        for (const line of lines) {
+          controller.enqueue(encoder.encode(`data:${line}\n`));
+        }
+      }
+      controller.enqueue(encoder.encode("\n"));
+    };
+
+    const writeControlEvent = (
+      controller: ReadableStreamDefaultController<Uint8Array>,
+      data: Record<string, unknown>,
+    ) => {
+      controller.enqueue(encoder.encode("event: control\n"));
+      controller.enqueue(encoder.encode(`data:${JSON.stringify(data)}\n\n`));
+    };
+
     const protocol = this.protocol;
 
-    const stream = new ReadableStream({
+    const stream = new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
-          // First, do a non-blocking read
-          const initialResult = await protocol.read(streamId, {
-            offset: currentOffset === "-1" ? undefined : currentOffset,
-          });
+          // For offset=now, skip historical data and start at the current tail.
+          // Otherwise do a non-blocking read for catch-up data.
+          let initialNextOffset: string;
+          let initialUpToDate: boolean;
+          if (currentOffset === "now") {
+            initialNextOffset = metadata.nextOffset!;
+            initialUpToDate = true;
+          } else {
+            const initialResult = await protocol.read(streamId, {
+              offset: currentOffset === "-1" ? undefined : currentOffset,
+            });
 
-          if (initialResult.status === "not-found") {
-            controller.close();
-            return;
-          }
-
-          // Send data events if we have messages from initial read
-          if (initialResult.messages.length > 0) {
-            if (isJson) {
-              const items = initialResult.messages.map((msg) =>
-                decoder.decode(msg.data),
-              );
-              controller.enqueue(encoder.encode("event: data\n"));
-              controller.enqueue(encoder.encode("data: [\n"));
-              for (let i = 0; i < items.length; i++) {
-                const suffix = i < items.length - 1 ? "," : "";
-                controller.enqueue(
-                  encoder.encode(`data: ${items[i]}${suffix}\n`),
-                );
-              }
-              controller.enqueue(encoder.encode("data: ]\n"));
-              controller.enqueue(encoder.encode("\n"));
-            } else {
-              const text = initialResult.messages
-                .map((msg) => decoder.decode(msg.data))
-                .join("");
-              const lines = text.split("\n");
-              controller.enqueue(encoder.encode("event: data\n"));
-              for (const line of lines) {
-                controller.enqueue(encoder.encode(`data: ${line}\n`));
-              }
-              controller.enqueue(encoder.encode("\n"));
+            if (initialResult.status === "not-found") {
+              controller.close();
+              return;
             }
+
+            if (initialResult.messages.length > 0) {
+              writeDataEvent(controller, initialResult.messages);
+            }
+
+            initialNextOffset = initialResult.nextOffset;
+            initialUpToDate = initialResult.upToDate;
           }
 
           // Send initial control event
@@ -488,19 +541,15 @@ export class HttpHandler {
             streamCursor: string;
             upToDate?: boolean;
           } = {
-            streamNextOffset: initialResult.nextOffset,
+            streamNextOffset: initialNextOffset,
             streamCursor: currentCursor,
           };
-          if (initialResult.upToDate) {
+          if (initialUpToDate) {
             initialControlData.upToDate = true;
           }
-          controller.enqueue(encoder.encode("event: control\n"));
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(initialControlData)}\n`),
-          );
-          controller.enqueue(encoder.encode("\n"));
+          writeControlEvent(controller, initialControlData);
 
-          currentOffset = initialResult.nextOffset;
+          currentOffset = initialNextOffset;
 
           // Live polling loop
           while (true) {
@@ -521,31 +570,7 @@ export class HttpHandler {
             }
 
             if (result.messages.length > 0) {
-              if (isJson) {
-                const items = result.messages.map((msg) =>
-                  decoder.decode(msg.data),
-                );
-                controller.enqueue(encoder.encode("event: data\n"));
-                controller.enqueue(encoder.encode("data: [\n"));
-                for (let i = 0; i < items.length; i++) {
-                  const suffix = i < items.length - 1 ? "," : "";
-                  controller.enqueue(
-                    encoder.encode(`data: ${items[i]}${suffix}\n`),
-                  );
-                }
-                controller.enqueue(encoder.encode("data: ]\n"));
-                controller.enqueue(encoder.encode("\n"));
-              } else {
-                const text = result.messages
-                  .map((msg) => decoder.decode(msg.data))
-                  .join("");
-                const lines = text.split("\n");
-                controller.enqueue(encoder.encode("event: data\n"));
-                for (const line of lines) {
-                  controller.enqueue(encoder.encode(`data: ${line}\n`));
-                }
-                controller.enqueue(encoder.encode("\n"));
-              }
+              writeDataEvent(controller, result.messages);
             }
 
             const controlData: {
@@ -559,11 +584,7 @@ export class HttpHandler {
             if (result.upToDate) {
               controlData.upToDate = true;
             }
-            controller.enqueue(encoder.encode("event: control\n"));
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(controlData)}\n`),
-            );
-            controller.enqueue(encoder.encode("\n"));
+            writeControlEvent(controller, controlData);
 
             currentOffset = result.nextOffset;
             currentCursor = result.cursor;
@@ -579,13 +600,16 @@ export class HttpHandler {
       },
     });
 
-    return new Response(stream, {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      },
-    });
+    const headers: Record<string, string> = {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    };
+    if (useBase64) {
+      headers["stream-sse-data-encoding"] = "base64";
+    }
+
+    return new Response(stream, { headers });
   }
 
   private async handleMetadata(streamId: string): Promise<Response> {
