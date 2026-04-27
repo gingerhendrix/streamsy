@@ -72,6 +72,8 @@ export class HttpHandler {
       request.headers.get("content-type") ?? "application/octet-stream";
     const ttlHeader = request.headers.get("stream-ttl");
     const expiresAtHeader = request.headers.get("stream-expires-at");
+    const closeHeader = request.headers.get("stream-closed");
+    const wantClosed = closeHeader?.toLowerCase() === "true";
 
     // Validate TTL format
     if (ttlHeader && !/^(0|[1-9]\d*)$/.test(ttlHeader)) {
@@ -141,6 +143,7 @@ export class HttpHandler {
       ttlSeconds,
       expiresAt: expiresAtHeader ?? undefined,
       initialData: effectiveInitialData,
+      closed: wantClosed,
     });
 
     if (result.status === "conflict") {
@@ -156,6 +159,7 @@ export class HttpHandler {
         "content-type": result.contentType,
         "stream-next-offset": result.nextOffset,
         ...(status === 201 ? { location: request.url } : {}),
+        ...(result.closed ? { "stream-closed": "true" } : {}),
       },
     });
   }
@@ -165,11 +169,9 @@ export class HttpHandler {
     streamId: string,
   ): Promise<Response> {
     const contentType = request.headers.get("content-type");
-    if (!contentType) {
-      return new Response("Content-Type required", { status: 400 });
-    }
-
     const seq = request.headers.get("stream-seq") ?? undefined;
+    const closeHeader = request.headers.get("stream-closed");
+    const wantClose = closeHeader?.toLowerCase() === "true";
 
     let data: ArrayBuffer;
     try {
@@ -179,8 +181,17 @@ export class HttpHandler {
       return new Response("Payload too large", { status: 413 });
     }
 
-    if (data.byteLength === 0) {
+    const isEmpty = data.byteLength === 0;
+
+    // Empty body is only valid when Stream-Closed: true is set.
+    if (isEmpty && !wantClose) {
       return new Response("Empty body not allowed", { status: 400 });
+    }
+
+    // Content-Type is required when a body is present. When the body is
+    // empty (close-only), Content-Type MAY be absent and MUST be ignored.
+    if (!contentType && !isEmpty) {
+      return new Response("Content-Type required", { status: 400 });
     }
 
     // Validate max message size at HTTP layer
@@ -188,8 +199,13 @@ export class HttpHandler {
       return new Response("Payload too large", { status: 413 });
     }
 
-    // Check for empty arrays in JSON content-type before calling protocol
-    if (contentType.toLowerCase().startsWith("application/json")) {
+    // Check for empty arrays in JSON content-type before calling protocol.
+    // Skip this when the body is empty (close-only path).
+    if (
+      !isEmpty &&
+      contentType &&
+      contentType.toLowerCase().startsWith("application/json")
+    ) {
       try {
         const text = new TextDecoder().decode(data);
         const parsed = JSON.parse(text);
@@ -206,8 +222,12 @@ export class HttpHandler {
 
     const result = await this.protocol.append(streamId, {
       data: new Uint8Array(data),
-      contentType,
+      // Empty close-only requests bypass the content-type check inside
+      // the protocol layer; pass an effective content type that won't be
+      // rejected. The protocol short-circuits before checking it.
+      contentType: contentType ?? "application/octet-stream",
       seq,
+      close: wantClose,
     });
 
     if (result.status === "not-found") {
@@ -215,6 +235,15 @@ export class HttpHandler {
     }
 
     if (result.status === "conflict") {
+      if (result.conflictReason === "closed") {
+        return new Response(null, {
+          status: 409,
+          headers: {
+            "stream-closed": "true",
+            "stream-next-offset": result.nextOffset!,
+          },
+        });
+      }
       const message =
         result.conflictReason === "content-type"
           ? "Content-Type mismatch"
@@ -226,6 +255,7 @@ export class HttpHandler {
       status: 204,
       headers: {
         "stream-next-offset": result.nextOffset!,
+        ...(result.closed ? { "stream-closed": "true" } : {}),
       },
     });
   }
@@ -264,9 +294,11 @@ export class HttpHandler {
       return new Response("Stream not found", { status: 404 });
     }
 
-    // Generate ETag for cache validation
+    // Generate ETag for cache validation. Closure status MUST vary the ETag
+    // so a client receiving a cached open response doesn't miss the close.
     const startOffset = offset ?? "-1";
-    const etag = `"${btoa(url.pathname)}:${startOffset}:${result.nextOffset}"`;
+    const closedSuffix = result.closed ? ":c" : "";
+    const etag = `"${btoa(url.pathname)}:${startOffset}:${result.nextOffset}${closedSuffix}"`;
 
     // Check If-None-Match header for conditional request
     const ifNoneMatch = request.headers.get("if-none-match");
@@ -315,6 +347,7 @@ export class HttpHandler {
         "content-type": metadata.contentType!,
         "stream-next-offset": result.nextOffset,
         ...(result.upToDate ? { "stream-up-to-date": "true" } : {}),
+        ...(result.closed ? { "stream-closed": "true" } : {}),
         etag,
         "cache-control": "public, max-age=60, stale-while-revalidate=300",
       },
@@ -342,7 +375,9 @@ export class HttpHandler {
         headers: {
           "stream-next-offset": result.nextOffset,
           "stream-up-to-date": "true",
-          "stream-cursor": result.cursor,
+          // Cursor MAY be omitted when the stream is closed.
+          ...(result.closed ? {} : { "stream-cursor": result.cursor }),
+          ...(result.closed ? { "stream-closed": "true" } : {}),
         },
       });
     }
@@ -381,7 +416,8 @@ export class HttpHandler {
         "content-type": metadata.contentType!,
         "stream-next-offset": result.nextOffset,
         "stream-up-to-date": "true",
-        "stream-cursor": result.cursor,
+        ...(result.closed ? {} : { "stream-cursor": result.cursor }),
+        ...(result.closed ? { "stream-closed": "true" } : {}),
       },
     });
   }
@@ -485,20 +521,32 @@ export class HttpHandler {
           currentCursor = generateCursor(currentCursor);
           const initialControlData: {
             streamNextOffset: string;
-            streamCursor: string;
+            streamCursor?: string;
             upToDate?: boolean;
+            streamClosed?: boolean;
           } = {
             streamNextOffset: initialResult.nextOffset,
-            streamCursor: currentCursor,
           };
-          if (initialResult.upToDate) {
-            initialControlData.upToDate = true;
+          if (initialResult.closed) {
+            // streamClosed: true implies upToDate, and cursor is unnecessary
+            // since clients MUST NOT reconnect after close.
+            initialControlData.streamClosed = true;
+          } else {
+            initialControlData.streamCursor = currentCursor;
+            if (initialResult.upToDate) {
+              initialControlData.upToDate = true;
+            }
           }
           controller.enqueue(encoder.encode("event: control\n"));
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(initialControlData)}\n`),
           );
           controller.enqueue(encoder.encode("\n"));
+
+          if (initialResult.closed) {
+            controller.close();
+            return;
+          }
 
           currentOffset = initialResult.nextOffset;
 
@@ -550,14 +598,19 @@ export class HttpHandler {
 
             const controlData: {
               streamNextOffset: string;
-              streamCursor: string;
+              streamCursor?: string;
               upToDate?: boolean;
+              streamClosed?: boolean;
             } = {
               streamNextOffset: result.nextOffset,
-              streamCursor: result.cursor,
             };
-            if (result.upToDate) {
-              controlData.upToDate = true;
+            if (result.closed) {
+              controlData.streamClosed = true;
+            } else {
+              controlData.streamCursor = result.cursor;
+              if (result.upToDate) {
+                controlData.upToDate = true;
+              }
             }
             controller.enqueue(encoder.encode("event: control\n"));
             controller.enqueue(
@@ -567,6 +620,11 @@ export class HttpHandler {
 
             currentOffset = result.nextOffset;
             currentCursor = result.cursor;
+
+            if (result.closed) {
+              controller.close();
+              return;
+            }
 
             if (result.status === "timeout") {
               continue;
@@ -603,6 +661,7 @@ export class HttpHandler {
           ? { "stream-ttl": String(result.ttlSeconds) }
           : {}),
         ...(result.expiresAt ? { "stream-expires-at": result.expiresAt } : {}),
+        ...(result.closed ? { "stream-closed": "true" } : {}),
         "cache-control": "no-store",
       },
     });
