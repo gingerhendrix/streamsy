@@ -16,6 +16,10 @@ import type {
   StoredMessage,
 } from "@streamsy/core";
 
+export interface MemoryStreamStorageOptions {
+  longPollTimeoutMs?: number;
+}
+
 export class MemoryStreamStorage implements StreamStorage {
   private metadata: StreamMetadata | null = null;
   private messages: StoredMessage[] = [];
@@ -23,6 +27,11 @@ export class MemoryStreamStorage implements StreamStorage {
   private currentOffset: string = MemoryStreamStorage.formatOffset(0);
   private waiters: Set<() => void> = new Set();
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
+  private longPollTimeoutMs: number;
+
+  constructor(options: MemoryStreamStorageOptions = {}) {
+    this.longPollTimeoutMs = options.longPollTimeoutMs ?? 30_000;
+  }
 
   async createStream(options: CreateStreamOptions): Promise<string> {
     const metadata: StreamMetadata = {
@@ -153,7 +162,7 @@ export class MemoryStreamStorage implements StreamStorage {
     }
 
     // Wait for new messages or timeout (waiter pattern from DO storage)
-    const timeout = 30_000;
+    const timeout = this.longPollTimeoutMs;
 
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {

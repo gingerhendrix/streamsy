@@ -19,7 +19,9 @@ describe("Memory Storage Server Implementation", () => {
   };
 
   beforeAll(async () => {
-    const storageFactory = createMemoryStorageFactory();
+    const storageFactory = createMemoryStorageFactory({
+      longPollTimeoutMs: 1500,
+    });
     const protocol = new StreamProtocol(storageFactory);
     const handler = new HttpHandler({ protocol, pathPrefix: "/" });
 

@@ -10,8 +10,12 @@
  */
 
 export { MemoryStreamStorage } from "./storage.ts";
+export type { MemoryStreamStorageOptions } from "./storage.ts";
 
-import { MemoryStreamStorage } from "./storage.ts";
+import {
+  MemoryStreamStorage,
+  type MemoryStreamStorageOptions,
+} from "./storage.ts";
 import type { StorageFactory } from "@streamsy/core";
 
 /**
@@ -28,12 +32,14 @@ import type { StorageFactory } from "@streamsy/core";
  * const handler = new HttpHandler({ protocol });
  * ```
  */
-export function createMemoryStorageFactory(): StorageFactory {
+export function createMemoryStorageFactory(
+  options: MemoryStreamStorageOptions = {},
+): StorageFactory {
   const stores = new Map<string, MemoryStreamStorage>();
   return (streamId: string) => {
     let store = stores.get(streamId);
     if (!store) {
-      store = new MemoryStreamStorage();
+      store = new MemoryStreamStorage(options);
       stores.set(streamId, store);
     }
     return store;
