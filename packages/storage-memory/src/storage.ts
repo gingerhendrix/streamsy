@@ -30,6 +30,7 @@ export class MemoryStreamStorage implements StreamStorage {
       ttlSeconds: options.ttlSeconds,
       expiresAt: options.expiresAt,
       createdAt: Date.now(),
+      ...(options.closed ? { closed: true, closedAt: Date.now() } : {}),
     };
 
     this.metadata = metadata;
@@ -107,7 +108,9 @@ export class MemoryStreamStorage implements StreamStorage {
       });
     }
 
-    this.currentOffset = lastOffset;
+    if (lastOffset !== "") {
+      this.currentOffset = lastOffset;
+    }
 
     if (seq && this.metadata) {
       this.metadata = { ...this.metadata, lastSeq: seq };
@@ -116,7 +119,24 @@ export class MemoryStreamStorage implements StreamStorage {
     // Notify waiters (ported from DO storage)
     this.notifyWaiters();
 
-    return lastOffset;
+    return this.currentOffset;
+  }
+
+  async close(messages?: Uint8Array[], seq?: string): Promise<string> {
+    if (messages && messages.length > 0) {
+      await this.append(messages, seq);
+    } else if (seq && this.metadata) {
+      this.metadata = { ...this.metadata, lastSeq: seq };
+    }
+
+    if (this.metadata) {
+      this.metadata = { ...this.metadata, closed: true, closedAt: Date.now() };
+    }
+
+    // Wake any long-poll waiters so they observe the closed state.
+    this.notifyWaiters();
+
+    return this.currentOffset;
   }
 
   async read(afterOffset?: string): Promise<StorageReadResult> {
