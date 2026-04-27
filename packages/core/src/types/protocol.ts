@@ -14,6 +14,7 @@ export interface CreateOptions {
   ttlSeconds?: number;
   expiresAt?: string;
   initialData?: Uint8Array;
+  closed?: boolean;
 }
 
 export interface ProducerOptions {
@@ -27,6 +28,7 @@ export interface AppendOptions {
   contentType: string;
   seq?: string;
   producer?: ProducerOptions;
+  close?: boolean;
 }
 
 export interface ReadOptions {
@@ -46,6 +48,7 @@ export interface CreateResult {
   status: "created" | "exists" | "conflict";
   nextOffset: string;
   contentType: string;
+  closed?: boolean;
 }
 
 export type AppendResult =
@@ -54,15 +57,17 @@ export type AppendResult =
       nextOffset: string;
       producerEpoch?: number;
       producerSeq?: number;
+      closed?: boolean;
     }
   | {
       status: "duplicate";
       nextOffset: string;
       producerEpoch: number;
       producerSeq: number;
+      closed?: boolean;
     }
   | { status: "not-found" }
-  | { status: "conflict"; conflictReason: "content-type" | "sequence" }
+  | { status: "conflict"; conflictReason: "content-type" | "sequence" | "closed"; nextOffset?: string; closed?: boolean }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
   | { status: "invalid-epoch-seq" };
@@ -72,6 +77,7 @@ export interface ReadResult {
   messages: StoredMessage[];
   nextOffset: string;
   upToDate: boolean;
+  closed?: boolean;
 }
 
 export interface ReadLiveResult {
@@ -80,6 +86,7 @@ export interface ReadLiveResult {
   nextOffset: string;
   upToDate: boolean;
   cursor: string;
+  closed?: boolean;
 }
 
 export interface MetadataResult {
@@ -88,6 +95,7 @@ export interface MetadataResult {
   nextOffset?: string;
   ttlSeconds?: number;
   expiresAt?: string;
+  closed?: boolean;
 }
 
 export interface DeleteResult {
