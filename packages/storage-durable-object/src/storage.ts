@@ -46,6 +46,7 @@ export class DurableObjectStreamStorage
       ttlSeconds: options.ttlSeconds,
       expiresAt: options.expiresAt,
       createdAt: Date.now(),
+      ...(options.closed ? { closed: true, closedAt: Date.now() } : {}),
     };
 
     this.ctx.storage.kv.put("metadata", metadata);
@@ -113,8 +114,10 @@ export class DurableObjectStreamStorage
     }
 
     this.ctx.storage.kv.put("counter", this.counter);
-    this.ctx.storage.kv.put("currentOffset", lastOffset);
-    this.currentOffset = lastOffset;
+    if (lastOffset !== "") {
+      this.ctx.storage.kv.put("currentOffset", lastOffset);
+      this.currentOffset = lastOffset;
+    }
 
     if (seq && this.metadata) {
       const updatedMeta = { ...this.metadata, lastSeq: seq };
@@ -125,7 +128,32 @@ export class DurableObjectStreamStorage
     // Notify waiters
     this.notifyWaiters();
 
-    return lastOffset;
+    return this.currentOffset;
+  }
+
+  async close(messages?: Uint8Array[], seq?: string): Promise<string> {
+    if (messages && messages.length > 0) {
+      await this.append(messages, seq);
+    } else if (seq && this.metadata) {
+      const updatedMeta = { ...this.metadata, lastSeq: seq };
+      this.ctx.storage.kv.put("metadata", updatedMeta);
+      this.metadata = updatedMeta;
+    }
+
+    if (this.metadata) {
+      const closedMeta = {
+        ...this.metadata,
+        closed: true,
+        closedAt: Date.now(),
+      };
+      this.ctx.storage.kv.put("metadata", closedMeta);
+      this.metadata = closedMeta;
+    }
+
+    // Wake any long-poll waiters so they observe the closed state.
+    this.notifyWaiters();
+
+    return this.currentOffset;
   }
 
   async read(afterOffset?: string): Promise<StorageReadResult> {
