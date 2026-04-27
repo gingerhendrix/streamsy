@@ -17,27 +17,24 @@ import type { StorageFactory } from "@streamsy/core";
 /**
  * Creates a StorageFactory backed by in-memory storage.
  * Each unique streamId gets its own MemoryStreamStorage instance.
- *
- * Usage:
- * ```typescript
- * import { StreamProtocol, HttpHandler } from "@streamsy/core";
- * import { createMemoryStorageFactory } from "@streamsy/storage-memory";
- *
- * const storage = createMemoryStorageFactory();
- * const protocol = new StreamProtocol(storage);
- * const handler = new HttpHandler({ protocol });
- * ```
+ * Instances are kept in a shared registry so cross-stream lookups
+ * (forks resolving their source) work transparently.
  */
 export function createMemoryStorageFactory(): StorageFactory {
   const stores = new Map<string, MemoryStreamStorage>();
-  return (streamId: string) => {
+  const factory: StorageFactory = (streamId: string) => {
     let store = stores.get(streamId);
     if (!store) {
-      store = new MemoryStreamStorage();
+      store = new MemoryStreamStorage({
+        onPurge: () => {
+          stores.delete(streamId);
+        },
+      });
       stores.set(streamId, store);
     }
     return store;
   };
+  return factory;
 }
 
 // Re-export core types that users of this package will need
