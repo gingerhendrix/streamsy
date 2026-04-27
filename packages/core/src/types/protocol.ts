@@ -16,10 +16,17 @@ export interface CreateOptions {
   initialData?: Uint8Array;
 }
 
+export interface ProducerOptions {
+  producerId: string;
+  producerEpoch: number;
+  producerSeq: number;
+}
+
 export interface AppendOptions {
   data: Uint8Array;
   contentType: string;
   seq?: string;
+  producer?: ProducerOptions;
 }
 
 export interface ReadOptions {
@@ -41,11 +48,24 @@ export interface CreateResult {
   contentType: string;
 }
 
-export interface AppendResult {
-  status: "ok" | "conflict" | "not-found";
-  nextOffset?: string;
-  conflictReason?: "content-type" | "sequence";
-}
+export type AppendResult =
+  | {
+      status: "appended";
+      nextOffset: string;
+      producerEpoch?: number;
+      producerSeq?: number;
+    }
+  | {
+      status: "duplicate";
+      nextOffset: string;
+      producerEpoch: number;
+      producerSeq: number;
+    }
+  | { status: "not-found" }
+  | { status: "conflict"; conflictReason: "content-type" | "sequence" }
+  | { status: "stale-epoch"; currentEpoch: number }
+  | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
+  | { status: "invalid-epoch-seq" };
 
 export interface ReadResult {
   status: "ok" | "not-found" | "gone";

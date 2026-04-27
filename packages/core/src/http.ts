@@ -4,7 +4,50 @@
  * Handles HTTP requests and routes them to the appropriate protocol methods.
  */
 
-import type { StreamProtocolInterface } from "./types/protocol.ts";
+import type {
+  ProducerOptions,
+  StreamProtocolInterface,
+} from "./types/protocol.ts";
+
+const MAX_SAFE_PRODUCER_INT = Number.MAX_SAFE_INTEGER;
+const NON_NEGATIVE_INT_RE = /^(0|[1-9]\d*)$/;
+
+type ProducerHeaderResult =
+  | { kind: "absent" }
+  | { kind: "ok"; producer: ProducerOptions }
+  | { kind: "invalid" };
+
+function parseProducerHeaders(request: Request): ProducerHeaderResult {
+  const id = request.headers.get("producer-id");
+  const epoch = request.headers.get("producer-epoch");
+  const seq = request.headers.get("producer-seq");
+
+  const present = [id, epoch, seq].filter((v) => v !== null).length;
+  if (present === 0) return { kind: "absent" };
+  if (present !== 3) return { kind: "invalid" };
+
+  if (id!.length === 0) return { kind: "invalid" };
+
+  const parsedEpoch = parseProducerInt(epoch!);
+  const parsedSeq = parseProducerInt(seq!);
+  if (parsedEpoch === null || parsedSeq === null) return { kind: "invalid" };
+
+  return {
+    kind: "ok",
+    producer: {
+      producerId: id!,
+      producerEpoch: parsedEpoch,
+      producerSeq: parsedSeq,
+    },
+  };
+}
+
+function parseProducerInt(raw: string): number | null {
+  if (!NON_NEGATIVE_INT_RE.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n > MAX_SAFE_PRODUCER_INT) return null;
+  return n;
+}
 
 interface HttpHandlerOptions {
   protocol: StreamProtocolInterface;
@@ -171,6 +214,11 @@ export class HttpHandler {
 
     const seq = request.headers.get("stream-seq") ?? undefined;
 
+    const producerHeaders = parseProducerHeaders(request);
+    if (producerHeaders.kind === "invalid") {
+      return new Response("Invalid producer headers", { status: 400 });
+    }
+
     let data: ArrayBuffer;
     try {
       data = await request.arrayBuffer();
@@ -208,26 +256,64 @@ export class HttpHandler {
       data: new Uint8Array(data),
       contentType,
       seq,
+      producer:
+        producerHeaders.kind === "ok" ? producerHeaders.producer : undefined,
     });
 
-    if (result.status === "not-found") {
-      return new Response("Stream not found", { status: 404 });
-    }
+    switch (result.status) {
+      case "not-found":
+        return new Response("Stream not found", { status: 404 });
 
-    if (result.status === "conflict") {
-      const message =
-        result.conflictReason === "content-type"
-          ? "Content-Type mismatch"
-          : "Sequence conflict";
-      return new Response(message, { status: 409 });
-    }
+      case "conflict": {
+        const message =
+          result.conflictReason === "content-type"
+            ? "Content-Type mismatch"
+            : "Sequence conflict";
+        return new Response(message, { status: 409 });
+      }
 
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "stream-next-offset": result.nextOffset!,
-      },
-    });
+      case "stale-epoch":
+        return new Response("Stale producer epoch", {
+          status: 403,
+          headers: { "producer-epoch": String(result.currentEpoch) },
+        });
+
+      case "producer-gap":
+        return new Response("Producer sequence gap", {
+          status: 409,
+          headers: {
+            "producer-expected-seq": String(result.expectedSeq),
+            "producer-received-seq": String(result.receivedSeq),
+          },
+        });
+
+      case "invalid-epoch-seq":
+        return new Response("New epoch must start at seq=0", { status: 400 });
+
+      case "duplicate":
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "stream-next-offset": result.nextOffset,
+            "producer-epoch": String(result.producerEpoch),
+            "producer-seq": String(result.producerSeq),
+          },
+        });
+
+      case "appended": {
+        const headers: Record<string, string> = {
+          "stream-next-offset": result.nextOffset,
+        };
+        if (result.producerEpoch !== undefined) {
+          headers["producer-epoch"] = String(result.producerEpoch);
+        }
+        if (result.producerSeq !== undefined) {
+          headers["producer-seq"] = String(result.producerSeq);
+        }
+        const status = producerHeaders.kind === "ok" ? 200 : 204;
+        return new Response(null, { status, headers });
+      }
+    }
   }
 
   private async handleRead(
