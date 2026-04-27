@@ -16,6 +16,8 @@ export interface StreamMetadata {
   expiresAt?: string;
   createdAt: number;
   lastSeq?: string;
+  closed?: boolean;
+  closedAt?: number;
 }
 
 export interface CreateStreamOptions {
@@ -23,6 +25,7 @@ export interface CreateStreamOptions {
   ttlSeconds?: number;
   expiresAt?: string;
   initialData?: Uint8Array[];
+  closed?: boolean;
 }
 
 export interface StorageReadResult {
@@ -53,6 +56,9 @@ export interface StreamStorage {
   // Messages
   append(messages: Uint8Array[], seq?: string): Promise<string>;
   read(afterOffset?: string): Promise<StorageReadResult>;
+
+  // Closure
+  close(messages?: Uint8Array[], seq?: string): Promise<string>;
 
   // Live reads (waits for new messages)
   readLive(

@@ -14,12 +14,14 @@ export interface CreateOptions {
   ttlSeconds?: number;
   expiresAt?: string;
   initialData?: Uint8Array;
+  closed?: boolean;
 }
 
 export interface AppendOptions {
   data: Uint8Array;
   contentType: string;
   seq?: string;
+  close?: boolean;
 }
 
 export interface ReadOptions {
@@ -39,12 +41,14 @@ export interface CreateResult {
   status: "created" | "exists" | "conflict";
   nextOffset: string;
   contentType: string;
+  closed?: boolean;
 }
 
 export interface AppendResult {
   status: "ok" | "conflict" | "not-found";
   nextOffset?: string;
-  conflictReason?: "content-type" | "sequence";
+  conflictReason?: "content-type" | "sequence" | "closed";
+  closed?: boolean;
 }
 
 export interface ReadResult {
@@ -52,6 +56,7 @@ export interface ReadResult {
   messages: StoredMessage[];
   nextOffset: string;
   upToDate: boolean;
+  closed?: boolean;
 }
 
 export interface ReadLiveResult {
@@ -60,6 +65,7 @@ export interface ReadLiveResult {
   nextOffset: string;
   upToDate: boolean;
   cursor: string;
+  closed?: boolean;
 }
 
 export interface MetadataResult {
@@ -68,6 +74,7 @@ export interface MetadataResult {
   nextOffset?: string;
   ttlSeconds?: number;
   expiresAt?: string;
+  closed?: boolean;
 }
 
 export interface DeleteResult {
