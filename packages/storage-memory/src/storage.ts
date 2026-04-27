@@ -17,23 +17,31 @@ import type {
   ProducerState,
 } from "@streamsy/core";
 
+const ZERO_OFFSET = `${"0".repeat(16)}_${"0".repeat(16)}`;
+
 export interface MemoryStreamStorageOptions {
   longPollTimeoutMs?: number;
+  // Called when this stream's TTL fires and the stream is fully purged
+  // (refCount == 0). The registry uses this to drop its map entry and
+  // cascade GC up the fork chain.
+  onPurge?: () => void | Promise<void>;
 }
 
 export class MemoryStreamStorage implements StreamStorage {
   private metadata: StreamMetadata | null = null;
   private messages: StoredMessage[] = [];
   private counter: number = 0;
-  private currentOffset: string = MemoryStreamStorage.formatOffset(0);
+  private currentOffset: string = ZERO_OFFSET;
   private waiters: Set<() => void> = new Set();
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
   private longPollTimeoutMs: number;
   private producers: Map<string, ProducerState> = new Map();
   private producerLocks: Map<string, Promise<void>> = new Map();
+  private onPurge?: () => void | Promise<void>;
 
   constructor(options: MemoryStreamStorageOptions = {}) {
     this.longPollTimeoutMs = options.longPollTimeoutMs ?? 30_000;
+    this.onPurge = options.onPurge;
   }
 
   async createStream(options: CreateStreamOptions): Promise<string> {
@@ -43,33 +51,27 @@ export class MemoryStreamStorage implements StreamStorage {
       expiresAt: options.expiresAt,
       createdAt: Date.now(),
       ...(options.closed ? { closed: true, closedAt: Date.now() } : {}),
+      forkedFrom: options.forkedFrom,
+      forkOffset: options.forkOffset,
+      refCount: 0,
     };
 
     this.metadata = metadata;
     this.messages = [];
-    this.counter = 0;
-    this.currentOffset = MemoryStreamStorage.formatOffset(0);
+    this.producers.clear();
 
-    // Set TTL timer if configured
-    if (this.ttlTimer) {
-      clearTimeout(this.ttlTimer);
-      this.ttlTimer = null;
+    if (options.forkedFrom && options.forkOffset) {
+      // Initialize counter from the fork offset so that subsequent appends
+      // produce strictly greater offsets and lex-ordering is preserved.
+      this.counter = parseCounter(options.forkOffset);
+      this.currentOffset = options.forkOffset;
+    } else {
+      this.counter = 0;
+      this.currentOffset = ZERO_OFFSET;
     }
 
-    if (options.ttlSeconds) {
-      this.ttlTimer = setTimeout(() => {
-        void this.deleteAll();
-      }, options.ttlSeconds * 1000);
-    } else if (options.expiresAt) {
-      const delay = new Date(options.expiresAt).getTime() - Date.now();
-      if (delay > 0) {
-        this.ttlTimer = setTimeout(() => {
-          void this.deleteAll();
-        }, delay);
-      }
-    }
+    this.scheduleTtl(options.ttlSeconds, options.expiresAt);
 
-    // Handle initial data
     if (options.initialData?.length) {
       return await this.append(options.initialData);
     }
@@ -78,24 +80,22 @@ export class MemoryStreamStorage implements StreamStorage {
   }
 
   async deleteAll(): Promise<void> {
-    // Clear TTL timer
     if (this.ttlTimer) {
       clearTimeout(this.ttlTimer);
       this.ttlTimer = null;
     }
 
-    // Notify and clear all waiters
     for (const waiter of this.waiters) {
       waiter();
     }
     this.waiters.clear();
 
-    // Reset state
     this.metadata = null;
     this.messages = [];
     this.counter = 0;
-    this.currentOffset = MemoryStreamStorage.formatOffset(0);
+    this.currentOffset = ZERO_OFFSET;
     this.producers.clear();
+    this.producerLocks.clear();
   }
 
   async getProducerState(
@@ -139,11 +139,11 @@ export class MemoryStreamStorage implements StreamStorage {
   async append(messages: Uint8Array[], seq?: string): Promise<string> {
     this.resetTtlIfApplicable();
 
-    let lastOffset = "";
+    let lastOffset = this.currentOffset;
 
     for (const data of messages) {
       this.counter++;
-      const offset = MemoryStreamStorage.formatOffset(this.counter);
+      const offset = formatOffset(this.counter);
       lastOffset = offset;
 
       this.messages.push({
@@ -153,15 +153,12 @@ export class MemoryStreamStorage implements StreamStorage {
       });
     }
 
-    if (lastOffset !== "") {
-      this.currentOffset = lastOffset;
-    }
+    this.currentOffset = lastOffset;
 
     if (seq && this.metadata) {
       this.metadata = { ...this.metadata, lastSeq: seq };
     }
 
-    // Notify waiters (ported from DO storage)
     this.notifyWaiters();
 
     return this.currentOffset;
@@ -170,8 +167,11 @@ export class MemoryStreamStorage implements StreamStorage {
   async close(messages?: Uint8Array[], seq?: string): Promise<string> {
     if (messages && messages.length > 0) {
       await this.append(messages, seq);
-    } else if (seq && this.metadata) {
-      this.metadata = { ...this.metadata, lastSeq: seq };
+    } else {
+      this.resetTtlIfApplicable();
+      if (seq && this.metadata) {
+        this.metadata = { ...this.metadata, lastSeq: seq };
+      }
     }
 
     if (this.metadata) {
@@ -187,15 +187,9 @@ export class MemoryStreamStorage implements StreamStorage {
   async read(afterOffset?: string): Promise<StorageReadResult> {
     this.resetTtlIfApplicable();
 
-    let messages: StoredMessage[];
-
-    if (afterOffset) {
-      // Find messages after the given offset using string comparison
-      // (offsets are zero-padded so lexicographic order = numeric order)
-      messages = this.messages.filter((msg) => msg.offset > afterOffset);
-    } else {
-      messages = [...this.messages];
-    }
+    const messages = afterOffset
+      ? this.messages.filter((msg) => msg.offset > afterOffset)
+      : [...this.messages];
 
     const nextOffset =
       messages.length > 0
@@ -213,14 +207,10 @@ export class MemoryStreamStorage implements StreamStorage {
     afterOffset: string,
     signal?: AbortSignal,
   ): Promise<StorageReadLiveResult> {
-    // Check for existing messages first
     const result = await this.read(afterOffset);
     if (result.messages.length > 0) {
       return { ...result, timedOut: false };
     }
-
-    // Wait for new messages or timeout (waiter pattern from DO storage)
-    const timeout = this.longPollTimeoutMs;
 
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
@@ -230,7 +220,7 @@ export class MemoryStreamStorage implements StreamStorage {
           nextOffset: result.nextOffset,
           timedOut: true,
         });
-      }, timeout);
+      }, this.longPollTimeoutMs);
 
       const notify = async () => {
         clearTimeout(timeoutId);
@@ -253,6 +243,56 @@ export class MemoryStreamStorage implements StreamStorage {
     });
   }
 
+  async setRefCount(value: number): Promise<void> {
+    if (!this.metadata) return;
+    this.metadata = { ...this.metadata, refCount: value };
+  }
+
+  async setSoftDeleted(value: boolean): Promise<void> {
+    if (!this.metadata) return;
+    this.metadata = { ...this.metadata, softDeleted: value };
+    if (value) {
+      // Wake live waiters; they should observe the soft-delete and exit.
+      this.notifyWaiters();
+    }
+  }
+
+  private scheduleTtl(ttlSeconds?: number, expiresAt?: string): void {
+    if (this.ttlTimer) {
+      clearTimeout(this.ttlTimer);
+      this.ttlTimer = null;
+    }
+
+    let delay: number | null = null;
+    if (ttlSeconds !== undefined) {
+      delay = ttlSeconds * 1000;
+    } else if (expiresAt) {
+      delay = new Date(expiresAt).getTime() - Date.now();
+    }
+
+    if (delay !== null && delay >= 0) {
+      this.ttlTimer = setTimeout(() => {
+        void this.handleTtlFired();
+      }, delay);
+    }
+  }
+
+  private async handleTtlFired(): Promise<void> {
+    this.ttlTimer = null;
+    if (!this.metadata) return;
+
+    const refCount = this.metadata.refCount ?? 0;
+    if (refCount > 0) {
+      // Forks still reference this stream — soft-delete only.
+      await this.setSoftDeleted(true);
+      return;
+    }
+
+    // No active forks — fully purge.
+    await this.deleteAll();
+    await this.onPurge?.();
+  }
+
   private notifyWaiters(): void {
     for (const waiter of this.waiters) {
       waiter();
@@ -264,15 +304,17 @@ export class MemoryStreamStorage implements StreamStorage {
   private resetTtlIfApplicable(): void {
     const ttlSeconds = this.metadata?.ttlSeconds;
     if (!ttlSeconds) return;
-    if (this.ttlTimer) clearTimeout(this.ttlTimer);
-    this.ttlTimer = setTimeout(() => {
-      void this.deleteAll();
-    }, ttlSeconds * 1000);
+    this.scheduleTtl(ttlSeconds, undefined);
   }
+}
 
-  private static formatOffset(counter: number): string {
-    const counterStr = String(counter).padStart(16, "0");
-    const byteOffset = "0".repeat(16);
-    return `${counterStr}_${byteOffset}`;
-  }
+function formatOffset(counter: number): string {
+  const counterStr = String(counter).padStart(16, "0");
+  const byteOffset = "0".repeat(16);
+  return `${counterStr}_${byteOffset}`;
+}
+
+function parseCounter(offset: string): number {
+  const [counterStr] = offset.split("_");
+  return parseInt(counterStr ?? "0", 10);
 }

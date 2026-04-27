@@ -15,6 +15,8 @@ export interface CreateOptions {
   expiresAt?: string;
   initialData?: Uint8Array;
   closed?: boolean;
+  forkedFrom?: string;
+  forkOffset?: string;
 }
 
 export interface ProducerOptions {
@@ -44,11 +46,19 @@ export interface ReadLiveOptions {
 
 // === Protocol Outputs ===
 
+export type CreateConflictReason =
+  | "config-mismatch"
+  | "soft-deleted"
+  | "fork-content-type"
+  | "fork-source-soft-deleted";
+
 export interface CreateResult {
-  status: "created" | "exists" | "conflict";
+  status: "created" | "exists" | "conflict" | "not-found" | "bad-request";
   nextOffset: string;
   contentType: string;
   closed?: boolean;
+  conflictReason?: CreateConflictReason;
+  errorMessage?: string;
 }
 
 export type AppendResult =
@@ -67,6 +77,7 @@ export type AppendResult =
       closed?: boolean;
     }
   | { status: "not-found" }
+  | { status: "gone" }
   | { status: "conflict"; conflictReason: "content-type" | "sequence" | "closed"; nextOffset?: string; closed?: boolean }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
@@ -81,7 +92,7 @@ export interface ReadResult {
 }
 
 export interface ReadLiveResult {
-  status: "ok" | "timeout" | "not-found";
+  status: "ok" | "timeout" | "not-found" | "gone";
   messages: StoredMessage[];
   nextOffset: string;
   upToDate: boolean;
@@ -90,7 +101,7 @@ export interface ReadLiveResult {
 }
 
 export interface MetadataResult {
-  status: "ok" | "not-found";
+  status: "ok" | "not-found" | "gone";
   contentType?: string;
   nextOffset?: string;
   ttlSeconds?: number;
@@ -99,7 +110,7 @@ export interface MetadataResult {
 }
 
 export interface DeleteResult {
-  status: "ok" | "not-found";
+  status: "ok" | "not-found" | "gone";
 }
 
 // === Storage Factory Type ===
