@@ -43,21 +43,36 @@ export class StreamProtocol implements StreamProtocolInterface {
         status: "exists",
         nextOffset: offset,
         contentType: existing.contentType,
+        closed: existing.closed === true,
       };
     }
 
     const contentType = options.contentType ?? "application/octet-stream";
+    const wantClosed = options.closed === true;
+
+    const initialMessages = options.initialData
+      ? this.processData(options.initialData, contentType)
+      : undefined;
 
     const nextOffset = await storage.createStream({
       contentType,
       ttlSeconds: options.ttlSeconds,
       expiresAt: options.expiresAt,
-      initialData: options.initialData
-        ? this.processData(options.initialData, contentType)
-        : undefined,
+      initialData: wantClosed ? undefined : initialMessages,
+      closed: wantClosed,
     });
 
-    return { status: "created", nextOffset, contentType };
+    let finalOffset = nextOffset;
+    if (wantClosed) {
+      finalOffset = await storage.close(initialMessages);
+    }
+
+    return {
+      status: "created",
+      nextOffset: finalOffset,
+      contentType,
+      closed: wantClosed,
+    };
   }
 
   async append(
@@ -71,6 +86,36 @@ export class StreamProtocol implements StreamProtocolInterface {
       return { status: "not-found" };
     }
 
+    const isClosed = metadata.closed === true;
+    const wantClose = options.close === true;
+    const hasBody = options.data.byteLength > 0;
+
+    // Close-only request: empty body + Stream-Closed: true
+    if (wantClose && !hasBody) {
+      // Idempotent: closing already-closed stream returns 204 with Stream-Closed
+      if (isClosed) {
+        return {
+          status: "ok",
+          nextOffset: await storage.getCurrentOffset(),
+          closed: true,
+        };
+      }
+      // Close without appending data; ignore content-type for empty body
+      const offset = await storage.close(undefined, options.seq);
+      return { status: "ok", nextOffset: offset, closed: true };
+    }
+
+    // Stream is already closed and we have a body — error precedence:
+    // closed wins over content-type and sequence.
+    if (isClosed) {
+      return {
+        status: "conflict",
+        conflictReason: "closed",
+        closed: true,
+        nextOffset: await storage.getCurrentOffset(),
+      };
+    }
+
     if (!this.contentTypeMatches(metadata.contentType, options.contentType)) {
       return { status: "conflict", conflictReason: "content-type" };
     }
@@ -81,8 +126,12 @@ export class StreamProtocol implements StreamProtocolInterface {
 
     const processed = this.processData(options.data, metadata.contentType);
 
-    const nextOffset = await storage.append(processed, options.seq);
+    if (wantClose) {
+      const offset = await storage.close(processed, options.seq);
+      return { status: "ok", nextOffset: offset, closed: true };
+    }
 
+    const nextOffset = await storage.append(processed, options.seq);
     return { status: "ok", nextOffset };
   }
 
@@ -104,8 +153,18 @@ export class StreamProtocol implements StreamProtocolInterface {
 
     const offset = this.normalizeOffset(options.offset);
     const { messages, nextOffset, upToDate } = await storage.read(offset);
+    const isClosed = metadata.closed === true;
 
-    return { status: "ok", messages, nextOffset, upToDate };
+    return {
+      status: "ok",
+      messages,
+      nextOffset,
+      upToDate,
+      // Only signal closed when caller has reached the tail. Partial reads
+      // (more data exists between response and final offset) MUST NOT carry
+      // Stream-Closed.
+      closed: isClosed && upToDate,
+    };
   }
 
   async readLive(
@@ -125,10 +184,34 @@ export class StreamProtocol implements StreamProtocolInterface {
       };
     }
 
+    const isClosed = metadata.closed === true;
+
+    // Closed stream: short-circuit to avoid waiting. Either return any
+    // remaining data (which makes us up-to-date afterward) or signal EOF
+    // immediately.
+    if (isClosed) {
+      const { messages, nextOffset, upToDate } = await storage.read(
+        options.offset
+      );
+      return {
+        status: messages.length > 0 ? "ok" : "timeout",
+        messages,
+        nextOffset,
+        upToDate: true,
+        cursor: this.generateCursor(options.cursor),
+        closed: upToDate,
+      };
+    }
+
     const { messages, nextOffset, timedOut } = await storage.readLive(
       options.offset,
       options.signal
     );
+
+    // The stream may have closed while we were waiting.
+    const finalMeta = await storage.getMetadata();
+    const finalClosed = finalMeta?.closed === true;
+    const reachedTail = nextOffset === (await storage.getCurrentOffset());
 
     return {
       status: timedOut ? "timeout" : "ok",
@@ -136,6 +219,7 @@ export class StreamProtocol implements StreamProtocolInterface {
       nextOffset,
       upToDate: true,
       cursor: this.generateCursor(options.cursor),
+      closed: finalClosed && reachedTail,
     };
   }
 
@@ -150,6 +234,7 @@ export class StreamProtocol implements StreamProtocolInterface {
       nextOffset: await storage.getCurrentOffset(),
       ttlSeconds: meta.ttlSeconds,
       expiresAt: meta.expiresAt,
+      closed: meta.closed === true,
     };
   }
 
@@ -204,6 +289,13 @@ export class StreamProtocol implements StreamProtocolInterface {
     }
 
     if (existing.expiresAt !== options.expiresAt) {
+      return false;
+    }
+
+    // Closure status is part of the configuration: PUT must match.
+    const existingClosed = existing.closed === true;
+    const wantClosed = options.closed === true;
+    if (existingClosed !== wantClosed) {
       return false;
     }
 
