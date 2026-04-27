@@ -16,6 +16,17 @@ export interface StreamMetadata {
   expiresAt?: string;
   createdAt: number;
   lastSeq?: string;
+
+  // Fork relationship — set when this stream was created as a fork.
+  forkedFrom?: string;
+  forkOffset?: string;
+
+  // Reference count: number of forks pointing at this stream as their source.
+  refCount?: number;
+
+  // Soft-delete: stream is logically deleted but data is retained for fork
+  // readers. Direct client operations against this stream return 410 Gone.
+  softDeleted?: boolean;
 }
 
 export interface CreateStreamOptions {
@@ -23,6 +34,12 @@ export interface CreateStreamOptions {
   ttlSeconds?: number;
   expiresAt?: string;
   initialData?: Uint8Array[];
+
+  // Fork creation — when set, the stream is created as a fork of `forkedFrom`
+  // at `forkOffset`. The storage initializes its counter/currentOffset so that
+  // future appends produce offsets greater than `forkOffset`.
+  forkedFrom?: string;
+  forkOffset?: string;
 }
 
 export interface StorageReadResult {
@@ -50,7 +67,7 @@ export interface StreamStorage {
   getMetadata(): Promise<StreamMetadata | null>;
   getCurrentOffset(): Promise<string>;
 
-  // Messages
+  // Messages — operates only on this stream's own data (does not walk fork chains)
   append(messages: Uint8Array[], seq?: string): Promise<string>;
   read(afterOffset?: string): Promise<StorageReadResult>;
 
@@ -59,4 +76,8 @@ export interface StreamStorage {
     afterOffset: string,
     signal?: AbortSignal,
   ): Promise<StorageReadLiveResult>;
+
+  // Fork lifecycle primitives
+  setRefCount(value: number): Promise<void>;
+  setSoftDeleted(value: boolean): Promise<void>;
 }
