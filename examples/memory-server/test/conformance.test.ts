@@ -10,7 +10,7 @@ import { describe, beforeAll, afterAll } from "vitest";
 import { StreamProtocol, HttpHandler } from "@streamsy/core";
 import { createMemoryStorageFactory } from "@streamsy/storage-memory";
 
-let server: { stop: () => void; port: number } | null = null;
+let server: { stop: () => void; port: number | undefined } | null = null;
 
 describe("Memory Storage Server Implementation", () => {
   const port = 19337 + Math.floor(Math.random() * 1000);
@@ -49,13 +49,16 @@ describe("Memory Storage Server Implementation", () => {
           method: req.method,
           headers,
           body: ["GET", "HEAD"].includes(req.method!) ? undefined : body,
-          // @ts-expect-error - Node needs duplex for request bodies
           duplex: "half",
-        });
+        } as RequestInit);
 
         const response = await handler.fetch(request);
 
-        res.writeHead(response.status, Object.fromEntries(response.headers));
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+        res.writeHead(response.status, responseHeaders);
         if (response.body) {
           const reader = response.body.getReader();
           const pump = async () => {

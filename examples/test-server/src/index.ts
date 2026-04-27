@@ -5,10 +5,12 @@
  * Wires together the HTTP handler, protocol, and storage layers.
  */
 
-import type { StreamStorageInterface } from "cf-durable-streams";
-import { HttpHandler, StreamProtocol, StreamStorage } from "cf-durable-streams";
+import type { StreamStorage as StreamStorageInterface } from "@streamsy/core";
+import { HttpHandler, StreamProtocol } from "@streamsy/core";
+import { DurableObjectStreamStorage as StreamStorage } from "@streamsy/storage-durable-object";
 
-// Re-export the Durable Object for the runtime
+// Re-export the Durable Object class for the runtime.
+// The exported name must match `className` in alchemy.run.ts.
 export { StreamStorage };
 
 /**

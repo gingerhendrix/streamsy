@@ -11,14 +11,16 @@
     "test": "vitest"
   },
   "dependencies": {
-    "cf-durable-streams": "workspace:*",
-    "@durable-streams/server-conformance-tests": "^0.2.3",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/storage-durable-object": "workspace:*",
+    "@durable-streams/server-conformance-tests": "^0.3.0",
     "vitest": "^4.0.16"
   },
   "devDependencies": {
     "alchemy": "catalog:",
     "@cloudflare/workers-types": "catalog:",
     "@durable-streams/conformance-tests": "file:../../../../scratch/durable-streams/packages/conformance-tests",
+    "@types/node": "^22.10.0",
     "typescript": "catalog:"
   }
 }

@@ -12,10 +12,11 @@
   "dependencies": {
     "@streamsy/core": "workspace:*",
     "@streamsy/storage-memory": "workspace:*",
-    "@durable-streams/server-conformance-tests": "^0.2.3",
+    "@durable-streams/server-conformance-tests": "^0.3.0",
     "vitest": "^4.0.16"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.0",
     "typescript": "catalog:"
   }
 }
