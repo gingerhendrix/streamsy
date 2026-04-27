@@ -23,22 +23,26 @@ export class HttpHandler {
     this.maxMessageSize = options.maxMessageSize ?? 1024 * 1024;
   }
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-
-    // Extract stream path - everything after the path prefix
+  private stripPrefix(pathname: string): string {
     const prefix = this.pathPrefix.endsWith("/")
       ? this.pathPrefix
       : this.pathPrefix + "/";
     const regex = new RegExp(
       `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
     );
-    const streamPath = url.pathname.replace(regex, "");
+    return pathname.replace(regex, "");
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    const streamPath = this.stripPrefix(url.pathname);
 
     if (!streamPath || streamPath === url.pathname) {
-      return new Response(`Stream path required: ${prefix}{path}`, {
-        status: 400,
-      });
+      return new Response(
+        `Stream path required: ${this.pathPrefix.endsWith("/") ? this.pathPrefix : this.pathPrefix + "/"}{path}`,
+        { status: 400 },
+      );
     }
 
     const method = request.method;
@@ -68,10 +72,11 @@ export class HttpHandler {
     request: Request,
     streamId: string,
   ): Promise<Response> {
-    const contentType =
-      request.headers.get("content-type") ?? "application/octet-stream";
+    const rawContentType = request.headers.get("content-type");
     const ttlHeader = request.headers.get("stream-ttl");
     const expiresAtHeader = request.headers.get("stream-expires-at");
+    const forkedFromHeader = request.headers.get("stream-forked-from");
+    const forkOffsetHeader = request.headers.get("stream-fork-offset");
 
     // Validate TTL format
     if (ttlHeader && !/^(0|[1-9]\d*)$/.test(ttlHeader)) {
@@ -98,6 +103,23 @@ export class HttpHandler {
       }
     }
 
+    if (forkOffsetHeader && !forkedFromHeader) {
+      return new Response(
+        "Stream-Fork-Offset requires Stream-Forked-From",
+        { status: 400 },
+      );
+    }
+
+    const isFork = !!forkedFromHeader;
+    // Canonicalize fork-source path to the same streamId space the rest of
+    // the system uses (path with the configured prefix stripped).
+    const forkedFromStreamId = forkedFromHeader
+      ? this.stripPrefix(forkedFromHeader)
+      : undefined;
+    // Content-Type is optional on fork creation; inherited from source.
+    const contentType =
+      rawContentType ?? (isFork ? undefined : "application/octet-stream");
+
     const ttlSeconds = ttlHeader ? parseInt(ttlHeader, 10) : undefined;
 
     let initialData: ArrayBuffer;
@@ -119,6 +141,7 @@ export class HttpHandler {
 
     if (
       effectiveInitialData &&
+      contentType &&
       contentType.toLowerCase().startsWith("application/json")
     ) {
       try {
@@ -141,12 +164,28 @@ export class HttpHandler {
       ttlSeconds,
       expiresAt: expiresAtHeader ?? undefined,
       initialData: effectiveInitialData,
+      forkedFrom: forkedFromStreamId,
+      forkOffset: forkOffsetHeader ?? undefined,
     });
 
+    if (result.status === "not-found") {
+      return new Response(
+        result.errorMessage ?? "Source stream not found",
+        { status: 404 },
+      );
+    }
+
+    if (result.status === "bad-request") {
+      return new Response(
+        result.errorMessage ?? "Invalid fork parameters",
+        { status: 400 },
+      );
+    }
+
     if (result.status === "conflict") {
-      return new Response("Stream exists with different configuration", {
-        status: 409,
-      });
+      const message =
+        result.errorMessage ?? "Stream exists with different configuration";
+      return new Response(message, { status: 409 });
     }
 
     const status = result.status === "created" ? 201 : 200;
@@ -214,6 +253,10 @@ export class HttpHandler {
       return new Response("Stream not found", { status: 404 });
     }
 
+    if (result.status === "gone") {
+      return new Response("Stream is soft-deleted", { status: 410 });
+    }
+
     if (result.status === "conflict") {
       const message =
         result.conflictReason === "content-type"
@@ -262,6 +305,10 @@ export class HttpHandler {
 
     if (result.status === "not-found") {
       return new Response("Stream not found", { status: 404 });
+    }
+
+    if (result.status === "gone") {
+      return new Response("Stream is soft-deleted", { status: 410 });
     }
 
     // Generate ETag for cache validation
@@ -336,6 +383,10 @@ export class HttpHandler {
       return new Response("Stream not found", { status: 404 });
     }
 
+    if (result.status === "gone") {
+      return new Response("Stream is soft-deleted", { status: 410 });
+    }
+
     if (result.status === "timeout" || result.messages.length === 0) {
       return new Response(null, {
         status: 204,
@@ -395,6 +446,10 @@ export class HttpHandler {
 
     if (metadata.status === "not-found") {
       return new Response("Stream not found", { status: 404 });
+    }
+
+    if (metadata.status === "gone") {
+      return new Response("Stream is soft-deleted", { status: 410 });
     }
 
     // SSE only valid for text/* or application/json
@@ -595,6 +650,10 @@ export class HttpHandler {
       return new Response("Stream not found", { status: 404 });
     }
 
+    if (result.status === "gone") {
+      return new Response("Stream is soft-deleted", { status: 410 });
+    }
+
     return new Response(null, {
       headers: {
         "content-type": result.contentType!,
@@ -613,6 +672,10 @@ export class HttpHandler {
 
     if (result.status === "not-found") {
       return new Response("Stream not found", { status: 404 });
+    }
+
+    if (result.status === "gone") {
+      return new Response("Stream is soft-deleted", { status: 410 });
     }
 
     return new Response(null, { status: 204 });
