@@ -98,6 +98,8 @@ export class DurableObjectStreamStorage
   }
 
   async append(messages: Uint8Array[], seq?: string): Promise<string> {
+    await this.resetTtlIfApplicable();
+
     let lastOffset = "";
 
     for (const data of messages) {
@@ -129,6 +131,8 @@ export class DurableObjectStreamStorage
   }
 
   async read(afterOffset?: string): Promise<StorageReadResult> {
+    await this.resetTtlIfApplicable();
+
     const listOptions: DurableObjectListOptions = {
       prefix: "message:",
     };
@@ -160,7 +164,7 @@ export class DurableObjectStreamStorage
     afterOffset: string,
     signal?: AbortSignal,
   ): Promise<StorageReadLiveResult> {
-    // Check for existing messages
+    // read() resets TTL; no separate call needed here.
     const result = await this.read(afterOffset);
     if (result.messages.length > 0) {
       return { ...result, timedOut: false };
@@ -204,6 +208,14 @@ export class DurableObjectStreamStorage
     for (const waiter of this.waiters) {
       waiter();
     }
+  }
+
+  // Per PROTOCOL.md §5.1: Stream-TTL is a sliding window. Stream-Expires-At
+  // is an absolute deadline and is not reset.
+  private async resetTtlIfApplicable(): Promise<void> {
+    const ttlSeconds = this.metadata?.ttlSeconds;
+    if (!ttlSeconds) return;
+    await this.ctx.storage.setAlarm(Date.now() + ttlSeconds * 1000);
   }
 
   private formatOffset(counter: number): string {

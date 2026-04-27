@@ -93,6 +93,8 @@ export class MemoryStreamStorage implements StreamStorage {
   }
 
   async append(messages: Uint8Array[], seq?: string): Promise<string> {
+    this.resetTtlIfApplicable();
+
     let lastOffset = "";
 
     for (const data of messages) {
@@ -120,6 +122,8 @@ export class MemoryStreamStorage implements StreamStorage {
   }
 
   async read(afterOffset?: string): Promise<StorageReadResult> {
+    this.resetTtlIfApplicable();
+
     let messages: StoredMessage[];
 
     if (afterOffset) {
@@ -190,6 +194,17 @@ export class MemoryStreamStorage implements StreamStorage {
     for (const waiter of this.waiters) {
       waiter();
     }
+  }
+
+  // Per PROTOCOL.md §5.1: Stream-TTL is a sliding window. Stream-Expires-At
+  // is an absolute deadline and is not reset.
+  private resetTtlIfApplicable(): void {
+    const ttlSeconds = this.metadata?.ttlSeconds;
+    if (!ttlSeconds) return;
+    if (this.ttlTimer) clearTimeout(this.ttlTimer);
+    this.ttlTimer = setTimeout(() => {
+      void this.deleteAll();
+    }, ttlSeconds * 1000);
   }
 
   private static formatOffset(counter: number): string {
