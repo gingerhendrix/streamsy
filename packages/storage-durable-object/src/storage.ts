@@ -16,6 +16,8 @@ import type {
   StoredMessage,
 } from "@streamsy/core";
 
+const ZERO_OFFSET = `${"0".repeat(16)}_${"0".repeat(16)}`;
+
 export class DurableObjectStreamStorage
   extends DurableObject
   implements StreamStorageInterface
@@ -29,14 +31,20 @@ export class DurableObjectStreamStorage
     super(ctx, env);
     this.metadata = ctx.storage.kv.get("metadata") ?? null;
     this.counter = ctx.storage.kv.get("counter") ?? 0;
-    this.currentOffset =
-      ctx.storage.kv.get("currentOffset") ?? this.formatOffset(0);
+    this.currentOffset = ctx.storage.kv.get("currentOffset") ?? ZERO_OFFSET;
   }
 
   /**
-   * TTL alarm handler - deletes expired streams
+   * TTL alarm handler.
+   * If forks still reference this stream (refCount > 0), soft-delete instead of purging.
    */
   override async alarm(): Promise<void> {
+    if (!this.metadata) return;
+    const refCount = this.metadata.refCount ?? 0;
+    if (refCount > 0) {
+      await this.setSoftDeleted(true);
+      return;
+    }
     await this.deleteAll();
   }
 
@@ -46,26 +54,36 @@ export class DurableObjectStreamStorage
       ttlSeconds: options.ttlSeconds,
       expiresAt: options.expiresAt,
       createdAt: Date.now(),
+      forkedFrom: options.forkedFrom,
+      forkOffset: options.forkOffset,
+      refCount: 0,
     };
 
     this.ctx.storage.kv.put("metadata", metadata);
-    this.ctx.storage.kv.put("counter", 0);
-    const initialOffset = this.formatOffset(0);
+
+    let initialOffset: string;
+    let initialCounter: number;
+    if (options.forkedFrom && options.forkOffset) {
+      initialOffset = options.forkOffset;
+      initialCounter = parseCounter(options.forkOffset);
+    } else {
+      initialOffset = ZERO_OFFSET;
+      initialCounter = 0;
+    }
+
+    this.ctx.storage.kv.put("counter", initialCounter);
     this.ctx.storage.kv.put("currentOffset", initialOffset);
 
-    // Update memoized state
     this.metadata = metadata;
-    this.counter = 0;
+    this.counter = initialCounter;
     this.currentOffset = initialOffset;
 
-    // Set alarm for TTL if configured
     if (options.ttlSeconds) {
       await this.ctx.storage.setAlarm(Date.now() + options.ttlSeconds * 1000);
     } else if (options.expiresAt) {
       await this.ctx.storage.setAlarm(new Date(options.expiresAt).getTime());
     }
 
-    // Handle initial data
     if (options.initialData?.length) {
       return await this.append(options.initialData);
     }
@@ -74,18 +92,15 @@ export class DurableObjectStreamStorage
   }
 
   async deleteAll(): Promise<void> {
-    // Clear all waiters
     for (const waiter of this.waiters) {
       waiter();
     }
     this.waiters.clear();
 
-    // Clear memoized state
     this.metadata = null;
     this.counter = 0;
-    this.currentOffset = this.formatOffset(0);
+    this.currentOffset = ZERO_OFFSET;
 
-    // Delete all storage
     await this.ctx.storage.deleteAll();
   }
 
@@ -98,11 +113,11 @@ export class DurableObjectStreamStorage
   }
 
   async append(messages: Uint8Array[], seq?: string): Promise<string> {
-    let lastOffset = "";
+    let lastOffset = this.currentOffset;
 
     for (const data of messages) {
       this.counter++;
-      const offset = this.formatOffset(this.counter);
+      const offset = formatOffset(this.counter);
       lastOffset = offset;
 
       this.ctx.storage.kv.put(`message:${offset}`, {
@@ -122,7 +137,6 @@ export class DurableObjectStreamStorage
       this.metadata = updatedMeta;
     }
 
-    // Notify waiters
     this.notifyWaiters();
 
     return lastOffset;
@@ -160,13 +174,11 @@ export class DurableObjectStreamStorage
     afterOffset: string,
     signal?: AbortSignal,
   ): Promise<StorageReadLiveResult> {
-    // Check for existing messages
     const result = await this.read(afterOffset);
     if (result.messages.length > 0) {
       return { ...result, timedOut: false };
     }
 
-    // Wait for new messages or timeout
     const timeout = 30_000;
 
     return new Promise((resolve) => {
@@ -200,15 +212,37 @@ export class DurableObjectStreamStorage
     });
   }
 
+  async setRefCount(value: number): Promise<void> {
+    if (!this.metadata) return;
+    const updated = { ...this.metadata, refCount: value };
+    this.ctx.storage.kv.put("metadata", updated);
+    this.metadata = updated;
+  }
+
+  async setSoftDeleted(value: boolean): Promise<void> {
+    if (!this.metadata) return;
+    const updated = { ...this.metadata, softDeleted: value };
+    this.ctx.storage.kv.put("metadata", updated);
+    this.metadata = updated;
+    if (value) {
+      this.notifyWaiters();
+    }
+  }
+
   private notifyWaiters() {
     for (const waiter of this.waiters) {
       waiter();
     }
   }
+}
 
-  private formatOffset(counter: number): string {
-    const counterStr = String(counter).padStart(16, "0");
-    const byteOffset = "0".repeat(16);
-    return `${counterStr}_${byteOffset}`;
-  }
+function formatOffset(counter: number): string {
+  const counterStr = String(counter).padStart(16, "0");
+  const byteOffset = "0".repeat(16);
+  return `${counterStr}_${byteOffset}`;
+}
+
+function parseCounter(offset: string): number {
+  const [counterStr] = offset.split("_");
+  return parseInt(counterStr ?? "0", 10);
 }
