@@ -258,26 +258,58 @@ export class HttpHandler {
     const live = url.searchParams.get("live");
     const cursor = url.searchParams.get("cursor") ?? undefined;
 
-    // Validate offset format
-    if (offset !== undefined && offset !== "-1" && !/^\d+_\d+$/.test(offset)) {
+    // Validate offset format: -1, now, or digits_digits
+    if (
+      offset !== undefined &&
+      offset !== "-1" &&
+      offset !== "now" &&
+      !/^\d+_\d+$/.test(offset)
+    ) {
       return new Response("Invalid offset format", { status: 400 });
+    }
+
+    // Resolve offset=now to the current tail before delegating, so the
+    // protocol/storage layers never see the literal sentinel.
+    let effectiveOffset = offset;
+    if (offset === "now") {
+      const meta = await this.protocol.metadata(streamId);
+      if (meta.status === "not-found") {
+        return new Response("Stream not found", { status: 404 });
+      }
+      effectiveOffset = meta.nextOffset;
+
+      // Catch-up mode (no live param): return an empty body at the tail.
+      if (live !== "long-poll" && live !== "sse") {
+        const contentType = meta.contentType!;
+        const isJson = contentType.toLowerCase().startsWith("application/json");
+        return new Response(isJson ? "[]" : "", {
+          headers: {
+            "content-type": contentType,
+            "stream-next-offset": effectiveOffset!,
+            "stream-up-to-date": "true",
+            "cache-control": "no-store",
+          },
+        });
+      }
     }
 
     // Handle live modes
     if (live === "long-poll" || live === "sse") {
-      if (!offset) {
+      if (!effectiveOffset) {
         return new Response("offset required for live modes", { status: 400 });
       }
 
       if (live === "sse") {
-        return await this.handleSSE(streamId, offset, cursor);
+        return await this.handleSSE(streamId, effectiveOffset, cursor);
       }
 
-      return await this.handleLongPoll(streamId, offset, cursor);
+      return await this.handleLongPoll(streamId, effectiveOffset, cursor);
     }
 
     // Regular catch-up read
-    const result = await this.protocol.read(streamId, { offset });
+    const result = await this.protocol.read(streamId, {
+      offset: effectiveOffset,
+    });
 
     if (result.status === "not-found") {
       return new Response("Stream not found", { status: 404 });
