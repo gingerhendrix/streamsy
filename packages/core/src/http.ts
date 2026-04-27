@@ -12,6 +12,21 @@ interface HttpHandlerOptions {
   maxMessageSize?: number; // default: 1MB (1024 * 1024)
 }
 
+function withSecurityHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  if (!headers.has("x-content-type-options")) {
+    headers.set("x-content-type-options", "nosniff");
+  }
+  if (!headers.has("cross-origin-resource-policy")) {
+    headers.set("cross-origin-resource-policy", "cross-origin");
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export class HttpHandler {
   private protocol: StreamProtocolInterface;
   private pathPrefix: string;
@@ -24,6 +39,10 @@ export class HttpHandler {
   }
 
   async fetch(request: Request): Promise<Response> {
+    return withSecurityHeaders(await this.dispatch(request));
+  }
+
+  private async dispatch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     // Extract stream path - everything after the path prefix
