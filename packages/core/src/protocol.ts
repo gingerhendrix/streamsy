@@ -19,7 +19,18 @@ import type {
   MetadataResult,
   DeleteResult,
 } from "./types/protocol.ts";
-import type { StreamMetadata } from "./types/storage.ts";
+import type {
+  ProducerState,
+  StreamMetadata,
+  StreamStorage,
+} from "./types/storage.ts";
+
+type ProducerValidation =
+  | { kind: "accepted"; proposedState: ProducerState }
+  | { kind: "duplicate"; lastSeq: number; epoch: number }
+  | { kind: "stale-epoch"; currentEpoch: number }
+  | { kind: "gap"; expectedSeq: number; receivedSeq: number }
+  | { kind: "invalid-epoch-seq" };
 
 const CURSOR_EPOCH = new Date("2024-10-09T00:00:00.000Z").getTime();
 const CURSOR_INTERVAL_MS = 20_000;
@@ -65,6 +76,25 @@ export class StreamProtocol implements StreamProtocolInterface {
     options: AppendOptions
   ): Promise<AppendResult> {
     const storage = this.getStorage(streamId);
+
+    if (options.producer) {
+      const release = await storage.acquireProducerLock(
+        options.producer.producerId
+      );
+      try {
+        return await this.appendInner(storage, options);
+      } finally {
+        release();
+      }
+    }
+
+    return this.appendInner(storage, options);
+  }
+
+  private async appendInner(
+    storage: StreamStorage,
+    options: AppendOptions
+  ): Promise<AppendResult> {
     const metadata = await storage.getMetadata();
 
     if (!metadata) {
@@ -75,6 +105,42 @@ export class StreamProtocol implements StreamProtocolInterface {
       return { status: "conflict", conflictReason: "content-type" };
     }
 
+    // Producer validation runs BEFORE Stream-Seq check so retries with both
+    // producer headers AND Stream-Seq can return 204 (duplicate) instead of
+    // failing the Stream-Seq conflict check.
+    let producerValidation: ProducerValidation | undefined;
+    if (options.producer) {
+      const state = await storage.getProducerState(options.producer.producerId);
+      producerValidation = this.validateProducer(
+        state,
+        options.producer.producerEpoch,
+        options.producer.producerSeq
+      );
+
+      switch (producerValidation.kind) {
+        case "duplicate":
+          return {
+            status: "duplicate",
+            nextOffset: await storage.getCurrentOffset(),
+            producerEpoch: producerValidation.epoch,
+            producerSeq: producerValidation.lastSeq,
+          };
+        case "stale-epoch":
+          return {
+            status: "stale-epoch",
+            currentEpoch: producerValidation.currentEpoch,
+          };
+        case "gap":
+          return {
+            status: "producer-gap",
+            expectedSeq: producerValidation.expectedSeq,
+            receivedSeq: producerValidation.receivedSeq,
+          };
+        case "invalid-epoch-seq":
+          return { status: "invalid-epoch-seq" };
+      }
+    }
+
     if (options.seq && metadata.lastSeq && options.seq <= metadata.lastSeq) {
       return { status: "conflict", conflictReason: "sequence" };
     }
@@ -83,7 +149,61 @@ export class StreamProtocol implements StreamProtocolInterface {
 
     const nextOffset = await storage.append(processed, options.seq);
 
-    return { status: "ok", nextOffset };
+    if (producerValidation && producerValidation.kind === "accepted") {
+      await storage.setProducerState(
+        options.producer!.producerId,
+        producerValidation.proposedState
+      );
+      return {
+        status: "appended",
+        nextOffset,
+        producerEpoch: producerValidation.proposedState.epoch,
+        producerSeq: producerValidation.proposedState.lastSeq,
+      };
+    }
+
+    return { status: "appended", nextOffset };
+  }
+
+  private validateProducer(
+    state: ProducerState | undefined,
+    epoch: number,
+    seq: number
+  ): ProducerValidation {
+    if (!state) {
+      // First time we see this producer. Treat as a fresh epoch session.
+      if (seq !== 0) {
+        return { kind: "gap", expectedSeq: 0, receivedSeq: seq };
+      }
+      return { kind: "accepted", proposedState: { epoch, lastSeq: 0 } };
+    }
+
+    if (epoch < state.epoch) {
+      return { kind: "stale-epoch", currentEpoch: state.epoch };
+    }
+
+    if (epoch > state.epoch) {
+      if (seq !== 0) {
+        return { kind: "invalid-epoch-seq" };
+      }
+      return { kind: "accepted", proposedState: { epoch, lastSeq: 0 } };
+    }
+
+    // Same epoch
+    if (seq <= state.lastSeq) {
+      return { kind: "duplicate", lastSeq: state.lastSeq, epoch: state.epoch };
+    }
+    if (seq === state.lastSeq + 1) {
+      return {
+        kind: "accepted",
+        proposedState: { epoch, lastSeq: seq },
+      };
+    }
+    return {
+      kind: "gap",
+      expectedSeq: state.lastSeq + 1,
+      receivedSeq: seq,
+    };
   }
 
   async read(

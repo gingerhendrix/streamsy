@@ -14,6 +14,7 @@ import type {
   StorageReadResult,
   StorageReadLiveResult,
   StoredMessage,
+  ProducerState,
 } from "@streamsy/core";
 
 export class DurableObjectStreamStorage
@@ -24,6 +25,7 @@ export class DurableObjectStreamStorage
   private metadata: StreamMetadata | null = null;
   private counter: number = 0;
   private currentOffset: string;
+  private producerLocks: Map<string, Promise<void>> = new Map();
 
   constructor(ctx: DurableObjectState, env: object) {
     super(ctx, env);
@@ -85,8 +87,38 @@ export class DurableObjectStreamStorage
     this.counter = 0;
     this.currentOffset = this.formatOffset(0);
 
-    // Delete all storage
+    // Delete all storage (also clears producer:* entries)
     await this.ctx.storage.deleteAll();
+  }
+
+  async getProducerState(
+    producerId: string,
+  ): Promise<ProducerState | undefined> {
+    return this.ctx.storage.kv.get<ProducerState>(`producer:${producerId}`);
+  }
+
+  async setProducerState(
+    producerId: string,
+    state: ProducerState,
+  ): Promise<void> {
+    this.ctx.storage.kv.put(`producer:${producerId}`, state);
+  }
+
+  async acquireProducerLock(producerId: string): Promise<() => void> {
+    while (this.producerLocks.has(producerId)) {
+      await this.producerLocks.get(producerId);
+    }
+
+    let release!: () => void;
+    const lock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.producerLocks.set(producerId, lock);
+
+    return () => {
+      this.producerLocks.delete(producerId);
+      release();
+    };
   }
 
   async getMetadata(): Promise<StreamMetadata | null> {

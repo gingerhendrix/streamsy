@@ -14,6 +14,7 @@ import type {
   StorageReadResult,
   StorageReadLiveResult,
   StoredMessage,
+  ProducerState,
 } from "@streamsy/core";
 
 export interface MemoryStreamStorageOptions {
@@ -28,6 +29,8 @@ export class MemoryStreamStorage implements StreamStorage {
   private waiters: Set<() => void> = new Set();
   private ttlTimer: ReturnType<typeof setTimeout> | null = null;
   private longPollTimeoutMs: number;
+  private producers: Map<string, ProducerState> = new Map();
+  private producerLocks: Map<string, Promise<void>> = new Map();
 
   constructor(options: MemoryStreamStorageOptions = {}) {
     this.longPollTimeoutMs = options.longPollTimeoutMs ?? 30_000;
@@ -91,6 +94,37 @@ export class MemoryStreamStorage implements StreamStorage {
     this.messages = [];
     this.counter = 0;
     this.currentOffset = MemoryStreamStorage.formatOffset(0);
+    this.producers.clear();
+  }
+
+  async getProducerState(
+    producerId: string,
+  ): Promise<ProducerState | undefined> {
+    return this.producers.get(producerId);
+  }
+
+  async setProducerState(
+    producerId: string,
+    state: ProducerState,
+  ): Promise<void> {
+    this.producers.set(producerId, state);
+  }
+
+  async acquireProducerLock(producerId: string): Promise<() => void> {
+    while (this.producerLocks.has(producerId)) {
+      await this.producerLocks.get(producerId);
+    }
+
+    let release!: () => void;
+    const lock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.producerLocks.set(producerId, lock);
+
+    return () => {
+      this.producerLocks.delete(producerId);
+      release();
+    };
   }
 
   async getMetadata(): Promise<StreamMetadata | null> {

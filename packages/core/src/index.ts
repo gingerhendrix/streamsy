@@ -20,6 +20,7 @@ export type {
   CreateResult,
   AppendOptions,
   AppendResult,
+  ProducerOptions,
   ReadOptions,
   ReadResult,
   ReadLiveOptions,
@@ -35,4 +36,5 @@ export type {
   StorageReadResult,
   StorageReadLiveResult,
   StoredMessage,
+  ProducerState,
 } from "./types/storage.ts";

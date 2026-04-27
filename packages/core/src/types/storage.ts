@@ -38,6 +38,14 @@ export interface StorageReadLiveResult {
 }
 
 /**
+ * Producer state tracked per (stream, producerId).
+ */
+export interface ProducerState {
+  epoch: number;
+  lastSeq: number;
+}
+
+/**
  * Storage Layer Interface
  *
  */
@@ -59,4 +67,9 @@ export interface StreamStorage {
     afterOffset: string,
     signal?: AbortSignal,
   ): Promise<StorageReadLiveResult>;
+
+  // Idempotent producer state (Section 5.2.1)
+  getProducerState(producerId: string): Promise<ProducerState | undefined>;
+  setProducerState(producerId: string, state: ProducerState): Promise<void>;
+  acquireProducerLock(producerId: string): Promise<() => void>;
 }
