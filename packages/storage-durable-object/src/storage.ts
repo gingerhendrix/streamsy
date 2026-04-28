@@ -18,6 +18,10 @@ import type {
 } from "@streamsy/core";
 
 const ZERO_OFFSET = `${"0".repeat(16)}_${"0".repeat(16)}`;
+// Keep server-side long-poll timeouts comfortably below common client/test
+// request timeouts. Clients that want to keep waiting can reconnect with the
+// returned Stream-Cursor and Stream-Next-Offset.
+const LONG_POLL_TIMEOUT_MS = 1500;
 
 export class DurableObjectStreamStorage
   extends DurableObject
@@ -249,8 +253,6 @@ export class DurableObjectStreamStorage
       return { ...result, timedOut: false };
     }
 
-    const timeout = 30_000;
-
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
         this.waiters.delete(notify);
@@ -259,7 +261,7 @@ export class DurableObjectStreamStorage
           nextOffset: result.nextOffset,
           timedOut: true,
         });
-      }, timeout);
+      }, LONG_POLL_TIMEOUT_MS);
 
       const notify = async () => {
         clearTimeout(timeoutId);
