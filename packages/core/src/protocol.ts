@@ -235,39 +235,10 @@ export class StreamProtocol implements StreamProtocolInterface {
     const wantClose = options.close === true;
     const hasBody = options.data.byteLength > 0;
 
-    // Close-only request: empty body + Stream-Closed: true
-    if (wantClose && !hasBody) {
-      // Idempotent: closing already-closed stream returns 204 with Stream-Closed
-      if (isClosed) {
-        return {
-          status: "appended",
-          nextOffset: await storage.getCurrentOffset(),
-          closed: true,
-        };
-      }
-      // Close without appending data; ignore content-type for empty body
-      const offset = await storage.close(undefined, options.seq);
-      return { status: "appended", nextOffset: offset, closed: true };
-    }
-
-    // Stream is already closed and we have a body — error precedence:
-    // closed wins over content-type and sequence.
-    if (isClosed) {
-      return {
-        status: "conflict",
-        conflictReason: "closed",
-        closed: true,
-        nextOffset: await storage.getCurrentOffset(),
-      };
-    }
-
-    if (!this.contentTypeMatches(metadata.contentType, options.contentType)) {
-      return { status: "conflict", conflictReason: "content-type" };
-    }
-
-    // Producer validation runs BEFORE Stream-Seq check so retries with both
-    // producer headers AND Stream-Seq can return 204 (duplicate) instead of
-    // failing the Stream-Seq conflict check.
+    // Producer validation must run before closed-stream conflict handling so
+    // retries of the producer tuple that closed the stream dedupe to 204 rather
+    // than becoming 409 STREAM_CLOSED. Accepted producer tuples still cannot
+    // append/close an already-closed stream.
     let producerValidation: ProducerValidation | undefined;
     if (options.producer) {
       const state = await storage.getProducerState(options.producer.producerId);
@@ -284,6 +255,7 @@ export class StreamProtocol implements StreamProtocolInterface {
             nextOffset: await storage.getCurrentOffset(),
             producerEpoch: producerValidation.epoch,
             producerSeq: producerValidation.lastSeq,
+            closed: isClosed,
           };
         case "stale-epoch":
           return {
@@ -299,6 +271,50 @@ export class StreamProtocol implements StreamProtocolInterface {
         case "invalid-epoch-seq":
           return { status: "invalid-epoch-seq" };
       }
+    }
+
+    // Close-only request: empty body + Stream-Closed: true
+    if (wantClose && !hasBody) {
+      // Idempotent non-producer close-only against an already closed stream.
+      if (isClosed) {
+        return {
+          status: "appended",
+          nextOffset: await storage.getCurrentOffset(),
+          closed: true,
+        };
+      }
+
+      // Close without appending data; ignore content-type for empty body.
+      const offset = await storage.close(undefined, options.seq);
+      if (producerValidation && producerValidation.kind === "accepted") {
+        await storage.setProducerState(
+          options.producer!.producerId,
+          producerValidation.proposedState
+        );
+        return {
+          status: "appended",
+          nextOffset: offset,
+          producerEpoch: producerValidation.proposedState.epoch,
+          producerSeq: producerValidation.proposedState.lastSeq,
+          closed: true,
+        };
+      }
+      return { status: "appended", nextOffset: offset, closed: true };
+    }
+
+    // Stream is already closed and we have a body, or an accepted non-duplicate
+    // producer tuple: closed wins over content-type and sequence.
+    if (isClosed) {
+      return {
+        status: "conflict",
+        conflictReason: "closed",
+        closed: true,
+        nextOffset: await storage.getCurrentOffset(),
+      };
+    }
+
+    if (!this.contentTypeMatches(metadata.contentType, options.contentType)) {
+      return { status: "conflict", conflictReason: "content-type" };
     }
 
     if (options.seq && metadata.lastSeq && options.seq <= metadata.lastSeq) {
@@ -600,7 +616,8 @@ export class StreamProtocol implements StreamProtocolInterface {
     streamId: string,
     metadata: StreamMetadata,
     afterOffset: string | undefined,
-    capOffset: string | undefined
+    capOffset: string | undefined,
+    touchOwnTtl = true
   ): Promise<StoredMessage[]> {
     const storage = this.getStorage(streamId);
     const out: StoredMessage[] = [];
@@ -621,7 +638,8 @@ export class StreamProtocol implements StreamProtocolInterface {
             metadata.forkedFrom,
             sourceMeta,
             afterOffset,
-            upstreamCap
+            upstreamCap,
+            false
           );
           out.push(...inherited);
         }
@@ -634,7 +652,9 @@ export class StreamProtocol implements StreamProtocolInterface {
       (afterOffset === undefined || afterOffset < metadata.forkOffset)
         ? metadata.forkOffset
         : afterOffset;
-    const r = await storage.read(ownStart);
+    const r = touchOwnTtl || !storage.readNoTouch
+      ? await storage.read(ownStart)
+      : await storage.readNoTouch(ownStart);
     for (const msg of r.messages) {
       if (capOffset !== undefined && msg.offset > capOffset) break;
       out.push(msg);

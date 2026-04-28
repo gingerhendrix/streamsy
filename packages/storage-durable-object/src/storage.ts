@@ -208,7 +208,10 @@ export class DurableObjectStreamStorage
 
   async read(afterOffset?: string): Promise<StorageReadResult> {
     await this.resetTtlIfApplicable();
+    return this.readNoTouch(afterOffset);
+  }
 
+  async readNoTouch(afterOffset?: string): Promise<StorageReadResult> {
     const listOptions: DurableObjectListOptions = {
       prefix: "message:",
     };

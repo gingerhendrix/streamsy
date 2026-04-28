@@ -416,7 +416,7 @@ export class HttpHandler {
         if (result.producerSeq !== undefined) {
           headers["producer-seq"] = String(result.producerSeq);
         }
-        const status = producerHeaders.kind === "ok" ? 200 : 204;
+        const status = producerHeaders.kind === "ok" && !isEmpty ? 200 : 204;
         return new Response(null, { status, headers });
       }
     }
@@ -462,6 +462,7 @@ export class HttpHandler {
             "content-type": contentType,
             "stream-next-offset": effectiveOffset!,
             "stream-up-to-date": "true",
+            ...(meta.closed ? { "stream-closed": "true" } : {}),
             "cache-control": "no-store",
           },
         });

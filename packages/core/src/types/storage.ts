@@ -81,6 +81,8 @@ export interface StreamStorage {
   // Messages — operates only on this stream's own data (does not walk fork chains)
   append(messages: Uint8Array[], seq?: string): Promise<string>;
   read(afterOffset?: string): Promise<StorageReadResult>;
+  // Read without renewing sliding TTL. Used for inherited fork-source data.
+  readNoTouch?(afterOffset?: string): Promise<StorageReadResult>;
 
   // Closure
   close(messages?: Uint8Array[], seq?: string): Promise<string>;

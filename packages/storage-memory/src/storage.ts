@@ -186,7 +186,10 @@ export class MemoryStreamStorage implements StreamStorage {
 
   async read(afterOffset?: string): Promise<StorageReadResult> {
     this.resetTtlIfApplicable();
+    return this.readNoTouch(afterOffset);
+  }
 
+  async readNoTouch(afterOffset?: string): Promise<StorageReadResult> {
     const messages = afterOffset
       ? this.messages.filter((msg) => msg.offset > afterOffset)
       : [...this.messages];
