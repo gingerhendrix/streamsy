@@ -44,6 +44,7 @@ See [`docs/api.md`](docs/api.md) for package boundaries, exported types, storage
 ## Examples
 
 - `examples/memory-server` — Bun/HTTP server using the memory storage backend and public API factories.
+- `examples/issue-tracker-demo` — React/Vite issue tracker using a Bun API server, Streamsy memory storage, and TanStack DB client collections to demonstrate a small durable-sync app.
 
 ## Development
 
