@@ -18,10 +18,18 @@ export type DemoCollections = {
   comments: Collection<Comment, string | number>;
 };
 
+export type DurableDbSnapshot = {
+  projects: Project[];
+  issues: Issue[];
+  comments: Comment[];
+  offset: string;
+};
+
 export type DurableDb = DemoCollections & {
   start: () => Promise<void>;
   stop: () => void;
   getOffset: () => string;
+  getSnapshot: () => DurableDbSnapshot;
   subscribe: (listener: () => void) => () => void;
 };
 
@@ -89,8 +97,9 @@ function applyEvent(collections: DemoCollections, event: StateEvent): void {
 async function readEvents(
   streamUrl: string,
   offset: string,
+  signal: AbortSignal,
 ): Promise<{ events: StateEvent[]; nextOffset: string }> {
-  const response = await fetch(`${streamUrl}?offset=${encodeURIComponent(offset)}&live=long-poll`);
+  const response = await fetch(`${streamUrl}?offset=${encodeURIComponent(offset)}&live=long-poll`, { signal });
   const nextOffset = response.headers.get("stream-next-offset") ?? offset;
 
   if (response.status === 204) {
@@ -110,34 +119,63 @@ export async function createDurableDb(): Promise<DurableDb> {
   const seed = (await fetch("/api/bootstrap").then((r) => r.json())) as BootstrapPayload;
   const collections = createCollections(seed);
   let currentOffset = seed.nextOffset;
+  let currentSnapshot: DurableDbSnapshot = {
+    projects: collections.projects.toArray as Project[],
+    issues: collections.issues.toArray as Issue[],
+    comments: collections.comments.toArray as Comment[],
+    offset: currentOffset,
+  };
   let running = false;
-  let abort = false;
+  let stopped = false;
+  let streamController: AbortController | null = null;
   const listeners = new Set<() => void>();
+
+  const updateSnapshot = () => {
+    currentSnapshot = {
+      projects: collections.projects.toArray as Project[],
+      issues: collections.issues.toArray as Issue[],
+      comments: collections.comments.toArray as Comment[],
+      offset: currentOffset,
+    };
+  };
 
   const notify = () => {
     for (const listener of listeners) listener();
   };
 
+  const onCollectionChange = () => {
+    updateSnapshot();
+    notify();
+  };
+
   const subscriptions = [
-    collections.projects.subscribeChanges(notify, { includeInitialState: false }),
-    collections.issues.subscribeChanges(notify, { includeInitialState: false }),
-    collections.comments.subscribeChanges(notify, { includeInitialState: false }),
+    collections.projects.subscribeChanges(onCollectionChange, { includeInitialState: false }),
+    collections.issues.subscribeChanges(onCollectionChange, { includeInitialState: false }),
+    collections.comments.subscribeChanges(onCollectionChange, { includeInitialState: false }),
   ];
 
   async function start() {
-    if (running) return;
+    if (running || stopped) return;
     running = true;
-    abort = false;
-    while (!abort) {
-      try {
-        const { events, nextOffset } = await readEvents(seed.streamUrl, currentOffset);
-        for (const event of events) applyEvent(collections, event);
-        currentOffset = nextOffset;
-        notify();
-      } catch (error) {
-        console.error(error);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      while (!stopped) {
+        streamController = new AbortController();
+        try {
+          const { events, nextOffset } = await readEvents(seed.streamUrl, currentOffset, streamController.signal);
+          for (const event of events) applyEvent(collections, event);
+          currentOffset = nextOffset;
+          updateSnapshot();
+          notify();
+        } catch (error) {
+          if (stopped && error instanceof DOMException && error.name === "AbortError") return;
+          console.error(error);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } finally {
+          streamController = null;
+        }
       }
+    } finally {
+      running = false;
     }
   }
 
@@ -145,10 +183,14 @@ export async function createDurableDb(): Promise<DurableDb> {
     ...collections,
     start,
     stop: () => {
-      abort = true;
+      if (stopped) return;
+      stopped = true;
+      streamController?.abort();
       for (const subscription of subscriptions) subscription.unsubscribe();
+      listeners.clear();
     },
     getOffset: () => currentOffset,
+    getSnapshot: () => currentSnapshot,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);

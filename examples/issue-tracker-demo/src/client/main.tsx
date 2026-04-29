@@ -1,14 +1,27 @@
-import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { createDurableDb, type DurableDb } from "./durable-db.ts";
+import { createDurableDb, type DurableDb, type DurableDbSnapshot } from "./durable-db.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../types.ts";
 import "./styles.css";
 
-function useDbSnapshot<T>(db: DurableDb | null, read: (db: DurableDb) => T, fallback: T): T {
+const EMPTY_DB_SNAPSHOT: DurableDbSnapshot = {
+  projects: [],
+  issues: [],
+  comments: [],
+  offset: "",
+};
+
+const STATUS_LABEL: Record<IssueStatus, string> = {
+  open: "open",
+  in_progress: "in progress",
+  done: "done",
+};
+
+function useDurableDbSnapshot(db: DurableDb | null): DurableDbSnapshot {
   return useSyncExternalStore(
     (listener) => (db ? db.subscribe(listener) : () => undefined),
-    () => (db ? read(db) : fallback),
-    () => fallback,
+    () => (db ? db.getSnapshot() : EMPTY_DB_SNAPSHOT),
+    () => EMPTY_DB_SNAPSHOT,
   );
 }
 
@@ -23,7 +36,26 @@ async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): 
   return (await response.json()) as T;
 }
 
-function IssueCard({
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const diff = Date.now() - then;
+  if (Number.isNaN(diff)) return "";
+  const seconds = Math.round(diff / 1000);
+  if (seconds < 60) return `${Math.max(seconds, 0)}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function shortId(id: string): string {
+  const idx = id.indexOf("_");
+  return idx >= 0 ? id.slice(idx + 1).toUpperCase() : id.toUpperCase();
+}
+
+function IssueRow({
   issue,
   comments,
   onStatus,
@@ -36,40 +68,65 @@ function IssueCard({
 }) {
   const [body, setBody] = useState("");
   return (
-    <article className="issue-card">
-      <div className="issue-title-row">
-        <h3>{issue.title}</h3>
-        <select value={issue.status} onChange={(event) => onStatus(event.target.value as IssueStatus)}>
+    <article className="issue-row">
+      <span className={`status-pill status-${issue.status}`}>{STATUS_LABEL[issue.status]}</span>
+      <div className="issue-main">
+        <h3 className="issue-title">{issue.title}</h3>
+        <div className="issue-meta">
+          <span className="issue-id">ISS-{shortId(issue.id)}</span>
+          <span className="issue-meta-divider">·</span>
+          <span>updated {formatRelativeTime(issue.updatedAt)}</span>
+          <span className="issue-meta-divider">·</span>
+          <span>{comments.length} {comments.length === 1 ? "comment" : "comments"}</span>
+        </div>
+      </div>
+      <div className="issue-actions">
+        <select
+          aria-label={`Status for ${issue.title}`}
+          value={issue.status}
+          onChange={(event) => onStatus(event.target.value as IssueStatus)}
+        >
           <option value="open">Open</option>
           <option value="in_progress">In progress</option>
           <option value="done">Done</option>
         </select>
       </div>
-      <p className="muted">Updated {new Date(issue.updatedAt).toLocaleTimeString()}</p>
       <section className="comments">
-        {comments.length === 0 ? <p className="muted">No comments yet.</p> : null}
-        {comments.map((comment) => (
-          <p key={comment.id} className="comment"><strong>{comment.author}:</strong> {comment.body}</p>
-        ))}
+        {comments.length === 0 ? (
+          <p className="comments-empty">No comments yet.</p>
+        ) : (
+          comments.map((comment) => (
+            <p key={comment.id} className="comment">
+              <span className="author">{comment.author}</span>
+              {comment.body}
+            </p>
+          ))
+        )}
+        <form
+          className="comment-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!body.trim()) return;
+            onComment(body.trim());
+            setBody("");
+          }}
+        >
+          <input
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            placeholder="Add a comment"
+            aria-label={`Comment on ${issue.title}`}
+          />
+          <button type="submit" className="subtle">Comment</button>
+        </form>
       </section>
-      <form
-        className="inline-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!body.trim()) return;
-          onComment(body.trim());
-          setBody("");
-        }}
-      >
-        <input value={body} onChange={(event) => setBody(event.target.value)} placeholder="Add a comment" />
-        <button type="submit">Comment</button>
-      </form>
     </article>
   );
 }
 
 function App() {
   const [db, setDb] = useState<DurableDb | null>(null);
+  const dbRef = useRef<DurableDb | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
@@ -77,26 +134,30 @@ function App() {
   const [lastOffset, setLastOffset] = useState("");
 
   useEffect(() => {
-    let mounted = true;
-    createDurableDb().then((created) => {
-      if (!mounted) {
+    let cancelled = false;
+    let createdDb: DurableDb | null = null;
+
+    void createDurableDb().then((created) => {
+      if (cancelled) {
         created.stop();
         return;
       }
+      createdDb = created;
+      dbRef.current = created;
       setDb(created);
       setLastOffset(created.getOffset());
       void created.start();
     });
+
     return () => {
-      mounted = false;
-      db?.stop();
+      cancelled = true;
+      createdDb?.stop();
+      dbRef.current?.stop();
+      dbRef.current = null;
     };
   }, []);
 
-  const projects = useDbSnapshot(db, (d) => d.projects.toArray as Project[], []);
-  const issues = useDbSnapshot(db, (d) => d.issues.toArray as Issue[], []);
-  const comments = useDbSnapshot(db, (d) => d.comments.toArray as Comment[], []);
-  const offset = useDbSnapshot(db, (d) => d.getOffset(), lastOffset);
+  const { projects, issues, comments, offset } = useDurableDbSnapshot(db);
 
   useEffect(() => {
     if (!selectedProjectId && projects[0]) setSelectedProjectId(projects[0].id);
@@ -109,6 +170,11 @@ function App() {
     () => issues.filter((issue) => issue.projectId === selectedProject?.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [issues, selectedProject?.id],
   );
+  const issueCountByProject = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const issue of issues) counts.set(issue.projectId, (counts.get(issue.projectId) ?? 0) + 1);
+    return counts;
+  }, [issues]);
   const commentsByIssue = useMemo(() => {
     const grouped = new Map<string, Comment[]>();
     for (const comment of comments) {
@@ -120,38 +186,49 @@ function App() {
     return grouped;
   }, [comments]);
 
-  if (!db) return <main className="shell"><p>Loading durable DB snapshot...</p></main>;
+  const displayedOffset = lastOffset || offset || "—";
+
+  if (!db) {
+    return (
+      <main className="shell">
+        <Topbar offset="connecting…" />
+        <div className="loading">Loading durable DB snapshot…</div>
+      </main>
+    );
+  }
 
   return (
     <main className="shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Streamsy + TanStack DB</p>
-          <h1>Durable issue tracker</h1>
-          <p>
-            A tiny sync-engine demo: Bun mutates an in-memory model, emits State Protocol events into a
-            Streamsy durable stream, and the React app materializes them into TanStack DB collections.
-          </p>
-        </div>
-        <div className="offset-card">
-          <span>current stream offset</span>
-          <code>{offset}</code>
-        </div>
-      </header>
+      <Topbar offset={displayedOffset} />
 
       <section className="layout">
         <aside className="panel projects">
-          <h2>Projects</h2>
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              className={project.id === selectedProject?.id ? "project-button selected" : "project-button"}
-              onClick={() => setSelectedProjectId(project.id)}
-            >
-              <strong>{project.name}</strong>
-              <span>{project.description}</span>
-            </button>
-          ))}
+          <div className="panel-header">
+            <h2>Projects</h2>
+            <span className="count-badge">{projects.length}</span>
+          </div>
+          <div className="project-list">
+            {projects.length === 0 ? (
+              <p className="project-empty">No projects yet</p>
+            ) : (
+              projects.map((project) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  className={project.id === selectedProject?.id ? "project-button selected" : "project-button"}
+                  onClick={() => setSelectedProjectId(project.id)}
+                >
+                  <span>
+                    <span className="project-name">{project.name}</span>
+                    {project.description ? (
+                      <span className="project-description">{project.description}</span>
+                    ) : null}
+                  </span>
+                  <span className="project-count">{issueCountByProject.get(project.id) ?? 0}</span>
+                </button>
+              ))
+            )}
+          </div>
 
           <form
             className="stack-form"
@@ -173,23 +250,34 @@ function App() {
             }}
           >
             <h3>New project</h3>
-            <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Project name" />
-            <textarea value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="Description" />
+            <input
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="Project name"
+            />
+            <textarea
+              value={projectDescription}
+              onChange={(event) => setProjectDescription(event.target.value)}
+              placeholder="Description (optional)"
+            />
             <button type="submit">Create project</button>
           </form>
         </aside>
 
         <section className="panel issues">
-          <div className="section-title">
-            <div>
+          <div className="issues-toolbar">
+            <div className="issues-title">
               <h2>{selectedProject?.name ?? "No project selected"}</h2>
-              <p>{visibleIssues.length} issues</p>
+              <p>
+                {visibleIssues.length} {visibleIssues.length === 1 ? "issue" : "issues"}
+                {selectedProject ? ` · ${shortId(selectedProject.id)}` : ""}
+              </p>
             </div>
           </div>
 
           {selectedProject ? (
             <form
-              className="inline-form new-issue"
+              className="new-issue-form"
               onSubmit={async (event) => {
                 event.preventDefault();
                 if (!issueTitle.trim()) return;
@@ -213,14 +301,29 @@ function App() {
                 setIssueTitle("");
               }}
             >
-              <input value={issueTitle} onChange={(event) => setIssueTitle(event.target.value)} placeholder="New issue title" />
+              <input
+                value={issueTitle}
+                onChange={(event) => setIssueTitle(event.target.value)}
+                placeholder="Describe a new issue…"
+              />
               <button type="submit">Add issue</button>
             </form>
           ) : null}
 
           <div className="issue-list">
+            {visibleIssues.length === 0 && selectedProject ? (
+              <div className="empty-state">
+                No issues in this project yet.
+                <span className="hint">Create one above — mutations append events to the durable stream.</span>
+              </div>
+            ) : null}
+            {!selectedProject ? (
+              <div className="empty-state">
+                Create a project to start tracking issues.
+              </div>
+            ) : null}
             {visibleIssues.map((issue) => (
-              <IssueCard
+              <IssueRow
                 key={issue.id}
                 issue={issue}
                 comments={commentsByIssue.get(issue.id) ?? []}
@@ -255,6 +358,24 @@ function App() {
         </section>
       </section>
     </main>
+  );
+}
+
+function Topbar({ offset }: { offset: string }) {
+  return (
+    <header className="topbar">
+      <div className="brand">
+        <span className="brand-mark" aria-hidden="true">S</span>
+        <span className="brand-name">Streamsy</span>
+        <span className="brand-divider">/</span>
+        <span className="brand-app">Issue Tracker</span>
+      </div>
+      <div className="stream-status" title="Current durable stream offset">
+        <span className="stream-dot" aria-hidden="true" />
+        <span className="label">Stream</span>
+        <span className="stream-offset">{offset}</span>
+      </div>
+    </header>
   );
 }
 
