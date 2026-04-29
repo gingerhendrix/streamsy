@@ -1,86 +1,35 @@
-# Durable Streams
+# Streamsy
 
-A Durable Streams protocol implementation for Cloudflare Workers using Durable Objects.
+Streamsy is a work-in-progress Durable Streams server implementation. It is currently focused on implementing the `@durable-streams/server-conformance-tests` protocol target for both in-memory and Cloudflare Durable Object storage backends.
 
-## Architecture
+## Status
 
-The implementation follows a 3-layer architecture:
+WIP. The current local implementation has been validated against `@durable-streams/server-conformance-tests@0.3.0` with both example servers passing the full conformance suite:
 
-1. **HTTP Layer** - Request parsing, response formatting, status codes
-2. **Protocol Layer** - Validation, JSON mode, cursor generation, orchestration
-3. **Storage Layer** - Persistence with SQLite-backed Durable Objects
+- `examples/memory-server`: 299/299 passing
+- `examples/test-server` (Cloudflare Durable Object storage): 299/299 passing
 
-## Project Structure
+The API and package boundaries are not yet stable, and all packages remain private while the project is being shaped.
 
-```
-packages/
-├── server/          - Durable Object implementation
-│   ├── src/
-│   │   ├── index.ts      - HTTP adapter & DO class
-│   │   ├── protocol.ts   - Protocol layer
-│   │   └── storage.ts    - Storage layer
-│   └── alchemy.resource.ts
-└── types/           - Shared TypeScript types
-    └── src/
-        ├── protocol.ts
-        └── storage.ts
-```
+## Packages
+
+- `@streamsy/core` (`packages/core`) — shared protocol types, request handling, response helpers, and server logic used by storage backends.
+- `@streamsy/storage-memory` (`packages/storage-memory`) — in-memory storage backend used for local development and conformance testing.
+- `@streamsy/storage-durable-object` (`packages/storage-durable-object`) — Cloudflare Durable Object storage backend with SQLite-backed persistence, long-polling, SSE support, TTL/expiry handling, and stream metadata.
+
+## Examples
+
+- `examples/memory-server` — Bun/HTTP server using the memory storage backend and conformance tests.
+- `examples/test-server` — Cloudflare Worker/Durable Object example deployed with Alchemy and exercised by the conformance tests.
 
 ## Development
 
-This is a Bun workspace monorepo with Alchemy for deployment.
-
-### Install Dependencies
-
 ```bash
 bun install
-```
-
-### Type Check
-
-```bash
 bun run typecheck
+bun run --cwd examples/memory-server test
+bun run --cwd examples/test-server test
 ```
-
-### Deploy
-
-```bash
-bun run deploy
-```
-
-### Development Mode
-
-```bash
-bun run dev
-```
-
-### Destroy Deployment
-
-```bash
-bun run destroy
-```
-
-## Documentation
-
-See `personal-vault/daily/2025-12-24/durable-streams/` for complete architecture documentation:
-
-- `overview.md` - Architecture overview
-- `http-spec.md` - Complete HTTP API specification
-- `types.md` - TypeScript type definitions
-- `protocol.md` - Protocol layer design
-- `storage.md` - Storage layer design
-
-## Key Features
-
-- **Durable**: Bytes persist once written and acknowledged
-- **Immutable**: Bytes at a given offset never change
-- **Ordered**: Strictly ordered by offset
-- **Typed**: Each stream has a MIME content type
-- **TTL/Expiry**: Optional time-to-live or absolute expiry
-- **JSON Mode**: Special handling for JSON streams with array flattening
-- **Live Reads**: Long-poll and SSE support for real-time data
-- **Sequence Coordination**: Optional monotonic sequence numbers for writers
-- **CDN-Friendly**: Cursor mechanism prevents infinite cache loops
 
 ## License
 
