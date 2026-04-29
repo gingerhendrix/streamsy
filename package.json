@@ -16,7 +16,8 @@
     "dev": "bun --cwd examples/test-server alchemy dev",
     "destroy": "bun --cwd examples/test-server alchemy destroy",
     "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun --cwd examples/test-server test"
+    "test": "bun --cwd examples/test-server test",
+    "test:conformance": "STAGE=conformance bun scripts/conformance-deploy-test-destroy.ts"
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.0"
