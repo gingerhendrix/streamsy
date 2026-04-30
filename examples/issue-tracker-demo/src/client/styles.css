@@ -96,52 +96,6 @@ button, input, textarea, select { font: inherit; color: inherit; }
   letter-spacing: 0.1em;
 }
 
-.stream-status {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.stream-status .label {
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 10.5px;
-}
-.stream-offset {
-  color: var(--text);
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-weight: 500;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.stream-dot {
-  position: relative;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--status-done);
-}
-.stream-dot::after {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  border: 1px solid var(--status-done);
-  opacity: 0.35;
-  animation: pulse 1.6s ease-out infinite;
-}
-@keyframes pulse {
-  0% { transform: scale(0.6); opacity: 0.5; }
-  100% { transform: scale(1.6); opacity: 0; }
-}
-
 /* ---------- Layout ---------- */
 
 .layout {

@@ -1,15 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createDurableDb, type DurableDb, type DurableDbSnapshot } from "./durable-db.ts";
+import { createStreamDB, type StreamDB } from "@durable-streams/state";
+import { useLiveQuery } from "@tanstack/react-db";
+import { issueTrackerState } from "../state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../types.ts";
 import "./styles.css";
 
-const EMPTY_DB_SNAPSHOT: DurableDbSnapshot = {
-  projects: [],
-  issues: [],
-  comments: [],
-  offset: "",
-};
+type IssueTrackerDb = StreamDB<typeof issueTrackerState>;
 
 const STATUS_LABEL: Record<IssueStatus, string> = {
   open: "open",
@@ -17,12 +14,19 @@ const STATUS_LABEL: Record<IssueStatus, string> = {
   done: "done",
 };
 
-function useDurableDbSnapshot(db: DurableDb | null): DurableDbSnapshot {
-  return useSyncExternalStore(
-    (listener) => (db ? db.subscribe(listener) : () => undefined),
-    () => (db ? db.getSnapshot() : EMPTY_DB_SNAPSHOT),
-    () => EMPTY_DB_SNAPSHOT,
-  );
+function streamUrl(): string {
+  return new URL("/streams/session/main", window.location.origin).toString();
+}
+
+function createIssueTrackerDb(): IssueTrackerDb {
+  return createStreamDB({
+    streamOptions: {
+      url: streamUrl(),
+      contentType: "application/json",
+      warnOnHttp: false,
+    },
+    state: issueTrackerState,
+  });
 }
 
 async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): Promise<T> {
@@ -125,45 +129,55 @@ function IssueRow({
 }
 
 function App() {
-  const [db, setDb] = useState<DurableDb | null>(null);
-  const dbRef = useRef<DurableDb | null>(null);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [projectName, setProjectName] = useState("");
-  const [projectDescription, setProjectDescription] = useState("");
-  const [issueTitle, setIssueTitle] = useState("");
-  const [lastOffset, setLastOffset] = useState("");
+  const [db, setDb] = useState<IssueTrackerDb | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    let createdDb: DurableDb | null = null;
+    const created = createIssueTrackerDb();
 
-    void createDurableDb().then((created) => {
+    void created.preload().then(() => {
       if (cancelled) {
-        created.stop();
+        created.close();
         return;
       }
-      createdDb = created;
-      dbRef.current = created;
       setDb(created);
-      setLastOffset(created.getOffset());
-      void created.start();
     });
 
     return () => {
       cancelled = true;
-      createdDb?.stop();
-      dbRef.current?.stop();
-      dbRef.current = null;
+      created.close();
     };
   }, []);
 
-  const { projects, issues, comments, offset } = useDurableDbSnapshot(db);
+  if (!db) {
+    return (
+      <main className="shell">
+        <Topbar />
+        <div className="loading">Loading durable stream database…</div>
+      </main>
+    );
+  }
+
+  return <IssueTrackerApp db={db} />;
+}
+
+function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [issueTitle, setIssueTitle] = useState("");
+
+  const projectsQuery = useLiveQuery(db.collections.projects as any);
+  const issuesQuery = useLiveQuery(db.collections.issues as any);
+  const commentsQuery = useLiveQuery(db.collections.comments as any);
+
+  const projects = (projectsQuery.data ?? []) as unknown as Project[];
+  const issues = (issuesQuery.data ?? []) as unknown as Issue[];
+  const comments = (commentsQuery.data ?? []) as unknown as Comment[];
 
   useEffect(() => {
     if (!selectedProjectId && projects[0]) setSelectedProjectId(projects[0].id);
   }, [projects, selectedProjectId]);
-
-  useEffect(() => setLastOffset(offset), [offset]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
   const visibleIssues = useMemo(
@@ -186,20 +200,9 @@ function App() {
     return grouped;
   }, [comments]);
 
-  const displayedOffset = lastOffset || offset || "—";
-
-  if (!db) {
-    return (
-      <main className="shell">
-        <Topbar offset="connecting…" />
-        <div className="loading">Loading durable DB snapshot…</div>
-      </main>
-    );
-  }
-
   return (
     <main className="shell">
-      <Topbar offset={displayedOffset} />
+      <Topbar />
 
       <section className="layout">
         <aside className="panel projects">
@@ -236,14 +239,11 @@ function App() {
               event.preventDefault();
               if (!projectName.trim()) return;
               const id = `proj_${crypto.randomUUID().slice(0, 8)}`;
-              const createdAt = new Date().toISOString();
-              db.projects.insert({ id, name: projectName, description: projectDescription, createdAt });
-              const result = await postJson<{ awaitOffset: string }>("/api/projects", {
+              await postJson<{ awaitOffset: string }>("/api/projects", {
                 id,
                 name: projectName,
                 description: projectDescription,
               });
-              setLastOffset(result.awaitOffset);
               setProjectName("");
               setProjectDescription("");
               setSelectedProjectId(id);
@@ -281,23 +281,13 @@ function App() {
               onSubmit={async (event) => {
                 event.preventDefault();
                 if (!issueTitle.trim()) return;
-                const timestamp = new Date().toISOString();
                 const id = `issue_${crypto.randomUUID().slice(0, 8)}`;
-                db.issues.insert({
-                  id,
-                  projectId: selectedProject.id,
-                  title: issueTitle,
-                  status: "open",
-                  createdAt: timestamp,
-                  updatedAt: timestamp,
-                });
-                const result = await postJson<{ awaitOffset: string }>("/api/issues", {
+                await postJson<{ awaitOffset: string }>("/api/issues", {
                   id,
                   projectId: selectedProject.id,
                   title: issueTitle,
                   status: "open",
                 });
-                setLastOffset(result.awaitOffset);
                 setIssueTitle("");
               }}
             >
@@ -328,17 +318,11 @@ function App() {
                 issue={issue}
                 comments={commentsByIssue.get(issue.id) ?? []}
                 onStatus={async (status) => {
-                  const updatedAt = new Date().toISOString();
-                  db.issues.update(issue.id, (draft) => {
-                    draft.status = status;
-                    draft.updatedAt = updatedAt;
-                  });
-                  const result = await postJson<{ awaitOffset: string }>(
+                  await postJson<{ awaitOffset: string }>(
                     `/api/issues/${encodeURIComponent(issue.id)}`,
                     { status },
                     { method: "PATCH" },
                   );
-                  setLastOffset(result.awaitOffset);
                 }}
                 onComment={async (body) => {
                   const comment: Comment = {
@@ -348,9 +332,7 @@ function App() {
                     body,
                     createdAt: new Date().toISOString(),
                   };
-                  db.comments.insert(comment);
-                  const result = await postJson<{ awaitOffset: string }>("/api/comments", comment);
-                  setLastOffset(result.awaitOffset);
+                  await postJson<{ awaitOffset: string }>("/api/comments", comment);
                 }}
               />
             ))}
@@ -361,7 +343,7 @@ function App() {
   );
 }
 
-function Topbar({ offset }: { offset: string }) {
+function Topbar() {
   return (
     <header className="topbar">
       <div className="brand">
@@ -369,11 +351,6 @@ function Topbar({ offset }: { offset: string }) {
         <span className="brand-name">Streamsy</span>
         <span className="brand-divider">/</span>
         <span className="brand-app">Issue Tracker</span>
-      </div>
-      <div className="stream-status" title="Current durable stream offset">
-        <span className="stream-dot" aria-hidden="true" />
-        <span className="label">Stream</span>
-        <span className="stream-offset">{offset}</span>
       </div>
     </header>
   );
