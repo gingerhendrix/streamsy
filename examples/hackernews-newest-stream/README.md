@@ -24,6 +24,13 @@ bun --cwd examples/hackernews-newest-stream run dev:web
 
 Open the Vite URL (default `http://localhost:5175`). The API server defaults to port `1339`.
 
+If you run the API on a different port, pass the same `PORT` to the Vite dev server so its `/api` and `/streams` proxies target the API server:
+
+```bash
+PORT=1349 bun --cwd examples/hackernews-newest-stream run dev:api
+PORT=1349 bun --cwd examples/hackernews-newest-stream run dev:web
+```
+
 ## What to look for
 
 - `src/server/hnews.ts` polls Hacker News `newstories` and fetches item details.
