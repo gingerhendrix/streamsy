@@ -6,7 +6,20 @@ import { issueTrackerState } from "../state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../types.ts";
 import "./styles.css";
 
-type IssueTrackerDb = StreamDB<typeof issueTrackerState>;
+type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<unknown> } };
+type ApiMutationResult = { awaitOffset: string; txid: string };
+type CreateProjectAction = { project: Project; txid: string };
+type CreateIssueAction = { issue: Issue; txid: string };
+type UpdateIssueStatusAction = { issue: Issue; status: IssueStatus; updatedAt: string; txid: string };
+type CreateCommentAction = { comment: Comment; txid: string };
+type IssueTrackerDb = StreamDB<typeof issueTrackerState> & {
+  actions: {
+    createProject: OptimisticAction<CreateProjectAction>;
+    createIssue: OptimisticAction<CreateIssueAction>;
+    updateIssueStatus: OptimisticAction<UpdateIssueStatusAction>;
+    createComment: OptimisticAction<CreateCommentAction>;
+  };
+};
 
 const STATUS_LABEL: Record<IssueStatus, string> = {
   open: "open",
@@ -26,7 +39,52 @@ function createIssueTrackerDb(): IssueTrackerDb {
       warnOnHttp: false,
     },
     state: issueTrackerState,
-  });
+    actions: ({ db }) => ({
+      createProject: {
+        onMutate: ({ project }: CreateProjectAction) => {
+          db.collections.projects.insert(project);
+        },
+        mutationFn: async ({ project, txid }: CreateProjectAction) => {
+          const result = await postJson<ApiMutationResult>("/api/projects", { ...project, txid });
+          await db.utils.awaitTxId(result.txid);
+        },
+      },
+      createIssue: {
+        onMutate: ({ issue }: CreateIssueAction) => {
+          db.collections.issues.insert(issue);
+        },
+        mutationFn: async ({ issue, txid }: CreateIssueAction) => {
+          const result = await postJson<ApiMutationResult>("/api/issues", { ...issue, txid });
+          await db.utils.awaitTxId(result.txid);
+        },
+      },
+      updateIssueStatus: {
+        onMutate: ({ issue, status, updatedAt }: UpdateIssueStatusAction) => {
+          db.collections.issues.update(issue.id, (draft) => {
+            draft.status = status;
+            draft.updatedAt = updatedAt;
+          });
+        },
+        mutationFn: async ({ issue, status, updatedAt, txid }: UpdateIssueStatusAction) => {
+          const result = await postJson<ApiMutationResult>(
+            `/api/issues/${encodeURIComponent(issue.id)}`,
+            { status, updatedAt, txid },
+            { method: "PATCH" },
+          );
+          await db.utils.awaitTxId(result.txid);
+        },
+      },
+      createComment: {
+        onMutate: ({ comment }: CreateCommentAction) => {
+          db.collections.comments.insert(comment);
+        },
+        mutationFn: async ({ comment, txid }: CreateCommentAction) => {
+          const result = await postJson<ApiMutationResult>("/api/comments", { ...comment, txid });
+          await db.utils.awaitTxId(result.txid);
+        },
+      },
+    }),
+  }) as IssueTrackerDb;
 }
 
 async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): Promise<T> {
@@ -38,6 +96,11 @@ async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): 
   });
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as T;
+}
+
+async function awaitOptimisticAction<T>(action: OptimisticAction<T>, variables: T): Promise<void> {
+  const transaction = action(variables);
+  await transaction.isPersisted.promise;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -238,15 +301,19 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
             onSubmit={async (event) => {
               event.preventDefault();
               if (!projectName.trim()) return;
-              const id = `proj_${crypto.randomUUID().slice(0, 8)}`;
-              await postJson<{ awaitOffset: string }>("/api/projects", {
-                id,
-                name: projectName,
-                description: projectDescription,
+              const project: Project = {
+                id: `proj_${crypto.randomUUID().slice(0, 8)}`,
+                name: projectName.trim(),
+                description: projectDescription.trim(),
+                createdAt: new Date().toISOString(),
+              };
+              await awaitOptimisticAction(db.actions.createProject, {
+                project,
+                txid: crypto.randomUUID(),
               });
               setProjectName("");
               setProjectDescription("");
-              setSelectedProjectId(id);
+              setSelectedProjectId(project.id);
             }}
           >
             <h3>New project</h3>
@@ -281,12 +348,18 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
               onSubmit={async (event) => {
                 event.preventDefault();
                 if (!issueTitle.trim()) return;
-                const id = `issue_${crypto.randomUUID().slice(0, 8)}`;
-                await postJson<{ awaitOffset: string }>("/api/issues", {
-                  id,
+                const timestamp = new Date().toISOString();
+                const issue: Issue = {
+                  id: `issue_${crypto.randomUUID().slice(0, 8)}`,
                   projectId: selectedProject.id,
-                  title: issueTitle,
+                  title: issueTitle.trim(),
                   status: "open",
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                };
+                await awaitOptimisticAction(db.actions.createIssue, {
+                  issue,
+                  txid: crypto.randomUUID(),
                 });
                 setIssueTitle("");
               }}
@@ -318,11 +391,12 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
                 issue={issue}
                 comments={commentsByIssue.get(issue.id) ?? []}
                 onStatus={async (status) => {
-                  await postJson<{ awaitOffset: string }>(
-                    `/api/issues/${encodeURIComponent(issue.id)}`,
-                    { status },
-                    { method: "PATCH" },
-                  );
+                  await awaitOptimisticAction(db.actions.updateIssueStatus, {
+                    issue,
+                    status,
+                    updatedAt: new Date().toISOString(),
+                    txid: crypto.randomUUID(),
+                  });
                 }}
                 onComment={async (body) => {
                   const comment: Comment = {
@@ -332,7 +406,10 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
                     body,
                     createdAt: new Date().toISOString(),
                   };
-                  await postJson<{ awaitOffset: string }>("/api/comments", comment);
+                  await awaitOptimisticAction(db.actions.createComment, {
+                    comment,
+                    txid: crypto.randomUUID(),
+                  });
                 }}
               />
             ))}

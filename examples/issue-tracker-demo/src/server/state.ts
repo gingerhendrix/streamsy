@@ -3,16 +3,18 @@ import { issueTrackerState, type Comment, type EntityByType, type EntityType, ty
 import { id, now } from "./http.ts";
 import type { DemoStreams } from "./streams.ts";
 
+type TxId = `${string}-${string}-${string}-${string}-${string}`;
+
 const state = new MaterializedState();
 
 function values<T>(type: EntityType): T[] {
   return Array.from(state.getType(type).values()) as T[];
 }
 
-function eventHeaders() {
+function eventHeaders(txid: TxId = crypto.randomUUID()) {
   return {
     timestamp: now(),
-    txid: crypto.randomUUID(),
+    txid,
   };
 }
 
@@ -45,20 +47,20 @@ async function emit<T extends EntityType>(
   return { event, offset };
 }
 
-export async function insertProject(streams: DemoStreams, project: Project) {
-  return emit(streams, issueTrackerState.projects.upsert({ value: project, headers: eventHeaders() }));
+export async function insertProject(streams: DemoStreams, project: Project, txid?: TxId) {
+  return emit(streams, issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) }));
 }
 
-export async function insertIssue(streams: DemoStreams, issue: Issue) {
-  return emit(streams, issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders() }));
+export async function insertIssue(streams: DemoStreams, issue: Issue, txid?: TxId) {
+  return emit(streams, issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) }));
 }
 
-export async function updateIssueState(streams: DemoStreams, issue: Issue, oldValue: Issue) {
-  return emit(streams, issueTrackerState.issues.update({ value: issue, oldValue, headers: eventHeaders() }));
+export async function updateIssueState(streams: DemoStreams, issue: Issue, oldValue: Issue, txid?: TxId) {
+  return emit(streams, issueTrackerState.issues.update({ value: issue, oldValue, headers: eventHeaders(txid) }));
 }
 
-export async function insertComment(streams: DemoStreams, comment: Comment) {
-  return emit(streams, issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders() }));
+export async function insertComment(streams: DemoStreams, comment: Comment, txid?: TxId) {
+  return emit(streams, issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) }));
 }
 
 export async function seed(streams: DemoStreams): Promise<void> {
@@ -126,19 +128,20 @@ export function newProject(input: Partial<Project>): Project {
     id: input.id ?? id("proj"),
     name: String(input.name ?? "Untitled project").trim(),
     description: String(input.description ?? "").trim(),
-    createdAt: now(),
+    createdAt: input.createdAt ?? now(),
   };
 }
 
 export function newIssue(input: Partial<Issue>): Issue {
   const timestamp = now();
+  const createdAt = input.createdAt ?? timestamp;
   return {
     id: input.id ?? id("issue"),
     projectId: String(input.projectId ?? ""),
     title: String(input.title ?? "Untitled issue").trim(),
     status: input.status ?? "open",
-    createdAt: timestamp,
-    updatedAt: timestamp,
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt,
   };
 }
 
@@ -147,7 +150,7 @@ export function nextIssue(previous: Issue, input: Partial<Issue>): Issue {
     ...previous,
     title: input.title === undefined ? previous.title : String(input.title).trim(),
     status: input.status ?? previous.status,
-    updatedAt: now(),
+    updatedAt: input.updatedAt ?? now(),
   };
 }
 
@@ -157,6 +160,6 @@ export function newComment(input: Partial<Comment>): Comment {
     issueId: String(input.issueId ?? ""),
     author: String(input.author ?? "you").trim() || "you",
     body: String(input.body ?? "").trim(),
-    createdAt: now(),
+    createdAt: input.createdAt ?? now(),
   };
 }
