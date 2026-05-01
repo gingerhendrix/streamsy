@@ -10,6 +10,28 @@
         "tsdown": "^0.9.9",
       },
     },
+    "examples/hackernews-newest-stream": {
+      "name": "hackernews-newest-stream",
+      "version": "0.0.1",
+      "dependencies": {
+        "@durable-streams/state": "^0.2.5",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/storage-memory": "workspace:*",
+        "@tanstack/db": "0.6.5",
+        "@tanstack/react-db": "^0.1.83",
+        "@vitejs/plugin-react": "latest",
+        "react": "latest",
+        "react-dom": "latest",
+        "typescript": "catalog:",
+        "vite": "latest",
+        "zod": "^4.4.1",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "@types/react": "latest",
+        "@types/react-dom": "latest",
+      },
+    },
     "examples/issue-tracker-demo": {
       "name": "issue-tracker-demo",
       "version": "0.0.1",
@@ -834,6 +856,8 @@
     "glob-to-regexp": ["glob-to-regexp@0.4.1", "", {}, "sha512-lkX1HJXwyMcprw/5YUZc2s7DrpAiHB21/V+E1rHUrVNokkvB6bqMzT0VfV6/86ZNabt1k14YOIaT7nDvOX3Iiw=="],
 
     "graceful-fs": ["graceful-fs@4.2.11", "", {}, "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ=="],
+
+    "hackernews-newest-stream": ["hackernews-newest-stream@workspace:examples/hackernews-newest-stream"],
 
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 

@@ -1,0 +1,31 @@
+{
+  "name": "hackernews-newest-stream",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:api": "bun run src/server/index.ts",
+    "dev:web": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "bun run src/server/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@durable-streams/state": "^0.2.5",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/storage-memory": "workspace:*",
+    "@tanstack/db": "0.6.5",
+    "@tanstack/react-db": "^0.1.83",
+    "@vitejs/plugin-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "catalog:",
+    "vite": "latest",
+    "zod": "^4.4.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}
