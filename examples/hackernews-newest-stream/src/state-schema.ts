@@ -11,8 +11,6 @@ export const hnStorySchema = z.object({
   type: z.literal("story"),
   url: z.string().optional(),
   text: z.string().optional(),
-  rank: z.number(),
-  fetchedAt: z.string(),
 });
 
 export const hackerNewsState = createStateSchema({

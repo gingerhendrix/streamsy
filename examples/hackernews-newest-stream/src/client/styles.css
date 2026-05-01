@@ -114,25 +114,11 @@ h2 { margin-bottom: 0; font-size: 1rem; }
 }
 
 .story-row {
-  display: grid;
-  grid-template-columns: 3rem 1fr;
-  gap: 0.85rem;
   padding: 1rem 1.25rem;
   border-bottom: 1px solid rgba(255,255,255,0.07);
 }
 .story-row:last-child { border-bottom: 0; }
 .story-row:hover { background: rgba(255,255,255,0.035); }
-
-.rank {
-  width: 2.2rem;
-  height: 2.2rem;
-  display: grid;
-  place-items: center;
-  border-radius: 0.7rem;
-  background: rgba(255, 102, 0, 0.14);
-  color: #ffb37a;
-  font-weight: 800;
-}
 
 .story-title {
   display: inline-block;
@@ -162,6 +148,6 @@ h2 { margin-bottom: 0; font-size: 1rem; }
 
 @media (max-width: 640px) {
   .topbar { align-items: flex-start; flex-direction: column; }
-  .story-row { grid-template-columns: 2.5rem 1fr; padding: 0.9rem; }
+  .story-row { padding: 0.9rem; }
   .intro { padding: 1rem; }
 }

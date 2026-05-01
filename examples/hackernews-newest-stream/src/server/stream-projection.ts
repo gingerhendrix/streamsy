@@ -13,7 +13,7 @@ export function startNewestProjection(config: {
       q
         .from({ story: config.storiesCollection })
         .where(({ story }) => eq(story.type, "story"))
-        .orderBy(({ story }) => story.rank, "asc")
+        .orderBy(({ story }) => [story.time, story.id], "desc")
         .limit(50)
         .select(({ story }) => ({
           id: story.id,
@@ -25,8 +25,6 @@ export function startNewestProjection(config: {
           type: story.type,
           url: story.url,
           text: story.text,
-          rank: story.rank,
-          fetchedAt: story.fetchedAt,
         })),
     skipInitial: false,
     onBatch: async (events) => {

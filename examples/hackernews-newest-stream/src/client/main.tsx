@@ -16,6 +16,9 @@ type ApiStatus = {
   lastPollCompletedAt?: string;
   lastPollError?: string;
   lastStoryCount: number;
+  lastFetchedNewStories: number;
+  lastRefreshedStories: number;
+  lastChangedStories: number;
 };
 
 function streamUrl(): string {
@@ -92,7 +95,7 @@ function App() {
 function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery(db.collections.stories as any);
   const stories = useMemo(
-    () => ([...((storiesQuery.data ?? []) as unknown as HnStory[])]).sort((a, b) => a.rank - b.rank),
+    () => ([...((storiesQuery.data ?? []) as unknown as HnStory[])]).sort((a, b) => b.time - a.time || b.id - a.id),
     [storiesQuery.data],
   );
   const [status, setStatus] = useState<ApiStatus | null>(null);
@@ -143,7 +146,6 @@ function HnApp({ db }: { db: HnDb }) {
 function StoryRow({ story }: { story: HnStory }) {
   return (
     <article className="story-row">
-      <div className="rank">{story.rank}</div>
       <div className="story-main">
         <a href={storyHref(story)} target="_blank" rel="noreferrer" className="story-title">
           {story.title}
@@ -174,6 +176,7 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
         {status ? (
           <div className="status">
             <span>{status.lastStoryCount} rows</span>
+            <span>{status.lastChangedStories} changed</span>
             <span>poll {status.pollIntervalMs / 1000}s</span>
             {status.lastPollError ? <span className="bad">error</span> : <span className="good">ok</span>}
           </div>

@@ -24,7 +24,7 @@ export async function fetchNewestStoryIds(limit: number): Promise<number[]> {
   return ids.slice(0, limit);
 }
 
-export async function fetchStory(id: number, rank: number): Promise<HnStory | null> {
+export async function fetchStory(id: number): Promise<HnStory | null> {
   const response = await fetch(`${hnBase}/item/${id}.json`);
   if (!response.ok) throw new Error(`HN item ${id} failed: ${response.status} ${response.statusText}`);
   const item = (await response.json()) as HnItem | null;
@@ -40,14 +40,11 @@ export async function fetchStory(id: number, rank: number): Promise<HnStory | nu
     type: "story",
     url: item.url,
     text: item.text,
-    rank,
-    fetchedAt: new Date().toISOString(),
   };
 }
 
-export async function fetchNewestStories(limit: number): Promise<HnStory[]> {
-  const ids = await fetchNewestStoryIds(limit);
-  const settled = await Promise.allSettled(ids.map((id, index) => fetchStory(id, index + 1)));
+export async function fetchStoriesById(ids: readonly number[]): Promise<HnStory[]> {
+  const settled = await Promise.allSettled(ids.map((id) => fetchStory(id)));
   const stories: HnStory[] = [];
 
   for (const result of settled) {
@@ -55,5 +52,9 @@ export async function fetchNewestStories(limit: number): Promise<HnStory[]> {
     if (result.status === "rejected") console.warn("Unable to fetch HN story", result.reason);
   }
 
-  return stories.sort((a, b) => a.rank - b.rank);
+  return stories.sort(newestStorySort);
+}
+
+export function newestStorySort(a: HnStory, b: HnStory): number {
+  return b.time - a.time || b.id - a.id;
 }

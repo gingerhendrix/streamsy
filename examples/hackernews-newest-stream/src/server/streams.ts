@@ -34,7 +34,7 @@ export class DemoStreams {
     return result.nextOffset;
   }
 
-  async proxy(request: Request): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     return this.handler.fetch(request);
   }
 }
