@@ -19,11 +19,9 @@
         "@streamsy/storage-memory": "workspace:*",
         "@tanstack/db": "0.6.5",
         "@tanstack/react-db": "^0.1.83",
-        "@vitejs/plugin-react": "latest",
         "react": "latest",
         "react-dom": "latest",
         "typescript": "catalog:",
-        "vite": "latest",
         "zod": "^4.4.1",
       },
       "devDependencies": {

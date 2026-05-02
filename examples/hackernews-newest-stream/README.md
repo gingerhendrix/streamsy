@@ -18,17 +18,21 @@ From the repository root:
 
 ```bash
 bun install
-bun --cwd examples/hackernews-newest-stream run dev:api
-bun --cwd examples/hackernews-newest-stream run dev:web
+bun --cwd examples/hackernews-newest-stream run dev
 ```
 
-Open the Vite URL (default `http://localhost:5175`). The API server defaults to port `1339`.
+Open the Bun server URL (default `http://localhost:1339`). The same Bun process serves the API, Streamsy stream, and built React client; no separate Vite dev server or proxy is needed.
 
-If you run the API on a different port, pass the same `PORT` to the Vite dev server so its `/api` and `/streams` proxies target the API server:
+To run on a different port:
 
 ```bash
-PORT=1349 bun --cwd examples/hackernews-newest-stream run dev:api
-PORT=1349 bun --cwd examples/hackernews-newest-stream run dev:web
+PORT=1349 bun --cwd examples/hackernews-newest-stream run dev
+```
+
+For API-only work, you can skip the client build:
+
+```bash
+bun --cwd examples/hackernews-newest-stream run dev:api
 ```
 
 ## What to look for

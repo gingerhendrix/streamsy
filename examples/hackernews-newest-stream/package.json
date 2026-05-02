@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "bun run build && bun run src/server/index.ts",
     "dev:api": "bun run src/server/index.ts",
-    "dev:web": "vite --host 0.0.0.0",
-    "build": "vite build",
-    "start": "bun run src/server/index.ts",
+    "build": "bun run src/server/build-client.ts",
+    "start": "bun run build && bun run src/server/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -16,11 +16,9 @@
     "@streamsy/storage-memory": "workspace:*",
     "@tanstack/db": "0.6.5",
     "@tanstack/react-db": "^0.1.83",
-    "@vitejs/plugin-react": "latest",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "catalog:",
-    "vite": "latest",
     "zod": "^4.4.1"
   },
   "devDependencies": {
