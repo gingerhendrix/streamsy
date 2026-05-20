@@ -2,26 +2,37 @@
   "name": "durable-streams",
   "version": "0.0.1",
   "private": true,
-  "type": "module",
   "workspaces": {
-    "packages": ["packages/*", "examples/*"],
+    "packages": [
+      "packages/*",
+      "examples/*"
+    ],
     "catalog": {
       "alchemy": "0.82.1",
       "@cloudflare/workers-types": "^4.20251228.0",
       "typescript": "^5.8.3"
     }
   },
+  "type": "module",
   "scripts": {
     "deploy": "bun --cwd examples/test-server alchemy deploy",
     "dev": "bun --cwd examples/test-server alchemy dev",
     "destroy": "bun --cwd examples/test-server alchemy destroy",
     "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun --cwd examples/test-server test"
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
+    "format": "oxfmt . --write",
+    "format:check": "oxfmt . --check",
+    "test": "cd examples/test-server && bun run test --run",
+    "test:conformance": "STAGE=conformance bun scripts/conformance-deploy-test-destroy.ts"
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.63.0"
+  },
   "overrides": {
     "@durable-streams/client": "^0.2.3"
   }

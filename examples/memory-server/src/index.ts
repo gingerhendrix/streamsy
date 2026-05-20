@@ -6,10 +6,10 @@
  */
 
 import { StreamProtocol, HttpHandler } from "@streamsy/core";
-import { createMemoryStorageFactory } from "@streamsy/storage-memory";
+import { createMemoryStreamStore } from "@streamsy/storage-memory";
 
-const storageFactory = createMemoryStorageFactory();
-const protocol = new StreamProtocol(storageFactory);
+const store = createMemoryStreamStore();
+const protocol = new StreamProtocol(store);
 const handler = new HttpHandler({ protocol, pathPrefix: "/" });
 
 const port = parseInt(process.env.PORT ?? "1337", 10);

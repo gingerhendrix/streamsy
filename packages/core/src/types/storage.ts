@@ -1,104 +1,120 @@
 /**
- * Storage Layer Types
+ * Simplified storage boundary for Streamsy.
  *
- * Types for the persistence layer that handles offset generation,
- * message storage, and TTL management
+ * Adapters persist facts and may provide runtime capabilities (locks,
+ * notification, expiration scheduling). Protocol/lifecycle policy lives in core.
  */
+export type StreamId = string;
+export type Offset = string;
+
 export interface StoredMessage {
   data: Uint8Array;
-  offset: string;
+  offset: Offset;
   timestamp: number;
 }
 
-export interface StreamMetadata {
+export interface StreamConfig {
   contentType: string;
   ttlSeconds?: number;
   expiresAt?: string;
   createdAt: number;
+}
+
+export interface StreamLifecycleState {
   lastSeq?: string;
   closed?: boolean;
   closedAt?: number;
-
-  // Fork relationship — set when this stream was created as a fork.
-  forkedFrom?: string;
-  forkOffset?: string;
-
-  // Reference count: number of forks pointing at this stream as their source.
-  refCount?: number;
-
-  // Soft-delete: stream is logically deleted but data is retained for fork
-  // readers. Direct client operations against this stream return 410 Gone.
+  forkedFrom?: StreamId;
+  forkOffset?: Offset;
+  childRefCount: number;
   softDeleted?: boolean;
+  /**
+   * Effective expiration deadline in epoch ms. Core updates this on create
+   * and on TTL touches; lazy `expireIfNeeded()` reads it. Absent when the
+   * stream has neither `ttlSeconds` nor `expiresAt`.
+   */
+  expiresAtMs?: number;
 }
 
-export interface CreateStreamOptions {
-  contentType: string;
-  ttlSeconds?: number;
-  expiresAt?: string;
-  initialData?: Uint8Array[];
-  closed?: boolean;
-
-  // Fork creation — when set, the stream is created as a fork of `forkedFrom`
-  // at `forkOffset`. The storage initializes its counter/currentOffset so that
-  // future appends produce offsets greater than `forkOffset`.
-  forkedFrom?: string;
-  forkOffset?: string;
+export interface StreamRecord {
+  id: StreamId;
+  config: StreamConfig;
+  lifecycle: StreamLifecycleState;
+  currentOffset: Offset;
+  counter: number;
 }
 
-export interface StorageReadResult {
-  messages: StoredMessage[];
-  nextOffset: string;
-  upToDate: boolean;
+export interface StreamRecordPatch {
+  config?: Partial<StreamConfig>;
+  lifecycle?: Partial<StreamLifecycleState>;
+  currentOffset?: Offset;
+  counter?: number;
 }
 
-export interface StorageReadLiveResult {
-  messages: StoredMessage[];
-  nextOffset: string;
-  timedOut: boolean;
-}
+export type CreateStreamRecordResult =
+  | { status: "created" }
+  | { status: "exists"; record: StreamRecord };
 
-/**
- * Producer state tracked per (stream, producerId).
- */
 export interface ProducerState {
   epoch: number;
   lastSeq: number;
 }
 
-/**
- * Storage Layer Interface
- *
- */
-export interface StreamStorage {
-  // Lifecycle
-  createStream(options: CreateStreamOptions): Promise<string>;
-  deleteAll(): Promise<void>;
+export interface ListMessagesOptions {
+  after?: Offset;
+  until?: Offset;
+  limit?: number;
+}
 
-  // Metadata
-  getMetadata(): Promise<StreamMetadata | null>;
-  getCurrentOffset(): Promise<string>;
+export type StreamEventType = "message" | "closed" | "deleted" | "soft-deleted";
 
-  // Messages — operates only on this stream's own data (does not walk fork chains)
-  append(messages: Uint8Array[], seq?: string): Promise<string>;
-  read(afterOffset?: string): Promise<StorageReadResult>;
-  // Read without renewing sliding TTL. Used for inherited fork-source data.
-  readNoTouch?(afterOffset?: string): Promise<StorageReadResult>;
+export interface WaitForEventOptions {
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
 
-  // Closure
-  close(messages?: Uint8Array[], seq?: string): Promise<string>;
+export type WaitForEventResult =
+  | { status: "notified"; type?: StreamEventType }
+  | { status: "timeout" }
+  | { status: "aborted" };
 
-  // Live reads (waits for new messages)
-  readLive(
-    afterOffset: string,
-    signal?: AbortSignal,
-  ): Promise<StorageReadLiveResult>;
+export interface StreamStoreAdapter {
+  get(streamId: StreamId): Promise<StreamRecord | null>;
+  /** Persist a new stream record without overwriting an existing one. */
+  create(record: StreamRecord): Promise<CreateStreamRecordResult>;
+  update(streamId: StreamId, patch: StreamRecordPatch): Promise<StreamRecord>;
+  delete(streamId: StreamId): Promise<void>;
 
-  // Idempotent producer state (Section 5.2.1)
-  getProducerState(producerId: string): Promise<ProducerState | undefined>;
-  setProducerState(producerId: string, state: ProducerState): Promise<void>;
-  acquireProducerLock(producerId: string): Promise<() => void>;
+  append(streamId: StreamId, messages: StoredMessage[]): Promise<void>;
+  list(streamId: StreamId, options?: ListMessagesOptions): Promise<StoredMessage[]>;
+  deleteMessages(streamId: StreamId): Promise<void>;
 
-  // Fork lifecycle primitives
-  setRefCount(value: number): Promise<void>;
-  setSoftDeleted(value: boolean): Promise<void>;
+  getProducerState(streamId: StreamId, producerId: string): Promise<ProducerState | undefined>;
+  setProducerState(streamId: StreamId, producerId: string, state: ProducerState): Promise<void>;
+  deleteProducerStates(streamId: StreamId): Promise<void>;
+
+  incrementChildRefCount(parentId: StreamId): Promise<number>;
+  decrementChildRefCount(parentId: StreamId): Promise<number>;
+
+  /** Optional atomic section for multi-record operations. */
+  transaction?<T>(fn: (tx: StreamStoreAdapter) => Promise<T>): Promise<T>;
+  /** Optional adapter/distributed lock; core provides an in-process fallback. */
+  withLock?<T>(key: string, fn: () => Promise<T>): Promise<T>;
+
+  /** Optional live-read runtime capability. */
+  waitForEvent?(streamId: StreamId, options: WaitForEventOptions): Promise<WaitForEventResult>;
+  notify?(streamId: StreamId, type: StreamEventType): Promise<void> | void;
+
+  /** Optional active-expiration runtime capability. Callback is used by in-process adapters. */
+  scheduleExpiry?(
+    streamId: StreamId,
+    at: number,
+    callback?: () => Promise<void>,
+  ): Promise<void> | void;
+  cancelExpiry?(streamId: StreamId): Promise<void> | void;
+}
+
+export interface Clock {
+  now(): number;
+  date(value?: number | string): Date;
 }

@@ -31,6 +31,14 @@ bun run --cwd examples/memory-server test
 bun run --cwd examples/test-server test
 ```
 
+The Durable Object conformance test command above expects an Alchemy dev server via `SERVER_BASE_URL` (defaulting to `http://localhost:1337`). To validate against a deployed Cloudflare Worker instead, use the dedicated conformance stage script:
+
+```bash
+bun run test:conformance
+```
+
+This deploys `examples/test-server` with `STAGE=conformance`, runs the Durable Object conformance tests against the deployed workers.dev URL, and destroys the conformance deployment in a `finally` step.
+
 ## License
 
 MIT

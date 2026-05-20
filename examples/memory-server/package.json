@@ -10,9 +10,9 @@
     "test:node": "node --experimental-vm-modules node_modules/.bin/vitest"
   },
   "dependencies": {
+    "@durable-streams/server-conformance-tests": "^0.3.0",
     "@streamsy/core": "workspace:*",
     "@streamsy/storage-memory": "workspace:*",
-    "@durable-streams/server-conformance-tests": "^0.3.0",
     "vitest": "^4.0.16"
   },
   "devDependencies": {
