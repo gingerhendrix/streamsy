@@ -4,9 +4,6 @@
   "workspaces": {
     "": {
       "name": "durable-streams",
-      "dependencies": {
-        "@durable-streams/server-conformance-tests": "^0.3.0",
-      },
       "devDependencies": {
         "oxfmt": "^0.48.0",
         "oxlint": "^1.63.0",
@@ -16,27 +13,27 @@
       "name": "memory-server",
       "version": "0.0.1",
       "dependencies": {
-        "@durable-streams/server-conformance-tests": "^0.3.0",
         "@streamsy/core": "workspace:*",
         "@streamsy/storage-memory": "workspace:*",
-        "vitest": "^4.0.16",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "typescript": "catalog:",
       },
     },
-    "examples/test-server": {
-      "name": "test-server",
+    "packages/conformance-tests": {
+      "name": "@streamsy/conformance-tests",
       "version": "0.0.1",
       "dependencies": {
         "@durable-streams/server-conformance-tests": "^0.3.0",
         "@streamsy/core": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
+        "@streamsy/storage-memory": "workspace:*",
         "vitest": "^4.0.16",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
+        "@types/bun": "^1.2.0",
         "@types/node": "^22.10.0",
         "alchemy": "catalog:",
         "typescript": "catalog:",
@@ -47,6 +44,7 @@
       "version": "0.0.1",
       "devDependencies": {
         "typescript": "catalog:",
+        "vitest": "^4.0.16",
       },
     },
     "packages/storage-durable-object": {
@@ -68,6 +66,7 @@
       },
       "devDependencies": {
         "typescript": "catalog:",
+        "vitest": "^4.0.16",
       },
     },
   },
@@ -510,6 +509,8 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
+    "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
+
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
@@ -831,8 +832,6 @@
     "strnum": ["strnum@2.1.2", "", {}, "sha512-l63NF9y/cLROq/yqKXSLtcMeeyOfnSQlfMSlzFt/K73oIaD8DGaQWd7Z34X9GPiKqP5rbSh84Hl4bOlLcjiSrQ=="],
 
     "supports-color": ["supports-color@7.2.0", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
-
-    "test-server": ["test-server@workspace:examples/test-server"],
 
     "tinybench": ["tinybench@2.9.0", "", {}, "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg=="],
 

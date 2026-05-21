@@ -145,7 +145,10 @@ describe("StreamProtocol concurrent create", () => {
     const store = new PausingCreateStore("fork-target-race");
     const protocol = new StreamProtocol(store);
 
-    await protocol.create("fork-source", { contentType: CONTENT_TYPE, initialData: bytes("source") });
+    await protocol.create("fork-source", {
+      contentType: CONTENT_TYPE,
+      initialData: bytes("source"),
+    });
 
     const forkCreate = protocol.create("fork-target-race", {
       contentType: CONTENT_TYPE,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ReadService, normalizeReadOffset, type ReadChain } from "../../../packages/core/src/protocol/read-service.ts";
-import type { StoredMessage, StreamRecord, StreamStoreAdapter } from "../../../packages/core/src/types/storage.ts";
+import { ReadService, normalizeReadOffset, type ReadChain } from "../protocol/read-service.ts";
+import type { StoredMessage, StreamRecord, StreamStoreAdapter } from "../types/storage.ts";
 
 const ZERO_OFFSET = "0000000000000000_0000000000000000";
 
@@ -185,8 +185,9 @@ describe("ReadService.execute", () => {
       lifecycle: { childRefCount: 0, closed: true },
     });
 
-    await expect(new ReadService(throwingStore(closedTail), async () => []).execute("stream-1", {}))
-      .resolves.toMatchObject({ status: "ok", upToDate: true, closed: true });
+    await expect(
+      new ReadService(throwingStore(closedTail), async () => []).execute("stream-1", {}),
+    ).resolves.toMatchObject({ status: "ok", upToDate: true, closed: true });
 
     await expect(
       new ReadService(throwingStore(closedAhead), async () => [

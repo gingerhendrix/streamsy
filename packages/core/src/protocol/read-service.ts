@@ -45,11 +45,7 @@ export class ReadService {
     if (record.lifecycle.softDeleted)
       return { status: "gone", messages: [], nextOffset: "", upToDate: false };
 
-    const messages = await this.readChain(
-      streamId,
-      record,
-      normalizeReadOffset(options.offset),
-    );
+    const messages = await this.readChain(streamId, record, normalizeReadOffset(options.offset));
     const lastOffset =
       messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
     const nextOffset =

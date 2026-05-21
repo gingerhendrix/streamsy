@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { systemClock } from "../../../packages/core/src/protocol/helpers/clock.ts";
+import { systemClock } from "../../protocol/helpers/clock.ts";
 
 afterEach(() => {
   vi.useRealTimers();

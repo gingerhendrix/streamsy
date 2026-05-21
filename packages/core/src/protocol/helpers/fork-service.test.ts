@@ -20,14 +20,10 @@ import {
   ForkService,
   resolveForkExpiry,
   type ForkServiceMutators,
-} from "../../../packages/core/src/protocol/helpers/fork-service.ts";
-import type { CreateOptions } from "../../../packages/core/src/types/protocol.ts";
-import type {
-  StreamId,
-  StreamRecord,
-  StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
-import { ZERO_OFFSET } from "../../../packages/core/src/protocol/helpers/offset-generator.ts";
+} from "../../protocol/helpers/fork-service.ts";
+import type { CreateOptions } from "../../types/protocol.ts";
+import type { StreamId, StreamRecord, StreamStoreAdapter } from "../../types/storage.ts";
+import { ZERO_OFFSET } from "../../protocol/helpers/offset-generator.ts";
 
 const SOURCE_ID = "src";
 const FORK_ID = "fork";
@@ -352,7 +348,9 @@ describe("ForkService.execute - fork offset", () => {
 
 describe("ForkService.execute - content type", () => {
   it("inherits source contentType when options.contentType is omitted", async () => {
-    const stub = makeStub([makeSource({ config: { contentType: "application/json", createdAt: 0 } })]);
+    const stub = makeStub([
+      makeSource({ config: { contentType: "application/json", createdAt: 0 } }),
+    ]);
     const { mutators, log } = makeMutators();
     const service = new ForkService(stub.store, mutators);
 
@@ -377,7 +375,9 @@ describe("ForkService.execute - content type", () => {
   });
 
   it("returns conflict/fork-content-type when options.contentType does not match the source", async () => {
-    const stub = makeStub([makeSource({ config: { contentType: "application/json", createdAt: 0 } })]);
+    const stub = makeStub([
+      makeSource({ config: { contentType: "application/json", createdAt: 0 } }),
+    ]);
     const { mutators, log } = makeMutators();
     const service = new ForkService(stub.store, mutators);
 
@@ -398,7 +398,9 @@ describe("ForkService.execute - content type", () => {
   });
 
   it("accepts a compatible explicit contentType (parameter-stripped equality)", async () => {
-    const stub = makeStub([makeSource({ config: { contentType: "application/json", createdAt: 0 } })]);
+    const stub = makeStub([
+      makeSource({ config: { contentType: "application/json", createdAt: 0 } }),
+    ]);
     const { mutators, log } = makeMutators();
     const service = new ForkService(stub.store, mutators);
 
@@ -415,7 +417,9 @@ describe("ForkService.execute - content type", () => {
 
 describe("ForkService.execute - expiry resolution", () => {
   it("uses explicit ttlSeconds when set on the request", async () => {
-    const stub = makeStub([makeSource({ config: { contentType: CONTENT_TYPE, createdAt: 0, ttlSeconds: 60 } })]);
+    const stub = makeStub([
+      makeSource({ config: { contentType: CONTENT_TYPE, createdAt: 0, ttlSeconds: 60 } }),
+    ]);
     const { mutators, log } = makeMutators();
     const service = new ForkService(stub.store, mutators);
 
@@ -426,7 +430,9 @@ describe("ForkService.execute - expiry resolution", () => {
   });
 
   it("uses explicit expiresAt when set on the request and ttlSeconds is absent", async () => {
-    const stub = makeStub([makeSource({ config: { contentType: CONTENT_TYPE, createdAt: 0, ttlSeconds: 60 } })]);
+    const stub = makeStub([
+      makeSource({ config: { contentType: CONTENT_TYPE, createdAt: 0, ttlSeconds: 60 } }),
+    ]);
     const { mutators, log } = makeMutators();
     const service = new ForkService(stub.store, mutators);
 
@@ -454,7 +460,9 @@ describe("ForkService.execute - expiry resolution", () => {
 
   it("inherits source expiresAt when neither is set on the request and source has expiresAt only", async () => {
     const stub = makeStub([
-      makeSource({ config: { contentType: CONTENT_TYPE, createdAt: 0, expiresAt: "2031-01-01T00:00:00Z" } }),
+      makeSource({
+        config: { contentType: CONTENT_TYPE, createdAt: 0, expiresAt: "2031-01-01T00:00:00Z" },
+      }),
     ]);
     const { mutators, log } = makeMutators();
     const service = new ForkService(stub.store, mutators);
@@ -470,9 +478,7 @@ describe("ForkService.execute - expiry resolution", () => {
     const { mutators } = makeMutators();
     const service = new ForkService(stub.store, mutators);
 
-    expect(
-      resolveForkExpiry({ forkedFrom: SOURCE_ID }, makeSource()),
-    ).toEqual({});
+    expect(resolveForkExpiry({ forkedFrom: SOURCE_ID }, makeSource())).toEqual({});
 
     await service.execute(FORK_ID, { forkedFrom: SOURCE_ID });
   });

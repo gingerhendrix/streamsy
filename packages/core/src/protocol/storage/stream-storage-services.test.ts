@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStreamStore } from "@streamsy/storage-memory";
-import { ExpiryPolicy } from "../../../packages/core/src/protocol/helpers/expiry-policy.ts";
-import { ZERO_OFFSET } from "../../../packages/core/src/protocol/helpers/offset-generator.ts";
-import { StreamMessageReader } from "../../../packages/core/src/protocol/storage/stream-message-reader.ts";
-import { StreamMessageWriter } from "../../../packages/core/src/protocol/storage/stream-message-writer.ts";
-import { StreamRecordFactory } from "../../../packages/core/src/protocol/storage/stream-record-factory.ts";
+import { ExpiryPolicy } from "../../protocol/helpers/expiry-policy.ts";
+import { ZERO_OFFSET } from "../../protocol/helpers/offset-generator.ts";
+import { StreamMessageReader } from "../../protocol/storage/stream-message-reader.ts";
+import { StreamMessageWriter } from "../../protocol/storage/stream-message-writer.ts";
+import { StreamRecordFactory } from "../../protocol/storage/stream-record-factory.ts";
 import type {
   Clock,
   StoredMessage,
@@ -12,7 +12,7 @@ import type {
   StreamLifecycleState,
   StreamRecord,
   StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
+} from "../../types/storage.ts";
 
 const clock: Clock = {
   now: () => 1_000,

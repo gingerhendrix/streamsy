@@ -6,12 +6,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { Clock } from "../../../packages/core/src/types/storage.ts";
+import type { Clock } from "../../types/storage.ts";
 import {
   CURSOR_EPOCH_MS,
   CURSOR_INTERVAL_MS,
   generateCursor,
-} from "../../../packages/core/src/protocol/helpers/cursor-generator.ts";
+} from "../../protocol/helpers/cursor-generator.ts";
 
 function fixedClock(nowMs: number): Clock {
   return {

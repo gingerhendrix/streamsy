@@ -7,7 +7,7 @@
 import alchemy from "alchemy";
 import { Worker, DurableObjectNamespace } from "alchemy/cloudflare";
 
-const app = await alchemy("durable-streams");
+const app = await alchemy("streamsy-conf");
 
 const streamDO = DurableObjectNamespace("stream-do", {
   className: "StreamStorage",
@@ -15,8 +15,8 @@ const streamDO = DurableObjectNamespace("stream-do", {
 });
 
 // Create the worker that handles HTTP requests
-const worker = await Worker("durable-streams-server", {
-  entrypoint: "./src/index.ts",
+const worker = await Worker("server", {
+  entrypoint: "./src/do-worker.ts",
   compatibility: "node",
   bindings: {
     STREAM_DO: streamDO,

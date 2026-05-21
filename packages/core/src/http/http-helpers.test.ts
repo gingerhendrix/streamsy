@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { EtagBuilder } from "../../../packages/core/src/http/etag-builder.ts";
-import { MessageBodyCodec } from "../../../packages/core/src/http/message-body-codec.ts";
-import { ProducerHeaderParser } from "../../../packages/core/src/http/producer-header-parser.ts";
-import { ReadQueryParser } from "../../../packages/core/src/http/read-query-parser.ts";
-import { RequestBodyReader } from "../../../packages/core/src/http/request-body-reader.ts";
-import { HttpResponseFactory } from "../../../packages/core/src/http/responses.ts";
-import { SseEventEncoder } from "../../../packages/core/src/http/sse-event-encoder.ts";
-import { StreamPathService } from "../../../packages/core/src/http/stream-path-service.ts";
+import { EtagBuilder } from "../http/etag-builder.ts";
+import { MessageBodyCodec } from "../http/message-body-codec.ts";
+import { ProducerHeaderParser } from "../http/producer-header-parser.ts";
+import { ReadQueryParser } from "../http/read-query-parser.ts";
+import { RequestBodyReader } from "../http/request-body-reader.ts";
+import { HttpResponseFactory } from "../http/responses.ts";
+import { SseEventEncoder } from "../http/sse-event-encoder.ts";
+import { StreamPathService } from "../http/stream-path-service.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -23,8 +23,19 @@ describe("HTTP MessageBodyCodec", () => {
 
   it("concatenates text and binary bodies", () => {
     const codec = new MessageBodyCodec();
-    expect(codec.encodeHttpBody([{ data: enc.encode("a") }, { data: enc.encode("b") }], "text/plain")).toBe("ab");
-    expect(Array.from(new Uint8Array(codec.encodeHttpBody([{ data: new Uint8Array([1]) }, { data: new Uint8Array([2, 3]) }], "application/octet-stream") as ArrayBuffer))).toEqual([1, 2, 3]);
+    expect(
+      codec.encodeHttpBody([{ data: enc.encode("a") }, { data: enc.encode("b") }], "text/plain"),
+    ).toBe("ab");
+    expect(
+      Array.from(
+        new Uint8Array(
+          codec.encodeHttpBody(
+            [{ data: new Uint8Array([1]) }, { data: new Uint8Array([2, 3]) }],
+            "application/octet-stream",
+          ) as ArrayBuffer,
+        ),
+      ),
+    ).toEqual([1, 2, 3]);
   });
 
   it("returns content-type-shaped empty bodies", () => {
@@ -39,9 +50,27 @@ describe("HTTP ProducerHeaderParser", () => {
   it("distinguishes absent, valid, partial, and overflow producer headers", () => {
     const parser = new ProducerHeaderParser();
     expect(parser.parse(new Request("http://x/s"))).toEqual({ kind: "absent" });
-    expect(parser.parse(new Request("http://x/s", { headers: { "producer-id": "p" } }))).toEqual({ kind: "invalid" });
-    expect(parser.parse(new Request("http://x/s", { headers: { "producer-id": "p", "producer-epoch": "1", "producer-seq": "2" } }))).toEqual({ kind: "ok", producer: { producerId: "p", producerEpoch: 1, producerSeq: 2 } });
-    expect(parser.parse(new Request("http://x/s", { headers: { "producer-id": "p", "producer-epoch": String(Number.MAX_SAFE_INTEGER + 1), "producer-seq": "0" } }))).toEqual({ kind: "invalid" });
+    expect(parser.parse(new Request("http://x/s", { headers: { "producer-id": "p" } }))).toEqual({
+      kind: "invalid",
+    });
+    expect(
+      parser.parse(
+        new Request("http://x/s", {
+          headers: { "producer-id": "p", "producer-epoch": "1", "producer-seq": "2" },
+        }),
+      ),
+    ).toEqual({ kind: "ok", producer: { producerId: "p", producerEpoch: 1, producerSeq: 2 } });
+    expect(
+      parser.parse(
+        new Request("http://x/s", {
+          headers: {
+            "producer-id": "p",
+            "producer-epoch": String(Number.MAX_SAFE_INTEGER + 1),
+            "producer-seq": "0",
+          },
+        }),
+      ),
+    ).toEqual({ kind: "invalid" });
   });
 });
 
@@ -58,9 +87,19 @@ describe("HTTP SseEventEncoder", () => {
   it("splits text lines and base64-encodes binary events", () => {
     const codec = new MessageBodyCodec();
     const sse = new SseEventEncoder(codec);
-    const text = sse.dataEvent([{ data: enc.encode("a\nb") }], { isJson: false, isText: true, useBase64: false }).map((chunk) => dec.decode(chunk)).join("");
+    const text = sse
+      .dataEvent([{ data: enc.encode("a\nb") }], { isJson: false, isText: true, useBase64: false })
+      .map((chunk) => dec.decode(chunk))
+      .join("");
     expect(text).toBe("event: data\ndata:a\ndata:b\n\n");
-    const binary = sse.dataEvent([{ data: new Uint8Array([1, 2, 3]) }], { isJson: false, isText: false, useBase64: true }).map((chunk) => dec.decode(chunk)).join("");
+    const binary = sse
+      .dataEvent([{ data: new Uint8Array([1, 2, 3]) }], {
+        isJson: false,
+        isText: false,
+        useBase64: true,
+      })
+      .map((chunk) => dec.decode(chunk))
+      .join("");
     expect(binary).toBe("event: data\ndata:AQID\n\n");
   });
 
@@ -68,10 +107,11 @@ describe("HTTP SseEventEncoder", () => {
     const codec = new MessageBodyCodec();
     const sse = new SseEventEncoder(codec);
     const text = sse
-      .dataEvent(
-        [{ data: enc.encode('{"a":1}') }, { data: enc.encode('{"b":2}') }],
-        { isJson: true, isText: false, useBase64: false },
-      )
+      .dataEvent([{ data: enc.encode('{"a":1}') }, { data: enc.encode('{"b":2}') }], {
+        isJson: true,
+        isText: false,
+        useBase64: false,
+      })
       .map((chunk) => dec.decode(chunk))
       .join("");
     expect(text).toBe('event: data\ndata:[\ndata:{"a":1},\ndata:{"b":2}\ndata:]\n\n');
@@ -90,7 +130,9 @@ describe("HTTP EtagBuilder", () => {
     const etags = new EtagBuilder();
     expect(etags.forCatchUp("/s", "-1", "1_0", false)).toBe(`"${btoa("/s")}:-1:1_0"`);
     expect(etags.forCatchUp("/s", "-1", "1_0", true)).toBe(`"${btoa("/s")}:-1:1_0:c"`);
-    expect(etags.forCatchUp("/s", "0_0", "1_0", false)).not.toEqual(etags.forCatchUp("/s", "1_0", "1_0", false));
+    expect(etags.forCatchUp("/s", "0_0", "1_0", false)).not.toEqual(
+      etags.forCatchUp("/s", "1_0", "1_0", false),
+    );
   });
 });
 
@@ -101,8 +143,14 @@ describe("HTTP ReadQueryParser", () => {
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.response.status).toBe(400);
     expect(parser.parse(new URL("http://x/s?offset=-1"))).toMatchObject({ ok: true, offset: "-1" });
-    expect(parser.parse(new URL("http://x/s?offset=now"))).toMatchObject({ ok: true, offset: "now" });
-    expect(parser.parse(new URL("http://x/s?offset=1_0"))).toMatchObject({ ok: true, offset: "1_0" });
+    expect(parser.parse(new URL("http://x/s?offset=now"))).toMatchObject({
+      ok: true,
+      offset: "now",
+    });
+    expect(parser.parse(new URL("http://x/s?offset=1_0"))).toMatchObject({
+      ok: true,
+      offset: "1_0",
+    });
   });
 
   it("classifies live mode and surfaces cursor", () => {
@@ -112,8 +160,14 @@ describe("HTTP ReadQueryParser", () => {
       live: "long-poll",
       cursor: "c1",
     });
-    expect(parser.parse(new URL("http://x/s?offset=-1&live=sse"))).toMatchObject({ ok: true, live: "sse" });
-    expect(parser.parse(new URL("http://x/s?offset=-1&live=other"))).toMatchObject({ ok: true, live: undefined });
+    expect(parser.parse(new URL("http://x/s?offset=-1&live=sse"))).toMatchObject({
+      ok: true,
+      live: "sse",
+    });
+    expect(parser.parse(new URL("http://x/s?offset=-1&live=other"))).toMatchObject({
+      ok: true,
+      live: undefined,
+    });
   });
 });
 

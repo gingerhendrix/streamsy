@@ -16,14 +16,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ExpiryPolicy, type TouchReason } from "../../../packages/core/src/protocol/helpers/expiry-policy.ts";
+import { ExpiryPolicy, type TouchReason } from "../../protocol/helpers/expiry-policy.ts";
 import type {
   Clock,
   StreamId,
   StreamRecord,
   StreamRecordPatch,
   StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
+} from "../../types/storage.ts";
 
 function makeClock(initialNow: number): Clock & { setNow: (next: number) => void } {
   let nowMs = initialNow;

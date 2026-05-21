@@ -28,17 +28,25 @@ export class HttpDispatchService {
     const url = new URL(request.url);
     const streamId = this.deps.path.strip(url.pathname);
     if (!streamId || streamId === url.pathname) {
-      return this.deps.responses.badRequest(`Stream path required: ${this.deps.path.requiredPathPattern()}`);
+      return this.deps.responses.badRequest(
+        `Stream path required: ${this.deps.path.requiredPathPattern()}`,
+      );
     }
     const ctx: HttpRouteContext = { request, url, streamId };
     try {
       switch (request.method) {
-        case "PUT": return await this.deps.create.execute(ctx);
-        case "POST": return await this.deps.append.execute(ctx);
-        case "GET": return await this.deps.read.execute(ctx);
-        case "HEAD": return await this.deps.metadata.execute(streamId);
-        case "DELETE": return await this.deps.delete.execute(streamId);
-        default: return this.deps.responses.methodNotAllowed();
+        case "PUT":
+          return await this.deps.create.execute(ctx);
+        case "POST":
+          return await this.deps.append.execute(ctx);
+        case "GET":
+          return await this.deps.read.execute(ctx);
+        case "HEAD":
+          return await this.deps.metadata.execute(streamId);
+        case "DELETE":
+          return await this.deps.delete.execute(streamId);
+        default:
+          return this.deps.responses.methodNotAllowed();
       }
     } catch (error) {
       console.error("Error handling request:", error);

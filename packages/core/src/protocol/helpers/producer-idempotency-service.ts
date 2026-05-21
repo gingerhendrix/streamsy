@@ -84,11 +84,7 @@ export class ProducerIdempotencyService {
     return this.store.getProducerState(streamId, producerId);
   }
 
-  validate(
-    state: ProducerState | undefined,
-    epoch: number,
-    seq: number,
-  ): ProducerValidation {
+  validate(state: ProducerState | undefined, epoch: number, seq: number): ProducerValidation {
     return validateProducer(state, epoch, seq);
   }
 

@@ -2,7 +2,9 @@ import type { StreamProtocolInterface } from "../../types/protocol.ts";
 import { CACHE_NO_STORE, HttpResponseFactory } from "../responses.ts";
 
 export class MetadataHttpService {
-  constructor(private deps: { protocol: StreamProtocolInterface; responses: HttpResponseFactory }) {}
+  constructor(
+    private deps: { protocol: StreamProtocolInterface; responses: HttpResponseFactory },
+  ) {}
 
   async execute(streamId: string): Promise<Response> {
     const result = await this.deps.protocol.metadata(streamId);

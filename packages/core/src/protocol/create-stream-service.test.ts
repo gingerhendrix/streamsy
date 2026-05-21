@@ -15,13 +15,9 @@ import { describe, expect, it } from "vitest";
 import {
   CreateStreamService,
   type CreateStreamMutators,
-} from "../../../packages/core/src/protocol/create-stream-service.ts";
-import type { CreateOptions, CreateResult } from "../../../packages/core/src/types/protocol.ts";
-import type {
-  StreamId,
-  StreamRecord,
-  StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
+} from "../protocol/create-stream-service.ts";
+import type { CreateOptions, CreateResult } from "../types/protocol.ts";
+import type { StreamId, StreamRecord, StreamStoreAdapter } from "../types/storage.ts";
 
 const CONTENT_TYPE = "application/octet-stream";
 
@@ -154,9 +150,7 @@ function makeMutators(
 
 describe("CreateStreamService.execute - existing record", () => {
   it("returns conflict/soft-deleted when existing target is soft-deleted", async () => {
-    const stub = makeStub([
-      makeRecord({ lifecycle: { childRefCount: 0, softDeleted: true } }),
-    ]);
+    const stub = makeStub([makeRecord({ lifecycle: { childRefCount: 0, softDeleted: true } })]);
     const { mutators, log } = makeMutators();
     const service = new CreateStreamService(stub.store, mutators);
 

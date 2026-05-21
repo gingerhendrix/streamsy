@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   contentTypeMatches,
   normalizeContentType,
-} from "../../../packages/core/src/protocol/helpers/content-type-matcher.ts";
+} from "../../protocol/helpers/content-type-matcher.ts";
 
 describe("normalizeContentType", () => {
   it("lowercases the type", () => {

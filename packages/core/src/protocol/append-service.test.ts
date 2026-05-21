@@ -11,13 +11,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { AppendService, appendedResult } from "../../../packages/core/src/protocol/append-service.ts";
-import { ProducerIdempotencyService } from "../../../packages/core/src/protocol/helpers/producer-idempotency-service.ts";
-import type {
-  ProducerState,
-  StreamRecord,
-  StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
+import { AppendService, appendedResult } from "../protocol/append-service.ts";
+import { ProducerIdempotencyService } from "../protocol/helpers/producer-idempotency-service.ts";
+import type { ProducerState, StreamRecord, StreamStoreAdapter } from "../types/storage.ts";
 
 const CONTENT_TYPE = "application/octet-stream";
 
@@ -89,7 +85,12 @@ function makeMutators(nextOffset = "00000000000000000099") {
   return {
     calls,
     mutators: {
-      async appendMessages(streamId: string, _record: StreamRecord, data: Uint8Array[], seq?: string) {
+      async appendMessages(
+        streamId: string,
+        _record: StreamRecord,
+        data: Uint8Array[],
+        seq?: string,
+      ) {
         calls.push({ kind: "appendMessages", streamId, data, seq });
         return nextOffset;
       },
@@ -109,7 +110,11 @@ function makeService(stub: Stub, mutators: ReturnType<typeof makeMutators>["muta
 describe("appendedResult", () => {
   it("includes producer fields when validation is accepted", () => {
     expect(
-      appendedResult("offset-A", { kind: "accepted", proposedState: { epoch: 3, lastSeq: 7 } }, true),
+      appendedResult(
+        "offset-A",
+        { kind: "accepted", proposedState: { epoch: 3, lastSeq: 7 } },
+        true,
+      ),
     ).toEqual({
       status: "appended",
       nextOffset: "offset-A",
@@ -128,9 +133,11 @@ describe("appendedResult", () => {
   });
 
   it("omits producer fields when validation is non-accepted", () => {
-    expect(
-      appendedResult("offset-A", { kind: "duplicate", epoch: 1, lastSeq: 0 }, false),
-    ).toEqual({ status: "appended", nextOffset: "offset-A", closed: false });
+    expect(appendedResult("offset-A", { kind: "duplicate", epoch: 1, lastSeq: 0 }, false)).toEqual({
+      status: "appended",
+      nextOffset: "offset-A",
+      closed: false,
+    });
   });
 });
 
@@ -139,15 +146,16 @@ describe("AppendService.execute", () => {
     const stub = makeStub([]);
     const m = makeMutators();
     const service = makeService(stub, m.mutators);
-    const result = await service.execute("missing", { data: bytes("x"), contentType: CONTENT_TYPE });
+    const result = await service.execute("missing", {
+      data: bytes("x"),
+      contentType: CONTENT_TYPE,
+    });
     expect(result).toEqual({ status: "not-found" });
     expect(m.calls).toHaveLength(0);
   });
 
   it("returns gone when the stream is soft-deleted", async () => {
-    const stub = makeStub([
-      makeRecord({ lifecycle: { childRefCount: 0, softDeleted: true } }),
-    ]);
+    const stub = makeStub([makeRecord({ lifecycle: { childRefCount: 0, softDeleted: true } })]);
     const m = makeMutators();
     const service = makeService(stub, m.mutators);
     const result = await service.execute("s1", { data: bytes("x"), contentType: CONTENT_TYPE });
@@ -227,9 +235,7 @@ describe("AppendService.execute", () => {
   });
 
   it("returns idempotent close for a close-only request on an already closed stream", async () => {
-    const stub = makeStub([
-      makeRecord({ lifecycle: { childRefCount: 0, closed: true } }),
-    ]);
+    const stub = makeStub([makeRecord({ lifecycle: { childRefCount: 0, closed: true } })]);
     const m = makeMutators();
     const service = makeService(stub, m.mutators);
     const result = await service.execute("s1", {
@@ -246,9 +252,7 @@ describe("AppendService.execute", () => {
   });
 
   it("rejects appends to closed streams with conflict/closed", async () => {
-    const stub = makeStub([
-      makeRecord({ lifecycle: { childRefCount: 0, closed: true } }),
-    ]);
+    const stub = makeStub([makeRecord({ lifecycle: { childRefCount: 0, closed: true } })]);
     const m = makeMutators();
     const service = makeService(stub, m.mutators);
     const result = await service.execute("s1", {
@@ -277,9 +281,7 @@ describe("AppendService.execute", () => {
   });
 
   it("rejects non-monotonic seq with conflict/sequence", async () => {
-    const stub = makeStub([
-      makeRecord({ lifecycle: { childRefCount: 0, lastSeq: "10" } }),
-    ]);
+    const stub = makeStub([makeRecord({ lifecycle: { childRefCount: 0, lastSeq: "10" } })]);
     const m = makeMutators();
     const service = makeService(stub, m.mutators);
     const result = await service.execute("s1", {
@@ -314,9 +316,7 @@ describe("AppendService.execute", () => {
   });
 
   it("returns duplicate without mutating or persisting on duplicate seq", async () => {
-    const stub = makeStub([
-      makeRecord({ lifecycle: { childRefCount: 0, closed: true } }),
-    ]);
+    const stub = makeStub([makeRecord({ lifecycle: { childRefCount: 0, closed: true } })]);
     stub.producerStates.set("s1:p1", { epoch: 0, lastSeq: 5 });
     const m = makeMutators();
     const service = makeService(stub, m.mutators);

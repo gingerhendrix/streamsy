@@ -4,12 +4,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
 
-const repoRoot = join(import.meta.dirname, "..");
-const testServerDir = join(repoRoot, "examples", "test-server");
-const appName = "durable-streams";
+const packageDir = join(import.meta.dirname, "..");
+const appName = "streamsy-conf";
 const stage = "conformance";
-const workerResourceId = "durable-streams-server";
-const statePath = join(testServerDir, ".alchemy", appName, stage, `${workerResourceId}.json`);
+const workerResourceId = "server";
+const statePath = join(packageDir, ".alchemy", appName, stage, `${workerResourceId}.json`);
 
 const env = {
   ...process.env,
@@ -42,12 +41,21 @@ function readWorkerUrl(): string {
   return url.replace(/\/$/, "");
 }
 
+function logFailure(label: string, error: unknown): void {
+  console.error(`\n${label}:`);
+  if (error instanceof Error) {
+    console.error(error.message);
+  } else {
+    console.error(error);
+  }
+}
+
 let exitCode = 0;
 
 try {
   await runStep(
     `deploy test server with STAGE=${stage}`,
-    $`bun alchemy deploy`.cwd(testServerDir).env(env),
+    $`bun alchemy deploy`.cwd(packageDir).env(env),
   );
 
   const serverBaseUrl = readWorkerUrl();
@@ -55,25 +63,23 @@ try {
 
   await runStep(
     "run Durable Object conformance tests against deployed server",
-    $`bun run test --reporter=dot`.cwd(testServerDir).env({
+    $`bun run test:do:local --reporter=dot`.cwd(packageDir).env({
       ...env,
       SERVER_BASE_URL: serverBaseUrl,
     }),
   );
 } catch (error) {
   exitCode = 1;
-  console.error("\nConformance deploy/test failed:");
-  console.error(error);
+  logFailure("Conformance deploy/test failed", error);
 } finally {
   try {
     await runStep(
       `destroy test server with STAGE=${stage}`,
-      $`bun alchemy destroy`.cwd(testServerDir).env(env),
+      $`bun alchemy destroy`.cwd(packageDir).env(env),
     );
   } catch (error) {
     exitCode = 1;
-    console.error("\nConformance destroy failed:");
-    console.error(error);
+    logFailure("Conformance destroy failed", error);
   }
 }
 

@@ -36,16 +36,8 @@ import { frameMessages } from "./helpers/message-framer.ts";
 export interface CreateStreamMutators {
   newRecord(streamId: StreamId, contentType: string, options: CreateOptions): StreamRecord;
   scheduleExpiry(record: StreamRecord): Promise<void>;
-  appendMessages(
-    streamId: StreamId,
-    record: StreamRecord,
-    data: Uint8Array[],
-  ): Promise<string>;
-  closeRecord(
-    streamId: StreamId,
-    record: StreamRecord,
-    data: Uint8Array[],
-  ): Promise<string>;
+  appendMessages(streamId: StreamId, record: StreamRecord, data: Uint8Array[]): Promise<string>;
+  closeRecord(streamId: StreamId, record: StreamRecord, data: Uint8Array[]): Promise<string>;
   createFork(streamId: StreamId, options: CreateOptions): Promise<CreateResult>;
 }
 
@@ -88,7 +80,8 @@ export class CreateStreamService {
 
     const record = this.mutators.newRecord(streamId, contentType, options);
     const createResult = await this.store.create(record);
-    if (createResult.status === "exists") return this.resultForExisting(createResult.record, options);
+    if (createResult.status === "exists")
+      return this.resultForExisting(createResult.record, options);
     await this.mutators.scheduleExpiry(record);
 
     let final = record.currentOffset;

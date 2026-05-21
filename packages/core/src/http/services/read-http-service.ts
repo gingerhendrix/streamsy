@@ -9,7 +9,15 @@ import { SseHttpService } from "./sse-http-service.ts";
 
 export class ReadHttpService {
   constructor(
-    private deps: { protocol: StreamProtocolInterface; responses: HttpResponseFactory; bodyCodec: MessageBodyCodec; readQuery: ReadQueryParser; etags: EtagBuilder; longPoll: LongPollHttpService; sse: SseHttpService },
+    private deps: {
+      protocol: StreamProtocolInterface;
+      responses: HttpResponseFactory;
+      bodyCodec: MessageBodyCodec;
+      readQuery: ReadQueryParser;
+      etags: EtagBuilder;
+      longPoll: LongPollHttpService;
+      sse: SseHttpService;
+    },
   ) {}
 
   async execute(ctx: HttpRouteContext): Promise<Response> {
@@ -31,26 +39,64 @@ export class ReadHttpService {
     return this.handleCatchUp(ctx, effectiveOffset, query.offset ?? "-1");
   }
 
-  private async resolveNowOffset(streamId: string, live?: string): Promise<{ ok: true; offset: string; response?: Response } | { ok: false; response: Response }> {
+  private async resolveNowOffset(
+    streamId: string,
+    live?: string,
+  ): Promise<
+    { ok: true; offset: string; response?: Response } | { ok: false; response: Response }
+  > {
     const meta = await this.deps.protocol.metadata(streamId);
     if (meta.status === "not-found") return { ok: false, response: this.deps.responses.notFound() };
     const offset = meta.nextOffset!;
     if (!live) {
       const contentType = meta.contentType!;
-      return { ok: true, offset, response: new Response(this.deps.bodyCodec.emptyBodyForContentType(contentType), { headers: { "content-type": contentType, "stream-next-offset": offset, "stream-up-to-date": "true", ...(meta.closed ? { "stream-closed": "true" } : {}), "cache-control": CACHE_NO_STORE } }) };
+      return {
+        ok: true,
+        offset,
+        response: new Response(this.deps.bodyCodec.emptyBodyForContentType(contentType), {
+          headers: {
+            "content-type": contentType,
+            "stream-next-offset": offset,
+            "stream-up-to-date": "true",
+            ...(meta.closed ? { "stream-closed": "true" } : {}),
+            "cache-control": CACHE_NO_STORE,
+          },
+        }),
+      };
     }
     return { ok: true, offset };
   }
 
-  private async handleCatchUp(ctx: HttpRouteContext, offset: string | undefined, startOffset: string): Promise<Response> {
+  private async handleCatchUp(
+    ctx: HttpRouteContext,
+    offset: string | undefined,
+    startOffset: string,
+  ): Promise<Response> {
     const result = await this.deps.protocol.read(ctx.streamId, { offset });
     if (result.status === "not-found") return this.deps.responses.notFound();
     if (result.status === "gone") return this.deps.responses.gone();
-    const etag = this.deps.etags.forCatchUp(ctx.url.pathname, startOffset, result.nextOffset, result.closed === true);
+    const etag = this.deps.etags.forCatchUp(
+      ctx.url.pathname,
+      startOffset,
+      result.nextOffset,
+      result.closed === true,
+    );
     if (ctx.request.headers.get("if-none-match") === etag) {
       return this.deps.responses.empty(304, { etag, "cache-control": CACHE_REVALIDATE });
     }
     const metadata = await this.deps.protocol.metadata(ctx.streamId);
-    return new Response(this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType!), { headers: { "content-type": metadata.contentType!, "stream-next-offset": result.nextOffset, ...(result.upToDate ? { "stream-up-to-date": "true" } : {}), ...(result.closed ? { "stream-closed": "true" } : {}), etag, "cache-control": CACHE_REVALIDATE } });
+    return new Response(
+      this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType!),
+      {
+        headers: {
+          "content-type": metadata.contentType!,
+          "stream-next-offset": result.nextOffset,
+          ...(result.upToDate ? { "stream-up-to-date": "true" } : {}),
+          ...(result.closed ? { "stream-closed": "true" } : {}),
+          etag,
+          "cache-control": CACHE_REVALIDATE,
+        },
+      },
+    );
   }
 }

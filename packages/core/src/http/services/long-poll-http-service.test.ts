@@ -18,11 +18,11 @@ import type {
   ReadLiveResult,
   ReadResult,
   StreamProtocolInterface,
-} from "../../../packages/core/src/types/protocol.ts";
-import type { StoredMessage } from "../../../packages/core/src/types/storage.ts";
-import { MessageBodyCodec } from "../../../packages/core/src/http/message-body-codec.ts";
-import { HttpResponseFactory } from "../../../packages/core/src/http/responses.ts";
-import { LongPollHttpService } from "../../../packages/core/src/http/services/long-poll-http-service.ts";
+} from "../../types/protocol.ts";
+import type { StoredMessage } from "../../types/storage.ts";
+import { MessageBodyCodec } from "../../http/message-body-codec.ts";
+import { HttpResponseFactory } from "../../http/responses.ts";
+import { LongPollHttpService } from "../../http/services/long-poll-http-service.ts";
 
 const enc = new TextEncoder();
 
@@ -154,7 +154,13 @@ describe("LongPollHttpService", () => {
 
   it("maps not-found and gone protocol results to the documented HTTP statuses", async () => {
     const stub = makeStub();
-    stub.setLive({ status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" });
+    stub.setLive({
+      status: "not-found",
+      messages: [],
+      nextOffset: "",
+      upToDate: false,
+      cursor: "",
+    });
     expect((await makeService(stub).execute("s", "-1")).status).toBe(404);
 
     stub.setLive({ status: "gone", messages: [], nextOffset: "", upToDate: false, cursor: "" });

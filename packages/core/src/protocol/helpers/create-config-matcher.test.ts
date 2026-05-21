@@ -6,19 +6,21 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { configMatches } from "../../../packages/core/src/protocol/helpers/create-config-matcher.ts";
-import { ZERO_OFFSET } from "../../../packages/core/src/protocol/helpers/offset-generator.ts";
-import type { StreamRecord } from "../../../packages/core/src/types/storage.ts";
-import type { CreateOptions } from "../../../packages/core/src/types/protocol.ts";
+import { configMatches } from "../../protocol/helpers/create-config-matcher.ts";
+import { ZERO_OFFSET } from "../../protocol/helpers/offset-generator.ts";
+import type { StreamRecord } from "../../types/storage.ts";
+import type { CreateOptions } from "../../types/protocol.ts";
 
-function makeRecord(overrides: {
-  contentType?: string;
-  ttlSeconds?: number;
-  expiresAt?: string;
-  closed?: boolean;
-  forkedFrom?: string;
-  forkOffset?: string;
-} = {}): StreamRecord {
+function makeRecord(
+  overrides: {
+    contentType?: string;
+    ttlSeconds?: number;
+    expiresAt?: string;
+    closed?: boolean;
+    forkedFrom?: string;
+    forkOffset?: string;
+  } = {},
+): StreamRecord {
   return {
     id: "stream",
     config: {
@@ -89,7 +91,10 @@ describe("configMatches — forkedFrom / forkOffset", () => {
   it("returns false when caller specifies a forkOffset that mismatches existing", () => {
     const existing = makeRecord({ forkedFrom: "parent", forkOffset: ZERO_OFFSET });
     expect(
-      configMatches(existing, { forkedFrom: "parent", forkOffset: "0000000000000001_0000000000000000" }),
+      configMatches(existing, {
+        forkedFrom: "parent",
+        forkOffset: "0000000000000001_0000000000000000",
+      }),
     ).toBe(false);
   });
 });

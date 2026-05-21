@@ -30,12 +30,7 @@
  * directly from this module.
  */
 
-import type {
-  Clock,
-  StreamId,
-  StreamRecord,
-  StreamStoreAdapter,
-} from "../../types/storage.ts";
+import type { Clock, StreamId, StreamRecord, StreamStoreAdapter } from "../../types/storage.ts";
 
 export type TouchReason = "append" | "close" | "read" | "live-read";
 
@@ -72,9 +67,7 @@ export class ExpiryPolicy {
   async scheduleExpiry(record: StreamRecord): Promise<void> {
     const at = record.lifecycle.expiresAtMs;
     if (at !== undefined)
-      await this.store.scheduleExpiry?.(record.id, at, () =>
-        this.onScheduledExpiry(record.id),
-      );
+      await this.store.scheduleExpiry?.(record.id, at, () => this.onScheduledExpiry(record.id));
   }
 
   async expireIfNeeded(streamId: StreamId): Promise<void> {

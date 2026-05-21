@@ -12,7 +12,7 @@ import {
   formatCounter,
   isValidOffset,
   parseCounter,
-} from "../../../packages/core/src/protocol/helpers/offset-generator.ts";
+} from "../../protocol/helpers/offset-generator.ts";
 
 describe("ZERO_OFFSET", () => {
   it("is 16 zero counter digits, underscore, 16 zero sub digits", () => {

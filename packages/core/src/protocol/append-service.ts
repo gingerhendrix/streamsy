@@ -92,8 +92,7 @@ export class AppendService {
     }
 
     if (wantClose && !hasBody) {
-      if (isClosed)
-        return { status: "appended", nextOffset: record.currentOffset, closed: true };
+      if (isClosed) return { status: "appended", nextOffset: record.currentOffset, closed: true };
       const nextOffset = await this.mutators.closeRecord(streamId, record, [], options.seq);
       await this.producerIdempotency.persistIfAccepted(
         streamId,

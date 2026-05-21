@@ -10,11 +10,8 @@ import {
   ProducerIdempotencyService,
   rejectionToAppendResult,
   validateProducer,
-} from "../../../packages/core/src/protocol/helpers/producer-idempotency-service.ts";
-import type {
-  ProducerState,
-  StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
+} from "../../protocol/helpers/producer-idempotency-service.ts";
+import type { ProducerState, StreamStoreAdapter } from "../../types/storage.ts";
 
 function notImplemented(method: string): never {
   throw new Error(`store.${method} not implemented in test stub`);
@@ -145,26 +142,20 @@ describe("rejectionToAppendResult", () => {
 
   it("shapes a producer-gap result with expected and received seq", () => {
     expect(
-      rejectionToAppendResult(
-        { kind: "gap", expectedSeq: 6, receivedSeq: 9 },
-        "offset-A",
-        false,
-      ),
+      rejectionToAppendResult({ kind: "gap", expectedSeq: 6, receivedSeq: 9 }, "offset-A", false),
     ).toEqual({ status: "producer-gap", expectedSeq: 6, receivedSeq: 9 });
   });
 
   it("shapes an invalid-epoch-seq result", () => {
-    expect(
-      rejectionToAppendResult({ kind: "invalid-epoch-seq" }, "offset-A", false),
-    ).toEqual({ status: "invalid-epoch-seq" });
+    expect(rejectionToAppendResult({ kind: "invalid-epoch-seq" }, "offset-A", false)).toEqual({
+      status: "invalid-epoch-seq",
+    });
   });
 });
 
 describe("ProducerIdempotencyService", () => {
   it("loads producer state through the adapter", async () => {
-    const { store } = createStubStore(
-      new Map([["s1:p1", { epoch: 1, lastSeq: 4 }]]),
-    );
+    const { store } = createStubStore(new Map([["s1:p1", { epoch: 1, lastSeq: 4 }]]));
     const service = new ProducerIdempotencyService(store);
     expect(await service.load("s1", "p1")).toEqual({ epoch: 1, lastSeq: 4 });
     expect(await service.load("s1", "p2")).toBeUndefined();

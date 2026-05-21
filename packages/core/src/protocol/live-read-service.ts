@@ -42,10 +42,7 @@ export type LiveReadOwn = (
   after?: Offset,
 ) => Promise<{ messages: StoredMessage[]; nextOffset: string }>;
 
-export type LiveReadTouch = (
-  streamId: StreamId,
-  record: StreamRecord,
-) => Promise<void>;
+export type LiveReadTouch = (streamId: StreamId, record: StreamRecord) => Promise<void>;
 
 export interface LiveReadDeps {
   readChain: LiveReadChain;
@@ -73,9 +70,7 @@ export class LiveReadService {
       const lastOffset =
         messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
       const nextOffset =
-        compareOffsets(lastOffset, record.currentOffset) > 0
-          ? lastOffset
-          : record.currentOffset;
+        compareOffsets(lastOffset, record.currentOffset) > 0 ? lastOffset : record.currentOffset;
       return {
         status: messages.length > 0 ? "ok" : "timeout",
         messages,
@@ -98,9 +93,7 @@ export class LiveReadService {
         status: "ok",
         messages,
         nextOffset:
-          compareOffsets(lastOffset, record.currentOffset) > 0
-            ? lastOffset
-            : record.currentOffset,
+          compareOffsets(lastOffset, record.currentOffset) > 0 ? lastOffset : record.currentOffset,
         upToDate: true,
         cursor: generateCursor(this.clock, options.cursor),
       };

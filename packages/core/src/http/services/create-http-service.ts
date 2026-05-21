@@ -34,17 +34,40 @@ export class CreateHttpService {
   }
 
   private parseHeaders(request: Request):
-    | { ok: true; contentType?: string; ttlSeconds?: number; expiresAt?: string; wantClosed: boolean; forkedFromStreamId?: string; forkOffset?: string }
+    | {
+        ok: true;
+        contentType?: string;
+        ttlSeconds?: number;
+        expiresAt?: string;
+        wantClosed: boolean;
+        forkedFromStreamId?: string;
+        forkOffset?: string;
+      }
     | { ok: false; response: Response } {
     const rawContentType = request.headers.get("content-type");
     const ttlHeader = request.headers.get("stream-ttl");
     const expiresAtHeader = request.headers.get("stream-expires-at");
     const forkedFromHeader = request.headers.get("stream-forked-from");
     const forkOffsetHeader = request.headers.get("stream-fork-offset");
-    if (ttlHeader && !/^(0|[1-9]\d*)$/.test(ttlHeader)) return { ok: false, response: this.deps.responses.badRequest("Invalid Stream-TTL format") };
-    if (ttlHeader && expiresAtHeader) return { ok: false, response: this.deps.responses.badRequest("Cannot specify both Stream-TTL and Stream-Expires-At") };
-    if (expiresAtHeader && isNaN(new Date(expiresAtHeader).getTime())) return { ok: false, response: this.deps.responses.badRequest("Invalid Stream-Expires-At format") };
-    if (forkOffsetHeader && !forkedFromHeader) return { ok: false, response: this.deps.responses.badRequest("Stream-Fork-Offset requires Stream-Forked-From") };
+    if (ttlHeader && !/^(0|[1-9]\d*)$/.test(ttlHeader))
+      return { ok: false, response: this.deps.responses.badRequest("Invalid Stream-TTL format") };
+    if (ttlHeader && expiresAtHeader)
+      return {
+        ok: false,
+        response: this.deps.responses.badRequest(
+          "Cannot specify both Stream-TTL and Stream-Expires-At",
+        ),
+      };
+    if (expiresAtHeader && isNaN(new Date(expiresAtHeader).getTime()))
+      return {
+        ok: false,
+        response: this.deps.responses.badRequest("Invalid Stream-Expires-At format"),
+      };
+    if (forkOffsetHeader && !forkedFromHeader)
+      return {
+        ok: false,
+        response: this.deps.responses.badRequest("Stream-Fork-Offset requires Stream-Forked-From"),
+      };
     const isFork = !!forkedFromHeader;
     return {
       ok: true,
@@ -52,29 +75,43 @@ export class CreateHttpService {
       ttlSeconds: ttlHeader ? parseInt(ttlHeader, 10) : undefined,
       expiresAt: expiresAtHeader ?? undefined,
       wantClosed: request.headers.get("stream-closed")?.toLowerCase() === "true",
-      forkedFromStreamId: forkedFromHeader ? this.deps.path.canonicalizeForkSource(forkedFromHeader) : undefined,
+      forkedFromStreamId: forkedFromHeader
+        ? this.deps.path.canonicalizeForkSource(forkedFromHeader)
+        : undefined,
       forkOffset: forkOffsetHeader ?? undefined,
     };
   }
 
-  private normalizeInitialData(data: Uint8Array, contentType?: string): { ok: true; initialData?: Uint8Array } | { ok: false; response: Response } {
+  private normalizeInitialData(
+    data: Uint8Array,
+    contentType?: string,
+  ): { ok: true; initialData?: Uint8Array } | { ok: false; response: Response } {
     let effectiveInitialData: Uint8Array | undefined = data.byteLength > 0 ? data : undefined;
     if (effectiveInitialData && contentType?.toLowerCase().startsWith("application/json")) {
       try {
         const parsed = JSON.parse(new TextDecoder().decode(effectiveInitialData));
         if (Array.isArray(parsed) && parsed.length === 0) effectiveInitialData = undefined;
       } catch (error) {
-        if (error instanceof SyntaxError) return { ok: false, response: this.deps.responses.invalidJson() };
+        if (error instanceof SyntaxError)
+          return { ok: false, response: this.deps.responses.invalidJson() };
         throw error;
       }
     }
     return { ok: true, initialData: effectiveInitialData };
   }
 
-  private toResponse(result: Awaited<ReturnType<StreamProtocolInterface["create"]>>, location: string): Response {
-    if (result.status === "not-found") return this.deps.responses.notFound(result.errorMessage ?? "Source stream not found");
-    if (result.status === "bad-request") return this.deps.responses.badRequest(result.errorMessage ?? "Invalid fork parameters");
-    if (result.status === "conflict") return this.deps.responses.conflict(result.errorMessage ?? "Stream exists with different configuration");
+  private toResponse(
+    result: Awaited<ReturnType<StreamProtocolInterface["create"]>>,
+    location: string,
+  ): Response {
+    if (result.status === "not-found")
+      return this.deps.responses.notFound(result.errorMessage ?? "Source stream not found");
+    if (result.status === "bad-request")
+      return this.deps.responses.badRequest(result.errorMessage ?? "Invalid fork parameters");
+    if (result.status === "conflict")
+      return this.deps.responses.conflict(
+        result.errorMessage ?? "Stream exists with different configuration",
+      );
     const status = result.status === "created" ? 201 : 200;
     return this.deps.responses.empty(status, {
       "content-type": result.contentType,

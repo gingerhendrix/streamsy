@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { frameMessages } from "../../../packages/core/src/protocol/helpers/message-framer.ts";
+import { frameMessages } from "../../protocol/helpers/message-framer.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();

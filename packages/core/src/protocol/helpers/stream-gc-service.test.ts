@@ -29,14 +29,14 @@ import { describe, expect, it } from "vitest";
 import {
   StreamGcService,
   type StreamGcServiceMutators,
-} from "../../../packages/core/src/protocol/helpers/stream-gc-service.ts";
+} from "../../protocol/helpers/stream-gc-service.ts";
 import type {
   StreamEventType,
   StreamId,
   StreamRecord,
   StreamRecordPatch,
   StreamStoreAdapter,
-} from "../../../packages/core/src/types/storage.ts";
+} from "../../types/storage.ts";
 
 const STREAM_ID = "s";
 const PARENT_ID = "p";
@@ -147,9 +147,10 @@ function makeStub(initial: StreamRecord[] = []): Stub {
   return { store, records, events, refCounts };
 }
 
-function makeMutators(
-  isExpired: (record: StreamRecord) => boolean = () => true,
-): { mutators: StreamGcServiceMutators; isExpiredCalls: StreamRecord[] } {
+function makeMutators(isExpired: (record: StreamRecord) => boolean = () => true): {
+  mutators: StreamGcServiceMutators;
+  isExpiredCalls: StreamRecord[];
+} {
   const isExpiredCalls: StreamRecord[] = [];
   return {
     isExpiredCalls,
@@ -175,7 +176,9 @@ describe("StreamGcService.delete", () => {
   });
 
   it("returns gone when the stream is soft-deleted", async () => {
-    const stub = makeStub([makeRecord(STREAM_ID, { lifecycle: { childRefCount: 0, softDeleted: true } })]);
+    const stub = makeStub([
+      makeRecord(STREAM_ID, { lifecycle: { childRefCount: 0, softDeleted: true } }),
+    ]);
     const { mutators } = makeMutators();
     const service = new StreamGcService(stub.store, mutators);
 
@@ -302,9 +305,7 @@ describe("StreamGcService purge cascade", () => {
 
     await service.delete(STREAM_ID);
 
-    const cascadeKinds = stub.events
-      .map((e) => e.kind)
-      .filter((k) => k !== "get");
+    const cascadeKinds = stub.events.map((e) => e.kind).filter((k) => k !== "get");
     expect(cascadeKinds).toEqual([
       "cancelExpiry",
       "deleteMessages",

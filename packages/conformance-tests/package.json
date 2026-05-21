@@ -1,24 +1,27 @@
 {
-  "name": "test-server",
+  "name": "@streamsy/conformance-tests",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "dev": "bun alchemy dev",
-    "deploy": "bun alchemy deploy",
-    "destroy": "bun alchemy destroy",
-    "test": "vitest --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
-    "test:conformance": "STAGE=conformance bun ../../scripts/conformance-deploy-test-destroy.ts"
+    "test:memory": "vitest --run src/memory.conformance.test.ts",
+    "test:do": "STAGE=conformance bun src/deploy-test-destroy.ts",
+    "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy"
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.0",
     "@streamsy/core": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
+    "@streamsy/storage-memory": "workspace:*",
     "vitest": "^4.0.16"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
     "alchemy": "catalog:",
     "typescript": "catalog:"

@@ -37,14 +37,32 @@ export class HttpHandler {
     const etags = new EtagBuilder();
     const sseEvents = new SseEventEncoder(bodyCodec);
     const longPoll = new LongPollHttpService({ protocol: options.protocol, responses, bodyCodec });
-    const sse = new SseHttpService({ protocol: options.protocol, responses, sseEvents, clock: systemClock });
+    const sse = new SseHttpService({
+      protocol: options.protocol,
+      responses,
+      sseEvents,
+      clock: systemClock,
+    });
 
     this.dispatch = new HttpDispatchService({
       path,
       responses,
       create: new CreateHttpService({ protocol: options.protocol, path, responses, bodyReader }),
-      append: new AppendHttpService({ protocol: options.protocol, responses, bodyReader, producerHeaders }),
-      read: new ReadHttpService({ protocol: options.protocol, responses, bodyCodec, readQuery, etags, longPoll, sse }),
+      append: new AppendHttpService({
+        protocol: options.protocol,
+        responses,
+        bodyReader,
+        producerHeaders,
+      }),
+      read: new ReadHttpService({
+        protocol: options.protocol,
+        responses,
+        bodyCodec,
+        readQuery,
+        etags,
+        longPoll,
+        sse,
+      }),
       metadata: new MetadataHttpService({ protocol: options.protocol, responses }),
       delete: new DeleteHttpService({ protocol: options.protocol, responses }),
     });

@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  LiveReadService,
-  type LiveReadDeps,
-} from "../../../packages/core/src/protocol/live-read-service.ts";
+import { LiveReadService, type LiveReadDeps } from "../protocol/live-read-service.ts";
 import type {
   Clock,
   StoredMessage,
   StreamRecord,
   StreamStoreAdapter,
   WaitForEventResult,
-} from "../../../packages/core/src/types/storage.ts";
+} from "../types/storage.ts";
 
 const ZERO_OFFSET = "0000000000000000_0000000000000000";
 

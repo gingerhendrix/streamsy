@@ -58,11 +58,7 @@ export interface ForkServiceMutators {
     fork: ForkDescriptor,
   ): StreamRecord;
   scheduleExpiry(record: StreamRecord): Promise<void>;
-  appendMessages(
-    streamId: StreamId,
-    record: StreamRecord,
-    data: Uint8Array[],
-  ): Promise<string>;
+  appendMessages(streamId: StreamId, record: StreamRecord, data: Uint8Array[]): Promise<string>;
 }
 
 export function resolveForkExpiry(
