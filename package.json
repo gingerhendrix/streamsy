@@ -2,27 +2,37 @@
   "name": "durable-streams",
   "version": "0.0.1",
   "private": true,
-  "type": "module",
   "workspaces": {
-    "packages": ["packages/*", "examples/*"],
+    "packages": [
+      "packages/*",
+      "examples/*"
+    ],
     "catalog": {
       "alchemy": "0.82.1",
       "@cloudflare/workers-types": "^4.20251228.0",
       "typescript": "^5.8.3"
     }
   },
+  "type": "module",
   "scripts": {
-    "deploy": "bun --cwd examples/test-server alchemy deploy",
-    "dev": "bun --cwd examples/test-server alchemy dev",
-    "destroy": "bun --cwd examples/test-server alchemy destroy",
+    "deploy": "bun run --cwd packages/conformance-tests deploy",
+    "dev": "bun run --cwd packages/conformance-tests dev",
+    "destroy": "bun run --cwd packages/conformance-tests destroy",
     "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun --cwd examples/test-server test",
-    "test:conformance": "STAGE=conformance bun scripts/conformance-deploy-test-destroy.ts"
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
+    "format": "oxfmt . --write",
+    "format:check": "oxfmt . --check",
+    "test": "bun run test:unit",
+    "test:conformance": "bun run test:conformance:memory && bun run test:conformance:do",
+    "test:unit": "bun run --cwd packages/core test:unit && bun run --cwd packages/storage-memory test:unit",
+    "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
+    "test:conformance:do": "bun run --cwd packages/conformance-tests test:do"
   },
-  "dependencies": {
-    "@durable-streams/server-conformance-tests": "^0.3.0"
+  "devDependencies": {
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.63.0"
   },
-  "devDependencies": {},
   "overrides": {
     "@durable-streams/client": "^0.2.3"
   }

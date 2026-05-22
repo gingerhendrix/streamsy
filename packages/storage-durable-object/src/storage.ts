@@ -1,328 +1,279 @@
-/**
- * Storage Layer Implementation - Cloudflare Durable Object
- *
- * SQLite-backed Durable Object storage.
- * Extends DurableObject for RPC access from the protocol layer.
- * Uses the synchronous KV storage API for performance.
- */
-
 import { DurableObject } from "cloudflare:workers";
+import { StreamProtocol } from "@streamsy/core";
 import type {
-  StreamStorage as StreamStorageInterface,
-  StreamMetadata,
-  CreateStreamOptions,
-  StorageReadResult,
-  StorageReadLiveResult,
-  StoredMessage,
+  ListMessagesOptions,
   ProducerState,
+  StoredMessage,
+  StreamEventType,
+  StreamRecord,
+  StreamRecordPatch,
+  StreamStoreAdapter,
+  WaitForEventOptions,
+  WaitForEventResult,
 } from "@streamsy/core";
 
-const ZERO_OFFSET = `${"0".repeat(16)}_${"0".repeat(16)}`;
-// Keep server-side long-poll timeouts comfortably below common client/test
-// request timeouts. Clients that want to keep waiting can reconnect with the
-// returned Stream-Cursor and Stream-Next-Offset.
 const LONG_POLL_TIMEOUT_MS = 1500;
 
+export interface DurableObjectStreamStoreEnv {
+  STREAM_DO: DurableObjectNamespace<DurableObjectStreamStorage>;
+}
+
+/**
+ * Namespace-level adapter used by core. Routes each operation to the stream's
+ * Durable Object.
+ *
+ * Atomicity model:
+ * - For single-stream mutations (create with initial data, append, close,
+ *   producer-id state) the adapter serializes the protocol's read-modify-write
+ *   sequence by routing `withLock` to a per-DO in-memory lock chain (see acquire/release on the
+ *   DO). Because each lock key is per-stream, the lock targets one DO and
+ *   leverages the DO's single-threaded RPC dispatch.
+ * - Multi-stream operations (fork creation, purge cascade) are NOT atomic
+ *   across DOs. The `transaction` capability is intentionally not provided.
+ *   Failures between parent/child updates can leave the fork graph in an
+ *   inconsistent state; this is documented and accepted for this pass.
+ */
+export class DurableObjectStreamStoreAdapter implements StreamStoreAdapter {
+  constructor(private namespace: DurableObjectNamespace<DurableObjectStreamStorage>) {}
+
+  private stub(streamId: string): DurableObjectStub<DurableObjectStreamStorage> {
+    return this.namespace.get(this.namespace.idFromName(streamId));
+  }
+
+  /** Lock keys are `stream:<streamId>` or `producer:<streamId>:<producerId>`. */
+  private streamIdFromLockKey(key: string): string {
+    if (key.startsWith("stream:")) return key.slice("stream:".length);
+    if (key.startsWith("producer:")) {
+      const rest = key.slice("producer:".length);
+      const lastColon = rest.lastIndexOf(":");
+      return lastColon >= 0 ? rest.slice(0, lastColon) : rest;
+    }
+    throw new Error(`Unrecognized lock key: ${key}`);
+  }
+
+  get(streamId: string) {
+    return this.stub(streamId).get(streamId);
+  }
+  create(record: StreamRecord) {
+    return this.stub(record.id).create(record);
+  }
+  update(streamId: string, patch: StreamRecordPatch) {
+    return this.stub(streamId).update(streamId, patch);
+  }
+  delete(streamId: string) {
+    return this.stub(streamId).delete(streamId);
+  }
+  append(streamId: string, messages: StoredMessage[]) {
+    return this.stub(streamId).append(streamId, messages);
+  }
+  list(streamId: string, options?: ListMessagesOptions) {
+    return this.stub(streamId).list(streamId, options);
+  }
+  deleteMessages(streamId: string) {
+    return this.stub(streamId).deleteMessages(streamId);
+  }
+  getProducerState(streamId: string, producerId: string) {
+    return this.stub(streamId).getProducerState(streamId, producerId);
+  }
+  setProducerState(streamId: string, producerId: string, state: ProducerState) {
+    return this.stub(streamId).setProducerState(streamId, producerId, state);
+  }
+  deleteProducerStates(streamId: string) {
+    return this.stub(streamId).deleteProducerStates(streamId);
+  }
+  incrementChildRefCount(parentId: string) {
+    return this.stub(parentId).incrementChildRefCount(parentId);
+  }
+  decrementChildRefCount(parentId: string) {
+    return this.stub(parentId).decrementChildRefCount(parentId);
+  }
+  waitForEvent(streamId: string, options: WaitForEventOptions) {
+    return this.stub(streamId).waitForEvent(streamId, options);
+  }
+  notify(streamId: string, type: StreamEventType) {
+    return this.stub(streamId).notify(streamId, type);
+  }
+  scheduleExpiry(streamId: string, at: number) {
+    return this.stub(streamId).scheduleExpiry(streamId, at);
+  }
+  cancelExpiry(streamId: string) {
+    return this.stub(streamId).cancelExpiry(streamId);
+  }
+
+  async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const streamId = this.streamIdFromLockKey(key);
+    const stub = this.stub(streamId);
+    const token = await stub.acquireLock(key);
+    try {
+      return await fn();
+    } finally {
+      await stub.releaseLock(key, token);
+    }
+  }
+}
+
+/** Per-stream Durable Object: durable fact storage plus DO runtime capabilities. */
 export class DurableObjectStreamStorage
-  extends DurableObject
-  implements StreamStorageInterface
+  extends DurableObject<DurableObjectStreamStoreEnv>
+  implements StreamStoreAdapter
 {
-  private waiters: Set<() => void> = new Set();
-  private metadata: StreamMetadata | null = null;
-  private counter: number = 0;
-  private currentOffset: string;
-  private producerLocks: Map<string, Promise<void>> = new Map();
+  private waiters = new Set<(result: WaitForEventResult) => void>();
+  private lockChain = new Map<string, Promise<void>>();
+  private lockReleasers = new Map<string, () => void>();
 
-  constructor(ctx: DurableObjectState, env: object) {
-    super(ctx, env);
-    this.metadata = ctx.storage.kv.get("metadata") ?? null;
-    this.counter = ctx.storage.kv.get("counter") ?? 0;
-    this.currentOffset = ctx.storage.kv.get("currentOffset") ?? ZERO_OFFSET;
-  }
-
-  /**
-   * TTL alarm handler.
-   * If forks still reference this stream (refCount > 0), soft-delete instead of purging.
-   */
   override async alarm(): Promise<void> {
-    if (!this.metadata) return;
-    const refCount = this.metadata.refCount ?? 0;
-    if (refCount > 0) {
-      await this.setSoftDeleted(true);
-      return;
+    const record = await this.getOwnRecord();
+    if (!record) return;
+    if (!this.env.STREAM_DO) {
+      // Required for fork-aware GC. Worker bindings must expose STREAM_DO.
+      throw new Error("DurableObjectStreamStorage.alarm requires env.STREAM_DO binding");
     }
-    await this.deleteAll();
+    const protocol = new StreamProtocol(new DurableObjectStreamStoreAdapter(this.env.STREAM_DO));
+    await protocol.handleScheduledExpiry(record.id);
   }
 
-  async createStream(options: CreateStreamOptions): Promise<string> {
-    const metadata: StreamMetadata = {
-      contentType: options.contentType,
-      ttlSeconds: options.ttlSeconds,
-      expiresAt: options.expiresAt,
-      createdAt: Date.now(),
-      ...(options.closed ? { closed: true, closedAt: Date.now() } : {}),
-      forkedFrom: options.forkedFrom,
-      forkOffset: options.forkOffset,
-      refCount: 0,
+  async get(_streamId: string): Promise<StreamRecord | null> {
+    return this.getOwnRecord();
+  }
+
+  async create(record: StreamRecord) {
+    const existing = await this.getOwnRecord();
+    if (existing) return { status: "exists" as const, record: existing };
+    await this.ctx.storage.kv.put("record", record);
+    return { status: "created" as const };
+  }
+
+  async update(_streamId: string, patch: StreamRecordPatch): Promise<StreamRecord> {
+    const existing = await this.mustRecord();
+    const updated: StreamRecord = {
+      ...existing,
+      config: { ...existing.config, ...patch.config },
+      lifecycle: { ...existing.lifecycle, ...patch.lifecycle },
+      currentOffset: patch.currentOffset ?? existing.currentOffset,
+      counter: patch.counter ?? existing.counter,
     };
-
-    this.ctx.storage.kv.put("metadata", metadata);
-
-    let initialOffset: string;
-    let initialCounter: number;
-    if (options.forkedFrom && options.forkOffset) {
-      initialOffset = options.forkOffset;
-      initialCounter = parseCounter(options.forkOffset);
-    } else {
-      initialOffset = ZERO_OFFSET;
-      initialCounter = 0;
-    }
-
-    this.ctx.storage.kv.put("counter", initialCounter);
-    this.ctx.storage.kv.put("currentOffset", initialOffset);
-
-    this.metadata = metadata;
-    this.counter = initialCounter;
-    this.currentOffset = initialOffset;
-
-    if (options.ttlSeconds) {
-      await this.ctx.storage.setAlarm(Date.now() + options.ttlSeconds * 1000);
-    } else if (options.expiresAt) {
-      await this.ctx.storage.setAlarm(new Date(options.expiresAt).getTime());
-    }
-
-    if (options.initialData?.length) {
-      return await this.append(options.initialData);
-    }
-
-    return initialOffset;
+    this.ctx.storage.kv.put("record", updated);
+    return updated;
   }
 
-  async deleteAll(): Promise<void> {
-    for (const waiter of this.waiters) {
-      waiter();
-    }
-    this.waiters.clear();
-
-    this.metadata = null;
-    this.counter = 0;
-    this.currentOffset = ZERO_OFFSET;
-
-    // Delete all storage (also clears producer:* entries)
+  async delete(_streamId: string): Promise<void> {
     await this.ctx.storage.deleteAll();
   }
 
+  async append(_streamId: string, messages: StoredMessage[]): Promise<void> {
+    for (const msg of messages) this.ctx.storage.kv.put(`message:${msg.offset}`, msg);
+  }
+
+  async list(_streamId: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+    const listOptions: DurableObjectListOptions = { prefix: "message:" };
+    if (options.after) listOptions.startAfter = `message:${options.after}`;
+    const entries = this.ctx.storage.kv.list<StoredMessage>(listOptions);
+    const messages: StoredMessage[] = [];
+    for (const [, value] of entries) {
+      if (options.until && value.offset > options.until) break;
+      messages.push(value);
+      if (options.limit !== undefined && messages.length >= options.limit) break;
+    }
+    return messages;
+  }
+
+  async deleteMessages(_streamId: string): Promise<void> {
+    const entries = this.ctx.storage.kv.list({ prefix: "message:" });
+    for (const [key] of entries) this.ctx.storage.kv.delete(key);
+  }
+
   async getProducerState(
+    _streamId: string,
     producerId: string,
   ): Promise<ProducerState | undefined> {
     return this.ctx.storage.kv.get<ProducerState>(`producer:${producerId}`);
   }
 
   async setProducerState(
+    _streamId: string,
     producerId: string,
     state: ProducerState,
   ): Promise<void> {
     this.ctx.storage.kv.put(`producer:${producerId}`, state);
   }
 
-  async acquireProducerLock(producerId: string): Promise<() => void> {
-    while (this.producerLocks.has(producerId)) {
-      await this.producerLocks.get(producerId);
-    }
-
-    let release!: () => void;
-    const lock = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.producerLocks.set(producerId, lock);
-
-    return () => {
-      this.producerLocks.delete(producerId);
-      release();
-    };
+  async deleteProducerStates(_streamId: string): Promise<void> {
+    const entries = this.ctx.storage.kv.list({ prefix: "producer:" });
+    for (const [key] of entries) this.ctx.storage.kv.delete(key);
   }
 
-  async getMetadata(): Promise<StreamMetadata | null> {
-    return this.metadata;
+  async incrementChildRefCount(streamId: string): Promise<number> {
+    const record = await this.mustRecord();
+    const next = record.lifecycle.childRefCount + 1;
+    await this.update(streamId, { lifecycle: { childRefCount: next } });
+    return next;
   }
 
-  async getCurrentOffset(): Promise<string> {
-    return this.currentOffset;
+  async decrementChildRefCount(streamId: string): Promise<number> {
+    const record = await this.mustRecord();
+    const next = Math.max(0, record.lifecycle.childRefCount - 1);
+    await this.update(streamId, { lifecycle: { childRefCount: next } });
+    return next;
   }
 
-  async append(messages: Uint8Array[], seq?: string): Promise<string> {
-    await this.resetTtlIfApplicable();
-
-    let lastOffset = this.currentOffset;
-
-    for (const data of messages) {
-      this.counter++;
-      const offset = formatOffset(this.counter);
-      lastOffset = offset;
-
-      this.ctx.storage.kv.put(`message:${offset}`, {
-        data,
-        offset,
-        timestamp: Date.now(),
-      } satisfies StoredMessage);
-    }
-
-    this.ctx.storage.kv.put("counter", this.counter);
-    this.ctx.storage.kv.put("currentOffset", lastOffset);
-    this.currentOffset = lastOffset;
-
-    if (seq && this.metadata) {
-      const updatedMeta = { ...this.metadata, lastSeq: seq };
-      this.ctx.storage.kv.put("metadata", updatedMeta);
-      this.metadata = updatedMeta;
-    }
-
-    this.notifyWaiters();
-
-    return this.currentOffset;
-  }
-
-  async close(messages?: Uint8Array[], seq?: string): Promise<string> {
-    if (messages && messages.length > 0) {
-      await this.append(messages, seq);
-    } else {
-      await this.resetTtlIfApplicable();
-      if (seq && this.metadata) {
-        const updatedMeta = { ...this.metadata, lastSeq: seq };
-        this.ctx.storage.kv.put("metadata", updatedMeta);
-        this.metadata = updatedMeta;
-      }
-    }
-
-    if (this.metadata) {
-      const closedMeta = {
-        ...this.metadata,
-        closed: true,
-        closedAt: Date.now(),
-      };
-      this.ctx.storage.kv.put("metadata", closedMeta);
-      this.metadata = closedMeta;
-    }
-
-    // Wake any long-poll waiters so they observe the closed state.
-    this.notifyWaiters();
-
-    return this.currentOffset;
-  }
-
-  async read(afterOffset?: string): Promise<StorageReadResult> {
-    await this.resetTtlIfApplicable();
-    return this.readNoTouch(afterOffset);
-  }
-
-  async readNoTouch(afterOffset?: string): Promise<StorageReadResult> {
-    const listOptions: DurableObjectListOptions = {
-      prefix: "message:",
-    };
-
-    if (afterOffset) {
-      listOptions.startAfter = `message:${afterOffset}`;
-    }
-
-    const entries = this.ctx.storage.kv.list<StoredMessage>(listOptions);
-    const messages: StoredMessage[] = [];
-
-    for (const [_, value] of entries) {
-      messages.push(value);
-    }
-
-    const nextOffset =
-      messages.length > 0
-        ? messages[messages.length - 1]!.offset
-        : this.currentOffset;
-
-    return {
-      messages,
-      nextOffset,
-      upToDate: nextOffset === this.currentOffset,
-    };
-  }
-
-  async readLive(
-    afterOffset: string,
-    signal?: AbortSignal,
-  ): Promise<StorageReadLiveResult> {
-    // read() resets TTL; no separate call needed here.
-    const result = await this.read(afterOffset);
-    if (result.messages.length > 0) {
-      return { ...result, timedOut: false };
-    }
-
+  async waitForEvent(_streamId: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
     return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        this.waiters.delete(notify);
-        resolve({
-          messages: [],
-          nextOffset: result.nextOffset,
-          timedOut: true,
-        });
-      }, LONG_POLL_TIMEOUT_MS);
-
-      const notify = async () => {
-        clearTimeout(timeoutId);
-        this.waiters.delete(notify);
-        const r = await this.read(afterOffset);
-        resolve({ ...r, timedOut: false });
+      const timeout = setTimeout(
+        () => finish({ status: "timeout" }),
+        Math.min(options.timeoutMs, LONG_POLL_TIMEOUT_MS),
+      );
+      const finish = (result: WaitForEventResult) => {
+        clearTimeout(timeout);
+        this.waiters.delete(finish);
+        resolve(result);
       };
-
-      this.waiters.add(notify);
-
-      signal?.addEventListener("abort", () => {
-        clearTimeout(timeoutId);
-        this.waiters.delete(notify);
-        resolve({
-          messages: [],
-          nextOffset: result.nextOffset,
-          timedOut: true,
-        });
+      this.waiters.add(finish);
+      options.signal?.addEventListener("abort", () => finish({ status: "aborted" }), {
+        once: true,
       });
     });
   }
 
-  async setRefCount(value: number): Promise<void> {
-    if (!this.metadata) return;
-    const updated = { ...this.metadata, refCount: value };
-    this.ctx.storage.kv.put("metadata", updated);
-    this.metadata = updated;
+  notify(_streamId: string, type: StreamEventType): void {
+    const waiters = [...this.waiters];
+    this.waiters.clear();
+    for (const waiter of waiters) waiter({ status: "notified", type });
   }
 
-  async setSoftDeleted(value: boolean): Promise<void> {
-    if (!this.metadata) return;
-    const updated = { ...this.metadata, softDeleted: value };
-    this.ctx.storage.kv.put("metadata", updated);
-    this.metadata = updated;
-    if (value) {
-      this.notifyWaiters();
-    }
+  async scheduleExpiry(_streamId: string, at: number): Promise<void> {
+    await this.ctx.storage.setAlarm(at);
+  }
+  async cancelExpiry(_streamId: string): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
   }
 
-  private notifyWaiters() {
-    for (const waiter of this.waiters) {
-      waiter();
-    }
+  /**
+   * Acquire an in-DO lock. The DO is single-threaded so the lock chain Map is
+   * safe to mutate from concurrent RPC calls. Returns a token used to release.
+   */
+  async acquireLock(key: string): Promise<string> {
+    while (this.lockChain.has(key)) await this.lockChain.get(key);
+    const token = `${key}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    let release!: () => void;
+    this.lockChain.set(key, new Promise<void>((resolve) => (release = resolve)));
+    this.lockReleasers.set(token, release);
+    return token;
   }
 
-  // Per PROTOCOL.md §5.1: Stream-TTL is a sliding window. Stream-Expires-At
-  // is an absolute deadline and is not reset.
-  private async resetTtlIfApplicable(): Promise<void> {
-    const ttlSeconds = this.metadata?.ttlSeconds;
-    if (!ttlSeconds) return;
-    await this.ctx.storage.setAlarm(Date.now() + ttlSeconds * 1000);
+  async releaseLock(key: string, token: string): Promise<void> {
+    const release = this.lockReleasers.get(token);
+    if (!release) return;
+    this.lockReleasers.delete(token);
+    this.lockChain.delete(key);
+    release();
   }
-}
 
-function formatOffset(counter: number): string {
-  const counterStr = String(counter).padStart(16, "0");
-  const byteOffset = "0".repeat(16);
-  return `${counterStr}_${byteOffset}`;
-}
-
-function parseCounter(offset: string): number {
-  const [counterStr] = offset.split("_");
-  return parseInt(counterStr ?? "0", 10);
+  private async getOwnRecord(): Promise<StreamRecord | null> {
+    return this.ctx.storage.kv.get<StreamRecord>("record") ?? null;
+  }
+  private async mustRecord(): Promise<StreamRecord> {
+    const record = await this.getOwnRecord();
+    if (!record) throw new Error("Stream not found");
+    return record;
+  }
 }

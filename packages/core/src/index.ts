@@ -1,21 +1,10 @@
-/**
- * @streamsy/core
- *
- * Runtime-agnostic protocol and HTTP layers for the Durable Streams protocol.
- * Provides StreamProtocol, HttpHandler, and all type definitions.
- *
- * Storage backends are provided by separate packages
- * (e.g., @streamsy/storage-durable-object).
- */
-
-// Core classes
-export { StreamProtocol } from "./protocol.ts";
+/** @streamsy/core */
+export { StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
 export { HttpHandler } from "./http.ts";
 
-// Type exports
 export type {
   StreamProtocolInterface,
-  StorageFactory,
+  StreamStoreFactory,
   CreateOptions,
   CreateResult,
   AppendOptions,
@@ -30,11 +19,18 @@ export type {
 } from "./types/protocol.ts";
 
 export type {
-  StreamStorage,
-  StreamMetadata,
-  CreateStreamOptions,
-  StorageReadResult,
-  StorageReadLiveResult,
+  StreamId,
+  Offset,
+  StreamConfig,
+  StreamLifecycleState,
+  StreamRecord,
+  StreamRecordPatch,
+  StreamStoreAdapter,
   StoredMessage,
   ProducerState,
+  ListMessagesOptions,
+  StreamEventType,
+  WaitForEventOptions,
+  WaitForEventResult,
+  Clock,
 } from "./types/storage.ts";

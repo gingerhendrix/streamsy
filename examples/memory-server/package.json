@@ -5,15 +5,11 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest",
-    "test:node": "node --experimental-vm-modules node_modules/.bin/vitest"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
-    "@streamsy/storage-memory": "workspace:*",
-    "@durable-streams/server-conformance-tests": "^0.3.0",
-    "vitest": "^4.0.16"
+    "@streamsy/storage-memory": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

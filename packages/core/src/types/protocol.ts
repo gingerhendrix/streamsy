@@ -5,7 +5,7 @@
  * JSON mode processing, cursor generation, and orchestration.
  */
 
-import type { StoredMessage, StreamStorage } from "./storage.ts";
+import type { StoredMessage, StreamStoreAdapter } from "./storage.ts";
 
 // === Protocol Inputs ===
 
@@ -78,7 +78,12 @@ export type AppendResult =
     }
   | { status: "not-found" }
   | { status: "gone" }
-  | { status: "conflict"; conflictReason: "content-type" | "sequence" | "closed"; nextOffset?: string; closed?: boolean }
+  | {
+      status: "conflict";
+      conflictReason: "content-type" | "sequence" | "closed";
+      nextOffset?: string;
+      closed?: boolean;
+    }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
   | { status: "invalid-epoch-seq" };
@@ -115,7 +120,7 @@ export interface DeleteResult {
 
 // === Storage Factory Type ===
 
-export type StorageFactory = (streamId: string) => StreamStorage;
+export type StreamStoreFactory = () => StreamStoreAdapter;
 
 // === Protocol Interface ===
 
