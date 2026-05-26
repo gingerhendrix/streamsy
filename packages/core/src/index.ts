@@ -1,12 +1,16 @@
 /** @streamsy/core */
-export { StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
-export { HttpHandler } from "./http.ts";
+export { createStreamProtocol, StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
+export { createHttpHandler, HttpHandler } from "./http.ts";
+
+export type { StreamProtocolOptions } from "./protocol.ts";
+export type { HttpHandlerInterface, HttpHandlerOptions } from "./http/types.ts";
 
 export type {
   StreamProtocolInterface,
   StreamStoreFactory,
   CreateOptions,
   CreateResult,
+  CreateConflictReason,
   AppendOptions,
   AppendResult,
   ProducerOptions,
@@ -25,6 +29,7 @@ export type {
   StreamLifecycleState,
   StreamRecord,
   StreamRecordPatch,
+  CreateStreamRecordResult,
   StreamStoreAdapter,
   StoredMessage,
   ProducerState,

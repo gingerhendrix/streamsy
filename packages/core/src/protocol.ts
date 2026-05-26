@@ -37,6 +37,13 @@ export interface StreamProtocolOptions {
   longPollTimeoutMs?: number;
 }
 
+export function createStreamProtocol(
+  store: StreamStoreAdapter,
+  options: StreamProtocolOptions = {},
+): StreamProtocolInterface {
+  return new StreamProtocol(store, options);
+}
+
 export class StreamProtocol implements StreamProtocolInterface {
   private clock: Clock;
   private longPollTimeoutMs: number;

@@ -15,7 +15,7 @@ import { RequestBodyReader } from "./http/request-body-reader.ts";
 import { HttpResponseFactory } from "./http/responses.ts";
 import { SseEventEncoder } from "./http/sse-event-encoder.ts";
 import { StreamPathService } from "./http/stream-path-service.ts";
-import type { HttpHandlerOptions } from "./http/types.ts";
+import type { HttpHandlerInterface, HttpHandlerOptions } from "./http/types.ts";
 import { AppendHttpService } from "./http/services/append-http-service.ts";
 import { CreateHttpService } from "./http/services/create-http-service.ts";
 import { DeleteHttpService } from "./http/services/delete-http-service.ts";
@@ -24,7 +24,11 @@ import { MetadataHttpService } from "./http/services/metadata-http-service.ts";
 import { ReadHttpService } from "./http/services/read-http-service.ts";
 import { SseHttpService } from "./http/services/sse-http-service.ts";
 
-export class HttpHandler {
+export function createHttpHandler(options: HttpHandlerOptions): HttpHandlerInterface {
+  return new HttpHandler(options);
+}
+
+export class HttpHandler implements HttpHandlerInterface {
   private dispatch: HttpDispatchService;
 
   constructor(options: HttpHandlerOptions) {

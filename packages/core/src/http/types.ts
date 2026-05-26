@@ -7,6 +7,10 @@ export interface HttpHandlerOptions {
   maxMessageSize?: number;
 }
 
+export interface HttpHandlerInterface {
+  fetch(request: Request): Promise<Response>;
+}
+
 export interface HttpRouteContext {
   request: Request;
   url: URL;

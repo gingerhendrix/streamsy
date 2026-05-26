@@ -1,16 +1,16 @@
 /**
  * Memory-backed Durable Streams server (Bun)
  *
- * Demonstrates wiring HttpHandler + StreamProtocol + MemoryStreamStorage
+ * Demonstrates wiring createHttpHandler + createStreamProtocol + MemoryStreamStorage
  * on a Bun runtime. Used for running conformance tests.
  */
 
-import { StreamProtocol, HttpHandler } from "@streamsy/core";
+import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
 import { createMemoryStreamStore } from "@streamsy/storage-memory";
 
 const store = createMemoryStreamStore();
-const protocol = new StreamProtocol(store);
-const handler = new HttpHandler({ protocol, pathPrefix: "/" });
+const protocol = createStreamProtocol(store);
+const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 
 const port = parseInt(process.env.PORT ?? "1337", 10);
 
