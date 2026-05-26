@@ -4,6 +4,22 @@ This example runs Streamsy's Fetch-based HTTP facade with the in-memory storage 
 
 The memory backend is process-local and non-persistent. Restarting the server clears all streams.
 
+## HTTP docs smoke test
+
+Run the smoke test from the repository root to catch drift between this walkthrough and the memory server's HTTP behavior:
+
+```bash
+bun run smoke:memory-server:http
+```
+
+The smoke test starts `examples/memory-server` on a temporary local port and verifies representative documented flows: create, append, catch-up read, `ETag`/`If-None-Match`, long-poll delivery after a later append, and initial SSE `data`/`control` events.
+
+You can also run it from this example package:
+
+```bash
+bun run --cwd examples/memory-server smoke:http
+```
+
 ## Start the server
 
 From the repository root:

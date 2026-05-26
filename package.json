@@ -26,6 +26,7 @@
     "test": "bun run test:unit",
     "test:conformance": "bun run test:conformance:memory && bun run test:conformance:do",
     "test:unit": "bun run --cwd packages/core test:unit && bun run --cwd packages/storage-memory test:unit",
+    "smoke:memory-server:http": "bun run --cwd examples/memory-server smoke:http",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:do": "bun run --cwd packages/conformance-tests test:do"
   },

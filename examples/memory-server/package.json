@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
+    "smoke:http": "bun run scripts/http-smoke.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
