@@ -91,11 +91,11 @@ Expected current offset after two appends is similar to `0000000000000002_000000
 
 Optional append headers:
 
-| Header | Use |
-| --- | --- |
-| `Stream-Seq` | Application sequence conflict check. A mismatch returns `409 Conflict`. |
-| `Stream-Closed: true` | Close the stream atomically with this append. |
-| `Producer-Id`, `Producer-Epoch`, `Producer-Seq` | Producer idempotency metadata. All three must be present together. |
+| Header                                          | Use                                                                     |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `Stream-Seq`                                    | Application sequence conflict check. A mismatch returns `409 Conflict`. |
+| `Stream-Closed: true`                           | Close the stream atomically with this append.                           |
+| `Producer-Id`, `Producer-Epoch`, `Producer-Seq` | Producer idempotency metadata. All three must be present together.      |
 
 ## Read from initial and current offsets
 
@@ -265,50 +265,50 @@ After deletion, reads and appends return `404 Not Found` for the memory backend.
 
 Common request headers:
 
-| Header | Methods | Meaning |
-| --- | --- | --- |
-| `Content-Type` | `PUT`, `POST` | Stream content type on create; required on non-empty append and must match the stream. |
-| `Stream-TTL` | `PUT` | Non-negative TTL in seconds. Cannot be combined with `Stream-Expires-At`. |
-| `Stream-Expires-At` | `PUT` | Absolute expiry timestamp. Cannot be combined with `Stream-TTL`. |
-| `Stream-Forked-From` | `PUT` | Source stream id/path when creating a fork. |
-| `Stream-Fork-Offset` | `PUT` | Source offset for the fork; requires `Stream-Forked-From`. |
-| `Stream-Seq` | `POST` | Optional application sequence check. |
-| `Stream-Closed` | `PUT`, `POST` | `true` creates/closes the stream as closed. |
-| `Producer-Id`, `Producer-Epoch`, `Producer-Seq` | `POST` | Optional idempotent producer metadata; all three are required if any are present. |
-| `If-None-Match` | `GET` | Conditional catch-up read using a previous `ETag`. |
+| Header                                          | Methods       | Meaning                                                                                |
+| ----------------------------------------------- | ------------- | -------------------------------------------------------------------------------------- |
+| `Content-Type`                                  | `PUT`, `POST` | Stream content type on create; required on non-empty append and must match the stream. |
+| `Stream-TTL`                                    | `PUT`         | Non-negative TTL in seconds. Cannot be combined with `Stream-Expires-At`.              |
+| `Stream-Expires-At`                             | `PUT`         | Absolute expiry timestamp. Cannot be combined with `Stream-TTL`.                       |
+| `Stream-Forked-From`                            | `PUT`         | Source stream id/path when creating a fork.                                            |
+| `Stream-Fork-Offset`                            | `PUT`         | Source offset for the fork; requires `Stream-Forked-From`.                             |
+| `Stream-Seq`                                    | `POST`        | Optional application sequence check.                                                   |
+| `Stream-Closed`                                 | `PUT`, `POST` | `true` creates/closes the stream as closed.                                            |
+| `Producer-Id`, `Producer-Epoch`, `Producer-Seq` | `POST`        | Optional idempotent producer metadata; all three are required if any are present.      |
+| `If-None-Match`                                 | `GET`         | Conditional catch-up read using a previous `ETag`.                                     |
 
 Common response headers:
 
-| Header | Meaning |
-| --- | --- |
-| `Stream-Next-Offset` | Offset to use for the next catch-up or live read. `-1` means no messages have been written yet. |
-| `Stream-Cursor` | Opaque live-read cursor for subsequent long-poll/SSE requests. |
-| `Stream-Up-To-Date` | `true` when the response has caught up to the stream at response time. |
-| `Stream-Closed` | `true` when the stream is closed, or when an append failed because the stream is closed. |
-| `ETag` | Validator for catch-up GET responses. Use with `If-None-Match`. |
-| `Location` | Created stream URL on `201 Created`. |
-| `Producer-Epoch`, `Producer-Seq` | Producer state returned for idempotent appends/duplicates. |
-| `Producer-Expected-Seq`, `Producer-Received-Seq` | Details for producer sequence-gap conflicts. |
-| `Stream-SSE-Data-Encoding` | `base64` when SSE data payloads are binary encoded. |
+| Header                                           | Meaning                                                                                         |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `Stream-Next-Offset`                             | Offset to use for the next catch-up or live read. `-1` means no messages have been written yet. |
+| `Stream-Cursor`                                  | Opaque live-read cursor for subsequent long-poll/SSE requests.                                  |
+| `Stream-Up-To-Date`                              | `true` when the response has caught up to the stream at response time.                          |
+| `Stream-Closed`                                  | `true` when the stream is closed, or when an append failed because the stream is closed.        |
+| `ETag`                                           | Validator for catch-up GET responses. Use with `If-None-Match`.                                 |
+| `Location`                                       | Created stream URL on `201 Created`.                                                            |
+| `Producer-Epoch`, `Producer-Seq`                 | Producer state returned for idempotent appends/duplicates.                                      |
+| `Producer-Expected-Seq`, `Producer-Received-Seq` | Details for producer sequence-gap conflicts.                                                    |
+| `Stream-SSE-Data-Encoding`                       | `base64` when SSE data payloads are binary encoded.                                             |
 
 Responses also include security headers such as `X-Content-Type-Options: nosniff` and `Cross-Origin-Resource-Policy: cross-origin`.
 
 ## Common status and error mapping
 
-| Status | Typical cause |
-| --- | --- |
-| `200 OK` | Compatible create of an existing stream; producer-tracked non-empty append; catch-up/live read with messages; metadata `HEAD`. |
-| `201 Created` | New stream created. |
-| `204 No Content` | Successful ordinary append/close with no response body, idempotent duplicate append, successful long-poll timeout/no messages, or successful delete. |
-| `304 Not Modified` | Catch-up `GET` with a matching `If-None-Match` ETag. |
-| `400 Bad Request` | Missing stream path, invalid offset, invalid JSON, empty append without close, missing content type on non-empty append, invalid TTL/expiry/fork/producer headers. |
-| `403 Forbidden` | Stale producer epoch. |
-| `404 Not Found` | Stream or fork source does not exist. |
-| `405 Method Not Allowed` | Unsupported HTTP method. |
-| `409 Conflict` | Content-type mismatch, sequence conflict, incompatible create, append to closed stream, or producer sequence gap. |
-| `410 Gone` | Stream is in a soft-deleted lifecycle state. The memory backend's `DELETE` currently removes the record, so later reads commonly return `404 Not Found`. |
-| `413 Payload Too Large` | Create/append body exceeds `maxMessageSize` (default 1 MiB). |
-| `500 Internal Server Error` | Unexpected server error. |
+| Status                      | Typical cause                                                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `200 OK`                    | Compatible create of an existing stream; producer-tracked non-empty append; catch-up/live read with messages; metadata `HEAD`.                                     |
+| `201 Created`               | New stream created.                                                                                                                                                |
+| `204 No Content`            | Successful ordinary append/close with no response body, idempotent duplicate append, successful long-poll timeout/no messages, or successful delete.               |
+| `304 Not Modified`          | Catch-up `GET` with a matching `If-None-Match` ETag.                                                                                                               |
+| `400 Bad Request`           | Missing stream path, invalid offset, invalid JSON, empty append without close, missing content type on non-empty append, invalid TTL/expiry/fork/producer headers. |
+| `403 Forbidden`             | Stale producer epoch.                                                                                                                                              |
+| `404 Not Found`             | Stream or fork source does not exist.                                                                                                                              |
+| `405 Method Not Allowed`    | Unsupported HTTP method.                                                                                                                                           |
+| `409 Conflict`              | Content-type mismatch, sequence conflict, incompatible create, append to closed stream, or producer sequence gap.                                                  |
+| `410 Gone`                  | Stream is in a soft-deleted lifecycle state. The memory backend's `DELETE` currently removes the record, so later reads commonly return `404 Not Found`.           |
+| `413 Payload Too Large`     | Create/append body exceeds `maxMessageSize` (default 1 MiB).                                                                                                       |
+| `500 Internal Server Error` | Unexpected server error.                                                                                                                                           |
 
 ## Practical notes
 

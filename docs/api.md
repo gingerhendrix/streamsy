@@ -11,12 +11,12 @@ This document is focused API documentation. It does not describe the full HTTP m
 
 ## Package boundaries
 
-| Package | Public role | Use when |
-| --- | --- | --- |
-| `@streamsy/core` | Protocol facade, HTTP facade, and shared protocol/storage types. | You are building an app server, integrating Streamsy into a framework/Worker, or authoring a storage adapter. |
-| `@streamsy/storage-memory` | In-memory `StreamStoreAdapter` implementation and factory. | You need local development, tests, examples, or a non-persistent server. |
-| `@streamsy/storage-durable-object` | Cloudflare Durable Object storage classes. | You are wiring Streamsy into a Durable Object runtime. |
-| `@streamsy/conformance-tests` | Private conformance harness. | Internal validation only; not an application API. |
+| Package                            | Public role                                                      | Use when                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`                   | Protocol facade, HTTP facade, and shared protocol/storage types. | You are building an app server, integrating Streamsy into a framework/Worker, or authoring a storage adapter. |
+| `@streamsy/storage-memory`         | In-memory `StreamStoreAdapter` implementation and factory.       | You need local development, tests, examples, or a non-persistent server.                                      |
+| `@streamsy/storage-durable-object` | Cloudflare Durable Object storage classes.                       | You are wiring Streamsy into a Durable Object runtime.                                                        |
+| `@streamsy/conformance-tests`      | Private conformance harness.                                     | Internal validation only; not an application API.                                                             |
 
 Applications should usually depend on `@streamsy/core` plus one storage package. They should not instantiate internal protocol services, HTTP method services, lock providers, readers, writers, or record factories.
 
@@ -224,10 +224,7 @@ export type {
 HTTP types:
 
 ```ts
-export type {
-  HttpHandlerInterface,
-  HttpHandlerOptions,
-} from "@streamsy/core";
+export type { HttpHandlerInterface, HttpHandlerOptions } from "@streamsy/core";
 ```
 
 Storage adapter types:
