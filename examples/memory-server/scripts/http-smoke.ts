@@ -157,7 +157,7 @@ try {
   assert(sseText.includes("event: data"), "SSE should include a data event");
   assert(sseText.includes("event: control"), "SSE should include a control event");
   assert(
-    sseText.includes(`\"streamNextOffset\":\"${secondOffset}\"`),
+    sseText.includes(`"streamNextOffset":"${secondOffset}"`),
     "SSE control should include the current next offset",
   );
   assert(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
