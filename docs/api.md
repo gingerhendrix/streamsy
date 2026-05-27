@@ -7,7 +7,7 @@ Streamsy exposes a small public surface for building Durable Streams servers and
 
 Storage adapters are a lower-level boundary. They persist stream facts and may expose runtime capabilities such as locking, notifications, and expiry scheduling. Protocol and lifecycle policy stay in `@streamsy/core`.
 
-This document is focused API documentation. It does not describe the full HTTP method/header matrix or curl walkthrough; those belong in an example-specific guide.
+This document is focused API documentation. It does not describe the full HTTP method/header matrix or curl walkthrough; those belong in an example-specific guide. For storage-adapter authoring guidance, see `docs/adapter-authoring.md`.
 
 ## Package boundaries
 
@@ -248,6 +248,35 @@ export type {
   Clock,
 } from "@streamsy/core";
 ```
+
+Factory / composed-stream types and helpers (see `docs/adapter-authoring.md`):
+
+```ts
+export type {
+  Stream,
+  StreamFactory,
+  StreamRecordStore,
+  StreamMessageStore,
+  StreamProducerStore,
+  StreamReferenceTracker,
+  StreamMutationCoordinator,
+  StreamEventHub,
+  StreamExpiryScheduler,
+  ComposedStreamDeps,
+  NotSupportedResult,
+} from "@streamsy/core";
+
+export {
+  composeStream,
+  createStreamFactoryFromAdapter,
+  notSupported,
+  isNotSupported,
+  notSupportedResponse,
+  maybeNotSupportedResponse,
+} from "@streamsy/core";
+```
+
+These are alongside the existing `StreamStoreAdapter` API. New adapter packages should still implement `StreamStoreAdapter` today; the factory seam is the destination architecture and exists so adapters and downstream code can migrate without one large rewrite.
 
 ### `@streamsy/storage-memory`
 
