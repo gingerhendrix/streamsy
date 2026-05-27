@@ -151,6 +151,34 @@ await stream.appendMessages([
 
 New adapter authors should read `packages/storage-memory/src/factory.ts` first — it is the smallest, most legible example of the seam.
 
+## Durable Object reference factory
+
+The `@streamsy/storage-durable-object` package ships a native factory for the one-stream-per-Durable-Object model:
+
+```ts
+import { createDurableObjectStreamFactory } from "@streamsy/storage-durable-object";
+
+interface Env {
+  STREAM_DO: DurableObjectNamespace<DurableObjectStreamStorage>;
+}
+
+const factory = createDurableObjectStreamFactory({ namespace: env.STREAM_DO });
+const stream = await factory.getStream("public-id");
+await stream.appendMessages([
+  /* ... */
+]);
+```
+
+The factory:
+
+- routes a public stream id to its per-stream `DurableObjectStreamStorage` instance via `namespace.idFromName(streamId)`;
+- composes a `Stream` whose record, message, producer, reference, mutation, event, and expiry operations are bound to that DO;
+- shares the `DurableObjectStreamStorage` class and the in-DO `acquireLock`/`releaseLock` chain with `DurableObjectStreamStoreAdapter`, so factory callers and existing adapter callers see the same persisted data and the same per-stream serialization point under the `stream:<id>` lock key.
+
+`DurableObjectStreamStoreAdapter` remains the `StreamStoreAdapter`-shaped entry point used by `StreamProtocol` and the existing conformance worker. New code that wants to target the factory seam directly can use `createDurableObjectStreamFactory` alongside the adapter without a protocol-side migration.
+
+Many-streams-per-Durable-Object factories, embeddable domain-DO engine helpers, and cross-object reference policy are explicit next-batch work; this batch only ships the one-stream-per-DO native factory.
+
 ## Adapter author checklist
 
 When designing a new adapter, walk through these questions and decide where each answer lives:

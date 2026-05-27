@@ -7,13 +7,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
   }
 }
