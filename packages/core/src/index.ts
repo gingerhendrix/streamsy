@@ -4,6 +4,13 @@ export { createHttpHandler, HttpHandler } from "./http.ts";
 
 export { composeStream } from "./factory/compose-stream.ts";
 export { createStreamFactoryFromAdapter } from "./factory/adapter-stream-factory.ts";
+export {
+  requireEventHub,
+  requireExpiryScheduler,
+  requireMutationCoordinator,
+  requireProducerStore,
+  requireReferenceTracker,
+} from "./factory/require-deps.ts";
 export { isNotSupported, notSupported } from "./types/factory.ts";
 export { maybeNotSupportedResponse, notSupportedResponse } from "./http/not-supported.ts";
 

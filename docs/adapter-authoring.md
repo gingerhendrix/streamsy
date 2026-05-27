@@ -108,6 +108,25 @@ return notSupportedResponse(result, responses);
 
 There is intentionally **no** capability enum or adapter-level capability declaration in the first pass. Capability declarations may be added later if they become useful for configuration, docs generation, or host validation; the source of truth in the meantime is the protocol result.
 
+Protocol code that needs an optional dependency can use the `require*` helpers to turn a missing member into the right `not-supported` feature id:
+
+```ts
+import {
+  requireEventHub,
+  requireExpiryScheduler,
+  requireMutationCoordinator,
+  requireProducerStore,
+  requireReferenceTracker,
+  isNotSupported,
+} from "@streamsy/core";
+
+const producers = requireProducerStore(stream);
+if (isNotSupported(producers)) return producers;
+await producers.setProducerState(producerId, state);
+```
+
+The feature ids returned by these helpers are `producer-idempotency`, `fork`, `mutation-lock`, `live-read`, and `active-expiry`. HTTP handlers translate those to a 4xx response via `notSupportedResponse` so adapters do not need to repeat the mapping.
+
 ## Compatibility seam for existing adapters
 
 Existing adapters that implement the multi-stream `StreamStoreAdapter` interface can be exposed as a `StreamFactory` without a rewrite:
