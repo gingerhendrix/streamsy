@@ -1,5 +1,7 @@
 /** @streamsy/storage-memory */
 export { MemoryStreamStore } from "./storage.ts";
+export { createMemoryStreamFactory } from "./factory.ts";
+export type { MemoryStreamFactoryOptions } from "./factory.ts";
 import { MemoryStreamStore } from "./storage.ts";
 import type { StreamStoreAdapter } from "@streamsy/core";
 

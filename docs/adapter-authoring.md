@@ -130,6 +130,27 @@ The shim:
 
 This shim is the migration path for adapter packages: keep implementing `StreamStoreAdapter`, expose a factory using the shim, and migrate to a native factory at your own pace.
 
+## Memory reference factory
+
+The `@streamsy/storage-memory` package ships the reference implementation of the factory seam:
+
+```ts
+import { createMemoryStreamFactory } from "@streamsy/storage-memory";
+
+const factory = createMemoryStreamFactory();
+const stream = await factory.getStream("demo");
+await stream.createRecord(/* ... */);
+await stream.appendMessages([
+  /* ... */
+]);
+```
+
+`createMemoryStreamFactory()` owns a process-wide multi-stream table and uses `composeStream` to bind record, message, producer, reference, mutation, event, and expiry operations to one stream id per returned `Stream`. The returned `Stream` does not expose any backing state.
+
+`createMemoryStreamStore()` continues to return a `StreamStoreAdapter` for code that has not yet migrated to the factory seam. The two APIs can share state via `createMemoryStreamFactory({ state })` when a test or example needs both views over the same in-process data; otherwise they are independent.
+
+New adapter authors should read `packages/storage-memory/src/factory.ts` first — it is the smallest, most legible example of the seam.
+
 ## Adapter author checklist
 
 When designing a new adapter, walk through these questions and decide where each answer lives:
