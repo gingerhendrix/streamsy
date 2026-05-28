@@ -1,7 +1,7 @@
 import { HttpHandler, StreamProtocol } from "@streamsy/core";
 import {
+  createDurableObjectStreamFactory,
   DurableObjectStreamStorage as StreamStorage,
-  DurableObjectStreamStoreAdapter,
 } from "@streamsy/storage-durable-object";
 
 export { StreamStorage };
@@ -12,8 +12,8 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const store = new DurableObjectStreamStoreAdapter(env.STREAM_DO);
-    const protocol = new StreamProtocol(store);
+    const factory = createDurableObjectStreamFactory({ namespace: env.STREAM_DO });
+    const protocol = new StreamProtocol({ storage: { factory } });
     const handler = new HttpHandler({ protocol });
     return handler.fetch(request);
   },

@@ -1,26 +1,30 @@
-import type { StreamProtocolInterface } from "../../types/protocol.ts";
+import type { ProtocolStream } from "../../types/protocol.ts";
 import { MessageBodyCodec } from "../message-body-codec.ts";
+import { maybeNotSupportedResponse } from "../not-supported.ts";
 import { HttpResponseFactory } from "../responses.ts";
 
 export class LongPollHttpService {
   constructor(
     private deps: {
-      protocol: StreamProtocolInterface;
       responses: HttpResponseFactory;
       bodyCodec: MessageBodyCodec;
     },
   ) {}
 
-  async execute(streamId: string, offset: string, cursor?: string): Promise<Response> {
-    const result = await this.deps.protocol.readLive(streamId, {
+  async execute(stream: ProtocolStream, offset: string, cursor?: string): Promise<Response> {
+    const result = await stream.readLive({
       offset,
       mode: "long-poll",
       cursor,
     });
+    if (result.status === "not-supported")
+      return maybeNotSupportedResponse(result, this.deps.responses)!;
     if (result.status === "not-found") return this.deps.responses.notFound();
     if (result.status === "gone") return this.deps.responses.gone();
     if (result.messages.length === 0) return this.toNoContentResponse(result);
-    const metadata = await this.deps.protocol.metadata(streamId);
+    const metadata = await stream.metadata();
+    if (metadata.status === "not-found") return this.deps.responses.notFound();
+    if (metadata.status === "gone") return this.deps.responses.gone();
     return new Response(
       this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType!),
       {

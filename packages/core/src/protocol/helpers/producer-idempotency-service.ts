@@ -1,24 +1,9 @@
-/**
- * Producer idempotency state-transition decisions and persistence.
- *
- * Responsibilities:
- *
- * - first appended `seq` from a producer must be 0;
- * - same-epoch `seq <= lastSeq` is a duplicate (echoes stored epoch/lastSeq);
- * - epoch lower than the stored epoch is `stale-epoch`;
- * - epoch higher than the stored epoch is accepted only with `seq === 0`,
- *   otherwise reported as `invalid-epoch-seq`;
- * - same-epoch next sequence is accepted only when `seq === lastSeq + 1`;
- * - same-epoch gap reports the expected and received seq;
- * - accepted state is persisted through `StreamStoreAdapter.setProducerState`.
- *
- * Used by `AppendService`. Callers must invoke this service inside the
- * stream-level `withLock` critical section to keep producer-state and
- * stream-mutation atomic.
- */
+/** Producer idempotency decisions and narrow bound-state persistence. */
 
-import type { AppendResult, ProducerOptions } from "../../types/protocol.ts";
-import type { ProducerState, StreamId, StreamStoreAdapter } from "../../types/storage.ts";
+import type { ProducerOptions } from "../../types/protocol.ts";
+import type { NotSupportedResult, StreamProducerStore } from "../../types/factory.ts";
+import type { ProducerState } from "../../types/storage.ts";
+import { notSupported } from "../../types/factory.ts";
 
 export type ProducerValidation =
   | { kind: "accepted"; proposedState: ProducerState }
@@ -54,34 +39,39 @@ export function rejectionToAppendResult(
   rejection: ProducerRejection,
   currentOffset: string,
   isClosed: boolean,
-): AppendResult {
+) {
   switch (rejection.kind) {
     case "duplicate":
       return {
-        status: "duplicate",
+        status: "duplicate" as const,
         nextOffset: currentOffset,
         producerEpoch: rejection.epoch,
         producerSeq: rejection.lastSeq,
         closed: isClosed,
       };
     case "stale-epoch":
-      return { status: "stale-epoch", currentEpoch: rejection.currentEpoch };
+      return { status: "stale-epoch" as const, currentEpoch: rejection.currentEpoch };
     case "gap":
       return {
-        status: "producer-gap",
+        status: "producer-gap" as const,
         expectedSeq: rejection.expectedSeq,
         receivedSeq: rejection.receivedSeq,
       };
     case "invalid-epoch-seq":
-      return { status: "invalid-epoch-seq" };
+      return { status: "invalid-epoch-seq" as const };
   }
 }
 
 export class ProducerIdempotencyService {
-  constructor(private store: StreamStoreAdapter) {}
+  constructor(private store: StreamProducerStore | undefined) {}
 
-  load(streamId: StreamId, producerId: string): Promise<ProducerState | undefined> {
-    return this.store.getProducerState(streamId, producerId);
+  load(producerId: string): Promise<ProducerState | undefined> | NotSupportedResult {
+    if (!this.store)
+      return notSupported(
+        "producer-idempotency",
+        "The active storage factory has no producer store",
+      );
+    return this.store.getProducerState(producerId);
   }
 
   validate(state: ProducerState | undefined, epoch: number, seq: number): ProducerValidation {
@@ -89,11 +79,16 @@ export class ProducerIdempotencyService {
   }
 
   async persistIfAccepted(
-    streamId: StreamId,
     producer: ProducerOptions | undefined,
     validation: ProducerValidation | undefined,
-  ): Promise<void> {
-    if (!producer || validation?.kind !== "accepted") return;
-    await this.store.setProducerState(streamId, producer.producerId, validation.proposedState);
+  ): Promise<NotSupportedResult | undefined> {
+    if (!producer || validation?.kind !== "accepted") return undefined;
+    if (!this.store)
+      return notSupported(
+        "producer-idempotency",
+        "The active storage factory has no producer store",
+      );
+    await this.store.setProducerState(producer.producerId, validation.proposedState);
+    return undefined;
   }
 }

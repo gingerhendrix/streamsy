@@ -1,5 +1,6 @@
-import type { StreamProtocolInterface } from "../../types/protocol.ts";
+import type { StreamProtocolFactory } from "../../types/protocol.ts";
 import type { HttpRouteContext } from "../types.ts";
+import { maybeNotSupportedResponse } from "../not-supported.ts";
 import { RequestBodyReader } from "../request-body-reader.ts";
 import { HttpResponseFactory } from "../responses.ts";
 import { StreamPathService } from "../stream-path-service.ts";
@@ -7,7 +8,7 @@ import { StreamPathService } from "../stream-path-service.ts";
 export class CreateHttpService {
   constructor(
     private deps: {
-      protocol: StreamProtocolInterface;
+      protocol: StreamProtocolFactory;
       path: StreamPathService;
       responses: HttpResponseFactory;
       bodyReader: RequestBodyReader;
@@ -30,6 +31,8 @@ export class CreateHttpService {
       forkedFrom: parsed.forkedFromStreamId,
       forkOffset: parsed.forkOffset,
     });
+    if (result.status === "not-supported")
+      return maybeNotSupportedResponse(result, this.deps.responses)!;
     return this.toResponse(result, ctx.request.url);
   }
 
@@ -101,7 +104,10 @@ export class CreateHttpService {
   }
 
   private toResponse(
-    result: Awaited<ReturnType<StreamProtocolInterface["create"]>>,
+    result: Exclude<
+      Awaited<ReturnType<StreamProtocolFactory["create"]>>,
+      { status: "not-supported" }
+    >,
     location: string,
   ): Response {
     if (result.status === "not-found")
@@ -112,12 +118,13 @@ export class CreateHttpService {
       return this.deps.responses.conflict(
         result.errorMessage ?? "Stream exists with different configuration",
       );
-    const status = result.status === "created" ? 201 : 200;
+    const success = result as Extract<typeof result, { status: "created" | "exists" }>;
+    const status = success.status === "created" ? 201 : 200;
     return this.deps.responses.empty(status, {
-      "content-type": result.contentType,
-      "stream-next-offset": result.nextOffset,
+      "content-type": success.contentType,
+      "stream-next-offset": success.nextOffset,
       ...(status === 201 ? { location } : {}),
-      ...(result.closed ? { "stream-closed": "true" } : {}),
+      ...(success.closed ? { "stream-closed": "true" } : {}),
     });
   }
 }

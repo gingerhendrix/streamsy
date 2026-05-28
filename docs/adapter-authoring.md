@@ -1,231 +1,51 @@
-# Authoring a Streamsy storage adapter
+# Storage factory authoring
 
-This guide explains the factory/composed-stream model that Streamsy storage adapters target. It is the primary reference for adapter authors. It complements `docs/api.md`, which describes the public application API surface.
+Streamsy storage packages implement `StreamFactory`.
 
-The factory/composed-stream model is being introduced incrementally. The legacy `StreamStoreAdapter` interface remains supported and is the input to the compatibility composer described below. New adapters should still implement `StreamStoreAdapter` for now; the factory seam is the destination architecture, exposed alongside the existing API so adapters and downstream code can migrate without one large rewrite.
+A `StreamFactory` maps a public stream id to a storage-bound `Stream`. The returned storage stream is bound to one id and exposes only primitive persistence/runtime operations for that id:
 
-## Core model
+- record operations: `getRecord`, `createRecord`, `updateRecord`, `deleteRecord`
+- message operations: `appendMessages`, `listMessages`, `deleteMessages`
+- optional producer state, fork references, mutation coordination, live events, and expiry scheduling
 
-### Factory owns lookup, routing, and composition
-
-A factory is the architectural boundary. It maps a public stream id to an operable `Stream` and composes that stream from backend-specific dependencies.
+Use `composeStream` when a package has separate record/message stores and wants to assemble the standard storage-bound stream shape.
 
 ```ts
-import type { StreamFactory } from "@streamsy/core";
+import { composeStream, type StreamFactory } from "@streamsy/core";
 
-const factory: StreamFactory = {
-  getStream(streamId) {
-    // return a Stream bound to streamId
-  },
-};
+export function createExampleStreamFactory(): StreamFactory {
+  return {
+    getStream(id) {
+      return composeStream({
+        id,
+        recordStore,
+        messageStore,
+        producerStore,
+        referenceTracker,
+        mutations,
+        events,
+        expiry,
+      });
+    },
+  };
+}
 ```
 
-Factory-owned concerns include:
+Optional capabilities should be omitted when unsupported. Protocol code maps missing optional capabilities to structured `not-supported` results through the shared `require*` helpers.
 
-- public stream id lookup;
-- object, database, or path routing;
-- local stream id binding;
-- tenant or domain partitioning;
-- composing a concrete `Stream` from storage and runtime dependencies;
-- choosing canonical write paths versus derived read paths;
-- cross-stream fork or reference policy;
-- cross-stream expiry scans and indexes;
-- shared locks or transactions when they span more than one stream.
+## Protocol wiring
 
-Adapter authors should not surface placement decisions through public APIs. Placement exists as a factory implementation detail.
-
-### Stream is bound to one stream and implements the operations directly
-
-A returned `Stream` represents one stream and exposes the operations the protocol uses for that one stream:
+Applications pass storage through the protocol factory dependency object:
 
 ```ts
-import type { Stream } from "@streamsy/core";
-
-const stream: Stream = await factory.getStream("public-id");
-const record = await stream.getRecord();
-await stream.appendMessages([message]);
-const tail = await stream.listMessages({ after: record?.currentOffset });
-```
-
-Two rules:
-
-1. **`Stream` implements the record and message operations directly.** Do not expose a public `stream.deps.recordStore.getRecord()` dependency bag. Protocol code talks to a stream.
-2. **Bound stores have no `streamId` parameter.** Multi-stream tables or maps are fine as an internal implementation detail; bind them to one stream id once, inside the factory.
-
-Optional behaviour is surfaced as additional members on `Stream`:
-
-| Member       | Type                        | Used for                              |
-| ------------ | --------------------------- | ------------------------------------- |
-| `producers`  | `StreamProducerStore`       | producer-idempotent appends           |
-| `references` | `StreamReferenceTracker`    | fork parent/child reference counting  |
-| `mutations`  | `StreamMutationCoordinator` | per-stream serialization of mutations |
-| `events`     | `StreamEventHub`            | live-read notification                |
-| `expiry`     | `StreamExpiryScheduler`     | active expiry scheduling              |
-
-Adapters omit these members when the backend does not support the corresponding behaviour. Protocol methods that cover those behaviours return a structured `not-supported` result (see below) rather than throwing or silently no-opping.
-
-### `composeStream` helper
-
-Factories can assemble a `Stream` from bound dependencies using the `composeStream` helper:
-
-```ts
-import { composeStream } from "@streamsy/core";
-
-return composeStream({
-  id: streamId,
-  recordStore,
-  messageStore,
-  producerStore,
-  referenceTracker,
-  mutations,
-  events,
-  expiry,
+const protocol = createStreamProtocol({
+  storage: { factory: createExampleStreamFactory() },
+  longPollTimeoutMs: 1500,
 });
 ```
 
-The helper forwards calls to each bound dependency and surfaces only the optional members that were supplied. Adapter authors may also build a `Stream` by hand if that is clearer for the backend.
+The protocol layer creates protocol-bound streams with `protocol.create(...)` and `protocol.get(...)`. Storage-bound streams remain an internal persistence boundary and should not be exposed as the HTTP/application protocol object.
 
-### Optional behaviour: `NotSupportedResult`
+## Durable Object guidance
 
-Optional behaviour is represented in protocol results, not as a separate capability negotiation system. When a protocol method covers behaviour the active adapter does not support, the method returns:
-
-```ts
-import { notSupported, type NotSupportedResult } from "@streamsy/core";
-
-const result: NotSupportedResult = notSupported("fork", "forks disabled for this stream");
-```
-
-The structured result has shape `{ status: "not-supported"; feature: string; message?: string }`. HTTP handlers map it to a 4xx response:
-
-```ts
-import { notSupportedResponse, HttpResponseFactory } from "@streamsy/core";
-
-const responses = new HttpResponseFactory();
-return notSupportedResponse(result, responses);
-```
-
-`notSupportedResponse` returns a 400 Bad Request whose body identifies the unsupported feature and whose `stream-not-supported` header carries the machine-readable feature id.
-
-There is intentionally **no** capability enum or adapter-level capability declaration in the first pass. Capability declarations may be added later if they become useful for configuration, docs generation, or host validation; the source of truth in the meantime is the protocol result.
-
-Protocol code that needs an optional dependency can use the `require*` helpers to turn a missing member into the right `not-supported` feature id:
-
-```ts
-import {
-  requireEventHub,
-  requireExpiryScheduler,
-  requireMutationCoordinator,
-  requireProducerStore,
-  requireReferenceTracker,
-  isNotSupported,
-} from "@streamsy/core";
-
-const producers = requireProducerStore(stream);
-if (isNotSupported(producers)) return producers;
-await producers.setProducerState(producerId, state);
-```
-
-The feature ids returned by these helpers are `producer-idempotency`, `fork`, `mutation-lock`, `live-read`, and `active-expiry`. HTTP handlers translate those to a 4xx response via `notSupportedResponse` so adapters do not need to repeat the mapping.
-
-## Compatibility seam for existing adapters
-
-Existing adapters that implement the multi-stream `StreamStoreAdapter` interface can be exposed as a `StreamFactory` without a rewrite:
-
-```ts
-import { createStreamFactoryFromAdapter } from "@streamsy/core";
-import { createMemoryStreamStore } from "@streamsy/storage-memory";
-
-const adapter = createMemoryStreamStore();
-const factory = createStreamFactoryFromAdapter(adapter);
-const stream = await factory.getStream("demo");
-```
-
-The shim:
-
-- binds every adapter call to the requested stream id;
-- forwards `withLock` to `withMutationLock` under the key `stream:<streamId>`;
-- surfaces `events` and `expiry` only when both halves of the pair (`waitForEvent`/`notify`, `scheduleExpiry`/`cancelExpiry`) are implemented;
-- never invents capability where the adapter has none.
-
-This shim is the migration path for adapter packages: keep implementing `StreamStoreAdapter`, expose a factory using the shim, and migrate to a native factory at your own pace.
-
-## Memory reference factory
-
-The `@streamsy/storage-memory` package ships the reference implementation of the factory seam:
-
-```ts
-import { createMemoryStreamFactory } from "@streamsy/storage-memory";
-
-const factory = createMemoryStreamFactory();
-const stream = await factory.getStream("demo");
-await stream.createRecord(/* ... */);
-await stream.appendMessages([
-  /* ... */
-]);
-```
-
-`createMemoryStreamFactory()` owns a process-wide multi-stream table and uses `composeStream` to bind record, message, producer, reference, mutation, event, and expiry operations to one stream id per returned `Stream`. The returned `Stream` does not expose any backing state.
-
-`createMemoryStreamStore()` continues to return a `StreamStoreAdapter` for code that has not yet migrated to the factory seam. The two APIs can share state via `createMemoryStreamFactory({ state })` when a test or example needs both views over the same in-process data; otherwise they are independent.
-
-New adapter authors should read `packages/storage-memory/src/factory.ts` first — it is the smallest, most legible example of the seam.
-
-## Durable Object reference factory
-
-The `@streamsy/storage-durable-object` package ships a native factory for the one-stream-per-Durable-Object model:
-
-```ts
-import { createDurableObjectStreamFactory } from "@streamsy/storage-durable-object";
-
-interface Env {
-  STREAM_DO: DurableObjectNamespace<DurableObjectStreamStorage>;
-}
-
-const factory = createDurableObjectStreamFactory({ namespace: env.STREAM_DO });
-const stream = await factory.getStream("public-id");
-await stream.appendMessages([
-  /* ... */
-]);
-```
-
-The factory:
-
-- routes a public stream id to its per-stream `DurableObjectStreamStorage` instance via `namespace.idFromName(streamId)`;
-- composes a `Stream` whose record, message, producer, reference, mutation, event, and expiry operations are bound to that DO;
-- shares the `DurableObjectStreamStorage` class and the in-DO `acquireLock`/`releaseLock` chain with `DurableObjectStreamStoreAdapter`, so factory callers and existing adapter callers see the same persisted data and the same per-stream serialization point under the `stream:<id>` lock key.
-
-`DurableObjectStreamStoreAdapter` remains the `StreamStoreAdapter`-shaped entry point used by `StreamProtocol` and the existing conformance worker. New code that wants to target the factory seam directly can use `createDurableObjectStreamFactory` alongside the adapter without a protocol-side migration.
-
-Many-streams-per-Durable-Object factories, embeddable domain-DO engine helpers, and cross-object reference policy are explicit next-batch work; this batch only ships the one-stream-per-DO native factory.
-
-## Adapter author checklist
-
-When designing a new adapter, walk through these questions and decide where each answer lives:
-
-1. **How do I get a stream for a public stream id?** Factory-owned.
-2. **Where do this stream's record and messages live?** Factory-owned routing; bound stores inside the stream.
-3. **Do I support producer or producer idempotency?** Provide `StreamProducerStore`; otherwise omit it and return `not-supported` from producer-idempotent protocol methods.
-4. **How are mutations serialized?** Provide `StreamMutationCoordinator` when the backend has a natural per-stream serialization point (a Durable Object, a row lock, a file lock); otherwise rely on the core in-process fallback.
-5. **Do I support live reads / notification?** Provide `StreamEventHub`. Without it, live-read paths that require notification should return `not-supported`; catch-up reads can still work.
-6. **Do I support active expiry, or only lazy expiry?** Provide `StreamExpiryScheduler` for active expiry. Without it, the protocol relies on lazy expiry.
-7. **Do I support forks, and in what scope?** Forks need `StreamReferenceTracker`. Cross-stream and cross-object fork policy is a factory or engine concern; per-adapter fork policy may also return `not-supported`.
-8. **What is cross-stream or factory-scoped rather than single-stream-scoped?** Anything cross-stream (indexes, scans, locks spanning multiple streams) belongs on the factory or an adjacent engine helper, not on the returned `Stream`.
-
-## Worked examples
-
-The architecture is designed to scale across a spectrum of backends:
-
-| Adapter                   | Factory returns                                             | Canonical write path                              | Optional behaviour                                           |
-| ------------------------- | ----------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
-| Memory (reference)        | `Stream` bound to an entry in a process-local table         | Direct table writes plus an in-process lock chain | Producer store, references, events, expiry — all supported   |
-| SQLite                    | `Stream` bound to rows keyed by stream id                   | DB transaction or write lock                      | Producer table, local forks, expiry index, polling or notify |
-| Filesystem                | `Stream` bound to an escaped or hashed directory            | File lock plus atomic writes                      | JSON producer map, lazy expiry, local forks                  |
-| R2 / KV with co-ord       | `Stream` bound to a key prefix plus an external coordinator | Separate coordinator, DO, or distributed lock     | Read-model or cache modes; forks may be `not-supported`      |
-| Embedded domain DO        | `Stream` implemented by host object methods                 | Host object methods plus a stream engine helper   | Host policy for forks, expiry, events                        |
-| Cloudflare Durable Object | One-stream-per-DO factory today; many-streams-per-DO later  | DO storage, KV, or SQLite via `ctx.storage`       | DO alarm-backed expiry, in-DO event hub, per-key lock chain  |
-
-The architecture should make new adapters straightforward rather than requiring them to imitate Cloudflare DO internals.
-
-## What stays internal
-
-The factory seam exists alongside the existing public API surface documented in `docs/api.md`. Protocol services, HTTP method services, record factories, lock providers, and conformance internals remain internal. New adapters compose through `composeStream` (or hand-rolled equivalents) and the public types exported from `@streamsy/core`.
+The Durable Object package uses one storage object per public stream id. The host-facing entrypoint is `createDurableObjectStreamFactory({ namespace })`; the Durable Object class supplies the RPC methods used by that factory and the native alarm path.

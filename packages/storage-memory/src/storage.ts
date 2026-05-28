@@ -5,7 +5,6 @@ import type {
   StreamEventType,
   StreamRecord,
   StreamRecordPatch,
-  StreamStoreAdapter,
   WaitForEventOptions,
   WaitForEventResult,
 } from "@streamsy/core";
@@ -17,14 +16,14 @@ interface MemoryEntry {
 }
 
 /** Minimal in-memory fact store plus in-process runtime capabilities. */
-export class MemoryStreamStore implements StreamStoreAdapter {
+export class MemoryStreamState {
   private entries = new Map<string, MemoryEntry>();
   private waiters = new Map<string, Set<(result: WaitForEventResult) => void>>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private locks = new Map<string, Promise<void>>();
 
-  async get(streamId: string): Promise<StreamRecord | null> {
-    return clone(this.entries.get(streamId)?.record ?? null);
+  async get(id: string): Promise<StreamRecord | null> {
+    return clone(this.entries.get(id)?.record ?? null);
   }
 
   async create(record: StreamRecord) {
@@ -34,8 +33,8 @@ export class MemoryStreamStore implements StreamStoreAdapter {
     return { status: "created" as const };
   }
 
-  async update(streamId: string, patch: StreamRecordPatch): Promise<StreamRecord> {
-    const entry = this.must(streamId);
+  async update(id: string, patch: StreamRecordPatch): Promise<StreamRecord> {
+    const entry = this.must(id);
     entry.record = {
       ...entry.record,
       config: { ...entry.record.config, ...patch.config },
@@ -46,17 +45,17 @@ export class MemoryStreamStore implements StreamStoreAdapter {
     return clone(entry.record);
   }
 
-  async delete(streamId: string): Promise<void> {
-    this.entries.delete(streamId);
-    await this.cancelExpiry(streamId);
+  async deleteStream(id: string): Promise<void> {
+    this.entries.delete(id);
+    await this.cancelExpiry(id);
   }
 
-  async append(streamId: string, messages: StoredMessage[]): Promise<void> {
-    this.must(streamId).messages.push(...clone(messages));
+  async appendToStream(id: string, messages: StoredMessage[]): Promise<void> {
+    this.must(id).messages.push(...clone(messages));
   }
 
-  async list(streamId: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
-    const messages = this.entries.get(streamId)?.messages ?? [];
+  async list(id: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+    const messages = this.entries.get(id)?.messages ?? [];
     let out = messages;
     if (options.after) out = out.filter((m) => m.offset > options.after!);
     if (options.until) out = out.filter((m) => m.offset <= options.until!);
@@ -64,25 +63,21 @@ export class MemoryStreamStore implements StreamStoreAdapter {
     return clone(out);
   }
 
-  async deleteMessages(streamId: string): Promise<void> {
-    const entry = this.entries.get(streamId);
+  async deleteMessages(id: string): Promise<void> {
+    const entry = this.entries.get(id);
     if (entry) entry.messages = [];
   }
 
-  async getProducerState(streamId: string, producerId: string): Promise<ProducerState | undefined> {
-    return clone(this.entries.get(streamId)?.producers.get(producerId));
+  async getProducerState(id: string, producerId: string): Promise<ProducerState | undefined> {
+    return clone(this.entries.get(id)?.producers.get(producerId));
   }
 
-  async setProducerState(
-    streamId: string,
-    producerId: string,
-    state: ProducerState,
-  ): Promise<void> {
-    this.must(streamId).producers.set(producerId, clone(state));
+  async setProducerState(id: string, producerId: string, state: ProducerState): Promise<void> {
+    this.must(id).producers.set(producerId, clone(state));
   }
 
-  async deleteProducerStates(streamId: string): Promise<void> {
-    this.entries.get(streamId)?.producers.clear();
+  async deleteProducerStates(id: string): Promise<void> {
+    this.entries.get(id)?.producers.clear();
   }
 
   async incrementChildRefCount(parentId: string): Promise<number> {
@@ -117,47 +112,47 @@ export class MemoryStreamStore implements StreamStoreAdapter {
     }
   }
 
-  async waitForEvent(streamId: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
+  async waitForEvent(id: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => finish({ status: "timeout" }), options.timeoutMs);
       const finish = (result: WaitForEventResult) => {
         clearTimeout(timeout);
-        this.waiters.get(streamId)?.delete(finish);
+        this.waiters.get(id)?.delete(finish);
         resolve(result);
       };
-      this.waiters.set(streamId, this.waiters.get(streamId) ?? new Set());
-      this.waiters.get(streamId)!.add(finish);
+      this.waiters.set(id, this.waiters.get(id) ?? new Set());
+      this.waiters.get(id)!.add(finish);
       options.signal?.addEventListener("abort", () => finish({ status: "aborted" }), {
         once: true,
       });
     });
   }
 
-  notify(streamId: string, type: StreamEventType): void {
-    const waiters = [...(this.waiters.get(streamId) ?? [])];
-    this.waiters.delete(streamId);
+  notify(id: string, type: StreamEventType): void {
+    const waiters = [...(this.waiters.get(id) ?? [])];
+    this.waiters.delete(id);
     for (const waiter of waiters) waiter({ status: "notified", type });
   }
 
-  scheduleExpiry(streamId: string, at: number, callback?: () => Promise<void>): void {
-    void this.cancelExpiry(streamId);
+  scheduleExpiry(id: string, at: number, callback?: () => Promise<void>): void {
+    void this.cancelExpiry(id);
     if (!callback) return;
     const delay = Math.max(0, at - Date.now());
     this.timers.set(
-      streamId,
+      id,
       setTimeout(() => void callback(), delay),
     );
   }
 
-  async cancelExpiry(streamId: string): Promise<void> {
-    const timer = this.timers.get(streamId);
+  async cancelExpiry(id: string): Promise<void> {
+    const timer = this.timers.get(id);
     if (timer) clearTimeout(timer);
-    this.timers.delete(streamId);
+    this.timers.delete(id);
   }
 
-  private must(streamId: string): MemoryEntry {
-    const entry = this.entries.get(streamId);
-    if (!entry) throw new Error(`Stream not found: ${streamId}`);
+  private must(id: string): MemoryEntry {
+    const entry = this.entries.get(id);
+    if (!entry) throw new Error(`Stream not found: ${id}`);
     return entry;
   }
 }

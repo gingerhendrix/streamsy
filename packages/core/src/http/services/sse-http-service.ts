@@ -1,4 +1,4 @@
-import type { StreamProtocolInterface } from "../../types/protocol.ts";
+import type { ProtocolStream } from "../../types/protocol.ts";
 import { generateCursor } from "../../protocol/helpers/cursor-generator.ts";
 import type { Clock } from "../types.ts";
 import { HttpResponseFactory } from "../responses.ts";
@@ -9,15 +9,14 @@ const CONNECTION_TIMEOUT_MS = 60_000;
 export class SseHttpService {
   constructor(
     private deps: {
-      protocol: StreamProtocolInterface;
       responses: HttpResponseFactory;
       sseEvents: SseEventEncoder;
       clock: Clock;
     },
   ) {}
 
-  async execute(streamId: string, offset: string, cursor?: string): Promise<Response> {
-    const metadata = await this.deps.protocol.metadata(streamId);
+  async execute(stream: ProtocolStream, offset: string, cursor?: string): Promise<Response> {
+    const metadata = await stream.metadata();
     if (metadata.status === "not-found") return this.deps.responses.notFound();
     if (metadata.status === "gone") return this.deps.responses.gone();
     const contentTypeLower = metadata.contentType!.toLowerCase();
@@ -27,15 +26,15 @@ export class SseHttpService {
       useBase64: false,
     };
     encoding.useBase64 = !encoding.isText && !encoding.isJson;
-    const stream = this.createStream(
-      streamId,
+    const body = this.createStream(
+      stream,
       offset,
       cursor,
       metadata.nextOffset!,
       metadata.closed === true,
       encoding,
     );
-    return new Response(stream, {
+    return new Response(body, {
       headers: {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
@@ -46,7 +45,7 @@ export class SseHttpService {
   }
 
   private createStream(
-    streamId: string,
+    stream: ProtocolStream,
     offset: string,
     cursor: string | undefined,
     metadataNextOffset: string,
@@ -56,7 +55,6 @@ export class SseHttpService {
     let currentOffset = offset;
     let currentCursor = cursor;
     const connectionStartTime = Date.now();
-    const protocol = this.deps.protocol;
     const sseEvents = this.deps.sseEvents;
     const clock = this.deps.clock;
     return new ReadableStream<Uint8Array>({
@@ -70,7 +68,7 @@ export class SseHttpService {
             initialUpToDate = true;
             initialClosed = metadataClosed;
           } else {
-            const initialResult = await protocol.read(streamId, {
+            const initialResult = await stream.read({
               offset: currentOffset === "-1" ? undefined : currentOffset,
             });
             if (initialResult.status === "not-found") {
@@ -107,12 +105,12 @@ export class SseHttpService {
               controller.close();
               return;
             }
-            const result = await protocol.readLive(streamId, {
+            const result = await stream.readLive({
               offset: currentOffset,
               mode: "sse",
               cursor: currentCursor,
             });
-            if (result.status === "not-found") {
+            if (result.status === "not-found" || result.status === "not-supported") {
               controller.close();
               return;
             }

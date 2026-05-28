@@ -9,9 +9,7 @@
  * unavailable, protocol methods covering it should return a structured
  * {@link NotSupportedResult}.
  *
- * This file only declares types/results. The compatibility composer that
- * wraps the existing {@link StreamStoreAdapter} into a `StreamFactory` lives
- * in `../factory/`.
+ * This file only declares types/results.
  */
 import type {
   CreateStreamRecordResult,
@@ -89,7 +87,7 @@ export interface Stream extends StreamRecordStore, StreamMessageStore {
 }
 
 /**
- * Adapter factory. Maps a public stream id to a `Stream` bound to that id.
+ * Storage factory. Maps a public stream id to a storage-bound `Stream`.
  * Lookup, routing, and dependency composition are factory-owned concerns
  * and are not exposed on the returned `Stream`.
  */

@@ -1,13 +1,11 @@
-import type { StreamProtocolInterface } from "../../types/protocol.ts";
+import type { BoundHttpRouteContext } from "../types.ts";
 import { CACHE_NO_STORE, HttpResponseFactory } from "../responses.ts";
 
 export class MetadataHttpService {
-  constructor(
-    private deps: { protocol: StreamProtocolInterface; responses: HttpResponseFactory },
-  ) {}
+  constructor(private deps: { responses: HttpResponseFactory }) {}
 
-  async execute(streamId: string): Promise<Response> {
-    const result = await this.deps.protocol.metadata(streamId);
+  async execute(ctx: BoundHttpRouteContext): Promise<Response> {
+    const result = await ctx.stream.metadata();
     if (result.status === "not-found") return this.deps.responses.notFound();
     if (result.status === "gone") return this.deps.responses.gone();
     return this.deps.responses.empty(200, {

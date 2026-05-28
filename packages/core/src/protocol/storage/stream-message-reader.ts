@@ -1,17 +1,15 @@
-/** Stored message read helpers for the durable streams protocol. */
+/** Stored message read helpers for storage-bound streams. */
 
-import type {
-  Offset,
-  StoredMessage,
-  StreamRecord,
-  StreamStoreAdapter,
-} from "../../types/storage.ts";
+import type { Stream } from "../../types/factory.ts";
+import type { Offset, StoredMessage, StreamRecord } from "../../types/storage.ts";
 import { compareOffsets } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
+export type ResolveStorageStream = (streamId: string) => Promise<Stream> | Stream;
+
 export class StreamMessageReader {
   constructor(
-    private store: StreamStoreAdapter,
+    private resolve: ResolveStorageStream,
     private expiryPolicy: ExpiryPolicy,
   ) {}
 
@@ -28,7 +26,8 @@ export class StreamMessageReader {
       record.lifecycle.forkOffset &&
       (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
     ) {
-      const source = await this.store.get(record.lifecycle.forkedFrom);
+      const sourceStream = await this.resolve(record.lifecycle.forkedFrom);
+      const source = await sourceStream.getRecord();
       if (source) {
         const upstreamCap =
           capOffset && compareOffsets(capOffset, record.lifecycle.forkOffset) < 0
@@ -51,7 +50,9 @@ export class StreamMessageReader {
       (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
         ? record.lifecycle.forkOffset
         : afterOffset;
-    const own = await this.store.list(streamId, { after: ownStart, until: capOffset });
+    const own = await (
+      await this.resolve(streamId)
+    ).listMessages({ after: ownStart, until: capOffset });
     out.push(...own);
     return out;
   }
@@ -60,9 +61,10 @@ export class StreamMessageReader {
     streamId: string,
     after?: Offset,
   ): Promise<{ messages: StoredMessage[]; nextOffset: string }> {
-    const record = await this.store.get(streamId);
+    const stream = await this.resolve(streamId);
+    const record = await stream.getRecord();
     if (!record) return { messages: [], nextOffset: "" };
-    const messages = await this.store.list(streamId, { after });
+    const messages = await stream.listMessages({ after });
     return {
       messages,
       nextOffset:

@@ -3,7 +3,6 @@ export { createStreamProtocol, StreamProtocol, ZERO_OFFSET } from "./protocol.ts
 export { createHttpHandler, HttpHandler } from "./http.ts";
 
 export { composeStream } from "./factory/compose-stream.ts";
-export { createStreamFactoryFromAdapter } from "./factory/adapter-stream-factory.ts";
 export {
   requireEventHub,
   requireExpiryScheduler,
@@ -14,12 +13,13 @@ export {
 export { isNotSupported, notSupported } from "./types/factory.ts";
 export { maybeNotSupportedResponse, notSupportedResponse } from "./http/not-supported.ts";
 
-export type { StreamProtocolOptions } from "./protocol.ts";
+export type { StreamProtocolDeps, StreamProtocolOptions } from "./protocol.ts";
 export type { HttpHandlerInterface, HttpHandlerOptions } from "./http/types.ts";
 
 export type {
-  StreamProtocolInterface,
-  StreamStoreFactory,
+  StreamProtocolFactory,
+  ProtocolStream,
+  ProtocolGetResult,
   CreateOptions,
   CreateResult,
   CreateConflictReason,
@@ -42,7 +42,6 @@ export type {
   StreamRecord,
   StreamRecordPatch,
   CreateStreamRecordResult,
-  StreamStoreAdapter,
   StoredMessage,
   ProducerState,
   ListMessagesOptions,

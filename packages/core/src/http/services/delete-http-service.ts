@@ -1,13 +1,11 @@
-import type { StreamProtocolInterface } from "../../types/protocol.ts";
+import type { BoundHttpRouteContext } from "../types.ts";
 import { HttpResponseFactory } from "../responses.ts";
 
 export class DeleteHttpService {
-  constructor(
-    private deps: { protocol: StreamProtocolInterface; responses: HttpResponseFactory },
-  ) {}
+  constructor(private deps: { responses: HttpResponseFactory }) {}
 
-  async execute(streamId: string): Promise<Response> {
-    const result = await this.deps.protocol.delete(streamId);
+  async execute(ctx: BoundHttpRouteContext): Promise<Response> {
+    const result = await ctx.stream.delete();
     if (result.status === "not-found") return this.deps.responses.notFound();
     if (result.status === "gone") return this.deps.responses.gone();
     return this.deps.responses.empty(204);

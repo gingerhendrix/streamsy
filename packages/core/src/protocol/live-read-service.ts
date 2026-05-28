@@ -1,33 +1,9 @@
-/**
- * Live-read orchestration for the durable streams protocol.
- *
- * Responsibilities:
- *
- *   1. record lookup, lifecycle gate (not-found / soft-deleted) with empty cursor
- *   2. closed-stream replay via `readChain` and `closed`/`upToDate` shaping
- *   3. fork-source upstream-tail replay via `readChain` when the requested
- *      offset is below the fork offset
- *   4. live-read touch (current implementation is a no-op for TTL extension)
- *   5. immediate own-message read via `readOwn`
- *   6. wait/timeout/abort via `store.waitForEvent` (with a setTimeout fallback
- *      when the adapter does not implement waiters)
- *   7. final metadata recheck after wake and final own-message read shaping
- *
- * Used by `StreamProtocol.readLive`. The lazy-expiry prelude
- * (`expireIfNeeded`) stays in `StreamProtocol`. The shared chain/own helpers
- * (`readChain`, `readOwn`) and the touch helper are injected callbacks because
- * they are also used by non-live reads and create/fork/append flows.
- */
+/** Live-read orchestration for one storage-bound stream. */
 
 import type { ReadLiveOptions, ReadLiveResult } from "../types/protocol.ts";
-import type {
-  Clock,
-  Offset,
-  StoredMessage,
-  StreamId,
-  StreamRecord,
-  StreamStoreAdapter,
-} from "../types/storage.ts";
+import type { Stream } from "../types/factory.ts";
+import type { Clock, Offset, StoredMessage, StreamId, StreamRecord } from "../types/storage.ts";
+import { notSupported } from "../types/factory.ts";
 import { compareOffsets } from "./helpers/offset-generator.ts";
 import { generateCursor } from "./helpers/cursor-generator.ts";
 
@@ -52,14 +28,14 @@ export interface LiveReadDeps {
 
 export class LiveReadService {
   constructor(
-    private store: StreamStoreAdapter,
+    private stream: Stream,
     private clock: Clock,
     private longPollTimeoutMs: number,
     private deps: LiveReadDeps,
   ) {}
 
   async execute(streamId: StreamId, options: ReadLiveOptions): Promise<ReadLiveResult> {
-    const record = await this.store.get(streamId);
+    const record = await this.stream.getRecord();
     if (!record)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (record.lifecycle.softDeleted)
@@ -109,15 +85,13 @@ export class LiveReadService {
         cursor: generateCursor(this.clock, options.cursor),
       };
 
-    const wait = this.store.waitForEvent
-      ? await this.store.waitForEvent(streamId, {
-          timeoutMs: this.longPollTimeoutMs,
-          signal: options.signal,
-        })
-      : await new Promise<{ status: "timeout" }>((resolve) =>
-          setTimeout(() => resolve({ status: "timeout" }), this.longPollTimeoutMs),
-        );
-    const latest = await this.store.get(streamId);
+    if (!this.stream.events)
+      return notSupported("live-read", "The active storage factory has no live-read event hub");
+    const wait = await this.stream.events.waitForEvent({
+      timeoutMs: this.longPollTimeoutMs,
+      signal: options.signal,
+    });
+    const latest = await this.stream.getRecord();
     if (!latest)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (latest.lifecycle.softDeleted)

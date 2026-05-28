@@ -1,4 +1,7 @@
-import type { HttpRouteContext } from "./types.ts";
+import type { BoundHttpRouteContext, HttpRouteContext } from "./types.ts";
+import type { StreamProtocolFactory } from "../types/protocol.ts";
+import { isNotSupported } from "../types/factory.ts";
+import { notSupportedResponse } from "./not-supported.ts";
 import { HttpResponseFactory } from "./responses.ts";
 import { StreamPathService } from "./stream-path-service.ts";
 import { AppendHttpService } from "./services/append-http-service.ts";
@@ -10,6 +13,7 @@ import { ReadHttpService } from "./services/read-http-service.ts";
 export class HttpDispatchService {
   constructor(
     private deps: {
+      protocol: StreamProtocolFactory;
       path: StreamPathService;
       responses: HttpResponseFactory;
       create: CreateHttpService;
@@ -38,13 +42,13 @@ export class HttpDispatchService {
         case "PUT":
           return await this.deps.create.execute(ctx);
         case "POST":
-          return await this.deps.append.execute(ctx);
+          return await this.withBoundStream(ctx, (bound) => this.deps.append.execute(bound));
         case "GET":
-          return await this.deps.read.execute(ctx);
+          return await this.withBoundStream(ctx, (bound) => this.deps.read.execute(bound));
         case "HEAD":
-          return await this.deps.metadata.execute(streamId);
+          return await this.withBoundStream(ctx, (bound) => this.deps.metadata.execute(bound));
         case "DELETE":
-          return await this.deps.delete.execute(streamId);
+          return await this.withBoundStream(ctx, (bound) => this.deps.delete.execute(bound));
         default:
           return this.deps.responses.methodNotAllowed();
       }
@@ -52,5 +56,16 @@ export class HttpDispatchService {
       console.error("Error handling request:", error);
       return this.deps.responses.internalError();
     }
+  }
+
+  private async withBoundStream(
+    ctx: HttpRouteContext,
+    fn: (ctx: BoundHttpRouteContext) => Promise<Response>,
+  ): Promise<Response> {
+    const lookup = await this.deps.protocol.get(ctx.streamId);
+    if (lookup.status === "not-found") return this.deps.responses.notFound();
+    if (lookup.status === "gone") return this.deps.responses.gone();
+    if (isNotSupported(lookup)) return notSupportedResponse(lookup, this.deps.responses);
+    return fn({ ...ctx, stream: lookup.stream });
   }
 }

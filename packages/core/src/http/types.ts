@@ -1,8 +1,8 @@
-import type { StreamProtocolInterface } from "../types/protocol.ts";
+import type { ProtocolStream, StreamProtocolFactory } from "../types/protocol.ts";
 export type { Clock } from "../types/storage.ts";
 
 export interface HttpHandlerOptions {
-  protocol: StreamProtocolInterface;
+  protocol: StreamProtocolFactory;
   pathPrefix?: string;
   maxMessageSize?: number;
 }
@@ -15,4 +15,8 @@ export interface HttpRouteContext {
   request: Request;
   url: URL;
   streamId: string;
+}
+
+export interface BoundHttpRouteContext extends HttpRouteContext {
+  stream: ProtocolStream;
 }

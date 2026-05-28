@@ -1,11 +1,14 @@
 /**
- * Protocol Layer Types
+ * Protocol layer types.
  *
- * Types for the business logic layer that handles validation,
- * JSON mode processing, cursor generation, and orchestration.
+ * The public protocol is factory-shaped: callers create or look up a
+ * protocol-bound stream, then operate on that bound stream. Storage-bound
+ * streams live in `types/factory.ts`; this file describes protocol-facing
+ * objects and result shapes.
  */
 
-import type { StoredMessage, StreamStoreAdapter } from "./storage.ts";
+import type { NotSupportedResult } from "./factory.ts";
+import type { StoredMessage, StreamId } from "./storage.ts";
 
 // === Protocol Inputs ===
 
@@ -52,14 +55,28 @@ export type CreateConflictReason =
   | "fork-content-type"
   | "fork-source-soft-deleted";
 
-export interface CreateResult {
-  status: "created" | "exists" | "conflict" | "not-found" | "bad-request";
-  nextOffset: string;
-  contentType: string;
-  closed?: boolean;
-  conflictReason?: CreateConflictReason;
-  errorMessage?: string;
-}
+export type CreateResult =
+  | {
+      status: "created" | "exists";
+      stream: ProtocolStream;
+      nextOffset: string;
+      contentType: string;
+      closed?: boolean;
+    }
+  | {
+      status: "conflict";
+      nextOffset: string;
+      contentType: string;
+      conflictReason?: CreateConflictReason;
+      errorMessage?: string;
+    }
+  | {
+      status: "not-found" | "bad-request";
+      nextOffset: string;
+      contentType: string;
+      errorMessage?: string;
+    }
+  | NotSupportedResult;
 
 export type AppendResult =
   | {
@@ -86,7 +103,8 @@ export type AppendResult =
     }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
-  | { status: "invalid-epoch-seq" };
+  | { status: "invalid-epoch-seq" }
+  | NotSupportedResult;
 
 export interface ReadResult {
   status: "ok" | "not-found" | "gone";
@@ -96,14 +114,16 @@ export interface ReadResult {
   closed?: boolean;
 }
 
-export interface ReadLiveResult {
-  status: "ok" | "timeout" | "not-found" | "gone";
-  messages: StoredMessage[];
-  nextOffset: string;
-  upToDate: boolean;
-  cursor: string;
-  closed?: boolean;
-}
+export type ReadLiveResult =
+  | {
+      status: "ok" | "timeout" | "not-found" | "gone";
+      messages: StoredMessage[];
+      nextOffset: string;
+      upToDate: boolean;
+      cursor: string;
+      closed?: boolean;
+    }
+  | NotSupportedResult;
 
 export interface MetadataResult {
   status: "ok" | "not-found" | "gone";
@@ -118,25 +138,24 @@ export interface DeleteResult {
   status: "ok" | "not-found" | "gone";
 }
 
-// === Storage Factory Type ===
+// === Protocol-bound stream and factory ===
 
-export type StreamStoreFactory = () => StreamStoreAdapter;
+export interface ProtocolStream {
+  readonly id: StreamId;
+  append(options: AppendOptions): Promise<AppendResult>;
+  read(options: ReadOptions): Promise<ReadResult>;
+  readLive(options: ReadLiveOptions): Promise<ReadLiveResult>;
+  metadata(): Promise<MetadataResult>;
+  delete(): Promise<DeleteResult>;
+}
 
-// === Protocol Interface ===
+export type ProtocolGetResult =
+  | { status: "ok"; stream: ProtocolStream }
+  | { status: "not-found" }
+  | { status: "gone" }
+  | NotSupportedResult;
 
-/**
- * Protocol Layer Interface
- *
- * Handles validation, JSON mode processing, cursor generation,
- * and orchestration between HTTP and storage layers.
- *
- * All methods take streamId as first parameter to identify the stream.
- */
-export interface StreamProtocolInterface {
+export interface StreamProtocolFactory {
   create(streamId: string, options: CreateOptions): Promise<CreateResult>;
-  append(streamId: string, options: AppendOptions): Promise<AppendResult>;
-  read(streamId: string, options: ReadOptions): Promise<ReadResult>;
-  readLive(streamId: string, options: ReadLiveOptions): Promise<ReadLiveResult>;
-  metadata(streamId: string): Promise<MetadataResult>;
-  delete(streamId: string): Promise<DeleteResult>;
+  get(streamId: string): Promise<ProtocolGetResult>;
 }

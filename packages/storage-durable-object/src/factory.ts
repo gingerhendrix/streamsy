@@ -11,12 +11,7 @@
  * routing, stub acquisition, and lock-key construction are factory-owned
  * concerns and stay internal.
  *
- * The existing {@link DurableObjectStreamStoreAdapter} remains the
- * StreamStoreAdapter-shaped entry point used by `StreamProtocol`. The new
- * factory is an additive surface for adapter authors and downstream code
- * targeting the factory/composed-stream seam directly. Both APIs talk to the
- * same `DurableObjectStreamStorage` class so the persisted data model is
- * unchanged.
+ * The factory is the host-facing entry point used by the protocol factory.
  */
 import {
   composeStream,
@@ -46,10 +41,10 @@ export function createDurableObjectStreamFactory(
           getRecord: () => stubFor(streamId).get(streamId),
           createRecord: (record) => stubFor(streamId).create(record),
           updateRecord: (patch) => stubFor(streamId).update(streamId, patch),
-          deleteRecord: () => stubFor(streamId).delete(streamId),
+          deleteRecord: () => stubFor(streamId).deleteStream(streamId),
         },
         messageStore: {
-          appendMessages: (messages) => stubFor(streamId).append(streamId, messages),
+          appendMessages: (messages) => stubFor(streamId).appendToStream(streamId, messages),
           listMessages: (listOptions) => stubFor(streamId).list(streamId, listOptions),
           deleteMessages: () => stubFor(streamId).deleteMessages(streamId),
         },
@@ -66,10 +61,7 @@ export function createDurableObjectStreamFactory(
         },
         mutations: {
           withMutationLock: async <T>(fn: () => Promise<T>): Promise<T> => {
-            // The DO is the natural per-stream serialization point. Use the
-            // same lock key shape (`stream:<id>`) as
-            // {@link DurableObjectStreamStoreAdapter} so the two surfaces
-            // share the in-DO lock chain for the same stream.
+            // The DO is the natural per-stream serialization point.
             const key = `stream:${streamId}`;
             const stub = stubFor(streamId);
             const token = await stub.acquireLock(key);

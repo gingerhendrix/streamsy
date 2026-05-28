@@ -1,5 +1,6 @@
-import type { StreamProtocolInterface, AppendResult } from "../../types/protocol.ts";
-import type { HttpRouteContext } from "../types.ts";
+import type { AppendResult } from "../../types/protocol.ts";
+import type { BoundHttpRouteContext } from "../types.ts";
+import { maybeNotSupportedResponse } from "../not-supported.ts";
 import { ProducerHeaderParser, type ProducerHeaderResult } from "../producer-header-parser.ts";
 import { RequestBodyReader } from "../request-body-reader.ts";
 import { HttpResponseFactory } from "../responses.ts";
@@ -7,25 +8,26 @@ import { HttpResponseFactory } from "../responses.ts";
 export class AppendHttpService {
   constructor(
     private deps: {
-      protocol: StreamProtocolInterface;
       responses: HttpResponseFactory;
       bodyReader: RequestBodyReader;
       producerHeaders: ProducerHeaderParser;
     },
   ) {}
 
-  async execute(ctx: HttpRouteContext): Promise<Response> {
+  async execute(ctx: BoundHttpRouteContext): Promise<Response> {
     const parsed = this.parseHeaders(ctx.request);
     if (!parsed.ok) return parsed.response;
     const body = await this.readAndValidateBody(ctx.request, parsed.contentType, parsed.wantClose);
     if (!body.ok) return body.response;
-    const result = await this.deps.protocol.append(ctx.streamId, {
+    const result = await ctx.stream.append({
       data: body.data,
       contentType: parsed.contentType ?? "application/octet-stream",
       seq: parsed.seq,
       producer: parsed.producerHeaders.kind === "ok" ? parsed.producerHeaders.producer : undefined,
       close: parsed.wantClose,
     });
+    if (result.status === "not-supported")
+      return maybeNotSupportedResponse(result, this.deps.responses)!;
     return this.toResponse(result, parsed.producerHeaders, body.isEmpty);
   }
 
@@ -80,7 +82,7 @@ export class AppendHttpService {
   }
 
   private toResponse(
-    result: AppendResult,
+    result: Exclude<AppendResult, { status: "not-supported" }>,
     producerHeaders: ProducerHeaderResult,
     isEmpty: boolean,
   ): Response {

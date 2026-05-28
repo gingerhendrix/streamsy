@@ -1,29 +1,8 @@
-/**
- * Append-side orchestration for the durable streams protocol.
- *
- * Responsibilities:
- *
- *   1. record lookup, lifecycle gate (not-found / soft-deleted)
- *   2. producer state load
- *   3. producer tuple validation
- *   4. early rejection with unchanged result shapes when not accepted
- *   5. lifecycle / content-type / sequence checks
- *   6. body framing and stream mutation (appendMessages / closeRecord)
- *   7. accepted producer-state persistence after successful mutation
- *   8. AppendResult shaping
- *
- * Used by `StreamProtocol.append`. The caller owns stream-level serialization:
- * `StreamProtocol.append` acquires `stream:<streamId>` before calling
- * `execute`, so producer-state read, validation, stream mutation, and
- * accepted-state write remain atomic per stream.
- *
- * The low-level mutation helpers (`appendMessages`, `closeRecord`) are
- * injected as callbacks because they are also used by create/fork flows in
- * `StreamProtocol`.
- */
+/** Append-side orchestration for one storage-bound stream. */
 
 import type { AppendOptions, AppendResult } from "../types/protocol.ts";
-import type { StreamId, StreamRecord, StreamStoreAdapter } from "../types/storage.ts";
+import { isNotSupported, type Stream } from "../types/factory.ts";
+import type { StreamId, StreamRecord } from "../types/storage.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
 import {
@@ -65,13 +44,13 @@ export function appendedResult(
 
 export class AppendService {
   constructor(
-    private store: StreamStoreAdapter,
+    private stream: Stream,
     private producerIdempotency: ProducerIdempotencyService,
     private mutators: AppendMutators,
   ) {}
 
   async execute(streamId: StreamId, options: AppendOptions): Promise<AppendResult> {
-    const record = await this.store.get(streamId);
+    const record = await this.stream.getRecord();
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
 
@@ -81,7 +60,8 @@ export class AppendService {
 
     let producerValidation: ProducerValidation | undefined;
     if (options.producer) {
-      const state = await this.producerIdempotency.load(streamId, options.producer.producerId);
+      const state = await this.producerIdempotency.load(options.producer.producerId);
+      if (isNotSupported(state)) return state;
       producerValidation = this.producerIdempotency.validate(
         state,
         options.producer.producerEpoch,
@@ -94,11 +74,11 @@ export class AppendService {
     if (wantClose && !hasBody) {
       if (isClosed) return { status: "appended", nextOffset: record.currentOffset, closed: true };
       const nextOffset = await this.mutators.closeRecord(streamId, record, [], options.seq);
-      await this.producerIdempotency.persistIfAccepted(
-        streamId,
+      const persisted = await this.producerIdempotency.persistIfAccepted(
         options.producer,
         producerValidation,
       );
+      if (persisted?.status === "not-supported") return persisted;
       return appendedResult(nextOffset, producerValidation, true);
     }
 
@@ -118,11 +98,11 @@ export class AppendService {
     const nextOffset = wantClose
       ? await this.mutators.closeRecord(streamId, record, processed, options.seq)
       : await this.mutators.appendMessages(streamId, record, processed, options.seq);
-    await this.producerIdempotency.persistIfAccepted(
-      streamId,
+    const persisted = await this.producerIdempotency.persistIfAccepted(
       options.producer,
       producerValidation,
     );
+    if (persisted?.status === "not-supported") return persisted;
     return appendedResult(nextOffset, producerValidation, wantClose);
   }
 }

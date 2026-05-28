@@ -1,40 +1,12 @@
-/**
- * TTL/Expires-At policy and expiry scheduling for the durable streams protocol.
- *
- * Responsibilities:
- *
- * - `computeExpiresAtMs(config)` returns `clock.now() + ttlSeconds * 1000`
- *   when `ttlSeconds` is set, falling back to `clock.date(expiresAt).getTime()`
- *   when only `expiresAt` is set; absent both yields `undefined`. `ttlSeconds`
- *   takes precedence over `expiresAt` when both are present.
- * - `touch(streamId, record, reason)` is a no-op when the record has no
- *   `ttlSeconds`. The `live-read` reason never extends TTL. For `append`,
- *   `close`, or `read` it updates `lifecycle.expiresAtMs` to
- *   `clock.now() + ttlSeconds * 1000` and reschedules via
- *   `store.scheduleExpiry?`, passing the protocol's scheduled-expiry callback.
- * - `scheduleExpiry(record)` issues the initial scheduler call from the
- *   record's persisted `lifecycle.expiresAtMs`, no-op when absent.
- * - `expireIfNeeded(streamId)` loads the record and invokes the injected
- *   scheduled-expiry handler only when the persisted deadline is at or below
- *   the current clock; the handler is responsible for rechecking the
- *   persisted deadline before purge/soft-delete, so stale scheduled callbacks
- *   remain safe.
- *
- * Used by `StreamProtocol` before create/read/append/delete operations, by
- * create/fork services when scheduling initial expiry, by append/read/live-read
- * touch paths, and by `StreamGcService` for scheduled-expiry decisions. The
- * scheduled-expiry handler is injected so GC/delete behavior remains owned by
- * `StreamGcService` and `StreamProtocol` wiring.
- *
- * Not exported from `packages/core/src/index.ts`; service-level tests import
- * directly from this module.
- */
+/** TTL/Expires-At policy and expiry scheduling. */
 
-import type { Clock, StreamId, StreamRecord, StreamStoreAdapter } from "../../types/storage.ts";
+import type { Stream } from "../../types/factory.ts";
+import type { Clock, StreamId, StreamRecord } from "../../types/storage.ts";
 
 export type TouchReason = "append" | "close" | "read" | "live-read";
 
 export type ScheduledExpiryHandler = (streamId: StreamId) => Promise<void>;
+export type ResolveStorageStream = (streamId: StreamId) => Promise<Stream> | Stream;
 
 export interface ExpiryConfig {
   ttlSeconds?: number;
@@ -43,7 +15,7 @@ export interface ExpiryConfig {
 
 export class ExpiryPolicy {
   constructor(
-    private store: StreamStoreAdapter,
+    private resolve: ResolveStorageStream,
     private clock: Clock,
     private onScheduledExpiry: ScheduledExpiryHandler,
   ) {}
@@ -57,21 +29,23 @@ export class ExpiryPolicy {
   async touch(streamId: StreamId, record: StreamRecord, reason: TouchReason): Promise<void> {
     if (record.config.ttlSeconds === undefined) return;
     if (reason === "live-read") return;
+    const stream = await this.resolve(streamId);
     const expiresAtMs = this.clock.now() + record.config.ttlSeconds * 1000;
-    await this.store.update(streamId, { lifecycle: { expiresAtMs } });
-    await this.store.scheduleExpiry?.(streamId, expiresAtMs, () =>
-      this.onScheduledExpiry(streamId),
-    );
+    await stream.updateRecord({ lifecycle: { expiresAtMs } });
+    await stream.expiry?.scheduleExpiry(expiresAtMs, () => this.onScheduledExpiry(streamId));
   }
 
   async scheduleExpiry(record: StreamRecord): Promise<void> {
     const at = record.lifecycle.expiresAtMs;
-    if (at !== undefined)
-      await this.store.scheduleExpiry?.(record.id, at, () => this.onScheduledExpiry(record.id));
+    if (at !== undefined) {
+      const stream = await this.resolve(record.id);
+      await stream.expiry?.scheduleExpiry(at, () => this.onScheduledExpiry(record.id));
+    }
   }
 
   async expireIfNeeded(streamId: StreamId): Promise<void> {
-    const record = await this.store.get(streamId);
+    const stream = await this.resolve(streamId);
+    const record = await stream.getRecord();
     if (record && this.isExpired(record)) await this.onScheduledExpiry(streamId);
   }
 

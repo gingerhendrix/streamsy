@@ -40,26 +40,24 @@ export class HttpHandler implements HttpHandlerInterface {
     const readQuery = new ReadQueryParser();
     const etags = new EtagBuilder();
     const sseEvents = new SseEventEncoder(bodyCodec);
-    const longPoll = new LongPollHttpService({ protocol: options.protocol, responses, bodyCodec });
+    const longPoll = new LongPollHttpService({ responses, bodyCodec });
     const sse = new SseHttpService({
-      protocol: options.protocol,
       responses,
       sseEvents,
       clock: systemClock,
     });
 
     this.dispatch = new HttpDispatchService({
+      protocol: options.protocol,
       path,
       responses,
       create: new CreateHttpService({ protocol: options.protocol, path, responses, bodyReader }),
       append: new AppendHttpService({
-        protocol: options.protocol,
         responses,
         bodyReader,
         producerHeaders,
       }),
       read: new ReadHttpService({
-        protocol: options.protocol,
         responses,
         bodyCodec,
         readQuery,
@@ -67,8 +65,8 @@ export class HttpHandler implements HttpHandlerInterface {
         longPoll,
         sse,
       }),
-      metadata: new MetadataHttpService({ protocol: options.protocol, responses }),
-      delete: new DeleteHttpService({ protocol: options.protocol, responses }),
+      metadata: new MetadataHttpService({ responses }),
+      delete: new DeleteHttpService({ responses }),
     });
   }
 

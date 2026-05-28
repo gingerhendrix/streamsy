@@ -87,12 +87,12 @@ class FakeStub {
     };
     return this.state.record;
   }
-  async delete(_streamId: string): Promise<void> {
+  async deleteStream(_streamId: string): Promise<void> {
     this.state.record = null;
     this.state.messages = [];
     this.state.producers.clear();
   }
-  async append(_streamId: string, messages: StoredMessage[]): Promise<void> {
+  async appendToStream(_streamId: string, messages: StoredMessage[]): Promise<void> {
     this.state.messages.push(...messages);
   }
   async list(_streamId: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {

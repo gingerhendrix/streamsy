@@ -1,12 +1,13 @@
-/** Stored message mutation helpers for the durable streams protocol. */
+/** Stored message mutation helpers for one storage-bound stream. */
 
-import type { Clock, StreamRecord, StreamStoreAdapter } from "../../types/storage.ts";
+import type { Stream } from "../../types/factory.ts";
+import type { Clock, StreamRecord } from "../../types/storage.ts";
 import { allocate as allocateOffsets } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
 export class StreamMessageWriter {
   constructor(
-    private store: StreamStoreAdapter,
+    private stream: Stream,
     private clock: Clock,
     private expiryPolicy: ExpiryPolicy,
   ) {}
@@ -25,13 +26,13 @@ export class StreamMessageWriter {
       offset: allocation.offsets[i]!,
       timestamp: now,
     }));
-    if (messages.length > 0) await this.store.append(streamId, messages);
-    await this.store.update(streamId, {
+    if (messages.length > 0) await this.stream.appendMessages(messages);
+    await this.stream.updateRecord({
       currentOffset: allocation.nextOffset,
       counter: allocation.endCounter,
       lifecycle: seq ? { lastSeq: seq } : undefined,
     });
-    await this.store.notify?.(streamId, "message");
+    await this.stream.events?.notify("message");
     return allocation.nextOffset;
   }
 
@@ -45,16 +46,16 @@ export class StreamMessageWriter {
     let nextOffset = record.currentOffset;
     if (data.length > 0) {
       nextOffset = await this.appendMessages(streamId, record, data, seq);
-      latest = (await this.store.get(streamId)) ?? record;
+      latest = (await this.stream.getRecord()) ?? record;
     } else {
       await this.expiryPolicy.touch(streamId, record, "close");
     }
-    await this.store.update(streamId, {
+    await this.stream.updateRecord({
       lifecycle: { closed: true, closedAt: this.clock.now(), ...(seq ? { lastSeq: seq } : {}) },
       currentOffset: nextOffset,
       counter: latest.counter,
     });
-    await this.store.notify?.(streamId, "closed");
+    await this.stream.events?.notify("closed");
     return nextOffset;
   }
 }
