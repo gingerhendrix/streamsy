@@ -6,7 +6,11 @@ import { $ } from "bun";
 
 const packageDir = join(import.meta.dirname, "..");
 const appName = "streamsy-conf";
-const stage = "conformance";
+const baseStage = process.env.STAGE || "conformance";
+const runId =
+  process.env.CONFORMANCE_RUN_ID ||
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const stage = process.env.CONFORMANCE_UNIQUE_STAGE === "1" ? `${baseStage}-${runId}` : baseStage;
 const workerResourceId = "server";
 const statePath = join(packageDir, ".alchemy", appName, stage, `${workerResourceId}.json`);
 
@@ -50,6 +54,27 @@ function logFailure(label: string, error: unknown): void {
   }
 }
 
+async function waitForWorkerReady(baseUrl: string): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/`);
+      const body = await response.text();
+      if (response.status === 400 && body.includes("Stream path required")) return;
+      lastError = new Error(
+        `Unexpected readiness response ${response.status}: ${body.slice(0, 120)}`,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+
+  throw new Error(`Worker did not become ready at ${baseUrl}: ${String(lastError)}`);
+}
+
 let exitCode = 0;
 
 try {
@@ -60,6 +85,8 @@ try {
 
   const serverBaseUrl = readWorkerUrl();
   console.log(`\n==> conformance server: ${serverBaseUrl}`);
+
+  await runStep("wait for deployed worker readiness", waitForWorkerReady(serverBaseUrl));
 
   await runStep(
     "run Durable Object conformance tests against deployed server",
