@@ -32,13 +32,14 @@ export interface LiveReadDeps {
   touch: LiveReadTouch;
 }
 
+export interface LiveReadServiceDeps extends LiveReadDeps {
+  store: LiveReadStore;
+  clock: Clock;
+  longPollTimeoutMs: number;
+}
+
 export class LiveReadService {
-  constructor(
-    private store: LiveReadStore,
-    private clock: Clock,
-    private longPollTimeoutMs: number,
-    private deps: LiveReadDeps,
-  ) {}
+  constructor(private deps: LiveReadServiceDeps) {}
 
   async execute(
     streamId: StreamId,
@@ -61,7 +62,7 @@ export class LiveReadService {
         messages,
         nextOffset,
         upToDate: true,
-        cursor: generateCursor(this.clock, options.cursor),
+        cursor: generateCursor(this.deps.clock, options.cursor),
         closed: nextOffset === record.currentOffset,
       };
     }
@@ -80,7 +81,7 @@ export class LiveReadService {
         nextOffset:
           compareOffsets(lastOffset, record.currentOffset) > 0 ? lastOffset : record.currentOffset,
         upToDate: true,
-        cursor: generateCursor(this.clock, options.cursor),
+        cursor: generateCursor(this.deps.clock, options.cursor),
       };
     }
 
@@ -91,16 +92,16 @@ export class LiveReadService {
         status: "ok",
         ...immediate,
         upToDate: true,
-        cursor: generateCursor(this.clock, options.cursor),
+        cursor: generateCursor(this.deps.clock, options.cursor),
       };
 
-    if (!this.store.events)
+    if (!this.deps.store.events)
       return notSupported("live-read", "The active storage factory has no live-read event hub");
-    const wait = await this.store.events.waitForEvent({
-      timeoutMs: this.longPollTimeoutMs,
+    const wait = await this.deps.store.events.waitForEvent({
+      timeoutMs: this.deps.longPollTimeoutMs,
       signal: options.signal,
     });
-    const latest = await this.store.getRecord();
+    const latest = await this.deps.store.getRecord();
     if (!latest)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (latest.lifecycle.softDeleted)
@@ -117,7 +118,7 @@ export class LiveReadService {
       messages: r.messages,
       nextOffset: r.nextOffset,
       upToDate: true,
-      cursor: generateCursor(this.clock, options.cursor),
+      cursor: generateCursor(this.deps.clock, options.cursor),
       closed: latest.lifecycle.closed === true && reachedTail,
     };
   }

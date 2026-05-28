@@ -62,16 +62,20 @@ export function rejectionToAppendResult(
   }
 }
 
+export interface ProducerIdempotencyServiceDeps {
+  store: StreamProducerStore | undefined;
+}
+
 export class ProducerIdempotencyService {
-  constructor(private store: StreamProducerStore | undefined) {}
+  constructor(private deps: ProducerIdempotencyServiceDeps) {}
 
   load(producerId: string): Promise<ProducerState | undefined> | NotSupportedResult {
-    if (!this.store)
+    if (!this.deps.store)
       return notSupported(
         "producer-idempotency",
         "The active storage factory has no producer store",
       );
-    return this.store.getProducerState(producerId);
+    return this.deps.store.getProducerState(producerId);
   }
 
   validate(state: ProducerState | undefined, epoch: number, seq: number): ProducerValidation {
@@ -83,12 +87,12 @@ export class ProducerIdempotencyService {
     validation: ProducerValidation | undefined,
   ): Promise<NotSupportedResult | undefined> {
     if (!producer || validation?.kind !== "accepted") return undefined;
-    if (!this.store)
+    if (!this.deps.store)
       return notSupported(
         "producer-idempotency",
         "The active storage factory has no producer store",
       );
-    await this.store.setProducerState(producer.producerId, validation.proposedState);
+    await this.deps.store.setProducerState(producer.producerId, validation.proposedState);
     return undefined;
   }
 }

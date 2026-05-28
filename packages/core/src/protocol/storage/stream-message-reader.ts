@@ -7,11 +7,13 @@ import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
 export type ResolveStorageStream = (streamId: string) => Promise<Stream> | Stream;
 
+export interface StreamMessageReaderDeps {
+  resolve: ResolveStorageStream;
+  expiryPolicy: ExpiryPolicy;
+}
+
 export class StreamMessageReader {
-  constructor(
-    private resolve: ResolveStorageStream,
-    private expiryPolicy: ExpiryPolicy,
-  ) {}
+  constructor(private deps: StreamMessageReaderDeps) {}
 
   async readChain(
     streamId: string,
@@ -26,7 +28,7 @@ export class StreamMessageReader {
       record.lifecycle.forkOffset &&
       (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
     ) {
-      const sourceStream = await this.resolve(record.lifecycle.forkedFrom);
+      const sourceStream = await this.deps.resolve(record.lifecycle.forkedFrom);
       const source = await sourceStream.getRecord();
       if (source) {
         const upstreamCap =
@@ -44,14 +46,14 @@ export class StreamMessageReader {
         );
       }
     }
-    if (touchOwnTtl) await this.expiryPolicy.touch(streamId, record, "read");
+    if (touchOwnTtl) await this.deps.expiryPolicy.touch(streamId, record, "read");
     const ownStart =
       record.lifecycle.forkOffset &&
       (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
         ? record.lifecycle.forkOffset
         : afterOffset;
     const own = await (
-      await this.resolve(streamId)
+      await this.deps.resolve(streamId)
     ).listMessages({ after: ownStart, until: capOffset });
     out.push(...own);
     return out;
@@ -61,7 +63,7 @@ export class StreamMessageReader {
     streamId: string,
     after?: Offset,
   ): Promise<{ messages: StoredMessage[]; nextOffset: string }> {
-    const stream = await this.resolve(streamId);
+    const stream = await this.deps.resolve(streamId);
     const record = await stream.getRecord();
     if (!record) return { messages: [], nextOffset: "" };
     const messages = await stream.listMessages({ after });

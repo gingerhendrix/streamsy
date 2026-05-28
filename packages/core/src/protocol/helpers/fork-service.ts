@@ -37,16 +37,18 @@ export function resolveForkExpiry(
   return {};
 }
 
+export interface ForkServiceDeps {
+  resolve: ResolveStorageStream;
+  mutators: ForkServiceMutators;
+}
+
 export class ForkService {
-  constructor(
-    private resolve: ResolveStorageStream,
-    private mutators: ForkServiceMutators,
-  ) {}
+  constructor(private deps: ForkServiceDeps) {}
 
   async execute(streamId: StreamId, options: CreateOptions): Promise<CreateOutcome> {
     const sourcePath = options.forkedFrom!;
-    await this.mutators.expireIfNeeded(sourcePath);
-    const sourceStream = await this.resolve(sourcePath);
+    await this.deps.mutators.expireIfNeeded(sourcePath);
+    const sourceStream = await this.deps.resolve(sourcePath);
     const source = await sourceStream.getRecord();
     if (!source)
       return {
@@ -99,7 +101,7 @@ export class ForkService {
     }
 
     const expiry = resolveForkExpiry(options, source);
-    const record = this.mutators.newRecord(
+    const record = this.deps.mutators.newRecord(
       streamId,
       contentType,
       { ...options, ...expiry },
@@ -109,7 +111,7 @@ export class ForkService {
       ? frameMessages(options.initialData, contentType)
       : [];
 
-    const targetStream = await this.resolve(streamId);
+    const targetStream = await this.deps.resolve(streamId);
     const createResult = await targetStream.createRecord(record);
     if (createResult.status === "created") await sourceStream.references?.incrementChildRefCount();
     if (createResult.status === "exists") {
@@ -121,10 +123,10 @@ export class ForkService {
         errorMessage: `Stream already exists: ${streamId}`,
       };
     }
-    await this.mutators.scheduleExpiry(record);
+    await this.deps.mutators.scheduleExpiry(record);
     let final = record.currentOffset;
     if (initialMessages.length > 0)
-      final = await this.mutators.appendMessages(streamId, record, initialMessages);
+      final = await this.deps.mutators.appendMessages(streamId, record, initialMessages);
     return { status: "created", nextOffset: final, contentType };
   }
 }

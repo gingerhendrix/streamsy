@@ -10,14 +10,16 @@ export interface StreamGcServiceMutators {
 
 export type ResolveStorageStream = (streamId: StreamId) => Promise<Stream> | Stream;
 
+export interface StreamGcServiceDeps {
+  resolve: ResolveStorageStream;
+  mutators: StreamGcServiceMutators;
+}
+
 export class StreamGcService {
-  constructor(
-    private resolve: ResolveStorageStream,
-    private mutators: StreamGcServiceMutators,
-  ) {}
+  constructor(private deps: StreamGcServiceDeps) {}
 
   async deleteStream(streamId: StreamId): Promise<DeleteResult> {
-    const stream = await this.resolve(streamId);
+    const stream = await this.deps.resolve(streamId);
     const record = await stream.getRecord();
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
@@ -31,10 +33,10 @@ export class StreamGcService {
   }
 
   async handleScheduledExpiry(streamId: StreamId): Promise<void> {
-    const stream = await this.resolve(streamId);
+    const stream = await this.deps.resolve(streamId);
     const record = await stream.getRecord();
     if (!record) return;
-    if (!this.mutators.isExpired(record)) return;
+    if (!this.deps.mutators.isExpired(record)) return;
     if (record.lifecycle.childRefCount > 0) {
       await stream.updateRecord({ lifecycle: { softDeleted: true } });
       await stream.events?.notify("soft-deleted");
@@ -44,7 +46,7 @@ export class StreamGcService {
   }
 
   private async purgeWithCascade(streamId: StreamId, record: StreamRecord): Promise<void> {
-    const stream = await this.resolve(streamId);
+    const stream = await this.deps.resolve(streamId);
     await stream.expiry?.cancelExpiry();
     await stream.deleteMessages();
     await stream.producers?.deleteProducerStates();
@@ -53,7 +55,7 @@ export class StreamGcService {
 
     const parentId = record.lifecycle.forkedFrom;
     if (!parentId) return;
-    const parentStream = await this.resolve(parentId);
+    const parentStream = await this.deps.resolve(parentId);
     const newRefCount = (await parentStream.references?.decrementChildRefCount()) ?? 0;
     const parent = await parentStream.getRecord();
     if (parent && newRefCount === 0 && parent.lifecycle.softDeleted)

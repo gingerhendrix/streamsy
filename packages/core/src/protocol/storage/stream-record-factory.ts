@@ -10,11 +10,13 @@ export interface ForkRecordDescriptor {
   forkOffset: string;
 }
 
+export interface StreamRecordFactoryDeps {
+  clock: Clock;
+  expiryPolicy: ExpiryPolicy;
+}
+
 export class StreamRecordFactory {
-  constructor(
-    private clock: Clock,
-    private expiryPolicy: ExpiryPolicy,
-  ) {}
+  constructor(private deps: StreamRecordFactoryDeps) {}
 
   newRecord(
     streamId: string,
@@ -27,7 +29,7 @@ export class StreamRecordFactory {
       contentType,
       ttlSeconds: options.ttlSeconds,
       expiresAt: options.expiresAt,
-      createdAt: this.clock.now(),
+      createdAt: this.deps.clock.now(),
     };
     return {
       id: streamId,
@@ -36,7 +38,7 @@ export class StreamRecordFactory {
         childRefCount: 0,
         forkedFrom: fork?.forkedFrom,
         forkOffset,
-        expiresAtMs: this.expiryPolicy.computeExpiresAtMs(config),
+        expiresAtMs: this.deps.expiryPolicy.computeExpiresAtMs(config),
       },
       currentOffset: forkOffset ?? ZERO_OFFSET,
       counter: forkOffset ? parseCounter(forkOffset) : 0,

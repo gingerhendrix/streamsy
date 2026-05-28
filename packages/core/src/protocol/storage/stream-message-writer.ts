@@ -13,12 +13,14 @@ export interface MessageWriterStore {
   readonly events?: StreamEventHub;
 }
 
+export interface StreamMessageWriterDeps {
+  stream: MessageWriterStore;
+  clock: Clock;
+  expiryPolicy: ExpiryPolicy;
+}
+
 export class StreamMessageWriter {
-  constructor(
-    private stream: MessageWriterStore,
-    private clock: Clock,
-    private expiryPolicy: ExpiryPolicy,
-  ) {}
+  constructor(private deps: StreamMessageWriterDeps) {}
 
   async appendMessages(
     streamId: string,
@@ -26,21 +28,21 @@ export class StreamMessageWriter {
     data: Uint8Array[],
     seq?: string,
   ): Promise<string> {
-    await this.expiryPolicy.touch(streamId, record, "append");
+    await this.deps.expiryPolicy.touch(streamId, record, "append");
     const allocation = allocateOffsets(record.counter, data.length);
-    const now = this.clock.now();
+    const now = this.deps.clock.now();
     const messages = data.map((bytes, i) => ({
       data: bytes,
       offset: allocation.offsets[i]!,
       timestamp: now,
     }));
-    if (messages.length > 0) await this.stream.appendMessages(messages);
-    await this.stream.updateRecord({
+    if (messages.length > 0) await this.deps.stream.appendMessages(messages);
+    await this.deps.stream.updateRecord({
       currentOffset: allocation.nextOffset,
       counter: allocation.endCounter,
       lifecycle: seq ? { lastSeq: seq } : undefined,
     });
-    await this.stream.events?.notify("message");
+    await this.deps.stream.events?.notify("message");
     return allocation.nextOffset;
   }
 
@@ -54,16 +56,20 @@ export class StreamMessageWriter {
     let nextOffset = record.currentOffset;
     if (data.length > 0) {
       nextOffset = await this.appendMessages(streamId, record, data, seq);
-      latest = (await this.stream.getRecord()) ?? record;
+      latest = (await this.deps.stream.getRecord()) ?? record;
     } else {
-      await this.expiryPolicy.touch(streamId, record, "close");
+      await this.deps.expiryPolicy.touch(streamId, record, "close");
     }
-    await this.stream.updateRecord({
-      lifecycle: { closed: true, closedAt: this.clock.now(), ...(seq ? { lastSeq: seq } : {}) },
+    await this.deps.stream.updateRecord({
+      lifecycle: {
+        closed: true,
+        closedAt: this.deps.clock.now(),
+        ...(seq ? { lastSeq: seq } : {}),
+      },
       currentOffset: nextOffset,
       counter: latest.counter,
     });
-    await this.stream.events?.notify("closed");
+    await this.deps.stream.events?.notify("closed");
     return nextOffset;
   }
 }

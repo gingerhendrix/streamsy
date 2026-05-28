@@ -19,11 +19,13 @@ export interface CreateStreamMutators {
   createFork(streamId: StreamId, options: CreateOptions): Promise<CreateOutcome>;
 }
 
+export interface CreateStreamServiceDeps {
+  store: CreateStreamStore;
+  mutators: CreateStreamMutators;
+}
+
 export class CreateStreamService {
-  constructor(
-    private store: CreateStreamStore,
-    private mutators: CreateStreamMutators,
-  ) {}
+  constructor(private deps: CreateStreamServiceDeps) {}
 
   async execute(
     streamId: StreamId,
@@ -31,7 +33,7 @@ export class CreateStreamService {
     options: CreateOptions,
   ): Promise<CreateOutcome> {
     if (record) return this.resultForExisting(record, options);
-    if (options.forkedFrom) return this.mutators.createFork(streamId, options);
+    if (options.forkedFrom) return this.deps.mutators.createFork(streamId, options);
 
     const contentType = options.contentType ?? "application/octet-stream";
     const initialMessages = options.initialData
@@ -39,19 +41,19 @@ export class CreateStreamService {
       : [];
     const wantClosed = options.closed === true;
 
-    const newRecord = this.mutators.newRecord(streamId, contentType, options);
-    const createResult = await this.store.createRecord(newRecord);
+    const newRecord = this.deps.mutators.newRecord(streamId, contentType, options);
+    const createResult = await this.deps.store.createRecord(newRecord);
     if (createResult.status === "exists")
       return this.resultForExisting(createResult.record, options);
-    await this.mutators.scheduleExpiry(newRecord);
+    await this.deps.mutators.scheduleExpiry(newRecord);
 
     let final = newRecord.currentOffset;
     if (initialMessages.length > 0) {
-      final = await this.mutators.appendMessages(streamId, newRecord, initialMessages);
+      final = await this.deps.mutators.appendMessages(streamId, newRecord, initialMessages);
     }
     if (wantClosed) {
-      const latest = (await this.store.getRecord()) ?? newRecord;
-      final = await this.mutators.closeRecord(streamId, latest, []);
+      const latest = (await this.deps.store.getRecord()) ?? newRecord;
+      final = await this.deps.mutators.closeRecord(streamId, latest, []);
     }
 
     return {

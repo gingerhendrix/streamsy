@@ -13,33 +13,35 @@ export interface ExpiryConfig {
   expiresAt?: string;
 }
 
+export interface ExpiryPolicyDeps {
+  resolve: ResolveStorageStream;
+  clock: Clock;
+  onScheduledExpiry: ScheduledExpiryHandler;
+}
+
 export class ExpiryPolicy {
-  constructor(
-    private resolve: ResolveStorageStream,
-    private clock: Clock,
-    private onScheduledExpiry: ScheduledExpiryHandler,
-  ) {}
+  constructor(private deps: ExpiryPolicyDeps) {}
 
   computeExpiresAtMs(config: ExpiryConfig): number | undefined {
-    if (config.ttlSeconds !== undefined) return this.clock.now() + config.ttlSeconds * 1000;
-    if (config.expiresAt) return this.clock.date(config.expiresAt).getTime();
+    if (config.ttlSeconds !== undefined) return this.deps.clock.now() + config.ttlSeconds * 1000;
+    if (config.expiresAt) return this.deps.clock.date(config.expiresAt).getTime();
     return undefined;
   }
 
   async touch(streamId: StreamId, record: StreamRecord, reason: TouchReason): Promise<void> {
     if (record.config.ttlSeconds === undefined) return;
     if (reason === "live-read") return;
-    const stream = await this.resolve(streamId);
-    const expiresAtMs = this.clock.now() + record.config.ttlSeconds * 1000;
+    const stream = await this.deps.resolve(streamId);
+    const expiresAtMs = this.deps.clock.now() + record.config.ttlSeconds * 1000;
     await stream.updateRecord({ lifecycle: { expiresAtMs } });
-    await stream.expiry?.scheduleExpiry(expiresAtMs, () => this.onScheduledExpiry(streamId));
+    await stream.expiry?.scheduleExpiry(expiresAtMs, () => this.deps.onScheduledExpiry(streamId));
   }
 
   async scheduleExpiry(record: StreamRecord): Promise<void> {
     const at = record.lifecycle.expiresAtMs;
     if (at !== undefined) {
-      const stream = await this.resolve(record.id);
-      await stream.expiry?.scheduleExpiry(at, () => this.onScheduledExpiry(record.id));
+      const stream = await this.deps.resolve(record.id);
+      await stream.expiry?.scheduleExpiry(at, () => this.deps.onScheduledExpiry(record.id));
     }
   }
 
@@ -50,10 +52,10 @@ export class ExpiryPolicy {
    * re-read so the returned value reflects the post-expiry state.
    */
   async expireIfNeeded(streamId: StreamId, stream?: Stream): Promise<StreamRecord | null> {
-    const resolved = stream ?? (await this.resolve(streamId));
+    const resolved = stream ?? (await this.deps.resolve(streamId));
     const record = await resolved.getRecord();
     if (record && this.isExpired(record)) {
-      await this.onScheduledExpiry(streamId);
+      await this.deps.onScheduledExpiry(streamId);
       return resolved.getRecord();
     }
     return record;
@@ -61,6 +63,6 @@ export class ExpiryPolicy {
 
   isExpired(record: StreamRecord): boolean {
     const at = record.lifecycle.expiresAtMs;
-    return at !== undefined && at <= this.clock.now();
+    return at !== undefined && at <= this.deps.clock.now();
   }
 }

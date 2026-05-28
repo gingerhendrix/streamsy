@@ -42,11 +42,13 @@ export function appendedResult(
   return { status: "appended", nextOffset, closed };
 }
 
+export interface AppendServiceDeps {
+  producerIdempotency: ProducerIdempotencyService;
+  mutators: AppendMutators;
+}
+
 export class AppendService {
-  constructor(
-    private producerIdempotency: ProducerIdempotencyService,
-    private mutators: AppendMutators,
-  ) {}
+  constructor(private deps: AppendServiceDeps) {}
 
   async execute(
     streamId: StreamId,
@@ -62,9 +64,9 @@ export class AppendService {
 
     let producerValidation: ProducerValidation | undefined;
     if (options.producer) {
-      const state = await this.producerIdempotency.load(options.producer.producerId);
+      const state = await this.deps.producerIdempotency.load(options.producer.producerId);
       if (isNotSupported(state)) return state;
-      producerValidation = this.producerIdempotency.validate(
+      producerValidation = this.deps.producerIdempotency.validate(
         state,
         options.producer.producerEpoch,
         options.producer.producerSeq,
@@ -75,8 +77,8 @@ export class AppendService {
 
     if (wantClose && !hasBody) {
       if (isClosed) return { status: "appended", nextOffset: record.currentOffset, closed: true };
-      const nextOffset = await this.mutators.closeRecord(streamId, record, [], options.seq);
-      const persisted = await this.producerIdempotency.persistIfAccepted(
+      const nextOffset = await this.deps.mutators.closeRecord(streamId, record, [], options.seq);
+      const persisted = await this.deps.producerIdempotency.persistIfAccepted(
         options.producer,
         producerValidation,
       );
@@ -98,9 +100,9 @@ export class AppendService {
 
     const processed = frameMessages(options.data, record.config.contentType);
     const nextOffset = wantClose
-      ? await this.mutators.closeRecord(streamId, record, processed, options.seq)
-      : await this.mutators.appendMessages(streamId, record, processed, options.seq);
-    const persisted = await this.producerIdempotency.persistIfAccepted(
+      ? await this.deps.mutators.closeRecord(streamId, record, processed, options.seq)
+      : await this.deps.mutators.appendMessages(streamId, record, processed, options.seq);
+    const persisted = await this.deps.producerIdempotency.persistIfAccepted(
       options.producer,
       producerValidation,
     );

@@ -61,15 +61,21 @@ export class StreamProtocol implements StreamProtocolFactory {
   constructor(private deps: StreamProtocolDeps) {
     this.clock = deps.clock ?? systemClock;
     this.longPollTimeoutMs = deps.longPollTimeoutMs ?? LONG_POLL_TIMEOUT_MS;
-    this.expiryPolicy = new ExpiryPolicy(
-      (id) => this.storageStream(id),
-      this.clock,
-      (id) => this.handleScheduledExpiry(id),
-    );
-    this.gcService = new StreamGcService((id) => this.storageStream(id), {
-      isExpired: (record) => this.expiryPolicy.isExpired(record),
+    this.expiryPolicy = new ExpiryPolicy({
+      resolve: (id) => this.storageStream(id),
+      clock: this.clock,
+      onScheduledExpiry: (id) => this.handleScheduledExpiry(id),
     });
-    this.recordFactory = new StreamRecordFactory(this.clock, this.expiryPolicy);
+    this.gcService = new StreamGcService({
+      resolve: (id) => this.storageStream(id),
+      mutators: {
+        isExpired: (record) => this.expiryPolicy.isExpired(record),
+      },
+    });
+    this.recordFactory = new StreamRecordFactory({
+      clock: this.clock,
+      expiryPolicy: this.expiryPolicy,
+    });
   }
 
   async create(streamId: string, options: CreateOptions): Promise<CreateResult> {
@@ -158,42 +164,59 @@ export class StreamProtocol implements StreamProtocolFactory {
     liveRead: LiveReadService;
     create: CreateStreamService;
   } {
-    const producerIdempotency = new ProducerIdempotencyService(storage.producers);
-    const messageWriter = new StreamMessageWriter(storage, this.clock, this.expiryPolicy);
-    const messageReader = new StreamMessageReader(
-      (id) => this.storageStream(id),
-      this.expiryPolicy,
-    );
-    const append = new AppendService(producerIdempotency, {
-      appendMessages: (id, record, data, seq) =>
-        messageWriter.appendMessages(id, record, data, seq),
-      closeRecord: (id, record, data, seq) => messageWriter.closeRecord(id, record, data, seq),
+    const producerIdempotency = new ProducerIdempotencyService({ store: storage.producers });
+    const messageWriter = new StreamMessageWriter({
+      stream: storage,
+      clock: this.clock,
+      expiryPolicy: this.expiryPolicy,
     });
-    const read = new ReadService((id, record, afterOffset) =>
-      messageReader.readChain(id, record, afterOffset, undefined, true),
-    );
-    const liveRead = new LiveReadService(storage, this.clock, this.longPollTimeoutMs, {
+    const messageReader = new StreamMessageReader({
+      resolve: (id) => this.storageStream(id),
+      expiryPolicy: this.expiryPolicy,
+    });
+    const append = new AppendService({
+      producerIdempotency,
+      mutators: {
+        appendMessages: (id, record, data, seq) =>
+          messageWriter.appendMessages(id, record, data, seq),
+        closeRecord: (id, record, data, seq) => messageWriter.closeRecord(id, record, data, seq),
+      },
+    });
+    const read = new ReadService({
+      readChain: (id, record, afterOffset) =>
+        messageReader.readChain(id, record, afterOffset, undefined, true),
+    });
+    const liveRead = new LiveReadService({
+      store: storage,
+      clock: this.clock,
+      longPollTimeoutMs: this.longPollTimeoutMs,
       readChain: (id, record, afterOffset) =>
         messageReader.readChain(id, record, afterOffset, undefined, true),
       readOwn: (id, after) => messageReader.readOwn(id, after),
       touch: (id, record) => this.expiryPolicy.touch(id, record, "live-read"),
     });
-    const forkService = new ForkService((id) => this.storageStream(id), {
-      expireIfNeeded: async (id) => {
-        await this.expiryPolicy.expireIfNeeded(id);
+    const forkService = new ForkService({
+      resolve: (id) => this.storageStream(id),
+      mutators: {
+        expireIfNeeded: async (id) => {
+          await this.expiryPolicy.expireIfNeeded(id);
+        },
+        newRecord: (id, contentType, opts, fork) =>
+          this.recordFactory.newRecord(id, contentType, opts, fork),
+        scheduleExpiry: (record) => this.expiryPolicy.scheduleExpiry(record),
+        appendMessages: (id, record, data) => messageWriter.appendMessages(id, record, data),
       },
-      newRecord: (id, contentType, opts, fork) =>
-        this.recordFactory.newRecord(id, contentType, opts, fork),
-      scheduleExpiry: (record) => this.expiryPolicy.scheduleExpiry(record),
-      appendMessages: (id, record, data) => messageWriter.appendMessages(id, record, data),
     });
-    const create = new CreateStreamService(storage, {
-      newRecord: (id, contentType, opts) =>
-        this.recordFactory.newRecord(id, contentType, opts, undefined),
-      scheduleExpiry: (record) => this.expiryPolicy.scheduleExpiry(record),
-      appendMessages: (id, record, data) => messageWriter.appendMessages(id, record, data),
-      closeRecord: (id, record, data) => messageWriter.closeRecord(id, record, data),
-      createFork: (id, opts) => forkService.execute(id, opts),
+    const create = new CreateStreamService({
+      store: storage,
+      mutators: {
+        newRecord: (id, contentType, opts) =>
+          this.recordFactory.newRecord(id, contentType, opts, undefined),
+        scheduleExpiry: (record) => this.expiryPolicy.scheduleExpiry(record),
+        appendMessages: (id, record, data) => messageWriter.appendMessages(id, record, data),
+        closeRecord: (id, record, data) => messageWriter.closeRecord(id, record, data),
+        createFork: (id, opts) => forkService.execute(id, opts),
+      },
     });
     return { append, read, liveRead, create };
   }

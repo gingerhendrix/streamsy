@@ -14,8 +14,12 @@ export function normalizeReadOffset(offset?: string): string | undefined {
   return !offset || offset === "-1" ? undefined : offset;
 }
 
+export interface ReadServiceDeps {
+  readChain: ReadChain;
+}
+
 export class ReadService {
-  constructor(private readChain: ReadChain) {}
+  constructor(private deps: ReadServiceDeps) {}
 
   async execute(
     streamId: StreamId,
@@ -25,7 +29,11 @@ export class ReadService {
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
 
-    const messages = await this.readChain(streamId, record, normalizeReadOffset(options.offset));
+    const messages = await this.deps.readChain(
+      streamId,
+      record,
+      normalizeReadOffset(options.offset),
+    );
     const lastOffset =
       messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
     const nextOffset =
