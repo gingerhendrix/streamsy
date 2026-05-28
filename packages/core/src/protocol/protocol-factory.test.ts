@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StreamProtocol } from "../protocol.ts";
+import { ProtocolStream, StreamProtocol } from "../protocol.ts";
 import { createInMemoryFactory } from "./test-memory-factory.ts";
 
 describe("StreamProtocol factory", () => {
@@ -11,11 +11,13 @@ describe("StreamProtocol factory", () => {
     });
     expect(created.status).toBe("created");
     if (created.status !== "created") throw new Error("expected create");
+    expect(created.stream).toBeInstanceOf(ProtocolStream);
     expect(created.stream.id).toBe("alpha");
 
     const lookup = await protocol.get("alpha");
     expect(lookup.status).toBe("ok");
     if (lookup.status !== "ok") throw new Error("expected lookup");
+    expect(lookup.stream).toBeInstanceOf(ProtocolStream);
     const read = await lookup.stream.read({});
     expect(read.status).toBe("ok");
     if (read.status !== "ok") throw new Error("expected read");
