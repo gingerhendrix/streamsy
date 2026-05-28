@@ -25,6 +25,7 @@ export type {
   CreateConflictReason,
   AppendOptions,
   AppendResult,
+  AppendConflictReason,
   ProducerOptions,
   ReadOptions,
   ReadResult,

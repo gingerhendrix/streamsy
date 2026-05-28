@@ -1,29 +1,36 @@
 /** Create-side orchestration for one storage-bound stream. */
 
-import type { CreateOptions, CreateResult } from "../types/protocol.ts";
-import type { Stream } from "../types/factory.ts";
-import type { StreamId, StreamRecord } from "../types/storage.ts";
+import type { CreateOptions, CreateOutcome } from "../types/protocol.ts";
+import type { CreateStreamRecordResult, StreamId, StreamRecord } from "../types/storage.ts";
 import { configMatches } from "./helpers/create-config-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
+
+/** Narrow record-store view the create service depends on. */
+export interface CreateStreamStore {
+  getRecord(): Promise<StreamRecord | null>;
+  createRecord(record: StreamRecord): Promise<CreateStreamRecordResult>;
+}
 
 export interface CreateStreamMutators {
   newRecord(streamId: StreamId, contentType: string, options: CreateOptions): StreamRecord;
   scheduleExpiry(record: StreamRecord): Promise<void>;
   appendMessages(streamId: StreamId, record: StreamRecord, data: Uint8Array[]): Promise<string>;
   closeRecord(streamId: StreamId, record: StreamRecord, data: Uint8Array[]): Promise<string>;
-  createFork(streamId: StreamId, options: CreateOptions): Promise<CreateResult>;
+  createFork(streamId: StreamId, options: CreateOptions): Promise<CreateOutcome>;
 }
 
 export class CreateStreamService {
   constructor(
-    private stream: Stream,
+    private store: CreateStreamStore,
     private mutators: CreateStreamMutators,
   ) {}
 
-  async execute(streamId: StreamId, options: CreateOptions): Promise<CreateResult> {
-    const existing = await this.stream.getRecord();
-
-    if (existing) return this.resultForExisting(existing, options);
+  async execute(
+    streamId: StreamId,
+    record: StreamRecord | null,
+    options: CreateOptions,
+  ): Promise<CreateOutcome> {
+    if (record) return this.resultForExisting(record, options);
     if (options.forkedFrom) return this.mutators.createFork(streamId, options);
 
     const contentType = options.contentType ?? "application/octet-stream";
@@ -32,31 +39,30 @@ export class CreateStreamService {
       : [];
     const wantClosed = options.closed === true;
 
-    const record = this.mutators.newRecord(streamId, contentType, options);
-    const createResult = await this.stream.createRecord(record);
+    const newRecord = this.mutators.newRecord(streamId, contentType, options);
+    const createResult = await this.store.createRecord(newRecord);
     if (createResult.status === "exists")
       return this.resultForExisting(createResult.record, options);
-    await this.mutators.scheduleExpiry(record);
+    await this.mutators.scheduleExpiry(newRecord);
 
-    let final = record.currentOffset;
+    let final = newRecord.currentOffset;
     if (initialMessages.length > 0) {
-      final = await this.mutators.appendMessages(streamId, record, initialMessages);
+      final = await this.mutators.appendMessages(streamId, newRecord, initialMessages);
     }
     if (wantClosed) {
-      const latest = (await this.stream.getRecord()) ?? record;
+      const latest = (await this.store.getRecord()) ?? newRecord;
       final = await this.mutators.closeRecord(streamId, latest, []);
     }
 
     return {
       status: "created",
-      stream: undefined as never,
       nextOffset: final,
       contentType,
       closed: wantClosed,
     };
   }
 
-  private resultForExisting(existing: StreamRecord, options: CreateOptions): CreateResult {
+  private resultForExisting(existing: StreamRecord, options: CreateOptions): CreateOutcome {
     if (existing.lifecycle.softDeleted) {
       return {
         status: "conflict",
@@ -75,7 +81,6 @@ export class CreateStreamService {
     }
     return {
       status: "exists",
-      stream: undefined as never,
       nextOffset: existing.currentOffset,
       contentType: existing.config.contentType,
       closed: existing.lifecycle.closed === true,

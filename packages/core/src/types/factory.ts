@@ -92,7 +92,7 @@ export interface Stream extends StreamRecordStore, StreamMessageStore {
  * and are not exposed on the returned `Stream`.
  */
 export interface StreamFactory {
-  getStream(streamId: StreamId): Promise<Stream> | Stream;
+  getStream(streamId: StreamId): Promise<Stream>;
 }
 
 /**

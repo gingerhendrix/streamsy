@@ -55,14 +55,7 @@ export type CreateConflictReason =
   | "fork-content-type"
   | "fork-source-soft-deleted";
 
-export type CreateResult =
-  | {
-      status: "created" | "exists";
-      stream: ProtocolStream;
-      nextOffset: string;
-      contentType: string;
-      closed?: boolean;
-    }
+type CreateFailureResult =
   | {
       status: "conflict";
       nextOffset: string;
@@ -77,6 +70,39 @@ export type CreateResult =
       errorMessage?: string;
     }
   | NotSupportedResult;
+
+/**
+ * Create/fork result produced by the protocol services, before the bound
+ * protocol stream is attached. The protocol factory grafts the resolved
+ * `stream` onto success outcomes to produce the public {@link CreateResult}.
+ *
+ * `created` and `exists` are kept as separate members (rather than a combined
+ * `"created" | "exists"` discriminant) so callers can narrow either status and
+ * still eliminate the other union members.
+ */
+export type CreateOutcome =
+  | { status: "created"; nextOffset: string; contentType: string; closed?: boolean }
+  | { status: "exists"; nextOffset: string; contentType: string; closed?: boolean }
+  | CreateFailureResult;
+
+export type CreateResult =
+  | {
+      status: "created";
+      stream: ProtocolStream;
+      nextOffset: string;
+      contentType: string;
+      closed?: boolean;
+    }
+  | {
+      status: "exists";
+      stream: ProtocolStream;
+      nextOffset: string;
+      contentType: string;
+      closed?: boolean;
+    }
+  | CreateFailureResult;
+
+export type AppendConflictReason = "content-type" | "sequence" | "closed";
 
 export type AppendResult =
   | {
@@ -95,24 +121,23 @@ export type AppendResult =
     }
   | { status: "not-found" }
   | { status: "gone" }
-  | {
-      status: "conflict";
-      conflictReason: "content-type" | "sequence" | "closed";
-      nextOffset?: string;
-      closed?: boolean;
-    }
+  | { status: "conflict"; conflictReason: "closed"; nextOffset: string; closed: true }
+  | { status: "conflict"; conflictReason: "content-type" | "sequence" }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
   | { status: "invalid-epoch-seq" }
   | NotSupportedResult;
 
-export interface ReadResult {
-  status: "ok" | "not-found" | "gone";
-  messages: StoredMessage[];
-  nextOffset: string;
-  upToDate: boolean;
-  closed?: boolean;
-}
+export type ReadResult =
+  | {
+      status: "ok";
+      messages: StoredMessage[];
+      nextOffset: string;
+      upToDate: boolean;
+      closed?: boolean;
+    }
+  | { status: "not-found" }
+  | { status: "gone" };
 
 export type ReadLiveResult =
   | {
@@ -125,18 +150,19 @@ export type ReadLiveResult =
     }
   | NotSupportedResult;
 
-export interface MetadataResult {
-  status: "ok" | "not-found" | "gone";
-  contentType?: string;
-  nextOffset?: string;
-  ttlSeconds?: number;
-  expiresAt?: string;
-  closed?: boolean;
-}
+export type MetadataResult =
+  | {
+      status: "ok";
+      contentType: string;
+      nextOffset: string;
+      ttlSeconds?: number;
+      expiresAt?: string;
+      closed?: boolean;
+    }
+  | { status: "not-found" }
+  | { status: "gone" };
 
-export interface DeleteResult {
-  status: "ok" | "not-found" | "gone";
-}
+export type DeleteResult = { status: "ok" } | { status: "not-found" } | { status: "gone" };
 
 // === Protocol-bound stream and factory ===
 

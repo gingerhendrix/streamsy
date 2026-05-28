@@ -19,7 +19,7 @@ export class SseHttpService {
     const metadata = await stream.metadata();
     if (metadata.status === "not-found") return this.deps.responses.notFound();
     if (metadata.status === "gone") return this.deps.responses.gone();
-    const contentTypeLower = metadata.contentType!.toLowerCase();
+    const contentTypeLower = metadata.contentType.toLowerCase();
     const encoding = {
       isText: contentTypeLower.startsWith("text/"),
       isJson: contentTypeLower.startsWith("application/json"),
@@ -30,7 +30,7 @@ export class SseHttpService {
       stream,
       offset,
       cursor,
-      metadata.nextOffset!,
+      metadata.nextOffset,
       metadata.closed === true,
       encoding,
     );
@@ -71,7 +71,7 @@ export class SseHttpService {
             const initialResult = await stream.read({
               offset: currentOffset === "-1" ? undefined : currentOffset,
             });
-            if (initialResult.status === "not-found") {
+            if (initialResult.status === "not-found" || initialResult.status === "gone") {
               controller.close();
               return;
             }

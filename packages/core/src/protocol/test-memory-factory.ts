@@ -44,7 +44,7 @@ export function createInMemoryFactory(): StreamFactory {
     for (const waiter of active) waiter({ status: "notified", type });
   };
   return {
-    getStream(id: StreamId) {
+    async getStream(id: StreamId) {
       return composeStream({
         id,
         recordStore: {

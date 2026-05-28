@@ -14,6 +14,8 @@ describe("memory protocol concurrency", () => {
       lookup.stream.append({ contentType: "text/plain", data: new TextEncoder().encode("b") }),
     ]);
     const read = await lookup.stream.read({});
+    expect(read.status).toBe("ok");
+    if (read.status !== "ok") throw new Error("read failed");
     expect(read.messages).toHaveLength(2);
   });
 });

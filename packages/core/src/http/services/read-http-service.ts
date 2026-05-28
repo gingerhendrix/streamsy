@@ -46,9 +46,9 @@ export class ReadHttpService {
     const meta = await ctx.stream.metadata();
     if (meta.status === "not-found") return { ok: false, response: this.deps.responses.notFound() };
     if (meta.status === "gone") return { ok: false, response: this.deps.responses.gone() };
-    const offset = meta.nextOffset!;
+    const offset = meta.nextOffset;
     if (!live) {
-      const contentType = meta.contentType!;
+      const contentType = meta.contentType;
       return {
         ok: true,
         offset,
@@ -86,18 +86,15 @@ export class ReadHttpService {
     const metadata = await ctx.stream.metadata();
     if (metadata.status === "not-found") return this.deps.responses.notFound();
     if (metadata.status === "gone") return this.deps.responses.gone();
-    return new Response(
-      this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType!),
-      {
-        headers: {
-          "content-type": metadata.contentType!,
-          "stream-next-offset": result.nextOffset,
-          ...(result.upToDate ? { "stream-up-to-date": "true" } : {}),
-          ...(result.closed ? { "stream-closed": "true" } : {}),
-          etag,
-          "cache-control": CACHE_REVALIDATE,
-        },
+    return new Response(this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType), {
+      headers: {
+        "content-type": metadata.contentType,
+        "stream-next-offset": result.nextOffset,
+        ...(result.upToDate ? { "stream-up-to-date": "true" } : {}),
+        ...(result.closed ? { "stream-closed": "true" } : {}),
+        etag,
+        "cache-control": CACHE_REVALIDATE,
       },
-    );
+    });
   }
 }

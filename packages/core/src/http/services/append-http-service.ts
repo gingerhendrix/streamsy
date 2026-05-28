@@ -95,7 +95,7 @@ export class AppendHttpService {
         if (result.conflictReason === "closed") {
           return this.deps.responses.empty(409, {
             "stream-closed": "true",
-            "stream-next-offset": result.nextOffset!,
+            "stream-next-offset": result.nextOffset,
           });
         }
         return this.deps.responses.conflict(

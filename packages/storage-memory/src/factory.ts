@@ -23,7 +23,7 @@ export interface MemoryStreamFactoryOptions {
 export function createMemoryStreamFactory(options: MemoryStreamFactoryOptions = {}): StreamFactory {
   const state = options.state ?? new MemoryStreamState();
   return {
-    getStream(streamId: StreamId): Stream {
+    async getStream(streamId: StreamId): Promise<Stream> {
       return composeStream({
         id: streamId,
         recordStore: {

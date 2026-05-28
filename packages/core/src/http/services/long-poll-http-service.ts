@@ -25,18 +25,15 @@ export class LongPollHttpService {
     const metadata = await stream.metadata();
     if (metadata.status === "not-found") return this.deps.responses.notFound();
     if (metadata.status === "gone") return this.deps.responses.gone();
-    return new Response(
-      this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType!),
-      {
-        headers: {
-          "content-type": metadata.contentType!,
-          "stream-next-offset": result.nextOffset,
-          "stream-up-to-date": "true",
-          ...(result.closed ? {} : { "stream-cursor": result.cursor }),
-          ...(result.closed ? { "stream-closed": "true" } : {}),
-        },
+    return new Response(this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType), {
+      headers: {
+        "content-type": metadata.contentType,
+        "stream-next-offset": result.nextOffset,
+        "stream-up-to-date": "true",
+        ...(result.closed ? {} : { "stream-cursor": result.cursor }),
+        ...(result.closed ? { "stream-closed": "true" } : {}),
       },
-    );
+    });
   }
 
   private toNoContentResponse(result: {

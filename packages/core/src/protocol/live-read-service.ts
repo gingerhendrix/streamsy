@@ -1,11 +1,17 @@
 /** Live-read orchestration for one storage-bound stream. */
 
 import type { ReadLiveOptions, ReadLiveResult } from "../types/protocol.ts";
-import type { Stream } from "../types/factory.ts";
+import type { StreamEventHub } from "../types/factory.ts";
 import type { Clock, Offset, StoredMessage, StreamId, StreamRecord } from "../types/storage.ts";
 import { notSupported } from "../types/factory.ts";
 import { compareOffsets } from "./helpers/offset-generator.ts";
 import { generateCursor } from "./helpers/cursor-generator.ts";
+
+/** Narrow view of the storage stream the live-read service depends on. */
+export interface LiveReadStore {
+  getRecord(): Promise<StreamRecord | null>;
+  readonly events?: StreamEventHub;
+}
 
 export type LiveReadChain = (
   streamId: StreamId,
@@ -28,14 +34,17 @@ export interface LiveReadDeps {
 
 export class LiveReadService {
   constructor(
-    private stream: Stream,
+    private store: LiveReadStore,
     private clock: Clock,
     private longPollTimeoutMs: number,
     private deps: LiveReadDeps,
   ) {}
 
-  async execute(streamId: StreamId, options: ReadLiveOptions): Promise<ReadLiveResult> {
-    const record = await this.stream.getRecord();
+  async execute(
+    streamId: StreamId,
+    record: StreamRecord | null,
+    options: ReadLiveOptions,
+  ): Promise<ReadLiveResult> {
     if (!record)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (record.lifecycle.softDeleted)
@@ -85,13 +94,13 @@ export class LiveReadService {
         cursor: generateCursor(this.clock, options.cursor),
       };
 
-    if (!this.stream.events)
+    if (!this.store.events)
       return notSupported("live-read", "The active storage factory has no live-read event hub");
-    const wait = await this.stream.events.waitForEvent({
+    const wait = await this.store.events.waitForEvent({
       timeoutMs: this.longPollTimeoutMs,
       signal: options.signal,
     });
-    const latest = await this.stream.getRecord();
+    const latest = await this.store.getRecord();
     if (!latest)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (latest.lifecycle.softDeleted)

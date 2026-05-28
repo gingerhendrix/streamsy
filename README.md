@@ -22,16 +22,16 @@ The API and package boundaries are not yet stable, and all packages remain priva
 
 Streamsy applications should usually compose:
 
-1. a `StreamStoreAdapter` from a storage package;
-2. a protocol facade from `createStreamProtocol(store)`;
+1. a `StreamFactory` from a storage package;
+2. a protocol facade from `createStreamProtocol({ storage: { factory } })`;
 3. an HTTP facade from `createHttpHandler({ protocol, pathPrefix })` when serving the Durable Streams HTTP protocol.
 
 ```ts
 import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createMemoryStreamStore } from "@streamsy/storage-memory";
+import { createMemoryStreamFactory } from "@streamsy/storage-memory";
 
-const store = createMemoryStreamStore();
-const protocol = createStreamProtocol(store);
+const factory = createMemoryStreamFactory();
+const protocol = createStreamProtocol({ storage: { factory } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 
 Bun.serve({ fetch: (request) => handler.fetch(request) });

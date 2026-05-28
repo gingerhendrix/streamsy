@@ -43,10 +43,20 @@ export class ExpiryPolicy {
     }
   }
 
-  async expireIfNeeded(streamId: StreamId): Promise<void> {
-    const stream = await this.resolve(streamId);
-    const record = await stream.getRecord();
-    if (record && this.isExpired(record)) await this.onScheduledExpiry(streamId);
+  /**
+   * Lazily expire the stream if its deadline has passed, returning the current
+   * record. Accepts an already-resolved storage stream so callers that have one
+   * avoid a redundant factory lookup. When the stream expires the record is
+   * re-read so the returned value reflects the post-expiry state.
+   */
+  async expireIfNeeded(streamId: StreamId, stream?: Stream): Promise<StreamRecord | null> {
+    const resolved = stream ?? (await this.resolve(streamId));
+    const record = await resolved.getRecord();
+    if (record && this.isExpired(record)) {
+      await this.onScheduledExpiry(streamId);
+      return resolved.getRecord();
+    }
+    return record;
   }
 
   isExpired(record: StreamRecord): boolean {

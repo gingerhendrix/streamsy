@@ -1,13 +1,21 @@
 /** Stored message mutation helpers for one storage-bound stream. */
 
-import type { Stream } from "../../types/factory.ts";
-import type { Clock, StreamRecord } from "../../types/storage.ts";
+import type { StreamEventHub } from "../../types/factory.ts";
+import type { Clock, StoredMessage, StreamRecord, StreamRecordPatch } from "../../types/storage.ts";
 import { allocate as allocateOffsets } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
+/** Narrow storage view the message writer mutates through. */
+export interface MessageWriterStore {
+  getRecord(): Promise<StreamRecord | null>;
+  updateRecord(patch: StreamRecordPatch): Promise<StreamRecord>;
+  appendMessages(messages: StoredMessage[]): Promise<void>;
+  readonly events?: StreamEventHub;
+}
+
 export class StreamMessageWriter {
   constructor(
-    private stream: Stream,
+    private stream: MessageWriterStore,
     private clock: Clock,
     private expiryPolicy: ExpiryPolicy,
   ) {}

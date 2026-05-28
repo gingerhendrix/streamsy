@@ -13,14 +13,20 @@ const protocol = createStreamProtocol({ storage: { factory } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 ```
 
-`createStreamProtocol({ storage: { factory }, ...options })` returns a protocol factory:
+`createStreamProtocol({ storage: { factory }, clock?, longPollTimeoutMs? })` returns a protocol
+factory. Optional `clock` and `longPollTimeoutMs` are provided inline on the dependency object.
+
+On success, `create` returns the bound protocol stream directly; existing streams are resolved with
+`get`:
 
 ```ts
 const created = await protocol.create("/streams/a", { contentType: "text/plain" });
-const lookup = await protocol.get("/streams/a");
+if (created.status === "created" || created.status === "exists") {
+  await created.stream.append({ contentType: "text/plain", data: bytes });
+}
 
+const lookup = await protocol.get("/streams/a");
 if (lookup.status === "ok") {
-  await lookup.stream.append({ contentType: "text/plain", data: bytes });
   const read = await lookup.stream.read({ offset: "-1" });
   const metadata = await lookup.stream.metadata();
 }

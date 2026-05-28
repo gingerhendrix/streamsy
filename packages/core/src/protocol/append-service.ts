@@ -1,7 +1,7 @@
 /** Append-side orchestration for one storage-bound stream. */
 
 import type { AppendOptions, AppendResult } from "../types/protocol.ts";
-import { isNotSupported, type Stream } from "../types/factory.ts";
+import { isNotSupported } from "../types/factory.ts";
 import type { StreamId, StreamRecord } from "../types/storage.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
@@ -44,13 +44,15 @@ export function appendedResult(
 
 export class AppendService {
   constructor(
-    private stream: Stream,
     private producerIdempotency: ProducerIdempotencyService,
     private mutators: AppendMutators,
   ) {}
 
-  async execute(streamId: StreamId, options: AppendOptions): Promise<AppendResult> {
-    const record = await this.stream.getRecord();
+  async execute(
+    streamId: StreamId,
+    record: StreamRecord | null,
+    options: AppendOptions,
+  ): Promise<AppendResult> {
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
 

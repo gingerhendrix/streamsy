@@ -18,6 +18,7 @@ describe("StreamProtocol factory", () => {
     if (lookup.status !== "ok") throw new Error("expected lookup");
     const read = await lookup.stream.read({});
     expect(read.status).toBe("ok");
+    if (read.status !== "ok") throw new Error("expected read");
     expect(new TextDecoder().decode(read.messages[0]!.data)).toBe("hello");
   });
 });

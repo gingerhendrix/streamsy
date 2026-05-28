@@ -2,7 +2,6 @@
 
 import type { ReadOptions, ReadResult } from "../types/protocol.ts";
 import type { StreamId, StoredMessage, StreamRecord } from "../types/storage.ts";
-import type { Stream } from "../types/factory.ts";
 import { compareOffsets } from "./helpers/offset-generator.ts";
 
 export type ReadChain = (
@@ -16,16 +15,15 @@ export function normalizeReadOffset(offset?: string): string | undefined {
 }
 
 export class ReadService {
-  constructor(
-    private stream: Stream,
-    private readChain: ReadChain,
-  ) {}
+  constructor(private readChain: ReadChain) {}
 
-  async execute(streamId: StreamId, options: ReadOptions): Promise<ReadResult> {
-    const record = await this.stream.getRecord();
-    if (!record) return { status: "not-found", messages: [], nextOffset: "", upToDate: false };
-    if (record.lifecycle.softDeleted)
-      return { status: "gone", messages: [], nextOffset: "", upToDate: false };
+  async execute(
+    streamId: StreamId,
+    record: StreamRecord | null,
+    options: ReadOptions,
+  ): Promise<ReadResult> {
+    if (!record) return { status: "not-found" };
+    if (record.lifecycle.softDeleted) return { status: "gone" };
 
     const messages = await this.readChain(streamId, record, normalizeReadOffset(options.offset));
     const lastOffset =

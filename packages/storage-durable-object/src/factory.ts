@@ -34,7 +34,7 @@ export function createDurableObjectStreamFactory(
   const stubFor = (streamId: StreamId) => namespace.get(namespace.idFromName(streamId));
 
   return {
-    getStream(streamId: StreamId): Stream {
+    async getStream(streamId: StreamId): Promise<Stream> {
       return composeStream({
         id: streamId,
         recordStore: {

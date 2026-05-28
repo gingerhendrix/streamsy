@@ -1,6 +1,6 @@
 /** Fork-side orchestration using explicit storage-stream resolution. */
 
-import type { CreateOptions, CreateResult } from "../../types/protocol.ts";
+import type { CreateOptions, CreateOutcome } from "../../types/protocol.ts";
 import type { Stream } from "../../types/factory.ts";
 import type { StreamId, StreamRecord } from "../../types/storage.ts";
 import { ZERO_OFFSET, compareOffsets, isValidOffset } from "./offset-generator.ts";
@@ -43,7 +43,7 @@ export class ForkService {
     private mutators: ForkServiceMutators,
   ) {}
 
-  async execute(streamId: StreamId, options: CreateOptions): Promise<CreateResult> {
+  async execute(streamId: StreamId, options: CreateOptions): Promise<CreateOutcome> {
     const sourcePath = options.forkedFrom!;
     await this.mutators.expireIfNeeded(sourcePath);
     const sourceStream = await this.resolve(sourcePath);
@@ -125,6 +125,6 @@ export class ForkService {
     let final = record.currentOffset;
     if (initialMessages.length > 0)
       final = await this.mutators.appendMessages(streamId, record, initialMessages);
-    return { status: "created", stream: undefined as never, nextOffset: final, contentType };
+    return { status: "created", nextOffset: final, contentType };
   }
 }
