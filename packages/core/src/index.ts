@@ -2,15 +2,14 @@
 export { createStreamProtocol, StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
 export { createHttpHandler, HttpHandler } from "./http.ts";
 
-export { composeStream } from "./factory/compose-stream.ts";
 export {
-  requireEventHub,
-  requireExpiryScheduler,
-  requireMutationCoordinator,
-  requireProducerStore,
-  requireReferenceTracker,
-} from "./factory/require-deps.ts";
-export { isNotSupported, notSupported } from "./types/factory.ts";
+  isNotSupported,
+  isNotSupportedError,
+  notSupported,
+  notSupportedFromError,
+  NotSupportedError,
+  unsupported,
+} from "./types/factory.ts";
 export { maybeNotSupportedResponse, notSupportedResponse } from "./http/not-supported.ts";
 
 export type { StreamProtocolDeps, StreamProtocolOptions } from "./protocol.ts";
@@ -62,6 +61,5 @@ export type {
   StreamMutationCoordinator,
   StreamEventHub,
   StreamExpiryScheduler,
-  ComposedStreamDeps,
   NotSupportedResult,
 } from "./types/factory.ts";

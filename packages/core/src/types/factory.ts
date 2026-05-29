@@ -1,13 +1,11 @@
 /**
- * Factory / composed-stream storage seam.
+ * Factory / storage-bound stream seam.
  *
  * The protocol-facing seam is a {@link StreamFactory} returning {@link Stream}
- * instances bound to one stream id. A `Stream` implements the protocol-facing
- * record/message operations directly. Optional behaviour (producer state,
- * fork reference counts, mutation gates, live-read events, active expiry) is
- * surfaced as additional members on the returned `Stream`. When a feature is
- * unavailable, protocol methods covering it should return a structured
- * {@link NotSupportedResult}.
+ * instances bound to one stream id. A `Stream` implements every storage method
+ * the protocol needs directly. Facet interfaces describe small implementation
+ * surfaces for adapters and tests, but they are inherited by `Stream` rather
+ * than exposed as nested public capability objects.
  *
  * This file only declares types/results.
  */
@@ -39,51 +37,51 @@ export interface StreamMessageStore {
   deleteMessages(): Promise<void>;
 }
 
-/** Bound producer-state store for a single stream. Optional. */
+/** Bound producer-state store for a single stream. */
 export interface StreamProducerStore {
   getProducerState(producerId: string): Promise<ProducerState | undefined>;
   setProducerState(producerId: string, state: ProducerState): Promise<void>;
   deleteProducerStates(): Promise<void>;
 }
 
-/** Bound parent/child reference tracker for a single stream. Optional. */
+/** Bound parent/child reference tracker for a single stream. */
 export interface StreamReferenceTracker {
   incrementChildRefCount(): Promise<number>;
   decrementChildRefCount(): Promise<number>;
 }
 
-/** Per-stream mutation coordinator (lock-like). Optional. */
+/** Per-stream mutation coordinator (lock-like). */
 export interface StreamMutationCoordinator {
   withMutationLock<T>(fn: () => Promise<T>): Promise<T>;
 }
 
-/** Per-stream live-read notification hub. Optional. */
+/** Per-stream live-read notification hub. */
 export interface StreamEventHub {
   waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult>;
   notify(type: StreamEventType): Promise<void> | void;
 }
 
-/** Per-stream active expiry scheduler. Optional. */
+/** Per-stream active expiry scheduler. */
 export interface StreamExpiryScheduler {
   scheduleExpiry(at: number, callback?: () => Promise<void>): Promise<void> | void;
   cancelExpiry(): Promise<void> | void;
 }
 
 /**
- * Protocol-facing stream. Represents one stream identified by `id` and
- * implements the record/message operations directly. Optional behaviour is
- * surfaced as additional members; missing optional members signal that the
- * adapter does not support that behaviour for this stream. There is no
- * public dependency bag on a `Stream`: composition with backing stores is a
- * factory implementation detail handled by `composeStream`.
+ * Protocol-facing stream. Represents one stream identified by `id` and exposes
+ * all protocol storage behavior as direct methods. Adapter-private store
+ * composition must stay behind this object.
  */
-export interface Stream extends StreamRecordStore, StreamMessageStore {
+export interface Stream
+  extends
+    StreamRecordStore,
+    StreamMessageStore,
+    StreamProducerStore,
+    StreamReferenceTracker,
+    StreamMutationCoordinator,
+    StreamEventHub,
+    StreamExpiryScheduler {
   readonly id: StreamId;
-  readonly producers?: StreamProducerStore;
-  readonly references?: StreamReferenceTracker;
-  readonly mutations?: StreamMutationCoordinator;
-  readonly events?: StreamEventHub;
-  readonly expiry?: StreamExpiryScheduler;
 }
 
 /**
@@ -96,29 +94,8 @@ export interface StreamFactory {
 }
 
 /**
- * Dependencies that adapter authors compose into a `Stream`. All
- * dependencies must already be bound to the same stream id.
- */
-export interface ComposedStreamDeps {
-  id: StreamId;
-  recordStore: StreamRecordStore;
-  messageStore: StreamMessageStore;
-  producerStore?: StreamProducerStore;
-  referenceTracker?: StreamReferenceTracker;
-  mutations?: StreamMutationCoordinator;
-  events?: StreamEventHub;
-  expiry?: StreamExpiryScheduler;
-}
-
-/**
- * Structured "feature not supported" protocol result. Protocol methods that
- * cover optional behaviour return this when the active adapter does not
- * implement the requested behaviour for the target stream. HTTP handlers
- * map this to a 4xx response (see `notSupportedResponse`).
- *
- * `feature` is a machine-readable identifier such as `"producer-idempotency"`,
- * `"fork"`, `"live-read"`, or `"active-expiry"`. `message` is an optional
- * human-readable detail intended for response bodies and logs.
+ * Structured "feature not supported" protocol result. Protocol methods map
+ * typed storage unsupported behavior to this public result shape.
  */
 export interface NotSupportedResult {
   status: "not-supported";
@@ -126,11 +103,37 @@ export interface NotSupportedResult {
   message?: string;
 }
 
+/** Internal/storage-level unsupported-feature error. */
+export class NotSupportedError extends Error {
+  constructor(
+    readonly feature: string,
+    message?: string,
+  ) {
+    super(message ?? `Feature not supported: ${feature}`);
+    this.name = "NotSupportedError";
+  }
+}
+
 /** Convenience constructor for a {@link NotSupportedResult}. */
 export function notSupported(feature: string, message?: string): NotSupportedResult {
   return message === undefined
     ? { status: "not-supported", feature }
     : { status: "not-supported", feature, message };
+}
+
+/** Convenience constructor for a storage-level unsupported-feature error. */
+export function unsupported(feature: string, message?: string): NotSupportedError {
+  return new NotSupportedError(feature, message);
+}
+
+/** Type guard for storage-level unsupported-feature errors. */
+export function isNotSupportedError(value: unknown): value is NotSupportedError {
+  return value instanceof NotSupportedError;
+}
+
+/** Convert storage-level unsupported-feature errors to public protocol results. */
+export function notSupportedFromError(error: NotSupportedError): NotSupportedResult {
+  return notSupported(error.feature, error.message);
 }
 
 /** Type guard for protocol results that may be a {@link NotSupportedResult}. */

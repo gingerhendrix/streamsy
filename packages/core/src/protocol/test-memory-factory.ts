@@ -1,5 +1,4 @@
-import { composeStream } from "../factory/compose-stream.ts";
-import type { StreamFactory } from "../types/factory.ts";
+import type { Stream, StreamFactory } from "../types/factory.ts";
 import type { StreamId } from "../types/storage.ts";
 import type {
   ListMessagesOptions,
@@ -44,90 +43,81 @@ export function createInMemoryFactory(): StreamFactory {
     for (const waiter of active) waiter({ status: "notified", type });
   };
   return {
-    async getStream(id: StreamId) {
-      return composeStream({
+    async getStream(id: StreamId): Promise<Stream> {
+      return {
         id,
-        recordStore: {
-          getRecord: async () => structuredClone(entries.get(id)?.record ?? null),
-          createRecord: async (record) => {
-            const existing = entries.get(id);
-            if (existing) return { status: "exists", record: structuredClone(existing.record) };
-            entries.set(id, {
-              record: structuredClone(record),
-              messages: [],
-              producers: new Map(),
-            });
-            return { status: "created" };
-          },
-          updateRecord: async (patch: StreamRecordPatch) => {
-            const entry = must(id);
-            entry.record = {
-              ...entry.record,
-              config: { ...entry.record.config, ...patch.config },
-              lifecycle: { ...entry.record.lifecycle, ...patch.lifecycle },
-              currentOffset: patch.currentOffset ?? entry.record.currentOffset,
-              counter: patch.counter ?? entry.record.counter,
+        getRecord: async () => structuredClone(entries.get(id)?.record ?? null),
+        createRecord: async (record) => {
+          const existing = entries.get(id);
+          if (existing) return { status: "exists", record: structuredClone(existing.record) };
+          entries.set(id, {
+            record: structuredClone(record),
+            messages: [],
+            producers: new Map(),
+          });
+          return { status: "created" };
+        },
+        updateRecord: async (patch: StreamRecordPatch) => {
+          const entry = must(id);
+          entry.record = {
+            ...entry.record,
+            config: { ...entry.record.config, ...patch.config },
+            lifecycle: { ...entry.record.lifecycle, ...patch.lifecycle },
+            currentOffset: patch.currentOffset ?? entry.record.currentOffset,
+            counter: patch.counter ?? entry.record.counter,
+          };
+          return structuredClone(entry.record);
+        },
+        deleteRecord: async () => {
+          entries.delete(id);
+        },
+        appendMessages: async (messages: StoredMessage[]) => {
+          must(id).messages.push(...structuredClone(messages));
+        },
+        listMessages: async (options: ListMessagesOptions = {}) => {
+          let out = entries.get(id)?.messages ?? [];
+          if (options.after) out = out.filter((m) => m.offset > options.after!);
+          if (options.until) out = out.filter((m) => m.offset <= options.until!);
+          if (options.limit !== undefined) out = out.slice(0, options.limit);
+          return structuredClone(out);
+        },
+        deleteMessages: async () => {
+          const entry = entries.get(id);
+          if (entry) entry.messages = [];
+        },
+        getProducerState: async (producerId) =>
+          structuredClone(entries.get(id)?.producers.get(producerId)),
+        setProducerState: async (producerId, state) => {
+          must(id).producers.set(producerId, structuredClone(state));
+        },
+        deleteProducerStates: async () => entries.get(id)?.producers.clear(),
+        incrementChildRefCount: async () => {
+          const entry = must(id);
+          return ++entry.record.lifecycle.childRefCount;
+        },
+        decrementChildRefCount: async () => {
+          const entry = must(id);
+          return (entry.record.lifecycle.childRefCount = Math.max(
+            0,
+            entry.record.lifecycle.childRefCount - 1,
+          ));
+        },
+        withMutationLock: (fn) => withLock(`stream:${id}`, fn),
+        waitForEvent: async (options: WaitForEventOptions) =>
+          new Promise((resolve) => {
+            const timeout = setTimeout(() => finish({ status: "timeout" }), options.timeoutMs);
+            const finish = (result: WaitForEventResult) => {
+              clearTimeout(timeout);
+              waiters.get(id)?.delete(finish);
+              resolve(result);
             };
-            return structuredClone(entry.record);
-          },
-          deleteRecord: async () => {
-            entries.delete(id);
-          },
-        },
-        messageStore: {
-          appendMessages: async (messages: StoredMessage[]) => {
-            must(id).messages.push(...structuredClone(messages));
-          },
-          listMessages: async (options: ListMessagesOptions = {}) => {
-            let out = entries.get(id)?.messages ?? [];
-            if (options.after) out = out.filter((m) => m.offset > options.after!);
-            if (options.until) out = out.filter((m) => m.offset <= options.until!);
-            if (options.limit !== undefined) out = out.slice(0, options.limit);
-            return structuredClone(out);
-          },
-          deleteMessages: async () => {
-            const entry = entries.get(id);
-            if (entry) entry.messages = [];
-          },
-        },
-        producerStore: {
-          getProducerState: async (producerId) =>
-            structuredClone(entries.get(id)?.producers.get(producerId)),
-          setProducerState: async (producerId, state) => {
-            must(id).producers.set(producerId, structuredClone(state));
-          },
-          deleteProducerStates: async () => entries.get(id)?.producers.clear(),
-        },
-        referenceTracker: {
-          incrementChildRefCount: async () => {
-            const entry = must(id);
-            return ++entry.record.lifecycle.childRefCount;
-          },
-          decrementChildRefCount: async () => {
-            const entry = must(id);
-            return (entry.record.lifecycle.childRefCount = Math.max(
-              0,
-              entry.record.lifecycle.childRefCount - 1,
-            ));
-          },
-        },
-        mutations: { withMutationLock: (fn) => withLock(`stream:${id}`, fn) },
-        events: {
-          waitForEvent: async (options: WaitForEventOptions) =>
-            new Promise((resolve) => {
-              const timeout = setTimeout(() => finish({ status: "timeout" }), options.timeoutMs);
-              const finish = (result: WaitForEventResult) => {
-                clearTimeout(timeout);
-                waiters.get(id)?.delete(finish);
-                resolve(result);
-              };
-              waiters.set(id, waiters.get(id) ?? new Set());
-              waiters.get(id)!.add(finish);
-            }),
-          notify: (type) => notify(id, type),
-        },
-        expiry: { scheduleExpiry: () => undefined, cancelExpiry: () => undefined },
-      });
+            waiters.set(id, waiters.get(id) ?? new Set());
+            waiters.get(id)!.add(finish);
+          }),
+        notify: (type) => notify(id, type),
+        scheduleExpiry: () => undefined,
+        cancelExpiry: () => undefined,
+      };
     },
   };
 }

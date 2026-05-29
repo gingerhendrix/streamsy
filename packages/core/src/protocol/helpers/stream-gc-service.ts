@@ -24,7 +24,7 @@ export class StreamGcService {
     if (record.lifecycle.softDeleted) return { status: "gone" };
     if (record.lifecycle.childRefCount > 0) {
       await stream.updateRecord({ lifecycle: { softDeleted: true } });
-      await stream.events?.notify("soft-deleted");
+      await stream.notify("soft-deleted");
       return { status: "ok" };
     }
     await this.purgeWithCascade(stream, record);
@@ -38,23 +38,23 @@ export class StreamGcService {
     if (!this.deps.mutators.isExpired(record)) return;
     if (record.lifecycle.childRefCount > 0) {
       await stream.updateRecord({ lifecycle: { softDeleted: true } });
-      await stream.events?.notify("soft-deleted");
+      await stream.notify("soft-deleted");
       return;
     }
     await this.purgeWithCascade(stream, record);
   }
 
   private async purgeWithCascade(stream: Stream, record: StreamRecord): Promise<void> {
-    await stream.expiry?.cancelExpiry();
+    await stream.cancelExpiry();
     await stream.deleteMessages();
-    await stream.producers?.deleteProducerStates();
+    await stream.deleteProducerStates();
     await stream.deleteRecord();
-    await stream.events?.notify("deleted");
+    await stream.notify("deleted");
 
     const parentId = record.lifecycle.forkedFrom;
     if (!parentId) return;
     const parentStream = await this.deps.resolve(parentId);
-    const newRefCount = (await parentStream.references?.decrementChildRefCount()) ?? 0;
+    const newRefCount = await parentStream.decrementChildRefCount();
     const parent = await parentStream.getRecord();
     if (parent && newRefCount === 0 && parent.lifecycle.softDeleted)
       await this.purgeWithCascade(parentStream, parent);

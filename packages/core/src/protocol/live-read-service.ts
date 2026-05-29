@@ -1,16 +1,16 @@
 /** Live-read orchestration for one storage-bound stream. */
 
 import type { ReadLiveOptions, ReadLiveResult } from "../types/protocol.ts";
-import type { StreamEventHub } from "../types/factory.ts";
 import type { Clock, Offset, StoredMessage, StreamRecord } from "../types/storage.ts";
-import { notSupported } from "../types/factory.ts";
 import { compareOffsets } from "./helpers/offset-generator.ts";
 import { generateCursor } from "./helpers/cursor-generator.ts";
 
 /** Narrow view of the storage stream the live-read service depends on. */
 export interface LiveReadStore {
   getRecord(): Promise<StreamRecord | null>;
-  readonly events?: StreamEventHub;
+  waitForEvent(
+    options: import("../types/storage.ts").WaitForEventOptions,
+  ): Promise<import("../types/storage.ts").WaitForEventResult>;
 }
 
 export type LiveReadChain = (
@@ -89,9 +89,7 @@ export class LiveReadService {
         cursor: generateCursor(this.deps.clock, options.cursor),
       };
 
-    if (!this.deps.store.events)
-      return notSupported("live-read", "The active storage factory has no live-read event hub");
-    const wait = await this.deps.store.events.waitForEvent({
+    const wait = await this.deps.store.waitForEvent({
       timeoutMs: this.deps.longPollTimeoutMs,
       signal: options.signal,
     });

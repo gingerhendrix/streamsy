@@ -14,7 +14,7 @@
  * - the mutation lock calls `acquireLock`/`releaseLock` on the same stub and
  *   forwards the canonical `stream:<id>` key;
  * - live-read notification and active expiry scheduling are routed through
- *   the composed `Stream`.
+ *   the direct `Stream`.
  */
 import { describe, it, expect } from "vitest";
 import type {
@@ -68,7 +68,7 @@ class FakeStub {
     this.state = state;
   }
 
-  async get(_streamId: string): Promise<StreamRecord | null> {
+  async get(): Promise<StreamRecord | null> {
     return this.state.record;
   }
   async create(record: StreamRecord) {
@@ -76,7 +76,7 @@ class FakeStub {
     this.state.record = record;
     return { status: "created" as const };
   }
-  async update(_streamId: string, patch: StreamRecordPatch): Promise<StreamRecord> {
+  async update(patch: StreamRecordPatch): Promise<StreamRecord> {
     if (!this.state.record) throw new Error("Stream not found");
     this.state.record = {
       ...this.state.record,
@@ -87,41 +87,34 @@ class FakeStub {
     };
     return this.state.record;
   }
-  async deleteStream(_streamId: string): Promise<void> {
+  async deleteStream(): Promise<void> {
     this.state.record = null;
     this.state.messages = [];
     this.state.producers.clear();
   }
-  async appendToStream(_streamId: string, messages: StoredMessage[]): Promise<void> {
+  async appendToStream(messages: StoredMessage[]): Promise<void> {
     this.state.messages.push(...messages);
   }
-  async list(_streamId: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+  async list(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
     let out = this.state.messages;
     if (options.after) out = out.filter((m) => m.offset > options.after!);
     if (options.until) out = out.filter((m) => m.offset <= options.until!);
     if (options.limit !== undefined) out = out.slice(0, options.limit);
     return out;
   }
-  async deleteMessages(_streamId: string): Promise<void> {
+  async deleteMessages(): Promise<void> {
     this.state.messages = [];
   }
-  async getProducerState(
-    _streamId: string,
-    producerId: string,
-  ): Promise<ProducerState | undefined> {
+  async getProducerState(producerId: string): Promise<ProducerState | undefined> {
     return this.state.producers.get(producerId);
   }
-  async setProducerState(
-    _streamId: string,
-    producerId: string,
-    state: ProducerState,
-  ): Promise<void> {
+  async setProducerState(producerId: string, state: ProducerState): Promise<void> {
     this.state.producers.set(producerId, state);
   }
-  async deleteProducerStates(_streamId: string): Promise<void> {
+  async deleteProducerStates(): Promise<void> {
     this.state.producers.clear();
   }
-  async incrementChildRefCount(_streamId: string): Promise<number> {
+  async incrementChildRefCount(): Promise<number> {
     if (!this.state.record) throw new Error("Stream not found");
     const next = this.state.record.lifecycle.childRefCount + 1;
     this.state.record = {
@@ -130,7 +123,7 @@ class FakeStub {
     };
     return next;
   }
-  async decrementChildRefCount(_streamId: string): Promise<number> {
+  async decrementChildRefCount(): Promise<number> {
     if (!this.state.record) throw new Error("Stream not found");
     const next = Math.max(0, this.state.record.lifecycle.childRefCount - 1);
     this.state.record = {
@@ -147,7 +140,7 @@ class FakeStub {
   async releaseLock(key: string, token: string): Promise<void> {
     this.state.lockEvents.push({ type: "release", key, token });
   }
-  async waitForEvent(_streamId: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
+  async waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
     this.state.waitOptions.push(options);
     return new Promise<WaitForEventResult>((resolve) => {
       const timer = setTimeout(() => {
@@ -161,17 +154,17 @@ class FakeStub {
       this.waiters.add(wrapped);
     });
   }
-  notify(_streamId: string, type: StreamEventType): void {
+  notify(type: StreamEventType): void {
     this.state.notifications.push(type);
     const snapshot = [...this.waiters];
     this.waiters.clear();
     for (const resolve of snapshot) resolve({ status: "notified", type });
   }
-  async scheduleExpiry(_streamId: string, at: number): Promise<void> {
+  async scheduleExpiry(at: number): Promise<void> {
     this.state.expiry.at = at;
     this.state.expiry.cancelled = false;
   }
-  async cancelExpiry(_streamId: string): Promise<void> {
+  async cancelExpiry(): Promise<void> {
     this.state.expiry.cancelled = true;
   }
 }
@@ -248,14 +241,14 @@ describe("createDurableObjectStreamFactory", () => {
     expect(messages).toHaveLength(1);
     expect(text(messages[0]!.data)).toBe("hello");
 
-    await stream.producers!.setProducerState("p1", { epoch: 0, lastSeq: 0 });
-    expect(await stream.producers!.getProducerState("p1")).toEqual({ epoch: 0, lastSeq: 0 });
-    await stream.producers!.deleteProducerStates();
-    expect(await stream.producers!.getProducerState("p1")).toBeUndefined();
+    await stream.setProducerState("p1", { epoch: 0, lastSeq: 0 });
+    expect(await stream.getProducerState("p1")).toEqual({ epoch: 0, lastSeq: 0 });
+    await stream.deleteProducerStates();
+    expect(await stream.getProducerState("p1")).toBeUndefined();
 
-    expect(await stream.references!.incrementChildRefCount()).toBe(1);
-    expect(await stream.references!.incrementChildRefCount()).toBe(2);
-    expect(await stream.references!.decrementChildRefCount()).toBe(1);
+    expect(await stream.incrementChildRefCount()).toBe(1);
+    expect(await stream.incrementChildRefCount()).toBe(2);
+    expect(await stream.decrementChildRefCount()).toBe(1);
 
     await stream.deleteMessages();
     expect(await stream.listMessages()).toEqual([]);
@@ -286,7 +279,7 @@ describe("createDurableObjectStreamFactory", () => {
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("locked");
 
-    const result = await stream.mutations!.withMutationLock(async () => "value");
+    const result = await stream.withMutationLock(async () => "value");
     expect(result).toBe("value");
 
     const events = fake.stubFor("locked").state.lockEvents;
@@ -302,7 +295,7 @@ describe("createDurableObjectStreamFactory", () => {
     const stream = await factory.getStream("locked");
 
     await expect(
-      stream.mutations!.withMutationLock(async () => {
+      stream.withMutationLock(async () => {
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
@@ -316,10 +309,10 @@ describe("createDurableObjectStreamFactory", () => {
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("notify");
 
-    const waiting = stream.events!.waitForEvent({ timeoutMs: 1_000 });
+    const waiting = stream.waitForEvent({ timeoutMs: 1_000 });
     // Ensure the wait has registered before notifying.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await stream.events!.notify("message");
+    await stream.notify("message");
     await expect(waiting).resolves.toEqual({ status: "notified", type: "message" });
     expect(fake.stubFor("notify").state.notifications).toEqual(["message"]);
   });
@@ -329,10 +322,10 @@ describe("createDurableObjectStreamFactory", () => {
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("expiry");
 
-    await stream.expiry!.scheduleExpiry(123_456);
+    await stream.scheduleExpiry(123_456);
     expect(fake.stubFor("expiry").state.expiry).toEqual({ at: 123_456, cancelled: false });
 
-    await stream.expiry!.cancelExpiry();
+    await stream.cancelExpiry();
     expect(fake.stubFor("expiry").state.expiry.cancelled).toBe(true);
   });
 

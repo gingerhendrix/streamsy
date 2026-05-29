@@ -27,7 +27,6 @@ import { ExpiryPolicy } from "./protocol/helpers/expiry-policy.ts";
 import { CreateStreamService } from "./protocol/create-stream-service.ts";
 import { ForkService } from "./protocol/helpers/fork-service.ts";
 import { StreamGcService } from "./protocol/helpers/stream-gc-service.ts";
-import { InProcessLockProvider } from "./protocol/storage/in-process-lock-provider.ts";
 import { StreamMessageReader } from "./protocol/storage/stream-message-reader.ts";
 import { StreamMessageWriter } from "./protocol/storage/stream-message-writer.ts";
 import { StreamRecordFactory } from "./protocol/storage/stream-record-factory.ts";
@@ -71,7 +70,7 @@ export class ProtocolStream implements ProtocolStreamApi {
 
   constructor(private deps: ProtocolStreamDeps) {
     this.id = deps.storage.id;
-    const producerIdempotency = new ProducerIdempotencyService({ store: deps.storage.producers });
+    const producerIdempotency = new ProducerIdempotencyService({ store: deps.storage });
     const messageWriter = new StreamMessageWriter({
       stream: deps.storage,
       clock: deps.clock,
@@ -172,7 +171,6 @@ export class ProtocolStream implements ProtocolStreamApi {
 export class StreamProtocol implements StreamProtocolFactory {
   private clock: Clock;
   private longPollTimeoutMs: number;
-  private locks = new InProcessLockProvider();
   private expiryPolicy: ExpiryPolicy;
   private gcService: StreamGcService;
   private recordFactory: StreamRecordFactory;
@@ -238,8 +236,6 @@ export class StreamProtocol implements StreamProtocolFactory {
   }
 
   private async withStreamMutationLock<T>(storage: Stream, fn: () => Promise<T>): Promise<T> {
-    return storage.mutations
-      ? storage.mutations.withMutationLock(fn)
-      : this.locks.withLock(`stream:${storage.id}`, fn);
+    return storage.withMutationLock(fn);
   }
 }

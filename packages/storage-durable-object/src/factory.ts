@@ -1,25 +1,25 @@
 /**
  * Native Durable Object `StreamFactory`.
  *
- * Implements the one-stream-per-Durable-Object model: each public stream id
- * is routed to a per-stream `DurableObjectStreamStorage` instance via
- * `namespace.idFromName(streamId)`, and `composeStream(...)` binds the
- * record/message/producer/reference/runtime operations of that DO to a
- * protocol-facing `Stream` for that id.
- *
- * The returned `Stream` does not expose a public dependency bag. Namespace
- * routing, stub acquisition, and lock-key construction are factory-owned
- * concerns and stay internal.
- *
- * The factory is the host-facing entry point used by the protocol factory.
+ * Implements the one-stream-per-Durable-Object model: each public stream id is
+ * routed to a per-stream `DurableObjectStreamStorage` instance via
+ * `namespace.idFromName(streamId)`. The factory returns a `DurableObjectStream`
+ * that implements the protocol-facing `Stream` methods directly while keeping
+ * stub/RPC details private.
  */
-import {
-  composeStream,
-  type Stream,
-  type StreamEventType,
-  type StreamFactory,
-  type StreamId,
-  type WaitForEventOptions,
+import type {
+  CreateStreamRecordResult,
+  ListMessagesOptions,
+  ProducerState,
+  StoredMessage,
+  Stream,
+  StreamEventType,
+  StreamFactory,
+  StreamId,
+  StreamRecord,
+  StreamRecordPatch,
+  WaitForEventOptions,
+  WaitForEventResult,
 } from "@streamsy/core";
 import type { DurableObjectStreamStorage } from "./storage.ts";
 
@@ -35,53 +35,88 @@ export function createDurableObjectStreamFactory(
 
   return {
     async getStream(streamId: StreamId): Promise<Stream> {
-      return composeStream({
-        id: streamId,
-        recordStore: {
-          getRecord: () => stubFor(streamId).get(streamId),
-          createRecord: (record) => stubFor(streamId).create(record),
-          updateRecord: (patch) => stubFor(streamId).update(streamId, patch),
-          deleteRecord: () => stubFor(streamId).deleteStream(streamId),
-        },
-        messageStore: {
-          appendMessages: (messages) => stubFor(streamId).appendToStream(streamId, messages),
-          listMessages: (listOptions) => stubFor(streamId).list(streamId, listOptions),
-          deleteMessages: () => stubFor(streamId).deleteMessages(streamId),
-        },
-        producerStore: {
-          getProducerState: (producerId) =>
-            stubFor(streamId).getProducerState(streamId, producerId),
-          setProducerState: (producerId, state) =>
-            stubFor(streamId).setProducerState(streamId, producerId, state),
-          deleteProducerStates: () => stubFor(streamId).deleteProducerStates(streamId),
-        },
-        referenceTracker: {
-          incrementChildRefCount: () => stubFor(streamId).incrementChildRefCount(streamId),
-          decrementChildRefCount: () => stubFor(streamId).decrementChildRefCount(streamId),
-        },
-        mutations: {
-          withMutationLock: async <T>(fn: () => Promise<T>): Promise<T> => {
-            // The DO is the natural per-stream serialization point.
-            const key = `stream:${streamId}`;
-            const stub = stubFor(streamId);
-            const token = await stub.acquireLock(key);
-            try {
-              return await fn();
-            } finally {
-              await stub.releaseLock(key, token);
-            }
-          },
-        },
-        events: {
-          waitForEvent: (waitOptions: WaitForEventOptions) =>
-            stubFor(streamId).waitForEvent(streamId, waitOptions),
-          notify: (type: StreamEventType) => stubFor(streamId).notify(streamId, type),
-        },
-        expiry: {
-          scheduleExpiry: (at: number) => stubFor(streamId).scheduleExpiry(streamId, at),
-          cancelExpiry: () => stubFor(streamId).cancelExpiry(streamId),
-        },
-      });
+      return new DurableObjectStream(streamId, stubFor(streamId));
     },
   };
+}
+
+class DurableObjectStream implements Stream {
+  constructor(
+    readonly id: StreamId,
+    private readonly stub: DurableObjectStub<DurableObjectStreamStorage>,
+  ) {}
+
+  getRecord(): Promise<StreamRecord | null> {
+    return this.stub.get();
+  }
+
+  createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
+    return this.stub.create(record);
+  }
+
+  updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
+    return this.stub.update(patch);
+  }
+
+  deleteRecord(): Promise<void> {
+    return this.stub.deleteStream();
+  }
+
+  appendMessages(messages: StoredMessage[]): Promise<void> {
+    return this.stub.appendToStream(messages);
+  }
+
+  listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
+    return this.stub.list(options);
+  }
+
+  deleteMessages(): Promise<void> {
+    return this.stub.deleteMessages();
+  }
+
+  getProducerState(producerId: string): Promise<ProducerState | undefined> {
+    return this.stub.getProducerState(producerId);
+  }
+
+  setProducerState(producerId: string, state: ProducerState): Promise<void> {
+    return this.stub.setProducerState(producerId, state);
+  }
+
+  deleteProducerStates(): Promise<void> {
+    return this.stub.deleteProducerStates();
+  }
+
+  incrementChildRefCount(): Promise<number> {
+    return this.stub.incrementChildRefCount();
+  }
+
+  decrementChildRefCount(): Promise<number> {
+    return this.stub.decrementChildRefCount();
+  }
+
+  async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    const key = `stream:${this.id}`;
+    const token = await this.stub.acquireLock(key);
+    try {
+      return await fn();
+    } finally {
+      await this.stub.releaseLock(key, token);
+    }
+  }
+
+  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+    return this.stub.waitForEvent(options);
+  }
+
+  notify(type: StreamEventType): Promise<void> | void {
+    return this.stub.notify(type);
+  }
+
+  scheduleExpiry(at: number): Promise<void> | void {
+    return this.stub.scheduleExpiry(at);
+  }
+
+  cancelExpiry(): Promise<void> | void {
+    return this.stub.cancelExpiry();
+  }
 }

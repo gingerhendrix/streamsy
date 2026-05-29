@@ -29,7 +29,7 @@ export class StreamMessageWriter {
       counter: allocation.endCounter,
       lifecycle: seq ? { lastSeq: seq } : undefined,
     });
-    await this.deps.stream.events?.notify("message");
+    await this.deps.stream.notify("message");
     return allocation.nextOffset;
   }
 
@@ -51,7 +51,7 @@ export class StreamMessageWriter {
       currentOffset: nextOffset,
       counter: latest.counter,
     });
-    await this.deps.stream.events?.notify("closed");
+    await this.deps.stream.notify("closed");
     return nextOffset;
   }
 }

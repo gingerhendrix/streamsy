@@ -33,14 +33,14 @@ export class ExpiryPolicy {
     if (reason === "live-read") return;
     const expiresAtMs = this.deps.clock.now() + record.config.ttlSeconds * 1000;
     await stream.updateRecord({ lifecycle: { expiresAtMs } });
-    await stream.expiry?.scheduleExpiry(expiresAtMs, () => this.deps.onScheduledExpiry(stream.id));
+    await stream.scheduleExpiry(expiresAtMs, () => this.deps.onScheduledExpiry(stream.id));
   }
 
   async scheduleExpiry(record: StreamRecord): Promise<void> {
     const at = record.lifecycle.expiresAtMs;
     if (at !== undefined) {
       const stream = await this.deps.resolve(record.id);
-      await stream.expiry?.scheduleExpiry(at, () => this.deps.onScheduledExpiry(record.id));
+      await stream.scheduleExpiry(at, () => this.deps.onScheduledExpiry(record.id));
     }
   }
 

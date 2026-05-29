@@ -3,7 +3,6 @@
 import type { ProducerOptions } from "../../types/protocol.ts";
 import type { NotSupportedResult, StreamProducerStore } from "../../types/factory.ts";
 import type { ProducerState } from "../../types/storage.ts";
-import { notSupported } from "../../types/factory.ts";
 
 export type ProducerValidation =
   | { kind: "accepted"; proposedState: ProducerState }
@@ -63,18 +62,13 @@ export function rejectionToAppendResult(
 }
 
 export interface ProducerIdempotencyServiceDeps {
-  store: StreamProducerStore | undefined;
+  store: StreamProducerStore;
 }
 
 export class ProducerIdempotencyService {
   constructor(private deps: ProducerIdempotencyServiceDeps) {}
 
   load(producerId: string): Promise<ProducerState | undefined> | NotSupportedResult {
-    if (!this.deps.store)
-      return notSupported(
-        "producer-idempotency",
-        "The active storage factory has no producer store",
-      );
     return this.deps.store.getProducerState(producerId);
   }
 
@@ -87,11 +81,6 @@ export class ProducerIdempotencyService {
     validation: ProducerValidation | undefined,
   ): Promise<NotSupportedResult | undefined> {
     if (!producer || validation?.kind !== "accepted") return undefined;
-    if (!this.deps.store)
-      return notSupported(
-        "producer-idempotency",
-        "The active storage factory has no producer store",
-      );
     await this.deps.store.setProducerState(producer.producerId, validation.proposedState);
     return undefined;
   }

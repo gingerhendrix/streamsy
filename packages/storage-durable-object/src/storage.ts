@@ -36,7 +36,7 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     await protocol.handleScheduledExpiry(record.id);
   }
 
-  async get(_streamId: string): Promise<StreamRecord | null> {
+  async get(): Promise<StreamRecord | null> {
     return this.getOwnRecord();
   }
 
@@ -47,7 +47,7 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return { status: "created" as const };
   }
 
-  async update(_streamId: string, patch: StreamRecordPatch): Promise<StreamRecord> {
+  async update(patch: StreamRecordPatch): Promise<StreamRecord> {
     const existing = await this.mustRecord();
     const updated: StreamRecord = {
       ...existing,
@@ -60,15 +60,15 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return updated;
   }
 
-  async deleteStream(_streamId: string): Promise<void> {
+  async deleteStream(): Promise<void> {
     await this.ctx.storage.deleteAll();
   }
 
-  async appendToStream(_streamId: string, messages: StoredMessage[]): Promise<void> {
+  async appendToStream(messages: StoredMessage[]): Promise<void> {
     for (const msg of messages) this.ctx.storage.kv.put(`message:${msg.offset}`, msg);
   }
 
-  async list(_streamId: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+  async list(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
     const listOptions: DurableObjectListOptions = { prefix: "message:" };
     if (options.after) listOptions.startAfter = `message:${options.after}`;
     const entries = this.ctx.storage.kv.list<StoredMessage>(listOptions);
@@ -81,46 +81,39 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return messages;
   }
 
-  async deleteMessages(_streamId: string): Promise<void> {
+  async deleteMessages(): Promise<void> {
     const entries = this.ctx.storage.kv.list({ prefix: "message:" });
     for (const [key] of entries) this.ctx.storage.kv.delete(key);
   }
 
-  async getProducerState(
-    _streamId: string,
-    producerId: string,
-  ): Promise<ProducerState | undefined> {
+  async getProducerState(producerId: string): Promise<ProducerState | undefined> {
     return this.ctx.storage.kv.get<ProducerState>(`producer:${producerId}`);
   }
 
-  async setProducerState(
-    _streamId: string,
-    producerId: string,
-    state: ProducerState,
-  ): Promise<void> {
+  async setProducerState(producerId: string, state: ProducerState): Promise<void> {
     this.ctx.storage.kv.put(`producer:${producerId}`, state);
   }
 
-  async deleteProducerStates(_streamId: string): Promise<void> {
+  async deleteProducerStates(): Promise<void> {
     const entries = this.ctx.storage.kv.list({ prefix: "producer:" });
     for (const [key] of entries) this.ctx.storage.kv.delete(key);
   }
 
-  async incrementChildRefCount(streamId: string): Promise<number> {
+  async incrementChildRefCount(): Promise<number> {
     const record = await this.mustRecord();
     const next = record.lifecycle.childRefCount + 1;
-    await this.update(streamId, { lifecycle: { childRefCount: next } });
+    await this.update({ lifecycle: { childRefCount: next } });
     return next;
   }
 
-  async decrementChildRefCount(streamId: string): Promise<number> {
+  async decrementChildRefCount(): Promise<number> {
     const record = await this.mustRecord();
     const next = Math.max(0, record.lifecycle.childRefCount - 1);
-    await this.update(streamId, { lifecycle: { childRefCount: next } });
+    await this.update({ lifecycle: { childRefCount: next } });
     return next;
   }
 
-  async waitForEvent(_streamId: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
+  async waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
     return new Promise((resolve) => {
       const timeout = setTimeout(
         () => finish({ status: "timeout" }),
@@ -138,16 +131,16 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     });
   }
 
-  notify(_streamId: string, type: StreamEventType): void {
+  notify(type: StreamEventType): void {
     const waiters = [...this.waiters];
     this.waiters.clear();
     for (const waiter of waiters) waiter({ status: "notified", type });
   }
 
-  async scheduleExpiry(_streamId: string, at: number): Promise<void> {
+  async scheduleExpiry(at: number): Promise<void> {
     await this.ctx.storage.setAlarm(at);
   }
-  async cancelExpiry(_streamId: string): Promise<void> {
+  async cancelExpiry(): Promise<void> {
     await this.ctx.storage.deleteAlarm();
   }
 

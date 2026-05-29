@@ -36,11 +36,11 @@ if (lookup.status === "ok") {
 
 ## Storage factories
 
-Storage packages expose `StreamFactory` implementations. A storage factory returns a storage-bound `Stream` with record/message primitives and optional per-stream capabilities such as producer state, references, mutation coordination, event waiters, and expiry scheduling.
+Storage packages expose `StreamFactory` implementations. A storage factory returns a storage-bound `Stream` with direct record/message primitives plus per-stream protocol storage methods for producer state, references, mutation coordination, event waiters, and expiry scheduling.
 
 Protocol-bound streams are distinct from storage-bound streams:
 
-- storage streams persist records/messages and optional runtime capabilities;
+- storage streams persist records/messages and provide direct runtime/storage methods;
 - protocol streams expose durable-stream operations: `append`, `read`, `readLive`, `metadata`, and `delete`.
 
 ## Packages
@@ -57,8 +57,8 @@ Core exports include:
 
 - `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`
 - protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadLiveResult`, `MetadataResult`, and `DeleteResult`
-- storage-factory types including `StreamFactory`, storage-bound `Stream`, `ComposedStreamDeps`, and optional capability interfaces
-- `composeStream` and `require*` optional-capability helpers
+- storage-factory types including `StreamFactory`, storage-bound `Stream`, and facet interfaces such as `StreamRecordStore`, `StreamMessageStore`, `StreamProducerStore`, `StreamReferenceTracker`, `StreamMutationCoordinator`, `StreamEventHub`, and `StreamExpiryScheduler`
+- structured unsupported-feature helpers including `notSupported`, `isNotSupported`, `NotSupportedError`, and `unsupported`
 
 Memory exports:
 

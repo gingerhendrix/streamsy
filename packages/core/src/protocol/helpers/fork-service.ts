@@ -115,7 +115,7 @@ export class ForkService {
       : [];
 
     const createResult = await targetStream.createRecord(record);
-    if (createResult.status === "created") await sourceStream.references?.incrementChildRefCount();
+    if (createResult.status === "created") await sourceStream.incrementChildRefCount();
     if (createResult.status === "exists") {
       return {
         status: "conflict",
