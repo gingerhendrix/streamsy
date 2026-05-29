@@ -17,7 +17,7 @@ import type {
   DeleteResult,
 } from "./types/protocol.ts";
 import type { Stream, StreamFactory } from "./types/factory.ts";
-import type { Clock } from "./types/storage.ts";
+import type { Clock, StreamId } from "./types/storage.ts";
 import { systemClock } from "./protocol/helpers/clock.ts";
 import { ProducerIdempotencyService } from "./protocol/helpers/producer-idempotency-service.ts";
 import { AppendService } from "./protocol/append-service.ts";
@@ -52,7 +52,7 @@ export function createStreamProtocol(deps: StreamProtocolDeps): StreamProtocolFa
 }
 
 interface ProtocolStreamDeps {
-  id: string;
+  id: StreamId;
   storage: Stream;
   clock: Clock;
   longPollTimeoutMs: number;
@@ -78,34 +78,33 @@ export class ProtocolStream implements ProtocolStreamApi {
     this.id = deps.id;
     const producerIdempotency = new ProducerIdempotencyService({ store: deps.storage.producers });
     const messageWriter = new StreamMessageWriter({
+      streamId: deps.id,
       stream: deps.storage,
       clock: deps.clock,
       expiryPolicy: deps.expiryPolicy,
     });
     const messageReader = new StreamMessageReader({
+      streamId: deps.id,
       resolve: deps.resolveStorageStream,
       expiryPolicy: deps.expiryPolicy,
     });
     this.appendService = new AppendService({
       producerIdempotency,
       mutators: {
-        appendMessages: (id, record, data, seq) =>
-          messageWriter.appendMessages(id, record, data, seq),
-        closeRecord: (id, record, data, seq) => messageWriter.closeRecord(id, record, data, seq),
+        appendMessages: (record, data, seq) => messageWriter.appendMessages(record, data, seq),
+        closeRecord: (record, data, seq) => messageWriter.closeRecord(record, data, seq),
       },
     });
     this.readService = new ReadService({
-      readChain: (id, record, afterOffset) =>
-        messageReader.readChain(id, record, afterOffset, undefined, true),
+      readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
     });
     this.liveReadService = new LiveReadService({
       store: deps.storage,
       clock: deps.clock,
       longPollTimeoutMs: deps.longPollTimeoutMs,
-      readChain: (id, record, afterOffset) =>
-        messageReader.readChain(id, record, afterOffset, undefined, true),
-      readOwn: (id, after) => messageReader.readOwn(id, after),
-      touch: (id, record) => deps.expiryPolicy.touch(id, record, "live-read"),
+      readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
+      readOwn: (after) => messageReader.readOwn(after),
+      touch: (record) => deps.expiryPolicy.touch(deps.id, record, "live-read"),
     });
     const forkService = new ForkService({
       resolve: deps.resolveStorageStream,
@@ -116,18 +115,18 @@ export class ProtocolStream implements ProtocolStreamApi {
         newRecord: (id, contentType, opts, fork) =>
           deps.recordFactory.newRecord(id, contentType, opts, fork),
         scheduleExpiry: (record) => deps.expiryPolicy.scheduleExpiry(record),
-        appendMessages: (id, record, data) => messageWriter.appendMessages(id, record, data),
+        appendMessages: (_id, record, data) => messageWriter.appendMessages(record, data),
       },
     });
     this.createService = new CreateStreamService({
       store: deps.storage,
       mutators: {
-        newRecord: (id, contentType, opts) =>
-          deps.recordFactory.newRecord(id, contentType, opts, undefined),
+        newRecord: (contentType, opts) =>
+          deps.recordFactory.newRecord(deps.id, contentType, opts, undefined),
         scheduleExpiry: (record) => deps.expiryPolicy.scheduleExpiry(record),
-        appendMessages: (id, record, data) => messageWriter.appendMessages(id, record, data),
-        closeRecord: (id, record, data) => messageWriter.closeRecord(id, record, data),
-        createFork: (id, opts) => forkService.execute(id, opts),
+        appendMessages: (record, data) => messageWriter.appendMessages(record, data),
+        closeRecord: (record, data) => messageWriter.closeRecord(record, data),
+        createFork: (opts) => forkService.execute(deps.id, opts),
       },
     });
   }
@@ -135,25 +134,25 @@ export class ProtocolStream implements ProtocolStreamApi {
   async create(options: CreateOptions): Promise<CreateOutcome> {
     return this.deps.withStreamMutationLock(this.id, this.deps.storage, async () => {
       const record = await this.deps.expiryPolicy.expireIfNeeded(this.id, this.deps.storage);
-      return this.createService.execute(this.id, record, options);
+      return this.createService.execute(record, options);
     });
   }
 
   async append(options: AppendOptions): Promise<AppendResult> {
     return this.deps.withStreamMutationLock(this.id, this.deps.storage, async () => {
       const record = await this.deps.expiryPolicy.expireIfNeeded(this.id, this.deps.storage);
-      return this.appendService.execute(this.id, record, options);
+      return this.appendService.execute(record, options);
     });
   }
 
   async read(options: ReadOptions): Promise<ReadResult> {
     const record = await this.deps.expiryPolicy.expireIfNeeded(this.id, this.deps.storage);
-    return this.readService.execute(this.id, record, options);
+    return this.readService.execute(record, options);
   }
 
   async readLive(options: ReadLiveOptions): Promise<ReadLiveResult> {
     const record = await this.deps.expiryPolicy.expireIfNeeded(this.id, this.deps.storage);
-    return this.liveReadService.execute(this.id, record, options);
+    return this.liveReadService.execute(record, options);
   }
 
   async metadata(): Promise<MetadataResult> {

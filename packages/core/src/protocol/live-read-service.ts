@@ -2,7 +2,7 @@
 
 import type { ReadLiveOptions, ReadLiveResult } from "../types/protocol.ts";
 import type { StreamEventHub } from "../types/factory.ts";
-import type { Clock, Offset, StoredMessage, StreamId, StreamRecord } from "../types/storage.ts";
+import type { Clock, Offset, StoredMessage, StreamRecord } from "../types/storage.ts";
 import { notSupported } from "../types/factory.ts";
 import { compareOffsets } from "./helpers/offset-generator.ts";
 import { generateCursor } from "./helpers/cursor-generator.ts";
@@ -14,17 +14,15 @@ export interface LiveReadStore {
 }
 
 export type LiveReadChain = (
-  streamId: StreamId,
   record: StreamRecord,
   afterOffset?: string,
 ) => Promise<StoredMessage[]>;
 
 export type LiveReadOwn = (
-  streamId: StreamId,
   after?: Offset,
 ) => Promise<{ messages: StoredMessage[]; nextOffset: string }>;
 
-export type LiveReadTouch = (streamId: StreamId, record: StreamRecord) => Promise<void>;
+export type LiveReadTouch = (record: StreamRecord) => Promise<void>;
 
 export interface LiveReadDeps {
   readChain: LiveReadChain;
@@ -41,18 +39,14 @@ export interface LiveReadServiceDeps extends LiveReadDeps {
 export class LiveReadService {
   constructor(private deps: LiveReadServiceDeps) {}
 
-  async execute(
-    streamId: StreamId,
-    record: StreamRecord | null,
-    options: ReadLiveOptions,
-  ): Promise<ReadLiveResult> {
+  async execute(record: StreamRecord | null, options: ReadLiveOptions): Promise<ReadLiveResult> {
     if (!record)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (record.lifecycle.softDeleted)
       return { status: "gone", messages: [], nextOffset: "", upToDate: false, cursor: "" };
 
     if (record.lifecycle.closed) {
-      const messages = await this.deps.readChain(streamId, record, options.offset);
+      const messages = await this.deps.readChain(record, options.offset);
       const lastOffset =
         messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
       const nextOffset =
@@ -72,7 +66,7 @@ export class LiveReadService {
       record.lifecycle.forkOffset &&
       compareOffsets(options.offset, record.lifecycle.forkOffset) < 0
     ) {
-      const messages = await this.deps.readChain(streamId, record, options.offset);
+      const messages = await this.deps.readChain(record, options.offset);
       const lastOffset =
         messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
       return {
@@ -85,8 +79,8 @@ export class LiveReadService {
       };
     }
 
-    await this.deps.touch(streamId, record);
-    const immediate = await this.deps.readOwn(streamId, options.offset);
+    await this.deps.touch(record);
+    const immediate = await this.deps.readOwn(options.offset);
     if (immediate.messages.length > 0)
       return {
         status: "ok",
@@ -106,7 +100,7 @@ export class LiveReadService {
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (latest.lifecycle.softDeleted)
       return { status: "gone", messages: [], nextOffset: "", upToDate: false, cursor: "" };
-    const r = await this.deps.readOwn(streamId, options.offset);
+    const r = await this.deps.readOwn(options.offset);
     const reachedTail = r.nextOffset === latest.currentOffset;
     const hasMessages = r.messages.length > 0;
     return {

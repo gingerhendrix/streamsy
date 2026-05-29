@@ -14,6 +14,7 @@ export interface MessageWriterStore {
 }
 
 export interface StreamMessageWriterDeps {
+  streamId: string;
   stream: MessageWriterStore;
   clock: Clock;
   expiryPolicy: ExpiryPolicy;
@@ -22,13 +23,8 @@ export interface StreamMessageWriterDeps {
 export class StreamMessageWriter {
   constructor(private deps: StreamMessageWriterDeps) {}
 
-  async appendMessages(
-    streamId: string,
-    record: StreamRecord,
-    data: Uint8Array[],
-    seq?: string,
-  ): Promise<string> {
-    await this.deps.expiryPolicy.touch(streamId, record, "append");
+  async appendMessages(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string> {
+    await this.deps.expiryPolicy.touch(this.deps.streamId, record, "append");
     const allocation = allocateOffsets(record.counter, data.length);
     const now = this.deps.clock.now();
     const messages = data.map((bytes, i) => ({
@@ -46,19 +42,14 @@ export class StreamMessageWriter {
     return allocation.nextOffset;
   }
 
-  async closeRecord(
-    streamId: string,
-    record: StreamRecord,
-    data: Uint8Array[],
-    seq?: string,
-  ): Promise<string> {
+  async closeRecord(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string> {
     let latest = record;
     let nextOffset = record.currentOffset;
     if (data.length > 0) {
-      nextOffset = await this.appendMessages(streamId, record, data, seq);
+      nextOffset = await this.appendMessages(record, data, seq);
       latest = (await this.deps.stream.getRecord()) ?? record;
     } else {
-      await this.deps.expiryPolicy.touch(streamId, record, "close");
+      await this.deps.expiryPolicy.touch(this.deps.streamId, record, "close");
     }
     await this.deps.stream.updateRecord({
       lifecycle: {

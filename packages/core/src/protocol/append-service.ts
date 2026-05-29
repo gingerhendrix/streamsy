@@ -2,7 +2,7 @@
 
 import type { AppendOptions, AppendResult } from "../types/protocol.ts";
 import { isNotSupported } from "../types/factory.ts";
-import type { StreamId, StreamRecord } from "../types/storage.ts";
+import type { StreamRecord } from "../types/storage.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
 import {
@@ -12,18 +12,8 @@ import {
 } from "./helpers/producer-idempotency-service.ts";
 
 export interface AppendMutators {
-  appendMessages(
-    streamId: StreamId,
-    record: StreamRecord,
-    data: Uint8Array[],
-    seq?: string,
-  ): Promise<string>;
-  closeRecord(
-    streamId: StreamId,
-    record: StreamRecord,
-    data: Uint8Array[],
-    seq?: string,
-  ): Promise<string>;
+  appendMessages(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string>;
+  closeRecord(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string>;
 }
 
 export function appendedResult(
@@ -50,11 +40,7 @@ export interface AppendServiceDeps {
 export class AppendService {
   constructor(private deps: AppendServiceDeps) {}
 
-  async execute(
-    streamId: StreamId,
-    record: StreamRecord | null,
-    options: AppendOptions,
-  ): Promise<AppendResult> {
+  async execute(record: StreamRecord | null, options: AppendOptions): Promise<AppendResult> {
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
 
@@ -77,7 +63,7 @@ export class AppendService {
 
     if (wantClose && !hasBody) {
       if (isClosed) return { status: "appended", nextOffset: record.currentOffset, closed: true };
-      const nextOffset = await this.deps.mutators.closeRecord(streamId, record, [], options.seq);
+      const nextOffset = await this.deps.mutators.closeRecord(record, [], options.seq);
       const persisted = await this.deps.producerIdempotency.persistIfAccepted(
         options.producer,
         producerValidation,
@@ -100,8 +86,8 @@ export class AppendService {
 
     const processed = frameMessages(options.data, record.config.contentType);
     const nextOffset = wantClose
-      ? await this.deps.mutators.closeRecord(streamId, record, processed, options.seq)
-      : await this.deps.mutators.appendMessages(streamId, record, processed, options.seq);
+      ? await this.deps.mutators.closeRecord(record, processed, options.seq)
+      : await this.deps.mutators.appendMessages(record, processed, options.seq);
     const persisted = await this.deps.producerIdempotency.persistIfAccepted(
       options.producer,
       producerValidation,

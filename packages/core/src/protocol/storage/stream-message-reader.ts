@@ -8,6 +8,7 @@ import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 export type ResolveStorageStream = (streamId: string) => Promise<Stream> | Stream;
 
 export interface StreamMessageReaderDeps {
+  streamId: string;
   resolve: ResolveStorageStream;
   expiryPolicy: ExpiryPolicy;
 }
@@ -16,6 +17,15 @@ export class StreamMessageReader {
   constructor(private deps: StreamMessageReaderDeps) {}
 
   async readChain(
+    record: StreamRecord,
+    afterOffset?: string,
+    capOffset?: string,
+    touchOwnTtl = true,
+  ): Promise<StoredMessage[]> {
+    return this.readChainFor(this.deps.streamId, record, afterOffset, capOffset, touchOwnTtl);
+  }
+
+  private async readChainFor(
     streamId: string,
     record: StreamRecord,
     afterOffset?: string,
@@ -36,7 +46,7 @@ export class StreamMessageReader {
             ? capOffset
             : record.lifecycle.forkOffset;
         out.push(
-          ...(await this.readChain(
+          ...(await this.readChainFor(
             record.lifecycle.forkedFrom,
             source,
             afterOffset,
@@ -59,11 +69,8 @@ export class StreamMessageReader {
     return out;
   }
 
-  async readOwn(
-    streamId: string,
-    after?: Offset,
-  ): Promise<{ messages: StoredMessage[]; nextOffset: string }> {
-    const stream = await this.deps.resolve(streamId);
+  async readOwn(after?: Offset): Promise<{ messages: StoredMessage[]; nextOffset: string }> {
+    const stream = await this.deps.resolve(this.deps.streamId);
     const record = await stream.getRecord();
     if (!record) return { messages: [], nextOffset: "" };
     const messages = await stream.listMessages({ after });
