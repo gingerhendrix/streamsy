@@ -1,4 +1,5 @@
 import type {
+  CreateStreamRecordResult,
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
@@ -15,89 +16,42 @@ interface MemoryEntry {
   producers: Map<string, ProducerState>;
 }
 
-/** Minimal in-memory fact store plus in-process runtime capabilities. */
+/**
+ * Shared in-memory backing tables and process-local runtime state.
+ *
+ * `MemoryStreamState` is intentionally not the protocol-facing adapter. It is
+ * just the owner of backing maps; `stream(id)` returns a stream-oriented handle
+ * that is composed from simple bound stores.
+ */
 export class MemoryStreamState {
   private entries = new Map<string, MemoryEntry>();
   private waiters = new Map<string, Set<(result: WaitForEventResult) => void>>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private locks = new Map<string, Promise<void>>();
 
-  async get(id: string): Promise<StreamRecord | null> {
-    return clone(this.entries.get(id)?.record ?? null);
+  stream(id: string): MemoryStreamStores {
+    return new MemoryStreamStores(id, this);
   }
 
-  async create(record: StreamRecord) {
-    const existing = this.entries.get(record.id);
-    if (existing) return { status: "exists" as const, record: clone(existing.record) };
-    this.entries.set(record.id, { record: clone(record), messages: [], producers: new Map() });
-    return { status: "created" as const };
+  getEntry(id: string): MemoryEntry | undefined {
+    return this.entries.get(id);
   }
 
-  async update(id: string, patch: StreamRecordPatch): Promise<StreamRecord> {
-    const entry = this.must(id);
-    entry.record = {
-      ...entry.record,
-      config: { ...entry.record.config, ...patch.config },
-      lifecycle: { ...entry.record.lifecycle, ...patch.lifecycle },
-      currentOffset: patch.currentOffset ?? entry.record.currentOffset,
-      counter: patch.counter ?? entry.record.counter,
-    };
-    return clone(entry.record);
-  }
-
-  async deleteStream(id: string): Promise<void> {
-    this.entries.delete(id);
-    await this.cancelExpiry(id);
-  }
-
-  async appendToStream(id: string, messages: StoredMessage[]): Promise<void> {
-    this.must(id).messages.push(...clone(messages));
-  }
-
-  async list(id: string, options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
-    const messages = this.entries.get(id)?.messages ?? [];
-    let out = messages;
-    if (options.after) out = out.filter((m) => m.offset > options.after!);
-    if (options.until) out = out.filter((m) => m.offset <= options.until!);
-    if (options.limit !== undefined) out = out.slice(0, options.limit);
-    return clone(out);
-  }
-
-  async deleteMessages(id: string): Promise<void> {
+  mustEntry(id: string): MemoryEntry {
     const entry = this.entries.get(id);
-    if (entry) entry.messages = [];
+    if (!entry) throw new Error(`Stream not found: ${id}`);
+    return entry;
   }
 
-  async getProducerState(id: string, producerId: string): Promise<ProducerState | undefined> {
-    return clone(this.entries.get(id)?.producers.get(producerId));
+  setEntry(record: StreamRecord): CreateStreamRecordResult {
+    const existing = this.entries.get(record.id);
+    if (existing) return { status: "exists", record: clone(existing.record) };
+    this.entries.set(record.id, { record: clone(record), messages: [], producers: new Map() });
+    return { status: "created" };
   }
 
-  async setProducerState(id: string, producerId: string, state: ProducerState): Promise<void> {
-    this.must(id).producers.set(producerId, clone(state));
-  }
-
-  async deleteProducerStates(id: string): Promise<void> {
-    this.entries.get(id)?.producers.clear();
-  }
-
-  async incrementChildRefCount(parentId: string): Promise<number> {
-    const entry = this.must(parentId);
-    const next = entry.record.lifecycle.childRefCount + 1;
-    entry.record = {
-      ...entry.record,
-      lifecycle: { ...entry.record.lifecycle, childRefCount: next },
-    };
-    return next;
-  }
-
-  async decrementChildRefCount(parentId: string): Promise<number> {
-    const entry = this.must(parentId);
-    const next = Math.max(0, entry.record.lifecycle.childRefCount - 1);
-    entry.record = {
-      ...entry.record,
-      lifecycle: { ...entry.record.lifecycle, childRefCount: next },
-    };
-    return next;
+  deleteEntry(id: string): void {
+    this.entries.delete(id);
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -112,7 +66,7 @@ export class MemoryStreamState {
     }
   }
 
-  async waitForEvent(id: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
+  waitForEvent(id: string, options: WaitForEventOptions): Promise<WaitForEventResult> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => finish({ status: "timeout" }), options.timeoutMs);
       const finish = (result: WaitForEventResult) => {
@@ -149,11 +103,176 @@ export class MemoryStreamState {
     if (timer) clearTimeout(timer);
     this.timers.delete(id);
   }
+}
 
-  private must(id: string): MemoryEntry {
-    const entry = this.entries.get(id);
-    if (!entry) throw new Error(`Stream not found: ${id}`);
-    return entry;
+/** Bound, stream-oriented collection of simple memory stores. */
+export class MemoryStreamStores {
+  readonly records: MemoryRecordStore;
+  readonly messages: MemoryMessageStore;
+  readonly producers: MemoryProducerStore;
+  readonly references: MemoryReferenceStore;
+  readonly mutations: MemoryMutationCoordinator;
+  readonly events: MemoryEventHub;
+  readonly expiry: MemoryExpiryScheduler;
+
+  constructor(
+    readonly id: string,
+    state: MemoryStreamState,
+  ) {
+    this.records = new MemoryRecordStore(id, state);
+    this.messages = new MemoryMessageStore(id, state);
+    this.producers = new MemoryProducerStore(id, state);
+    this.references = new MemoryReferenceStore(id, state);
+    this.mutations = new MemoryMutationCoordinator(id, state);
+    this.events = new MemoryEventHub(id, state);
+    this.expiry = new MemoryExpiryScheduler(id, state);
+  }
+}
+
+export class MemoryRecordStore {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  async getRecord(): Promise<StreamRecord | null> {
+    return clone(this.state.getEntry(this.id)?.record ?? null);
+  }
+
+  async createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
+    if (record.id !== this.id) {
+      throw new Error(`Record id ${record.id} does not match bound stream ${this.id}`);
+    }
+    return this.state.setEntry(record);
+  }
+
+  async updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
+    const entry = this.state.mustEntry(this.id);
+    entry.record = {
+      ...entry.record,
+      config: { ...entry.record.config, ...patch.config },
+      lifecycle: { ...entry.record.lifecycle, ...patch.lifecycle },
+      currentOffset: patch.currentOffset ?? entry.record.currentOffset,
+      counter: patch.counter ?? entry.record.counter,
+    };
+    return clone(entry.record);
+  }
+
+  async deleteRecord(): Promise<void> {
+    this.state.deleteEntry(this.id);
+    await this.state.cancelExpiry(this.id);
+  }
+}
+
+export class MemoryMessageStore {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  async appendMessages(messages: StoredMessage[]): Promise<void> {
+    this.state.mustEntry(this.id).messages.push(...clone(messages));
+  }
+
+  async listMessages(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+    const messages = this.state.getEntry(this.id)?.messages ?? [];
+    let out = messages;
+    if (options.after) out = out.filter((m) => m.offset > options.after!);
+    if (options.until) out = out.filter((m) => m.offset <= options.until!);
+    if (options.limit !== undefined) out = out.slice(0, options.limit);
+    return clone(out);
+  }
+
+  async deleteMessages(): Promise<void> {
+    const entry = this.state.getEntry(this.id);
+    if (entry) entry.messages = [];
+  }
+}
+
+export class MemoryProducerStore {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  async getProducerState(producerId: string): Promise<ProducerState | undefined> {
+    return clone(this.state.getEntry(this.id)?.producers.get(producerId));
+  }
+
+  async setProducerState(producerId: string, producerState: ProducerState): Promise<void> {
+    this.state.mustEntry(this.id).producers.set(producerId, clone(producerState));
+  }
+
+  async deleteProducerStates(): Promise<void> {
+    this.state.getEntry(this.id)?.producers.clear();
+  }
+}
+
+export class MemoryReferenceStore {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  async incrementChildRefCount(): Promise<number> {
+    const entry = this.state.mustEntry(this.id);
+    const next = entry.record.lifecycle.childRefCount + 1;
+    entry.record = {
+      ...entry.record,
+      lifecycle: { ...entry.record.lifecycle, childRefCount: next },
+    };
+    return next;
+  }
+
+  async decrementChildRefCount(): Promise<number> {
+    const entry = this.state.mustEntry(this.id);
+    const next = Math.max(0, entry.record.lifecycle.childRefCount - 1);
+    entry.record = {
+      ...entry.record,
+      lifecycle: { ...entry.record.lifecycle, childRefCount: next },
+    };
+    return next;
+  }
+}
+
+export class MemoryMutationCoordinator {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    return this.state.withLock(`stream:${this.id}`, fn);
+  }
+}
+
+export class MemoryEventHub {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+    return this.state.waitForEvent(this.id, options);
+  }
+
+  notify(type: StreamEventType): void {
+    this.state.notify(this.id, type);
+  }
+}
+
+export class MemoryExpiryScheduler {
+  constructor(
+    private readonly id: string,
+    private readonly state: MemoryStreamState,
+  ) {}
+
+  scheduleExpiry(at: number, callback?: () => Promise<void>): void {
+    this.state.scheduleExpiry(this.id, at, callback);
+  }
+
+  cancelExpiry(): Promise<void> {
+    return this.state.cancelExpiry(this.id);
   }
 }
 

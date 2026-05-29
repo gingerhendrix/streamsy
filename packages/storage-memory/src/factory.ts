@@ -1,14 +1,14 @@
 /**
  * Native memory `StreamFactory`.
  *
- * Owns a process-wide multi-stream table (`MemoryStreamState`) and composes
- * a protocol-facing `Stream` per id from that table using `composeStream`.
- * Bound record/message/producer/reference/runtime operations target one
- * stream id, fixed at composition time, so the returned `Stream` carries no
- * public dependency bag.
+ * Owns a process-wide multi-stream state table (`MemoryStreamState`). Each
+ * lookup asks that table for a stream-oriented handle and composes the
+ * protocol-facing `Stream` from simple bound stores: records, messages,
+ * producers, references, mutation coordination, events, and expiry.
  *
- * This is the reference implementation of the factory seam: small, in-memory,
- * and faithful to the architecture.
+ * This keeps the reference adapter faithful to the factory seam. The returned
+ * stream is bound to one id, and no id-routing or dependency bag leaks through
+ * the public adapter API.
  */
 import { composeStream, type Stream, type StreamFactory, type StreamId } from "@streamsy/core";
 import { MemoryStreamState } from "./storage.ts";
@@ -24,40 +24,16 @@ export function createMemoryStreamFactory(options: MemoryStreamFactoryOptions = 
   const state = options.state ?? new MemoryStreamState();
   return {
     async getStream(streamId: StreamId): Promise<Stream> {
+      const stores = state.stream(streamId);
       return composeStream({
         id: streamId,
-        recordStore: {
-          getRecord: () => state.get(streamId),
-          createRecord: (record) => state.create(record),
-          updateRecord: (patch) => state.update(streamId, patch),
-          deleteRecord: () => state.deleteStream(streamId),
-        },
-        messageStore: {
-          appendMessages: (messages) => state.appendToStream(streamId, messages),
-          listMessages: (listOptions) => state.list(streamId, listOptions),
-          deleteMessages: () => state.deleteMessages(streamId),
-        },
-        producerStore: {
-          getProducerState: (producerId) => state.getProducerState(streamId, producerId),
-          setProducerState: (producerId, producerState) =>
-            state.setProducerState(streamId, producerId, producerState),
-          deleteProducerStates: () => state.deleteProducerStates(streamId),
-        },
-        referenceTracker: {
-          incrementChildRefCount: () => state.incrementChildRefCount(streamId),
-          decrementChildRefCount: () => state.decrementChildRefCount(streamId),
-        },
-        mutations: {
-          withMutationLock: (fn) => state.withLock(`stream:${streamId}`, fn),
-        },
-        events: {
-          waitForEvent: (waitOptions) => state.waitForEvent(streamId, waitOptions),
-          notify: (type) => state.notify(streamId, type),
-        },
-        expiry: {
-          scheduleExpiry: (at, callback) => state.scheduleExpiry(streamId, at, callback),
-          cancelExpiry: () => state.cancelExpiry(streamId),
-        },
+        recordStore: stores.records,
+        messageStore: stores.messages,
+        producerStore: stores.producers,
+        referenceTracker: stores.references,
+        mutations: stores.mutations,
+        events: stores.events,
+        expiry: stores.expiry,
       });
     },
   };
