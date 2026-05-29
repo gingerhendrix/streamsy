@@ -1,13 +1,15 @@
-import type { MemoryStream } from "./stream.ts";
-
 export class MemoryExpiryScheduler {
-  constructor(private readonly stream: MemoryStream) {}
+  private timer?: ReturnType<typeof setTimeout>;
 
   scheduleExpiry(at: number, callback?: () => Promise<void>): void {
-    this.stream.scheduleExpiry(at, callback);
+    void this.cancelExpiry();
+    if (!callback) return;
+    const delay = Math.max(0, at - Date.now());
+    this.timer = setTimeout(() => void callback(), delay);
   }
 
-  cancelExpiry(): Promise<void> {
-    return this.stream.cancelExpiry();
+  async cancelExpiry(): Promise<void> {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
   }
 }

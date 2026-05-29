@@ -1,19 +1,22 @@
 import type { ProducerState } from "@streamsy/core";
-import type { MemoryStream } from "./stream.ts";
-import { clone } from "./memory-entry.ts";
+import { clone } from "./clone.ts";
+import type { MemoryRecordStore } from "./record-store.ts";
 
 export class MemoryProducerStore {
-  constructor(private readonly stream: MemoryStream) {}
+  private readonly producers = new Map<string, ProducerState>();
+
+  constructor(private readonly records: MemoryRecordStore) {}
 
   async getProducerState(producerId: string): Promise<ProducerState | undefined> {
-    return clone(this.stream.entry?.producers.get(producerId));
+    return clone(this.producers.get(producerId));
   }
 
   async setProducerState(producerId: string, producerState: ProducerState): Promise<void> {
-    this.stream.mustEntry().producers.set(producerId, clone(producerState));
+    this.records.requireRecord();
+    this.producers.set(producerId, clone(producerState));
   }
 
   async deleteProducerStates(): Promise<void> {
-    this.stream.entry?.producers.clear();
+    this.producers.clear();
   }
 }

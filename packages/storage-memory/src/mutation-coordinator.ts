@@ -1,9 +1,15 @@
-import type { MemoryStream } from "./stream.ts";
-
 export class MemoryMutationCoordinator {
-  constructor(private readonly stream: MemoryStream) {}
+  private lock?: Promise<void>;
 
-  withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
-    return this.stream.withMutationLock(fn);
+  async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.lock) await this.lock;
+    let release!: () => void;
+    this.lock = new Promise<void>((resolve) => (release = resolve));
+    try {
+      return await fn();
+    } finally {
+      this.lock = undefined;
+      release();
+    }
   }
 }
