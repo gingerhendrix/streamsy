@@ -1,21 +1,12 @@
 /** Stored message mutation helpers for one storage-bound stream. */
 
-import type { StreamEventHub } from "../../types/factory.ts";
-import type { Clock, StoredMessage, StreamRecord, StreamRecordPatch } from "../../types/storage.ts";
+import type { Stream } from "../../types/factory.ts";
+import type { Clock, StreamRecord } from "../../types/storage.ts";
 import { allocate as allocateOffsets } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
-/** Narrow storage view the message writer mutates through. */
-export interface MessageWriterStore {
-  getRecord(): Promise<StreamRecord | null>;
-  updateRecord(patch: StreamRecordPatch): Promise<StreamRecord>;
-  appendMessages(messages: StoredMessage[]): Promise<void>;
-  readonly events?: StreamEventHub;
-}
-
 export interface StreamMessageWriterDeps {
-  streamId: string;
-  stream: MessageWriterStore;
+  stream: Stream;
   clock: Clock;
   expiryPolicy: ExpiryPolicy;
 }
@@ -24,7 +15,7 @@ export class StreamMessageWriter {
   constructor(private deps: StreamMessageWriterDeps) {}
 
   async appendMessages(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string> {
-    await this.deps.expiryPolicy.touch(this.deps.streamId, record, "append");
+    await this.deps.expiryPolicy.touch(this.deps.stream, record, "append");
     const allocation = allocateOffsets(record.counter, data.length);
     const now = this.deps.clock.now();
     const messages = data.map((bytes, i) => ({
@@ -49,7 +40,7 @@ export class StreamMessageWriter {
       nextOffset = await this.appendMessages(record, data, seq);
       latest = (await this.deps.stream.getRecord()) ?? record;
     } else {
-      await this.deps.expiryPolicy.touch(this.deps.streamId, record, "close");
+      await this.deps.expiryPolicy.touch(this.deps.stream, record, "close");
     }
     await this.deps.stream.updateRecord({
       lifecycle: {

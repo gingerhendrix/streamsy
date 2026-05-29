@@ -28,13 +28,12 @@ export class ExpiryPolicy {
     return undefined;
   }
 
-  async touch(streamId: StreamId, record: StreamRecord, reason: TouchReason): Promise<void> {
+  async touch(stream: Stream, record: StreamRecord, reason: TouchReason): Promise<void> {
     if (record.config.ttlSeconds === undefined) return;
     if (reason === "live-read") return;
-    const stream = await this.deps.resolve(streamId);
     const expiresAtMs = this.deps.clock.now() + record.config.ttlSeconds * 1000;
     await stream.updateRecord({ lifecycle: { expiresAtMs } });
-    await stream.expiry?.scheduleExpiry(expiresAtMs, () => this.deps.onScheduledExpiry(streamId));
+    await stream.expiry?.scheduleExpiry(expiresAtMs, () => this.deps.onScheduledExpiry(stream.id));
   }
 
   async scheduleExpiry(record: StreamRecord): Promise<void> {
@@ -47,16 +46,16 @@ export class ExpiryPolicy {
 
   /**
    * Lazily expire the stream if its deadline has passed, returning the current
-   * record. Accepts an already-resolved storage stream so callers that have one
-   * avoid a redundant factory lookup. When the stream expires the record is
-   * re-read so the returned value reflects the post-expiry state.
+   * record. The storage stream is already bound to an id, so callers should pass
+   * that stream instead of threading a duplicate stream id alongside it. When
+   * the stream expires the record is re-read so the returned value reflects the
+   * post-expiry state.
    */
-  async expireIfNeeded(streamId: StreamId, stream?: Stream): Promise<StreamRecord | null> {
-    const resolved = stream ?? (await this.deps.resolve(streamId));
-    const record = await resolved.getRecord();
+  async expireIfNeeded(stream: Stream): Promise<StreamRecord | null> {
+    const record = await stream.getRecord();
     if (record && this.isExpired(record)) {
-      await this.deps.onScheduledExpiry(streamId);
-      return resolved.getRecord();
+      await this.deps.onScheduledExpiry(stream.id);
+      return stream.getRecord();
     }
     return record;
   }

@@ -8,7 +8,7 @@ import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 export type ResolveStorageStream = (streamId: string) => Promise<Stream> | Stream;
 
 export interface StreamMessageReaderDeps {
-  streamId: string;
+  stream: Stream;
   resolve: ResolveStorageStream;
   expiryPolicy: ExpiryPolicy;
 }
@@ -22,11 +22,11 @@ export class StreamMessageReader {
     capOffset?: string,
     touchOwnTtl = true,
   ): Promise<StoredMessage[]> {
-    return this.readChainFor(this.deps.streamId, record, afterOffset, capOffset, touchOwnTtl);
+    return this.readChainFor(this.deps.stream, record, afterOffset, capOffset, touchOwnTtl);
   }
 
   private async readChainFor(
-    streamId: string,
+    stream: Stream,
     record: StreamRecord,
     afterOffset?: string,
     capOffset?: string,
@@ -46,31 +46,23 @@ export class StreamMessageReader {
             ? capOffset
             : record.lifecycle.forkOffset;
         out.push(
-          ...(await this.readChainFor(
-            record.lifecycle.forkedFrom,
-            source,
-            afterOffset,
-            upstreamCap,
-            false,
-          )),
+          ...(await this.readChainFor(sourceStream, source, afterOffset, upstreamCap, false)),
         );
       }
     }
-    if (touchOwnTtl) await this.deps.expiryPolicy.touch(streamId, record, "read");
+    if (touchOwnTtl) await this.deps.expiryPolicy.touch(stream, record, "read");
     const ownStart =
       record.lifecycle.forkOffset &&
       (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
         ? record.lifecycle.forkOffset
         : afterOffset;
-    const own = await (
-      await this.deps.resolve(streamId)
-    ).listMessages({ after: ownStart, until: capOffset });
+    const own = await stream.listMessages({ after: ownStart, until: capOffset });
     out.push(...own);
     return out;
   }
 
   async readOwn(after?: Offset): Promise<{ messages: StoredMessage[]; nextOffset: string }> {
-    const stream = await this.deps.resolve(this.deps.streamId);
+    const stream = this.deps.stream;
     const record = await stream.getRecord();
     if (!record) return { messages: [], nextOffset: "" };
     const messages = await stream.listMessages({ after });

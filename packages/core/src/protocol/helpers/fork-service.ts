@@ -13,15 +13,15 @@ export interface ForkDescriptor {
 }
 
 export interface ForkServiceMutators {
-  expireIfNeeded(streamId: StreamId): Promise<void>;
+  expireIfNeeded(stream: Stream): Promise<void>;
   newRecord(
-    streamId: StreamId,
+    stream: Stream,
     contentType: string,
     options: CreateOptions,
     fork: ForkDescriptor,
   ): StreamRecord;
   scheduleExpiry(record: StreamRecord): Promise<void>;
-  appendMessages(streamId: StreamId, record: StreamRecord, data: Uint8Array[]): Promise<string>;
+  appendMessages(record: StreamRecord, data: Uint8Array[]): Promise<string>;
 }
 
 export type ResolveStorageStream = (streamId: StreamId) => Promise<Stream> | Stream;
@@ -45,10 +45,10 @@ export interface ForkServiceDeps {
 export class ForkService {
   constructor(private deps: ForkServiceDeps) {}
 
-  async execute(streamId: StreamId, options: CreateOptions): Promise<CreateOutcome> {
+  async execute(targetStream: Stream, options: CreateOptions): Promise<CreateOutcome> {
     const sourcePath = options.forkedFrom!;
-    await this.deps.mutators.expireIfNeeded(sourcePath);
     const sourceStream = await this.deps.resolve(sourcePath);
+    await this.deps.mutators.expireIfNeeded(sourceStream);
     const source = await sourceStream.getRecord();
     if (!source)
       return {
@@ -102,16 +102,18 @@ export class ForkService {
 
     const expiry = resolveForkExpiry(options, source);
     const record = this.deps.mutators.newRecord(
-      streamId,
+      targetStream,
       contentType,
       { ...options, ...expiry },
-      { forkedFrom: sourcePath, forkOffset },
+      {
+        forkedFrom: sourcePath,
+        forkOffset,
+      },
     );
     const initialMessages = options.initialData
       ? frameMessages(options.initialData, contentType)
       : [];
 
-    const targetStream = await this.deps.resolve(streamId);
     const createResult = await targetStream.createRecord(record);
     if (createResult.status === "created") await sourceStream.references?.incrementChildRefCount();
     if (createResult.status === "exists") {
@@ -120,13 +122,13 @@ export class ForkService {
         nextOffset: "",
         contentType: "",
         conflictReason: "config-mismatch",
-        errorMessage: `Stream already exists: ${streamId}`,
+        errorMessage: `Stream already exists: ${targetStream.id}`,
       };
     }
     await this.deps.mutators.scheduleExpiry(record);
     let final = record.currentOffset;
     if (initialMessages.length > 0)
-      final = await this.deps.mutators.appendMessages(streamId, record, initialMessages);
+      final = await this.deps.mutators.appendMessages(record, initialMessages);
     return { status: "created", nextOffset: final, contentType };
   }
 }
