@@ -1,16 +1,12 @@
 /**
  * Native memory `StreamFactory`.
  *
- * Owns a process-wide multi-stream state table (`MemoryStreamState`). Each
- * lookup asks that table for a stream-oriented handle and composes the
- * protocol-facing `Stream` from simple bound stores: records, messages,
- * producers, references, mutation coordination, events, and expiry.
- *
- * This keeps the reference adapter faithful to the factory seam. The returned
- * stream is bound to one id, and no id-routing or dependency bag leaks through
- * the public adapter API.
+ * Owns a process-wide registry of `MemoryStream` instances. Each lookup returns
+ * the protocol-facing stream object for one id; `MemoryStream` implements the
+ * core `Stream` interface directly and delegates storage/runtime operations to
+ * simple bound stores.
  */
-import { composeStream, type Stream, type StreamFactory, type StreamId } from "@streamsy/core";
+import type { Stream, StreamFactory, StreamId } from "@streamsy/core";
 import { MemoryStreamState } from "./storage.ts";
 
 export interface MemoryStreamFactoryOptions {
@@ -24,17 +20,7 @@ export function createMemoryStreamFactory(options: MemoryStreamFactoryOptions = 
   const state = options.state ?? new MemoryStreamState();
   return {
     async getStream(streamId: StreamId): Promise<Stream> {
-      const stores = state.stream(streamId);
-      return composeStream({
-        id: streamId,
-        recordStore: stores.records,
-        messageStore: stores.messages,
-        producerStore: stores.producers,
-        referenceTracker: stores.references,
-        mutations: stores.mutations,
-        events: stores.events,
-        expiry: stores.expiry,
-      });
+      return state.getStream(streamId);
     },
   };
 }
