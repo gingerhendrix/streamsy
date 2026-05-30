@@ -49,6 +49,7 @@ Protocol-bound streams are distinct from storage-bound streams:
 | ---------------------------------- | ----------------------------------------------------------------- |
 | `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types.              |
 | `@streamsy/storage-memory`         | In-memory `StreamFactory` for tests, examples, and local servers. |
+| `@streamsy/storage-sqlite`         | Bun `bun:sqlite` `StreamFactory` for durable local persistence.   |
 | `@streamsy/storage-durable-object` | Cloudflare Durable Object `StreamFactory` and storage class.      |
 
 ## Public exports

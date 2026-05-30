@@ -29,6 +29,7 @@
         "@streamsy/core": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
         "@streamsy/storage-memory": "workspace:*",
+        "@streamsy/storage-sqlite": "workspace:*",
         "vitest": "^4.0.16",
       },
       "devDependencies": {
@@ -68,6 +69,17 @@
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
+      },
+    },
+    "packages/storage-sqlite": {
+      "name": "@streamsy/storage-sqlite",
+      "version": "0.0.1",
+      "dependencies": {
+        "@streamsy/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
       },
     },
   },
@@ -517,6 +529,8 @@
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
 
     "@streamsy/storage-memory": ["@streamsy/storage-memory@workspace:packages/storage-memory"],
+
+    "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
 
     "@types/bun": ["@types/bun@1.3.13", "", { "dependencies": { "bun-types": "1.3.13" } }, "sha512-9fqXWk5YIHGGnUau9TEi+qdlTYDAnOj+xLCmSTwXfAIqXr2x4tytJb43E9uCvt09zJURKXwAtkoH4nLQfzeTXw=="],
 

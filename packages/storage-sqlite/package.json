@@ -1,0 +1,20 @@
+{
+  "name": "@streamsy/storage-sqlite",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test src"
+  },
+  "dependencies": {
+    "@streamsy/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:"
+  }
+}

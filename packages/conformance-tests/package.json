@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:memory": "vitest --run src/memory.conformance.test.ts",
+    "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
     "test:do": "STAGE=conformance bun src/deploy-test-destroy.ts",
     "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
     "deploy": "alchemy deploy",
@@ -17,6 +18,7 @@
     "@streamsy/core": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
     "@streamsy/storage-memory": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
     "vitest": "^4.0.16"
   },
   "devDependencies": {

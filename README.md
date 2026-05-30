@@ -7,6 +7,7 @@ Streamsy is a work-in-progress Durable Streams server implementation. It is curr
 WIP. The current local implementation has been validated against `@durable-streams/server-conformance-tests@0.3.0` with both storage backends passing the full conformance suite:
 
 - `@streamsy/storage-memory`: 299/299 passing
+- `@streamsy/storage-sqlite` (Bun `bun:sqlite` storage): 299/299 passing
 - `@streamsy/storage-durable-object` (Cloudflare Durable Object storage): 299/299 passing
 
 The API and package boundaries are not yet stable, and all packages remain private while the project is being shaped.
@@ -15,8 +16,9 @@ The API and package boundaries are not yet stable, and all packages remain priva
 
 - `@streamsy/core` (`packages/core`) — public protocol and HTTP facades, plus shared protocol/storage types.
 - `@streamsy/storage-memory` (`packages/storage-memory`) — in-memory storage adapter used for local development, examples, and conformance testing.
+- `@streamsy/storage-sqlite` (`packages/storage-sqlite`) — Bun SQLite (`bun:sqlite`) storage adapter providing durable local persistence, automatic migrations, in-process mutation locking, live-read notification, and lazy/in-process expiry. Requires the Bun runtime.
 - `@streamsy/storage-durable-object` (`packages/storage-durable-object`) — Cloudflare Durable Object storage adapter with SQLite-backed persistence, long-polling, SSE support, TTL/expiry handling, and stream metadata.
-- `@streamsy/conformance-tests` (`packages/conformance-tests`) — private conformance harness for the memory and Durable Object adapters.
+- `@streamsy/conformance-tests` (`packages/conformance-tests`) — private conformance harness for the memory, SQLite, and Durable Object adapters.
 
 ## Public API
 
@@ -50,6 +52,7 @@ bun install
 bun run typecheck
 bun run test:unit
 bun run test:conformance:memory
+bun run test:conformance:sqlite
 ```
 
 Durable Object conformance uses an Alchemy-managed Cloudflare deployment and can take longer than local checks:
