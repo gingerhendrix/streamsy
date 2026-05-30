@@ -15,7 +15,7 @@ export class RecordStore {
   ) {}
 
   async getRecord(): Promise<StreamRecord | null> {
-    return (await this.kv.get<StreamRecord>(RECORD_KEY)) ?? null;
+    return this.kv.get<StreamRecord>(RECORD_KEY) ?? null;
   }
 
   async createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
@@ -25,7 +25,7 @@ export class RecordStore {
     }
     const existing = await this.getRecord();
     if (existing) return { status: "exists", record: existing };
-    await this.kv.put(RECORD_KEY, record);
+    this.kv.put(RECORD_KEY, record);
     return { status: "created" };
   }
 
@@ -38,12 +38,12 @@ export class RecordStore {
       currentOffset: patch.currentOffset ?? existing.currentOffset,
       counter: patch.counter ?? existing.counter,
     };
-    await this.kv.put(RECORD_KEY, updated);
+    this.kv.put(RECORD_KEY, updated);
     return updated;
   }
 
   async deleteRecord(): Promise<void> {
-    await this.kv.delete(RECORD_KEY);
+    this.kv.delete(RECORD_KEY);
   }
 
   async incrementChildRefCount(): Promise<number> {

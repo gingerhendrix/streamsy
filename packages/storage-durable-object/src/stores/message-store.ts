@@ -12,7 +12,7 @@ export class MessageStore {
 
   async appendMessages(messages: StoredMessage[]): Promise<void> {
     await this.records.requireRecord();
-    for (const msg of messages) await this.kv.put(messageKey(msg.offset), msg);
+    for (const msg of messages) this.kv.put(messageKey(msg.offset), msg);
   }
 
   async listMessages(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
@@ -30,6 +30,6 @@ export class MessageStore {
 
   async deleteMessages(): Promise<void> {
     const entries = this.kv.list({ prefix: MESSAGE_PREFIX });
-    for (const [key] of entries) await this.kv.delete(key);
+    for (const [key] of entries) this.kv.delete(key);
   }
 }

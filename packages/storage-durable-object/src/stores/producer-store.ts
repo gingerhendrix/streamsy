@@ -16,11 +16,11 @@ export class ProducerStore {
 
   async setProducerState(producerId: string, state: ProducerState): Promise<void> {
     await this.records.requireRecord();
-    await this.kv.put(producerKey(producerId), state);
+    this.kv.put(producerKey(producerId), state);
   }
 
   async deleteProducerStates(): Promise<void> {
     const entries = this.kv.list({ prefix: PRODUCER_PREFIX });
-    for (const [key] of entries) await this.kv.delete(key);
+    for (const [key] of entries) this.kv.delete(key);
   }
 }

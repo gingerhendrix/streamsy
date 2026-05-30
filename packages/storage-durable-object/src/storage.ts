@@ -13,7 +13,6 @@ import type {
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
-  Stream,
   StreamEventType,
   StreamId,
   StreamRecord,
@@ -27,10 +26,7 @@ export interface DurableObjectStreamStoreEnv {
 }
 
 /** Per-stream Durable Object: durable fact storage plus DO runtime capabilities. */
-export class DurableObjectStreamStorage
-  extends DurableObject<DurableObjectStreamStoreEnv>
-  implements Stream
-{
+export class DurableObjectStreamStorage extends DurableObject<DurableObjectStreamStoreEnv> {
   id!: StreamId;
 
   private readonly records: RecordStore;
@@ -49,17 +45,17 @@ export class DurableObjectStreamStorage
   }
 
   async init(streamId: StreamId): Promise<void> {
-    const existing = await this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
+    const existing = this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
     if (existing && existing !== streamId) {
       throw new Error(`Durable Object already initialized for stream ${existing}`);
     }
-    if (!existing) await this.ctx.storage.kv.put(STREAM_ID_KEY, streamId);
+    if (!existing) this.ctx.storage.kv.put(STREAM_ID_KEY, streamId);
     this.id = streamId;
   }
 
   private async requireStreamId(): Promise<StreamId> {
     if (this.id) return this.id;
-    const stored = await this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
+    const stored = this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
     if (!stored) throw new Error("Durable Object stream is not initialized");
     this.id = stored;
     return stored;
@@ -126,15 +122,6 @@ export class DurableObjectStreamStorage
 
   decrementChildRefCount(): Promise<number> {
     return this.records.decrementChildRefCount();
-  }
-
-  withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
-    // Cloudflare RPC callbacks execute outside this Durable Object and may call
-    // back into the same stub. Holding an in-object lock around the callback
-    // would deadlock those nested storage calls, so the direct stub surface
-    // invokes the callback directly and relies on the Durable Object's
-    // per-method single-threaded execution for storage mutations.
-    return fn();
   }
 
   waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {

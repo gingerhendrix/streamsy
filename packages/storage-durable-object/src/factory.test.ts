@@ -3,7 +3,6 @@ import type {
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
-  Stream,
   StreamEventType,
   StreamId,
   StreamRecord,
@@ -40,8 +39,8 @@ interface FakeStubState {
   notifications: StreamEventType[];
 }
 
-/** Minimal in-process stand-in for a DurableObjectStub whose class implements Stream directly. */
-class FakeStub implements Stream {
+/** Minimal in-process stand-in for a DurableObjectStub exposing storage RPC methods. */
+class FakeStub {
   readonly state: FakeStubState;
   private nextToken = 0;
   private waiters = new Set<(result: WaitForEventResult) => void>();
@@ -142,10 +141,6 @@ class FakeStub implements Stream {
       lifecycle: { ...this.state.record.lifecycle, childRefCount: next },
     };
     return next;
-  }
-
-  async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
-    return fn();
   }
 
   async acquireLock(key: string): Promise<string> {
