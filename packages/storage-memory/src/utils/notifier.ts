@@ -1,6 +1,6 @@
 import type { StreamEventType, WaitForEventOptions, WaitForEventResult } from "@streamsy/core";
 
-export class MemoryEventHub {
+export class MemoryNotifier {
   private readonly waiters = new Set<(result: WaitForEventResult) => void>();
 
   waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {

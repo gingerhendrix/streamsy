@@ -1,11 +1,11 @@
 import type { ListMessagesOptions, StoredMessage } from "@streamsy/core";
-import { clone } from "./clone.ts";
-import type { MemoryRecordStore } from "./record-store.ts";
+import { clone } from "#lib/clone";
+import type { RecordStore } from "./record-store.ts";
 
-export class MemoryMessageStore {
+export class MessageStore {
   private messages: StoredMessage[] = [];
 
-  constructor(private readonly records: MemoryRecordStore) {}
+  constructor(private readonly records: RecordStore) {}
 
   async appendMessages(messages: StoredMessage[]): Promise<void> {
     this.records.requireRecord();

@@ -11,34 +11,31 @@ import type {
   WaitForEventOptions,
   WaitForEventResult,
 } from "@streamsy/core";
-import { MemoryEventHub } from "./event-hub.ts";
-import { MemoryExpiryScheduler } from "./expiry-scheduler.ts";
-import { MemoryMessageStore } from "./message-store.ts";
-import { MemoryMutationCoordinator } from "./mutation-coordinator.ts";
-import { MemoryProducerStore } from "./producer-store.ts";
-import { MemoryRecordStore } from "./record-store.ts";
-import { MemoryReferenceStore } from "./reference-store.ts";
+import { MessageStore } from "./stores/message-store.ts";
+import { ProducerStore } from "./stores/producer-store.ts";
+import { RecordStore } from "./stores/record-store.ts";
+import { MemoryLock } from "./utils/lock.ts";
+import { MemoryNotifier } from "./utils/notifier.ts";
+import { TimeoutScheduler } from "./utils/timeout-scheduler.ts";
 
 export class MemoryStream implements Stream {
-  private readonly records: MemoryRecordStore;
-  private readonly messages: MemoryMessageStore;
-  private readonly producers: MemoryProducerStore;
-  private readonly references: MemoryReferenceStore;
-  private readonly mutations: MemoryMutationCoordinator;
-  private readonly events: MemoryEventHub;
-  private readonly expiry: MemoryExpiryScheduler;
+  private readonly records: RecordStore;
+  private readonly messages: MessageStore;
+  private readonly producers: ProducerStore;
+  private readonly lock: MemoryLock;
+  private readonly notifier: MemoryNotifier;
+  private readonly timeout: TimeoutScheduler;
 
   constructor(
     readonly id: StreamId,
     private readonly deleteFromState: () => void,
   ) {
-    this.records = new MemoryRecordStore(id);
-    this.messages = new MemoryMessageStore(this.records);
-    this.producers = new MemoryProducerStore(this.records);
-    this.references = new MemoryReferenceStore(this.records);
-    this.mutations = new MemoryMutationCoordinator();
-    this.events = new MemoryEventHub();
-    this.expiry = new MemoryExpiryScheduler();
+    this.records = new RecordStore(id);
+    this.messages = new MessageStore(this.records);
+    this.producers = new ProducerStore(this.records);
+    this.lock = new MemoryLock();
+    this.notifier = new MemoryNotifier();
+    this.timeout = new TimeoutScheduler();
   }
 
   getRecord(): Promise<StreamRecord | null> {
@@ -57,7 +54,7 @@ export class MemoryStream implements Stream {
     await this.records.deleteRecord();
     await this.messages.deleteMessages();
     await this.producers.deleteProducerStates();
-    await this.expiry.cancelExpiry();
+    this.timeout.cancel();
     this.deleteFromState();
   }
 
@@ -86,30 +83,30 @@ export class MemoryStream implements Stream {
   }
 
   incrementChildRefCount(): Promise<number> {
-    return this.references.incrementChildRefCount();
+    return this.records.incrementChildRefCount();
   }
 
   decrementChildRefCount(): Promise<number> {
-    return this.references.decrementChildRefCount();
+    return this.records.decrementChildRefCount();
   }
 
   withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
-    return this.mutations.withMutationLock(fn);
+    return this.lock.withLock(fn);
   }
 
   waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
-    return this.events.waitForEvent(options);
+    return this.notifier.waitForEvent(options);
   }
 
   notify(type: StreamEventType): Promise<void> | void {
-    return this.events.notify(type);
+    return this.notifier.notify(type);
   }
 
   scheduleExpiry(at: number, callback?: () => Promise<void>): Promise<void> | void {
-    return this.expiry.scheduleExpiry(at, callback);
+    return this.timeout.schedule(at, callback);
   }
 
   cancelExpiry(): Promise<void> | void {
-    return this.expiry.cancelExpiry();
+    return this.timeout.cancel();
   }
 }

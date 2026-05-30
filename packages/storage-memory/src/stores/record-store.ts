@@ -4,9 +4,9 @@ import type {
   StreamRecord,
   StreamRecordPatch,
 } from "@streamsy/core";
-import { clone } from "./clone.ts";
+import { clone } from "#lib/clone";
 
-export class MemoryRecordStore {
+export class RecordStore {
   private record?: StreamRecord;
 
   constructor(readonly id: StreamId) {}
@@ -40,12 +40,34 @@ export class MemoryRecordStore {
     this.record = undefined;
   }
 
+  async incrementChildRefCount(): Promise<number> {
+    const updated = this.updateStoredRecord((record) => {
+      const next = record.lifecycle.childRefCount + 1;
+      return {
+        ...record,
+        lifecycle: { ...record.lifecycle, childRefCount: next },
+      };
+    });
+    return updated.lifecycle.childRefCount;
+  }
+
+  async decrementChildRefCount(): Promise<number> {
+    const updated = this.updateStoredRecord((record) => {
+      const next = Math.max(0, record.lifecycle.childRefCount - 1);
+      return {
+        ...record,
+        lifecycle: { ...record.lifecycle, childRefCount: next },
+      };
+    });
+    return updated.lifecycle.childRefCount;
+  }
+
   requireRecord(): StreamRecord {
     if (!this.record) throw new Error(`Stream not found: ${this.id}`);
     return this.record;
   }
 
-  updateStoredRecord(update: (record: StreamRecord) => StreamRecord): StreamRecord {
+  private updateStoredRecord(update: (record: StreamRecord) => StreamRecord): StreamRecord {
     this.record = update(this.requireRecord());
     return this.record;
   }

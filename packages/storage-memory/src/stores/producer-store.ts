@@ -1,11 +1,11 @@
 import type { ProducerState } from "@streamsy/core";
-import { clone } from "./clone.ts";
-import type { MemoryRecordStore } from "./record-store.ts";
+import { clone } from "#lib/clone";
+import type { RecordStore } from "./record-store.ts";
 
-export class MemoryProducerStore {
+export class ProducerStore {
   private readonly producers = new Map<string, ProducerState>();
 
-  constructor(private readonly records: MemoryRecordStore) {}
+  constructor(private readonly records: RecordStore) {}
 
   async getProducerState(producerId: string): Promise<ProducerState | undefined> {
     return clone(this.producers.get(producerId));

@@ -7,7 +7,7 @@
  * simple bound stores.
  */
 import type { Stream, StreamFactory, StreamId } from "@streamsy/core";
-import { MemoryStreamState } from "./storage.ts";
+import { MemoryStreamState } from "./state.ts";
 
 export interface MemoryStreamFactoryOptions {
   /**
