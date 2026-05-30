@@ -42,13 +42,17 @@ interface FakeStubState {
 
 /** Minimal in-process stand-in for a DurableObjectStub whose class implements Stream directly. */
 class FakeStub implements Stream {
-  readonly id!: StreamId;
   readonly state: FakeStubState;
   private nextToken = 0;
   private waiters = new Set<(result: WaitForEventResult) => void>();
 
   constructor(state: FakeStubState) {
     this.state = state;
+  }
+
+  get id(): StreamId {
+    if (!this.state.initializedAs) throw new Error("Durable Object stream is not initialized");
+    return this.state.initializedAs;
   }
 
   async init(streamId: StreamId): Promise<void> {
@@ -240,14 +244,15 @@ function newRecord(id: string): StreamRecord {
 }
 
 describe("createDurableObjectStreamFactory", () => {
-  it("initializes and returns the routed Durable Object stub", async () => {
+  it("initializes the routed Durable Object stub and returns a typed stream proxy", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
 
     const stream = await factory.getStream("alpha");
 
-    expect(stream).toBe(fake.stubFor("alpha"));
+    expect(stream).not.toBe(fake.stubFor("alpha"));
     expect(stream.id).toBe("alpha");
+    expect(await stream.getRecord()).toBeNull();
     expect(fake.stubFor("alpha").state.initCalls).toEqual(["alpha"]);
   });
 
