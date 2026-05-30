@@ -1,6 +1,7 @@
 /** @streamsy/core */
 export { createStreamProtocol, StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
 export { createHttpHandler, HttpHandler } from "./http.ts";
+export { createReadOnlyHttpHandler, ReadOnlyHttpHandler } from "./read-only-http.ts";
 
 export {
   isNotSupported,
@@ -13,7 +14,11 @@ export {
 export { maybeNotSupportedResponse, notSupportedResponse } from "./http/not-supported.ts";
 
 export type { StreamProtocolDeps, StreamProtocolOptions } from "./protocol.ts";
-export type { HttpHandlerInterface, HttpHandlerOptions } from "./http/types.ts";
+export type {
+  HttpHandlerInterface,
+  HttpHandlerOptions,
+  ReadOnlyHttpHandlerOptions,
+} from "./http/types.ts";
 
 export type {
   StreamProtocolFactory,

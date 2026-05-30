@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createHttpHandler,
+  createReadOnlyHttpHandler,
   createStreamProtocol,
   ZERO_OFFSET,
   type ProtocolStream,
@@ -18,8 +19,10 @@ describe("public API import guard", () => {
     const factory: StreamFactory = createMemoryStreamFactory();
     const protocol: StreamProtocolFactory = createStreamProtocol({ storage: { factory } });
     const handler = createHttpHandler({ protocol });
+    const readOnlyHandler = createReadOnlyHttpHandler({ protocol });
     expect(ZERO_OFFSET).toBe("-1");
     expect(handler.fetch).toBeTypeOf("function");
+    expect(readOnlyHandler.fetch).toBeTypeOf("function");
     const created = await protocol.create("guard", {});
     expect(created.status).toBe("created");
     if (created.status === "created") {

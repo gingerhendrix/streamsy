@@ -7,6 +7,11 @@ export interface HttpHandlerOptions {
   maxMessageSize?: number;
 }
 
+export interface ReadOnlyHttpHandlerOptions {
+  protocol: StreamProtocolFactory;
+  pathPrefix?: string;
+}
+
 export interface HttpHandlerInterface {
   fetch(request: Request): Promise<Response>;
 }
