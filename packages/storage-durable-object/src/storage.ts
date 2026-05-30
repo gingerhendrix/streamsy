@@ -1,31 +1,72 @@
 import { DurableObject } from "cloudflare:workers";
 import { StreamProtocol } from "@streamsy/core";
 import { createDurableObjectStreamFactory } from "./factory.ts";
+import { STREAM_ID_KEY } from "./lib/keys.ts";
+import { MessageStore } from "./stores/message-store.ts";
+import { ProducerStore } from "./stores/producer-store.ts";
+import { RecordStore } from "./stores/record-store.ts";
+import { AlarmScheduler } from "./utils/alarm-scheduler.ts";
+import { DurableObjectLock } from "./utils/lock.ts";
+import { DurableObjectNotifier } from "./utils/notifier.ts";
 import type {
+  CreateStreamRecordResult,
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
+  Stream,
   StreamEventType,
+  StreamId,
   StreamRecord,
   StreamRecordPatch,
   WaitForEventOptions,
   WaitForEventResult,
 } from "@streamsy/core";
 
-const LONG_POLL_TIMEOUT_MS = 1500;
-
 export interface DurableObjectStreamStoreEnv {
   STREAM_DO: DurableObjectNamespace<DurableObjectStreamStorage>;
 }
 
 /** Per-stream Durable Object: durable fact storage plus DO runtime capabilities. */
-export class DurableObjectStreamStorage extends DurableObject<DurableObjectStreamStoreEnv> {
-  private waiters = new Set<(result: WaitForEventResult) => void>();
-  private lockChain = new Map<string, Promise<void>>();
-  private lockReleasers = new Map<string, () => void>();
+export class DurableObjectStreamStorage
+  extends DurableObject<DurableObjectStreamStoreEnv>
+  implements Stream
+{
+  id!: StreamId;
+
+  private readonly records: RecordStore;
+  private readonly messages: MessageStore;
+  private readonly producers: ProducerStore;
+  private readonly lock = new DurableObjectLock();
+  private readonly notifier = new DurableObjectNotifier();
+  private readonly alarms: AlarmScheduler;
+
+  constructor(ctx: DurableObjectState, env: DurableObjectStreamStoreEnv) {
+    super(ctx, env);
+    this.records = new RecordStore(() => this.requireStreamId(), ctx.storage.kv);
+    this.messages = new MessageStore(this.records, ctx.storage.kv);
+    this.producers = new ProducerStore(this.records, ctx.storage.kv);
+    this.alarms = new AlarmScheduler(ctx.storage);
+  }
+
+  async init(streamId: StreamId): Promise<void> {
+    const existing = await this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
+    if (existing && existing !== streamId) {
+      throw new Error(`Durable Object already initialized for stream ${existing}`);
+    }
+    if (!existing) await this.ctx.storage.kv.put(STREAM_ID_KEY, streamId);
+    this.id = streamId;
+  }
+
+  private async requireStreamId(): Promise<StreamId> {
+    if (this.id) return this.id;
+    const stored = await this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
+    if (!stored) throw new Error("Durable Object stream is not initialized");
+    this.id = stored;
+    return stored;
+  }
 
   override async alarm(): Promise<void> {
-    const record = await this.getOwnRecord();
+    const record = await this.records.getRecord();
     if (!record) return;
     if (!this.env.STREAM_DO) {
       // Required for fork-aware GC. Worker bindings must expose STREAM_DO.
@@ -36,141 +77,89 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     await protocol.handleScheduledExpiry(record.id);
   }
 
-  async get(): Promise<StreamRecord | null> {
-    return this.getOwnRecord();
+  getRecord(): Promise<StreamRecord | null> {
+    return this.records.getRecord();
   }
 
-  async create(record: StreamRecord) {
-    const existing = await this.getOwnRecord();
-    if (existing) return { status: "exists" as const, record: existing };
-    await this.ctx.storage.kv.put("record", record);
-    return { status: "created" as const };
+  createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
+    return this.records.createRecord(record);
   }
 
-  async update(patch: StreamRecordPatch): Promise<StreamRecord> {
-    const existing = await this.mustRecord();
-    const updated: StreamRecord = {
-      ...existing,
-      config: { ...existing.config, ...patch.config },
-      lifecycle: { ...existing.lifecycle, ...patch.lifecycle },
-      currentOffset: patch.currentOffset ?? existing.currentOffset,
-      counter: patch.counter ?? existing.counter,
-    };
-    this.ctx.storage.kv.put("record", updated);
-    return updated;
+  updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
+    return this.records.updateRecord(patch);
   }
 
-  async deleteStream(): Promise<void> {
-    await this.ctx.storage.deleteAll();
+  async deleteRecord(): Promise<void> {
+    await this.records.deleteRecord();
+    await this.messages.deleteMessages();
+    await this.producers.deleteProducerStates();
+    await this.alarms.cancel();
   }
 
-  async appendToStream(messages: StoredMessage[]): Promise<void> {
-    for (const msg of messages) this.ctx.storage.kv.put(`message:${msg.offset}`, msg);
+  appendMessages(messages: StoredMessage[]): Promise<void> {
+    return this.messages.appendMessages(messages);
   }
 
-  async list(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
-    const listOptions: DurableObjectListOptions = { prefix: "message:" };
-    if (options.after) listOptions.startAfter = `message:${options.after}`;
-    const entries = this.ctx.storage.kv.list<StoredMessage>(listOptions);
-    const messages: StoredMessage[] = [];
-    for (const [, value] of entries) {
-      if (options.until && value.offset > options.until) break;
-      messages.push(value);
-      if (options.limit !== undefined && messages.length >= options.limit) break;
-    }
-    return messages;
+  listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
+    return this.messages.listMessages(options);
   }
 
-  async deleteMessages(): Promise<void> {
-    const entries = this.ctx.storage.kv.list({ prefix: "message:" });
-    for (const [key] of entries) this.ctx.storage.kv.delete(key);
+  deleteMessages(): Promise<void> {
+    return this.messages.deleteMessages();
   }
 
-  async getProducerState(producerId: string): Promise<ProducerState | undefined> {
-    return this.ctx.storage.kv.get<ProducerState>(`producer:${producerId}`);
+  getProducerState(producerId: string): Promise<ProducerState | undefined> {
+    return this.producers.getProducerState(producerId);
   }
 
-  async setProducerState(producerId: string, state: ProducerState): Promise<void> {
-    this.ctx.storage.kv.put(`producer:${producerId}`, state);
+  setProducerState(producerId: string, state: ProducerState): Promise<void> {
+    return this.producers.setProducerState(producerId, state);
   }
 
-  async deleteProducerStates(): Promise<void> {
-    const entries = this.ctx.storage.kv.list({ prefix: "producer:" });
-    for (const [key] of entries) this.ctx.storage.kv.delete(key);
+  deleteProducerStates(): Promise<void> {
+    return this.producers.deleteProducerStates();
   }
 
-  async incrementChildRefCount(): Promise<number> {
-    const record = await this.mustRecord();
-    const next = record.lifecycle.childRefCount + 1;
-    await this.update({ lifecycle: { childRefCount: next } });
-    return next;
+  incrementChildRefCount(): Promise<number> {
+    return this.records.incrementChildRefCount();
   }
 
-  async decrementChildRefCount(): Promise<number> {
-    const record = await this.mustRecord();
-    const next = Math.max(0, record.lifecycle.childRefCount - 1);
-    await this.update({ lifecycle: { childRefCount: next } });
-    return next;
+  decrementChildRefCount(): Promise<number> {
+    return this.records.decrementChildRefCount();
   }
 
-  async waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(
-        () => finish({ status: "timeout" }),
-        Math.min(options.timeoutMs, LONG_POLL_TIMEOUT_MS),
-      );
-      const finish = (result: WaitForEventResult) => {
-        clearTimeout(timeout);
-        this.waiters.delete(finish);
-        resolve(result);
-      };
-      this.waiters.add(finish);
-      options.signal?.addEventListener("abort", () => finish({ status: "aborted" }), {
-        once: true,
-      });
-    });
+  withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    // Cloudflare RPC callbacks execute outside this Durable Object and may call
+    // back into the same stub. Holding an in-object lock around the callback
+    // would deadlock those nested storage calls, so the direct stub surface
+    // invokes the callback directly and relies on the Durable Object's
+    // per-method single-threaded execution for storage mutations.
+    return fn();
+  }
+
+  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+    return this.notifier.waitForEvent(options);
   }
 
   notify(type: StreamEventType): void {
-    const waiters = [...this.waiters];
-    this.waiters.clear();
-    for (const waiter of waiters) waiter({ status: "notified", type });
+    return this.notifier.notify(type);
   }
 
-  async scheduleExpiry(at: number): Promise<void> {
-    await this.ctx.storage.setAlarm(at);
-  }
-  async cancelExpiry(): Promise<void> {
-    await this.ctx.storage.deleteAlarm();
+  scheduleExpiry(at: number, callback?: () => Promise<void>): Promise<void> {
+    void callback;
+    return this.alarms.schedule(at);
   }
 
-  /**
-   * Acquire an in-DO lock. The DO is single-threaded so the lock chain Map is
-   * safe to mutate from concurrent RPC calls. Returns a token used to release.
-   */
+  cancelExpiry(): Promise<void> {
+    return this.alarms.cancel();
+  }
+
   async acquireLock(key: string): Promise<string> {
-    while (this.lockChain.has(key)) await this.lockChain.get(key);
-    const token = `${key}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-    let release!: () => void;
-    this.lockChain.set(key, new Promise<void>((resolve) => (release = resolve)));
-    this.lockReleasers.set(token, release);
-    return token;
+    return this.lock.acquire(key);
   }
 
   async releaseLock(key: string, token: string): Promise<void> {
-    const release = this.lockReleasers.get(token);
-    if (!release) return;
-    this.lockReleasers.delete(token);
-    this.lockChain.delete(key);
-    release();
-  }
-
-  private async getOwnRecord(): Promise<StreamRecord | null> {
-    return this.ctx.storage.kv.get<StreamRecord>("record") ?? null;
-  }
-  private async mustRecord(): Promise<StreamRecord> {
-    const record = await this.getOwnRecord();
-    if (!record) throw new Error("Stream not found");
-    return record;
+    void key;
+    return this.lock.release(token);
   }
 }

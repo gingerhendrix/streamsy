@@ -1,27 +1,11 @@
-/**
- * Unit coverage for the native Durable Object `StreamFactory`.
- *
- * The factory routes per-stream calls through a `DurableObjectNamespace`
- * stub. These tests substitute the namespace with an in-process fake that
- * matches the structural shape used by the factory, so they exercise the
- * routing/composition logic without requiring deployed Cloudflare resources.
- *
- * Asserts that:
- * - the factory returns a `Stream` bound to the requested id and routes
- *   record/message/producer/reference operations through the corresponding
- *   per-stream stub;
- * - operations on different ids land in different stubs;
- * - the mutation lock calls `acquireLock`/`releaseLock` on the same stub and
- *   forwards the canonical `stream:<id>` key;
- * - live-read notification and active expiry scheduling are routed through
- *   the direct `Stream`.
- */
 import { describe, it, expect } from "vitest";
 import type {
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
+  Stream,
   StreamEventType,
+  StreamId,
   StreamRecord,
   StreamRecordPatch,
   WaitForEventOptions,
@@ -45,6 +29,8 @@ function text(value: Uint8Array): string {
 }
 
 interface FakeStubState {
+  initializedAs?: StreamId;
+  initCalls: StreamId[];
   record: StreamRecord | null;
   messages: StoredMessage[];
   producers: Map<string, ProducerState>;
@@ -54,12 +40,9 @@ interface FakeStubState {
   notifications: StreamEventType[];
 }
 
-/**
- * Minimal stand-in for a `DurableObjectStub<DurableObjectStreamStorage>`.
- * Only implements the methods the factory uses, with state held in memory
- * so test assertions can compare round-trips.
- */
-class FakeStub {
+/** Minimal in-process stand-in for a DurableObjectStub whose class implements Stream directly. */
+class FakeStub implements Stream {
+  readonly id!: StreamId;
   readonly state: FakeStubState;
   private nextToken = 0;
   private waiters = new Set<(result: WaitForEventResult) => void>();
@@ -68,15 +51,27 @@ class FakeStub {
     this.state = state;
   }
 
-  async get(): Promise<StreamRecord | null> {
+  async init(streamId: StreamId): Promise<void> {
+    this.state.initCalls.push(streamId);
+    if (this.state.initializedAs && this.state.initializedAs !== streamId) {
+      throw new Error(`Durable Object already initialized for stream ${this.state.initializedAs}`);
+    }
+    this.state.initializedAs = streamId;
+  }
+
+  async getRecord(): Promise<StreamRecord | null> {
     return this.state.record;
   }
-  async create(record: StreamRecord) {
+
+  async createRecord(record: StreamRecord) {
+    if (record.id !== this.id)
+      throw new Error(`Record id ${record.id} does not match bound stream ${this.id}`);
     if (this.state.record) return { status: "exists" as const, record: this.state.record };
     this.state.record = record;
     return { status: "created" as const };
   }
-  async update(patch: StreamRecordPatch): Promise<StreamRecord> {
+
+  async updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
     if (!this.state.record) throw new Error("Stream not found");
     this.state.record = {
       ...this.state.record,
@@ -87,33 +82,44 @@ class FakeStub {
     };
     return this.state.record;
   }
-  async deleteStream(): Promise<void> {
+
+  async deleteRecord(): Promise<void> {
     this.state.record = null;
     this.state.messages = [];
     this.state.producers.clear();
+    this.state.expiry.cancelled = true;
   }
-  async appendToStream(messages: StoredMessage[]): Promise<void> {
+
+  async appendMessages(messages: StoredMessage[]): Promise<void> {
+    if (!this.state.record) throw new Error("Stream not found");
     this.state.messages.push(...messages);
   }
-  async list(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+
+  async listMessages(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
     let out = this.state.messages;
     if (options.after) out = out.filter((m) => m.offset > options.after!);
     if (options.until) out = out.filter((m) => m.offset <= options.until!);
     if (options.limit !== undefined) out = out.slice(0, options.limit);
     return out;
   }
+
   async deleteMessages(): Promise<void> {
     this.state.messages = [];
   }
+
   async getProducerState(producerId: string): Promise<ProducerState | undefined> {
     return this.state.producers.get(producerId);
   }
+
   async setProducerState(producerId: string, state: ProducerState): Promise<void> {
+    if (!this.state.record) throw new Error("Stream not found");
     this.state.producers.set(producerId, state);
   }
+
   async deleteProducerStates(): Promise<void> {
     this.state.producers.clear();
   }
+
   async incrementChildRefCount(): Promise<number> {
     if (!this.state.record) throw new Error("Stream not found");
     const next = this.state.record.lifecycle.childRefCount + 1;
@@ -123,6 +129,7 @@ class FakeStub {
     };
     return next;
   }
+
   async decrementChildRefCount(): Promise<number> {
     if (!this.state.record) throw new Error("Stream not found");
     const next = Math.max(0, this.state.record.lifecycle.childRefCount - 1);
@@ -132,48 +139,53 @@ class FakeStub {
     };
     return next;
   }
+
+  async withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    return fn();
+  }
+
   async acquireLock(key: string): Promise<string> {
     const token = `t${++this.nextToken}`;
     this.state.lockEvents.push({ type: "acquire", key, token });
     return token;
   }
+
   async releaseLock(key: string, token: string): Promise<void> {
     this.state.lockEvents.push({ type: "release", key, token });
   }
+
   async waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
     this.state.waitOptions.push(options);
     return new Promise<WaitForEventResult>((resolve) => {
       const timer = setTimeout(() => {
-        this.waiters.delete(resolve);
+        this.waiters.delete(wrapped);
         resolve({ status: "timeout" });
       }, options.timeoutMs);
-      const wrapped: (result: WaitForEventResult) => void = (result) => {
+      const wrapped = (result: WaitForEventResult) => {
         clearTimeout(timer);
         resolve(result);
       };
       this.waiters.add(wrapped);
     });
   }
+
   notify(type: StreamEventType): void {
     this.state.notifications.push(type);
     const snapshot = [...this.waiters];
     this.waiters.clear();
     for (const resolve of snapshot) resolve({ status: "notified", type });
   }
+
   async scheduleExpiry(at: number): Promise<void> {
     this.state.expiry.at = at;
     this.state.expiry.cancelled = false;
   }
+
   async cancelExpiry(): Promise<void> {
     this.state.expiry.cancelled = true;
   }
 }
 
-/**
- * In-process fake `DurableObjectNamespace` keyed by stream id. Each
- * `idFromName(name)` returns a stable id and `get(id)` returns the same
- * `FakeStub` instance, so repeated calls within a test target shared state.
- */
 function createFakeNamespace() {
   const stubs = new Map<string, FakeStub>();
   const ids = new Map<string, { name: string; toString(): string }>();
@@ -182,6 +194,7 @@ function createFakeNamespace() {
     let stub = stubs.get(name);
     if (!stub) {
       stub = new FakeStub({
+        initCalls: [],
         record: null,
         messages: [],
         producers: new Map(),
@@ -227,14 +240,27 @@ function newRecord(id: string): StreamRecord {
 }
 
 describe("createDurableObjectStreamFactory", () => {
+  it("initializes and returns the routed Durable Object stub", async () => {
+    const fake = createFakeNamespace();
+    const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
+
+    const stream = await factory.getStream("alpha");
+
+    expect(stream).toBe(fake.stubFor("alpha"));
+    expect(stream.id).toBe("alpha");
+    expect(fake.stubFor("alpha").state.initCalls).toEqual(["alpha"]);
+  });
+
   it("routes record/message/producer/reference operations to the bound stub", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("alpha");
-    expect(stream.id).toBe("alpha");
 
     expect(await stream.createRecord(newRecord("alpha"))).toEqual({ status: "created" });
     expect(await stream.getRecord()).toMatchObject({ id: "alpha" });
+    await expect(stream.createRecord(newRecord("wrong"))).rejects.toThrow(
+      "Record id wrong does not match bound stream alpha",
+    );
 
     await stream.appendMessages([{ data: bytes("hello"), offset: "1_0", timestamp: 1 }]);
     const messages = await stream.listMessages();
@@ -257,7 +283,7 @@ describe("createDurableObjectStreamFactory", () => {
     expect(await stream.getRecord()).toBeNull();
   });
 
-  it("routes operations for different ids to different stubs", async () => {
+  it("routes operations for different ids to different initialized stubs", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
 
@@ -268,20 +294,19 @@ describe("createDurableObjectStreamFactory", () => {
     await a.appendMessages([{ data: bytes("a-1"), offset: "1_0", timestamp: 1 }]);
     await b.appendMessages([{ data: bytes("b-1"), offset: "1_0", timestamp: 1 }]);
 
-    expect(fake.stubFor("a").state.messages.map((m) => text(m.data))).toEqual(["a-1"]);
-    expect(fake.stubFor("b").state.messages.map((m) => text(m.data))).toEqual(["b-1"]);
+    expect(fake.stubFor("a").state.initCalls).toEqual(["a"]);
+    expect(fake.stubFor("b").state.initCalls).toEqual(["b"]);
     expect((await a.listMessages()).map((m) => text(m.data))).toEqual(["a-1"]);
     expect((await b.listMessages()).map((m) => text(m.data))).toEqual(["b-1"]);
   });
 
-  it("acquires and releases the lock on the per-stream stub with the stream:<id> key", async () => {
+  it("uses a local mutation lock helper on the returned stub", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("locked");
 
     const result = await stream.withMutationLock(async () => "value");
     expect(result).toBe("value");
-
     const events = fake.stubFor("locked").state.lockEvents;
     expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({ type: "acquire", key: "stream:locked" });
@@ -289,7 +314,7 @@ describe("createDurableObjectStreamFactory", () => {
     expect(events[0]!.token).toBe(events[1]!.token);
   });
 
-  it("releases the lock even when the callback throws", async () => {
+  it("releases the local mutation lock helper even when the callback throws", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("locked");
@@ -300,24 +325,25 @@ describe("createDurableObjectStreamFactory", () => {
       }),
     ).rejects.toThrow("boom");
 
-    const events = fake.stubFor("locked").state.lockEvents;
-    expect(events.map((e) => e.type)).toEqual(["acquire", "release"]);
+    expect(fake.stubFor("locked").state.lockEvents.map((e) => e.type)).toEqual([
+      "acquire",
+      "release",
+    ]);
   });
 
-  it("routes live-read notification through the bound stub", async () => {
+  it("routes live-read notification through the initialized stub", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("notify");
 
     const waiting = stream.waitForEvent({ timeoutMs: 1_000 });
-    // Ensure the wait has registered before notifying.
     await new Promise((resolve) => setTimeout(resolve, 0));
     await stream.notify("message");
     await expect(waiting).resolves.toEqual({ status: "notified", type: "message" });
     expect(fake.stubFor("notify").state.notifications).toEqual(["message"]);
   });
 
-  it("routes active expiry scheduling through the bound stub", async () => {
+  it("routes active expiry scheduling through the initialized stub", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     const stream = await factory.getStream("expiry");
@@ -332,7 +358,7 @@ describe("createDurableObjectStreamFactory", () => {
   it("does not create stubs for ids that are never used", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
-    void factory; // factory creation should not touch the namespace.
+    void factory;
     expect(fake.has("anything")).toBe(false);
   });
 });
