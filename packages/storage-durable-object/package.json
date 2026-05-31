@@ -1,17 +1,41 @@
 {
   "name": "@streamsy/storage-durable-object",
   "version": "0.0.1",
-  "private": true,
+  "description": "Cloudflare Durable Object Streamsy storage adapter.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/storage-durable-object"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external cloudflare:workers",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "workspace:*"
+    "@streamsy/core": "0.0.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",

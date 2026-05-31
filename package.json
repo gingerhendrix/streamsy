@@ -2,6 +2,16 @@
   "name": "durable-streams",
   "version": "0.0.1",
   "private": true,
+  "description": "Durable Streams server implementation and storage adapters.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git"
+  },
   "workspaces": {
     "packages": [
       "packages/*",
@@ -18,7 +28,7 @@
     "deploy": "bun run --cwd packages/conformance-tests deploy",
     "dev": "bun run --cwd packages/conformance-tests dev",
     "destroy": "bun run --cwd packages/conformance-tests destroy",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run build && bun run --filter '*' typecheck",
     "lint": "oxlint .",
     "lint:fix": "oxlint . --fix",
     "format": "oxfmt . --write",
@@ -29,11 +39,14 @@
     "smoke:memory-server:http": "bun run --cwd examples/memory-server smoke:http",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
-    "test:conformance:do": "bun run --cwd packages/conformance-tests test:do"
+    "test:conformance:do": "bun run --cwd packages/conformance-tests test:do",
+    "build": "bun run --cwd packages/core build && bun run --cwd packages/storage-memory build && bun run --cwd packages/storage-sqlite build && bun run --cwd packages/storage-durable-object build",
+    "pack:dry-run": "for dir in packages/core packages/storage-memory packages/storage-sqlite packages/storage-durable-object; do (cd \"$dir\" && npm pack --dry-run); done"
   },
   "devDependencies": {
     "oxfmt": "^0.48.0",
-    "oxlint": "^1.63.0"
+    "oxlint": "^1.63.0",
+    "tsdown": "^0.9.9"
   },
   "overrides": {
     "@durable-streams/client": "^0.2.3"

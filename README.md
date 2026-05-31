@@ -10,7 +10,7 @@ WIP. The current local implementation has been validated against `@durable-strea
 - `@streamsy/storage-sqlite` (Bun `bun:sqlite` storage): 299/299 passing
 - `@streamsy/storage-durable-object` (Cloudflare Durable Object storage): 299/299 passing
 
-The API and package boundaries are not yet stable, and all packages remain private while the project is being shaped.
+The API and package boundaries are not yet stable. The public packages are prepared for npm publishing under the `@streamsy/*` scope; the conformance harness and examples remain private.
 
 ## Packages
 
@@ -49,7 +49,10 @@ See [`docs/api.md`](docs/api.md) for package boundaries, exported types, storage
 
 ```bash
 bun install
+bun run build
 bun run typecheck
+bun run lint
+bun run format:check
 bun run test:unit
 bun run test:conformance:memory
 bun run test:conformance:sqlite
@@ -62,6 +65,10 @@ bun run test:conformance:do
 ```
 
 `test:conformance:do` deploys the `packages/conformance-tests` worker with `STAGE=conformance`, runs the Durable Object conformance tests against the deployed workers.dev URL, and destroys the conformance deployment in a `finally` step.
+
+## Release
+
+See [`docs/release.md`](docs/release.md) for the npm release runbook, including first manual publish steps and GitHub Actions trusted publishing setup.
 
 ## License
 
