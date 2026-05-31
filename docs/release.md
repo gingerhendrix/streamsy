@@ -52,6 +52,8 @@ bun run test:conformance:do
 
 npm trusted publishing can only be configured after each new package exists on npm. Do the first publish manually from a clean checkout. Do **not** publish `@streamsy/conformance-tests` or `examples/*`.
 
+Local/manual publishes cannot create npm provenance attestations because provenance requires a supported cloud CI/CD runner with OIDC. The first manual publish should therefore use normal npm authentication and `--access public`; provenance starts with the trusted-publishing workflow after the packages exist and trusted publishers are configured.
+
 1. Log in to npm in an interactive shell:
 
    ```bash
@@ -70,20 +72,20 @@ npm trusted publishing can only be configured after each new package exists on n
    bun run pack:dry-run
    ```
 
-3. Publish each scoped package publicly with provenance:
+3. Publish each scoped package publicly. Do not pass `--provenance` for this local/manual first publish:
 
    ```bash
    cd packages/core
-   npm publish --provenance --access public
+   npm publish --access public
 
    cd ../storage-memory
-   npm publish --provenance --access public
+   npm publish --access public
 
    cd ../storage-sqlite
-   npm publish --provenance --access public
+   npm publish --access public
 
    cd ../storage-durable-object
-   npm publish --provenance --access public
+   npm publish --access public
    ```
 
 4. Confirm the packages are visible:
