@@ -1,55 +1,95 @@
-name: Publish npm packages
+name: Publish to npm
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 permissions:
-  contents: read
   id-token: write
+  contents: write
 
 jobs:
   publish:
-    name: Publish npm packages
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node for npm trusted publishing
-        uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
-      - name: Ensure npm supports trusted publishing
-        run: npm install -g npm@latest
+      - run: npm install -g npm@11.11.0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - run: bun install --frozen-lockfile
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - run: bun run build
 
-      - name: Verify package manifests and build output
+      - run: bun run typecheck
+
+      - run: bun run lint
+
+      - run: bun run format:check
+
+      - run: bun run test:unit
+
+      - run: bun run test:conformance:memory
+
+      - run: bun run test:conformance:sqlite
+
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      - name: Verify package versions match tag
         run: |
-          bun run typecheck
-          bun run lint
-          bun run format:check
-          bun run build
-          bun run pack:dry-run
-
-      - name: Publish packages with provenance
-        run: |
-          set -euo pipefail
-          for dir in \
-            packages/core \
-            packages/storage-memory \
-            packages/storage-sqlite \
+          PACKAGES=(
+            packages/core
+            packages/storage-memory
+            packages/storage-sqlite
             packages/storage-durable-object
-          do
-            (cd "$dir" && npm publish --provenance --access public)
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            PKG_NAME=$(node -p "require('./${pkg}/package.json').name")
+            PKG_VERSION=$(node -p "require('./${pkg}/package.json').version")
+            if [[ "$PKG_VERSION" != "$VERSION" ]]; then
+              echo "Error: tag $GITHUB_REF_NAME but $PKG_NAME has version $PKG_VERSION" >&2
+              exit 1
+            fi
           done
+
+      - name: Pack and publish packages
+        run: |
+          PACKAGES=(
+            packages/core
+            packages/storage-memory
+            packages/storage-sqlite
+            packages/storage-durable-object
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            echo "Publishing $pkg..."
+            cd "$pkg"
+
+            # Skip if already published (partial-publish recovery)
+            PKG_NAME=$(node -p "require('./package.json').name")
+            if npm view "$PKG_NAME@$VERSION" version &>/dev/null; then
+              echo "  $PKG_NAME@$VERSION already published, skipping"
+              cd "$GITHUB_WORKSPACE"
+              continue
+            fi
+
+            bun pm pack --quiet
+            TARBALL=$(ls *.tgz)
+            npm publish "$TARBALL" --provenance --access public
+            rm -f "$TARBALL"
+            cd "$GITHUB_WORKSPACE"
+          done
+
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

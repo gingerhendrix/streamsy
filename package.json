@@ -41,7 +41,7 @@
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
     "test:conformance:do": "bun run --cwd packages/conformance-tests test:do",
     "build": "bun run --cwd packages/core build && bun run --cwd packages/storage-memory build && bun run --cwd packages/storage-sqlite build && bun run --cwd packages/storage-durable-object build",
-    "pack:dry-run": "for dir in packages/core packages/storage-memory packages/storage-sqlite packages/storage-durable-object; do (cd \"$dir\" && npm pack --dry-run); done"
+    "pack:dry-run": "for dir in packages/core packages/storage-memory packages/storage-sqlite packages/storage-durable-object; do (cd \"$dir\" && bun pm pack --dry-run); done"
   },
   "devDependencies": {
     "oxfmt": "^0.48.0",
