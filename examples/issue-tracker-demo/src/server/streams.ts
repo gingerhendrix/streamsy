@@ -1,5 +1,5 @@
-import { HttpHandler, StreamProtocol } from "@streamsy/core";
-import { createMemoryStorageFactory } from "@streamsy/storage-memory";
+import { createHttpHandler, createStreamProtocol, type ProtocolStream } from "@streamsy/core";
+import { createMemoryStreamFactory } from "@streamsy/storage-memory";
 import { contentType, streamPath } from "./config.ts";
 
 const encoder = new TextEncoder();
@@ -7,21 +7,34 @@ const streamPrefix = "/streams";
 const streamId = streamPath.replace(/^\/streams\/?/, "");
 
 export class DemoStreams {
-  private readonly protocol = new StreamProtocol(createMemoryStorageFactory());
-  private readonly handler = new HttpHandler({
+  private readonly protocol = createStreamProtocol({
+    storage: { factory: createMemoryStreamFactory() },
+  });
+  private readonly handler = createHttpHandler({
     protocol: this.protocol,
     pathPrefix: streamPrefix,
   });
+  private stream: ProtocolStream | undefined;
 
   async start(): Promise<void> {
     const result = await this.protocol.create(streamId, { contentType });
-    if (result.status === "conflict" || result.status === "not-found" || result.status === "bad-request") {
+    if (result.status !== "created" && result.status !== "exists") {
       throw new Error(`Unable to create Streamsy demo stream: ${result.status}`);
     }
+
+    this.stream = result.stream;
   }
 
   async appendJson(value: unknown): Promise<string> {
-    const result = await this.protocol.append(streamId, {
+    if (!this.stream) {
+      const result = await this.protocol.get(streamId);
+      if (result.status !== "ok") {
+        throw new Error(`Unable to resolve Streamsy demo stream: ${result.status}`);
+      }
+      this.stream = result.stream;
+    }
+
+    const result = await this.stream.append({
       data: encoder.encode(JSON.stringify(value)),
       contentType,
     });
