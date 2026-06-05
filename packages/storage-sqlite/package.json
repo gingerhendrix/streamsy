@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/storage-sqlite",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Bun SQLite Streamsy storage adapter for durable local persistence.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -35,7 +35,7 @@
     "test:unit": "bun test src"
   },
   "dependencies": {
-    "@streamsy/core": "0.0.1"
+    "@streamsy/core": "0.0.2"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

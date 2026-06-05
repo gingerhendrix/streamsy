@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/storage-durable-object",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Cloudflare Durable Object Streamsy storage adapter.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -35,7 +35,7 @@
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "0.0.1"
+    "@streamsy/core": "0.0.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",

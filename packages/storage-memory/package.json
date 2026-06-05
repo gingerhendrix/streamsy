@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/storage-memory",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "In-memory Streamsy storage adapter for development, tests, and ephemeral servers.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -38,7 +38,7 @@
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "0.0.1"
+    "@streamsy/core": "0.0.2"
   },
   "devDependencies": {
     "typescript": "catalog:",
