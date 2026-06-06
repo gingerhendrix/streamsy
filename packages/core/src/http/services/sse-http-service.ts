@@ -57,8 +57,45 @@ export class SseHttpService {
     const connectionStartTime = Date.now();
     const sseEvents = this.deps.sseEvents;
     const clock = this.deps.clock;
+    let cancelActiveRead: (() => void) | undefined;
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
+        const liveReadAbortController = new AbortController();
+        let inactive = false;
+        const shouldStop = () => inactive || liveReadAbortController.signal.aborted;
+        const stop = () => {
+          inactive = true;
+          liveReadAbortController.abort();
+        };
+        cancelActiveRead = stop;
+        const close = () => {
+          if (inactive) return;
+          inactive = true;
+          liveReadAbortController.abort();
+          try {
+            controller.close();
+          } catch {
+            // The client may have already cancelled the response body. Treat this as a
+            // normal disconnect rather than surfacing closed-controller noise.
+          }
+        };
+        const enqueue = (chunk: Uint8Array) => {
+          if (shouldStop()) return false;
+          try {
+            controller.enqueue(chunk);
+            return true;
+          } catch {
+            stop();
+            return false;
+          }
+        };
+        const writeChunks = (chunks: Uint8Array[], enabled: boolean) => {
+          if (!enabled) return true;
+          for (const chunk of chunks) {
+            if (!enqueue(chunk)) return false;
+          }
+          return true;
+        };
         try {
           let initialNextOffset: string;
           let initialUpToDate: boolean;
@@ -71,76 +108,96 @@ export class SseHttpService {
             const initialResult = await stream.read({
               offset: currentOffset === "-1" ? undefined : currentOffset,
             });
+            if (shouldStop()) return;
             if (initialResult.status === "not-found" || initialResult.status === "gone") {
-              controller.close();
+              close();
               return;
             }
-            this.writeChunks(
-              controller,
-              sseEvents.dataEvent(initialResult.messages, encoding),
-              initialResult.messages.length > 0,
-            );
+            if (
+              !writeChunks(
+                sseEvents.dataEvent(initialResult.messages, encoding),
+                initialResult.messages.length > 0,
+              )
+            )
+              return;
             initialNextOffset = initialResult.nextOffset;
             initialUpToDate = initialResult.upToDate;
             initialClosed = initialResult.closed === true;
           }
           currentCursor = generateCursor(clock, currentCursor);
-          controller.enqueue(
-            sseEvents.controlEvent(
-              this.buildControlData(
-                initialNextOffset,
-                currentCursor,
-                initialUpToDate,
-                initialClosed,
+          if (
+            !enqueue(
+              sseEvents.controlEvent(
+                this.buildControlData(
+                  initialNextOffset,
+                  currentCursor,
+                  initialUpToDate,
+                  initialClosed,
+                ),
               ),
-            ),
-          );
+            )
+          )
+            return;
           if (initialClosed) {
-            controller.close();
+            close();
             return;
           }
           currentOffset = initialNextOffset;
-          while (true) {
+          while (!shouldStop()) {
             if (Date.now() - connectionStartTime >= CONNECTION_TIMEOUT_MS) {
-              controller.close();
+              close();
               return;
             }
             const result = await stream.readLive({
               offset: currentOffset,
               mode: "sse",
               cursor: currentCursor,
+              signal: liveReadAbortController.signal,
             });
-            if (result.status === "not-found" || result.status === "not-supported") {
-              controller.close();
+            if (shouldStop()) return;
+            if (
+              result.status === "not-found" ||
+              result.status === "gone" ||
+              result.status === "not-supported"
+            ) {
+              close();
               return;
             }
-            this.writeChunks(
-              controller,
-              sseEvents.dataEvent(result.messages, encoding),
-              result.messages.length > 0,
-            );
-            controller.enqueue(
-              sseEvents.controlEvent(
-                this.buildControlData(
-                  result.nextOffset,
-                  result.cursor,
-                  result.upToDate,
-                  result.closed === true,
+            if (
+              !writeChunks(
+                sseEvents.dataEvent(result.messages, encoding),
+                result.messages.length > 0,
+              )
+            )
+              return;
+            if (
+              !enqueue(
+                sseEvents.controlEvent(
+                  this.buildControlData(
+                    result.nextOffset,
+                    result.cursor,
+                    result.upToDate,
+                    result.closed === true,
+                  ),
                 ),
-              ),
-            );
+              )
+            )
+              return;
             currentOffset = result.nextOffset;
             currentCursor = result.cursor;
             if (result.closed) {
-              controller.close();
+              close();
               return;
             }
             if (result.status === "timeout") continue;
           }
         } catch (error) {
-          console.error("SSE stream error:", error);
-          controller.close();
+          if (!shouldStop()) console.error("SSE stream error:", error);
+          close();
         }
+      },
+      cancel: () => {
+        cancelActiveRead?.();
       },
     });
   }
@@ -157,14 +214,5 @@ export class SseHttpService {
       streamCursor: cursor,
       ...(upToDate ? { upToDate: true } : {}),
     };
-  }
-
-  private writeChunks(
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    chunks: Uint8Array[],
-    enabled: boolean,
-  ): void {
-    if (!enabled) return;
-    for (const chunk of chunks) controller.enqueue(chunk);
   }
 }
