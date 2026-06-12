@@ -38,6 +38,7 @@
     "test:unit": "bun run --cwd packages/core test:unit && bun run --cwd packages/storage-memory test:unit && bun run --cwd packages/storage-sqlite test:unit && bun run --cwd packages/storage-durable-object test:unit",
     "smoke:memory-server:http": "bun run --cwd examples/memory-server smoke:http",
     "smoke:issue-tracker": "bun run --cwd examples/issue-tracker-demo smoke:http",
+    "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
     "test:conformance:do": "bun run --cwd packages/conformance-tests test:do",

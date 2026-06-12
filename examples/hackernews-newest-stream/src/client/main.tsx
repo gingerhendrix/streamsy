@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createStreamDB, type StreamDB } from "@durable-streams/state";
+import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { hackerNewsState, type HnStory } from "../state-schema.ts";
 import "./styles.css";
@@ -82,11 +82,19 @@ function App() {
   }, []);
 
   if (loadError) {
-    return <Shell><div className="panel error">Unable to load stream DB: {loadError}</div></Shell>;
+    return (
+      <Shell>
+        <div className="panel error">Unable to load stream DB: {loadError}</div>
+      </Shell>
+    );
   }
 
   if (!db) {
-    return <Shell><div className="panel loading">Loading durable stream database…</div></Shell>;
+    return (
+      <Shell>
+        <div className="panel loading">Loading durable stream database…</div>
+      </Shell>
+    );
   }
 
   return <HnApp db={db} />;
@@ -95,7 +103,10 @@ function App() {
 function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery(db.collections.stories as any);
   const stories = useMemo(
-    () => ([...((storiesQuery.data ?? []) as unknown as HnStory[])]).sort((a, b) => b.time - a.time || b.id - a.id),
+    () =>
+      ((storiesQuery.data ?? []) as unknown as HnStory[]).toSorted(
+        (a, b) => b.time - a.time || b.id - a.id,
+      ),
     [storiesQuery.data],
   );
   const [status, setStatus] = useState<ApiStatus | null>(null);
@@ -123,8 +134,8 @@ function HnApp({ db }: { db: HnDb }) {
         <h1>Hacker News newest stories</h1>
         <p>
           A Bun server polls HN, writes rows into a server-owned TanStack DB collection, and a
-          <code> createEffect </code> projection emits durable state events. The browser mirrors that
-          stream into its own TanStack DB via <code>createStreamDB</code>.
+          <code> createEffect </code> projection emits durable state events. The browser mirrors
+          that stream into its own TanStack DB via <code>createStreamDB</code>.
         </p>
       </section>
 
@@ -168,7 +179,9 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
     <main className="shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">S</span>
+          <span className="brand-mark" aria-hidden="true">
+            S
+          </span>
           <span className="brand-name">Streamsy</span>
           <span className="brand-divider">/</span>
           <span className="brand-app">HN newest stream</span>
@@ -178,7 +191,11 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
             <span>{status.lastStoryCount} rows</span>
             <span>{status.lastChangedStories} changed</span>
             <span>poll {status.pollIntervalMs / 1000}s</span>
-            {status.lastPollError ? <span className="bad">error</span> : <span className="good">ok</span>}
+            {status.lastPollError ? (
+              <span className="bad">error</span>
+            ) : (
+              <span className="good">ok</span>
+            )}
           </div>
         ) : null}
       </header>

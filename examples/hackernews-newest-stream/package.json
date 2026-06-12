@@ -8,13 +8,14 @@
     "dev:api": "bun run src/server/index.ts",
     "build": "bun run src/server/build-client.ts",
     "start": "bun run build && bun run src/server/index.ts",
+    "smoke:http": "bun run scripts/http-smoke.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@durable-streams/state": "^0.2.5",
+    "@durable-streams/state": "^0.3.1",
     "@streamsy/core": "workspace:*",
     "@streamsy/storage-memory": "workspace:*",
-    "@tanstack/db": "0.6.5",
+    "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
     "react": "latest",
     "react-dom": "latest",
