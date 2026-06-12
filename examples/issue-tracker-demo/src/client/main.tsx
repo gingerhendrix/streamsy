@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createStreamDB, type StreamDB } from "@durable-streams/state";
+import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { issueTrackerState } from "../state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../types.ts";
@@ -10,7 +10,12 @@ type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<u
 type ApiMutationResult = { awaitOffset: string; txid: string };
 type CreateProjectAction = { project: Project; txid: string };
 type CreateIssueAction = { issue: Issue; txid: string };
-type UpdateIssueStatusAction = { issue: Issue; status: IssueStatus; updatedAt: string; txid: string };
+type UpdateIssueStatusAction = {
+  issue: Issue;
+  status: IssueStatus;
+  updatedAt: string;
+  txid: string;
+};
 type CreateCommentAction = { comment: Comment; txid: string };
 type IssueTrackerDb = StreamDB<typeof issueTrackerState> & {
   actions: {
@@ -144,7 +149,9 @@ function IssueRow({
           <span className="issue-meta-divider">·</span>
           <span>updated {formatRelativeTime(issue.updatedAt)}</span>
           <span className="issue-meta-divider">·</span>
-          <span>{comments.length} {comments.length === 1 ? "comment" : "comments"}</span>
+          <span>
+            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+          </span>
         </div>
       </div>
       <div className="issue-actions">
@@ -184,7 +191,9 @@ function IssueRow({
             placeholder="Add a comment"
             aria-label={`Comment on ${issue.title}`}
           />
-          <button type="submit" className="subtle">Comment</button>
+          <button type="submit" className="subtle">
+            Comment
+          </button>
         </form>
       </section>
     </article>
@@ -242,9 +251,13 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
     if (!selectedProjectId && projects[0]) setSelectedProjectId(projects[0].id);
   }, [projects, selectedProjectId]);
 
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? projects[0];
+  const selectedProject =
+    projects.find((project) => project.id === selectedProjectId) ?? projects[0];
   const visibleIssues = useMemo(
-    () => issues.filter((issue) => issue.projectId === selectedProject?.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    () =>
+      issues
+        .filter((issue) => issue.projectId === selectedProject?.id)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [issues, selectedProject?.id],
   );
   const issueCountByProject = useMemo(() => {
@@ -259,7 +272,8 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
       list.push(comment);
       grouped.set(comment.issueId, list);
     }
-    for (const list of grouped.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const list of grouped.values())
+      list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     return grouped;
   }, [comments]);
 
@@ -281,7 +295,11 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
                 <button
                   key={project.id}
                   type="button"
-                  className={project.id === selectedProject?.id ? "project-button selected" : "project-button"}
+                  className={
+                    project.id === selectedProject?.id
+                      ? "project-button selected"
+                      : "project-button"
+                  }
                   onClick={() => setSelectedProjectId(project.id)}
                 >
                   <span>
@@ -377,13 +395,13 @@ function IssueTrackerApp({ db }: { db: IssueTrackerDb }) {
             {visibleIssues.length === 0 && selectedProject ? (
               <div className="empty-state">
                 No issues in this project yet.
-                <span className="hint">Create one above — mutations append events to the durable stream.</span>
+                <span className="hint">
+                  Create one above — mutations append events to the durable stream.
+                </span>
               </div>
             ) : null}
             {!selectedProject ? (
-              <div className="empty-state">
-                Create a project to start tracking issues.
-              </div>
+              <div className="empty-state">Create a project to start tracking issues.</div>
             ) : null}
             {visibleIssues.map((issue) => (
               <IssueRow
@@ -424,7 +442,9 @@ function Topbar() {
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-mark" aria-hidden="true">S</span>
+        <span className="brand-mark" aria-hidden="true">
+          S
+        </span>
         <span className="brand-name">Streamsy</span>
         <span className="brand-divider">/</span>
         <span className="brand-app">Issue Tracker</span>
