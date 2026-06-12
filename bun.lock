@@ -128,6 +128,7 @@
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
+    "@tanstack/db": "0.6.8",
   },
   "catalog": {
     "@cloudflare/workers-types": "^4.20251228.0",
@@ -1158,8 +1159,6 @@
     "@octokit/plugin-rest-endpoint-methods/@octokit/types": ["@octokit/types@13.10.0", "", { "dependencies": { "@octokit/openapi-types": "^24.2.0" } }, "sha512-ifLaO34EbbPj0Xgro4G5lP5asESjwHracYJvVaPIyXMuiuXLlhic3S47cBdTb+jfODkTE5YtGCLt3Ay3+J97sA=="],
 
     "@poppinss/dumper/supports-color": ["supports-color@10.2.2", "", {}, "sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g=="],
-
-    "@tanstack/react-db/@tanstack/db": ["@tanstack/db@0.6.7", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@tanstack/db-ivm": "0.1.18", "@tanstack/pacer-lite": "^0.2.1" }, "peerDependencies": { "typescript": ">=4.7" } }, "sha512-nCwOhNXogu3JHdkNPXX6+B8aL0F4wVe0CwLvNS7ccCQ6m9147L8qJewL4IZVyACQDsLGs5MKg91x+VUiD+MplQ=="],
 
     "@types/bun/bun-types": ["bun-types@1.3.13", "", { "dependencies": { "@types/node": "*" } }, "sha512-QXKeHLlOLqQX9LgYaHJfzdBaV21T63HhFJnvuRCcjZiaUDpbs5ED1MgxbMra71CsryN/1dAoXuJJJwIv/2drVA=="],
 

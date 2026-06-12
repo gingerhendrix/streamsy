@@ -11,19 +11,13 @@ export function IssueTrackerApp({ db }: { db: IssueDb }) {
   // the first project below — no effect needed to "initialize" the selection.
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
-  const projectsQuery = useLiveQuery(db.collections.projects as any);
-  const issuesQuery = useLiveQuery(db.collections.issues as any);
-  const commentsQuery = useLiveQuery(db.collections.comments as any);
+  const projectsQuery = useLiveQuery((q) => q.from({ projects: db.collections.projects }));
+  const issuesQuery = useLiveQuery((q) => q.from({ issues: db.collections.issues }));
+  const commentsQuery = useLiveQuery((q) => q.from({ comments: db.collections.comments }));
 
-  const projects = useMemo(
-    () => (projectsQuery.data ?? []) as unknown as Project[],
-    [projectsQuery.data],
-  );
-  const issues = useMemo(() => (issuesQuery.data ?? []) as unknown as Issue[], [issuesQuery.data]);
-  const comments = useMemo(
-    () => (commentsQuery.data ?? []) as unknown as Comment[],
-    [commentsQuery.data],
-  );
+  const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
+  const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
+  const comments = useMemo(() => commentsQuery.data ?? [], [commentsQuery.data]);
 
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0];

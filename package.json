@@ -51,6 +51,7 @@
     "tsdown": "^0.9.9"
   },
   "overrides": {
-    "@durable-streams/client": "^0.2.6"
+    "@durable-streams/client": "^0.2.6",
+    "@tanstack/db": "0.6.8"
   }
 }

@@ -101,12 +101,9 @@ function App() {
 }
 
 function HnApp({ db }: { db: HnDb }) {
-  const storiesQuery = useLiveQuery(db.collections.stories as any);
+  const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
   const stories = useMemo(
-    () =>
-      ((storiesQuery.data ?? []) as unknown as HnStory[]).toSorted(
-        (a, b) => b.time - a.time || b.id - a.id,
-      ),
+    () => (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || b.id - a.id),
     [storiesQuery.data],
   );
   const [status, setStatus] = useState<ApiStatus | null>(null);
