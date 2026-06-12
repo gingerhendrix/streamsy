@@ -6,7 +6,7 @@ import {
   type JsonReadLiveResult,
   type JsonReadResult,
   type JsonSchema,
-} from "./json.ts";
+} from "@streamsy/json";
 import type {
   AppendResult,
   CreateOptions,
@@ -15,9 +15,9 @@ import type {
   ProtocolStream,
   ReadLiveOptions,
   ReadOptions,
+  StreamId,
   StreamProtocolFactory,
-} from "./types/protocol.ts";
-import type { StreamId } from "./types/storage.ts";
+} from "@streamsy/core";
 
 export type DurableStateControl = "snapshot-start" | "snapshot-end" | "reset";
 export type DurableStateOperation = "insert" | "update" | "delete";

@@ -67,6 +67,8 @@
       "dependencies": {
         "@durable-streams/server-conformance-tests": "^0.3.0",
         "@streamsy/core": "workspace:*",
+        "@streamsy/json": "workspace:*",
+        "@streamsy/state": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
         "vitest": "^4.0.16",
@@ -82,6 +84,29 @@
     "packages/core": {
       "name": "@streamsy/core",
       "version": "0.0.2",
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
+    "packages/json": {
+      "name": "@streamsy/json",
+      "version": "0.0.2",
+      "dependencies": {
+        "@streamsy/core": "0.0.2",
+      },
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
+    "packages/state": {
+      "name": "@streamsy/state",
+      "version": "0.0.2",
+      "dependencies": {
+        "@streamsy/core": "0.0.2",
+        "@streamsy/json": "0.0.2",
+      },
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -660,6 +685,10 @@
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
+
+    "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
+
+    "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
 
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
 

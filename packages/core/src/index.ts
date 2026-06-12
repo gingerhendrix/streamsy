@@ -4,18 +4,6 @@ export { createMemoryStreamFactory } from "./storage/memory/factory.ts";
 export type { MemoryStreamFactoryOptions } from "./storage/memory/factory.ts";
 export { createHttpHandler, HttpHandler } from "./http.ts";
 export { createReadOnlyHttpHandler, ReadOnlyHttpHandler } from "./read-only-http.ts";
-export {
-  createJsonProtocol,
-  JsonProtocol,
-  JsonStream,
-  JSON_CONTENT_TYPE,
-  JsonValidationError,
-} from "./json.ts";
-export {
-  createDurableStateProtocol,
-  DurableStateProtocol,
-  DurableStateStream,
-} from "./durable-state.ts";
 
 export {
   isNotSupported,
@@ -33,41 +21,6 @@ export type {
   HttpHandlerOptions,
   ReadOnlyHttpHandlerOptions,
 } from "./http/types.ts";
-
-export type {
-  JsonAppendOptions,
-  JsonCodec,
-  JsonCreateOptions,
-  JsonCreateResult,
-  JsonGetResult,
-  JsonReadLiveResult,
-  JsonReadResult,
-  JsonSchema,
-  JsonStoredMessage,
-} from "./json.ts";
-
-export type {
-  ChangeMessage,
-  CollectionValue,
-  ControlMessage,
-  DeleteMessage,
-  DurableState,
-  DurableStateChangeHeaders,
-  DurableStateCollectionDef,
-  DurableStateControl,
-  DurableStateControlHeaders,
-  DurableStateCreateOptions,
-  DurableStateCreateResult,
-  DurableStateGetResult,
-  DurableStateMessage,
-  DurableStateOperation,
-  DurableStateOperationWithExtensions,
-  DurableStateSchemaMap,
-  DurableStateUserHeaders,
-  InsertMessage,
-  UpdateMessage,
-  ValuesByWireType,
-} from "./durable-state.ts";
 
 export type {
   StreamProtocolFactory,

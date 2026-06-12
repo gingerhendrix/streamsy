@@ -47,6 +47,8 @@ jobs:
         run: |
           PACKAGES=(
             packages/core
+            packages/json
+            packages/state
             packages/storage-sqlite
             packages/storage-durable-object
           )
@@ -64,6 +66,8 @@ jobs:
         run: |
           PACKAGES=(
             packages/core
+            packages/json
+            packages/state
             packages/storage-sqlite
             packages/storage-durable-object
           )

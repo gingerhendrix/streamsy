@@ -1,0 +1,45 @@
+{
+  "name": "@streamsy/state",
+  "version": "0.0.2",
+  "description": "Durable State protocol and stream wrappers for Streamsy durable streams.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/state"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external @streamsy/json",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src"
+  },
+  "dependencies": {
+    "@streamsy/core": "0.0.2",
+    "@streamsy/json": "0.0.2"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

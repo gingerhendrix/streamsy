@@ -5,16 +5,17 @@ import type {
   CreateResult,
   DeleteResult,
   MetadataResult,
+  NotSupportedResult,
   ProtocolGetResult,
   ProtocolStream,
   ReadLiveOptions,
   ReadLiveResult,
   ReadOptions,
   ReadResult,
+  StoredMessage,
+  StreamId,
   StreamProtocolFactory,
-} from "./types/protocol.ts";
-import type { NotSupportedResult } from "./types/factory.ts";
-import type { StoredMessage, StreamId } from "./types/storage.ts";
+} from "@streamsy/core";
 
 export const JSON_CONTENT_TYPE = "application/json";
 
@@ -69,11 +70,14 @@ export type JsonReadResult<T> =
   | Exclude<ReadResult, { status: "ok" }>
   | { status: "invalid-json"; error: unknown; offset?: string };
 
+// ReadLiveResult models all data-carrying statuses ("ok" | "timeout" |
+// "not-found" | "gone") as one member, so the typed variant swaps its
+// messages wholesale rather than extracting by status.
 export type JsonReadLiveResult<T> =
-  | (Omit<Extract<ReadLiveResult, { status: "ok" | "timeout" }>, "messages"> & {
+  | (Omit<Extract<ReadLiveResult, { messages: StoredMessage[] }>, "messages"> & {
       messages: JsonStoredMessage<T>[];
     })
-  | Exclude<ReadLiveResult, { status: "ok" | "timeout" }>
+  | Exclude<ReadLiveResult, { messages: StoredMessage[] }>
   | { status: "invalid-json"; error: unknown; offset?: string };
 
 const encoder = new TextEncoder();
@@ -250,7 +254,7 @@ export class JsonStream<T> {
 
   async readLive(options: ReadLiveOptions): Promise<JsonReadLiveResult<T>> {
     const result = await this.stream.readLive(options);
-    if (result.status !== "ok" && result.status !== "timeout") return result;
+    if (result.status === "not-supported") return result;
     const decoded = decodeMessages(this.codec, result.messages);
     if (!decoded.ok)
       return { status: "invalid-json", error: decoded.error, offset: decoded.offset };

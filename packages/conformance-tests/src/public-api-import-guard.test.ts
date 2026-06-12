@@ -9,6 +9,8 @@ import {
   type StreamProtocolFactory,
   createMemoryStreamFactory,
 } from "@streamsy/core";
+import { createJsonProtocol, JsonProtocol } from "@streamsy/json";
+import { createDurableStateProtocol, DurableStateProtocol } from "@streamsy/state";
 import {
   createDurableObjectStreamFactory,
   DurableObjectStreamStorage,
@@ -31,5 +33,12 @@ describe("public API import guard", () => {
     }
     expect(createDurableObjectStreamFactory).toBeTypeOf("function");
     expect(DurableObjectStreamStorage).toBeTypeOf("function");
+    const json = createJsonProtocol(protocol, {
+      encode: (value: unknown) => value,
+      decode: (value: unknown) => value,
+    });
+    expect(json).toBeInstanceOf(JsonProtocol);
+    const durable = createDurableStateProtocol(protocol, {});
+    expect(durable).toBeInstanceOf(DurableStateProtocol);
   });
 });

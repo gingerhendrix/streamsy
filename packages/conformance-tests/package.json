@@ -16,6 +16,8 @@
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.0",
     "@streamsy/core": "workspace:*",
+    "@streamsy/json": "workspace:*",
+    "@streamsy/state": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
     "vitest": "^4.0.16"
