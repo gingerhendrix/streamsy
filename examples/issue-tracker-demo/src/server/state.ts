@@ -134,9 +134,6 @@ export async function seed(streams: DemoStreams): Promise<void> {
     },
   ];
 
-  // All seed events are Durable State upserts of distinct keys, so they commute:
-  // consumers materialize by (type, key) and never depend on stream order between
-  // different entities. Append them all concurrently.
   await Promise.all([
     ...initialProjects.map((project) => insertProject(streams, project)),
     ...initialIssues.map((issue) => insertIssue(streams, issue)),
