@@ -1,14 +1,14 @@
 import { createStateSchema, type ChangeEvent } from "@durable-streams/state";
 import { z } from "zod";
 
-export const projectSchema = z.object({
+const projectSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
   createdAt: z.string(),
 });
 
-export const issueSchema = z.object({
+const issueSchema = z.object({
   id: z.string(),
   projectId: z.string(),
   title: z.string(),
@@ -17,7 +17,7 @@ export const issueSchema = z.object({
   updatedAt: z.string(),
 });
 
-export const commentSchema = z.object({
+const commentSchema = z.object({
   id: z.string(),
   issueId: z.string(),
   author: z.string(),

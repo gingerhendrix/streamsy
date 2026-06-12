@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import type { Comment, Issue, IssueStatus, Project } from "../../types.ts";
 import { shortId } from "../format.ts";
 import { IssueRow } from "./IssueRow.tsx";
@@ -20,6 +20,22 @@ export function IssuesPanel({
 }) {
   const [issueTitle, setIssueTitle] = useState("");
 
+  const submitNewIssue = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedProject || !issueTitle.trim()) return;
+    const timestamp = new Date().toISOString();
+    const issue: Issue = {
+      id: `issue_${crypto.randomUUID().slice(0, 8)}`,
+      projectId: selectedProject.id,
+      title: issueTitle.trim(),
+      status: "open",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await onCreateIssue(issue);
+    setIssueTitle("");
+  };
+
   return (
     <section className="panel issues">
       <div className="issues-toolbar">
@@ -33,28 +49,12 @@ export function IssuesPanel({
       </div>
 
       {selectedProject ? (
-        <form
-          className="new-issue-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            if (!issueTitle.trim()) return;
-            const timestamp = new Date().toISOString();
-            const issue: Issue = {
-              id: `issue_${crypto.randomUUID().slice(0, 8)}`,
-              projectId: selectedProject.id,
-              title: issueTitle.trim(),
-              status: "open",
-              createdAt: timestamp,
-              updatedAt: timestamp,
-            };
-            await onCreateIssue(issue);
-            setIssueTitle("");
-          }}
-        >
+        <form className="new-issue-form" onSubmit={submitNewIssue}>
           <input
             value={issueTitle}
             onChange={(event) => setIssueTitle(event.target.value)}
             placeholder="Describe a new issue…"
+            aria-label="New issue title"
           />
           <button type="submit">Add issue</button>
         </form>

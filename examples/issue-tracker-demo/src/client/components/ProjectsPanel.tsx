@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import type { Project } from "../../types.ts";
 
 export function ProjectsPanel({
@@ -16,6 +16,20 @@ export function ProjectsPanel({
 }) {
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+
+  const submitNewProject = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!projectName.trim()) return;
+    const project: Project = {
+      id: `proj_${crypto.randomUUID().slice(0, 8)}`,
+      name: projectName.trim(),
+      description: projectDescription.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    await onCreate(project);
+    setProjectName("");
+    setProjectDescription("");
+  };
 
   return (
     <aside className="panel projects">
@@ -48,32 +62,19 @@ export function ProjectsPanel({
         )}
       </div>
 
-      <form
-        className="stack-form"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (!projectName.trim()) return;
-          const project: Project = {
-            id: `proj_${crypto.randomUUID().slice(0, 8)}`,
-            name: projectName.trim(),
-            description: projectDescription.trim(),
-            createdAt: new Date().toISOString(),
-          };
-          await onCreate(project);
-          setProjectName("");
-          setProjectDescription("");
-        }}
-      >
+      <form className="stack-form" onSubmit={submitNewProject}>
         <h3>New project</h3>
         <input
           value={projectName}
           onChange={(event) => setProjectName(event.target.value)}
           placeholder="Project name"
+          aria-label="Project name"
         />
         <textarea
           value={projectDescription}
           onChange={(event) => setProjectDescription(event.target.value)}
           placeholder="Description (optional)"
+          aria-label="Project description"
         />
         <button type="submit">Create project</button>
       </form>

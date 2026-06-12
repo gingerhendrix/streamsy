@@ -25,16 +25,8 @@ function eventHeaders(txid: TxId = crypto.randomUUID()) {
   };
 }
 
-export function projects(): Project[] {
+function projects(): Project[] {
   return values<Project>("project");
-}
-
-export function issues(): Issue[] {
-  return values<Issue>("issue");
-}
-
-export function comments(): Comment[] {
-  return values<Comment>("comment");
 }
 
 export function getProject(projectId: string): Project | undefined {
@@ -142,9 +134,14 @@ export async function seed(streams: DemoStreams): Promise<void> {
     },
   ];
 
-  for (const project of initialProjects) await insertProject(streams, project);
-  for (const issue of initialIssues) await insertIssue(streams, issue);
-  for (const comment of initialComments) await insertComment(streams, comment);
+  // All seed events are Durable State upserts of distinct keys, so they commute:
+  // consumers materialize by (type, key) and never depend on stream order between
+  // different entities. Append them all concurrently.
+  await Promise.all([
+    ...initialProjects.map((project) => insertProject(streams, project)),
+    ...initialIssues.map((issue) => insertIssue(streams, issue)),
+    ...initialComments.map((comment) => insertComment(streams, comment)),
+  ]);
 }
 
 export function newProject(input: Partial<Project>): Project {

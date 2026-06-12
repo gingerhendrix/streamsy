@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
 import type { Comment, Issue, IssueStatus, Project } from "../../types.ts";
 import { awaitOptimisticAction, type IssueDb } from "../db.ts";
@@ -7,19 +7,23 @@ import { ProjectsPanel } from "./ProjectsPanel.tsx";
 import { IssuesPanel } from "./IssuesPanel.tsx";
 
 export function IssueTrackerApp({ db }: { db: IssueDb }) {
+  // Holds an explicit user selection only; while empty, rendering falls back to
+  // the first project below — no effect needed to "initialize" the selection.
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
   const projectsQuery = useLiveQuery(db.collections.projects as any);
   const issuesQuery = useLiveQuery(db.collections.issues as any);
   const commentsQuery = useLiveQuery(db.collections.comments as any);
 
-  const projects = (projectsQuery.data ?? []) as unknown as Project[];
-  const issues = (issuesQuery.data ?? []) as unknown as Issue[];
-  const comments = (commentsQuery.data ?? []) as unknown as Comment[];
-
-  useEffect(() => {
-    if (!selectedProjectId && projects[0]) setSelectedProjectId(projects[0].id);
-  }, [projects, selectedProjectId]);
+  const projects = useMemo(
+    () => (projectsQuery.data ?? []) as unknown as Project[],
+    [projectsQuery.data],
+  );
+  const issues = useMemo(() => (issuesQuery.data ?? []) as unknown as Issue[], [issuesQuery.data]);
+  const comments = useMemo(
+    () => (commentsQuery.data ?? []) as unknown as Comment[],
+    [commentsQuery.data],
+  );
 
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0];
