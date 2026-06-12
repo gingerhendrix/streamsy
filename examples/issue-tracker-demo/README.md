@@ -1,30 +1,78 @@
 # Streamsy Issue Tracker Demo
 
-A small sync-engine demo for the Part 2 article idea: use Streamsy as the append-only transport while sharing the official Durable State schema, materialization helpers, and StreamDB/TanStack DB client path.
+A small application-level demo: use **Streamsy** as the append-only durable transport for an
+issue tracker, while sharing the official **Durable State** schema, materialization helpers, and
+the **StreamDB / TanStack DB** client path. The app shows project/issue/comment state, with
+optimistic local writes, without writing a bespoke sync engine.
+
+## The Durable State + StreamDB story
+
+```text
+   browser form            Bun API server                 Streamsy stream            browser StreamDB
+  (optimistic write)   (owns mutations + state)         (durable transport)         (TanStack DB view)
+        │                       │                              │                            │
+        │  POST /api/issues     │                              │                            │
+        ├──────────────────────▶│                              │                            │
+        │                       │  1. build Durable State      │                            │
+        │                       │     ChangeEvent (upsert)     │                            │
+        │                       │  2. append event ───────────▶│  /streams/session/main     │
+        │                       │  3. apply event to           │                            │
+        │                       │     MaterializedState        │                            │
+        │  201 { txid, offset } │                              │   live read (long-poll) ──▶│ createStreamDB
+        │◀──────────────────────┤                              │                            │ replays events
+        │                       │                              │                            │ into collections
+        │   awaitTxId(txid) reconciles the optimistic write once the event round-trips ─────▶│
+```
+
+The **same Durable State `ChangeEvent`** is the unit of truth on both sides:
+
+- the server appends it to Streamsy and applies it to `MaterializedState`;
+- the browser replays it from the stream into StreamDB / TanStack DB collections.
+
+There is no snapshot endpoint and no custom stream-materialization adapter — the durable stream
+_is_ the database log.
 
 ## What it demonstrates
 
-- **Backend**: one Bun server with separated `src/server/` concerns for API routing, Streamsy stream serving, static serving, and materialized state.
-- **Transport**: Streamsy (`@streamsy/core` + `@streamsy/storage-memory`) serves `/streams/session/main` from the Bun server.
-- **Server state**: `MaterializedState` from `@durable-streams/state` is the canonical in-memory database; mutation handlers append an event to Streamsy and then apply that same event to the materialized state.
+- **Backend**: one Bun server with separated `src/server/` concerns — API routing (`api.ts`),
+  Streamsy stream serving (`streams.ts`), static serving (`static.ts`), and materialized state
+  (`state.ts`).
+- **Transport**: Streamsy (`@streamsy/core` + `@streamsy/storage-memory`) serves
+  `/streams/session/main` from the same Bun process via `createHttpHandler`.
+- **Server state**: `MaterializedState` from `@durable-streams/state` is the canonical in-memory
+  database. Each mutation handler appends an event to Streamsy and then applies that same event to
+  the materialized state, so reads and validation always reflect the durable log.
 - **State events**: each project, issue, or comment mutation appends a Durable State JSON event:
 
   ```json
   {
     "type": "issue",
     "key": "issue_123",
-    "value": { "id": "issue_123", "title": "..." },
-    "headers": {
-      "operation": "upsert",
-      "txid": "...",
-      "timestamp": "..."
-    }
+    "value": { "id": "issue_123", "status": "done", "title": "..." },
+    "old_value": { "id": "issue_123", "status": "open", "title": "..." },
+    "headers": { "operation": "update", "txid": "...", "timestamp": "..." }
   }
   ```
 
+  `upsert` events carry only `value`; `update` events also carry `old_value` for replication.
+
 - **Frontend**: React + Vite.
-- **Client DB**: `createStreamDB` from `@durable-streams/state` builds StreamDB collections (`projects`, `issues`, `comments`) directly from the Streamsy durable stream. There is no bootstrap snapshot endpoint or custom stream-materialization adapter.
-- **Mutations through API**: UI posts mutations to the Bun API; appended stream events then flow back into StreamDB/TanStack DB collections through the durable stream.
+- **Client DB**: `createStreamDB` from `@durable-streams/state/db` builds StreamDB collections
+  (`projects`, `issues`, `comments`) directly from the Streamsy durable stream, with optimistic
+  `onMutate` actions reconciled by `awaitTxId`.
+
+### Package layout note (`@durable-streams/state` 0.3.x)
+
+`@durable-streams/state` 0.3 split its entry points so framework-agnostic state code does not pull
+in TanStack DB:
+
+| Import                      | Used by                                | Provides                                                |
+| --------------------------- | -------------------------------------- | ------------------------------------------------------- |
+| `@durable-streams/state`    | server (`state.ts`, `state-schema.ts`) | `createStateSchema`, `MaterializedState`, `ChangeEvent` |
+| `@durable-streams/state/db` | browser client (`client/main.tsx`)     | `createStreamDB`, `StreamDB`, TanStack DB bindings      |
+
+`@tanstack/db` is now a peer dependency of `@durable-streams/state`, so this demo declares it
+directly.
 
 ## Run it
 
@@ -41,7 +89,8 @@ In another terminal:
 bun --cwd examples/issue-tracker-demo run dev:web
 ```
 
-Open the Vite URL (default `http://localhost:5174`). Vite proxies `/api` and `/streams` to the Bun server on port `1338`.
+Open the Vite URL (default `http://localhost:5174`). Vite proxies `/api` and `/streams` to the Bun
+server on port `1338`.
 
 To serve the built React app from the Bun server instead:
 
@@ -52,16 +101,37 @@ bun --cwd examples/issue-tracker-demo run start
 
 Then open `http://localhost:1338`.
 
+## Smoke test
+
+A headless smoke test exercises the full mutation + durable-read contract — create project, reject
+an issue with an unknown project, create issue, update issue status, comment — and then reads the
+Streamsy stream to assert each mutation emitted a client-readable Durable State change event.
+
+From the repository root:
+
+```bash
+bun run smoke:issue-tracker
+```
+
+or from this package:
+
+```bash
+bun run --cwd examples/issue-tracker-demo smoke:http
+```
+
 ## Endpoints
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/projects` | Create a project and append a `project` state event. |
-| `POST /api/issues` | Create an issue and append an `issue` state event. |
-| `PATCH /api/issues/:id` | Update issue title/status and append an `issue` update event. |
-| `POST /api/comments` | Create a comment and append a `comment` state event. |
-| `/streams/session/main` | Streamsy durable stream endpoint. |
+| Endpoint                | Purpose                                                              |
+| ----------------------- | -------------------------------------------------------------------- |
+| `POST /api/projects`    | Create a project and append a `project` upsert event.                |
+| `POST /api/issues`      | Create an issue and append an `issue` upsert event.                  |
+| `PATCH /api/issues/:id` | Update issue title/status and append an `issue` update event.        |
+| `POST /api/comments`    | Create a comment and append a `comment` upsert event.                |
+| `/streams/session/main` | Streamsy durable stream endpoint (read/live-read with `?offset=-1`). |
 
 ## Why this shape
 
-This version intentionally avoids snapshots and prehydration. The demo keeps Streamsy as the server-side durable stream implementation while using the official Durable State tools where they are useful: shared `src/state-schema.ts` types, `MaterializedState` on the server, and StreamDB on the browser client.
+This version intentionally avoids snapshots and prehydration. The demo keeps Streamsy as the
+server-side durable stream implementation while using the official Durable State tools where they
+are useful: shared `src/state-schema.ts` types, `MaterializedState` on the server, and StreamDB on
+the browser client.
