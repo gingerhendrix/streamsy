@@ -5,8 +5,7 @@ Streamsy exposes a protocol factory over storage factories.
 ## Core
 
 ```ts
-import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createMemoryStreamFactory } from "@streamsy/storage-memory";
+import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
 
 const factory = createMemoryStreamFactory();
 const protocol = createStreamProtocol({ storage: { factory } });
@@ -45,12 +44,13 @@ Protocol-bound streams are distinct from storage-bound streams:
 
 ## Packages
 
-| Package                            | Purpose                                                           |
-| ---------------------------------- | ----------------------------------------------------------------- |
-| `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types.              |
-| `@streamsy/storage-memory`         | In-memory `StreamFactory` for tests, examples, and local servers. |
-| `@streamsy/storage-sqlite`         | Bun `bun:sqlite` `StreamFactory` for durable local persistence.   |
-| `@streamsy/storage-durable-object` | Cloudflare Durable Object `StreamFactory` and storage class.      |
+| Package                            | Purpose                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types, and the in-memory `StreamFactory` for tests, examples, and local servers. |
+| `@streamsy/json`                   | Typed JSON protocol/stream wrappers over a `StreamProtocolFactory`.                                                            |
+| `@streamsy/state`                  | Durable State protocol/stream wrappers: typed change/control messages over collections.                                        |
+| `@streamsy/storage-sqlite`         | Bun `bun:sqlite` `StreamFactory` for durable local persistence.                                                                |
+| `@streamsy/storage-durable-object` | Cloudflare Durable Object `StreamFactory` and storage class.                                                                   |
 
 ## Public exports
 
@@ -60,10 +60,18 @@ Core exports include:
 - protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadLiveResult`, `MetadataResult`, and `DeleteResult`
 - storage-factory types including `StreamFactory`, storage-bound `Stream`, and facet interfaces such as `StreamRecordStore`, `StreamMessageStore`, `StreamProducerStore`, `StreamReferenceTracker`, `StreamMutationCoordinator`, `StreamEventHub`, and `StreamExpiryScheduler`
 - structured unsupported-feature helpers including `notSupported`, `isNotSupported`, `NotSupportedError`, and `unsupported`
+- the in-memory storage adapter: `createMemoryStreamFactory` and `MemoryStreamFactoryOptions`
 
-Memory exports:
+JSON exports (`@streamsy/json`):
 
-- `createMemoryStreamFactory`
+- `createJsonProtocol`, `JsonProtocol`, `JsonStream`, `JsonValidationError`, `normalizeJsonCodec`, `JSON_CONTENT_TYPE`
+- types including `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readLive result and option types
+
+State exports (`@streamsy/state`):
+
+- `createDurableStateProtocol`, `DurableStateProtocol`, `DurableStateStream`
+- types including `DurableStateCollectionDef`, `DurableStateMessage`, `ChangeMessage`, `ControlMessage`, and the typed create/get/read result and option types
+- re-exports `JsonCodec` and `JsonSchema` from `@streamsy/json` for schema authoring
 
 Durable Object exports:
 
