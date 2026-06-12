@@ -16,7 +16,6 @@
       "dependencies": {
         "@durable-streams/state": "^0.3.1",
         "@streamsy/core": "workspace:*",
-        "@streamsy/storage-memory": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",
         "react": "latest",
@@ -36,7 +35,6 @@
       "dependencies": {
         "@durable-streams/state": "^0.3.1",
         "@streamsy/core": "workspace:*",
-        "@streamsy/storage-memory": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",
         "@vitejs/plugin-react": "latest",
@@ -57,7 +55,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@streamsy/core": "workspace:*",
-        "@streamsy/storage-memory": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -71,7 +68,6 @@
         "@durable-streams/server-conformance-tests": "^0.3.0",
         "@streamsy/core": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
-        "@streamsy/storage-memory": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
         "vitest": "^4.0.16",
       },
@@ -99,17 +95,6 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
-        "typescript": "catalog:",
-        "vitest": "^4.0.16",
-      },
-    },
-    "packages/storage-memory": {
-      "name": "@streamsy/storage-memory",
-      "version": "0.0.2",
-      "dependencies": {
-        "@streamsy/core": "0.0.2",
-      },
-      "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
       },
@@ -677,8 +662,6 @@
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
-
-    "@streamsy/storage-memory": ["@streamsy/storage-memory@workspace:packages/storage-memory"],
 
     "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
 

@@ -5,8 +5,7 @@
  * on a Bun runtime. Used for running conformance tests.
  */
 
-import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createMemoryStreamFactory } from "@streamsy/storage-memory";
+import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
 
 const factory = createMemoryStreamFactory();
 const protocol = createStreamProtocol({ storage: { factory } });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryStreamFactory } from "./index.ts";
+import { createMemoryStreamFactory } from "./factory.ts";
 
 describe("createMemoryStreamFactory", () => {
   it("returns storage streams bound to ids", async () => {

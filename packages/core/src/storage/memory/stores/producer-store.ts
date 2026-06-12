@@ -1,5 +1,5 @@
-import type { ProducerState } from "@streamsy/core";
-import { clone } from "#lib/clone";
+import type { ProducerState } from "../../../types/storage.ts";
+import { clone } from "../lib/clone.ts";
 import type { RecordStore } from "./record-store.ts";
 
 export class ProducerStore {

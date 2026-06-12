@@ -6,12 +6,12 @@ import {
   type ProtocolStream,
   type StreamProtocolFactory,
 } from "../index.ts";
-import { createInMemoryFactory } from "../protocol/test-memory-factory.ts";
+import { createMemoryStreamFactory } from "../storage/memory/factory.ts";
 
 const enc = new TextEncoder();
 
 async function createProtocolWithStream() {
-  const protocol = new StreamProtocol({ storage: { factory: createInMemoryFactory() } });
+  const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
   const created = await protocol.create("example", { contentType: "text/plain" });
   expect(created.status).toBe("created");
   if (created.status !== "created") throw new Error("expected created stream");

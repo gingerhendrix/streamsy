@@ -1,5 +1,5 @@
-import type { ListMessagesOptions, StoredMessage } from "@streamsy/core";
-import { clone } from "#lib/clone";
+import type { ListMessagesOptions, StoredMessage } from "../../../types/storage.ts";
+import { clone } from "../lib/clone.ts";
 import type { RecordStore } from "./record-store.ts";
 
 export class MessageStore {

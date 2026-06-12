@@ -3,8 +3,8 @@ import type {
   StreamId,
   StreamRecord,
   StreamRecordPatch,
-} from "@streamsy/core";
-import { clone } from "#lib/clone";
+} from "../../../types/storage.ts";
+import { clone } from "../lib/clone.ts";
 
 export class RecordStore {
   private record?: StreamRecord;

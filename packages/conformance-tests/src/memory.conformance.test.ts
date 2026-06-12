@@ -7,8 +7,7 @@
 
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { describe, beforeAll, afterAll } from "vitest";
-import { StreamProtocol, HttpHandler } from "@streamsy/core";
-import { createMemoryStreamFactory } from "@streamsy/storage-memory";
+import { StreamProtocol, HttpHandler, createMemoryStreamFactory } from "@streamsy/core";
 
 let server: { stop: () => void; port: number | undefined } | null = null;
 

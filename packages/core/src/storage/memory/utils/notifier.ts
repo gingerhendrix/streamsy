@@ -1,4 +1,8 @@
-import type { StreamEventType, WaitForEventOptions, WaitForEventResult } from "@streamsy/core";
+import type {
+  StreamEventType,
+  WaitForEventOptions,
+  WaitForEventResult,
+} from "../../../types/storage.ts";
 
 export class MemoryNotifier {
   private readonly waiters = new Set<(result: WaitForEventResult) => void>();

@@ -1,5 +1,7 @@
 /** @streamsy/core */
 export { createStreamProtocol, StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
+export { createMemoryStreamFactory } from "./storage/memory/factory.ts";
+export type { MemoryStreamFactoryOptions } from "./storage/memory/factory.ts";
 export { createHttpHandler, HttpHandler } from "./http.ts";
 export { createReadOnlyHttpHandler, ReadOnlyHttpHandler } from "./read-only-http.ts";
 export {

@@ -1,5 +1,9 @@
-import { createHttpHandler, createStreamProtocol, type ProtocolStream } from "@streamsy/core";
-import { createMemoryStreamFactory } from "@streamsy/storage-memory";
+import {
+  createHttpHandler,
+  createMemoryStreamFactory,
+  createStreamProtocol,
+  type ProtocolStream,
+} from "@streamsy/core";
 import { contentType, streamPath } from "./config.ts";
 
 const encoder = new TextEncoder();

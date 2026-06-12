@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { StreamProtocol } from "@streamsy/core";
-import { createMemoryStreamFactory } from "./index.ts";
+import { StreamProtocol } from "../../protocol.ts";
+import { createMemoryStreamFactory } from "./factory.ts";
 
 describe("memory protocol concurrency", () => {
   it("appends through a bound protocol stream", async () => {

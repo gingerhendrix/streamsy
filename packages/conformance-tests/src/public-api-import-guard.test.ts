@@ -7,8 +7,8 @@ import {
   type ProtocolStream,
   type StreamFactory,
   type StreamProtocolFactory,
+  createMemoryStreamFactory,
 } from "@streamsy/core";
-import { createMemoryStreamFactory } from "@streamsy/storage-memory";
 import {
   createDurableObjectStreamFactory,
   DurableObjectStreamStorage,

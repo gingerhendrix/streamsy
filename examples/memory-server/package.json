@@ -9,8 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@streamsy/core": "workspace:*",
-    "@streamsy/storage-memory": "workspace:*"
+    "@streamsy/core": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

@@ -1,16 +1,16 @@
+import type { Stream } from "../../types/factory.ts";
 import type {
   CreateStreamRecordResult,
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
-  Stream,
   StreamEventType,
   StreamId,
   StreamRecord,
   StreamRecordPatch,
   WaitForEventOptions,
   WaitForEventResult,
-} from "@streamsy/core";
+} from "../../types/storage.ts";
 import { MessageStore } from "./stores/message-store.ts";
 import { ProducerStore } from "./stores/producer-store.ts";
 import { RecordStore } from "./stores/record-store.ts";
