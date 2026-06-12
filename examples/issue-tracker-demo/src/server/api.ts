@@ -22,7 +22,10 @@ export function createApiRouter(streams: DemoStreams) {
     const body = (await request.json()) as MutationBody<Project>;
     const project = newProject(body);
     const result = await insertProject(streams, project, body.txid);
-    return json({ project, awaitOffset: result.offset, txid: result.event.headers.txid }, { status: 201 });
+    return json(
+      { project, awaitOffset: result.offset, txid: result.event.headers.txid },
+      { status: 201 },
+    );
   }
 
   async function createIssue(request: Request): Promise<Response> {
@@ -32,7 +35,10 @@ export function createApiRouter(streams: DemoStreams) {
       return json({ error: "Unknown projectId" }, { status: 400 });
     }
     const result = await insertIssue(streams, issue, body.txid);
-    return json({ issue, awaitOffset: result.offset, txid: result.event.headers.txid }, { status: 201 });
+    return json(
+      { issue, awaitOffset: result.offset, txid: result.event.headers.txid },
+      { status: 201 },
+    );
   }
 
   async function updateIssue(request: Request, issueId: string): Promise<Response> {
@@ -52,7 +58,10 @@ export function createApiRouter(streams: DemoStreams) {
       return json({ error: "Unknown issueId" }, { status: 400 });
     }
     const result = await insertComment(streams, comment, body.txid);
-    return json({ comment, awaitOffset: result.offset, txid: result.event.headers.txid }, { status: 201 });
+    return json(
+      { comment, awaitOffset: result.offset, txid: result.event.headers.txid },
+      { status: 201 },
+    );
   }
 
   return async function routeApi(request: Request, url: URL): Promise<Response> {

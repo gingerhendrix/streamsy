@@ -1,5 +1,12 @@
 import { MaterializedState, type ChangeEvent } from "@durable-streams/state";
-import { issueTrackerState, type Comment, type EntityByType, type EntityType, type Issue, type Project } from "../state-schema.ts";
+import {
+  issueTrackerState,
+  type Comment,
+  type EntityByType,
+  type EntityType,
+  type Issue,
+  type Project,
+} from "../state-schema.ts";
 import { id, now } from "./http.ts";
 import type { DemoStreams } from "./streams.ts";
 
@@ -48,19 +55,36 @@ async function emit<T extends EntityType>(
 }
 
 export async function insertProject(streams: DemoStreams, project: Project, txid?: TxId) {
-  return emit(streams, issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) }));
+  return emit(
+    streams,
+    issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) }),
+  );
 }
 
 export async function insertIssue(streams: DemoStreams, issue: Issue, txid?: TxId) {
-  return emit(streams, issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) }));
+  return emit(
+    streams,
+    issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) }),
+  );
 }
 
-export async function updateIssueState(streams: DemoStreams, issue: Issue, oldValue: Issue, txid?: TxId) {
-  return emit(streams, issueTrackerState.issues.update({ value: issue, oldValue, headers: eventHeaders(txid) }));
+export async function updateIssueState(
+  streams: DemoStreams,
+  issue: Issue,
+  oldValue: Issue,
+  txid?: TxId,
+) {
+  return emit(
+    streams,
+    issueTrackerState.issues.update({ value: issue, oldValue, headers: eventHeaders(txid) }),
+  );
 }
 
 export async function insertComment(streams: DemoStreams, comment: Comment, txid?: TxId) {
-  return emit(streams, issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) }));
+  return emit(
+    streams,
+    issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) }),
+  );
 }
 
 export async function seed(streams: DemoStreams): Promise<void> {
