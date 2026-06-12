@@ -39,7 +39,10 @@ export function startNewestProjection(config: {
   });
 }
 
-async function appendHnDelta(streams: StreamWriter, event: DeltaEvent<HnStory, number>): Promise<void> {
+async function appendHnDelta(
+  streams: StreamWriter,
+  event: DeltaEvent<HnStory, number>,
+): Promise<void> {
   const headers = {
     timestamp: new Date().toISOString(),
     txid: crypto.randomUUID(),

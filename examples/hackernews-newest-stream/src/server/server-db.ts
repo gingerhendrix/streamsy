@@ -8,7 +8,10 @@ export type HnServerDb = {
 };
 
 export function createHnServerDb(): HnServerDb {
-  const { collection: storiesCollection, writer: storiesWriter } = createServerCollection<HnStory, number>({
+  const { collection: storiesCollection, writer: storiesWriter } = createServerCollection<
+    HnStory,
+    number
+  >({
     id: "hn-stories",
     getKey: (story) => story.id,
   });
