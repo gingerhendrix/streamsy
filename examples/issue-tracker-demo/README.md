@@ -35,7 +35,8 @@ _is_ the database log.
 ## What it demonstrates
 
 - **Backend**: one Bun server with separated `src/server/` concerns — API routing (`api.ts`),
-  Streamsy stream serving (`streams.ts`), static serving (`static.ts`), and materialized state
+  Streamsy stream serving (`streams.ts`), Bun fullstack SPA serving (`index.html` route), and
+  materialized state
   (`state.ts`).
 - **Transport**: Streamsy (`@streamsy/core` + `@streamsy/storage-memory`) serves
   `/streams/session/main` from the same Bun process via `createHttpHandler`.
@@ -56,7 +57,8 @@ _is_ the database log.
 
   `upsert` events carry only `value`; `update` events also carry `old_value` for replication.
 
-- **Frontend**: React + Vite.
+- **Frontend**: React, bundled and served by Bun's fullstack server (an `index.html` import passed
+  to `Bun.serve` routes — no Vite, no separate dev server).
 - **Client DB**: `createStreamDB` from `@durable-streams/state/db` builds StreamDB collections
   (`projects`, `issues`, `comments`) directly from the Streamsy durable stream, with optimistic
   `onMutate` actions reconciled by `awaitTxId`.
@@ -80,26 +82,18 @@ From the repository root:
 
 ```bash
 bun install
-bun --cwd examples/issue-tracker-demo run dev:api
+bun --cwd examples/issue-tracker-demo run dev
 ```
 
-In another terminal:
+Open `http://localhost:1338`. One Bun process serves everything: the React app (bundled on the
+fly from `index.html`, with HMR in development), the `/api` mutation endpoints, and the
+`/streams/session/main` durable stream. `--hot` also hot-reloads the server code.
+
+For production-style serving (minified client assets, in-memory caching, no HMR):
 
 ```bash
-bun --cwd examples/issue-tracker-demo run dev:web
-```
-
-Open the Vite URL (default `http://localhost:5174`). Vite proxies `/api` and `/streams` to the Bun
-server on port `1338`.
-
-To serve the built React app from the Bun server instead:
-
-```bash
-bun --cwd examples/issue-tracker-demo run build
 bun --cwd examples/issue-tracker-demo run start
 ```
-
-Then open `http://localhost:1338`.
 
 ## Smoke test
 

@@ -1,9 +1,9 @@
+import index from "../../index.html";
 import { createApiRouter } from "./api.ts";
 import { port, serverIdleTimeoutSeconds, streamPath } from "./config.ts";
 import { json } from "./http.ts";
 import { seed } from "./state.ts";
 import { DemoStreams } from "./streams.ts";
-import { serveStatic } from "./static.ts";
 
 const streams = new DemoStreams();
 await streams.start();
@@ -14,20 +14,14 @@ const routeApi = createApiRouter(streams);
 const server = Bun.serve({
   port,
   idleTimeout: serverIdleTimeoutSeconds,
-  async fetch(request) {
-    const url = new URL(request.url);
-    try {
-      if (url.pathname.startsWith("/streams/")) {
-        return streams.proxy(request);
-      }
-      if (url.pathname.startsWith("/api/")) {
-        return routeApi(request, url);
-      }
-      return serveStatic(url);
-    } catch (error) {
-      console.error(error);
-      return json({ error: "Internal server error" }, { status: 500 });
-    }
+  routes: {
+    "/streams/*": (request) => streams.proxy(request),
+    "/api/*": (request) => routeApi(request, new URL(request.url)),
+    "/*": index,
+  },
+  error(error) {
+    console.error(error);
+    return json({ error: "Internal server error" }, { status: 500 });
   },
 });
 
