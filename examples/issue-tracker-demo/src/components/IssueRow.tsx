@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { Comment, Issue, IssueStatus } from "../../types.ts";
-import { STATUS_LABEL, formatRelativeTime, shortId } from "../format.ts";
+import type { Comment, Issue, IssueStatus } from "../../shared/types.ts";
+import { STATUS_LABEL, formatRelativeTime, shortId } from "../utils/format.ts";
 
 export function IssueRow({
   issue,

@@ -1,3 +1,4 @@
+export const isDevelopment = process.env.NODE_ENV !== "production";
 export const port = Number.parseInt(process.env.PORT ?? "1338", 10);
 export const streamPath = "/streams/session/main";
 export const contentType = "application/json";

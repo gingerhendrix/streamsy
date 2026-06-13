@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
-import type { Comment, Issue, IssueStatus, Project } from "../../types.ts";
-import { shortId } from "../format.ts";
+import type { Comment, Issue, IssueStatus, Project } from "../../shared/types.ts";
+import { shortId } from "../utils/format.ts";
 import { IssueRow } from "./IssueRow.tsx";
 
 export function IssuesPanel({

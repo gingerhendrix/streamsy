@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import type { Project } from "../../types.ts";
+import type { Project } from "../../shared/types.ts";
 
 export function ProjectsPanel({
   projects,

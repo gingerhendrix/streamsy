@@ -90,7 +90,7 @@ function findEvent(
   return match;
 }
 
-const server = Bun.spawn(["bun", "src/server/index.ts"], {
+const server = Bun.spawn(["bun", "server/index.ts"], {
   cwd: packageDir,
   env: { ...process.env, PORT: String(port) },
   stdout: "pipe",

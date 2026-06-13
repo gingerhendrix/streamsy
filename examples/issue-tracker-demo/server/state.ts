@@ -6,8 +6,8 @@ import {
   type EntityType,
   type Issue,
   type Project,
-} from "../state-schema.ts";
-import { id, now } from "./http.ts";
+} from "../shared/state-schema.ts";
+import { id, now } from "./utils.ts";
 import type { DemoStreams } from "./streams.ts";
 
 type TxId = `${string}-${string}-${string}-${string}-${string}`;

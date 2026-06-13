@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { createIssueDb, type IssueDb } from "../db.ts";
-import { Topbar } from "./Topbar.tsx";
-import { IssueTrackerApp } from "./IssueTrackerApp.tsx";
+import { createIssueDb, type IssueDb } from "./db.ts";
+import { Topbar } from "./components/Topbar.tsx";
+import { IssueTrackerApp } from "./components/IssueTrackerApp.tsx";
 
 export function App() {
   const [db, setDb] = useState<IssueDb | null>(null);

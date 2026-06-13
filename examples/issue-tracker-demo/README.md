@@ -34,10 +34,9 @@ _is_ the database log.
 
 ## What it demonstrates
 
-- **Backend**: one Bun server with separated `src/server/` concerns — API routing (`api.ts`),
-  Streamsy stream serving (`streams.ts`), Bun fullstack SPA serving (`index.html` route), and
-  materialized state
-  (`state.ts`).
+- **Backend**: one Bun server (`server/`) — per-resource API route objects (`server/routes/`),
+  Streamsy stream serving (`streams.ts`), Bun fullstack SPA serving (the `public/index.html`
+  route), and materialized state (`state.ts`).
 - **Transport**: Streamsy (`@streamsy/core` + `@streamsy/storage-memory`) serves
   `/streams/session/main` from the same Bun process via `createHttpHandler`.
 - **Server state**: `MaterializedState` from `@durable-streams/state` is the canonical in-memory
@@ -68,13 +67,52 @@ _is_ the database log.
 `@durable-streams/state` 0.3 split its entry points so framework-agnostic state code does not pull
 in TanStack DB:
 
-| Import                      | Used by                                | Provides                                                |
-| --------------------------- | -------------------------------------- | ------------------------------------------------------- |
-| `@durable-streams/state`    | server (`state.ts`, `state-schema.ts`) | `createStateSchema`, `MaterializedState`, `ChangeEvent` |
-| `@durable-streams/state/db` | browser client (`client/main.tsx`)     | `createStreamDB`, `StreamDB`, TanStack DB bindings      |
+| Import                      | Used by                                              | Provides                                                |
+| --------------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `@durable-streams/state`    | server (`server/state.ts`, `shared/state-schema.ts`) | `createStateSchema`, `MaterializedState`, `ChangeEvent` |
+| `@durable-streams/state/db` | browser client (`src/db.ts`)                         | `createStreamDB`, `StreamDB`, TanStack DB bindings      |
 
 `@tanstack/db` is now a peer dependency of `@durable-streams/state`, so this demo declares it
 directly.
+
+## Project layout
+
+The folder structure follows the [Bun fullstack dev server best practices](https://bun.com/docs/bundler/fullstack):
+frontend in `src/`, HTML entrypoints in `public/`, server in `server/` with per-resource route
+modules. Code shared by both sides (the Durable State schema and entity types) lives in `shared/`.
+
+```text
+issue-tracker-demo/
+├── public/
+│   └── index.html          # HTML entrypoint, imported by the server as a route
+├── src/                    # frontend (bundled by Bun from index.html)
+│   ├── components/
+│   ├── styles/globals.css
+│   ├── utils/format.ts
+│   ├── App.tsx
+│   ├── db.ts               # StreamDB / TanStack DB collections + optimistic actions
+│   └── main.tsx
+├── server/
+│   ├── routes/             # Bun route objects, one module per resource
+│   │   ├── projects.ts     # POST /api/projects
+│   │   ├── issues.ts       # POST /api/issues, PATCH /api/issues/:id
+│   │   └── comments.ts     # POST /api/comments
+│   ├── config.ts
+│   ├── state.ts            # MaterializedState + mutation helpers
+│   ├── streams.ts          # Streamsy stream + /streams HTTP handler
+│   ├── utils.ts            # json/error response helpers
+│   └── index.ts            # Bun.serve with routes + development options
+├── shared/
+│   ├── state-schema.ts     # Durable State schema (zod), used by both sides
+│   └── types.ts
+└── scripts/http-smoke.ts
+```
+
+API endpoints are plain `Bun.serve` route objects — exact and `:id`-parameterized paths with
+per-HTTP-method handlers (`req.params.id` via `BunRequest`) — instead of a hand-rolled router.
+Unknown `/api/*` paths return a JSON 404; everything else falls back to the bundled SPA. In
+development the server enables `development: { hmr: true, console: true }`, so the client
+hot-reloads and browser console logs are echoed to the terminal.
 
 ## Run it
 
@@ -86,7 +124,7 @@ bun --cwd examples/issue-tracker-demo run dev
 ```
 
 Open `http://localhost:1338`. One Bun process serves everything: the React app (bundled on the
-fly from `index.html`, with HMR in development), the `/api` mutation endpoints, and the
+fly from `public/index.html`, with HMR in development), the `/api` mutation endpoints, and the
 `/streams/session/main` durable stream. `--hot` also hot-reloads the server code.
 
 For production-style serving (minified client assets, in-memory caching, no HMR):
@@ -127,5 +165,5 @@ bun run --cwd examples/issue-tracker-demo smoke:http
 
 This version intentionally avoids snapshots and prehydration. The demo keeps Streamsy as the
 server-side durable stream implementation while using the official Durable State tools where they
-are useful: shared `src/state-schema.ts` types, `MaterializedState` on the server, and StreamDB on
+are useful: shared `shared/state-schema.ts` types, `MaterializedState` on the server, and StreamDB on
 the browser client.

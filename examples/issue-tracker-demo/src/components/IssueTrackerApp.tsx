@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
-import type { Comment, Issue, IssueStatus, Project } from "../../types.ts";
+import type { Comment, Issue, IssueStatus, Project } from "../../shared/types.ts";
 import { awaitOptimisticAction, type IssueDb } from "../db.ts";
 import { Topbar } from "./Topbar.tsx";
 import { ProjectsPanel } from "./ProjectsPanel.tsx";

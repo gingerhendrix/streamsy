@@ -1,4 +1,4 @@
-import type { IssueStatus } from "../types.ts";
+import type { IssueStatus } from "../../shared/types.ts";
 
 export const STATUS_LABEL: Record<IssueStatus, string> = {
   open: "open",

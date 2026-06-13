@@ -1,6 +1,6 @@
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
-import { issueTrackerState } from "../state-schema.ts";
-import type { Comment, Issue, IssueStatus, Project } from "../types.ts";
+import { issueTrackerState } from "../shared/state-schema.ts";
+import type { Comment, Issue, IssueStatus, Project } from "../shared/types.ts";
 
 export type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<unknown> } };
 
