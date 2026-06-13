@@ -95,7 +95,7 @@ export class AppendHttpService {
         if (result.conflictReason === "closed") {
           return this.deps.responses.empty(409, {
             "stream-closed": "true",
-            "stream-next-offset": result.nextOffset,
+            "stream-next-offset": result.offset,
           });
         }
         return this.deps.responses.conflict(
@@ -115,14 +115,14 @@ export class AppendHttpService {
         return this.deps.responses.badRequest("New epoch must start at seq=0");
       case "duplicate":
         return this.deps.responses.empty(204, {
-          "stream-next-offset": result.nextOffset,
+          "stream-next-offset": result.offset,
           "producer-epoch": String(result.producerEpoch),
           "producer-seq": String(result.producerSeq),
           ...(result.closed ? { "stream-closed": "true" } : {}),
         });
       case "appended": {
         const headers: Record<string, string> = {
-          "stream-next-offset": result.nextOffset,
+          "stream-next-offset": result.offset,
           ...(result.closed ? { "stream-closed": "true" } : {}),
         };
         if (result.producerEpoch !== undefined)

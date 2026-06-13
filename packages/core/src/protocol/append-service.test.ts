@@ -12,17 +12,16 @@ async function createStream(contentType = "text/plain"): Promise<ProtocolStream>
   return created.stream;
 }
 
-describe("append currentOffset", () => {
+describe("append offset", () => {
   it("returns the exact offset of a single appended message", async () => {
     const stream = await createStream();
     const result = await stream.append({ contentType: "text/plain", data: encode("a") });
     expect(result.status).toBe("appended");
     if (result.status !== "appended") throw new Error("expected appended");
-    expect(result.currentOffset).toBe(result.nextOffset);
 
     const read = await stream.read({});
     if (read.status !== "ok") throw new Error("expected read");
-    expect(read.messages.at(-1)!.offset).toBe(result.currentOffset);
+    expect(read.messages.at(-1)!.offset).toBe(result.offset);
   });
 
   it("returns the offset of the last message for a multi-message JSON append", async () => {
@@ -36,7 +35,7 @@ describe("append currentOffset", () => {
     const read = await stream.read({});
     if (read.status !== "ok") throw new Error("expected read");
     expect(read.messages).toHaveLength(3);
-    expect(read.messages.at(-1)!.offset).toBe(result.currentOffset);
+    expect(read.messages.at(-1)!.offset).toBe(result.offset);
   });
 
   it("keeps the tail offset for a body-less close append", async () => {
@@ -51,7 +50,7 @@ describe("append currentOffset", () => {
     });
     if (closed.status !== "appended") throw new Error("expected appended");
     expect(closed.closed).toBe(true);
-    expect(closed.currentOffset).toBe(appended.currentOffset);
+    expect(closed.offset).toBe(appended.offset);
   });
 
   it("keeps the tail offset when closing an already-closed stream", async () => {
@@ -67,7 +66,7 @@ describe("append currentOffset", () => {
     });
     if (again.status !== "appended") throw new Error("expected appended");
     expect(again.closed).toBe(true);
-    expect(again.currentOffset).toBe(appended.currentOffset);
+    expect(again.offset).toBe(appended.offset);
   });
 
   it("returns the tail offset on duplicate producer appends", async () => {
@@ -87,7 +86,6 @@ describe("append currentOffset", () => {
     });
     expect(duplicate.status).toBe("duplicate");
     if (duplicate.status !== "duplicate") throw new Error("expected duplicate");
-    expect(duplicate.currentOffset).toBe(first.currentOffset);
-    expect(duplicate.nextOffset).toBe(duplicate.currentOffset);
+    expect(duplicate.offset).toBe(first.offset);
   });
 });

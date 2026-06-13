@@ -79,7 +79,7 @@ describe("ReadOnlyHttpHandler", () => {
       id: "example",
       append: async () => {
         appendCalls++;
-        return { status: "appended", nextOffset: "1_0", currentOffset: "1_0" };
+        return { status: "appended", offset: "1_0" };
       },
       read: async () => ({
         status: "ok",

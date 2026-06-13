@@ -21,7 +21,7 @@ describe("SseHttpService", () => {
     });
     const stream: ProtocolStream = {
       id: "s",
-      append: async () => ({ status: "appended", nextOffset: "0", currentOffset: "0" }),
+      append: async () => ({ status: "appended", offset: "0" }),
       read: async () => ({ status: "ok", messages: [], nextOffset: "0", upToDate: true }),
       readLive: async (options: ReadLiveOptions) => {
         readLiveSignal = options.signal;

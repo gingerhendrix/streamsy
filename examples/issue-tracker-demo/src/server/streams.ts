@@ -47,7 +47,7 @@ export class DemoStreams {
       throw new Error(`Unable to append state event to Streamsy stream: ${result.status}`);
     }
 
-    return result.nextOffset;
+    return result.offset;
   }
 
   async proxy(request: Request): Promise<Response> {

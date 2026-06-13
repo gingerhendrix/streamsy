@@ -19,24 +19,23 @@ export interface AppendMutators {
 /**
  * Mutators return the stream's post-mutation tail offset: the offset of the
  * last message they wrote (or the unchanged tail for a body-less close). That
- * value is both the exact appended offset (`currentOffset`) and, because reads
- * are after-exclusive, the read cursor (`nextOffset`).
+ * value is both the exact appended offset and, because reads are
+ * after-exclusive, the read cursor.
  */
 export function appendedResult(
-  nextOffset: string,
+  offset: string,
   validation: ProducerValidation | undefined,
   closed?: boolean,
 ): AppendResult {
   if (validation?.kind === "accepted")
     return {
       status: "appended",
-      nextOffset,
-      currentOffset: nextOffset,
+      offset,
       producerEpoch: validation.proposedState.epoch,
       producerSeq: validation.proposedState.lastSeq,
       closed,
     };
-  return { status: "appended", nextOffset, currentOffset: nextOffset, closed };
+  return { status: "appended", offset, closed };
 }
 
 export interface AppendServiceDeps {
@@ -72,8 +71,7 @@ export class AppendService {
       if (isClosed)
         return {
           status: "appended",
-          nextOffset: record.currentOffset,
-          currentOffset: record.currentOffset,
+          offset: record.currentOffset,
           closed: true,
         };
       const nextOffset = await this.deps.mutators.closeRecord(record, [], options.seq);
@@ -90,7 +88,7 @@ export class AppendService {
         status: "conflict",
         conflictReason: "closed",
         closed: true,
-        nextOffset: record.currentOffset,
+        offset: record.currentOffset,
       };
     if (!contentTypeMatches(record.config.contentType, options.contentType))
       return { status: "conflict", conflictReason: "content-type" };

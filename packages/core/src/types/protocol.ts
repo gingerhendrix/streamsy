@@ -107,35 +107,34 @@ export type AppendConflictReason = "content-type" | "sequence" | "closed";
 export type AppendResult =
   | {
       status: "appended";
-      nextOffset: string;
       /**
        * Exact stream offset after this append: the offset of the last message
        * written by it (for a close-only append with no body, the unchanged
        * tail offset). This is the write-acknowledgement token — a reader or
-       * mirror that has passed `currentOffset` has observed this write.
+       * mirror that has passed `offset` has observed this write. Because reads
+       * are after-exclusive, it is also the read cursor.
        */
-      currentOffset: string;
+      offset: string;
       producerEpoch?: number;
       producerSeq?: number;
       closed?: boolean;
     }
   | {
       status: "duplicate";
-      nextOffset: string;
       /**
        * Current tail offset at acknowledgement time. The originally appended
-       * message sits at or before `currentOffset`, so it remains a valid
+       * message sits at or before `offset`, so it remains a valid
        * write-acknowledgement token for sync ("synced once your mirror passes
        * offset X").
        */
-      currentOffset: string;
+      offset: string;
       producerEpoch: number;
       producerSeq: number;
       closed?: boolean;
     }
   | { status: "not-found" }
   | { status: "gone" }
-  | { status: "conflict"; conflictReason: "closed"; nextOffset: string; closed: true }
+  | { status: "conflict"; conflictReason: "closed"; offset: string; closed: true }
   | { status: "conflict"; conflictReason: "content-type" | "sequence" }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
