@@ -38,6 +38,24 @@ export function appendedResult(
   return { status: "appended", offset, closed };
 }
 
+/**
+ * Compare-and-swap precondition for optimistic concurrency: when
+ * `expectedOffset` is set, the append proceeds only if the stream's tail
+ * still equals it. Atomicity with the mutation is guaranteed because the
+ * protocol loads the record and runs this service inside the per-stream
+ * mutation lock.
+ *
+ * Pinned precedence: checked after the closed/content-type/sequence conflicts
+ * and before any mutation, so a CAS failure never advances producer state.
+ * A close-only append on an already-closed stream stays an idempotent
+ * success and skips the check (nothing is written, so no update can be lost).
+ */
+function expectedOffsetConflict(record: StreamRecord, options: AppendOptions): AppendResult | null {
+  if (options.expectedOffset === undefined || options.expectedOffset === record.currentOffset)
+    return null;
+  return { status: "conflict", conflictReason: "expected-offset", offset: record.currentOffset };
+}
+
 export interface AppendServiceDeps {
   producerIdempotency: ProducerIdempotencyService;
   mutators: AppendMutators;
@@ -74,6 +92,8 @@ export class AppendService {
           offset: record.currentOffset,
           closed: true,
         };
+      const casConflict = expectedOffsetConflict(record, options);
+      if (casConflict) return casConflict;
       const nextOffset = await this.deps.mutators.closeRecord(record, [], options.seq);
       const persisted = await this.deps.producerIdempotency.persistIfAccepted(
         options.producer,
@@ -94,6 +114,8 @@ export class AppendService {
       return { status: "conflict", conflictReason: "content-type" };
     if (options.seq && record.lifecycle.lastSeq && options.seq <= record.lifecycle.lastSeq)
       return { status: "conflict", conflictReason: "sequence" };
+    const casConflict = expectedOffsetConflict(record, options);
+    if (casConflict) return casConflict;
 
     const processed = frameMessages(options.data, record.config.contentType);
     const nextOffset = wantClose

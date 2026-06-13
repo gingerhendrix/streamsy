@@ -92,3 +92,38 @@ describe("sqlite protocol", () => {
     expect(result.messages).toHaveLength(1);
   });
 });
+
+test("expectedOffset CAS: stale append conflicts and retries cleanly", async () => {
+  const protocol = new StreamProtocol({ storage: { factory: createSqliteStreamFactory() } });
+  await protocol.create("s", { contentType: "text/plain" });
+  const lookup = await protocol.get("s");
+  if (lookup.status !== "ok") throw new Error("lookup failed");
+  const head = await lookup.stream.append({ contentType: "text/plain", data: encode("a") });
+  if (head.status !== "appended") throw new Error("expected appended");
+
+  const winner = await lookup.stream.append({
+    contentType: "text/plain",
+    data: encode("b"),
+    expectedOffset: head.offset,
+  });
+  expect(winner.status).toBe("appended");
+
+  const loser = await lookup.stream.append({
+    contentType: "text/plain",
+    data: encode("c"),
+    expectedOffset: head.offset,
+  });
+  if (loser.status !== "conflict" || loser.conflictReason !== "expected-offset")
+    throw new Error("expected expected-offset conflict");
+
+  const retry = await lookup.stream.append({
+    contentType: "text/plain",
+    data: encode("c"),
+    expectedOffset: loser.offset,
+  });
+  expect(retry.status).toBe("appended");
+
+  const read = await lookup.stream.read({});
+  if (read.status !== "ok") throw new Error("read failed");
+  expect(read.messages).toHaveLength(3);
+});

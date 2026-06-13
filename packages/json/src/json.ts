@@ -53,6 +53,11 @@ export type JsonCreateOptions<T> = Omit<CreateOptions, "contentType" | "initialD
   initialMessages?: readonly T[];
 };
 
+/**
+ * Append options minus the byte-level fields. `expectedOffset` (the CAS
+ * precondition) is per-append: it is not meaningful with `appendMany`, whose
+ * appends run concurrently — a shared `expectedOffset` would fail all but one.
+ */
 export type JsonAppendOptions = Omit<AppendOptions, "data" | "contentType">;
 
 export type JsonCreateResult<T> =

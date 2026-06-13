@@ -34,6 +34,15 @@ export interface AppendOptions {
   seq?: string;
   producer?: ProducerOptions;
   close?: boolean;
+  /**
+   * Optimistic-concurrency precondition: append only if the stream's tail
+   * offset still equals this offset. On mismatch the append fails with a
+   * `conflict`/`expected-offset` result carrying the actual tail, and no
+   * state (messages, close flag, producer state) is changed. `ZERO_OFFSET`
+   * means "append only if the stream is still empty". Streamsy extension to
+   * the Durable Streams protocol.
+   */
+  expectedOffset?: string;
 }
 
 export interface ReadOptions {
@@ -102,7 +111,7 @@ export type CreateResult =
     }
   | CreateFailureResult;
 
-export type AppendConflictReason = "content-type" | "sequence" | "closed";
+export type AppendConflictReason = "content-type" | "sequence" | "closed" | "expected-offset";
 
 export type AppendResult =
   | {
@@ -135,6 +144,16 @@ export type AppendResult =
   | { status: "not-found" }
   | { status: "gone" }
   | { status: "conflict"; conflictReason: "closed"; offset: string; closed: true }
+  | {
+      status: "conflict";
+      conflictReason: "expected-offset";
+      /**
+       * Actual tail offset at the time the `expectedOffset` precondition
+       * failed, so callers can see how far behind they were. Retry loops
+       * should re-read state and rebuild the append from the new tail.
+       */
+      offset: string;
+    }
   | { status: "conflict"; conflictReason: "content-type" | "sequence" }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }

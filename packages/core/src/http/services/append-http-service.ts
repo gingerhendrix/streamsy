@@ -1,4 +1,5 @@
 import type { AppendResult } from "../../types/protocol.ts";
+import { isValidOffset } from "../../protocol/helpers/offset-generator.ts";
 import type { BoundHttpRouteContext } from "../types.ts";
 import { maybeNotSupportedResponse } from "../not-supported.ts";
 import { ProducerHeaderParser, type ProducerHeaderResult } from "../producer-header-parser.ts";
@@ -25,6 +26,7 @@ export class AppendHttpService {
       seq: parsed.seq,
       producer: parsed.producerHeaders.kind === "ok" ? parsed.producerHeaders.producer : undefined,
       close: parsed.wantClose,
+      expectedOffset: parsed.expectedOffset,
     });
     if (result.status === "not-supported")
       return maybeNotSupportedResponse(result, this.deps.responses)!;
@@ -37,17 +39,23 @@ export class AppendHttpService {
         contentType: string | null;
         seq?: string;
         wantClose: boolean;
+        expectedOffset?: string;
         producerHeaders: ProducerHeaderResult;
       }
     | { ok: false; response: Response } {
     const producerHeaders = this.deps.producerHeaders.parse(request);
     if (producerHeaders.kind === "invalid")
       return { ok: false, response: this.deps.responses.badRequest("Invalid producer headers") };
+    // Streamsy extension: optimistic-concurrency precondition (see docs/api.md).
+    const expectedOffset = request.headers.get("stream-expected-offset") ?? undefined;
+    if (expectedOffset !== undefined && !isValidOffset(expectedOffset))
+      return { ok: false, response: this.deps.responses.badRequest("Invalid expected offset") };
     return {
       ok: true,
       contentType: request.headers.get("content-type"),
       seq: request.headers.get("stream-seq") ?? undefined,
       wantClose: request.headers.get("stream-closed")?.toLowerCase() === "true",
+      expectedOffset,
       producerHeaders,
     };
   }
@@ -95,6 +103,11 @@ export class AppendHttpService {
         if (result.conflictReason === "closed") {
           return this.deps.responses.empty(409, {
             "stream-closed": "true",
+            "stream-next-offset": result.offset,
+          });
+        }
+        if (result.conflictReason === "expected-offset") {
+          return this.deps.responses.conflict("Expected offset mismatch", {
             "stream-next-offset": result.offset,
           });
         }
