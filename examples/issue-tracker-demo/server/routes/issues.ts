@@ -1,43 +1,51 @@
 import type { BunRequest } from "bun";
 import type { Issue } from "../../shared/types.ts";
-import {
-  getIssue,
-  getProject,
-  insertIssue,
-  newIssue,
-  nextIssue,
-  updateIssueState,
-} from "../state.ts";
+import { isValidWorkspaceId } from "../config.ts";
+import { issueUpdate, issueUpsert, mutateWorkspace, newIssue, nextIssue } from "../state.ts";
 import type { DemoStreams } from "../streams.ts";
 import { badRequest, json, notFound, type MutationBody } from "../utils.ts";
 
 export function issueRoutes(streams: DemoStreams) {
   return {
-    "/api/issues": {
-      async POST(request: BunRequest<"/api/issues">): Promise<Response> {
+    "/api/w/:ws/issues": {
+      async POST(request: BunRequest<"/api/w/:ws/issues">): Promise<Response> {
+        const workspaceId = request.params.ws;
+        if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
+
         const body = (await request.json()) as MutationBody<Issue>;
-        const issue = newIssue(body);
-        if (!getProject(issue.projectId)) {
-          return badRequest("Unknown projectId");
-        }
-        const result = await insertIssue(streams, issue, body.txid);
-        return json(
-          { issue, awaitOffset: result.offset, txid: result.event.headers.txid },
-          { status: 201 },
-        );
+        return mutateWorkspace(streams, workspaceId, (state) => {
+          const issue = newIssue(body);
+          if (!state.getProject(issue.projectId)) {
+            return { response: badRequest("Unknown projectId") };
+          }
+          const event = issueUpsert(issue, body.txid);
+          return {
+            event,
+            respond: ({ offset }) =>
+              json({ issue, awaitOffset: offset, txid: event.headers.txid }, { status: 201 }),
+          };
+        });
       },
     },
 
-    "/api/issues/:id": {
-      async PATCH(request: BunRequest<"/api/issues/:id">): Promise<Response> {
-        const issueId = decodeURIComponent(request.params.id);
-        const previous = getIssue(issueId);
-        if (!previous) return notFound("Issue not found");
+    "/api/w/:ws/issues/:id": {
+      async PATCH(request: BunRequest<"/api/w/:ws/issues/:id">): Promise<Response> {
+        const workspaceId = request.params.ws;
+        if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
 
+        const issueId = decodeURIComponent(request.params.id);
         const body = (await request.json()) as MutationBody<Issue>;
-        const issue = nextIssue(previous, body);
-        const result = await updateIssueState(streams, issue, previous, body.txid);
-        return json({ issue, awaitOffset: result.offset, txid: result.event.headers.txid });
+        return mutateWorkspace(streams, workspaceId, (state) => {
+          const previous = state.getIssue(issueId);
+          if (!previous) return { response: notFound("Issue not found") };
+
+          const issue = nextIssue(previous, body);
+          const event = issueUpdate(issue, previous, body.txid);
+          return {
+            event,
+            respond: ({ offset }) => json({ issue, awaitOffset: offset, txid: event.headers.txid }),
+          };
+        });
       },
     },
   };

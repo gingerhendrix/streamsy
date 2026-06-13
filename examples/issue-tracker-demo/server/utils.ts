@@ -21,6 +21,10 @@ export function badRequest(message: string): Response {
   return json({ error: message }, { status: 400 });
 }
 
+export function conflict(message: string): Response {
+  return json({ error: message }, { status: 409 });
+}
+
 export function now(): string {
   return new Date().toISOString();
 }

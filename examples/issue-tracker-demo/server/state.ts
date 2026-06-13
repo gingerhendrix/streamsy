@@ -1,21 +1,21 @@
-import { MaterializedState, type ChangeEvent } from "@durable-streams/state";
+import { MaterializedState } from "@durable-streams/state";
+import { ZERO_OFFSET } from "@streamsy/core";
 import {
   issueTrackerState,
   type Comment,
-  type EntityByType,
-  type EntityType,
   type Issue,
   type Project,
+  type StateEvent,
 } from "../shared/state-schema.ts";
-import { id, now } from "./utils.ts";
+import { mainWorkspaceId, workspaceStreamId } from "./config.ts";
 import type { DemoStreams } from "./streams.ts";
+import { conflict, id, notFound, now, type TxId } from "./utils.ts";
 
-type TxId = `${string}-${string}-${string}-${string}-${string}`;
-
-const state = new MaterializedState();
-
-function values<T>(type: EntityType): T[] {
-  return Array.from(state.getType(type).values()) as T[];
+/** Read-only view over one workspace's materialized state. */
+export interface WorkspaceState {
+  getProject(projectId: string): Project | undefined;
+  getIssue(issueId: string): Issue | undefined;
+  hasProjects(): boolean;
 }
 
 function eventHeaders(txid: TxId = crypto.randomUUID()) {
@@ -25,62 +25,136 @@ function eventHeaders(txid: TxId = crypto.randomUUID()) {
   };
 }
 
-function projects(): Project[] {
-  return values<Project>("project");
-}
-
-export function getProject(projectId: string): Project | undefined {
-  return state.get<Project>("project", projectId);
-}
-
-export function getIssue(issueId: string): Issue | undefined {
-  return state.get<Issue>("issue", issueId);
-}
-
-async function emit<T extends EntityType>(
+/**
+ * Materialize one workspace's state by folding its durable stream from the
+ * beginning. Stateless by design: nothing outlives the request. Returns the
+ * state plus the stream's head offset — the CAS token for appends conditioned
+ * on exactly this state — or undefined when the workspace does not exist.
+ */
+export async function materializeWorkspace(
   streams: DemoStreams,
-  event: ChangeEvent<EntityByType[T]>,
-): Promise<{ event: ChangeEvent<EntityByType[T]>; offset: string }> {
-  const offset = await streams.appendJson(event);
-  state.apply(event);
-  return { event, offset };
+  workspaceId: string,
+): Promise<{ state: WorkspaceState; headOffset: string } | undefined> {
+  const read = await streams.readAll(workspaceStreamId(workspaceId));
+  if (!read) return undefined;
+
+  const state = new MaterializedState();
+  for (const event of read.events) {
+    state.apply(event);
+  }
+
+  return {
+    state: {
+      getProject: (projectId) => state.get<Project>("project", projectId),
+      getIssue: (issueId) => state.get<Issue>("issue", issueId),
+      hasProjects: () => state.getType("project").size > 0,
+    },
+    headOffset: read.headOffset,
+  };
 }
 
-export async function insertProject(streams: DemoStreams, project: Project, txid?: TxId) {
-  return emit(
-    streams,
-    issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) }),
-  );
-}
+/** Outcome of one mutation attempt against freshly materialized state. */
+export type MutationAttempt =
+  | { response: Response }
+  | { event: StateEvent; respond: (ack: { offset: string }) => Response };
 
-export async function insertIssue(streams: DemoStreams, issue: Issue, txid?: TxId) {
-  return emit(
-    streams,
-    issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) }),
-  );
-}
+const maxMutationAttempts = 4;
 
-export async function updateIssueState(
+/**
+ * Optimistic-concurrency mutation loop (CAS append with retry): materialize
+ * the workspace, let the caller validate and build an event from that fresh
+ * state, then append conditioned on the materialized head offset. If another
+ * writer appended in between, re-materialize and retry — validation and the
+ * event are rebuilt from the new state each attempt, so a successful CAS
+ * proves validation ran against the exact state the event landed on. Correct
+ * even across processes; production writers would add backoff/jitter.
+ *
+ * Validation outcomes (`{ response }`) are returned as-is and never retried.
+ * Unknown workspaces yield 404; retry exhaustion yields 409.
+ */
+export async function mutateWorkspace(
   streams: DemoStreams,
-  issue: Issue,
-  oldValue: Issue,
-  txid?: TxId,
-) {
-  return emit(
-    streams,
-    issueTrackerState.issues.update({ value: issue, oldValue, headers: eventHeaders(txid) }),
-  );
+  workspaceId: string,
+  attempt: (state: WorkspaceState) => MutationAttempt,
+): Promise<Response> {
+  const streamId = workspaceStreamId(workspaceId);
+
+  for (let attemptNumber = 1; attemptNumber <= maxMutationAttempts; attemptNumber++) {
+    const materialized = await materializeWorkspace(streams, workspaceId);
+    if (!materialized) return notFound("Unknown workspace");
+
+    const outcome = attempt(materialized.state);
+    if ("response" in outcome) return outcome.response;
+
+    const result = await streams.appendEvent(streamId, outcome.event, materialized.headOffset);
+    if (result.status === "appended") {
+      return outcome.respond({ offset: result.offset });
+    }
+    if (result.status === "conflict" && result.conflictReason === "expected-offset") {
+      continue; // Lost the race; re-materialize and rebuild from the new head.
+    }
+    throw new Error(`Unable to append state event to ${streamId}: ${result.status}`);
+  }
+
+  return conflict("Concurrent updates, please retry");
 }
 
-export async function insertComment(streams: DemoStreams, comment: Comment, txid?: TxId) {
-  return emit(
-    streams,
-    issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) }),
-  );
+// === Event builders ===
+
+export function projectUpsert(project: Project, txid?: TxId): StateEvent {
+  return issueTrackerState.projects.upsert({
+    value: project,
+    headers: eventHeaders(txid),
+  });
 }
 
-export async function seed(streams: DemoStreams): Promise<void> {
-  if (projects().length > 0) return;
+export function issueUpsert(issue: Issue, txid?: TxId): StateEvent {
+  return issueTrackerState.issues.upsert({
+    value: issue,
+    headers: eventHeaders(txid),
+  });
+}
+
+export function issueUpdate(issue: Issue, oldValue: Issue, txid?: TxId): StateEvent {
+  return issueTrackerState.issues.update({
+    value: issue,
+    oldValue,
+    headers: eventHeaders(txid),
+  });
+}
+
+export function commentUpsert(comment: Comment, txid?: TxId): StateEvent {
+  return issueTrackerState.comments.upsert({
+    value: comment,
+    headers: eventHeaders(txid),
+  });
+}
+
+// === Seeding ===
+
+async function appendSeedEvent(
+  streams: DemoStreams,
+  streamId: string,
+  event: StateEvent,
+  expectedOffset?: string,
+): Promise<void> {
+  const result = await streams.appendEvent(streamId, event, expectedOffset);
+  if (result.status !== "appended") {
+    throw new Error(`Unable to seed Streamsy stream ${streamId}: ${result.status}`);
+  }
+}
+
+/**
+ * Ensure and seed the known demo workspace at boot. No-op when the stream
+ * already holds projects (e.g. a hot reload of the server module).
+ */
+export async function seedMainWorkspace(streams: DemoStreams): Promise<void> {
+  const streamId = workspaceStreamId(mainWorkspaceId);
+  await streams.ensureStream(streamId);
+
+  const materialized = await materializeWorkspace(streams, mainWorkspaceId);
+  if (!materialized || materialized.state.hasProjects()) return;
+
   const createdAt = now();
   const initialProjects: Project[] = [
     {
@@ -129,17 +203,42 @@ export async function seed(streams: DemoStreams): Promise<void> {
       id: "comment_welcome",
       issueId: "issue_bootstrap",
       author: "demo-server",
-      body: "The app consumes JSON state events from /streams/session/main with @durable-streams/state StreamDB.",
+      body: "The app consumes JSON state events from /streams/workspace/main with @durable-streams/state StreamDB.",
       createdAt,
     },
   ];
 
-  await Promise.all([
-    ...initialProjects.map((project) => insertProject(streams, project)),
-    ...initialIssues.map((issue) => insertIssue(streams, issue)),
-    ...initialComments.map((comment) => insertComment(streams, comment)),
-  ]);
+  const events: StateEvent[] = [
+    ...initialProjects.map((project) => projectUpsert(project)),
+    ...initialIssues.map((issue) => issueUpsert(issue)),
+    ...initialComments.map((comment) => commentUpsert(comment)),
+  ];
+  for (const event of events) {
+    await appendSeedEvent(streams, streamId, event);
+  }
 }
+
+/**
+ * Seed a freshly created shared workspace with one starter project so the
+ * shareable link does not open onto a blank UI. The `ZERO_OFFSET` CAS is a
+ * belt-and-braces assertion that the new stream is still empty.
+ */
+export async function seedStarterProject(streams: DemoStreams, workspaceId: string): Promise<void> {
+  const project: Project = {
+    id: id("proj"),
+    name: "Getting started",
+    description: "Shared workspace — anyone with this link sees changes live.",
+    createdAt: now(),
+  };
+  await appendSeedEvent(
+    streams,
+    workspaceStreamId(workspaceId),
+    projectUpsert(project),
+    ZERO_OFFSET,
+  );
+}
+
+// === Entity builders ===
 
 export function newProject(input: Partial<Project>): Project {
   return {
