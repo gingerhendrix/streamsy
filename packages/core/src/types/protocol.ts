@@ -108,6 +108,13 @@ export type AppendResult =
   | {
       status: "appended";
       nextOffset: string;
+      /**
+       * Exact stream offset after this append: the offset of the last message
+       * written by it (for a close-only append with no body, the unchanged
+       * tail offset). This is the write-acknowledgement token — a reader or
+       * mirror that has passed `currentOffset` has observed this write.
+       */
+      currentOffset: string;
       producerEpoch?: number;
       producerSeq?: number;
       closed?: boolean;
@@ -115,6 +122,13 @@ export type AppendResult =
   | {
       status: "duplicate";
       nextOffset: string;
+      /**
+       * Current tail offset at acknowledgement time. The originally appended
+       * message sits at or before `currentOffset`, so it remains a valid
+       * write-acknowledgement token for sync ("synced once your mirror passes
+       * offset X").
+       */
+      currentOffset: string;
       producerEpoch: number;
       producerSeq: number;
       closed?: boolean;

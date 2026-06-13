@@ -8,7 +8,7 @@ describe("LongPollHttpService", () => {
   it("uses the supplied bound protocol stream", async () => {
     const stream: ProtocolStream = {
       id: "s",
-      append: async () => ({ status: "appended", nextOffset: "0" }),
+      append: async () => ({ status: "appended", nextOffset: "0", currentOffset: "0" }),
       read: async () => ({ status: "ok", messages: [], nextOffset: "0", upToDate: true }),
       readLive: async () => ({
         status: "timeout",

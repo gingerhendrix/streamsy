@@ -16,6 +16,12 @@ export interface AppendMutators {
   closeRecord(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string>;
 }
 
+/**
+ * Mutators return the stream's post-mutation tail offset: the offset of the
+ * last message they wrote (or the unchanged tail for a body-less close). That
+ * value is both the exact appended offset (`currentOffset`) and, because reads
+ * are after-exclusive, the read cursor (`nextOffset`).
+ */
 export function appendedResult(
   nextOffset: string,
   validation: ProducerValidation | undefined,
@@ -25,11 +31,12 @@ export function appendedResult(
     return {
       status: "appended",
       nextOffset,
+      currentOffset: nextOffset,
       producerEpoch: validation.proposedState.epoch,
       producerSeq: validation.proposedState.lastSeq,
       closed,
     };
-  return { status: "appended", nextOffset, closed };
+  return { status: "appended", nextOffset, currentOffset: nextOffset, closed };
 }
 
 export interface AppendServiceDeps {
@@ -62,7 +69,13 @@ export class AppendService {
     }
 
     if (wantClose && !hasBody) {
-      if (isClosed) return { status: "appended", nextOffset: record.currentOffset, closed: true };
+      if (isClosed)
+        return {
+          status: "appended",
+          nextOffset: record.currentOffset,
+          currentOffset: record.currentOffset,
+          closed: true,
+        };
       const nextOffset = await this.deps.mutators.closeRecord(record, [], options.seq);
       const persisted = await this.deps.producerIdempotency.persistIfAccepted(
         options.producer,

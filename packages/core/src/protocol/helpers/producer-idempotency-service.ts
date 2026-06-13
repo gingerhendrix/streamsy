@@ -44,6 +44,7 @@ export function rejectionToAppendResult(
       return {
         status: "duplicate" as const,
         nextOffset: currentOffset,
+        currentOffset,
         producerEpoch: rejection.epoch,
         producerSeq: rejection.lastSeq,
         closed: isClosed,
