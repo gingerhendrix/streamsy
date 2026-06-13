@@ -25,14 +25,21 @@ export type IssueDb = StreamDB<typeof issueTrackerState> & {
   };
 };
 
-function streamUrl(): string {
-  return new URL("/streams/session/main", window.location.origin).toString();
+function streamUrl(workspaceId: string): string {
+  return new URL(
+    `/streams/workspace/${encodeURIComponent(workspaceId)}`,
+    window.location.origin,
+  ).toString();
 }
 
-export function createIssueDb(): IssueDb {
+function apiUrl(workspaceId: string, path: string): string {
+  return `/api/w/${encodeURIComponent(workspaceId)}${path}`;
+}
+
+export function createIssueDb(workspaceId: string): IssueDb {
   return createStreamDB({
     streamOptions: {
-      url: streamUrl(),
+      url: streamUrl(workspaceId),
       contentType: "application/json",
       warnOnHttp: false,
     },
@@ -43,7 +50,10 @@ export function createIssueDb(): IssueDb {
           db.collections.projects.insert(project);
         },
         mutationFn: async ({ project, txid }: CreateProjectAction) => {
-          const result = await postJson<ApiMutationResult>("/api/projects", { ...project, txid });
+          const result = await postJson<ApiMutationResult>(apiUrl(workspaceId, "/projects"), {
+            ...project,
+            txid,
+          });
           await db.utils.awaitTxId(result.txid);
         },
       },
@@ -52,7 +62,10 @@ export function createIssueDb(): IssueDb {
           db.collections.issues.insert(issue);
         },
         mutationFn: async ({ issue, txid }: CreateIssueAction) => {
-          const result = await postJson<ApiMutationResult>("/api/issues", { ...issue, txid });
+          const result = await postJson<ApiMutationResult>(apiUrl(workspaceId, "/issues"), {
+            ...issue,
+            txid,
+          });
           await db.utils.awaitTxId(result.txid);
         },
       },
@@ -65,7 +78,7 @@ export function createIssueDb(): IssueDb {
         },
         mutationFn: async ({ issue, status, updatedAt, txid }: UpdateIssueStatusAction) => {
           const result = await postJson<ApiMutationResult>(
-            `/api/issues/${encodeURIComponent(issue.id)}`,
+            apiUrl(workspaceId, `/issues/${encodeURIComponent(issue.id)}`),
             { status, updatedAt, txid },
             { method: "PATCH" },
           );
@@ -77,7 +90,10 @@ export function createIssueDb(): IssueDb {
           db.collections.comments.insert(comment);
         },
         mutationFn: async ({ comment, txid }: CreateCommentAction) => {
-          const result = await postJson<ApiMutationResult>("/api/comments", { ...comment, txid });
+          const result = await postJson<ApiMutationResult>(apiUrl(workspaceId, "/comments"), {
+            ...comment,
+            txid,
+          });
           await db.utils.awaitTxId(result.txid);
         },
       },

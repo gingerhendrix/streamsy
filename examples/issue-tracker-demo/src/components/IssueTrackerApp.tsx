@@ -6,7 +6,7 @@ import { Topbar } from "./Topbar.tsx";
 import { ProjectsPanel } from "./ProjectsPanel.tsx";
 import { IssuesPanel } from "./IssuesPanel.tsx";
 
-export function IssueTrackerApp({ db }: { db: IssueDb }) {
+export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId: string }) {
   // Holds an explicit user selection only; while empty, rendering falls back to
   // the first project below — no effect needed to "initialize" the selection.
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -85,7 +85,7 @@ export function IssueTrackerApp({ db }: { db: IssueDb }) {
 
   return (
     <main className="shell">
-      <Topbar />
+      <Topbar workspaceId={workspaceId} />
 
       <section className="layout">
         <ProjectsPanel

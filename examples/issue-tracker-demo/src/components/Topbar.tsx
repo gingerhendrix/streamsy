@@ -1,4 +1,6 @@
-export function Topbar() {
+import { ShareControls } from "./ShareControls.tsx";
+
+export function Topbar({ workspaceId }: { workspaceId: string }) {
   return (
     <header className="topbar">
       <div className="brand">
@@ -9,6 +11,7 @@ export function Topbar() {
         <span className="brand-divider">/</span>
         <span className="brand-app">Issue Tracker</span>
       </div>
+      <ShareControls workspaceId={workspaceId} />
     </header>
   );
 }
