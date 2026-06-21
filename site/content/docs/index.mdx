@@ -1,0 +1,37 @@
+---
+title: Streamsy
+description: A work-in-progress Durable Streams server implementation, with typed JSON and Durable State layers, for memory, SQLite, and Cloudflare Durable Object backends.
+---
+
+Streamsy is a work-in-progress **Durable Streams** server implementation. Durable Streams is an append-only streams protocol over HTTP (from the creators of electric-sql), and Streamsy also provides a Durable State synchronization layer on top of it.
+
+Streamsy is currently focused on implementing the `@durable-streams/server-conformance-tests` protocol target across in-memory, Bun SQLite, and Cloudflare Durable Object storage backends.
+
+## Status
+
+WIP. The API and package boundaries are not yet stable. The current implementation has been validated against `@durable-streams/server-conformance-tests@0.3.0`, with every storage backend passing the full conformance suite:
+
+| Backend | Package | Conformance |
+|---|---|---|
+| In-memory | `@streamsy/core` | 299/299 passing |
+| Bun SQLite (`bun:sqlite`) | `@streamsy/storage-sqlite` | 299/299 passing |
+| Cloudflare Durable Object | `@streamsy/storage-durable-object` | 299/299 passing |
+
+The public packages are prepared for npm publishing under the `@streamsy/*` scope; the conformance harness and examples remain private.
+
+## Packages
+
+- **`@streamsy/core`** — public protocol and HTTP facades, shared protocol/storage types, and the in-memory storage adapter (`createMemoryStreamFactory`) used for local development, examples, and conformance testing.
+- **`@streamsy/json`** — typed JSON protocol and stream wrappers (`JsonProtocol<T>` / `JsonStream<T>`) that encode/decode `application/json` messages through a codec or Standard Schema.
+- **`@streamsy/state`** — Durable State protocol and stream wrappers (`DurableStateProtocol<S>` / `DurableStateStream<S>`) for typed change/control messages over collections.
+- **`@streamsy/storage-sqlite`** — Bun SQLite (`bun:sqlite`) storage adapter providing durable local persistence, automatic migrations, in-process mutation locking, live-read notification, and lazy/in-process expiry. Requires the Bun runtime.
+- **`@streamsy/storage-durable-object`** — Cloudflare Durable Object storage adapter with SQLite-backed persistence, long-polling, SSE support, TTL/expiry handling, and stream metadata.
+- **`@streamsy/conformance-tests`** — private conformance harness for the memory, SQLite, and Durable Object adapters.
+
+## Start here
+
+- [Getting started](/docs/getting-started) — stand up a Durable Streams HTTP server with the in-memory backend and the public `@streamsy/core` API.
+
+## About this site
+
+This is the foundation of the Streamsy documentation site. The full package references (API boundaries, adapter authoring, and the release runbook) will be migrated here from the repository `docs/` after they are checked against current source.
