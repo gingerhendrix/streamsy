@@ -5,6 +5,7 @@
     "": {
       "name": "streamsy-docs",
       "dependencies": {
+        "@fontsource/knewave": "^5.2.7",
         "@tailwindcss/vite": "^4.1.18",
         "@tanstack/react-router": "1.166.2",
         "@tanstack/react-start": "1.166.2",
@@ -206,6 +207,8 @@
     "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.8", "", { "dependencies": { "@floating-ui/dom": "^1.7.6" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-cC52bHwM/n/CxS87FH0yWdngEZrjdtLW/qVruo68qg+prK7ZQ4YGdut2GyDVpoGeAYe/h899rVeOVm6Oi40k2A=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
+
+    "@fontsource/knewave": ["@fontsource/knewave@5.2.7", "", {}, "sha512-uzx8jgcTiQgAwKvQ/hWdX7lOQPwS+K74Eij/WCVzYvAkCX7GRTnWnbxXXx0XsKR6UIN16kH/u40LW4K8aHJb1w=="],
 
     "@fuma-translate/react": ["@fuma-translate/react@1.0.2", "", { "peerDependencies": { "@types/react": "*", "react": "^19.2.0", "react-dom": "^19.2.0" }, "optionalPeers": ["@types/react"] }, "sha512-uOiOtBx3nRXR8Nu1GzBf1tApgF1FErDBTHxRIAQeyQdyOoZbrNRN6H4kDCWObY4qyGeGbHydG0DHzgeUgFDMIw=="],
 

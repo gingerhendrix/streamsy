@@ -12,6 +12,7 @@
     "check": "fumadocs-mdx && tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource/knewave": "^5.2.7",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-router": "1.166.2",
     "@tanstack/react-start": "1.166.2",

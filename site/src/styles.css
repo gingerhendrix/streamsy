@@ -42,10 +42,18 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Knewave";
+  src: url("../node_modules/@fontsource/knewave/files/knewave-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", "Roboto Mono", Menlo, Monaco, "Liberation Mono", "DejaVu Sans Mono", "Courier New", monospace;
-  --font-logotype: "Geist Pixel Grid", "Geist Mono", ui-monospace, monospace;
+  --font-logotype: "Knewave", "Geist Mono", ui-monospace, monospace;
 }
 
 html {
