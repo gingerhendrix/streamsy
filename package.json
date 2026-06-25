@@ -1,6 +1,6 @@
 {
   "name": "durable-streams",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Durable Streams server implementation and storage adapters.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",

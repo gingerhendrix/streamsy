@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/json",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "Typed JSON protocol and stream wrappers for Streamsy durable streams.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -35,7 +35,7 @@
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "0.0.2"
+    "@streamsy/core": "0.1.0"
   },
   "devDependencies": {
     "typescript": "catalog:",
