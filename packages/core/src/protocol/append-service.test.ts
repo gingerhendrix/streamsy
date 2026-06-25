@@ -1,303 +1,159 @@
 import { describe, expect, it } from "vitest";
-import { StreamProtocol } from "../protocol.ts";
-import { createMemoryStreamFactory } from "../storage/memory/factory.ts";
-import type { ProtocolStream } from "../types/protocol.ts";
+import type { AppendOptions } from "../types/protocol.ts";
+import type { StreamRecord } from "../types/storage.ts";
+import { AppendService } from "./append-service.ts";
 import { ZERO_OFFSET } from "./helpers/offset-generator.ts";
 
 const encode = (s: string) => new TextEncoder().encode(s);
+const clock = { now: () => 1_000, date: (value?: number | string) => new Date(value ?? 1_000) };
 
-async function createStream(contentType = "text/plain"): Promise<ProtocolStream> {
-  const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
-  const created = await protocol.create("s", { contentType });
-  if (created.status !== "created") throw new Error("expected create");
-  return created.stream;
+function record(overrides: Partial<StreamRecord> = {}): StreamRecord {
+  return {
+    id: "s",
+    config: { contentType: "text/plain", createdAt: 1, ttlSeconds: 60 },
+    lifecycle: {},
+    currentOffset: ZERO_OFFSET,
+    counter: 0,
+    ...overrides,
+  };
 }
 
-describe("append offset", () => {
-  it("returns the exact offset of a single appended message", async () => {
-    const stream = await createStream();
-    const result = await stream.append({ contentType: "text/plain", data: encode("a") });
-    expect(result.status).toBe("appended");
-    if (result.status !== "appended") throw new Error("expected appended");
+function append(overrides: Partial<AppendOptions> = {}): AppendOptions {
+  return {
+    contentType: "text/plain",
+    data: encode("a"),
+    ...overrides,
+  };
+}
 
-    const read = await stream.read({});
-    if (read.status !== "ok") throw new Error("expected read");
-    expect(read.messages.at(-1)!.offset).toBe(result.offset);
+describe("AppendService.plan", () => {
+  it("returns terminal not-found and gone results without a write plan", () => {
+    const service = new AppendService({ clock });
+
+    expect(service.plan(null, append(), undefined)).toEqual({
+      kind: "terminal",
+      result: { status: "not-found" },
+    });
+    expect(service.plan(record({ lifecycle: { softDeleted: true } }), append(), undefined)).toEqual(
+      {
+        kind: "terminal",
+        result: { status: "gone" },
+      },
+    );
   });
 
-  it("returns the offset of the last message for a multi-message JSON append", async () => {
-    const stream = await createStream("application/json");
-    const result = await stream.append({
-      contentType: "application/json",
-      data: encode(JSON.stringify([1, 2, 3])),
-    });
-    if (result.status !== "appended") throw new Error("expected appended");
+  it("keeps close-only on an already closed stream idempotent regardless of expectedOffset", () => {
+    const service = new AppendService({ clock });
+    const decision = service.plan(
+      record({ currentOffset: "0000000000000001_0000000000000000", lifecycle: { closed: true } }),
+      append({ data: new Uint8Array(), close: true, expectedOffset: ZERO_OFFSET }),
+      undefined,
+    );
 
-    const read = await stream.read({});
-    if (read.status !== "ok") throw new Error("expected read");
-    expect(read.messages).toHaveLength(3);
-    expect(read.messages.at(-1)!.offset).toBe(result.offset);
+    expect(decision).toEqual({
+      kind: "terminal",
+      result: {
+        status: "appended",
+        offset: "0000000000000001_0000000000000000",
+        closed: true,
+      },
+    });
   });
 
-  it("keeps the tail offset for a body-less close append", async () => {
-    const stream = await createStream();
-    const appended = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (appended.status !== "appended") throw new Error("expected appended");
+  it("reports content-type and closed conflicts before expected-offset conflicts", () => {
+    const service = new AppendService({ clock });
 
-    const closed = await stream.append({
-      contentType: "text/plain",
-      data: new Uint8Array(),
-      close: true,
+    expect(
+      service.plan(
+        record({ currentOffset: "0000000000000001_0000000000000000" }),
+        append({ contentType: "application/json", expectedOffset: ZERO_OFFSET }),
+        undefined,
+      ),
+    ).toEqual({
+      kind: "terminal",
+      result: { status: "conflict", conflictReason: "content-type" },
     });
-    if (closed.status !== "appended") throw new Error("expected appended");
-    expect(closed.closed).toBe(true);
-    expect(closed.offset).toBe(appended.offset);
+
+    expect(
+      service.plan(
+        record({
+          currentOffset: "0000000000000001_0000000000000000",
+          lifecycle: { closed: true },
+        }),
+        append({ expectedOffset: ZERO_OFFSET }),
+        undefined,
+      ),
+    ).toEqual({
+      kind: "terminal",
+      result: {
+        status: "conflict",
+        conflictReason: "closed",
+        closed: true,
+        offset: "0000000000000001_0000000000000000",
+      },
+    });
   });
 
-  it("keeps the tail offset when closing an already-closed stream", async () => {
-    const stream = await createStream();
-    const appended = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (appended.status !== "appended") throw new Error("expected appended");
-    await stream.append({ contentType: "text/plain", data: new Uint8Array(), close: true });
+  it("builds a commit plan with allocated messages, CAS, TTL touch, and notify effect", () => {
+    const service = new AppendService({ clock });
+    const decision = service.plan(record(), append(), undefined);
+    if (decision.kind !== "commit") throw new Error("expected commit plan");
 
-    const again = await stream.append({
-      contentType: "text/plain",
-      data: new Uint8Array(),
-      close: true,
-    });
-    if (again.status !== "appended") throw new Error("expected appended");
-    expect(again.closed).toBe(true);
-    expect(again.offset).toBe(appended.offset);
-  });
-
-  it("returns the tail offset on duplicate producer appends", async () => {
-    const stream = await createStream();
-    const producer = { producerId: "p", producerEpoch: 1, producerSeq: 0 };
-    const first = await stream.append({
-      contentType: "text/plain",
-      data: encode("a"),
-      producer,
-    });
-    if (first.status !== "appended") throw new Error("expected appended");
-
-    const duplicate = await stream.append({
-      contentType: "text/plain",
-      data: encode("a"),
-      producer,
-    });
-    expect(duplicate.status).toBe("duplicate");
-    if (duplicate.status !== "duplicate") throw new Error("expected duplicate");
-    expect(duplicate.offset).toBe(first.offset);
-  });
-});
-
-describe("append expectedOffset (CAS)", () => {
-  it("appends when expectedOffset matches the tail", async () => {
-    const stream = await createStream();
-    const first = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (first.status !== "appended") throw new Error("expected appended");
-
-    const result = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      expectedOffset: first.offset,
-    });
-    expect(result.status).toBe("appended");
-  });
-
-  it("conflicts with the actual tail when expectedOffset is stale", async () => {
-    const stream = await createStream();
-    const first = await stream.append({ contentType: "text/plain", data: encode("a") });
-    const second = await stream.append({ contentType: "text/plain", data: encode("b") });
-    if (first.status !== "appended" || second.status !== "appended")
-      throw new Error("expected appended");
-
-    const result = await stream.append({
-      contentType: "text/plain",
-      data: encode("c"),
-      expectedOffset: first.offset,
-    });
-    expect(result).toEqual({
-      status: "conflict",
-      conflictReason: "expected-offset",
-      offset: second.offset,
-    });
-
-    const read = await stream.read({});
-    if (read.status !== "ok") throw new Error("expected read");
-    expect(read.messages).toHaveLength(2);
-  });
-
-  it("treats ZERO_OFFSET as 'still empty'", async () => {
-    const stream = await createStream();
-    const onEmpty = await stream.append({
-      contentType: "text/plain",
-      data: encode("a"),
+    expect(decision.plan.preconditions).toEqual({
       expectedOffset: ZERO_OFFSET,
+      expectedClosed: false,
     });
-    expect(onEmpty.status).toBe("appended");
-
-    const onNonEmpty = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      expectedOffset: ZERO_OFFSET,
+    expect(decision.plan.appendMessages).toHaveLength(1);
+    expect(decision.plan.appendMessages?.[0]?.offset).toBe("0000000000000001_0000000000000000");
+    expect(decision.plan.recordPatch).toEqual({
+      currentOffset: "0000000000000001_0000000000000000",
+      counter: 1,
+      lifecycle: { expiresAtMs: 61_000 },
     });
-    expect(onNonEmpty.status).toBe("conflict");
-    if (onNonEmpty.status !== "conflict") throw new Error("expected conflict");
-    expect(onNonEmpty.conflictReason).toBe("expected-offset");
+    expect(decision.plan.afterCommit).toEqual({
+      notify: "message",
+      scheduleExpiryAt: 61_000,
+    });
   });
 
-  it("reports closed before expected-offset on a closed stream", async () => {
-    const stream = await createStream();
-    await stream.append({ contentType: "text/plain", data: encode("a") });
-    await stream.append({ contentType: "text/plain", data: new Uint8Array(), close: true });
+  it("encodes accepted producer state as an atomic precondition", () => {
+    const service = new AppendService({ clock });
+    const decision = service.plan(
+      record(),
+      append({ producer: { producerId: "p", producerEpoch: 1, producerSeq: 1 } }),
+      { epoch: 1, lastSeq: 0 },
+    );
+    if (decision.kind !== "commit") throw new Error("expected commit plan");
 
-    const result = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      expectedOffset: ZERO_OFFSET,
+    expect(decision.plan.preconditions.producer).toEqual({
+      producerId: "p",
+      expected: { epoch: 1, lastSeq: 0 },
+      next: { epoch: 1, lastSeq: 1 },
     });
-    if (result.status !== "conflict") throw new Error("expected conflict");
-    expect(result.conflictReason).toBe("closed");
+    expect(decision.toResult(record({ currentOffset: "ignored" }))).toMatchObject({
+      status: "appended",
+      producerEpoch: 1,
+      producerSeq: 1,
+    });
   });
 
-  it("reports content-type before expected-offset", async () => {
-    const stream = await createStream();
-    await stream.append({ contentType: "text/plain", data: encode("a") });
+  it("returns duplicate producer acknowledgements without a write plan", () => {
+    const service = new AppendService({ clock });
+    const decision = service.plan(
+      record({ currentOffset: "0000000000000001_0000000000000000" }),
+      append({ producer: { producerId: "p", producerEpoch: 1, producerSeq: 0 } }),
+      { epoch: 1, lastSeq: 0 },
+    );
 
-    const result = await stream.append({
-      contentType: "application/json",
-      data: encode("{}"),
-      expectedOffset: ZERO_OFFSET,
+    expect(decision).toEqual({
+      kind: "terminal",
+      result: {
+        status: "duplicate",
+        offset: "0000000000000001_0000000000000000",
+        producerEpoch: 1,
+        producerSeq: 0,
+        closed: false,
+      },
     });
-    if (result.status !== "conflict") throw new Error("expected conflict");
-    expect(result.conflictReason).toBe("content-type");
-  });
-
-  it("applies the precondition to close-with-data appends", async () => {
-    const stream = await createStream();
-    const first = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (first.status !== "appended") throw new Error("expected appended");
-
-    const stale = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      close: true,
-      expectedOffset: ZERO_OFFSET,
-    });
-    if (stale.status !== "conflict") throw new Error("expected conflict");
-    expect(stale.conflictReason).toBe("expected-offset");
-
-    const matched = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      close: true,
-      expectedOffset: first.offset,
-    });
-    expect(matched.status).toBe("appended");
-    if (matched.status !== "appended") throw new Error("expected appended");
-    expect(matched.closed).toBe(true);
-  });
-
-  it("applies the precondition to close-only appends on an open stream", async () => {
-    const stream = await createStream();
-    const first = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (first.status !== "appended") throw new Error("expected appended");
-    await stream.append({ contentType: "text/plain", data: encode("b") });
-
-    const stale = await stream.append({
-      contentType: "text/plain",
-      data: new Uint8Array(),
-      close: true,
-      expectedOffset: first.offset,
-    });
-    if (stale.status !== "conflict") throw new Error("expected conflict");
-    expect(stale.conflictReason).toBe("expected-offset");
-
-    const metadata = await stream.metadata();
-    if (metadata.status !== "ok") throw new Error("expected metadata");
-    expect(metadata.closed).toBeFalsy();
-  });
-
-  it("keeps close-only on an already-closed stream idempotent regardless of expectedOffset", async () => {
-    const stream = await createStream();
-    const appended = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (appended.status !== "appended") throw new Error("expected appended");
-    await stream.append({ contentType: "text/plain", data: new Uint8Array(), close: true });
-
-    const again = await stream.append({
-      contentType: "text/plain",
-      data: new Uint8Array(),
-      close: true,
-      expectedOffset: ZERO_OFFSET,
-    });
-    if (again.status !== "appended") throw new Error("expected appended");
-    expect(again.closed).toBe(true);
-    expect(again.offset).toBe(appended.offset);
-  });
-
-  it("does not advance producer state on a CAS failure", async () => {
-    const stream = await createStream();
-    const first = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (first.status !== "appended") throw new Error("expected appended");
-
-    const producer = { producerId: "p", producerEpoch: 1, producerSeq: 0 };
-    const stale = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      producer,
-      expectedOffset: ZERO_OFFSET,
-    });
-    if (stale.status !== "conflict") throw new Error("expected conflict");
-    expect(stale.conflictReason).toBe("expected-offset");
-
-    // Same epoch/seq retried with the correct precondition: accepted as a
-    // first append (not a duplicate) because the failed CAS persisted nothing.
-    const retried = await stream.append({
-      contentType: "text/plain",
-      data: encode("b"),
-      producer,
-      expectedOffset: first.offset,
-    });
-    expect(retried.status).toBe("appended");
-  });
-
-  it("supports the materialize-validate-append retry loop under interleaving", async () => {
-    const stream = await createStream();
-    const head = await stream.append({ contentType: "text/plain", data: encode("a") });
-    if (head.status !== "appended") throw new Error("expected appended");
-
-    // A wins the race at head H.
-    const a = await stream.append({
-      contentType: "text/plain",
-      data: encode("from-a"),
-      expectedOffset: head.offset,
-    });
-    if (a.status !== "appended") throw new Error("expected appended");
-
-    // B conditioned on the old head loses...
-    const b = await stream.append({
-      contentType: "text/plain",
-      data: encode("from-b"),
-      expectedOffset: head.offset,
-    });
-    if (b.status !== "conflict" || b.conflictReason !== "expected-offset")
-      throw new Error("expected expected-offset conflict");
-
-    // ...and succeeds after re-reading the head from the conflict result.
-    const retry = await stream.append({
-      contentType: "text/plain",
-      data: encode("from-b"),
-      expectedOffset: b.offset,
-    });
-    expect(retry.status).toBe("appended");
-
-    const read = await stream.read({});
-    if (read.status !== "ok") throw new Error("expected read");
-    expect(read.messages.map((m) => new TextDecoder().decode(m.data))).toEqual([
-      "a",
-      "from-a",
-      "from-b",
-    ]);
   });
 });

@@ -4,15 +4,14 @@ Streamsy storage packages implement `StreamFactory`.
 
 A `StreamFactory` maps a public stream id to a storage-bound `Stream`. The returned storage stream is bound to one id and exposes the protocol storage/runtime operations for that id as direct methods:
 
-- record operations: `getRecord`, `createRecord`, `updateRecord`, `deleteRecord`
-- message operations: `appendMessages`, `listMessages`, `deleteMessages`
-- producer state: `getProducerState`, `setProducerState`, `deleteProducerStates`
-- fork references: `incrementChildRefCount`, `decrementChildRefCount`
-- mutation coordination: `withMutationLock`
+- read operations: `getRecord`, `listMessages`, `getProducerState`
+- mutation: `commit(plan)` for append/close record/message/producer changes
 - live events: `waitForEvent`, `notify`
 - expiry scheduling: `scheduleExpiry`, `cancelExpiry`
+- lifecycle operations on the factory: `create(plan)`, optional `fork(plan)`, and `delete(plan)`
 
-Facet interfaces such as `StreamRecordStore`, `StreamMessageStore`, and `StreamProducerStore` are available for internal implementation structure, tests, and documentation. They are not exposed as nested properties on `Stream`: adapters should return one object implementing `Stream` and may delegate internally to private stores.
+Adapters may still use private record/message/producer stores internally. They should not expose
+those stores as the storage-author contract; the protocol only depends on the plan-based seam.
 
 ```ts
 import type { Stream, StreamFactory } from "@streamsy/core";
@@ -29,8 +28,8 @@ class ExampleStream implements Stream {
     return this.records.getRecord();
   }
 
-  appendMessages(messages) {
-    return this.messages.appendMessages(messages);
+  commit(plan) {
+    return this.committer.commit(plan);
   }
 
   getProducerState(producerId) {
@@ -50,6 +49,12 @@ export function createExampleStreamFactory(): StreamFactory {
         new ExampleMessageStore(id),
         new ExampleProducerStore(id),
       );
+    },
+    async create(plan) {
+      // Insert the new record and initial messages atomically.
+    },
+    async delete(plan) {
+      // Purge or soft-delete using the adapter's lineage policy.
     },
   };
 }

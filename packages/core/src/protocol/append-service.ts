@@ -1,27 +1,21 @@
-/** Append-side orchestration for one storage-bound stream. */
+/** Append-side plan building for one storage-bound stream snapshot. */
 
+import type { MutationPlan } from "../types/factory.ts";
 import type { AppendOptions, AppendResult } from "../types/protocol.ts";
-import { isNotSupported } from "../types/factory.ts";
-import type { StreamRecord } from "../types/storage.ts";
+import type { Clock, ProducerState, StreamRecord } from "../types/storage.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
+import { allocate as allocateOffsets } from "./helpers/offset-generator.ts";
 import {
-  ProducerIdempotencyService,
   rejectionToAppendResult,
+  validateProducer,
   type ProducerValidation,
 } from "./helpers/producer-idempotency-service.ts";
 
-export interface AppendMutators {
-  appendMessages(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string>;
-  closeRecord(record: StreamRecord, data: Uint8Array[], seq?: string): Promise<string>;
-}
+export type AppendDecision =
+  | { kind: "terminal"; result: AppendResult }
+  | { kind: "commit"; plan: MutationPlan; toResult: (record: StreamRecord) => AppendResult };
 
-/**
- * Mutators return the stream's post-mutation tail offset: the offset of the
- * last message they wrote (or the unchanged tail for a body-less close). That
- * value is both the exact appended offset and, because reads are
- * after-exclusive, the read cursor.
- */
 export function appendedResult(
   offset: string,
   validation: ProducerValidation | undefined,
@@ -38,18 +32,6 @@ export function appendedResult(
   return { status: "appended", offset, closed };
 }
 
-/**
- * Compare-and-swap precondition for optimistic concurrency: when
- * `expectedOffset` is set, the append proceeds only if the stream's tail
- * still equals it. Atomicity with the mutation is guaranteed because the
- * protocol loads the record and runs this service inside the per-stream
- * mutation lock.
- *
- * Pinned precedence: checked after the closed/content-type/sequence conflicts
- * and before any mutation, so a CAS failure never advances producer state.
- * A close-only append on an already-closed stream stays an idempotent
- * success and skips the check (nothing is written, so no update can be lost).
- */
 function expectedOffsetConflict(record: StreamRecord, options: AppendOptions): AppendResult | null {
   if (options.expectedOffset === undefined || options.expectedOffset === record.currentOffset)
     return null;
@@ -57,16 +39,19 @@ function expectedOffsetConflict(record: StreamRecord, options: AppendOptions): A
 }
 
 export interface AppendServiceDeps {
-  producerIdempotency: ProducerIdempotencyService;
-  mutators: AppendMutators;
+  clock: Clock;
 }
 
 export class AppendService {
   constructor(private deps: AppendServiceDeps) {}
 
-  async execute(record: StreamRecord | null, options: AppendOptions): Promise<AppendResult> {
-    if (!record) return { status: "not-found" };
-    if (record.lifecycle.softDeleted) return { status: "gone" };
+  plan(
+    record: StreamRecord | null,
+    options: AppendOptions,
+    producerState: ProducerState | undefined,
+  ): AppendDecision {
+    if (!record) return { kind: "terminal", result: { status: "not-found" } };
+    if (record.lifecycle.softDeleted) return { kind: "terminal", result: { status: "gone" } };
 
     const isClosed = record.lifecycle.closed === true;
     const wantClose = options.close === true;
@@ -74,58 +59,114 @@ export class AppendService {
 
     let producerValidation: ProducerValidation | undefined;
     if (options.producer) {
-      const state = await this.deps.producerIdempotency.load(options.producer.producerId);
-      if (isNotSupported(state)) return state;
-      producerValidation = this.deps.producerIdempotency.validate(
-        state,
+      producerValidation = validateProducer(
+        producerState,
         options.producer.producerEpoch,
         options.producer.producerSeq,
       );
-      if (producerValidation.kind !== "accepted")
-        return rejectionToAppendResult(producerValidation, record.currentOffset, isClosed);
+      if (producerValidation.kind !== "accepted") {
+        return {
+          kind: "terminal",
+          result: rejectionToAppendResult(producerValidation, record.currentOffset, isClosed),
+        };
+      }
     }
 
     if (wantClose && !hasBody) {
       if (isClosed)
         return {
-          status: "appended",
-          offset: record.currentOffset,
-          closed: true,
+          kind: "terminal",
+          result: {
+            status: "appended",
+            offset: record.currentOffset,
+            closed: true,
+          },
         };
       const casConflict = expectedOffsetConflict(record, options);
-      if (casConflict) return casConflict;
-      const nextOffset = await this.deps.mutators.closeRecord(record, [], options.seq);
-      const persisted = await this.deps.producerIdempotency.persistIfAccepted(
-        options.producer,
-        producerValidation,
-      );
-      if (persisted?.status === "not-supported") return persisted;
-      return appendedResult(nextOffset, producerValidation, true);
+      if (casConflict) return { kind: "terminal", result: casConflict };
+      return this.commitDecision(record, [], options, producerState, producerValidation, true);
     }
 
     if (isClosed)
       return {
-        status: "conflict",
-        conflictReason: "closed",
-        closed: true,
-        offset: record.currentOffset,
+        kind: "terminal",
+        result: {
+          status: "conflict",
+          conflictReason: "closed",
+          closed: true,
+          offset: record.currentOffset,
+        },
       };
     if (!contentTypeMatches(record.config.contentType, options.contentType))
-      return { status: "conflict", conflictReason: "content-type" };
+      return { kind: "terminal", result: { status: "conflict", conflictReason: "content-type" } };
     if (options.seq && record.lifecycle.lastSeq && options.seq <= record.lifecycle.lastSeq)
-      return { status: "conflict", conflictReason: "sequence" };
+      return { kind: "terminal", result: { status: "conflict", conflictReason: "sequence" } };
     const casConflict = expectedOffsetConflict(record, options);
-    if (casConflict) return casConflict;
+    if (casConflict) return { kind: "terminal", result: casConflict };
 
     const processed = frameMessages(options.data, record.config.contentType);
-    const nextOffset = wantClose
-      ? await this.deps.mutators.closeRecord(record, processed, options.seq)
-      : await this.deps.mutators.appendMessages(record, processed, options.seq);
-    const persisted = await this.deps.producerIdempotency.persistIfAccepted(
-      options.producer,
+    return this.commitDecision(
+      record,
+      processed,
+      options,
+      producerState,
       producerValidation,
+      wantClose,
     );
-    if (persisted?.status === "not-supported") return persisted;
-    return appendedResult(nextOffset, producerValidation, wantClose);
+  }
+
+  private commitDecision(
+    record: StreamRecord,
+    data: Uint8Array[],
+    options: AppendOptions,
+    producerState: ProducerState | undefined,
+    producerValidation: ProducerValidation | undefined,
+    wantClose: boolean,
+  ): AppendDecision {
+    const allocation = allocateOffsets(record.counter, data.length);
+    const now = this.deps.clock.now();
+    const messages = data.map((bytes, i) => ({
+      data: bytes,
+      offset: allocation.offsets[i]!,
+      timestamp: now,
+    }));
+    const expiresAtMs =
+      record.config.ttlSeconds === undefined ? undefined : now + record.config.ttlSeconds * 1000;
+    const lifecycle = {
+      ...(options.seq ? { lastSeq: options.seq } : {}),
+      ...(wantClose ? { closed: true, closedAt: now } : {}),
+      ...(expiresAtMs !== undefined ? { expiresAtMs } : {}),
+    };
+    const plan: MutationPlan = {
+      preconditions: {
+        expectedOffset: options.expectedOffset ?? record.currentOffset,
+        expectedClosed: false,
+        ...(options.producer && producerValidation?.kind === "accepted"
+          ? {
+              producer: {
+                producerId: options.producer.producerId,
+                expected: producerState,
+                next: producerValidation.proposedState,
+              },
+            }
+          : {}),
+      },
+      appendMessages: messages,
+      recordPatch: {
+        currentOffset: allocation.nextOffset,
+        counter: allocation.endCounter,
+        lifecycle,
+      },
+      afterCommit: {
+        notify: wantClose ? "closed" : "message",
+        ...(expiresAtMs !== undefined ? { scheduleExpiryAt: expiresAtMs } : {}),
+      },
+    };
+
+    return {
+      kind: "commit",
+      plan,
+      toResult: () => appendedResult(allocation.nextOffset, producerValidation, wantClose),
+    };
   }
 }

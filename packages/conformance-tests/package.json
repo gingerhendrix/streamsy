@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit",
     "test:memory": "vitest --run src/memory.conformance.test.ts",
     "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
-    "test:do": "STAGE=conformance bun src/deploy-test-destroy.ts",
+    "test:do": "STAGE=conformance node src/deploy-test-destroy.ts",
     "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",

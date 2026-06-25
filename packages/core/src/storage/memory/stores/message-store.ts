@@ -7,7 +7,7 @@ export class MessageStore {
 
   constructor(private readonly records: RecordStore) {}
 
-  async appendMessages(messages: StoredMessage[]): Promise<void> {
+  appendMessagesSync(messages: StoredMessage[]): void {
     this.records.requireRecord();
     this.messages.push(...clone(messages));
   }
@@ -20,7 +20,7 @@ export class MessageStore {
     return clone(out);
   }
 
-  async deleteMessages(): Promise<void> {
+  deleteMessagesSync(): void {
     this.messages = [];
   }
 }

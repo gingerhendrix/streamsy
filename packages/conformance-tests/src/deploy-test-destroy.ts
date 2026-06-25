@@ -1,10 +1,11 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { $ } from "bun";
 
 const packageDir = join(import.meta.dirname, "..");
+const alchemyEntrypoint = join(packageDir, "alchemy.run.ts");
 const appName = "streamsy-conf";
 const baseStage = process.env.STAGE || "conformance";
 const runId =
@@ -19,9 +20,34 @@ const env = {
   STAGE: stage,
 };
 
-async function runStep(label: string, command: Promise<unknown>) {
+async function runStep(label: string, command: () => Promise<unknown>) {
   console.log(`\n==> ${label}`);
-  await command;
+  await command();
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv },
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: "inherit",
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else if (signal) {
+        reject(new Error(`${command} ${args.join(" ")} exited with signal ${signal}`));
+      } else {
+        reject(new Error(`${command} ${args.join(" ")} exited with code ${code}`));
+      }
+    });
+  });
 }
 
 function readWorkerUrl(): string {
@@ -78,21 +104,22 @@ async function waitForWorkerReady(baseUrl: string): Promise<void> {
 let exitCode = 0;
 
 try {
-  await runStep(
-    `deploy test server with STAGE=${stage}`,
-    $`bun alchemy deploy`.cwd(packageDir).env(env),
+  await runStep(`deploy test server with STAGE=${stage}`, () =>
+    runCommand(process.execPath, [alchemyEntrypoint], { cwd: packageDir, env }),
   );
 
   const serverBaseUrl = readWorkerUrl();
   console.log(`\n==> conformance server: ${serverBaseUrl}`);
 
-  await runStep("wait for deployed worker readiness", waitForWorkerReady(serverBaseUrl));
+  await runStep("wait for deployed worker readiness", () => waitForWorkerReady(serverBaseUrl));
 
-  await runStep(
-    "run Durable Object conformance tests against deployed server",
-    $`bun run test:do:local --reporter=dot`.cwd(packageDir).env({
-      ...env,
-      SERVER_BASE_URL: serverBaseUrl,
+  await runStep("run Durable Object conformance tests against deployed server", () =>
+    runCommand("bun", ["run", "test:do:local", "--reporter=dot"], {
+      cwd: packageDir,
+      env: {
+        ...env,
+        SERVER_BASE_URL: serverBaseUrl,
+      },
     }),
   );
 } catch (error) {
@@ -100,9 +127,8 @@ try {
   logFailure("Conformance deploy/test failed", error);
 } finally {
   try {
-    await runStep(
-      `destroy test server with STAGE=${stage}`,
-      $`bun alchemy destroy`.cwd(packageDir).env(env),
+    await runStep(`destroy test server with STAGE=${stage}`, () =>
+      runCommand(process.execPath, [alchemyEntrypoint, "--destroy"], { cwd: packageDir, env }),
     );
   } catch (error) {
     exitCode = 1;

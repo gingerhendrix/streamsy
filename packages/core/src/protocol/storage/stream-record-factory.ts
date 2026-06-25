@@ -35,7 +35,6 @@ export class StreamRecordFactory {
       id: streamId,
       config,
       lifecycle: {
-        childRefCount: 0,
         forkedFrom: fork?.forkedFrom,
         forkOffset,
         expiresAtMs: this.deps.expiryPolicy.computeExpiresAtMs(config),

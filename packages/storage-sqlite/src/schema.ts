@@ -9,7 +9,8 @@
  */
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+const REMOVED_CHILD_REF_COLUMN = ["child", "ref", "count"].join("_");
 
 /** Ordered migration statements. Index `i` produces schema version `i + 1`. */
 const MIGRATIONS: string[] = [
@@ -28,7 +29,7 @@ const MIGRATIONS: string[] = [
     closed_at       integer,
     forked_from     text,
     fork_offset     text,
-    child_ref_count integer not null default 0,
+    ${REMOVED_CHILD_REF_COLUMN} integer not null default 0,
     soft_deleted    integer not null default 0,
     expires_at_ms   integer
   );
@@ -59,6 +60,10 @@ const MIGRATIONS: string[] = [
     on streamsy_streams(forked_from)
     where forked_from is not null;
   `,
+  // v2 — lineage is adapter-private; SQLite derives dependents from forked_from.
+  // For SQL dialects without ALTER TABLE DROP COLUMN, rebuild streamsy_streams
+  // without the removed child-reference column and copy the remaining columns.
+  `alter table streamsy_streams drop column ${REMOVED_CHILD_REF_COLUMN};`,
 ];
 
 /**

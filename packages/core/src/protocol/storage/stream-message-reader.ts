@@ -33,28 +33,29 @@ export class StreamMessageReader {
     touchOwnTtl = true,
   ): Promise<StoredMessage[]> {
     const out: StoredMessage[] = [];
+    let current = record;
     if (
-      record.lifecycle.forkedFrom &&
-      record.lifecycle.forkOffset &&
-      (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
+      current.lifecycle.forkedFrom &&
+      current.lifecycle.forkOffset &&
+      (afterOffset === undefined || compareOffsets(afterOffset, current.lifecycle.forkOffset) < 0)
     ) {
-      const sourceStream = await this.deps.resolve(record.lifecycle.forkedFrom);
+      const sourceStream = await this.deps.resolve(current.lifecycle.forkedFrom);
       const source = await sourceStream.getRecord();
       if (source) {
         const upstreamCap =
-          capOffset && compareOffsets(capOffset, record.lifecycle.forkOffset) < 0
+          capOffset && compareOffsets(capOffset, current.lifecycle.forkOffset) < 0
             ? capOffset
-            : record.lifecycle.forkOffset;
+            : current.lifecycle.forkOffset;
         out.push(
           ...(await this.readChainFor(sourceStream, source, afterOffset, upstreamCap, false)),
         );
       }
     }
-    if (touchOwnTtl) await this.deps.expiryPolicy.touch(stream, record, "read");
+    if (touchOwnTtl) current = await this.deps.expiryPolicy.touch(stream, current, "read");
     const ownStart =
-      record.lifecycle.forkOffset &&
-      (afterOffset === undefined || compareOffsets(afterOffset, record.lifecycle.forkOffset) < 0)
-        ? record.lifecycle.forkOffset
+      current.lifecycle.forkOffset &&
+      (afterOffset === undefined || compareOffsets(afterOffset, current.lifecycle.forkOffset) < 0)
+        ? current.lifecycle.forkOffset
         : afterOffset;
     const own = await stream.listMessages({ after: ownStart, until: capOffset });
     out.push(...own);

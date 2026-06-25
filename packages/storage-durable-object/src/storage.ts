@@ -1,22 +1,28 @@
 import { DurableObject } from "cloudflare:workers";
 import { StreamProtocol } from "@streamsy/core";
 import { createDurableObjectStreamFactory } from "./factory.ts";
-import { STREAM_ID_KEY } from "./lib/keys.ts";
+import {
+  CHILD_PREFIX,
+  RECORD_KEY,
+  STREAM_ID_KEY,
+  childKey,
+  messageKey,
+  producerKey,
+} from "./lib/keys.ts";
 import { MessageStore } from "./stores/message-store.ts";
 import { ProducerStore } from "./stores/producer-store.ts";
 import { RecordStore } from "./stores/record-store.ts";
 import { AlarmScheduler } from "./utils/alarm-scheduler.ts";
-import { DurableObjectLock } from "./utils/lock.ts";
 import { DurableObjectNotifier } from "./utils/notifier.ts";
 import type {
-  CreateStreamRecordResult,
+  CommitResult,
   ListMessagesOptions,
+  MutationPlan,
   ProducerState,
   StoredMessage,
   StreamEventType,
   StreamId,
   StreamRecord,
-  StreamRecordPatch,
   WaitForEventOptions,
   WaitForEventResult,
 } from "@streamsy/core";
@@ -32,7 +38,6 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
   private readonly records: RecordStore;
   private readonly messages: MessageStore;
   private readonly producers: ProducerStore;
-  private readonly lock = new DurableObjectLock();
   private readonly notifier = new DurableObjectNotifier();
   private readonly alarms: AlarmScheduler;
 
@@ -77,51 +82,78 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return this.records.getRecord();
   }
 
-  createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
-    return this.records.createRecord(record);
+  async commit(plan: MutationPlan): Promise<CommitResult> {
+    const id = await this.requireStreamId();
+    let record = (this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null) as StreamRecord | null;
+
+    if (plan.createRecord) {
+      if (plan.createRecord.id !== id) {
+        throw new Error(`Record id ${plan.createRecord.id} does not match bound stream ${id}`);
+      }
+      if (record) return { status: "precondition-failed", record };
+      this.ctx.storage.kv.put(RECORD_KEY, plan.createRecord);
+      record = plan.createRecord;
+    }
+
+    if (!record) return { status: "precondition-failed", record: null };
+    if (
+      plan.preconditions.expectedOffset !== undefined &&
+      plan.preconditions.expectedOffset !== record.currentOffset
+    )
+      return { status: "precondition-failed", record };
+    if (
+      plan.preconditions.expectedClosed !== undefined &&
+      plan.preconditions.expectedClosed !== (record.lifecycle.closed === true)
+    )
+      return { status: "precondition-failed", record };
+
+    const producer = plan.preconditions.producer;
+    if (producer) {
+      const current = this.ctx.storage.kv.get<ProducerState>(producerKey(producer.producerId));
+      if (!producerStatesEqual(current, producer.expected))
+        return { status: "precondition-failed", record };
+    }
+
+    if (plan.appendMessages) {
+      for (const message of plan.appendMessages) {
+        this.ctx.storage.kv.put(messageKey(message.offset), message);
+      }
+    }
+
+    let updated = record;
+    if (plan.recordPatch) {
+      updated = {
+        ...record,
+        config: { ...record.config, ...plan.recordPatch.config },
+        lifecycle: { ...record.lifecycle, ...plan.recordPatch.lifecycle },
+        currentOffset: plan.recordPatch.currentOffset ?? record.currentOffset,
+        counter: plan.recordPatch.counter ?? record.counter,
+      };
+      this.ctx.storage.kv.put(RECORD_KEY, updated);
+    }
+    if (producer) this.ctx.storage.kv.put(producerKey(producer.producerId), producer.next);
+
+    return { status: "committed", record: updated };
   }
 
-  updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
-    return this.records.updateRecord(patch);
-  }
-
-  async deleteRecord(): Promise<void> {
+  async purgeSelf(): Promise<void> {
     await this.records.deleteRecord();
     await this.messages.deleteMessages();
     await this.producers.deleteProducerStates();
+    await this.deleteChildEdges();
     await this.alarms.cancel();
   }
 
-  appendMessages(messages: StoredMessage[]): Promise<void> {
-    return this.messages.appendMessages(messages);
+  async softDelete(): Promise<void> {
+    await this.records.updateRecord({ lifecycle: { softDeleted: true } });
   }
 
   listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
     return this.messages.listMessages(options);
   }
 
-  deleteMessages(): Promise<void> {
-    return this.messages.deleteMessages();
-  }
-
   getProducerState(producerId: string): Promise<ProducerState | undefined> {
     return this.producers.getProducerState(producerId);
-  }
-
-  setProducerState(producerId: string, state: ProducerState): Promise<void> {
-    return this.producers.setProducerState(producerId, state);
-  }
-
-  deleteProducerStates(): Promise<void> {
-    return this.producers.deleteProducerStates();
-  }
-
-  incrementChildRefCount(): Promise<number> {
-    return this.records.incrementChildRefCount();
-  }
-
-  decrementChildRefCount(): Promise<number> {
-    return this.records.decrementChildRefCount();
   }
 
   waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
@@ -132,8 +164,7 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return this.notifier.notify(type);
   }
 
-  scheduleExpiry(at: number, callback?: () => Promise<void>): Promise<void> {
-    void callback;
+  scheduleExpiry(at: number): Promise<void> {
     return this.alarms.schedule(at);
   }
 
@@ -141,12 +172,30 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return this.alarms.cancel();
   }
 
-  async acquireLock(key: string): Promise<string> {
-    return this.lock.acquire(key);
+  async addChildEdge(childId: StreamId): Promise<void> {
+    this.ctx.storage.kv.put(childKey(childId), true);
   }
 
-  async releaseLock(key: string, token: string): Promise<void> {
-    void key;
-    return this.lock.release(token);
+  async dropChildEdge(childId: StreamId): Promise<void> {
+    this.ctx.storage.kv.delete(childKey(childId));
   }
+
+  async countChildEdges(): Promise<number> {
+    let count = 0;
+    for (const _ of this.ctx.storage.kv.list({ prefix: CHILD_PREFIX })) count++;
+    return count;
+  }
+
+  private async deleteChildEdges(): Promise<void> {
+    const entries = this.ctx.storage.kv.list({ prefix: CHILD_PREFIX });
+    for (const [key] of entries) this.ctx.storage.kv.delete(key);
+  }
+}
+
+function producerStatesEqual(
+  left: ProducerState | undefined,
+  right: ProducerState | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  return left.epoch === right.epoch && left.lastSeq === right.lastSeq;
 }

@@ -1,13 +1,10 @@
 import type { Database } from "bun:sqlite";
-import type {
-  CreateStreamRecordResult,
-  StreamId,
-  StreamRecord,
-  StreamRecordPatch,
-} from "@streamsy/core";
+import type { StreamId, StreamRecord, StreamRecordPatch } from "@streamsy/core";
 import { recordToRow, rowToRecord, STREAM_COLUMNS, type StreamRow } from "../lib/codec.ts";
 
-const INSERT_SQL = `insert into streamsy_streams (${STREAM_COLUMNS.join(", ")}) values (${STREAM_COLUMNS.map(
+export type CreateRecordResult = { status: "created" } | { status: "exists"; record: StreamRecord };
+
+export const INSERT_SQL = `insert into streamsy_streams (${STREAM_COLUMNS.join(", ")}) values (${STREAM_COLUMNS.map(
   () => "?",
 ).join(", ")}) on conflict(stream_id) do nothing`;
 
@@ -22,11 +19,15 @@ export class RecordStore {
   ) {}
 
   async getRecord(): Promise<StreamRecord | null> {
+    return this.getRecordSync();
+  }
+
+  getRecordSync(): StreamRecord | null {
     const row = this.row();
     return row ? rowToRecord(row) : null;
   }
 
-  async createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
+  createRecordSync(record: StreamRecord): CreateRecordResult {
     if (record.id !== this.id) {
       throw new Error(`Record id ${record.id} does not match bound stream ${this.id}`);
     }
@@ -35,7 +36,7 @@ export class RecordStore {
     return { status: "exists", record: rowToRecord(this.requireRow()) };
   }
 
-  async updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
+  updateRecordSync(patch: StreamRecordPatch): StreamRecord {
     const record = rowToRecord(this.requireRow());
     const next: StreamRecord = {
       ...record,
@@ -49,30 +50,12 @@ export class RecordStore {
     return next;
   }
 
-  async deleteRecord(): Promise<void> {
+  deleteRecordSync(): void {
     this.db.run("delete from streamsy_streams where stream_id = ?", [this.id]);
-  }
-
-  async incrementChildRefCount(): Promise<number> {
-    return this.adjustChildRefCount(`child_ref_count + 1`);
-  }
-
-  async decrementChildRefCount(): Promise<number> {
-    return this.adjustChildRefCount(`max(0, child_ref_count - 1)`);
   }
 
   requireRecord(): StreamRecord {
     return rowToRecord(this.requireRow());
-  }
-
-  private adjustChildRefCount(expr: string): number {
-    const row = this.db
-      .query<{ child_ref_count: number }, [StreamId]>(
-        `update streamsy_streams set child_ref_count = ${expr} where stream_id = ? returning child_ref_count`,
-      )
-      .get(this.id);
-    if (!row) throw new Error(`Stream not found: ${this.id}`);
-    return row.child_ref_count;
   }
 
   private row(): StreamRow | null {

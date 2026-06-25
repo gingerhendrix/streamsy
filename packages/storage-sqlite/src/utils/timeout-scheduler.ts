@@ -8,11 +8,17 @@
 export class TimeoutScheduler {
   private timer?: ReturnType<typeof setTimeout>;
 
-  schedule(at: number, callback?: () => Promise<void>): void {
+  constructor(private readonly callback?: () => Promise<void> | void) {}
+
+  schedule(at: number): void {
     this.cancel();
-    if (!callback) return;
+    if (!this.callback) return;
     const delay = Math.max(0, at - Date.now());
-    this.timer = setTimeout(() => void callback(), delay);
+    this.timer = setTimeout(() => {
+      void Promise.resolve(this.callback?.()).catch((error) => {
+        console.error("sqlite expiry callback failed", error);
+      });
+    }, delay);
   }
 
   cancel(): void {

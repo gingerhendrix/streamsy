@@ -21,7 +21,6 @@ export interface StreamRow {
   closed_at: number | null;
   forked_from: string | null;
   fork_offset: string | null;
-  child_ref_count: number;
   soft_deleted: number;
   expires_at_ms: number | null;
 }
@@ -40,7 +39,6 @@ export const STREAM_COLUMNS = [
   "closed_at",
   "forked_from",
   "fork_offset",
-  "child_ref_count",
   "soft_deleted",
   "expires_at_ms",
 ] as const;
@@ -63,7 +61,6 @@ export function recordToRow(record: StreamRecord): StreamColumnValue[] {
     lifecycle.closedAt ?? null,
     lifecycle.forkedFrom ?? null,
     lifecycle.forkOffset ?? null,
-    lifecycle.childRefCount,
     lifecycle.softDeleted ? 1 : 0,
     lifecycle.expiresAtMs ?? null,
   ];
@@ -80,7 +77,6 @@ export function rowToRecord(row: StreamRow): StreamRecord {
       ...(row.expires_at !== null ? { expiresAt: row.expires_at } : {}),
     },
     lifecycle: {
-      childRefCount: row.child_ref_count,
       closed: row.closed === 1,
       softDeleted: row.soft_deleted === 1,
       ...(row.last_seq !== null ? { lastSeq: row.last_seq } : {}),

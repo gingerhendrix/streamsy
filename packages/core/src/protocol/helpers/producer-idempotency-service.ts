@@ -1,7 +1,5 @@
-/** Producer idempotency decisions and narrow bound-state persistence. */
+/** Pure producer idempotency decisions. */
 
-import type { ProducerOptions } from "../../types/protocol.ts";
-import type { NotSupportedResult, StreamProducerStore } from "../../types/factory.ts";
 import type { ProducerState } from "../../types/storage.ts";
 
 export type ProducerValidation =
@@ -58,30 +56,5 @@ export function rejectionToAppendResult(
       };
     case "invalid-epoch-seq":
       return { status: "invalid-epoch-seq" as const };
-  }
-}
-
-export interface ProducerIdempotencyServiceDeps {
-  store: StreamProducerStore;
-}
-
-export class ProducerIdempotencyService {
-  constructor(private deps: ProducerIdempotencyServiceDeps) {}
-
-  load(producerId: string): Promise<ProducerState | undefined> | NotSupportedResult {
-    return this.deps.store.getProducerState(producerId);
-  }
-
-  validate(state: ProducerState | undefined, epoch: number, seq: number): ProducerValidation {
-    return validateProducer(state, epoch, seq);
-  }
-
-  async persistIfAccepted(
-    producer: ProducerOptions | undefined,
-    validation: ProducerValidation | undefined,
-  ): Promise<NotSupportedResult | undefined> {
-    if (!producer || validation?.kind !== "accepted") return undefined;
-    await this.deps.store.setProducerState(producer.producerId, validation.proposedState);
-    return undefined;
   }
 }

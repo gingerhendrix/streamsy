@@ -10,8 +10,8 @@
  * This file only declares types/results.
  */
 import type {
-  CreateStreamRecordResult,
   ListMessagesOptions,
+  Offset,
   ProducerState,
   StoredMessage,
   StreamEventType,
@@ -22,37 +22,77 @@ import type {
   WaitForEventResult,
 } from "./storage.ts";
 
-/** Bound record store: every method targets the single stream this store represents. */
-export interface StreamRecordStore {
+// Read surface used by core to build plans and serve reads.
+export interface StreamReader {
   getRecord(): Promise<StreamRecord | null>;
-  createRecord(record: StreamRecord): Promise<CreateStreamRecordResult>;
-  updateRecord(patch: StreamRecordPatch): Promise<StreamRecord>;
-  deleteRecord(): Promise<void>;
-}
-
-/** Bound message store for a single stream. */
-export interface StreamMessageStore {
-  appendMessages(messages: StoredMessage[]): Promise<void>;
   listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]>;
-  deleteMessages(): Promise<void>;
-}
-
-/** Bound producer-state store for a single stream. */
-export interface StreamProducerStore {
   getProducerState(producerId: string): Promise<ProducerState | undefined>;
-  setProducerState(producerId: string, state: ProducerState): Promise<void>;
-  deleteProducerStates(): Promise<void>;
 }
 
-/** Bound parent/child reference tracker for a single stream. */
-export interface StreamReferenceTracker {
-  incrementChildRefCount(): Promise<number>;
-  decrementChildRefCount(): Promise<number>;
+export interface AfterCommitEffects {
+  notify?: StreamEventType;
+  scheduleExpiryAt?: number;
+  cancelExpiry?: boolean;
 }
 
-/** Per-stream mutation coordinator (lock-like). */
-export interface StreamMutationCoordinator {
-  withMutationLock<T>(fn: () => Promise<T>): Promise<T>;
+export interface MutationPlan {
+  createRecord?: StreamRecord;
+  preconditions: {
+    expectedOffset?: Offset;
+    expectedClosed?: boolean;
+    producer?: {
+      producerId: string;
+      expected?: ProducerState;
+      next: ProducerState;
+    };
+  };
+  appendMessages?: StoredMessage[];
+  recordPatch?: StreamRecordPatch;
+  afterCommit?: AfterCommitEffects;
+}
+
+export type CommitResult =
+  | { status: "committed"; record: StreamRecord }
+  | { status: "precondition-failed"; record: StreamRecord | null };
+
+export interface CreatePlan {
+  record: StreamRecord;
+  initialMessages?: StoredMessage[];
+  closeAfter?: boolean;
+  afterCommit?: AfterCommitEffects;
+}
+
+export type CreateCommit =
+  | { status: "created"; record: StreamRecord }
+  | { status: "exists"; record: StreamRecord };
+
+export interface ForkPlan {
+  child: StreamRecord;
+  sourceId: StreamId;
+  initialMessages?: StoredMessage[];
+  precondition: { sourceLiveAtOffset: Offset };
+  afterCommit?: AfterCommitEffects;
+}
+
+export type ForkCommit =
+  | { status: "created"; record: StreamRecord }
+  | { status: "exists" }
+  | { status: "fork-source-gone" };
+
+export interface DeletePlan {
+  streamId: StreamId;
+  reason: "delete" | "expiry";
+  afterCommit?: AfterCommitEffects;
+}
+
+export type DeleteCommit =
+  | { status: "purged" }
+  | { status: "retained-soft-deleted" }
+  | { status: "not-found" }
+  | { status: "gone" };
+
+export interface StreamMutator {
+  commit(plan: MutationPlan): Promise<CommitResult>;
 }
 
 /** Per-stream live-read notification hub. */
@@ -63,7 +103,7 @@ export interface StreamEventHub {
 
 /** Per-stream active expiry scheduler. */
 export interface StreamExpiryScheduler {
-  scheduleExpiry(at: number, callback?: () => Promise<void>): Promise<void> | void;
+  scheduleExpiry(at: number): Promise<void> | void;
   cancelExpiry(): Promise<void> | void;
 }
 
@@ -72,15 +112,7 @@ export interface StreamExpiryScheduler {
  * all protocol storage behavior as direct methods. Adapter-private store
  * composition must stay behind this object.
  */
-export interface Stream
-  extends
-    StreamRecordStore,
-    StreamMessageStore,
-    StreamProducerStore,
-    StreamReferenceTracker,
-    StreamMutationCoordinator,
-    StreamEventHub,
-    StreamExpiryScheduler {
+export interface Stream extends StreamReader, StreamMutator, StreamEventHub, StreamExpiryScheduler {
   readonly id: StreamId;
 }
 
@@ -91,6 +123,9 @@ export interface Stream
  */
 export interface StreamFactory {
   getStream(streamId: StreamId): Promise<Stream>;
+  create(plan: CreatePlan): Promise<CreateCommit>;
+  fork?(plan: ForkPlan): Promise<ForkCommit>;
+  delete(plan: DeletePlan): Promise<DeleteCommit>;
 }
 
 /**

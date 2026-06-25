@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { HttpHandler, StreamProtocol } from "../../index.ts";
 import { createMemoryStreamFactory } from "../../storage/memory/factory.ts";
 
+function append(handler: HttpHandler, body: string, expectedOffset?: string) {
+  return handler.fetch(
+    new Request("http://x/s", {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        ...(expectedOffset !== undefined ? { "stream-expected-offset": expectedOffset } : {}),
+      },
+      body,
+    }),
+  );
+}
+
 describe("HTTP services with bound protocol streams", () => {
   it("resolves streams through protocol get for existing-stream operations", async () => {
     const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
@@ -35,19 +48,6 @@ describe("append expectedOffset over HTTP (Streamsy extension)", () => {
     );
     expect(put.status).toBe(201);
     return handler;
-  }
-
-  function append(handler: HttpHandler, body: string, expectedOffset?: string) {
-    return handler.fetch(
-      new Request("http://x/s", {
-        method: "POST",
-        headers: {
-          "content-type": "text/plain",
-          ...(expectedOffset !== undefined ? { "stream-expected-offset": expectedOffset } : {}),
-        },
-        body,
-      }),
-    );
   }
 
   it("appends when the stream-expected-offset header matches the tail", async () => {

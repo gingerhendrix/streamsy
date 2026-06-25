@@ -34,6 +34,24 @@ interface MutationResult {
   comment?: { id: string };
 }
 
+function probeEvent(suffix: string) {
+  return {
+    type: "project",
+    key: `proj_probe_${suffix}`,
+    value: {
+      id: `proj_probe_${suffix}`,
+      name: `Probe ${suffix}`,
+      description: "expectedOffset probe",
+      createdAt: new Date().toISOString(),
+    },
+    headers: {
+      operation: "upsert",
+      txid: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
 async function postJson(
   path: string,
   body: unknown,
@@ -274,22 +292,6 @@ try {
   }
 
   // === 7. Direct CAS conflict probe over HTTP ===
-
-  const probeEvent = (suffix: string) => ({
-    type: "project",
-    key: `proj_probe_${suffix}`,
-    value: {
-      id: `proj_probe_${suffix}`,
-      name: `Probe ${suffix}`,
-      description: "expectedOffset probe",
-      createdAt: new Date().toISOString(),
-    },
-    headers: {
-      operation: "upsert",
-      txid: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-    },
-  });
 
   const { head } = await readStream(mainStreamUrl);
   const casMatch = await fetch(mainStreamUrl, {

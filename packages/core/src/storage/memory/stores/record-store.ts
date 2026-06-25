@@ -1,10 +1,7 @@
-import type {
-  CreateStreamRecordResult,
-  StreamId,
-  StreamRecord,
-  StreamRecordPatch,
-} from "../../../types/storage.ts";
+import type { StreamId, StreamRecord, StreamRecordPatch } from "../../../types/storage.ts";
 import { clone } from "../lib/clone.ts";
+
+export type CreateRecordResult = { status: "created" } | { status: "exists"; record: StreamRecord };
 
 export class RecordStore {
   private record?: StreamRecord;
@@ -12,10 +9,14 @@ export class RecordStore {
   constructor(readonly id: StreamId) {}
 
   async getRecord(): Promise<StreamRecord | null> {
+    return this.getRecordSync();
+  }
+
+  getRecordSync(): StreamRecord | null {
     return clone(this.record ?? null);
   }
 
-  async createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
+  createRecordSync(record: StreamRecord): CreateRecordResult {
     if (record.id !== this.id) {
       throw new Error(`Record id ${record.id} does not match bound stream ${this.id}`);
     }
@@ -24,7 +25,7 @@ export class RecordStore {
     return { status: "created" };
   }
 
-  async updateRecord(patch: StreamRecordPatch): Promise<StreamRecord> {
+  updateRecordSync(patch: StreamRecordPatch): StreamRecord {
     const record = this.requireRecord();
     this.record = {
       ...record,
@@ -36,39 +37,12 @@ export class RecordStore {
     return clone(this.record);
   }
 
-  async deleteRecord(): Promise<void> {
+  deleteRecordSync(): void {
     this.record = undefined;
-  }
-
-  async incrementChildRefCount(): Promise<number> {
-    const updated = this.updateStoredRecord((record) => {
-      const next = record.lifecycle.childRefCount + 1;
-      return {
-        ...record,
-        lifecycle: { ...record.lifecycle, childRefCount: next },
-      };
-    });
-    return updated.lifecycle.childRefCount;
-  }
-
-  async decrementChildRefCount(): Promise<number> {
-    const updated = this.updateStoredRecord((record) => {
-      const next = Math.max(0, record.lifecycle.childRefCount - 1);
-      return {
-        ...record,
-        lifecycle: { ...record.lifecycle, childRefCount: next },
-      };
-    });
-    return updated.lifecycle.childRefCount;
   }
 
   requireRecord(): StreamRecord {
     if (!this.record) throw new Error(`Stream not found: ${this.id}`);
-    return this.record;
-  }
-
-  private updateStoredRecord(update: (record: StreamRecord) => StreamRecord): StreamRecord {
-    this.record = update(this.requireRecord());
     return this.record;
   }
 }

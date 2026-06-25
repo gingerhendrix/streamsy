@@ -30,7 +30,6 @@ function makeRecord(
       createdAt: 0,
     },
     lifecycle: {
-      childRefCount: 0,
       forkedFrom: overrides.forkedFrom,
       forkOffset: overrides.forkOffset,
       closed: overrides.closed,

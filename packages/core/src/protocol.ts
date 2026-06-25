@@ -1,39 +1,42 @@
 /** Core-owned durable streams protocol and lifecycle policy. */
 
 import type {
-  StreamProtocolFactory,
-  ProtocolStream as ProtocolStreamApi,
-  ProtocolGetResult,
-  CreateOptions,
-  CreateResult,
-  CreateOutcome,
   AppendOptions,
   AppendResult,
-  ReadOptions,
-  ReadResult,
+  CreateOptions,
+  CreateOutcome,
+  CreateResult,
+  DeleteResult,
+  MetadataResult,
+  ProtocolGetResult,
+  ProtocolStream as ProtocolStreamApi,
   ReadLiveOptions,
   ReadLiveResult,
-  MetadataResult,
-  DeleteResult,
+  ReadOptions,
+  ReadResult,
+  StreamProtocolFactory,
 } from "./types/protocol.ts";
 import type { Stream, StreamFactory } from "./types/factory.ts";
+import { notSupported } from "./types/factory.ts";
 import type { Clock } from "./types/storage.ts";
 import { systemClock } from "./protocol/helpers/clock.ts";
-import { ProducerIdempotencyService } from "./protocol/helpers/producer-idempotency-service.ts";
 import { AppendService } from "./protocol/append-service.ts";
 import { ReadService } from "./protocol/read-service.ts";
 import { LiveReadService } from "./protocol/live-read-service.ts";
 import { ExpiryPolicy } from "./protocol/helpers/expiry-policy.ts";
 import { CreateStreamService } from "./protocol/create-stream-service.ts";
-import { ForkService } from "./protocol/helpers/fork-service.ts";
-import { StreamGcService } from "./protocol/helpers/stream-gc-service.ts";
+import { ForkPlanBuilder } from "./protocol/helpers/fork-plan-builder.ts";
 import { StreamMessageReader } from "./protocol/storage/stream-message-reader.ts";
-import { StreamMessageWriter } from "./protocol/storage/stream-message-writer.ts";
 import { StreamRecordFactory } from "./protocol/storage/stream-record-factory.ts";
+import { compareOffsets, ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
+import { runAfterCommit } from "./protocol/helpers/after-commit-effects.ts";
 
 export { ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
 
 const LONG_POLL_TIMEOUT_MS = 1_500;
+const MAX_COMMIT_ATTEMPTS = 8;
+const MAX_NO_PROGRESS_ATTEMPTS = 8;
+type DeleteStatus = "purged" | "retained-soft-deleted" | "not-found" | "gone";
 
 export interface StreamProtocolOptions {
   clock?: Clock;
@@ -50,15 +53,26 @@ export function createStreamProtocol(deps: StreamProtocolDeps): StreamProtocolFa
   return new StreamProtocol(deps);
 }
 
+async function runDeleteEffects(status: DeleteStatus, storage: Stream): Promise<void> {
+  if (status === "purged") await runAfterCommit({ cancelExpiry: true, notify: "deleted" }, storage);
+  else if (status === "retained-soft-deleted")
+    await runAfterCommit({ notify: "soft-deleted" }, storage);
+}
+
+function mapDelete(status: DeleteStatus): DeleteResult {
+  if (status === "not-found") return { status: "not-found" };
+  if (status === "gone") return { status: "gone" };
+  return { status: "ok" };
+}
+
 interface ProtocolStreamDeps {
   storage: Stream;
+  factory: StreamFactory;
   clock: Clock;
   longPollTimeoutMs: number;
   expiryPolicy: ExpiryPolicy;
-  gcService: StreamGcService;
   recordFactory: StreamRecordFactory;
   resolveStorageStream: (streamId: string) => Promise<Stream>;
-  withStreamMutationLock: <T>(storage: Stream, fn: () => Promise<T>) => Promise<T>;
 }
 
 export class ProtocolStream implements ProtocolStreamApi {
@@ -67,27 +81,16 @@ export class ProtocolStream implements ProtocolStreamApi {
   private readService: ReadService;
   private liveReadService: LiveReadService;
   private createService: CreateStreamService;
+  private forkPlanBuilder: ForkPlanBuilder;
 
   constructor(private deps: ProtocolStreamDeps) {
     this.id = deps.storage.id;
-    const producerIdempotency = new ProducerIdempotencyService({ store: deps.storage });
-    const messageWriter = new StreamMessageWriter({
-      stream: deps.storage,
-      clock: deps.clock,
-      expiryPolicy: deps.expiryPolicy,
-    });
     const messageReader = new StreamMessageReader({
       stream: deps.storage,
       resolve: deps.resolveStorageStream,
       expiryPolicy: deps.expiryPolicy,
     });
-    this.appendService = new AppendService({
-      producerIdempotency,
-      mutators: {
-        appendMessages: (record, data, seq) => messageWriter.appendMessages(record, data, seq),
-        closeRecord: (record, data, seq) => messageWriter.closeRecord(record, data, seq),
-      },
-    });
+    this.appendService = new AppendService({ clock: deps.clock });
     this.readService = new ReadService({
       readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
     });
@@ -97,45 +100,74 @@ export class ProtocolStream implements ProtocolStreamApi {
       longPollTimeoutMs: deps.longPollTimeoutMs,
       readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
       readOwn: (after) => messageReader.readOwn(after),
-      touch: (record) => deps.expiryPolicy.touch(deps.storage, record, "live-read"),
-    });
-    const forkService = new ForkService({
-      resolve: deps.resolveStorageStream,
-      mutators: {
-        expireIfNeeded: async (stream) => {
-          await deps.expiryPolicy.expireIfNeeded(stream);
-        },
-        newRecord: (stream, contentType, opts, fork) =>
-          deps.recordFactory.newRecord(stream.id, contentType, opts, fork),
-        scheduleExpiry: (record) => deps.expiryPolicy.scheduleExpiry(record),
-        appendMessages: (record, data) => messageWriter.appendMessages(record, data),
-      },
     });
     this.createService = new CreateStreamService({
-      store: deps.storage,
-      mutators: {
-        newRecord: (contentType, opts) =>
-          deps.recordFactory.newRecord(deps.storage.id, contentType, opts, undefined),
-        scheduleExpiry: (record) => deps.expiryPolicy.scheduleExpiry(record),
-        appendMessages: (record, data) => messageWriter.appendMessages(record, data),
-        closeRecord: (record, data) => messageWriter.closeRecord(record, data),
-        createFork: (opts) => forkService.execute(deps.storage, opts),
-      },
+      clock: deps.clock,
+      newRecord: (contentType, opts) =>
+        deps.recordFactory.newRecord(deps.storage.id, contentType, opts, undefined),
+    });
+    this.forkPlanBuilder = new ForkPlanBuilder({
+      clock: deps.clock,
+      newRecord: (streamId, contentType, opts, fork) =>
+        deps.recordFactory.newRecord(streamId, contentType, opts, fork),
     });
   }
 
   async create(options: CreateOptions): Promise<CreateOutcome> {
-    return this.deps.withStreamMutationLock(this.deps.storage, async () => {
-      const record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
-      return this.createService.execute(record, options);
-    });
+    const record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
+    const decision = this.createService.plan(record, options);
+    if (decision.kind === "terminal") return decision.result;
+
+    if (decision.kind === "fork") return this.createFork(options);
+
+    const commit = await this.deps.factory.create(decision.plan);
+    if (commit.status === "exists")
+      return this.createService.resultForExisting(commit.record, options);
+
+    await runAfterCommit(decision.plan.afterCommit, this.deps.storage);
+    return decision.toResult(commit.record);
   }
 
   async append(options: AppendOptions): Promise<AppendResult> {
-    return this.deps.withStreamMutationLock(this.deps.storage, async () => {
-      const record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
-      return this.appendService.execute(record, options);
-    });
+    let lastRecord = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
+    let noProgressAttempts = 0;
+    let attempt = 0;
+    const hasUserExpectedOffset = options.expectedOffset !== undefined;
+
+    while (true) {
+      const producerState = options.producer
+        ? await this.deps.storage.getProducerState(options.producer.producerId)
+        : undefined;
+      const decision = this.appendService.plan(lastRecord, options, producerState);
+      if (decision.kind === "terminal") return decision.result;
+
+      const out = await this.deps.storage.commit(decision.plan);
+      if (out.status === "committed") {
+        await runAfterCommit(decision.plan.afterCommit, this.deps.storage);
+        return decision.toResult(out.record);
+      }
+
+      lastRecord = out.record;
+      if (lastRecord === null) return { status: "not-found" };
+
+      if (hasUserExpectedOffset) {
+        attempt++;
+        if (attempt >= MAX_COMMIT_ATTEMPTS) {
+          return {
+            status: "conflict",
+            conflictReason: "expected-offset",
+            offset: lastRecord.currentOffset,
+          };
+        }
+      } else {
+        const previousOffset = decision.plan.preconditions.expectedOffset ?? ZERO_OFFSET;
+        const madeProgress = compareOffsets(lastRecord.currentOffset, previousOffset) > 0;
+        noProgressAttempts = madeProgress ? 0 : noProgressAttempts + 1;
+        if (noProgressAttempts >= MAX_NO_PROGRESS_ATTEMPTS) return { status: "busy" };
+      }
+
+      await Promise.resolve();
+    }
   }
 
   async read(options: ReadOptions): Promise<ReadResult> {
@@ -164,7 +196,42 @@ export class ProtocolStream implements ProtocolStreamApi {
 
   async delete(): Promise<DeleteResult> {
     await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
-    return this.deps.gcService.deleteStream(this.deps.storage);
+    const commit = await this.deps.factory.delete({ streamId: this.id, reason: "delete" });
+    await runDeleteEffects(commit.status, this.deps.storage);
+    return mapDelete(commit.status);
+  }
+
+  private async createFork(options: CreateOptions): Promise<CreateOutcome> {
+    const fork = this.deps.factory.fork;
+    if (!fork) return notSupported("fork");
+
+    const sourceId = options.forkedFrom!;
+    const sourceStream = await this.deps.resolveStorageStream(sourceId);
+    const source = await this.deps.expiryPolicy.expireIfNeeded(sourceStream);
+    const decision = this.forkPlanBuilder.build(this.id, sourceId, source, options);
+    if (decision.kind === "terminal") return decision.result;
+
+    const commit = await fork.call(this.deps.factory, decision.plan);
+    if (commit.status === "exists") {
+      return {
+        status: "conflict",
+        nextOffset: "",
+        contentType: "",
+        conflictReason: "config-mismatch",
+        errorMessage: `Stream already exists: ${this.id}`,
+      };
+    }
+    if (commit.status === "fork-source-gone") {
+      return {
+        status: "not-found",
+        nextOffset: "",
+        contentType: "",
+        errorMessage: `Source stream not found: ${sourceId}`,
+      };
+    }
+
+    await runAfterCommit(decision.plan.afterCommit, this.deps.storage);
+    return decision.toResult(commit.record);
   }
 }
 
@@ -172,7 +239,6 @@ export class StreamProtocol implements StreamProtocolFactory {
   private clock: Clock;
   private longPollTimeoutMs: number;
   private expiryPolicy: ExpiryPolicy;
-  private gcService: StreamGcService;
   private recordFactory: StreamRecordFactory;
 
   constructor(private deps: StreamProtocolDeps) {
@@ -182,12 +248,6 @@ export class StreamProtocol implements StreamProtocolFactory {
       resolve: (id) => this.storageStream(id),
       clock: this.clock,
       onScheduledExpiry: (id) => this.handleScheduledExpiry(id),
-    });
-    this.gcService = new StreamGcService({
-      resolve: (id) => this.storageStream(id),
-      mutators: {
-        isExpired: (record) => this.expiryPolicy.isExpired(record),
-      },
     });
     this.recordFactory = new StreamRecordFactory({
       clock: this.clock,
@@ -213,29 +273,28 @@ export class StreamProtocol implements StreamProtocolFactory {
     return { status: "ok", stream: this.boundProtocolStream(storage) };
   }
 
-  /** Called by adapter schedulers/alarms; core decides soft-delete vs purge. */
+  /** Called by adapter schedulers/alarms; core decides whether expiry applies. */
   async handleScheduledExpiry(streamId: string): Promise<void> {
-    return this.gcService.handleScheduledExpiry(streamId);
+    const storage = await this.storageStream(streamId);
+    const record = await storage.getRecord();
+    if (!record || !this.expiryPolicy.isExpired(record)) return;
+    const commit = await this.deps.storage.factory.delete({ streamId, reason: "expiry" });
+    await runDeleteEffects(commit.status, storage);
   }
 
   private boundProtocolStream(storage: Stream): ProtocolStream {
     return new ProtocolStream({
       storage,
+      factory: this.deps.storage.factory,
       clock: this.clock,
       longPollTimeoutMs: this.longPollTimeoutMs,
       expiryPolicy: this.expiryPolicy,
-      gcService: this.gcService,
       recordFactory: this.recordFactory,
       resolveStorageStream: (id) => this.storageStream(id),
-      withStreamMutationLock: (stream, fn) => this.withStreamMutationLock(stream, fn),
     });
   }
 
   private async storageStream(streamId: string): Promise<Stream> {
     return this.deps.storage.factory.getStream(streamId);
-  }
-
-  private async withStreamMutationLock<T>(storage: Stream, fn: () => Promise<T>): Promise<T> {
-    return storage.withMutationLock(fn);
   }
 }

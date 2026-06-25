@@ -13,7 +13,7 @@
  *   without parameter stripping.
  * - Invalid JSON propagates the underlying `JSON.parse` error.
  *
- * Used by `AppendService`, `CreateStreamService`, and `ForkService` before
+ * Used by `AppendService`, `CreateStreamService`, and `ForkPlanBuilder` before
  * incoming request bodies are persisted as stored messages.
  */
 

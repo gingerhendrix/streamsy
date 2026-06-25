@@ -1,12 +1,8 @@
-import type {
-  CreateStreamRecordResult,
-  StreamId,
-  StreamRecord,
-  StreamRecordPatch,
-} from "@streamsy/core";
+import type { StreamId, StreamRecord, StreamRecordPatch } from "@streamsy/core";
 import { RECORD_KEY } from "../lib/keys.ts";
 
 type DurableObjectKv = DurableObjectStorage["kv"];
+export type CreateRecordResult = { status: "created" } | { status: "exists"; record: StreamRecord };
 
 export class RecordStore {
   constructor(
@@ -18,7 +14,7 @@ export class RecordStore {
     return this.kv.get<StreamRecord>(RECORD_KEY) ?? null;
   }
 
-  async createRecord(record: StreamRecord): Promise<CreateStreamRecordResult> {
+  async createRecord(record: StreamRecord): Promise<CreateRecordResult> {
     const id = await this.getId();
     if (record.id !== id) {
       throw new Error(`Record id ${record.id} does not match bound stream ${id}`);
@@ -44,20 +40,6 @@ export class RecordStore {
 
   async deleteRecord(): Promise<void> {
     this.kv.delete(RECORD_KEY);
-  }
-
-  async incrementChildRefCount(): Promise<number> {
-    const record = await this.requireRecord();
-    const next = record.lifecycle.childRefCount + 1;
-    await this.updateRecord({ lifecycle: { childRefCount: next } });
-    return next;
-  }
-
-  async decrementChildRefCount(): Promise<number> {
-    const record = await this.requireRecord();
-    const next = Math.max(0, record.lifecycle.childRefCount - 1);
-    await this.updateRecord({ lifecycle: { childRefCount: next } });
-    return next;
   }
 
   async requireRecord(): Promise<StreamRecord> {

@@ -155,6 +155,7 @@ export type AppendResult =
       offset: string;
     }
   | { status: "conflict"; conflictReason: "content-type" | "sequence" }
+  | { status: "busy" }
   | { status: "stale-epoch"; currentEpoch: number }
   | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
   | { status: "invalid-epoch-seq" }

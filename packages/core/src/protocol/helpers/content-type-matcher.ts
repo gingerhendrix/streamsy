@@ -10,7 +10,7 @@
  *
  * Used by `AppendService` for append content-type conflicts, by
  * `CreateStreamService` via `configMatches` for idempotent create checks, and
- * by `ForkService` for fork content-type compatibility.
+ * by `ForkPlanBuilder` for fork content-type compatibility.
  */
 
 export function normalizeContentType(ct: string): string {

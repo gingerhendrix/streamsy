@@ -1,7 +1,5 @@
 import type { Database } from "bun:sqlite";
 import type { ListMessagesOptions, StoredMessage, StreamId } from "@streamsy/core";
-import type { RecordStore } from "./record-store.ts";
-
 interface MessageRow {
   offset: string;
   timestamp: number;
@@ -12,21 +10,16 @@ export class MessageStore {
   constructor(
     private readonly db: Database,
     private readonly id: StreamId,
-    private readonly records: RecordStore,
   ) {}
 
-  async appendMessages(messages: StoredMessage[]): Promise<void> {
-    this.records.requireRecord();
+  appendMessagesSync(messages: StoredMessage[]): void {
     if (messages.length === 0) return;
     const insert = this.db.query(
       "insert into streamsy_messages (stream_id, offset, timestamp, data) values (?, ?, ?, ?)",
     );
-    const run = this.db.transaction((batch: StoredMessage[]) => {
-      for (const message of batch) {
-        insert.run(this.id, message.offset, message.timestamp, message.data);
-      }
-    });
-    run(messages);
+    for (const message of messages) {
+      insert.run(this.id, message.offset, message.timestamp, message.data);
+    }
   }
 
   async listMessages(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
@@ -55,7 +48,7 @@ export class MessageStore {
     }));
   }
 
-  async deleteMessages(): Promise<void> {
+  deleteMessagesSync(): void {
     this.db.run("delete from streamsy_messages where stream_id = ?", [this.id]);
   }
 }

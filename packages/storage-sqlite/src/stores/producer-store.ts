@@ -1,7 +1,5 @@
 import type { Database } from "bun:sqlite";
 import type { ProducerState, StreamId } from "@streamsy/core";
-import type { RecordStore } from "./record-store.ts";
-
 interface ProducerRow {
   epoch: number;
   last_seq: number;
@@ -11,10 +9,13 @@ export class ProducerStore {
   constructor(
     private readonly db: Database,
     private readonly id: StreamId,
-    private readonly records: RecordStore,
   ) {}
 
   async getProducerState(producerId: string): Promise<ProducerState | undefined> {
+    return this.getProducerStateSync(producerId);
+  }
+
+  getProducerStateSync(producerId: string): ProducerState | undefined {
     const row = this.db
       .query<ProducerRow, [StreamId, string]>(
         "select epoch, last_seq from streamsy_producers where stream_id = ? and producer_id = ?",
@@ -23,8 +24,7 @@ export class ProducerStore {
     return row ? { epoch: row.epoch, lastSeq: row.last_seq } : undefined;
   }
 
-  async setProducerState(producerId: string, state: ProducerState): Promise<void> {
-    this.records.requireRecord();
+  setProducerStateSync(producerId: string, state: ProducerState): void {
     this.db.run(
       `insert into streamsy_producers (stream_id, producer_id, epoch, last_seq)
        values (?, ?, ?, ?)
@@ -34,7 +34,7 @@ export class ProducerStore {
     );
   }
 
-  async deleteProducerStates(): Promise<void> {
+  deleteProducerStatesSync(): void {
     this.db.run("delete from streamsy_producers where stream_id = ?", [this.id]);
   }
 }

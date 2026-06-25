@@ -48,7 +48,6 @@ export type {
   StreamLifecycleState,
   StreamRecord,
   StreamRecordPatch,
-  CreateStreamRecordResult,
   StoredMessage,
   ProducerState,
   ListMessagesOptions,
@@ -61,12 +60,28 @@ export type {
 export type {
   Stream,
   StreamFactory,
-  StreamRecordStore,
-  StreamMessageStore,
-  StreamProducerStore,
-  StreamReferenceTracker,
-  StreamMutationCoordinator,
+  StreamReader,
+  StreamMutator,
   StreamEventHub,
   StreamExpiryScheduler,
+  AfterCommitEffects,
+  MutationPlan,
+  CommitResult,
+  CreatePlan,
+  CreateCommit,
+  ForkPlan,
+  ForkCommit,
+  DeletePlan,
+  DeleteCommit,
   NotSupportedResult,
 } from "./types/factory.ts";
+
+export {
+  cascadeReclaim,
+  copyOnForkReclaim,
+  plainPurge,
+  refCountLineage,
+  reverseIndexLineage,
+  ttlOnlyReclaim,
+} from "./storage/strategies/index.ts";
+export type { DependentsQuery, LineagePolicy, LineageStore } from "./storage/strategies/index.ts";

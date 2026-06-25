@@ -1,8 +1,9 @@
 /**
  * Simplified storage boundary for Streamsy.
  *
- * Adapters persist facts and may provide runtime capabilities (locks,
- * notification, expiration scheduling). Protocol/lifecycle policy lives in core.
+ * Adapters persist facts and may provide runtime capabilities (notification,
+ * expiration scheduling). Atomic mutation is expressed through commit plans and
+ * factory lifecycle verbs; protocol/lifecycle policy lives in core.
  */
 export type StreamId = string;
 export type Offset = string;
@@ -26,7 +27,6 @@ export interface StreamLifecycleState {
   closedAt?: number;
   forkedFrom?: StreamId;
   forkOffset?: Offset;
-  childRefCount: number;
   softDeleted?: boolean;
   /**
    * Effective expiration deadline in epoch ms. Core updates this on create
@@ -50,10 +50,6 @@ export interface StreamRecordPatch {
   currentOffset?: Offset;
   counter?: number;
 }
-
-export type CreateStreamRecordResult =
-  | { status: "created" }
-  | { status: "exists"; record: StreamRecord };
 
 export interface ProducerState {
   epoch: number;

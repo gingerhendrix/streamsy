@@ -8,15 +8,19 @@ export class ProducerStore {
   constructor(private readonly records: RecordStore) {}
 
   async getProducerState(producerId: string): Promise<ProducerState | undefined> {
+    return this.getProducerStateSync(producerId);
+  }
+
+  getProducerStateSync(producerId: string): ProducerState | undefined {
     return clone(this.producers.get(producerId));
   }
 
-  async setProducerState(producerId: string, producerState: ProducerState): Promise<void> {
+  setProducerStateSync(producerId: string, producerState: ProducerState): void {
     this.records.requireRecord();
     this.producers.set(producerId, clone(producerState));
   }
 
-  async deleteProducerStates(): Promise<void> {
+  deleteProducerStatesSync(): void {
     this.producers.clear();
   }
 }

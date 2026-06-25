@@ -1,66 +1,63 @@
-/** Create-side orchestration for one storage-bound stream. */
+/** Create-side plan building for one storage-bound stream snapshot. */
 
+import type { CreatePlan } from "../types/factory.ts";
 import type { CreateOptions, CreateOutcome } from "../types/protocol.ts";
-import type { CreateStreamRecordResult, StreamRecord } from "../types/storage.ts";
+import type { Clock, StoredMessage, StreamRecord } from "../types/storage.ts";
 import { configMatches } from "./helpers/create-config-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
+import { allocate as allocateOffsets } from "./helpers/offset-generator.ts";
 
-/** Narrow record-store view the create service depends on. */
-export interface CreateStreamStore {
-  getRecord(): Promise<StreamRecord | null>;
-  createRecord(record: StreamRecord): Promise<CreateStreamRecordResult>;
-}
-
-export interface CreateStreamMutators {
-  newRecord(contentType: string, options: CreateOptions): StreamRecord;
-  scheduleExpiry(record: StreamRecord): Promise<void>;
-  appendMessages(record: StreamRecord, data: Uint8Array[]): Promise<string>;
-  closeRecord(record: StreamRecord, data: Uint8Array[]): Promise<string>;
-  createFork(options: CreateOptions): Promise<CreateOutcome>;
-}
+export type CreateDecision =
+  | { kind: "terminal"; result: CreateOutcome }
+  | { kind: "create"; plan: CreatePlan; toResult: (record: StreamRecord) => CreateOutcome }
+  | { kind: "fork" };
 
 export interface CreateStreamServiceDeps {
-  store: CreateStreamStore;
-  mutators: CreateStreamMutators;
+  clock: Clock;
+  newRecord(contentType: string, options: CreateOptions): StreamRecord;
 }
 
 export class CreateStreamService {
   constructor(private deps: CreateStreamServiceDeps) {}
 
-  async execute(record: StreamRecord | null, options: CreateOptions): Promise<CreateOutcome> {
-    if (record) return this.resultForExisting(record, options);
-    if (options.forkedFrom) return this.deps.mutators.createFork(options);
+  plan(record: StreamRecord | null, options: CreateOptions): CreateDecision {
+    if (record) return { kind: "terminal", result: this.resultForExisting(record, options) };
+    if (options.forkedFrom) return { kind: "fork" };
 
     const contentType = options.contentType ?? "application/octet-stream";
-    const initialMessages = options.initialData
-      ? frameMessages(options.initialData, contentType)
-      : [];
+    const initialMessages = this.initialMessages(options.initialData, contentType, 0);
     const wantClosed = options.closed === true;
-
-    const newRecord = this.deps.mutators.newRecord(contentType, options);
-    const createResult = await this.deps.store.createRecord(newRecord);
-    if (createResult.status === "exists")
-      return this.resultForExisting(createResult.record, options);
-    await this.deps.mutators.scheduleExpiry(newRecord);
-
-    let final = newRecord.currentOffset;
-    if (initialMessages.length > 0) {
-      final = await this.deps.mutators.appendMessages(newRecord, initialMessages);
-    }
-    if (wantClosed) {
-      const latest = (await this.deps.store.getRecord()) ?? newRecord;
-      final = await this.deps.mutators.closeRecord(latest, []);
-    }
+    const newRecord = this.deps.newRecord(contentType, options);
+    const finalRecord = this.withInitialTail(newRecord, initialMessages, wantClosed);
+    const plan: CreatePlan = {
+      record: finalRecord,
+      initialMessages,
+      closeAfter: wantClosed,
+      afterCommit: {
+        ...(finalRecord.lifecycle.expiresAtMs !== undefined
+          ? { scheduleExpiryAt: finalRecord.lifecycle.expiresAtMs }
+          : {}),
+        ...(wantClosed
+          ? { notify: "closed" as const }
+          : initialMessages.length > 0
+            ? { notify: "message" as const }
+            : {}),
+      },
+    };
 
     return {
-      status: "created",
-      nextOffset: final,
-      contentType,
-      closed: wantClosed,
+      kind: "create",
+      plan,
+      toResult: (created) => ({
+        status: "created",
+        nextOffset: created.currentOffset,
+        contentType,
+        closed: wantClosed,
+      }),
     };
   }
 
-  private resultForExisting(existing: StreamRecord, options: CreateOptions): CreateOutcome {
+  resultForExisting(existing: StreamRecord, options: CreateOptions): CreateOutcome {
     if (existing.lifecycle.softDeleted) {
       return {
         status: "conflict",
@@ -82,6 +79,38 @@ export class CreateStreamService {
       nextOffset: existing.currentOffset,
       contentType: existing.config.contentType,
       closed: existing.lifecycle.closed === true,
+    };
+  }
+
+  private initialMessages(
+    initialData: Uint8Array | undefined,
+    contentType: string,
+    startCounter: number,
+  ): StoredMessage[] {
+    const framed = initialData ? frameMessages(initialData, contentType) : [];
+    const allocation = allocateOffsets(startCounter, framed.length);
+    const now = this.deps.clock.now();
+    return framed.map((data, i) => ({
+      data,
+      offset: allocation.offsets[i]!,
+      timestamp: now,
+    }));
+  }
+
+  private withInitialTail(
+    record: StreamRecord,
+    initialMessages: StoredMessage[],
+    closed: boolean,
+  ): StreamRecord {
+    const allocation = allocateOffsets(record.counter, initialMessages.length);
+    return {
+      ...record,
+      currentOffset: allocation.nextOffset,
+      counter: allocation.endCounter,
+      lifecycle: {
+        ...record.lifecycle,
+        ...(closed ? { closed: true, closedAt: this.deps.clock.now() } : {}),
+      },
     };
   }
 }

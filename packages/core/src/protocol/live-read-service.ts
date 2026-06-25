@@ -22,12 +22,9 @@ export type LiveReadOwn = (
   after?: Offset,
 ) => Promise<{ messages: StoredMessage[]; nextOffset: string }>;
 
-export type LiveReadTouch = (record: StreamRecord) => Promise<void>;
-
 export interface LiveReadDeps {
   readChain: LiveReadChain;
   readOwn: LiveReadOwn;
-  touch: LiveReadTouch;
 }
 
 export interface LiveReadServiceDeps extends LiveReadDeps {
@@ -79,7 +76,6 @@ export class LiveReadService {
       };
     }
 
-    await this.deps.touch(record);
     const immediate = await this.deps.readOwn(options.offset);
     if (immediate.messages.length > 0)
       return {

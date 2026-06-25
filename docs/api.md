@@ -40,7 +40,8 @@ stream's tail offset still equals the given offset. On mismatch nothing is writt
 flag, and producer state are untouched) and the append returns
 `{ status: "conflict", conflictReason: "expected-offset", offset }`, where `offset` is the actual
 tail. `ZERO_OFFSET` means "append only if the stream is still empty". The check is atomic with the
-append because the protocol runs both inside the per-stream mutation lock.
+append because the protocol builds a declarative mutation plan and the storage adapter commits that
+plan with an atomic per-stream compare-and-swap.
 
 The intended pattern is a materialize → validate → append → retry loop:
 
@@ -79,11 +80,35 @@ Notes:
 
 ## Storage factories
 
-Storage packages expose `StreamFactory` implementations. A storage factory returns a storage-bound `Stream` with direct record/message primitives plus per-stream protocol storage methods for producer state, references, mutation coordination, event waiters, and expiry scheduling.
+Storage packages expose `StreamFactory` implementations. A storage factory returns a storage-bound
+`Stream` with read methods, the atomic `commit(plan: MutationPlan)` mutation primitive, live-event
+waiters, and expiry scheduling.
+
+Storage authors implement two surfaces:
+
+- within a stream: `Stream.commit(MutationPlan)` applies one atomic storage mutation. The adapter
+  re-reads the stream record and referenced producer row, checks every precondition, inserts any
+  pre-framed messages, applies the record patch, upserts producer state, and returns either
+  `committed` with the fresh record or `precondition-failed` with the latest record.
+- lifecycle: `StreamFactory.create(CreatePlan)`, optional `fork(ForkPlan)`, and
+  `delete(DeletePlan)` materialize existence and adapter-private lineage. These replace the old
+  public record/message/producer writer methods, mutation-lock hook, and child-reference tracker.
+
+`AfterCommitEffects` on plans describe best-effort work that runs only after durable commit:
+notification, expiry scheduling, and expiry cancellation. Adapters must not run those effects inside
+`commit`.
+
+Consistency boundary:
+
+- operations on one stream are per-stream linearizable through the adapter's atomic commit point
+  (SQLite transaction/CAS, Durable Object input-gate turn, or synchronous memory section);
+- cross-stream operations are not globally atomic. Fork edge registration and delete/GC cascades are
+  convergent, idempotent sagas. A retry or later GC/delete pass can repair a missing lineage edge or
+  finish reclaiming an already-soft-deleted parent.
 
 Protocol-bound streams are distinct from storage-bound streams:
 
-- storage streams persist records/messages and provide direct runtime/storage methods;
+- storage streams persist records/messages through the storage-author seam;
 - protocol streams expose durable-stream operations: `append`, `read`, `readLive`, `metadata`, and `delete`.
 
 ## Packages
@@ -102,7 +127,8 @@ Core exports include:
 
 - `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`
 - protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadLiveResult`, `MetadataResult`, and `DeleteResult`
-- storage-factory types including `StreamFactory`, storage-bound `Stream`, and facet interfaces such as `StreamRecordStore`, `StreamMessageStore`, `StreamProducerStore`, `StreamReferenceTracker`, `StreamMutationCoordinator`, `StreamEventHub`, and `StreamExpiryScheduler`
+- storage-factory types including `StreamFactory`, storage-bound `Stream`, `StreamReader`, `StreamMutator`, `StreamEventHub`, `StreamExpiryScheduler`, `MutationPlan`, `CommitResult`, `CreatePlan`, `CreateCommit`, `ForkPlan`, `ForkCommit`, `DeletePlan`, `DeleteCommit`, and `AfterCommitEffects`
+- lineage strategy helpers for storage authors: `LineageStore`, `LineagePolicy`, `cascadeReclaim`, `plainPurge`, `refCountLineage`, `reverseIndexLineage`, `copyOnForkReclaim`, and `ttlOnlyReclaim`
 - structured unsupported-feature helpers including `notSupported`, `isNotSupported`, `NotSupportedError`, and `unsupported`
 - the in-memory storage adapter: `createMemoryStreamFactory` and `MemoryStreamFactoryOptions`
 

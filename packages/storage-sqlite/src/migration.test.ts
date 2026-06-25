@@ -18,6 +18,12 @@ describe("migrations", () => {
     expect(tables).toContain("streamsy_streams");
     expect(tables).toContain("streamsy_messages");
     expect(tables).toContain("streamsy_producers");
+
+    const streamColumns = db
+      .query<{ name: string }, []>("pragma table_info(streamsy_streams)")
+      .all()
+      .map((row) => row.name);
+    expect(streamColumns).not.toContain(["child", "ref", "count"].join("_"));
     db.close();
   });
 

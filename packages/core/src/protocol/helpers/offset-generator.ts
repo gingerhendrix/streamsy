@@ -12,7 +12,7 @@
  * - `allocate` produces the next contiguous offsets for a mutation batch.
  *
  * Used by `StreamProtocol` mutation helpers, `ReadService`, `LiveReadService`,
- * and `ForkService` for allocation, cursor/tail comparisons, and fork-offset
+ * and `ForkPlanBuilder` for allocation, cursor/tail comparisons, and fork-offset
  * validation.
  */
 

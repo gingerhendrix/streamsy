@@ -115,6 +115,8 @@ export class AppendHttpService {
           result.conflictReason === "content-type" ? "Content-Type mismatch" : "Sequence conflict",
         );
       }
+      case "busy":
+        return this.deps.responses.text("Stream busy, retry later", 503);
       case "stale-epoch":
         return this.deps.responses.text("Stale producer epoch", 403, {
           "producer-epoch": String(result.currentEpoch),

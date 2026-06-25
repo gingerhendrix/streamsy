@@ -2,9 +2,9 @@
 
 import type { Stream } from "../../types/factory.ts";
 import type { Clock, StreamId, StreamRecord } from "../../types/storage.ts";
+import { runAfterCommit } from "./after-commit-effects.ts";
 
-export type TouchReason = "append" | "close" | "read" | "live-read";
-
+export type TouchReason = "read" | "live-read";
 export type ScheduledExpiryHandler = (streamId: StreamId) => Promise<void>;
 export type ResolveStorageStream = (streamId: StreamId) => Promise<Stream> | Stream;
 
@@ -28,19 +28,26 @@ export class ExpiryPolicy {
     return undefined;
   }
 
-  async touch(stream: Stream, record: StreamRecord, reason: TouchReason): Promise<void> {
-    if (record.config.ttlSeconds === undefined) return;
-    if (reason === "live-read") return;
+  async touch(stream: Stream, record: StreamRecord, reason: TouchReason): Promise<StreamRecord> {
+    if (record.config.ttlSeconds === undefined) return record;
+    if (reason === "live-read") return record;
     const expiresAtMs = this.deps.clock.now() + record.config.ttlSeconds * 1000;
-    await stream.updateRecord({ lifecycle: { expiresAtMs } });
-    await stream.scheduleExpiry(expiresAtMs, () => this.deps.onScheduledExpiry(stream.id));
+    const afterCommit = { scheduleExpiryAt: expiresAtMs };
+    const out = await stream.commit({
+      preconditions: { expectedOffset: record.currentOffset },
+      recordPatch: { lifecycle: { expiresAtMs } },
+      afterCommit,
+    });
+    if (out.status !== "committed") return record;
+    await runAfterCommit(afterCommit, stream);
+    return out.record;
   }
 
   async scheduleExpiry(record: StreamRecord): Promise<void> {
     const at = record.lifecycle.expiresAtMs;
     if (at !== undefined) {
       const stream = await this.deps.resolve(record.id);
-      await stream.scheduleExpiry(at, () => this.deps.onScheduledExpiry(record.id));
+      await stream.scheduleExpiry(at);
     }
   }
 
