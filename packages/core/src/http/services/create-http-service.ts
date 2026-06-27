@@ -30,6 +30,7 @@ export class CreateHttpService {
       closed: parsed.wantClosed,
       forkedFrom: parsed.forkedFromStreamId,
       forkOffset: parsed.forkOffset,
+      forkSubOffset: parsed.forkSubOffset,
     });
     if (result.status === "not-supported")
       return maybeNotSupportedResponse(result, this.deps.responses)!;
@@ -45,6 +46,7 @@ export class CreateHttpService {
         wantClosed: boolean;
         forkedFromStreamId?: string;
         forkOffset?: string;
+        forkSubOffset?: number;
       }
     | { ok: false; response: Response } {
     const rawContentType = request.headers.get("content-type");
@@ -52,6 +54,7 @@ export class CreateHttpService {
     const expiresAtHeader = request.headers.get("stream-expires-at");
     const forkedFromHeader = request.headers.get("stream-forked-from");
     const forkOffsetHeader = request.headers.get("stream-fork-offset");
+    const forkSubOffsetHeader = request.headers.get("stream-fork-sub-offset");
     if (ttlHeader && !/^(0|[1-9]\d*)$/.test(ttlHeader))
       return { ok: false, response: this.deps.responses.badRequest("Invalid Stream-TTL format") };
     if (ttlHeader && expiresAtHeader)
@@ -71,6 +74,27 @@ export class CreateHttpService {
         ok: false,
         response: this.deps.responses.badRequest("Stream-Fork-Offset requires Stream-Forked-From"),
       };
+    if (forkSubOffsetHeader !== null) {
+      if (!forkedFromHeader)
+        return {
+          ok: false,
+          response: this.deps.responses.badRequest(
+            "Stream-Fork-Sub-Offset requires Stream-Forked-From",
+          ),
+        };
+      if (!/^(0|[1-9]\d*)$/.test(forkSubOffsetHeader))
+        return {
+          ok: false,
+          response: this.deps.responses.badRequest("Invalid Stream-Fork-Sub-Offset format"),
+        };
+      if (parseInt(forkSubOffsetHeader, 10) > 0 && !forkOffsetHeader)
+        return {
+          ok: false,
+          response: this.deps.responses.badRequest(
+            "Stream-Fork-Sub-Offset greater than zero requires Stream-Fork-Offset",
+          ),
+        };
+    }
     const isFork = !!forkedFromHeader;
     return {
       ok: true,
@@ -82,6 +106,7 @@ export class CreateHttpService {
         ? this.deps.path.canonicalizeForkSource(forkedFromHeader)
         : undefined,
       forkOffset: forkOffsetHeader ?? undefined,
+      forkSubOffset: forkSubOffsetHeader !== null ? parseInt(forkSubOffsetHeader, 10) : undefined,
     };
   }
 

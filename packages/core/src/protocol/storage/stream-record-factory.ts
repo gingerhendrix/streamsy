@@ -8,6 +8,8 @@ import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 export interface ForkRecordDescriptor {
   forkedFrom: string;
   forkOffset: string;
+  /** Recorded only when a partial-message prefix was materialized (`> 0`). */
+  forkSubOffset?: number;
 }
 
 export interface StreamRecordFactoryDeps {
@@ -37,6 +39,9 @@ export class StreamRecordFactory {
       lifecycle: {
         forkedFrom: fork?.forkedFrom,
         forkOffset,
+        ...(fork?.forkSubOffset !== undefined && fork.forkSubOffset > 0
+          ? { forkSubOffset: fork.forkSubOffset }
+          : {}),
         expiresAtMs: this.deps.expiryPolicy.computeExpiresAtMs(config),
       },
       currentOffset: forkOffset ?? ZERO_OFFSET,

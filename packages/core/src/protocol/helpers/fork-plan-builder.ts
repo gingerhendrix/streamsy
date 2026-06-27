@@ -15,6 +15,7 @@ import {
 export interface ForkDescriptor {
   forkedFrom: StreamId;
   forkOffset: string;
+  forkSubOffset?: number;
 }
 
 export type ForkBuildResult =
@@ -50,6 +51,12 @@ export class ForkPlanBuilder {
     sourcePath: StreamId,
     source: StreamRecord | null,
     options: CreateOptions,
+    /**
+     * Source messages strictly after `forkOffset`, in offset order. Required to
+     * materialize a sub-offset prefix; the caller reads them through the fork
+     * chain so chained forks compose. Omit when no sub-offset is requested.
+     */
+    sourceTail?: StoredMessage[],
   ): ForkBuildResult {
     if (!source)
       return {
@@ -116,6 +123,20 @@ export class ForkPlanBuilder {
       };
     }
 
+    const subOffset = options.forkSubOffset;
+    const prefix = this.materializePrefix(subOffset, contentType, sourceTail);
+    if (!prefix.ok) {
+      return {
+        kind: "terminal",
+        result: {
+          status: "bad-request",
+          nextOffset: "",
+          contentType: "",
+          errorMessage: prefix.errorMessage,
+        },
+      };
+    }
+
     const expiry = resolveForkExpiry(options, source);
     const baseRecord = this.deps.newRecord(
       targetId,
@@ -124,9 +145,11 @@ export class ForkPlanBuilder {
       {
         forkedFrom: sourcePath,
         forkOffset,
+        ...(subOffset !== undefined && subOffset > 0 ? { forkSubOffset: subOffset } : {}),
       },
     );
     const initialMessages = this.initialMessages(
+      prefix.messages,
       options.initialData,
       contentType,
       baseRecord.counter,
@@ -156,12 +179,40 @@ export class ForkPlanBuilder {
     };
   }
 
+  /**
+   * Materialize the partial-message prefix addressed by `forkSubOffset` from the
+   * source messages that follow `forkOffset`. `0`/absent yields no prefix. For
+   * JSON the sub-offset counts whole flattened messages; for binary/text it
+   * counts bytes within the single next source message. Overshoot or an empty
+   * source is a 400.
+   */
+  private materializePrefix(
+    subOffset: number | undefined,
+    contentType: string,
+    sourceTail: StoredMessage[] | undefined,
+  ): { ok: true; messages: Uint8Array[] } | { ok: false; errorMessage: string } {
+    if (subOffset === undefined || subOffset === 0) return { ok: true, messages: [] };
+    const tail = sourceTail ?? [];
+    if (contentType.toLowerCase().startsWith("application/json")) {
+      if (subOffset > tail.length)
+        return { ok: false, errorMessage: "Stream-Fork-Sub-Offset exceeds source message count" };
+      return { ok: true, messages: tail.slice(0, subOffset).map((m) => m.data) };
+    }
+    const first = tail[0];
+    if (!first)
+      return { ok: false, errorMessage: "Stream-Fork-Sub-Offset has no source message to fork" };
+    if (subOffset > first.data.byteLength)
+      return { ok: false, errorMessage: "Stream-Fork-Sub-Offset exceeds source message length" };
+    return { ok: true, messages: [first.data.subarray(0, subOffset)] };
+  }
+
   private initialMessages(
+    prefix: Uint8Array[],
     initialData: Uint8Array | undefined,
     contentType: string,
     startCounter: number,
   ): StoredMessage[] {
-    const framed = initialData ? frameMessages(initialData, contentType) : [];
+    const framed = [...prefix, ...(initialData ? frameMessages(initialData, contentType) : [])];
     const allocation = allocateOffsets(startCounter, framed.length);
     const now = this.deps.clock.now();
     return framed.map((data, i) => ({

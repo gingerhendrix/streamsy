@@ -64,7 +64,7 @@
       "name": "@streamsy/conformance-tests",
       "version": "0.0.1",
       "dependencies": {
-        "@durable-streams/server-conformance-tests": "^0.3.0",
+        "@durable-streams/server-conformance-tests": "^0.3.5",
         "@streamsy/core": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/state": "workspace:*",
@@ -237,7 +237,7 @@
 
     "@durable-streams/client": ["@durable-streams/client@0.2.6", "", { "dependencies": { "@microsoft/fetch-event-source": "^2.0.1", "fastq": "^1.19.1" }, "bin": { "intent": "bin/intent.js" } }, "sha512-uHKKbWpsKLhFMeGjG0PgM6LXE3oEIi7FHKlJZkmYGxcqd4Yjjd/QEvnQnDzteRP4Av1uJVM8qjTL7kfKsgeS/w=="],
 
-    "@durable-streams/server-conformance-tests": ["@durable-streams/server-conformance-tests@0.3.0", "", { "dependencies": { "@durable-streams/client": "0.2.3", "fast-check": "^4.4.0", "vitest": "^4.0.0" }, "bin": { "server-conformance-tests": "dist/cli.js", "durable-streams-server-conformance": "dist/cli.js", "durable-streams-server-conformance-dev": "bin/conformance-dev.mjs" } }, "sha512-hjzSIt049lV3klHwgJXanZjVyluS8g0hjxqMUuCsizaXUL1kpUPksZAaA0BDUjEqwom8I7HHh9zweT1BHqBuow=="],
+    "@durable-streams/server-conformance-tests": ["@durable-streams/server-conformance-tests@0.3.5", "", { "dependencies": { "@durable-streams/client": "0.2.6", "fast-check": "^4.4.0", "vitest": "^4.0.0" }, "bin": { "server-conformance-tests": "dist/cli.js", "durable-streams-server-conformance": "dist/cli.js", "durable-streams-server-conformance-dev": "bin/conformance-dev.mjs" } }, "sha512-sXl2S562yVa+gO9ypZMJ3rC9lMpsUoc7XIBw24iY/k8g0RczgKdK3jYpgc10bttZLQLLGQMo3QxZ+pbGgIO5dw=="],
 
     "@durable-streams/state": ["@durable-streams/state@0.3.1", "", { "dependencies": { "@durable-streams/client": "0.2.6", "@standard-schema/spec": "^1.0.0" }, "peerDependencies": { "@tanstack/db": ">=0.6.0 <1.0.0" }, "optionalPeers": ["@tanstack/db"], "bin": { "intent": "bin/intent.js" } }, "sha512-HYhw520Bfl9+L3MJgWpzLQjByP5y/uNNasOqSSFfyWhFxZeaKHM6Go2P79YFfTJPmXh4ZHEh1jOgIfrumqT6hA=="],
 

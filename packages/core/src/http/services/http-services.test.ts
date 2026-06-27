@@ -82,3 +82,98 @@ describe("append expectedOffset over HTTP (Streamsy extension)", () => {
     expect(await response.text()).toBe("Invalid expected offset");
   });
 });
+
+const ZERO = "0000000000000000_0000000000000000";
+
+async function sourceHandler(body: string, contentType = "text/plain"): Promise<HttpHandler> {
+  const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+  const handler = new HttpHandler({ protocol });
+  const res = await handler.fetch(
+    new Request("http://x/src", { method: "PUT", headers: { "content-type": contentType }, body }),
+  );
+  expect(res.status).toBe(201);
+  return handler;
+}
+
+function forkRequest(handler: HttpHandler, headers: Record<string, string>, body?: string) {
+  return handler.fetch(new Request("http://x/fork", { method: "PUT", headers, body }));
+}
+
+describe("fork sub-offset over HTTP", () => {
+  it("materializes a binary sub-offset prefix into the fork", async () => {
+    const handler = await sourceHandler("hello");
+    const res = await forkRequest(handler, {
+      "content-type": "text/plain",
+      "stream-forked-from": "/src",
+      "stream-fork-offset": ZERO,
+      "stream-fork-sub-offset": "3",
+    });
+    expect(res.status).toBe(201);
+    const read = await handler.fetch(new Request("http://x/fork?offset=-1", { method: "GET" }));
+    expect(await read.text()).toBe("hel");
+  });
+
+  it("appends the initial body after the materialized prefix", async () => {
+    const handler = await sourceHandler("hello");
+    const res = await forkRequest(
+      handler,
+      {
+        "content-type": "text/plain",
+        "stream-forked-from": "/src",
+        "stream-fork-offset": ZERO,
+        "stream-fork-sub-offset": "3",
+      },
+      "XY",
+    );
+    expect(res.status).toBe(201);
+    const read = await handler.fetch(new Request("http://x/fork?offset=-1", { method: "GET" }));
+    expect(await read.text()).toBe("helXY");
+  });
+
+  it("is idempotent on matching sub-offset and conflicts on mismatch", async () => {
+    const handler = await sourceHandler("hello");
+    const headers = {
+      "content-type": "text/plain",
+      "stream-forked-from": "/src",
+      "stream-fork-offset": ZERO,
+      "stream-fork-sub-offset": "2",
+    };
+    expect((await forkRequest(handler, headers)).status).toBe(201);
+    expect((await forkRequest(handler, headers)).status).toBe(200);
+    expect((await forkRequest(handler, { ...headers, "stream-fork-sub-offset": "3" })).status).toBe(
+      409,
+    );
+  });
+
+  it("rejects a sub-offset header without Stream-Forked-From (even when 0)", async () => {
+    const handler = await sourceHandler("data");
+    const res = await forkRequest(handler, {
+      "content-type": "text/plain",
+      "stream-fork-sub-offset": "0",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a positive sub-offset without Stream-Fork-Offset", async () => {
+    const handler = await sourceHandler("data");
+    const res = await forkRequest(handler, {
+      "content-type": "text/plain",
+      "stream-forked-from": "/src",
+      "stream-fork-sub-offset": "1",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects malformed sub-offset values", async () => {
+    const handler = await sourceHandler("data");
+    for (const bad of ["-1", "abc", "1.5", "05", "+1"]) {
+      const res = await forkRequest(handler, {
+        "content-type": "text/plain",
+        "stream-forked-from": "/src",
+        "stream-fork-offset": ZERO,
+        "stream-fork-sub-offset": bad,
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+});

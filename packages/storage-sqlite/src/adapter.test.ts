@@ -136,6 +136,51 @@ describe("SqliteStream record store", () => {
     expect(await (await sqlite.getStream("parent")).getRecord()).toBeNull();
     sqlite.close();
   });
+
+  test("forks at a binary sub-offset, persisting the materialized prefix and sub-offset", async () => {
+    const sqlite = createSqliteStreamFactory();
+    const protocol = new StreamProtocol({ storage: { factory: sqlite } });
+
+    const src = await protocol.create("src", {
+      contentType: "text/plain",
+      initialData: new TextEncoder().encode("hello"),
+    });
+    expect(src.status).toBe("created");
+
+    const fork = await protocol.create("fork", {
+      contentType: "text/plain",
+      forkedFrom: "src",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 3,
+    });
+    expect(fork.status).toBe("created");
+    if (fork.status !== "created") throw new Error("expected fork created");
+
+    const read = await fork.stream.read({});
+    if (read.status !== "ok") throw new Error("expected read ok");
+    expect(read.messages.map((m) => new TextDecoder().decode(m.data)).join("")).toBe("hel");
+
+    // Sub-offset persists across a fresh lookup and drives idempotency.
+    const forkRecord = await (await sqlite.getStream("fork")).getRecord();
+    expect(forkRecord?.lifecycle.forkSubOffset).toBe(3);
+
+    const again = await protocol.create("fork", {
+      contentType: "text/plain",
+      forkedFrom: "src",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 3,
+    });
+    expect(again.status).toBe("exists");
+
+    const mismatch = await protocol.create("fork", {
+      contentType: "text/plain",
+      forkedFrom: "src",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 2,
+    });
+    expect(mismatch.status).toBe("conflict");
+    sqlite.close();
+  });
 });
 
 async function seedThreeLevelForkWithMessages(protocol: StreamProtocol): Promise<void> {

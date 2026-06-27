@@ -45,7 +45,28 @@ export class DurableObjectStreamProxy implements Stream {
   }
 
   waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
-    return this.stub.waitForEvent(options);
+    const { signal, ...serializableOptions } = options;
+    if (!signal) return this.stub.waitForEvent(serializableOptions);
+    if (signal.aborted) return Promise.resolve({ status: "aborted" });
+
+    return new Promise<WaitForEventResult>((resolve, reject) => {
+      let settled = false;
+      const finish = (result: WaitForEventResult) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        resolve(result);
+      };
+      const abort = () => finish({ status: "aborted" });
+
+      signal.addEventListener("abort", abort, { once: true });
+      this.stub.waitForEvent(serializableOptions).then(finish, (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      });
+    });
   }
 
   notify(type: StreamEventType): Promise<void> | void {

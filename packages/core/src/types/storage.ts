@@ -27,6 +27,15 @@ export interface StreamLifecycleState {
   closedAt?: number;
   forkedFrom?: StreamId;
   forkOffset?: Offset;
+  /**
+   * Sub-message boundary inside the source message that follows `forkOffset`.
+   * Only recorded when a fork materialized a partial-message prefix (`> 0`).
+   * For binary/text it counts bytes within the next source message; for JSON it
+   * counts flattened messages/items. Kept purely for fork idempotency/config
+   * matching — reads use the materialized prefix stored as the child's own
+   * messages, not this value.
+   */
+  forkSubOffset?: number;
   softDeleted?: boolean;
   /**
    * Effective expiration deadline in epoch ms. Core updates this on create

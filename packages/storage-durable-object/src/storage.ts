@@ -78,7 +78,7 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     await protocol.handleScheduledExpiry(record.id);
   }
 
-  getRecord(): Promise<StreamRecord | null> {
+  async getRecord(): Promise<StreamRecord | null> {
     return this.records.getRecord();
   }
 
@@ -148,7 +148,8 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     await this.records.updateRecord({ lifecycle: { softDeleted: true } });
   }
 
-  listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
+  async listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
+    await this.requireStreamId();
     return this.messages.listMessages(options);
   }
 
@@ -156,7 +157,8 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return this.producers.getProducerState(producerId);
   }
 
-  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+  async waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+    await this.requireStreamId();
     return this.notifier.waitForEvent(options);
   }
 

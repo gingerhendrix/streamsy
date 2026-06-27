@@ -18,7 +18,7 @@ import type {
 } from "./types/protocol.ts";
 import type { Stream, StreamFactory } from "./types/factory.ts";
 import { notSupported } from "./types/factory.ts";
-import type { Clock } from "./types/storage.ts";
+import type { Clock, StoredMessage, StreamRecord } from "./types/storage.ts";
 import { systemClock } from "./protocol/helpers/clock.ts";
 import { AppendService } from "./protocol/append-service.ts";
 import { ReadService } from "./protocol/read-service.ts";
@@ -28,7 +28,7 @@ import { CreateStreamService } from "./protocol/create-stream-service.ts";
 import { ForkPlanBuilder } from "./protocol/helpers/fork-plan-builder.ts";
 import { StreamMessageReader } from "./protocol/storage/stream-message-reader.ts";
 import { StreamRecordFactory } from "./protocol/storage/stream-record-factory.ts";
-import { compareOffsets, ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
+import { compareOffsets, isValidOffset, ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
 import { runAfterCommit } from "./protocol/helpers/after-commit-effects.ts";
 
 export { ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
@@ -201,6 +201,30 @@ export class ProtocolStream implements ProtocolStreamApi {
     return mapDelete(commit.status);
   }
 
+  /**
+   * Read the source messages immediately after `forkOffset`, composed through
+   * the source's own fork chain, so a sub-offset fork can materialize a
+   * partial-message prefix (and chained forks compose). Only needed when a
+   * positive `forkSubOffset` is requested; validation of the offset/sub-offset
+   * combination stays in the fork plan builder.
+   */
+  private async readSourceTailForSubOffset(
+    sourceStream: Stream,
+    source: StreamRecord | null,
+    options: CreateOptions,
+  ): Promise<StoredMessage[] | undefined> {
+    const subOffset = options.forkSubOffset;
+    if (subOffset === undefined || subOffset <= 0 || !source) return undefined;
+    const forkOffset = options.forkOffset ?? source.currentOffset;
+    if (!isValidOffset(forkOffset)) return undefined;
+    const reader = new StreamMessageReader({
+      stream: sourceStream,
+      resolve: this.deps.resolveStorageStream,
+      expiryPolicy: this.deps.expiryPolicy,
+    });
+    return reader.readChain(source, forkOffset, undefined, false);
+  }
+
   private async createFork(options: CreateOptions): Promise<CreateOutcome> {
     const fork = this.deps.factory.fork;
     if (!fork) return notSupported("fork");
@@ -208,7 +232,8 @@ export class ProtocolStream implements ProtocolStreamApi {
     const sourceId = options.forkedFrom!;
     const sourceStream = await this.deps.resolveStorageStream(sourceId);
     const source = await this.deps.expiryPolicy.expireIfNeeded(sourceStream);
-    const decision = this.forkPlanBuilder.build(this.id, sourceId, source, options);
+    const sourceTail = await this.readSourceTailForSubOffset(sourceStream, source, options);
+    const decision = this.forkPlanBuilder.build(this.id, sourceId, source, options, sourceTail);
     if (decision.kind === "terminal") return decision.result;
 
     const commit = await fork.call(this.deps.factory, decision.plan);
@@ -277,7 +302,15 @@ export class StreamProtocol implements StreamProtocolFactory {
   async handleScheduledExpiry(streamId: string): Promise<void> {
     const storage = await this.storageStream(streamId);
     const record = await storage.getRecord();
-    if (!record || !this.expiryPolicy.isExpired(record)) return;
+    if (!record) return;
+    if (!this.expiryPolicy.isExpired(record)) {
+      // The deadline slid forward (e.g. a GET/POST renewed a sliding TTL) after
+      // this alarm was scheduled. A fired one-shot alarm is consumed, so
+      // re-arm it against the latest stored `expiresAtMs` instead of dropping
+      // expiry and relying solely on lazy checks.
+      await this.expiryPolicy.scheduleExpiry(record);
+      return;
+    }
     const commit = await this.deps.storage.factory.delete({ streamId, reason: "expiry" });
     await runDeleteEffects(commit.status, storage);
   }

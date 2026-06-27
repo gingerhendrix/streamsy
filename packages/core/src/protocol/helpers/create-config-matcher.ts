@@ -8,6 +8,8 @@
  * - `forkedFrom` must match exactly (including absent ↔ absent).
  * - `forkOffset` must match when the caller specifies one; an unspecified
  *   `forkOffset` is treated as "don't care".
+ * - `forkSubOffset` must match, treating an absent header and `0` as equal so a
+ *   sub-offset of `0` is idempotent with a plain fork.
  * - Fork callers may inherit the source's expiry: when `forkedFrom` is set
  *   and both `ttlSeconds` and `expiresAt` are omitted, the existing record's
  *   expiry fields are accepted.
@@ -28,6 +30,7 @@ export function configMatches(existing: StreamRecord, options: CreateOptions): b
   if ((options.forkedFrom ?? undefined) !== existing.lifecycle.forkedFrom) return false;
   if (options.forkOffset !== undefined && options.forkOffset !== existing.lifecycle.forkOffset)
     return false;
+  if ((options.forkSubOffset ?? 0) !== (existing.lifecycle.forkSubOffset ?? 0)) return false;
   const inheritedForkExpiry =
     options.forkedFrom && options.ttlSeconds === undefined && options.expiresAt === undefined;
   if (existing.config.ttlSeconds !== options.ttlSeconds && !inheritedForkExpiry) return false;

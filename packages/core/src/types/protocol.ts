@@ -20,6 +20,14 @@ export interface CreateOptions {
   closed?: boolean;
   forkedFrom?: string;
   forkOffset?: string;
+  /**
+   * Optional sub-message boundary inside the source message at `forkOffset`.
+   * `0` is treated as equivalent to an absent header. For binary/text it is a
+   * byte count within the next source message; for JSON it is a flattened
+   * message/item count. Requires `forkedFrom`; values `> 0` require
+   * `forkOffset`.
+   */
+  forkSubOffset?: number;
 }
 
 export interface ProducerOptions {

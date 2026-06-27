@@ -9,7 +9,7 @@
  */
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 const REMOVED_CHILD_REF_COLUMN = ["child", "ref", "count"].join("_");
 
 /** Ordered migration statements. Index `i` produces schema version `i + 1`. */
@@ -64,6 +64,9 @@ const MIGRATIONS: string[] = [
   // For SQL dialects without ALTER TABLE DROP COLUMN, rebuild streamsy_streams
   // without the removed child-reference column and copy the remaining columns.
   `alter table streamsy_streams drop column ${REMOVED_CHILD_REF_COLUMN};`,
+  // v3 — record the sub-message fork boundary for fork idempotency/config
+  // matching. NULL for non-sub-offset forks and plain streams.
+  `alter table streamsy_streams add column fork_sub_offset integer;`,
 ];
 
 /**

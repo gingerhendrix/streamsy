@@ -19,6 +19,7 @@ function makeRecord(
     closed?: boolean;
     forkedFrom?: string;
     forkOffset?: string;
+    forkSubOffset?: number;
   } = {},
 ): StreamRecord {
   return {
@@ -32,6 +33,7 @@ function makeRecord(
     lifecycle: {
       forkedFrom: overrides.forkedFrom,
       forkOffset: overrides.forkOffset,
+      forkSubOffset: overrides.forkSubOffset,
       closed: overrides.closed,
     },
     currentOffset: ZERO_OFFSET,
@@ -122,6 +124,46 @@ describe("configMatches — expiry", () => {
   it("returns false when caller supplies a non-matching ttlSeconds on a fork (inheritance does not apply)", () => {
     const existing = makeRecord({ forkedFrom: "parent", ttlSeconds: 60 });
     expect(configMatches(existing, { forkedFrom: "parent", ttlSeconds: 120 })).toBe(false);
+  });
+});
+
+describe("configMatches — fork sub-offset", () => {
+  it("matches when both sides agree on a positive sub-offset", () => {
+    const existing = makeRecord({
+      forkedFrom: "parent",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 2,
+    });
+    expect(
+      configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET, forkSubOffset: 2 }),
+    ).toBe(true);
+  });
+
+  it("returns false when sub-offsets differ", () => {
+    const existing = makeRecord({
+      forkedFrom: "parent",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 2,
+    });
+    expect(
+      configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET, forkSubOffset: 3 }),
+    ).toBe(false);
+  });
+
+  it("treats an absent sub-offset and 0 as equal", () => {
+    const existing = makeRecord({ forkedFrom: "parent", forkOffset: ZERO_OFFSET });
+    expect(
+      configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET, forkSubOffset: 0 }),
+    ).toBe(true);
+  });
+
+  it("returns false when caller drops a sub-offset the existing fork was created with", () => {
+    const existing = makeRecord({
+      forkedFrom: "parent",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 2,
+    });
+    expect(configMatches(existing, { forkedFrom: "parent", forkOffset: ZERO_OFFSET })).toBe(false);
   });
 });
 

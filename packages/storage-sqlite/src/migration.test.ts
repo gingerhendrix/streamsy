@@ -24,6 +24,7 @@ describe("migrations", () => {
       .all()
       .map((row) => row.name);
     expect(streamColumns).not.toContain(["child", "ref", "count"].join("_"));
+    expect(streamColumns).toContain("fork_sub_offset");
     db.close();
   });
 

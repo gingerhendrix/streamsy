@@ -13,6 +13,7 @@ const runId =
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const stage = process.env.CONFORMANCE_UNIQUE_STAGE === "1" ? `${baseStage}-${runId}` : baseStage;
 const workerResourceId = "server";
+const testScript = process.env.STREAMSY_DO_TEST_SCRIPT || "test:do:local";
 const statePath = join(packageDir, ".alchemy", appName, stage, `${workerResourceId}.json`);
 
 const env = {
@@ -113,14 +114,18 @@ try {
 
   await runStep("wait for deployed worker readiness", () => waitForWorkerReady(serverBaseUrl));
 
-  await runStep("run Durable Object conformance tests against deployed server", () =>
-    runCommand("bun", ["run", "test:do:local", "--reporter=dot"], {
-      cwd: packageDir,
-      env: {
-        ...env,
-        SERVER_BASE_URL: serverBaseUrl,
+  await runStep(`run ${testScript} against deployed server`, () =>
+    runCommand(
+      "bun",
+      ["run", testScript, ...(testScript === "test:do:local" ? ["--reporter=dot"] : [])],
+      {
+        cwd: packageDir,
+        env: {
+          ...env,
+          SERVER_BASE_URL: serverBaseUrl,
+        },
       },
-    }),
+    ),
   );
 } catch (error) {
   exitCode = 1;

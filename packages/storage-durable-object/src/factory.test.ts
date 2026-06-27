@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { StreamProtocol, ZERO_OFFSET } from "@streamsy/core";
 import type {
   CommitResult,
   ListMessagesOptions,
@@ -290,6 +291,35 @@ describe("createDurableObjectStreamFactory", () => {
     expect(fake.stubFor("alpha").state.expiry.cancelled).toBe(true);
   });
 
+  it("keeps AbortSignal cancellation local when waiting through the DO proxy", async () => {
+    const fake = createFakeNamespace();
+    const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
+    const stream = await factory.getStream("alpha");
+    const controller = new AbortController();
+
+    const waiting = stream.waitForEvent({ timeoutMs: 1_000, signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+
+    await expect(waiting).resolves.toEqual({ status: "aborted" });
+    expect(fake.stubFor("alpha").state.waitOptions).toHaveLength(1);
+    expect(fake.stubFor("alpha").state.waitOptions[0]).toEqual({ timeoutMs: 1_000 });
+    expect(fake.stubFor("alpha").state.waitOptions[0]?.signal).toBeUndefined();
+  });
+
+  it("does not call the DO wait RPC when the signal is already aborted", async () => {
+    const fake = createFakeNamespace();
+    const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
+    const stream = await factory.getStream("alpha");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      stream.waitForEvent({ timeoutMs: 1_000, signal: controller.signal }),
+    ).resolves.toEqual({ status: "aborted" });
+    expect(fake.stubFor("alpha").state.waitOptions).toEqual([]);
+  });
+
   it("routes operations for different ids to different initialized stubs", async () => {
     const fake = createFakeNamespace();
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
@@ -382,5 +412,39 @@ describe("createDurableObjectStreamFactory", () => {
     const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
     void factory;
     expect(fake.has("anything")).toBe(false);
+  });
+
+  it("forks at a binary sub-offset, materializing the prefix into the child", async () => {
+    const fake = createFakeNamespace();
+    const factory = createDurableObjectStreamFactory({ namespace: fake.namespace });
+    const protocol = new StreamProtocol({ storage: { factory } });
+
+    const src = await protocol.create("src", {
+      contentType: "text/plain",
+      initialData: bytes("hello"),
+    });
+    expect(src.status).toBe("created");
+
+    const fork = await protocol.create("fork", {
+      contentType: "text/plain",
+      forkedFrom: "src",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 3,
+    });
+    expect(fork.status).toBe("created");
+    if (fork.status !== "created") throw new Error("expected fork created");
+
+    const read = await fork.stream.read({});
+    if (read.status !== "ok") throw new Error("expected read ok");
+    expect(read.messages.map((m) => text(m.data)).join("")).toBe("hel");
+    expect(fake.stubFor("fork").state.record?.lifecycle.forkSubOffset).toBe(3);
+
+    const mismatch = await protocol.create("fork", {
+      contentType: "text/plain",
+      forkedFrom: "src",
+      forkOffset: ZERO_OFFSET,
+      forkSubOffset: 2,
+    });
+    expect(mismatch.status).toBe("conflict");
   });
 });

@@ -9,12 +9,14 @@
     "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
     "test:do": "STAGE=conformance node src/deploy-test-destroy.ts",
     "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
+    "test:do:sse-diagnostic:local": "vitest --run src/do.sse-final-append-diagnostic.test.ts --testTimeout=15000 --reporter=verbose",
+    "test:do:sse-diagnostic": "STAGE=conformance STREAMSY_DO_TEST_SCRIPT=test:do:sse-diagnostic:local node src/deploy-test-destroy.ts",
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@durable-streams/server-conformance-tests": "^0.3.0",
+    "@durable-streams/server-conformance-tests": "^0.3.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",
