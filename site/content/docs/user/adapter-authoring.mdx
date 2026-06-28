@@ -1,0 +1,256 @@
+---
+title: Storage adapter authoring
+description: Implement Streamsy storage adapters by providing a StreamFactory and atomically applying MutationPlan commits.
+---
+
+
+Streamsy storage packages implement `StreamFactory` from `@streamsy/core`. A factory maps a public stream id to a storage-bound `Stream`; each `Stream` owns persistence and runtime behavior for exactly one stream id.
+
+This is a storage-author seam, not the public Durable Streams API. Applications wire a factory into `createStreamProtocol({ storage: { factory } })`; protocol-bound streams then expose `append`, `read`, `readLive`, `metadata`, and `delete`.
+
+## Responsibilities
+
+Core owns protocol policy:
+
+- content-type checks and result mapping;
+- message framing, timestamping, offset allocation, and counters;
+- sequence and producer-idempotency decisions;
+- TTL/expires-at policy and expiry mutation plans;
+- fork payload materialization and fork idempotency checks;
+- mapping typed storage unsupported errors to public `not-supported` results;
+- running `AfterCommitEffects` after durable success.
+
+Adapters own atomic persistence and local runtime capabilities:
+
+- route stream ids to storage-bound `Stream` objects;
+- read records, messages, and producer state;
+- atomically apply `MutationPlan` preconditions and writes;
+- create, fork, delete, and reclaim storage records according to an adapter lineage policy;
+- provide live-read notification and active expiry scheduling where the backend supports it.
+
+Do not reimplement protocol policy in adapters. Apply the plans core gives you.
+
+## Interfaces to implement
+
+```ts
+import type { Stream, StreamFactory } from "@streamsy/core";
+
+export interface StreamFactory {
+  getStream(streamId: string): Promise<Stream>;
+  create(plan: CreatePlan): Promise<CreateCommit>;
+  fork?(plan: ForkPlan): Promise<ForkCommit>;
+  delete(plan: DeletePlan): Promise<DeleteCommit>;
+}
+```
+
+A storage-bound `Stream` implements these facets directly:
+
+| Surface                 | Methods                                         | Adapter job                                                                                                                        |
+| ----------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `StreamReader`          | `getRecord`, `listMessages`, `getProducerState` | Return durable facts for one bound id. Reads should hide adapter-private indexes and tombstones as required by the protocol state. |
+| `StreamMutator`         | `commit(plan: MutationPlan)`                    | Apply one atomic per-stream mutation. This is the main write seam.                                                                 |
+| `StreamEventHub`        | `waitForEvent`, `notify`                        | Support long-poll/SSE wakeups. Lost notifications should only add latency; readers can poll again.                                 |
+| `StreamExpiryScheduler` | `scheduleExpiry`, `cancelExpiry`                | Schedule or cancel active expiry work. Lazy expiry on read can supplement this.                                                    |
+
+Private record/message/producer stores are fine internally, but the public storage contract is the `StreamFactory`/`Stream` pair.
+
+## `commit(MutationPlan)` algorithm
+
+`commit` must be atomic for one stream. Use a SQL transaction/CAS, an actor or Durable Object turn, or a synchronous in-memory critical section.
+
+Implement it as:
+
+1. Open the backend's atomic boundary.
+2. Re-read the current stream record inside that boundary.
+3. If `plan.createRecord` is present:
+   - verify it matches the bound stream id;
+   - fail with `{ status: "precondition-failed", record }` if a record already exists;
+   - insert the record.
+4. If no record exists, return `{ status: "precondition-failed", record: null }`.
+5. Enforce every record precondition inside the boundary:
+   - `expectedOffset` equals the current record offset;
+   - `expectedClosed` equals the current closed state.
+6. If `plan.preconditions.producer` is present:
+   - re-read the current producer row/key;
+   - compare it to `expected` (`undefined` means absent);
+   - insert or update to `next` only if the comparison holds.
+7. Insert all `appendMessages` exactly as supplied. Core already chose offsets and framed bytes.
+8. Apply `recordPatch` by merging partial `config` and `lifecycle` objects and replacing `currentOffset`/`counter` when provided.
+9. Return `{ status: "committed", record: freshRecord }` after durable success.
+10. On any failed precondition, write nothing from the plan and return `{ status: "precondition-failed", record: latestRecordOrNull }`.
+
+Important details:
+
+- Message inserts, record patches, producer-state changes, and create-record writes must commit or abort together.
+- If the backend implements conditional updates, fold preconditions into the storage condition (`WHERE current_offset = ?`, `WHERE epoch = ?`, etc.).
+- Never allocate offsets, check content type, validate sequence headers, or derive protocol responses in `commit`.
+- Never run `plan.afterCommit` inside `commit`.
+
+## Factory lifecycle methods
+
+### `getStream(streamId)`
+
+Return a `Stream` bound to `streamId`. It may be a cached object, a thin proxy, or a newly created wrapper. It should not create durable stream records by itself unless the backend requires idempotent routing initialization, such as Durable Object name binding.
+
+### `create(plan)`
+
+Create a new stream record and optional initial messages atomically. A common implementation delegates to `commit`:
+
+```ts
+const stream = await factory.getStream(plan.record.id);
+const result = await stream.commit({
+  createRecord: plan.record,
+  preconditions: {},
+  appendMessages: plan.initialMessages,
+  recordPatch: plan.closeAfter ? { lifecycle: { closed: true } } : undefined,
+});
+return result.status === "committed"
+  ? { status: "created", record: result.record }
+  : { status: "exists", record: result.record ?? plan.record };
+```
+
+Preserve `closedAt` from `plan.record.lifecycle.closedAt` when applying `closeAfter`.
+
+### `fork?(plan)`
+
+`fork` is optional. If supported, the factory should:
+
+1. Re-check the source stream exists, is not soft-deleted, and is still live at `plan.precondition.sourceLiveAtOffset`.
+2. Create the child record and `initialMessages` atomically for the child.
+3. Record any adapter-private parent-child lineage edge.
+4. Return `created`, `exists`, or `fork-source-gone`.
+
+Core builds the child record and materialized prefix. The adapter does not need to copy source messages except for `plan.initialMessages`. Persist `forkedFrom`, `forkOffset`, and `forkSubOffset` because they are part of the child record and are needed for idempotency and reclaim.
+
+Cross-stream fork work does not need a global distributed transaction. Make edge registration idempotent and repairable. If child creation succeeds but edge registration is retried later, adding the same edge again should be safe.
+
+### `delete(plan)`
+
+Delete handles user deletes and scheduled expiry (`plan.reason`). It should return:
+
+- `not-found` when no record exists;
+- `gone` when a user delete targets an already soft-deleted stream;
+- `purged` when storage was physically removed;
+- `retained-soft-deleted` when the record must remain because forks still depend on it.
+
+Deletion may purge messages, producer state, records, timers, and adapter-private lineage. When a soft-deleted child is finally purged, cascade reclamation can continue up to parents that no longer have dependents.
+
+## Lineage strategy choices
+
+Core exports small helpers for common reclaim policies:
+
+| Strategy                               | Use when                                                | Notes                                                                             |
+| -------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `plainPurge(store, plan)`              | Forks are unsupported or dependencies do not matter.    | Always purges existing records.                                                   |
+| `cascadeReclaim(store, plan, lineage)` | Parents must be retained while children depend on them. | Soft-deletes parents with dependents; purges upward when dependents drop to zero. |
+| `refCountLineage(store)`               | Backend can store parent-child edges or counts.         | Used by memory and Durable Object adapters.                                       |
+| `reverseIndexLineage(query)`           | Backend can query children by `forked_from`.            | Natural fit for SQL indexes.                                                      |
+| `copyOnForkReclaim()`                  | Forks materialize independent copies.                   | Dependents count is always zero.                                                  |
+| `ttlOnlyReclaim()`                     | Backend wants expiry retention and no active reclaim.   | Dependents count is always non-zero.                                              |
+
+Implement `LineageStore` with `getRecord`, `purgeSelf`, `softDelete`, and optionally `addEdge`, `dropEdge`, and `countDependents`. The strategies are adapter-composed; core does not mandate one storage layout.
+
+## After-commit effects
+
+Plans may include:
+
+```ts
+interface AfterCommitEffects {
+  notify?: "message" | "closed" | "deleted" | "soft-deleted";
+  scheduleExpiryAt?: number;
+  cancelExpiry?: boolean;
+}
+```
+
+These effects are not durable facts. Adapters must not run them inside `commit`, `create`, `fork`, or `delete` transactions. Core runs them after the storage commit reports success.
+
+This rule prevents non-transactional work from firing for rolled-back mutations and keeps notification/expiry failures from corrupting persisted state.
+
+## Unsupported features
+
+A minimal adapter still implements every `Stream` method. For unsupported methods or lifecycle features, fail explicitly with the typed storage error:
+
+```ts
+import { unsupported } from "@streamsy/core";
+
+async fork() {
+  throw unsupported("fork", "This adapter does not support stream forks");
+}
+```
+
+The protocol maps `NotSupportedError` to structured public `not-supported` results. Avoid silent no-ops for features such as live reads, expiry scheduling, or fork; they hide correctness gaps.
+
+## Backend sketches
+
+### SQL-like stores
+
+- Use tables for streams, messages, and producer states.
+- Keep hot record fields as columns (`current_offset`, `closed`, `soft_deleted`, `forked_from`, `expires_at_ms`) rather than opaque blobs where possible.
+- Wrap `commit` in an immediate/write transaction.
+- Use conditional `UPDATE`/`INSERT ... ON CONFLICT DO NOTHING` for expected offset, closed state, and producer CAS.
+- Insert messages in the same transaction as the record and producer updates.
+- For fork reclaim, either query a reverse index on `forked_from` or maintain explicit child-edge rows.
+- Add retry/backoff for transient lock errors, but surface unresolved contention as a precondition failure or backend error consistently.
+
+Reference: `packages/storage-sqlite/src`.
+
+### Actor or Durable Object stores
+
+- Route one public stream id to one actor/object instance.
+- Initialize routing idempotently and reject mismatched ids.
+- Apply `commit` in one actor turn using the actor's storage API.
+- Keep a thin `Stream` proxy if the RPC object cannot expose local readonly properties such as `id`.
+- Model fork/delete/GC as convergent sagas. Child creation and parent-edge registration should be idempotent.
+- Use actor alarms/timers for active expiry and actor-local waiters for live reads.
+
+Reference: `packages/storage-durable-object/src`.
+
+### Memory and test stores
+
+- Keep a process-wide state registry for streams.
+- Use a synchronous critical section for `commit`.
+- Implement the same precondition checks as durable backends; tests should not rely on weaker memory semantics.
+- Provide simple notifier and timeout scheduler implementations for live reads and expiry.
+- Use memory as a conformance baseline, not as a different protocol.
+
+Reference: `packages/core/src/storage/memory`.
+
+## Verification checklist
+
+For a new adapter:
+
+1. Typecheck the package and any public examples.
+2. Run unit tests for create, append, close, expected-offset CAS, producer idempotency, read ranges, live reads, expiry, delete, and fork if supported.
+3. Run the shared conformance harness for the backend where possible.
+4. Run a conflict test with two concurrent appends against the same expected offset; exactly one should commit.
+5. Run producer-state races; stale producer state must fail without writing messages.
+6. Run fork/delete reclaim tests for the selected lineage strategy.
+7. Test crash/retry/idempotency paths around create, fork child creation, edge registration, and delete.
+8. If the backend ships a bundled worker or generated output, rebuild it before deployed conformance tests.
+
+Useful repo commands:
+
+```bash
+bun run format:check
+bun run typecheck
+bun run test:unit
+bun run test:conformance:memory
+bun run test:conformance:sqlite
+bun run test:conformance:do # slower; deploys Cloudflare resources
+```
+
+Run the checks that match the adapter and document any skipped ones.
+
+## Common pitfalls
+
+- Running `notify`, `scheduleExpiry`, or `cancelExpiry` inside the storage transaction.
+- Checking `expectedOffset`, `expectedClosed`, or producer state before the atomic boundary instead of inside it.
+- Updating the record but forgetting producer CAS, or vice versa.
+- Inserting messages outside the transaction that updates the record offset.
+- Recomputing offsets, timestamps, framing, content type, sequence policy, or public protocol result mapping in the adapter.
+- Treating storage-bound `Stream` as the public protocol stream.
+- Exposing private record/message/producer stores as the adapter contract.
+- Forgetting to persist `forkSubOffset` when the child record contains it.
+- Implementing fork edge registration as non-idempotent cross-stream work.
+- Treating live-read notification as the only correctness path; readers must be able to poll again.
+- Leaving stale generated worker bundles or deployment artifacts when testing Durable Object conformance.

@@ -1,0 +1,110 @@
+---
+title: Durable State
+description: Typed change and control messages over collections with @streamsy/state — DurableStateProtocol and DurableStateStream.
+---
+
+`@streamsy/state` is a typed layer on top of [JSON mode](/docs/user/json-mode). Instead of arbitrary JSON values, a Durable State stream carries **change messages** (insert / update / delete over named collections) and **control messages** (snapshot boundaries, reset). The message shape follows the Durable State synchronization convention, so a client materializer can replay the stream into local collections.
+
+```bash
+bun add @streamsy/state
+```
+
+## Define a schema
+
+A schema maps each collection name to a value codec/Standard Schema, an optional wire `type`, and a `primaryKey`:
+
+```ts
+import { createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createDurableStateProtocol, type JsonCodec } from "@streamsy/state";
+
+type Issue = { id: string; title: string; status: "open" | "closed" };
+
+const issueCodec: JsonCodec<Issue> = {
+  encode: (value) => value,
+  decode(value) {
+    const v = value as Partial<Issue>;
+    if (typeof v?.id !== "string" || typeof v?.title !== "string") {
+      throw new Error("invalid issue");
+    }
+    return { id: v.id, title: v.title, status: v.status ?? "open" };
+  },
+};
+
+const protocol = createStreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+const state = createDurableStateProtocol(protocol, {
+  issues: { type: "issue", schema: issueCodec, primaryKey: "id" },
+});
+```
+
+- **`schema`** is any `JsonSchema<T>` — a `JsonCodec<T>` or a Standard Schema (Zod, Valibot, …).
+- **`type`** is the on-the-wire type tag; it defaults to the collection name.
+- **`primaryKey`** is a property name (`"id"`) or a function `(value) => string` for derived keys (e.g. `` (v) => `issue:${v.id}` ``).
+
+## Apply changes
+
+`create` / `get` return a `DurableStateStream<S>` whose `.state` exposes the typed mutators:
+
+```ts
+const created = await state.create("workspace-42");
+if (created.status !== "created" && created.status !== "exists") {
+  throw new Error(`create failed: ${created.status}`);
+}
+const stream = created.stream; // DurableStateStream<S>
+
+await stream.state.insert("issues", { id: "i1", title: "Bug", status: "open" });
+await stream.state.update(
+  "issues",
+  { id: "i1", title: "Bug", status: "closed" },
+  { oldValue: { id: "i1", title: "Bug", status: "open" } },
+);
+await stream.state.delete("issues", "i1");
+```
+
+`DurableState<S>` methods:
+
+- `insert(type, value, { key?, headers? })`
+- `update(type, value, { key?, oldValue?, headers? })`
+- `delete(type, key, { oldValue?, headers? })`
+- `snapshotStart({ offset?, headers? })`, `snapshotEnd(...)`, `reset(...)` — control messages
+- `append(message)` — append a pre-built `DurableStateMessage` (validated)
+
+Keys are derived from the value via `primaryKey` unless you pass an explicit `key`. Values are validated through the codec **before** append, so an invalid value throws rather than writing a bad message. The optional `headers` carry sync metadata (`txid`, `timestamp`, `from`).
+
+## Message shape
+
+Change messages serialize to the standard durable-state envelope; control messages omit `type`/`key`:
+
+```ts
+// insert
+{ type: "issue", key: "i1", value: { id: "i1", title: "Bug", status: "open" },
+  headers: { operation: "insert" } }
+
+// update (with optional old_value)
+{ type: "issue", key: "i1", value: { /* ... */ }, old_value: { /* ... */ },
+  headers: { operation: "update" } }
+
+// delete
+{ type: "issue", key: "i1", headers: { operation: "delete" } }
+
+// control
+{ headers: { control: "snapshot-start", offset: "2_0" } }
+```
+
+## Read and materialize
+
+Reads decode back into typed change/control messages, so a client can fold them into local state:
+
+```ts
+const read = await stream.read();
+if (read.status === "ok") {
+  for (const { value } of read.messages) {
+    if ("type" in value) {
+      // change message: value.type, value.key, value.value, value.headers.operation
+    } else {
+      // control message: value.headers.control
+    }
+  }
+}
+```
+
+`DurableStateStream<S>` also exposes `readLive(options)`, `metadata()`, `delete()`, and the underlying `json` / `stream` handles for byte- or JSON-level access. This change/control stream is the server-side half of a sync setup: a client materializer (StreamDB-style) consumes it to rebuild collections — see the issue-tracker example for an end-to-end multi-user pattern.

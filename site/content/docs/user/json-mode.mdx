@@ -1,0 +1,96 @@
+---
+title: JSON mode
+description: Typed JSON streams with @streamsy/json — JsonProtocol, JsonStream, codecs, and Standard Schema.
+---
+
+`@streamsy/json` wraps a `StreamProtocolFactory` so messages are typed JavaScript values instead of raw bytes. Values are encoded to / decoded from `application/json` through a **codec** or a **Standard Schema**, and streams are tagged with the `application/json` content type.
+
+```bash
+bun add @streamsy/json
+```
+
+## Create a typed protocol
+
+`createJsonProtocol(protocol, schema)` returns a `JsonProtocol<T>` over an existing protocol factory:
+
+```ts
+import { createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
+
+type User = { id: string; name: string };
+
+const userCodec: JsonCodec<User> = {
+  encode(value) {
+    if (typeof value.id !== "string" || typeof value.name !== "string") {
+      throw new Error("invalid user");
+    }
+    return value;
+  },
+  decode(value) {
+    const candidate = value as Partial<User>;
+    if (typeof candidate?.id !== "string" || typeof candidate?.name !== "string") {
+      throw new Error("invalid user");
+    }
+    return { id: candidate.id, name: candidate.name };
+  },
+};
+
+const protocol = createStreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+const users = createJsonProtocol(protocol, userCodec);
+```
+
+## Codecs and Standard Schema
+
+The `schema` argument is a `JsonSchema<T>`, which is either:
+
+- a **`JsonCodec<T>`** — `{ encode(value): unknown; decode(value): T }`, as above; or
+- a **Standard Schema** (anything exposing `~standard`, e.g. Zod, Valibot, ArkType).
+
+A Standard Schema is normalized to a codec internally: `encode` passes the value through and `decode` runs validation. Validation must be synchronous — an async Standard Schema throws `JsonValidationError`. Use an explicit `JsonCodec` if you need custom wire shaping (encode to a different shape than you decode).
+
+```ts
+import { z } from "zod";
+
+const User = z.object({ id: z.string(), name: z.string() });
+const users = createJsonProtocol(protocol, User); // Standard Schema
+```
+
+## Create, append, read
+
+`JsonProtocol<T>` exposes `create`, `get`, and `wrap`; the resulting `JsonStream<T>` carries the typed operations.
+
+```ts
+const created = await users.create("users", { initialMessage: { id: "u1", name: "Alice" } });
+if (created.status !== "created" && created.status !== "exists") {
+  throw new Error(`create failed: ${created.status}`);
+}
+
+const stream = created.stream; // JsonStream<User>
+await stream.append({ id: "u2", name: "Bob" });
+await stream.appendMany([{ id: "u3", name: "Carol" }]);
+
+const read = await stream.read();
+if (read.status === "ok") {
+  read.messages.map((message) => message.value.name); // typed User values
+}
+```
+
+`create` accepts `initialMessage` and/or `initialMessages` (encoded as the first append(s)) instead of raw `initialData`. `JsonStream<T>` provides:
+
+- `append(value, options?)` / `appendMany(values, options?)` — encode and append typed values.
+- `appendJson(value, options?)` — append an already-JSON value without codec encoding (escape hatch).
+- `read(options?)` / `readLive(options)` — decode stored messages into `{ ...message, value: T }`.
+- `readRaw(options?)` — the underlying byte-level `read`.
+- `metadata()`, `delete()`.
+
+> `appendMany` runs its appends concurrently, so it omits the per-append `expectedOffset` CAS precondition (a shared expected offset would fail all but one). Use single `append` calls when you need conditional appends.
+
+## Result statuses
+
+Typed results extend the underlying protocol's discriminated unions:
+
+- **`create`** → `created` / `exists` (with a typed `stream`), or a passthrough failure (`conflict`, `not-found`, `bad-request`, `not-supported`).
+- **`get`** → `ok` (typed `stream`) or `content-type-conflict` when the stream isn't `application/json`, plus passthrough `not-found` / `gone` / `not-supported`.
+- **`read` / `readLive`** → `ok` with decoded `messages`, or `invalid-json` (`{ error, offset? }`) when a stored value fails the codec/schema, plus the underlying `timeout` / `not-found` / `gone` statuses.
+
+Because the base protocol's framer parses `application/json` bodies, malformed JSON bytes are rejected at append time; the read-side `invalid-json` status surfaces codec/schema failures or externally corrupted storage. Always narrow on `status` before reading `stream` or `messages`.

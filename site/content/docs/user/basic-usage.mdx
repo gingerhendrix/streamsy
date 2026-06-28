@@ -1,0 +1,117 @@
+---
+title: Basic usage
+description: Compose a Durable Streams HTTP server with @streamsy/core, then choose a durable storage backend.
+---
+
+A Streamsy server is composed from three pieces:
+
+1. a **`StreamFactory`** from a storage package (where messages are persisted);
+2. a **protocol facade** from `createStreamProtocol({ storage: { factory } })` (the Durable Streams operations);
+3. an **HTTP facade** from `createHttpHandler({ protocol, pathPrefix })` (serves the protocol over HTTP).
+
+The protocol and HTTP facades never change — only the factory you pass decides where data lives.
+
+## Install
+
+Streamsy targets the Bun runtime. Start with the core package, which bundles the in-memory factory:
+
+```bash
+bun add @streamsy/core
+```
+
+## Compose the server
+
+```ts
+import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+
+const factory = createMemoryStreamFactory();
+const protocol = createStreamProtocol({ storage: { factory } });
+const handler = createHttpHandler({ protocol, pathPrefix: "/" });
+
+Bun.serve({ fetch: (request) => handler.fetch(request) });
+```
+
+The server now speaks the Durable Streams HTTP protocol on the configured `pathPrefix`. The in-memory factory keeps everything in process — ideal for development, examples, and conformance testing, but not durable across restarts.
+
+## Use the protocol directly
+
+You can also drive the protocol in-process, without HTTP — useful for tests, scripts, and server-side materializers:
+
+```ts
+const created = await protocol.create("events", { contentType: "application/json" });
+if (created.status === "created") {
+  await created.stream.append({ data: new TextEncoder().encode('{"hello":"world"}') });
+  const read = await created.stream.read();
+  // read.status === "ok" -> read.messages
+}
+```
+
+Results are discriminated unions keyed on `status` (`"created"`, `"exists"`, `"ok"`, `"not-found"`, `"conflict"`, …); narrow on `status` before using a result.
+
+## Choose a durable backend
+
+To persist data, swap `createMemoryStreamFactory()` for a durable factory. Nothing else in the composition changes.
+
+### Bun SQLite — `@streamsy/storage-sqlite`
+
+File-backed persistence on `bun:sqlite`, with automatic migrations, in-process mutation locking, live-read notification, and lazy expiry. Requires the Bun runtime.
+
+```bash
+bun add @streamsy/storage-sqlite
+```
+
+```ts
+import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
+import { createSqliteStreamFactory } from "@streamsy/storage-sqlite";
+
+const factory = createSqliteStreamFactory({ filename: "streams.db" }); // omit for :memory:
+const protocol = createStreamProtocol({ storage: { factory } });
+const handler = createHttpHandler({ protocol, pathPrefix: "/" });
+
+Bun.serve({ fetch: (request) => handler.fetch(request) });
+
+// factory.close() closes the underlying database connection.
+```
+
+### Cloudflare Durable Object — `@streamsy/storage-durable-object`
+
+SQLite-backed persistence inside a Durable Object, with long-polling, SSE, and TTL/expiry. Each stream id maps to one Durable Object instance.
+
+```bash
+bun add @streamsy/storage-durable-object
+```
+
+```ts
+import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
+import {
+  createDurableObjectStreamFactory,
+  DurableObjectStreamStorage,
+} from "@streamsy/storage-durable-object";
+
+// Re-export the storage class so Wrangler can bind it as a Durable Object.
+export { DurableObjectStreamStorage };
+
+interface Env {
+  STREAMS: DurableObjectNamespace<DurableObjectStreamStorage>;
+}
+
+export default {
+  fetch(request: Request, env: Env) {
+    const factory = createDurableObjectStreamFactory({ namespace: env.STREAMS });
+    const protocol = createStreamProtocol({ storage: { factory } });
+    const handler = createHttpHandler({ protocol, pathPrefix: "/" });
+    return handler.fetch(request);
+  },
+};
+```
+
+Bind `STREAMS` to the `DurableObjectStreamStorage` class in your Wrangler config (with a SQLite-backed migration). The factory routes each stream id to its Durable Object via `namespace.idFromName(streamId)`.
+
+## Typed layers
+
+Most applications don't work with raw bytes. Two packages wrap the protocol factory with typed facades:
+
+- **[JSON mode](/docs/user/json-mode)** (`@streamsy/json`) — typed JSON messages validated through a codec or Standard Schema.
+- **[Durable State](/docs/user/durable-state)** (`@streamsy/state`) — typed change/control messages over named collections.
+
+Both accept the same `protocol` object returned by `createStreamProtocol`, so you layer them on top of any storage backend.
