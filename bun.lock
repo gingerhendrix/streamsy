@@ -69,6 +69,7 @@
         "@streamsy/json": "workspace:*",
         "@streamsy/state": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
+        "@streamsy/storage-fs": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
         "vitest": "^4.0.16",
       },
@@ -92,7 +93,7 @@
       "name": "@streamsy/json",
       "version": "0.1.0",
       "dependencies": {
-        "@streamsy/core": "0.0.2",
+        "@streamsy/core": "0.1.0",
       },
       "devDependencies": {
         "typescript": "catalog:",
@@ -103,8 +104,8 @@
       "name": "@streamsy/state",
       "version": "0.1.0",
       "dependencies": {
-        "@streamsy/core": "0.0.2",
-        "@streamsy/json": "0.0.2",
+        "@streamsy/core": "0.1.0",
+        "@streamsy/json": "0.1.0",
       },
       "devDependencies": {
         "typescript": "catalog:",
@@ -115,7 +116,7 @@
       "name": "@streamsy/storage-durable-object",
       "version": "0.1.0",
       "dependencies": {
-        "@streamsy/core": "0.0.2",
+        "@streamsy/core": "0.1.0",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
@@ -138,7 +139,7 @@
       "name": "@streamsy/storage-sqlite",
       "version": "0.1.0",
       "dependencies": {
-        "@streamsy/core": "0.0.2",
+        "@streamsy/core": "0.1.0",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",

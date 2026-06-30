@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:memory": "vitest --run src/memory.conformance.test.ts",
+    "test:fs": "vitest --run src/fs.conformance.test.ts -t '^(?!.*Fork - )'",
     "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
     "test:do": "STAGE=conformance node src/deploy-test-destroy.ts",
     "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
@@ -21,6 +22,7 @@
     "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
+    "@streamsy/storage-fs": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
     "vitest": "^4.0.16"
   },
