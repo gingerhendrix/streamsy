@@ -82,7 +82,7 @@
     },
     "packages/core": {
       "name": "@streamsy/core",
-      "version": "0.0.2",
+      "version": "0.1.0",
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -90,7 +90,7 @@
     },
     "packages/json": {
       "name": "@streamsy/json",
-      "version": "0.0.2",
+      "version": "0.1.0",
       "dependencies": {
         "@streamsy/core": "0.0.2",
       },
@@ -101,7 +101,7 @@
     },
     "packages/state": {
       "name": "@streamsy/state",
-      "version": "0.0.2",
+      "version": "0.1.0",
       "dependencies": {
         "@streamsy/core": "0.0.2",
         "@streamsy/json": "0.0.2",
@@ -113,7 +113,7 @@
     },
     "packages/storage-durable-object": {
       "name": "@streamsy/storage-durable-object",
-      "version": "0.0.2",
+      "version": "0.1.0",
       "dependencies": {
         "@streamsy/core": "0.0.2",
       },
@@ -123,9 +123,20 @@
         "vitest": "^4.0.16",
       },
     },
+    "packages/storage-fs": {
+      "name": "@streamsy/storage-fs",
+      "version": "0.1.0",
+      "dependencies": {
+        "@streamsy/core": "0.1.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
+      },
+    },
     "packages/storage-sqlite": {
       "name": "@streamsy/storage-sqlite",
-      "version": "0.0.2",
+      "version": "0.1.0",
       "dependencies": {
         "@streamsy/core": "0.0.2",
       },
@@ -690,6 +701,8 @@
     "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
 
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
+
+    "@streamsy/storage-fs": ["@streamsy/storage-fs@workspace:packages/storage-fs"],
 
     "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
 
