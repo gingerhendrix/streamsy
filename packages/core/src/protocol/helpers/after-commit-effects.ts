@@ -1,30 +1,33 @@
-import type { AfterCommitEffects, Stream } from "../../types/factory.ts";
+import type { BoundStream } from "./bind-stream.ts";
+
+/**
+ * Core-side after-commit effects. These live on core's plan *decisions*, NOT on
+ * the seam plan types: core executes them itself (calling `scheduleExpiry` /
+ * `cancelExpiry` back on the adapter) after the adapter's mutation returns.
+ * Adapters never see or run them — putting them on the plans taught a
+ * double-execution bug.
+ */
+export interface AfterCommitEffects {
+  scheduleExpiryAt?: number;
+  cancelExpiry?: boolean;
+}
 
 /**
  * Runtime effects that are safe to fire only after the durable mutation has
- * committed. Storage adapters persist the MutationPlan atomically; core owns
- * scheduling and notification side effects so failed preconditions never fire
- * timers or wake readers.
+ * committed. Storage adapters persist each intent atomically; core owns expiry
+ * scheduling so failed preconditions never fire timers.
+ *
+ * Waking live readers is not an after-commit effect: the level-triggered
+ * `awaitChange` seam re-reads durable state, so an adapter wakes its own waiters
+ * from inside a successful mutation (a pure latency optimization). Correctness
+ * never depends on a notification crossing the seam.
  */
 export async function runAfterCommit(
   effects: AfterCommitEffects | undefined,
-  storage: Stream,
+  storage: BoundStream,
 ): Promise<void> {
   if (!effects) return;
   if (effects.cancelExpiry) await storage.cancelExpiry();
   else if (effects.scheduleExpiryAt !== undefined)
     await storage.scheduleExpiry(effects.scheduleExpiryAt);
-  if (effects.notify) {
-    // Await the notification so storage backends whose `notify` is a remote
-    // call (e.g. the Durable Object stub RPC) reliably wake waiting readers
-    // before the mutating request completes. On Cloudflare, un-awaited work can
-    // be cancelled once the response returns, which would drop the wake of a
-    // live reader sitting at the tail when a final message + close commit
-    // together. A failed notification must not fail the committed mutation.
-    try {
-      await storage.notify(effects.notify);
-    } catch (error) {
-      console.error("stream notify after-commit effect failed", error);
-    }
-  }
 }

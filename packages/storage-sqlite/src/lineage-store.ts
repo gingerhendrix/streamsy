@@ -20,7 +20,7 @@ export class SqliteLineageStore implements LineageStore {
   async purgeSelf(id: StreamId): Promise<void> {
     const stream = this.state.getExistingStream(id);
     if (stream) {
-      stream.purgeSelfSync();
+      stream.purgeSelf();
       return;
     }
     const purge = this.db.transaction(() => {

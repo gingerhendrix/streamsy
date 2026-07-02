@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { StreamProtocol } from "@streamsy/core";
-import { createSqliteStreamFactory } from "./index.ts";
+import { createSqliteStorageAdapter } from "./index.ts";
 
 const [dbPath, streamId, label, countRaw, readyPath, startPath] = process.argv.slice(2);
 
@@ -12,8 +12,8 @@ if (!dbPath || !streamId || !label || !countRaw || !readyPath || !startPath) {
 
 const count = Number(countRaw);
 const encoder = new TextEncoder();
-const factory = createSqliteStreamFactory({ filename: dbPath, busyTimeoutMs: 10_000 });
-const protocol = new StreamProtocol({ storage: { factory } });
+const adapter = createSqliteStorageAdapter({ filename: dbPath, busyTimeoutMs: 10_000 });
+const protocol = new StreamProtocol({ storage: { adapter } });
 
 writeFileSync(readyPath, "ready");
 while (!existsSync(startPath)) await delay(5);
@@ -35,4 +35,4 @@ for (let i = 0; i < count; i++) {
   }
 }
 
-factory.close();
+adapter.close();

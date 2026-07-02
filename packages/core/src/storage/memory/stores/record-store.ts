@@ -8,15 +8,11 @@ export class RecordStore {
 
   constructor(readonly id: StreamId) {}
 
-  async getRecord(): Promise<StreamRecord | null> {
-    return this.getRecordSync();
-  }
-
-  getRecordSync(): StreamRecord | null {
+  getRecord(): StreamRecord | null {
     return clone(this.record ?? null);
   }
 
-  createRecordSync(record: StreamRecord): CreateRecordResult {
+  createRecord(record: StreamRecord): CreateRecordResult {
     if (record.id !== this.id) {
       throw new Error(`Record id ${record.id} does not match bound stream ${this.id}`);
     }
@@ -25,7 +21,7 @@ export class RecordStore {
     return { status: "created" };
   }
 
-  updateRecordSync(patch: StreamRecordPatch): StreamRecord {
+  updateRecord(patch: StreamRecordPatch): StreamRecord {
     const record = this.requireRecord();
     this.record = {
       ...record,
@@ -37,7 +33,7 @@ export class RecordStore {
     return clone(this.record);
   }
 
-  deleteRecordSync(): void {
+  deleteRecord(): void {
     this.record = undefined;
   }
 

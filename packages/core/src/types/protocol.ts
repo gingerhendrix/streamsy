@@ -3,11 +3,11 @@
  *
  * The public protocol is factory-shaped: callers create or look up a
  * protocol-bound stream, then operate on that bound stream. Storage-bound
- * streams live in `types/factory.ts`; this file describes protocol-facing
+ * streams live in `types/storage-adapter.ts`; this file describes protocol-facing
  * objects and result shapes.
  */
 
-import type { NotSupportedResult } from "./factory.ts";
+import type { NotSupportedResult } from "./storage-adapter.ts";
 import type { StoredMessage, StreamId } from "./storage.ts";
 
 // === Protocol Inputs ===

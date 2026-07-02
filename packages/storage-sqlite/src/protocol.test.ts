@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { StreamProtocol } from "@streamsy/core";
-import { createSqliteStreamFactory } from "./index.ts";
+import { createSqliteStorageAdapter } from "./index.ts";
 
 const encode = (s: string) => new TextEncoder().encode(s);
 const tempDirs: string[] = [];
@@ -24,7 +24,7 @@ afterEach(() => {
 
 describe("sqlite protocol", () => {
   test("create is idempotent through the protocol", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createSqliteStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createSqliteStorageAdapter() } });
     const first = await protocol.create("s", { contentType: "text/plain" });
     const second = await protocol.create("s", { contentType: "text/plain" });
     expect(first.status).toBe("created");
@@ -32,7 +32,7 @@ describe("sqlite protocol", () => {
   });
 
   test("concurrent appends serialize without losing messages", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createSqliteStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createSqliteStorageAdapter() } });
     await protocol.create("s", { contentType: "text/plain" });
     const lookup = await protocol.get("s");
     if (lookup.status !== "ok") throw new Error("lookup failed");
@@ -53,7 +53,7 @@ describe("sqlite protocol", () => {
   });
 
   test("producer idempotency: duplicate seq does not double-append", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createSqliteStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createSqliteStorageAdapter() } });
     await protocol.create("s", { contentType: "text/plain" });
     const lookup = await protocol.get("s");
     if (lookup.status !== "ok") throw new Error("lookup failed");
@@ -76,7 +76,7 @@ describe("sqlite protocol", () => {
   });
 
   test("producer idempotency: stale epoch is rejected", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createSqliteStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createSqliteStorageAdapter() } });
     await protocol.create("s", { contentType: "text/plain" });
     const lookup = await protocol.get("s");
     if (lookup.status !== "ok") throw new Error("lookup failed");
@@ -95,7 +95,7 @@ describe("sqlite protocol", () => {
 
   test("long-poll live read times out then observes a later append", async () => {
     const protocol = new StreamProtocol({
-      storage: { factory: createSqliteStreamFactory() },
+      storage: { adapter: createSqliteStorageAdapter() },
       longPollTimeoutMs: 150,
     });
     await protocol.create("s", { contentType: "text/plain" });
@@ -116,7 +116,7 @@ describe("sqlite protocol", () => {
 });
 
 test("expectedOffset CAS: stale append conflicts and retries cleanly", async () => {
-  const protocol = new StreamProtocol({ storage: { factory: createSqliteStreamFactory() } });
+  const protocol = new StreamProtocol({ storage: { adapter: createSqliteStorageAdapter() } });
   await protocol.create("s", { contentType: "text/plain" });
   const lookup = await protocol.get("s");
   if (lookup.status !== "ok") throw new Error("lookup failed");
@@ -152,10 +152,10 @@ test("expectedOffset CAS: stale append conflicts and retries cleanly", async () 
 
 test("multi-writer file-backed appends retry cleanly across database handles", async () => {
   const path = tempDbPath();
-  const firstFactory = createSqliteStreamFactory({ filename: path });
-  const secondFactory = createSqliteStreamFactory({ filename: path });
-  const first = new StreamProtocol({ storage: { factory: firstFactory } });
-  const second = new StreamProtocol({ storage: { factory: secondFactory } });
+  const firstAdapter = createSqliteStorageAdapter({ filename: path });
+  const secondAdapter = createSqliteStorageAdapter({ filename: path });
+  const first = new StreamProtocol({ storage: { adapter: firstAdapter } });
+  const second = new StreamProtocol({ storage: { adapter: secondAdapter } });
 
   await first.create("s", { contentType: "text/plain" });
   const firstLookup = await first.get("s");
@@ -182,14 +182,14 @@ test("multi-writer file-backed appends retry cleanly across database handles", a
     "0000000000000008_0000000000000000",
   ]);
 
-  firstFactory.close();
-  secondFactory.close();
+  firstAdapter.close();
+  secondAdapter.close();
 });
 
 test("multi-process file-backed appends retry cleanly across database handles", async () => {
   const path = tempDbPath();
-  const factory = createSqliteStreamFactory({ filename: path, busyTimeoutMs: 10_000 });
-  const protocol = new StreamProtocol({ storage: { factory } });
+  const adapter = createSqliteStorageAdapter({ filename: path, busyTimeoutMs: 10_000 });
+  const protocol = new StreamProtocol({ storage: { adapter } });
   await protocol.create("s", { contentType: "text/plain" });
 
   const dir = tempDirs.at(-1)!;
@@ -222,7 +222,7 @@ test("multi-process file-backed appends retry cleanly across database handles", 
     ),
   );
 
-  factory.close();
+  adapter.close();
 });
 
 function spawnWorker(

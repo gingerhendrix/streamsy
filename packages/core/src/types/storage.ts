@@ -2,12 +2,29 @@
  * Simplified storage boundary for Streamsy.
  *
  * Adapters persist facts and may provide runtime capabilities (notification,
- * expiration scheduling). Atomic mutation is expressed through commit plans and
- * factory lifecycle verbs; protocol/lifecycle policy lives in core.
+ * expiration scheduling). Atomic mutation is expressed through append and
+ * lifecycle intents on the storage adapter; protocol/lifecycle policy lives in
+ * core.
  */
 export type StreamId = string;
+
+/**
+ * Public stream offset. **Seam guarantee**: offsets are fixed-width,
+ * lexicographically ordered strings of the form `<counter:16>_<sub:16>` where
+ * both parts are zero-padded decimals, so **lexicographic order = offset
+ * order**. Adapters rely on this to compare and window offsets inside their own
+ * storage engines (SQL `WHERE offset > ?`, key-range scans, line filtering).
+ * `compareOffsets` and `ZERO_OFFSET` are exported from the package root.
+ * Within one stream incarnation an offset only ever advances; a purge followed
+ * by a re-create restarts the offset sequence.
+ */
 export type Offset = string;
 
+/**
+ * One stored message. `data` is binary (`Uint8Array`) — it survives structured
+ * clone (the Durable Object RPC boundary) but is NOT plain JSON; a remote
+ * adapter transporting messages over JSON must encode it (e.g. base64).
+ */
 export interface StoredMessage {
   data: Uint8Array;
   offset: Offset;
@@ -53,6 +70,12 @@ export interface StreamRecord {
   counter: number;
 }
 
+/**
+ * **Patches set values; they never delete them.** An absent field means "leave
+ * unchanged". Clearing a field is deliberately inexpressible: `undefined` is
+ * dropped by JSON but preserved by structured clone, so "set to undefined"
+ * would behave differently across transports. Core never clears fields.
+ */
 export interface StreamRecordPatch {
   config?: Partial<StreamConfig>;
   lifecycle?: Partial<StreamLifecycleState>;
@@ -71,17 +94,47 @@ export interface ListMessagesOptions {
   limit?: number;
 }
 
-export type StreamEventType = "message" | "closed" | "deleted" | "soft-deleted";
-
-export interface WaitForEventOptions {
-  timeoutMs: number;
-  signal?: AbortSignal;
+/**
+ * Observable, serializable snapshot of the change-relevant state of one stream.
+ * Every field is a JSON-serializable primitive so the snapshot crosses a Durable
+ * Object RPC (or any future remote adapter) boundary unchanged.
+ */
+export interface StreamChangeSnapshot {
+  /** `false` once the record has been purged. */
+  present: boolean;
+  currentOffset: Offset;
+  closed: boolean;
+  softDeleted: boolean;
 }
 
-export type WaitForEventResult =
-  | { status: "notified"; type?: StreamEventType }
-  | { status: "timeout" }
-  | { status: "aborted" };
+/**
+ * Serializable, closure-free input to the level-triggered live-wait seam. The
+ * caller passes the position/lifecycle state it already observed; the adapter
+ * re-reads durable state and decides whether anything relevant advanced.
+ */
+export interface AwaitChangeOptions {
+  /** The offset the live reader is parked at. */
+  fromOffset: Offset;
+  /** Closed state the caller already observed (treated as `false` when absent). */
+  observedClosed?: boolean;
+  /** Soft-deleted state the caller already observed (treated as `false` when absent). */
+  observedSoftDeleted?: boolean;
+  timeoutMs: number;
+}
+
+/**
+ * Result of {@link AwaitChangeOptions}. There is no `aborted` status:
+ * cancellation is caller-local and the adapter never learns about it.
+ *
+ * `timeout` means "no relevant change observed yet" — it does NOT promise the
+ * full `timeoutMs` budget elapsed. Adapters MAY return `timeout` early (bounded
+ * parks are encouraged for remote backends, e.g. a Durable Object capping the
+ * total wait so a single RPC never strands the actor). Callers MUST re-park on
+ * `timeout` rather than assume the budget was consumed.
+ */
+export type AwaitChangeResult =
+  | { status: "changed"; snapshot: StreamChangeSnapshot }
+  | { status: "timeout"; snapshot: StreamChangeSnapshot };
 
 export interface Clock {
   now(): number;

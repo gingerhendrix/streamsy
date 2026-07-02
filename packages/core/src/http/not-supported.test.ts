@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { notSupported } from "../types/factory.ts";
+import { notSupported } from "../types/storage-adapter.ts";
 import { HttpResponseFactory } from "./responses.ts";
 import { maybeNotSupportedResponse, notSupportedResponse } from "./not-supported.ts";
 

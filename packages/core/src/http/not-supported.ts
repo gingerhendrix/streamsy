@@ -5,8 +5,8 @@
  * Request with a body describing the unsupported feature and a
  * `stream-not-supported` header carrying the machine-readable feature id.
  */
-import type { NotSupportedResult } from "../types/factory.ts";
-import { isNotSupported } from "../types/factory.ts";
+import type { NotSupportedResult } from "../types/storage-adapter.ts";
+import { isNotSupported } from "../types/storage-adapter.ts";
 import { HttpResponseFactory } from "./responses.ts";
 
 export function notSupportedResponse(

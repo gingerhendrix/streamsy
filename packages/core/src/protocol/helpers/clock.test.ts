@@ -1,7 +1,7 @@
 /**
- * Unit coverage for the default `systemClock` extracted from
- * StreamProtocol. Pins `now()` to `Date.now()` and the
- * `date(value?)` semantics that previously lived inline in protocol.ts.
+ * Unit coverage for the default `systemClock` used by StreamProtocol. Pins
+ * `now()` to `Date.now()` and verifies the `date(value?)` semantics (passthrough
+ * of a provided value, else `now()`).
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";

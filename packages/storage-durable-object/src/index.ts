@@ -1,6 +1,6 @@
 /** @streamsy/storage-durable-object */
 export { DurableObjectStreamStorage } from "./storage.ts";
 export type { DurableObjectStreamStoreEnv } from "./storage.ts";
-export { createDurableObjectStreamFactory } from "./factory.ts";
-export type { DurableObjectStreamFactoryOptions } from "./factory.ts";
-export type { StreamFactory, StreamRecord, StoredMessage, ProducerState } from "@streamsy/core";
+export { createDurableObjectStorageAdapter } from "./adapter.ts";
+export type { DurableObjectStorageAdapterOptions } from "./adapter.ts";
+export type { StorageAdapter, StreamRecord, StoredMessage, ProducerState } from "@streamsy/core";

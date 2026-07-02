@@ -11,11 +11,7 @@ export class ProducerStore {
     private readonly id: StreamId,
   ) {}
 
-  async getProducerState(producerId: string): Promise<ProducerState | undefined> {
-    return this.getProducerStateSync(producerId);
-  }
-
-  getProducerStateSync(producerId: string): ProducerState | undefined {
+  getProducerState(producerId: string): ProducerState | undefined {
     const row = this.db
       .query<ProducerRow, [StreamId, string]>(
         "select epoch, last_seq from streamsy_producers where stream_id = ? and producer_id = ?",
@@ -24,7 +20,7 @@ export class ProducerStore {
     return row ? { epoch: row.epoch, lastSeq: row.last_seq } : undefined;
   }
 
-  setProducerStateSync(producerId: string, state: ProducerState): void {
+  setProducerState(producerId: string, state: ProducerState): void {
     this.db.run(
       `insert into streamsy_producers (stream_id, producer_id, epoch, last_seq)
        values (?, ?, ?, ?)
@@ -34,7 +30,7 @@ export class ProducerStore {
     );
   }
 
-  deleteProducerStatesSync(): void {
+  deleteProducerStates(): void {
     this.db.run("delete from streamsy_producers where stream_id = ?", [this.id]);
   }
 }

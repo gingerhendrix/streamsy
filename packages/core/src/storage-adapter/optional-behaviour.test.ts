@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isNotSupportedError, notSupportedFromError, unsupported } from "../types/factory.ts";
+import {
+  isNotSupportedError,
+  notSupportedFromError,
+  unsupported,
+} from "../types/storage-adapter.ts";
 
 describe("unsupported storage behavior", () => {
   it("uses typed errors that map to protocol not-supported results", () => {

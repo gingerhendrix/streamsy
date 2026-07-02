@@ -7,7 +7,7 @@ Typed JSON protocol and stream wrappers for [Streamsy](https://github.com/ginger
 ## Usage
 
 ```ts
-import { createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
 import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 
 type User = { id: string; name: string };
@@ -18,7 +18,7 @@ const userCodec: JsonCodec<User> = {
 };
 
 const protocol = createStreamProtocol({
-  storage: { factory: createMemoryStreamFactory() },
+  storage: { adapter: createMemoryStorageAdapter() },
 });
 const json = createJsonProtocol(protocol, userCodec);
 

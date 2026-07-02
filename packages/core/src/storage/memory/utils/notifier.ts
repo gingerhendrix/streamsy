@@ -1,30 +1,31 @@
-import type {
-  StreamEventType,
-  WaitForEventOptions,
-  WaitForEventResult,
-} from "../../../types/storage.ts";
-
+/**
+ * In-process wake bus backing the memory adapter's level-triggered `awaitChange`.
+ *
+ * A parked waiter resolves either when a mutation calls {@link wake} or after its
+ * timeout; the caller re-reads durable state to decide whether anything relevant
+ * changed. Spurious wakes are safe — the caller simply re-checks and parks again
+ * within its remaining budget.
+ */
 export class MemoryNotifier {
-  private readonly waiters = new Set<(result: WaitForEventResult) => void>();
+  private readonly wakeWaiters = new Set<() => void>();
 
-  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+  waitForWake(timeoutMs: number): Promise<void> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => finish({ status: "timeout" }), options.timeoutMs);
-      const finish = (result: WaitForEventResult) => {
+      const finish = () => {
         clearTimeout(timeout);
-        this.waiters.delete(finish);
-        resolve(result);
+        this.wakeWaiters.delete(finish);
+        resolve();
       };
-      this.waiters.add(finish);
-      options.signal?.addEventListener("abort", () => finish({ status: "aborted" }), {
-        once: true,
-      });
+      const timeout = setTimeout(finish, timeoutMs);
+      this.wakeWaiters.add(finish);
     });
   }
 
-  notify(type: StreamEventType): void {
-    const waiters = [...this.waiters];
-    this.waiters.clear();
-    for (const waiter of waiters) waiter({ status: "notified", type });
+  /** Wake every parked `awaitChange` waiter. Called from inside a mutation. */
+  wake(): void {
+    if (this.wakeWaiters.size === 0) return;
+    const waiters = [...this.wakeWaiters];
+    this.wakeWaiters.clear();
+    for (const waiter of waiters) waiter();
   }
 }

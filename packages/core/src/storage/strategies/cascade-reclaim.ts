@@ -1,4 +1,4 @@
-import type { DeleteCommit, DeletePlan } from "../../types/factory.ts";
+import type { StorageDeleteResult, DeletePlan } from "../../types/storage-adapter.ts";
 import type { StreamId, StreamRecord } from "../../types/storage.ts";
 import type { LineagePolicy, LineageStore } from "./lineage-store.ts";
 
@@ -6,7 +6,7 @@ export async function cascadeReclaim(
   store: LineageStore,
   plan: DeletePlan,
   lineage: LineagePolicy,
-): Promise<DeleteCommit> {
+): Promise<StorageDeleteResult> {
   const record = await store.getRecord(plan.streamId);
   if (!record) return { status: "not-found" };
   if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" };
@@ -21,7 +21,10 @@ export async function cascadeReclaim(
   return { status: "purged" };
 }
 
-export async function plainPurge(store: LineageStore, plan: DeletePlan): Promise<DeleteCommit> {
+export async function plainPurge(
+  store: LineageStore,
+  plan: DeletePlan,
+): Promise<StorageDeleteResult> {
   const record = await store.getRecord(plan.streamId);
   if (!record) return { status: "not-found" };
   if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" };

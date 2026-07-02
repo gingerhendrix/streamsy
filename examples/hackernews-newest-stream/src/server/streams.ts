@@ -1,6 +1,6 @@
 import {
   createHttpHandler,
-  createMemoryStreamFactory,
+  createMemoryStorageAdapter,
   createStreamProtocol,
   type ProtocolStream,
 } from "@streamsy/core";
@@ -12,7 +12,7 @@ const streamId = streamPath.replace(/^\/streams\/?/, "");
 
 export class DemoStreams {
   private readonly protocol = createStreamProtocol({
-    storage: { factory: createMemoryStreamFactory() },
+    storage: { adapter: createMemoryStorageAdapter() },
   });
   private readonly handler = createHttpHandler({
     protocol: this.protocol,

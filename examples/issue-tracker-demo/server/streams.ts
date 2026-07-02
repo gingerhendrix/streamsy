@@ -1,6 +1,6 @@
 import {
   createHttpHandler,
-  createMemoryStreamFactory,
+  createMemoryStorageAdapter,
   createStreamProtocol,
   type AppendResult,
 } from "@streamsy/core";
@@ -25,7 +25,7 @@ const eventCodec = {
  */
 export class DemoStreams {
   private readonly protocol = createStreamProtocol({
-    storage: { factory: createMemoryStreamFactory() },
+    storage: { adapter: createMemoryStorageAdapter() },
   });
   private readonly json = createJsonProtocol<StateEvent>(this.protocol, eventCodec);
   private readonly handler = createHttpHandler({

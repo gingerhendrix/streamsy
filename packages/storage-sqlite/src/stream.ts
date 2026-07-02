@@ -1,18 +1,17 @@
 import type { Database } from "bun:sqlite";
 import type {
-  CommitResult,
+  AppendPlan,
+  AwaitChangeOptions,
+  AwaitChangeResult,
   ListMessagesOptions,
-  MutationPlan,
   ProducerState,
+  StorageAppendResult,
   StoredMessage,
-  Stream,
-  StreamEventType,
   StreamId,
   StreamRecord,
   StreamRecordPatch,
-  WaitForEventOptions,
-  WaitForEventResult,
 } from "@streamsy/core";
+import { runAwaitChangeLoop } from "@streamsy/core";
 import { recordToRow, rowToRecord, STREAM_COLUMNS, type StreamRow } from "./lib/codec.ts";
 import { MessageStore } from "./stores/message-store.ts";
 import { ProducerStore } from "./stores/producer-store.ts";
@@ -24,12 +23,32 @@ import {
   SqliteBusyRetryExhausted,
 } from "./utils/transaction.ts";
 
+type FailureReason = "offset" | "closed" | "producer";
+
 /**
- * SQLite-backed protocol stream bound to one id. Record/message/producer state
- * is persisted in the shared database; the live-read notifier and expiry timer
- * are process-local runtime capabilities (see their modules).
+ * Adapter-internal write engine input. Superset of `AppendPlan` with an optional
+ * `createRecord` — the `create`/`fork` intents reuse the engine to insert the
+ * record, while the public `append` never carries `createRecord`.
  */
-export class SqliteStream implements Stream {
+interface WritePlan {
+  createRecord?: StreamRecord;
+  preconditions: AppendPlan["preconditions"];
+  messages?: StoredMessage[];
+  recordPatch?: StreamRecordPatch;
+}
+
+type WriteResult =
+  | { status: "committed"; record: StreamRecord }
+  | { status: "precondition-failed"; record: StreamRecord | null; reason?: FailureReason };
+
+/**
+ * SQLite-backed per-stream handle bound to one id. Record/message/producer state
+ * is persisted in the shared database; the live-read notifier and expiry timer
+ * are process-local runtime capabilities (see their modules). This handle is
+ * adapter-private — the seam is the flat `StorageAdapter` returned by
+ * `createSqliteStorageAdapter`.
+ */
+export class SqliteStream {
   private readonly records: RecordStore;
   private readonly messages: MessageStore;
   private readonly producers: ProducerStore;
@@ -48,23 +67,52 @@ export class SqliteStream implements Stream {
     this.timeout = new TimeoutScheduler(onScheduledExpiry);
   }
 
-  getRecord(): Promise<StreamRecord | null> {
+  getRecord(): StreamRecord | null {
     return this.records.getRecord();
   }
 
-  async commit(plan: MutationPlan): Promise<CommitResult> {
+  /** Public append intent (no `createRecord`). */
+  async append(plan: AppendPlan): Promise<StorageAppendResult> {
+    const out = await this.applyMutation({
+      preconditions: plan.preconditions,
+      messages: plan.messages,
+      recordPatch: plan.recordPatch,
+    });
+    if (out.status === "committed") return { status: "appended", record: out.record };
+    // `reason` is required on the seam. SQLite's conditional UPDATE is opaque,
+    // so attribution comes from a post-failure re-read (exact in the
+    // single-writer case the kit tests; best-effort under concurrency, falling
+    // back to "offset" when unattributable, e.g. busy-retry exhaustion).
+    return { status: "precondition-failed", record: out.record, reason: out.reason ?? "offset" };
+  }
+
+  /**
+   * Adapter-internal write engine shared by `append` (no `createRecord`) and the
+   * `create`/`fork` intents (with `createRecord`). Wraps the mutation in one
+   * immediate transaction with busy-retry and wakes parked `awaitChange` waiters
+   * after a successful commit.
+   */
+  async applyMutation(plan: WritePlan): Promise<WriteResult> {
     try {
-      return await runImmediateTransactionWithBusyRetry(this.db, () =>
-        this.commitInTransaction(plan),
+      const result = await runImmediateTransactionWithBusyRetry(this.db, () =>
+        this.applyMutationInTransaction(plan),
       );
+      // Over-waking is safe: a woken waiter re-reads and re-parks if nothing
+      // relevant changed.
+      if (result.status === "committed") this.notifier.wake();
+      return result;
     } catch (error) {
-      if (error instanceof PreconditionFailed || error instanceof SqliteBusyRetryExhausted)
+      if (error instanceof PreconditionFailed)
+        return error.reason !== undefined
+          ? { status: "precondition-failed", record: this.readRecord(), reason: error.reason }
+          : { status: "precondition-failed", record: this.readRecord() };
+      if (error instanceof SqliteBusyRetryExhausted)
         return { status: "precondition-failed", record: this.readRecord() };
       throw error;
     }
   }
 
-  purgeSelfSync(): void {
+  purgeSelf(): void {
     const purge = this.db.transaction(() => {
       this.db.run("delete from streamsy_messages where stream_id = ?", [this.id]);
       this.db.run("delete from streamsy_producers where stream_id = ?", [this.id]);
@@ -73,22 +121,38 @@ export class SqliteStream implements Stream {
     purge();
     this.timeout.cancel();
     this.deleteFromCache();
+    this.notifier.wake();
   }
 
-  listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
+  /** Wake parked `awaitChange` waiters. Used by the delete path to surface a
+   * soft-delete / purge transition without waiting for the poll timeout. */
+  wake(): void {
+    this.notifier.wake();
+  }
+
+  listMessages(options?: ListMessagesOptions): StoredMessage[] {
     return this.messages.listMessages(options);
   }
 
-  getProducerState(producerId: string): Promise<ProducerState | undefined> {
+  getProducerState(producerId: string): ProducerState | undefined {
     return this.producers.getProducerState(producerId);
   }
 
-  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
-    return this.notifier.waitForEvent(options);
-  }
-
-  notify(type: StreamEventType): Promise<void> | void {
-    return this.notifier.notify(type);
+  /**
+   * Level-triggered live wait via the shared exported loop. Re-reads durable
+   * state first (so a commit that landed between the caller's observation and
+   * this call is never missed), then parks on the in-process wake bus until the
+   * state advances or the budget expires. Cross-process writes are surfaced on
+   * the next timeout re-read.
+   */
+  awaitChange(options: AwaitChangeOptions): Promise<AwaitChangeResult> {
+    return runAwaitChangeLoop(
+      {
+        readRecord: () => this.readRecord(),
+        waitForWake: (timeoutMs) => this.notifier.waitForWake(timeoutMs),
+      },
+      options,
+    );
   }
 
   scheduleExpiry(at: number): Promise<void> | void {
@@ -99,7 +163,7 @@ export class SqliteStream implements Stream {
     return this.timeout.cancel();
   }
 
-  private commitInTransaction(plan: MutationPlan): CommitResult {
+  private applyMutationInTransaction(plan: WritePlan): WriteResult {
     let record = this.readRecord();
 
     if (plan.createRecord) {
@@ -117,10 +181,15 @@ export class SqliteStream implements Stream {
 
     if (plan.recordPatch) {
       const updated = this.updateRecordConditional(record, plan.recordPatch, plan);
-      if (!updated) return { status: "precondition-failed", record: this.readRecord() };
+      if (!updated)
+        return {
+          status: "precondition-failed",
+          record: this.readRecord(),
+          reason: this.reason(plan),
+        };
       record = updated;
     } else if (!this.recordPreconditionsHold(record, plan)) {
-      return { status: "precondition-failed", record };
+      return { status: "precondition-failed", record, reason: this.reason(plan) };
     }
 
     const producer = plan.preconditions.producer;
@@ -128,19 +197,35 @@ export class SqliteStream implements Stream {
       const changed = producer.expected
         ? this.updateProducerIfExpected(producer.producerId, producer.expected, producer.next)
         : this.insertProducerIfAbsent(producer.producerId, producer.next);
-      if (!changed) throw new PreconditionFailed();
+      if (!changed) throw new PreconditionFailed("producer");
     }
 
-    if (plan.appendMessages && plan.appendMessages.length > 0)
-      this.messages.appendMessagesSync(plan.appendMessages);
+    if (plan.messages && plan.messages.length > 0) this.messages.appendMessages(plan.messages);
 
     return { status: "committed", record: this.readRecord() ?? record };
+  }
+
+  /** Best-effort attribution of an offset/closed precondition failure. */
+  private reason(plan: WritePlan): FailureReason | undefined {
+    const record = this.readRecord();
+    if (!record) return undefined;
+    if (
+      plan.preconditions.expectedOffset !== undefined &&
+      plan.preconditions.expectedOffset !== record.currentOffset
+    )
+      return "offset";
+    if (
+      plan.preconditions.expectedClosed !== undefined &&
+      plan.preconditions.expectedClosed !== (record.lifecycle.closed === true)
+    )
+      return "closed";
+    return undefined;
   }
 
   private updateRecordConditional(
     record: StreamRecord,
     patch: StreamRecordPatch,
-    plan: MutationPlan,
+    plan: WritePlan,
   ): StreamRecord | null {
     const next: StreamRecord = {
       ...record,
@@ -170,7 +255,7 @@ export class SqliteStream implements Stream {
     return result.changes > 0 ? next : null;
   }
 
-  private recordPreconditionsHold(record: StreamRecord, plan: MutationPlan): boolean {
+  private recordPreconditionsHold(record: StreamRecord, plan: WritePlan): boolean {
     if (
       plan.preconditions.expectedOffset !== undefined &&
       plan.preconditions.expectedOffset !== record.currentOffset
@@ -217,4 +302,8 @@ export class SqliteStream implements Stream {
   }
 }
 
-class PreconditionFailed extends Error {}
+class PreconditionFailed extends Error {
+  constructor(readonly reason?: FailureReason) {
+    super();
+  }
+}

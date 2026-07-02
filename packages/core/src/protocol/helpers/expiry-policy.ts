@@ -1,12 +1,12 @@
 /** TTL/Expires-At policy and expiry scheduling. */
 
-import type { Stream } from "../../types/factory.ts";
 import type { Clock, StreamId, StreamRecord } from "../../types/storage.ts";
+import type { BoundStream } from "./bind-stream.ts";
 import { runAfterCommit } from "./after-commit-effects.ts";
 
 export type TouchReason = "read" | "live-read";
 export type ScheduledExpiryHandler = (streamId: StreamId) => Promise<void>;
-export type ResolveStorageStream = (streamId: StreamId) => Promise<Stream> | Stream;
+export type ResolveStorageStream = (streamId: StreamId) => Promise<BoundStream> | BoundStream;
 
 export interface ExpiryConfig {
   ttlSeconds?: number;
@@ -28,18 +28,20 @@ export class ExpiryPolicy {
     return undefined;
   }
 
-  async touch(stream: Stream, record: StreamRecord, reason: TouchReason): Promise<StreamRecord> {
+  async touch(
+    stream: BoundStream,
+    record: StreamRecord,
+    reason: TouchReason,
+  ): Promise<StreamRecord> {
     if (record.config.ttlSeconds === undefined) return record;
     if (reason === "live-read") return record;
     const expiresAtMs = this.deps.clock.now() + record.config.ttlSeconds * 1000;
-    const afterCommit = { scheduleExpiryAt: expiresAtMs };
-    const out = await stream.commit({
+    const out = await stream.append({
       preconditions: { expectedOffset: record.currentOffset },
       recordPatch: { lifecycle: { expiresAtMs } },
-      afterCommit,
     });
-    if (out.status !== "committed") return record;
-    await runAfterCommit(afterCommit, stream);
+    if (out.status !== "appended") return record;
+    await runAfterCommit({ scheduleExpiryAt: expiresAtMs }, stream);
     return out.record;
   }
 
@@ -58,7 +60,7 @@ export class ExpiryPolicy {
    * the stream expires the record is re-read so the returned value reflects the
    * post-expiry state.
    */
-  async expireIfNeeded(stream: Stream): Promise<StreamRecord | null> {
+  async expireIfNeeded(stream: BoundStream): Promise<StreamRecord | null> {
     const record = await stream.getRecord();
     if (record && this.isExpired(record)) {
       await this.deps.onScheduledExpiry(stream.id);

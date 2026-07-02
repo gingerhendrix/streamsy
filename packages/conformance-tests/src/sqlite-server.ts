@@ -9,13 +9,13 @@
  * once ready so the parent can synchronize.
  */
 import { StreamProtocol, HttpHandler } from "@streamsy/core";
-import { createSqliteStreamFactory } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 
 const port = Number(process.env.PORT ?? 0);
 const filename = process.env.DB_PATH ?? ":memory:";
 
-const factory = createSqliteStreamFactory({ filename });
-const protocol = new StreamProtocol({ storage: { factory }, longPollTimeoutMs: 1500 });
+const adapter = createSqliteStorageAdapter({ filename });
+const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 1500 });
 const handler = new HttpHandler({ protocol, pathPrefix: "/" });
 
 const server = Bun.serve({
@@ -27,7 +27,7 @@ console.log(`LISTENING ${server.port}`);
 
 const shutdown = () => {
   server.stop(true);
-  factory.close();
+  adapter.close();
   process.exit(0);
 };
 process.on("SIGTERM", shutdown);

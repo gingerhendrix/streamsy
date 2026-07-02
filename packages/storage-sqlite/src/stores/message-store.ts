@@ -12,7 +12,7 @@ export class MessageStore {
     private readonly id: StreamId,
   ) {}
 
-  appendMessagesSync(messages: StoredMessage[]): void {
+  appendMessages(messages: StoredMessage[]): void {
     if (messages.length === 0) return;
     const insert = this.db.query(
       "insert into streamsy_messages (stream_id, offset, timestamp, data) values (?, ?, ?, ?)",
@@ -22,7 +22,7 @@ export class MessageStore {
     }
   }
 
-  async listMessages(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+  listMessages(options: ListMessagesOptions = {}): StoredMessage[] {
     const clauses = ["stream_id = ?"];
     const params: (string | number)[] = [this.id];
     if (options.after !== undefined) {
@@ -48,7 +48,7 @@ export class MessageStore {
     }));
   }
 
-  deleteMessagesSync(): void {
+  deleteMessages(): void {
     this.db.run("delete from streamsy_messages where stream_id = ?", [this.id]);
   }
 }

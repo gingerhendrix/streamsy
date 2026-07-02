@@ -18,16 +18,12 @@ export class RecordStore {
     readonly id: StreamId,
   ) {}
 
-  async getRecord(): Promise<StreamRecord | null> {
-    return this.getRecordSync();
-  }
-
-  getRecordSync(): StreamRecord | null {
+  getRecord(): StreamRecord | null {
     const row = this.row();
     return row ? rowToRecord(row) : null;
   }
 
-  createRecordSync(record: StreamRecord): CreateRecordResult {
+  createRecord(record: StreamRecord): CreateRecordResult {
     if (record.id !== this.id) {
       throw new Error(`Record id ${record.id} does not match bound stream ${this.id}`);
     }
@@ -36,7 +32,7 @@ export class RecordStore {
     return { status: "exists", record: rowToRecord(this.requireRow()) };
   }
 
-  updateRecordSync(patch: StreamRecordPatch): StreamRecord {
+  updateRecord(patch: StreamRecordPatch): StreamRecord {
     const record = rowToRecord(this.requireRow());
     const next: StreamRecord = {
       ...record,
@@ -50,7 +46,7 @@ export class RecordStore {
     return next;
   }
 
-  deleteRecordSync(): void {
+  deleteRecord(): void {
     this.db.run("delete from streamsy_streams where stream_id = ?", [this.id]);
   }
 

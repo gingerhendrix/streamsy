@@ -1,4 +1,4 @@
-import type { DeleteCommit } from "../../types/factory.ts";
+import type { StorageDeleteResult } from "../../types/storage-adapter.ts";
 import type { StreamId, StreamRecord } from "../../types/storage.ts";
 
 export interface LineageStore {
@@ -18,4 +18,4 @@ export interface LineagePolicy {
 
 export type DependentsQuery = (parent: StreamId) => Promise<number>;
 
-export type ReclaimResult = DeleteCommit["status"];
+export type ReclaimResult = StorageDeleteResult["status"];

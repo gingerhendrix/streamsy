@@ -7,7 +7,7 @@ Durable State protocol and stream wrappers for [Streamsy](https://github.com/gin
 ## Usage
 
 ```ts
-import { createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
 import { createDurableStateProtocol } from "@streamsy/state";
 import type { JsonCodec } from "@streamsy/state";
 
@@ -19,7 +19,7 @@ const userCodec: JsonCodec<User> = {
 };
 
 const protocol = createStreamProtocol({
-  storage: { factory: createMemoryStreamFactory() },
+  storage: { adapter: createMemoryStorageAdapter() },
 });
 const durable = createDurableStateProtocol(protocol, {
   users: { type: "user", schema: userCodec, primaryKey: "id" },

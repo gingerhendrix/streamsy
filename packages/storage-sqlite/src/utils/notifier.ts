@@ -1,34 +1,33 @@
-import type { StreamEventType, WaitForEventOptions, WaitForEventResult } from "@streamsy/core";
-
 /**
- * In-process live-read notifier.
+ * In-process wake bus for the level-triggered `awaitChange` seam.
  *
- * Wakes same-process waiters on `notify`; otherwise waiters resolve to
- * `timeout`. Writers in other processes against a shared database file cannot
- * be observed here, so live reads are process-local notification plus a timeout
- * fallback — full cross-process pub/sub is out of scope for this adapter.
+ * Wakes same-process waiters on {@link wake}; otherwise a parked waiter resolves
+ * after its timeout and the caller re-reads durable state. Writers in other
+ * processes against a shared database file cannot wake these waiters, so live
+ * reads are process-local notification plus a timeout fallback — a cross-process
+ * write is observed on the next timeout re-read, not instantly. Full
+ * cross-process pub/sub is out of scope for this adapter.
  */
 export class StreamNotifier {
-  private readonly waiters = new Set<(result: WaitForEventResult) => void>();
+  private readonly waiters = new Set<() => void>();
 
-  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
+  waitForWake(timeoutMs: number): Promise<void> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => finish({ status: "timeout" }), options.timeoutMs);
-      const finish = (result: WaitForEventResult) => {
+      const finish = () => {
         clearTimeout(timeout);
         this.waiters.delete(finish);
-        resolve(result);
+        resolve();
       };
+      const timeout = setTimeout(finish, timeoutMs);
       this.waiters.add(finish);
-      options.signal?.addEventListener("abort", () => finish({ status: "aborted" }), {
-        once: true,
-      });
     });
   }
 
-  notify(type: StreamEventType): void {
+  /** Wake every parked `awaitChange` waiter. Called from inside a mutation. */
+  wake(): void {
+    if (this.waiters.size === 0) return;
     const waiters = [...this.waiters];
     this.waiters.clear();
-    for (const waiter of waiters) waiter({ status: "notified", type });
+    for (const waiter of waiters) waiter();
   }
 }

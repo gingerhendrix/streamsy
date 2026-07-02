@@ -1,57 +1,54 @@
 /**
- * Bun SQLite `StreamFactory`.
+ * Bun SQLite {@link StorageAdapter}.
  *
- * Opens (or adopts) a single `bun:sqlite` database, applies migrations, and
- * returns protocol-facing `SqliteStream` instances bound to one id each. The
- * returned factory also exposes the underlying `state` so callers/tests can
- * reach the `Database` or close it.
+ * Opens (or adopts) a single `bun:sqlite` database, applies migrations, and owns
+ * a per-id cache of private `SqliteStream` handles. The adapter is flat: every
+ * per-stream method takes `streamId` and delegates to `state.getStream(id)`. It
+ * also exposes the underlying `state` so callers/tests can reach the `Database`
+ * or close it.
  */
-import type {
-  CreatePlan,
-  DeleteCommit,
-  DeletePlan,
-  ForkPlan,
-  Stream,
-  StreamFactory,
-  StreamId,
-} from "@streamsy/core";
+import type { CreatePlan, DeletePlan, ForkPlan, StorageAdapter, StreamId } from "@streamsy/core";
 import { recordToRow, rowToRecord, type StreamRow } from "./lib/codec.ts";
 import { SqliteStreamState, type SqliteStreamStateOptions } from "./state.ts";
 import { INSERT_SQL } from "./stores/record-store.ts";
 import { runImmediateTransactionWithBusyRetry } from "./utils/transaction.ts";
 
-export interface SqliteStreamFactoryOptions extends SqliteStreamStateOptions {
+export interface SqliteStorageAdapterOptions extends SqliteStreamStateOptions {
   /** Share an existing state instead of opening a new database. */
   state?: SqliteStreamState;
 }
 
-export interface SqliteStreamFactory extends StreamFactory {
+export interface SqliteStorageAdapter extends StorageAdapter {
   readonly state: SqliteStreamState;
   /** Close the underlying database connection. */
   close(): void;
 }
 
-export function createSqliteStreamFactory(
-  options: SqliteStreamFactoryOptions = {},
-): SqliteStreamFactory {
+export function createSqliteStorageAdapter(
+  options: SqliteStorageAdapterOptions = {},
+): SqliteStorageAdapter {
   const { state: existing, ...stateOptions } = options;
   const state = existing ?? new SqliteStreamState(stateOptions);
 
   return {
     state,
-    async getStream(streamId: StreamId): Promise<Stream> {
-      return state.getStream(streamId);
-    },
+    getRecord: (streamId) => Promise.resolve(state.getStream(streamId).getRecord()),
+    listMessages: (streamId, listOptions) =>
+      Promise.resolve(state.getStream(streamId).listMessages(listOptions)),
+    getProducerState: (streamId, producerId) =>
+      Promise.resolve(state.getStream(streamId).getProducerState(producerId)),
+    append: (streamId, plan) => state.getStream(streamId).append(plan),
+    awaitChange: (streamId, awaitOptions) => state.getStream(streamId).awaitChange(awaitOptions),
+    scheduleExpiry: (streamId, at) => state.getStream(streamId).scheduleExpiry(at),
+    cancelExpiry: (streamId) => state.getStream(streamId).cancelExpiry(),
     async create(plan: CreatePlan) {
       const stream = state.getStream(plan.record.id);
-      const closedAt = plan.record.lifecycle.closedAt;
-      const result = await stream.commit({
+      // `plan.record` is the single source of truth — a created-closed stream
+      // arrives with `lifecycle.closed`/`closedAt` already folded in by core.
+      const result = await stream.applyMutation({
         createRecord: plan.record,
         preconditions: {},
-        appendMessages: plan.initialMessages,
-        recordPatch: plan.closeAfter
-          ? { lifecycle: { closed: true, ...(closedAt !== undefined ? { closedAt } : {}) } }
-          : undefined,
+        messages: plan.initialMessages,
       });
       if (result.status === "committed") return { status: "created", record: result.record };
       return { status: "exists", record: result.record ?? plan.record };
@@ -69,7 +66,14 @@ export function createSqliteStreamFactory(
         if (!source) return { status: "fork-source-gone" as const };
 
         const inserted = state.db.run(INSERT_SQL, recordToRow(plan.child));
-        if (inserted.changes === 0) return { status: "exists" as const };
+        if (inserted.changes === 0) {
+          // `exists` carries the existing child so core can run its
+          // config-match idempotency (identical racing forks are not conflicts).
+          return {
+            status: "exists" as const,
+            record: readRecord(state, plan.child.id) ?? plan.child,
+          };
+        }
 
         if (plan.initialMessages && plan.initialMessages.length > 0) {
           const insertMessage = state.db.query(
@@ -92,20 +96,24 @@ export function createSqliteStreamFactory(
   };
 }
 
-function deleteInTransaction(state: SqliteStreamState, plan: DeletePlan): DeleteCommit {
+// `as const` keeps the `status` discriminants from widening to `string`; the
+// inferred union is the adapter `DeleteResult`, validated by the flat seam.
+function deleteInTransaction(state: SqliteStreamState, plan: DeletePlan) {
   const record = readRecord(state, plan.streamId);
-  if (!record) return { status: "not-found" };
-  if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" };
+  if (!record) return { status: "not-found" as const };
+  if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" as const };
 
   if (countDependents(state, plan.streamId) > 0) {
     state.db.run("update streamsy_streams set soft_deleted = 1 where stream_id = ?", [
       plan.streamId,
     ]);
-    return { status: "retained-soft-deleted" };
+    // Surface the soft-delete transition to any parked live waiter on this stream.
+    state.getExistingStream(plan.streamId)?.wake();
+    return { status: "retained-soft-deleted" as const };
   }
 
   purgeAndCascadeInTransaction(state, record.id, record.lifecycle.forkedFrom);
-  return { status: "purged" };
+  return { status: "purged" as const };
 }
 
 function purgeAndCascadeInTransaction(
@@ -130,6 +138,9 @@ function purgeStream(state: SqliteStreamState, streamId: StreamId): void {
   state.db.run("delete from streamsy_messages where stream_id = ?", [streamId]);
   state.db.run("delete from streamsy_producers where stream_id = ?", [streamId]);
   state.db.run("delete from streamsy_streams where stream_id = ?", [streamId]);
+  // Wake parked live waiters before evicting the cached instance: their loop
+  // still re-reads through it and observes the now-absent record (`!present`).
+  state.getExistingStream(streamId)?.wake();
   state.deleteFromCache(streamId);
 }
 

@@ -1,14 +1,14 @@
 /** Stored message read helpers for storage-bound streams. */
 
-import type { Stream } from "../../types/factory.ts";
 import type { Offset, StoredMessage, StreamRecord } from "../../types/storage.ts";
+import type { BoundStream } from "../helpers/bind-stream.ts";
 import { compareOffsets } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
-export type ResolveStorageStream = (streamId: string) => Promise<Stream> | Stream;
+export type ResolveStorageStream = (streamId: string) => Promise<BoundStream> | BoundStream;
 
 export interface StreamMessageReaderDeps {
-  stream: Stream;
+  stream: BoundStream;
   resolve: ResolveStorageStream;
   expiryPolicy: ExpiryPolicy;
 }
@@ -26,7 +26,7 @@ export class StreamMessageReader {
   }
 
   private async readChainFor(
-    stream: Stream,
+    stream: BoundStream,
     record: StreamRecord,
     afterOffset?: string,
     capOffset?: string,
@@ -67,10 +67,15 @@ export class StreamMessageReader {
     const record = await stream.getRecord();
     if (!record) return { messages: [], nextOffset: "" };
     const messages = await stream.listMessages({ after });
-    return {
-      messages,
-      nextOffset:
-        messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset,
-    };
+    if (messages.length > 0) return { messages, nextOffset: messages[messages.length - 1]!.offset };
+    // Visibility guard: with an eventually-consistent adapter, `awaitChange` may
+    // report the tail advanced before the new messages are listable. When the
+    // caller is parked behind the tail (`after < currentOffset`) and nothing is
+    // listable yet, hold `nextOffset` at `after` instead of jumping to the tail —
+    // do not advance and do not let the caller infer "closed". The next poll
+    // repairs it. Adapters with atomic record+message visibility never hit this.
+    if (after !== undefined && compareOffsets(after, record.currentOffset) < 0)
+      return { messages, nextOffset: after };
+    return { messages, nextOffset: record.currentOffset };
   }
 }

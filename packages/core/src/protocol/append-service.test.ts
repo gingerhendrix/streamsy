@@ -94,24 +94,23 @@ describe("AppendService.plan", () => {
     });
   });
 
-  it("builds a commit plan with allocated messages, CAS, TTL touch, and notify effect", () => {
+  it("builds an append plan with allocated messages, CAS, and TTL touch", () => {
     const service = new AppendService({ clock });
     const decision = service.plan(record(), append(), undefined);
-    if (decision.kind !== "commit") throw new Error("expected commit plan");
+    if (decision.kind !== "append") throw new Error("expected append plan");
 
     expect(decision.plan.preconditions).toEqual({
       expectedOffset: ZERO_OFFSET,
       expectedClosed: false,
     });
-    expect(decision.plan.appendMessages).toHaveLength(1);
-    expect(decision.plan.appendMessages?.[0]?.offset).toBe("0000000000000001_0000000000000000");
+    expect(decision.plan.messages).toHaveLength(1);
+    expect(decision.plan.messages?.[0]?.offset).toBe("0000000000000001_0000000000000000");
     expect(decision.plan.recordPatch).toEqual({
       currentOffset: "0000000000000001_0000000000000000",
       counter: 1,
       lifecycle: { expiresAtMs: 61_000 },
     });
-    expect(decision.plan.afterCommit).toEqual({
-      notify: "message",
+    expect(decision.afterCommit).toEqual({
       scheduleExpiryAt: 61_000,
     });
   });
@@ -123,7 +122,7 @@ describe("AppendService.plan", () => {
       append({ producer: { producerId: "p", producerEpoch: 1, producerSeq: 1 } }),
       { epoch: 1, lastSeq: 0 },
     );
-    if (decision.kind !== "commit") throw new Error("expected commit plan");
+    if (decision.kind !== "append") throw new Error("expected append plan");
 
     expect(decision.plan.preconditions.producer).toEqual({
       producerId: "p",

@@ -7,12 +7,12 @@ export class MessageStore {
 
   constructor(private readonly records: RecordStore) {}
 
-  appendMessagesSync(messages: StoredMessage[]): void {
+  appendMessages(messages: StoredMessage[]): void {
     this.records.requireRecord();
     this.messages.push(...clone(messages));
   }
 
-  async listMessages(options: ListMessagesOptions = {}): Promise<StoredMessage[]> {
+  listMessages(options: ListMessagesOptions = {}): StoredMessage[] {
     let out = this.messages;
     if (options.after) out = out.filter((m) => m.offset > options.after!);
     if (options.until) out = out.filter((m) => m.offset <= options.until!);
@@ -20,7 +20,7 @@ export class MessageStore {
     return clone(out);
   }
 
-  deleteMessagesSync(): void {
+  deleteMessages(): void {
     this.messages = [];
   }
 }

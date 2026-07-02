@@ -16,13 +16,14 @@ import type {
   ReadResult,
   StreamProtocolFactory,
 } from "./types/protocol.ts";
-import type { Stream, StreamFactory } from "./types/factory.ts";
-import { notSupported } from "./types/factory.ts";
+import type { StorageAdapter } from "./types/storage-adapter.ts";
+import { notSupported } from "./types/storage-adapter.ts";
 import type { Clock, StoredMessage, StreamRecord } from "./types/storage.ts";
 import { systemClock } from "./protocol/helpers/clock.ts";
 import { AppendService } from "./protocol/append-service.ts";
 import { ReadService } from "./protocol/read-service.ts";
-import { LiveReadService } from "./protocol/live-read-service.ts";
+import { LiveReadService, type LiveReadStore } from "./protocol/live-read-service.ts";
+import { bindStream, type BoundStream } from "./protocol/helpers/bind-stream.ts";
 import { ExpiryPolicy } from "./protocol/helpers/expiry-policy.ts";
 import { CreateStreamService } from "./protocol/create-stream-service.ts";
 import { ForkPlanBuilder } from "./protocol/helpers/fork-plan-builder.ts";
@@ -45,7 +46,7 @@ export interface StreamProtocolOptions {
 
 export interface StreamProtocolDeps extends StreamProtocolOptions {
   storage: {
-    factory: StreamFactory;
+    adapter: StorageAdapter;
   };
 }
 
@@ -53,10 +54,12 @@ export function createStreamProtocol(deps: StreamProtocolDeps): StreamProtocolFa
   return new StreamProtocol(deps);
 }
 
-async function runDeleteEffects(status: DeleteStatus, storage: Stream): Promise<void> {
-  if (status === "purged") await runAfterCommit({ cancelExpiry: true, notify: "deleted" }, storage);
-  else if (status === "retained-soft-deleted")
-    await runAfterCommit({ notify: "soft-deleted" }, storage);
+async function runDeleteEffects(status: DeleteStatus, storage: BoundStream): Promise<void> {
+  // Only expiry cancellation crosses as an after-commit effect now. Waking live
+  // readers on a purge / soft-delete is the adapter's own concern, fired from
+  // inside the delete; `awaitChange` re-reads durable state and observes the
+  // `!present` / `softDeleted` transition regardless.
+  if (status === "purged") await runAfterCommit({ cancelExpiry: true }, storage);
 }
 
 function mapDelete(status: DeleteStatus): DeleteResult {
@@ -65,14 +68,26 @@ function mapDelete(status: DeleteStatus): DeleteResult {
   return { status: "ok" };
 }
 
+/**
+ * Adapt a storage `Stream` to the live-read store. Every adapter implements
+ * `awaitChange` (a backend that cannot wake cheaply polls inside its own
+ * implementation), so core wires it straight through with no fallback.
+ */
+function liveReadStore(storage: BoundStream): LiveReadStore {
+  return {
+    getRecord: () => storage.getRecord(),
+    awaitChange: (options) => storage.awaitChange(options),
+  };
+}
+
 interface ProtocolStreamDeps {
-  storage: Stream;
-  factory: StreamFactory;
+  storage: BoundStream;
+  adapter: StorageAdapter;
   clock: Clock;
   longPollTimeoutMs: number;
   expiryPolicy: ExpiryPolicy;
   recordFactory: StreamRecordFactory;
-  resolveStorageStream: (streamId: string) => Promise<Stream>;
+  resolveStorageStream: (streamId: string) => BoundStream;
 }
 
 export class ProtocolStream implements ProtocolStreamApi {
@@ -95,7 +110,7 @@ export class ProtocolStream implements ProtocolStreamApi {
       readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
     });
     this.liveReadService = new LiveReadService({
-      store: deps.storage,
+      store: liveReadStore(deps.storage),
       clock: deps.clock,
       longPollTimeoutMs: deps.longPollTimeoutMs,
       readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
@@ -120,11 +135,11 @@ export class ProtocolStream implements ProtocolStreamApi {
 
     if (decision.kind === "fork") return this.createFork(options);
 
-    const commit = await this.deps.factory.create(decision.plan);
+    const commit = await this.deps.adapter.create(decision.plan);
     if (commit.status === "exists")
       return this.createService.resultForExisting(commit.record, options);
 
-    await runAfterCommit(decision.plan.afterCommit, this.deps.storage);
+    await runAfterCommit(decision.afterCommit, this.deps.storage);
     return decision.toResult(commit.record);
   }
 
@@ -141,9 +156,9 @@ export class ProtocolStream implements ProtocolStreamApi {
       const decision = this.appendService.plan(lastRecord, options, producerState);
       if (decision.kind === "terminal") return decision.result;
 
-      const out = await this.deps.storage.commit(decision.plan);
-      if (out.status === "committed") {
-        await runAfterCommit(decision.plan.afterCommit, this.deps.storage);
+      const out = await this.deps.storage.append(decision.plan);
+      if (out.status === "appended") {
+        await runAfterCommit(decision.afterCommit, this.deps.storage);
         return decision.toResult(out.record);
       }
 
@@ -196,7 +211,7 @@ export class ProtocolStream implements ProtocolStreamApi {
 
   async delete(): Promise<DeleteResult> {
     await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
-    const commit = await this.deps.factory.delete({ streamId: this.id, reason: "delete" });
+    const commit = await this.deps.adapter.delete({ streamId: this.id, reason: "delete" });
     await runDeleteEffects(commit.status, this.deps.storage);
     return mapDelete(commit.status);
   }
@@ -209,7 +224,7 @@ export class ProtocolStream implements ProtocolStreamApi {
    * combination stays in the fork plan builder.
    */
   private async readSourceTailForSubOffset(
-    sourceStream: Stream,
+    sourceStream: BoundStream,
     source: StreamRecord | null,
     options: CreateOptions,
   ): Promise<StoredMessage[] | undefined> {
@@ -226,25 +241,21 @@ export class ProtocolStream implements ProtocolStreamApi {
   }
 
   private async createFork(options: CreateOptions): Promise<CreateOutcome> {
-    const fork = this.deps.factory.fork;
+    const fork = this.deps.adapter.fork;
     if (!fork) return notSupported("fork");
 
     const sourceId = options.forkedFrom!;
-    const sourceStream = await this.deps.resolveStorageStream(sourceId);
+    const sourceStream = this.deps.resolveStorageStream(sourceId);
     const source = await this.deps.expiryPolicy.expireIfNeeded(sourceStream);
     const sourceTail = await this.readSourceTailForSubOffset(sourceStream, source, options);
     const decision = this.forkPlanBuilder.build(this.id, sourceId, source, options, sourceTail);
     if (decision.kind === "terminal") return decision.result;
 
-    const commit = await fork.call(this.deps.factory, decision.plan);
+    const commit = await fork.call(this.deps.adapter, decision.plan);
     if (commit.status === "exists") {
-      return {
-        status: "conflict",
-        nextOffset: "",
-        contentType: "",
-        conflictReason: "config-mismatch",
-        errorMessage: `Stream already exists: ${this.id}`,
-      };
+      // Same idempotency as create: a racing byte-identical fork resolves as
+      // `exists` success; a genuinely different child is a config conflict.
+      return this.createService.resultForExisting(commit.record, options);
     }
     if (commit.status === "fork-source-gone") {
       return {
@@ -255,7 +266,7 @@ export class ProtocolStream implements ProtocolStreamApi {
       };
     }
 
-    await runAfterCommit(decision.plan.afterCommit, this.deps.storage);
+    await runAfterCommit(decision.afterCommit, this.deps.storage);
     return decision.toResult(commit.record);
   }
 }
@@ -281,7 +292,7 @@ export class StreamProtocol implements StreamProtocolFactory {
   }
 
   async create(streamId: string, options: CreateOptions): Promise<CreateResult> {
-    const storage = await this.storageStream(streamId);
+    const storage = this.storageStream(streamId);
     const stream = this.boundProtocolStream(storage);
     const result = await stream.create(options);
     if (result.status === "created" || result.status === "exists") {
@@ -291,7 +302,7 @@ export class StreamProtocol implements StreamProtocolFactory {
   }
 
   async get(streamId: string): Promise<ProtocolGetResult> {
-    const storage = await this.storageStream(streamId);
+    const storage = this.storageStream(streamId);
     const record = await this.expiryPolicy.expireIfNeeded(storage);
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
@@ -300,7 +311,7 @@ export class StreamProtocol implements StreamProtocolFactory {
 
   /** Called by adapter schedulers/alarms; core decides whether expiry applies. */
   async handleScheduledExpiry(streamId: string): Promise<void> {
-    const storage = await this.storageStream(streamId);
+    const storage = this.storageStream(streamId);
     const record = await storage.getRecord();
     if (!record) return;
     if (!this.expiryPolicy.isExpired(record)) {
@@ -311,14 +322,14 @@ export class StreamProtocol implements StreamProtocolFactory {
       await this.expiryPolicy.scheduleExpiry(record);
       return;
     }
-    const commit = await this.deps.storage.factory.delete({ streamId, reason: "expiry" });
+    const commit = await this.deps.storage.adapter.delete({ streamId, reason: "expiry" });
     await runDeleteEffects(commit.status, storage);
   }
 
-  private boundProtocolStream(storage: Stream): ProtocolStream {
+  private boundProtocolStream(storage: BoundStream): ProtocolStream {
     return new ProtocolStream({
       storage,
-      factory: this.deps.storage.factory,
+      adapter: this.deps.storage.adapter,
       clock: this.clock,
       longPollTimeoutMs: this.longPollTimeoutMs,
       expiryPolicy: this.expiryPolicy,
@@ -327,7 +338,8 @@ export class StreamProtocol implements StreamProtocolFactory {
     });
   }
 
-  private async storageStream(streamId: string): Promise<Stream> {
-    return this.deps.storage.factory.getStream(streamId);
+  /** Bind the flat adapter to one id for ergonomic core-side per-stream calls. */
+  private storageStream(streamId: string): BoundStream {
+    return bindStream(this.deps.storage.adapter, streamId);
   }
 }

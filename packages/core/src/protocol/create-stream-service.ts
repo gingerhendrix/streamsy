@@ -1,15 +1,22 @@
 /** Create-side plan building for one storage-bound stream snapshot. */
 
-import type { CreatePlan } from "../types/factory.ts";
+import type { CreatePlan } from "../types/storage-adapter.ts";
 import type { CreateOptions, CreateOutcome } from "../types/protocol.ts";
 import type { Clock, StoredMessage, StreamRecord } from "../types/storage.ts";
+import type { AfterCommitEffects } from "./helpers/after-commit-effects.ts";
 import { configMatches } from "./helpers/create-config-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
 import { allocate as allocateOffsets } from "./helpers/offset-generator.ts";
 
 export type CreateDecision =
   | { kind: "terminal"; result: CreateOutcome }
-  | { kind: "create"; plan: CreatePlan; toResult: (record: StreamRecord) => CreateOutcome }
+  | {
+      kind: "create";
+      plan: CreatePlan;
+      /** Core-side effects run by core after the adapter commit; never on the seam. */
+      afterCommit: AfterCommitEffects;
+      toResult: (record: StreamRecord) => CreateOutcome;
+    }
   | { kind: "fork" };
 
 export interface CreateStreamServiceDeps {
@@ -29,25 +36,20 @@ export class CreateStreamService {
     const wantClosed = options.closed === true;
     const newRecord = this.deps.newRecord(contentType, options);
     const finalRecord = this.withInitialTail(newRecord, initialMessages, wantClosed);
+    // `finalRecord` is the single source of truth — a created-closed stream is
+    // pre-folded into `record.lifecycle` (no separate close-after step).
     const plan: CreatePlan = {
       record: finalRecord,
       initialMessages,
-      closeAfter: wantClosed,
-      afterCommit: {
-        ...(finalRecord.lifecycle.expiresAtMs !== undefined
-          ? { scheduleExpiryAt: finalRecord.lifecycle.expiresAtMs }
-          : {}),
-        ...(wantClosed
-          ? { notify: "closed" as const }
-          : initialMessages.length > 0
-            ? { notify: "message" as const }
-            : {}),
-      },
     };
 
     return {
       kind: "create",
       plan,
+      afterCommit:
+        finalRecord.lifecycle.expiresAtMs !== undefined
+          ? { scheduleExpiryAt: finalRecord.lifecycle.expiresAtMs }
+          : {},
       toResult: (created) => ({
         status: "created",
         nextOffset: created.currentOffset,

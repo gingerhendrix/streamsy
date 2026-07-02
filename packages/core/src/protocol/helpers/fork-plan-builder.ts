@@ -1,8 +1,9 @@
 /** Fork-side validation and plan building. */
 
-import type { ForkPlan } from "../../types/factory.ts";
+import type { ForkPlan } from "../../types/storage-adapter.ts";
 import type { CreateOptions, CreateOutcome } from "../../types/protocol.ts";
 import type { Clock, StoredMessage, StreamId, StreamRecord } from "../../types/storage.ts";
+import type { AfterCommitEffects } from "./after-commit-effects.ts";
 import { contentTypeMatches } from "./content-type-matcher.ts";
 import { frameMessages } from "./message-framer.ts";
 import {
@@ -20,7 +21,13 @@ export interface ForkDescriptor {
 
 export type ForkBuildResult =
   | { kind: "terminal"; result: CreateOutcome }
-  | { kind: "fork"; plan: ForkPlan; toResult: (record: StreamRecord) => CreateOutcome };
+  | {
+      kind: "fork";
+      plan: ForkPlan;
+      /** Core-side effects run by core after the adapter commit; never on the seam. */
+      afterCommit: AfterCommitEffects;
+      toResult: (record: StreamRecord) => CreateOutcome;
+    };
 
 export interface ForkPlanBuilderDeps {
   clock: Clock;
@@ -160,17 +167,15 @@ export class ForkPlanBuilder {
       sourceId: sourcePath,
       initialMessages,
       precondition: { sourceLiveAtOffset: forkOffset },
-      afterCommit: {
-        ...(child.lifecycle.expiresAtMs !== undefined
-          ? { scheduleExpiryAt: child.lifecycle.expiresAtMs }
-          : {}),
-        ...(initialMessages.length > 0 ? { notify: "message" as const } : {}),
-      },
     };
 
     return {
       kind: "fork",
       plan,
+      afterCommit:
+        child.lifecycle.expiresAtMs !== undefined
+          ? { scheduleExpiryAt: child.lifecycle.expiresAtMs }
+          : {},
       toResult: (record) => ({
         status: "created",
         nextOffset: record.currentOffset,

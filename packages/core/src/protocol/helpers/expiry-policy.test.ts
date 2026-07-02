@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { CommitResult, MutationPlan, Stream } from "../../types/factory.ts";
+import type { AppendPlan, StorageAppendResult } from "../../types/storage-adapter.ts";
+import type { BoundStream } from "./bind-stream.ts";
 import type {
+  AwaitChangeResult,
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
-  StreamEventType,
   StreamRecord,
-  WaitForEventOptions,
-  WaitForEventResult,
 } from "../../types/storage.ts";
 import { ExpiryPolicy } from "./expiry-policy.ts";
 
@@ -19,12 +18,12 @@ const record: StreamRecord = {
   counter: 1,
 };
 
-class TestStream implements Stream {
+class TestStream implements BoundStream {
   readonly id = record.id;
-  commits: MutationPlan[] = [];
+  appends: AppendPlan[] = [];
   scheduled: number[] = [];
 
-  constructor(private readonly commitResult: CommitResult) {}
+  constructor(private readonly appendResult: StorageAppendResult) {}
 
   getRecord(): Promise<StreamRecord | null> {
     return Promise.resolve(record);
@@ -38,16 +37,23 @@ class TestStream implements Stream {
     return Promise.resolve(undefined);
   }
 
-  commit(plan: MutationPlan): Promise<CommitResult> {
-    this.commits.push(plan);
-    return Promise.resolve(this.commitResult);
+  append(plan: AppendPlan): Promise<StorageAppendResult> {
+    this.appends.push(plan);
+    return Promise.resolve(this.appendResult);
   }
 
-  waitForEvent(_options: WaitForEventOptions): Promise<WaitForEventResult> {
-    return Promise.resolve({ status: "timeout" });
+  awaitChange(): Promise<AwaitChangeResult> {
+    // ExpiryPolicy never waits; the stub satisfies the required seam method only.
+    return Promise.resolve({
+      status: "timeout",
+      snapshot: {
+        present: true,
+        currentOffset: record.currentOffset,
+        closed: false,
+        softDeleted: false,
+      },
+    });
   }
-
-  notify(_type: StreamEventType): Promise<void> | void {}
 
   scheduleExpiry(at: number): Promise<void> | void {
     this.scheduled.push(at);
@@ -62,7 +68,7 @@ describe("ExpiryPolicy.touch", () => {
       ...record,
       lifecycle: { ...record.lifecycle, expiresAtMs: 40_000 },
     };
-    const stream = new TestStream({ status: "committed", record: touched });
+    const stream = new TestStream({ status: "appended", record: touched });
     const policy = new ExpiryPolicy({
       resolve: () => stream,
       clock: { now: () => 10_000, date: (value) => new Date(value ?? 0) },
@@ -71,18 +77,17 @@ describe("ExpiryPolicy.touch", () => {
 
     await expect(policy.touch(stream, record, "read")).resolves.toBe(touched);
 
-    expect(stream.commits).toEqual([
+    expect(stream.appends).toEqual([
       {
         preconditions: { expectedOffset: record.currentOffset },
         recordPatch: { lifecycle: { expiresAtMs: 40_000 } },
-        afterCommit: { scheduleExpiryAt: 40_000 },
       },
     ]);
     expect(stream.scheduled).toEqual([40_000]);
   });
 
   it("does not schedule read-side TTL renewal when the commit precondition fails", async () => {
-    const stream = new TestStream({ status: "precondition-failed", record });
+    const stream = new TestStream({ status: "precondition-failed", record, reason: "offset" });
     const policy = new ExpiryPolicy({
       resolve: () => stream,
       clock: { now: () => 10_000, date: (value) => new Date(value ?? 0) },
@@ -91,11 +96,10 @@ describe("ExpiryPolicy.touch", () => {
 
     await expect(policy.touch(stream, record, "read")).resolves.toBe(record);
 
-    expect(stream.commits).toEqual([
+    expect(stream.appends).toEqual([
       {
         preconditions: { expectedOffset: record.currentOffset },
         recordPatch: { lifecycle: { expiresAtMs: 40_000 } },
-        afterCommit: { scheduleExpiryAt: 40_000 },
       },
     ]);
     expect(stream.scheduled).toEqual([]);

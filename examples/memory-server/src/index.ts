@@ -5,10 +5,14 @@
  * on a Bun runtime. Used for running conformance tests.
  */
 
-import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import {
+  createHttpHandler,
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+} from "@streamsy/core";
 
-const factory = createMemoryStreamFactory();
-const protocol = createStreamProtocol({ storage: { factory } });
+const factory = createMemoryStorageAdapter();
+const protocol = createStreamProtocol({ storage: { adapter: factory } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 
 const port = parseInt(process.env.PORT ?? "1337", 10);

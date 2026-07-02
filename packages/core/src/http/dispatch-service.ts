@@ -1,6 +1,10 @@
 import type { BoundHttpRouteContext, HttpRouteContext } from "./types.ts";
 import type { StreamProtocolFactory } from "../types/protocol.ts";
-import { isNotSupported } from "../types/factory.ts";
+import {
+  isNotSupported,
+  isNotSupportedError,
+  notSupportedFromError,
+} from "../types/storage-adapter.ts";
 import { notSupportedResponse } from "./not-supported.ts";
 import { HttpResponseFactory } from "./responses.ts";
 import { StreamPathService } from "./stream-path-service.ts";
@@ -53,6 +57,13 @@ export class HttpDispatchService {
           return this.deps.responses.methodNotAllowed();
       }
     } catch (error) {
+      // A storage-level `NotSupportedError` thrown by an adapter (for a
+      // sub-method feature it cannot support, e.g. producer CAS inside
+      // `append`) surfaces as the public structured `not-supported` result.
+      // Any OTHER thrown error is treated as internal.
+      if (isNotSupportedError(error)) {
+        return notSupportedResponse(notSupportedFromError(error), this.deps.responses);
+      }
       console.error("Error handling request:", error);
       return this.deps.responses.internalError();
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createMemoryStreamFactory,
+  createMemoryStorageAdapter,
   createStreamProtocol,
   ZERO_OFFSET,
   type StreamProtocolFactory,
@@ -29,7 +29,7 @@ const userCodec: JsonCodec<User> = {
 };
 
 function createProtocol(): StreamProtocolFactory {
-  return createStreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+  return createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
 }
 
 describe("JsonProtocol", () => {

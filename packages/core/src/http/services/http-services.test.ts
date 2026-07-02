@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HttpHandler, StreamProtocol } from "../../index.ts";
-import { createMemoryStreamFactory } from "../../storage/memory/factory.ts";
+import { createMemoryStorageAdapter } from "../../storage/memory/adapter.ts";
 
 function append(handler: HttpHandler, body: string, expectedOffset?: string) {
   return handler.fetch(
@@ -17,7 +17,7 @@ function append(handler: HttpHandler, body: string, expectedOffset?: string) {
 
 describe("HTTP services with bound protocol streams", () => {
   it("resolves streams through protocol get for existing-stream operations", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
     const handler = new HttpHandler({ protocol });
     const put = await handler.fetch(
       new Request("http://x/example", { method: "PUT", headers: { "content-type": "text/plain" } }),
@@ -41,7 +41,7 @@ describe("HTTP services with bound protocol streams", () => {
 
 describe("append expectedOffset over HTTP (Streamsy extension)", () => {
   async function setup() {
-    const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
     const handler = new HttpHandler({ protocol });
     const put = await handler.fetch(
       new Request("http://x/s", { method: "PUT", headers: { "content-type": "text/plain" } }),
@@ -86,7 +86,7 @@ describe("append expectedOffset over HTTP (Streamsy extension)", () => {
 const ZERO = "0000000000000000_0000000000000000";
 
 async function sourceHandler(body: string, contentType = "text/plain"): Promise<HttpHandler> {
-  const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+  const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
   const handler = new HttpHandler({ protocol });
   const res = await handler.fetch(
     new Request("http://x/src", { method: "PUT", headers: { "content-type": contentType }, body }),

@@ -1,18 +1,22 @@
 # Streamsy API
 
-Streamsy exposes a protocol factory over storage factories.
+Streamsy exposes a protocol factory over a flat storage adapter.
 
 ## Core
 
 ```ts
-import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import {
+  createHttpHandler,
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+} from "@streamsy/core";
 
-const factory = createMemoryStreamFactory();
-const protocol = createStreamProtocol({ storage: { factory } });
+const adapter = createMemoryStorageAdapter();
+const protocol = createStreamProtocol({ storage: { adapter } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 ```
 
-`createStreamProtocol({ storage: { factory }, clock?, longPollTimeoutMs? })` returns a protocol
+`createStreamProtocol({ storage: { adapter }, clock?, longPollTimeoutMs? })` returns a protocol
 factory. Optional `clock` and `longPollTimeoutMs` are provided inline on the dependency object.
 
 On success, `create` returns the bound protocol stream directly; existing streams are resolved with
@@ -78,25 +82,38 @@ Notes:
   appends run concurrently;
 - this is a Streamsy extension — the upstream Durable Streams protocol has no append precondition.
 
-## Storage factories
+## Storage adapters
 
-Storage packages expose `StreamFactory` implementations. A storage factory returns a storage-bound
-`Stream` with read methods, the atomic `commit(plan: MutationPlan)` mutation primitive, live-event
-waiters, and expiry scheduling.
+Storage packages implement one flat `StorageAdapter`. Every per-stream method takes `streamId`
+first, the lifecycle intents (`create` / `fork` / `delete`) take a plan that carries the id, and
+nothing lifetime-bearing or non-serializable crosses the seam (no returned per-stream handle, no
+`AbortSignal`). See [`adapter-authoring.md`](./adapter-authoring.md) for the full contract.
 
-Storage authors implement two surfaces:
+Storage authors implement:
 
-- within a stream: `Stream.commit(MutationPlan)` applies one atomic storage mutation. The adapter
-  re-reads the stream record and referenced producer row, checks every precondition, inserts any
-  pre-framed messages, applies the record patch, upserts producer state, and returns either
-  `committed` with the fresh record or `precondition-failed` with the latest record.
-- lifecycle: `StreamFactory.create(CreatePlan)`, optional `fork(ForkPlan)`, and
-  `delete(DeletePlan)` materialize existence and adapter-private lineage. These replace the old
-  public record/message/producer writer methods, mutation-lock hook, and child-reference tracker.
+- **reads**: `getRecord(streamId)`, `listMessages(streamId, options?)`,
+  `getProducerState(streamId, producerId)`.
+- **write**: `append(streamId, AppendPlan)` applies one atomic mutation — pre-framed messages, the
+  required record patch (offset/counter advance, with `lifecycle.closed` folding a close, and a
+  lifecycle-only TTL renewal as the one shape that patches without advancing), an
+  optional producer compare-and-set, all guarded by `preconditions` (`expectedOffset` /
+  `expectedClosed` / producer CAS). It returns `appended` with the fresh record or
+  `precondition-failed` with `reason` (`offset` | `closed` | `producer`) and the latest record. A
+  lifecycle-only TTL "touch" is an `append` whose patch carries only `lifecycle.expiresAtMs`.
+- **live wait** (required): `awaitChange(streamId, AwaitChangeOptions)` is level-triggered and fully
+  serializable. A backend that can wake cheaply does so; one that cannot implements `awaitChange` by
+  polling its own durable reads. Core wires in no polling fallback, but exports the
+  contract-faithful loop (`runAwaitChangeLoop`) so an adapter supplies only `readRecord` +
+  `waitForWake`.
+- **expiry**: `scheduleExpiry(streamId, at)`, `cancelExpiry(streamId)`.
+- **lifecycle**: `create(CreatePlan)`, optional `fork(ForkPlan)`, `delete(DeletePlan)` materialize
+  existence and adapter-private lineage. `fork` is capability-by-presence: omit it and forks are
+  `not-supported` for that backend (no core fork fallback), while every non-fork operation stays
+  fully supported.
 
-`AfterCommitEffects` on plans describe best-effort work that runs only after durable commit:
-notification, expiry scheduling, and expiry cancellation. Adapters must not run those effects inside
-`commit`.
+Expiry scheduling is core's responsibility: after a successful mutation core calls
+`scheduleExpiry` / `cancelExpiry` back on the adapter. Plans carry no after-commit effects —
+adapters only persist the plan.
 
 Consistency boundary:
 
@@ -113,13 +130,13 @@ Protocol-bound streams are distinct from storage-bound streams:
 
 ## Packages
 
-| Package                            | Purpose                                                                                                                        |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types, and the in-memory `StreamFactory` for tests, examples, and local servers. |
-| `@streamsy/json`                   | Typed JSON protocol/stream wrappers over a `StreamProtocolFactory`.                                                            |
-| `@streamsy/state`                  | Durable State protocol/stream wrappers: typed change/control messages over collections.                                        |
-| `@streamsy/storage-sqlite`         | Bun `bun:sqlite` `StreamFactory` for durable local persistence.                                                                |
-| `@streamsy/storage-durable-object` | Cloudflare Durable Object `StreamFactory` and storage class.                                                                   |
+| Package                            | Purpose                                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types, and the in-memory `StorageAdapter` for tests, examples, and local servers. |
+| `@streamsy/json`                   | Typed JSON protocol/stream wrappers over a `StreamProtocolFactory`.                                                             |
+| `@streamsy/state`                  | Durable State protocol/stream wrappers: typed change/control messages over collections.                                         |
+| `@streamsy/storage-sqlite`         | Bun `bun:sqlite` `StorageAdapter` for durable local persistence.                                                                |
+| `@streamsy/storage-durable-object` | Cloudflare Durable Object `StorageAdapter` and storage class.                                                                   |
 
 ## Public exports
 
@@ -127,10 +144,13 @@ Core exports include:
 
 - `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`
 - protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadLiveResult`, `MetadataResult`, and `DeleteResult`
-- storage-factory types including `StreamFactory`, storage-bound `Stream`, `StreamReader`, `StreamMutator`, `StreamEventHub`, `StreamExpiryScheduler`, `MutationPlan`, `CommitResult`, `CreatePlan`, `CreateCommit`, `ForkPlan`, `ForkCommit`, `DeletePlan`, `DeleteCommit`, and `AfterCommitEffects`
+- the flat storage-adapter seam: `StorageAdapter` (with the grouping facets `StreamReader`, `StreamAppender`, `StreamLiveWaiter`, `StreamExpiryScheduler`), plan types `AppendPlan`, `CreatePlan`, `ForkPlan`, `DeletePlan`, adapter result types `StorageAppendResult`, `StorageCreateResult`, `StorageForkResult`, `StorageDeleteResult`, and the live-wait types `StreamChangeSnapshot`, `AwaitChangeOptions`, `AwaitChangeResult`
+- the core-internal per-stream binding for adapter authors and tests: `bindStream` and `BoundStream`
+- the level-triggered `awaitChange` building blocks every adapter uses to implement its live wait (including a polling one): `runAwaitChangeLoop` (with `AwaitChangeLoopDeps`), `buildChangeSnapshot`, `changeSnapshotDiffers`, and `compareOffsets`
+- the reusable adapter conformance kit: `runStorageAdapterContract` (with `MakeStorageAdapter` and `StorageAdapterContractHarness`)
 - lineage strategy helpers for storage authors: `LineageStore`, `LineagePolicy`, `cascadeReclaim`, `plainPurge`, `refCountLineage`, `reverseIndexLineage`, `copyOnForkReclaim`, and `ttlOnlyReclaim`
 - structured unsupported-feature helpers including `notSupported`, `isNotSupported`, `NotSupportedError`, and `unsupported`
-- the in-memory storage adapter: `createMemoryStreamFactory` and `MemoryStreamFactoryOptions`
+- the in-memory storage adapter: `createMemoryStorageAdapter` and `MemoryStorageAdapterOptions`
 
 JSON exports (`@streamsy/json`):
 
@@ -145,5 +165,5 @@ State exports (`@streamsy/state`):
 
 Durable Object exports:
 
-- `createDurableObjectStreamFactory`
+- `createDurableObjectStorageAdapter` and `DurableObjectStorageAdapterOptions`
 - `DurableObjectStreamStorage`

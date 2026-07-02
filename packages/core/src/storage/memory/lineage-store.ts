@@ -6,15 +6,15 @@ export class MemoryLineageStore implements LineageStore {
   constructor(private readonly state: MemoryStreamState) {}
 
   async getRecord(id: StreamId): Promise<StreamRecord | null> {
-    return this.state.getExistingStream(id)?.getRecordSync() ?? null;
+    return this.state.getExistingStream(id)?.getRecord() ?? null;
   }
 
   async purgeSelf(id: StreamId): Promise<void> {
-    this.state.getExistingStream(id)?.purgeSelfSync();
+    this.state.getExistingStream(id)?.purgeSelf();
   }
 
   async softDelete(id: StreamId): Promise<void> {
-    this.state.getExistingStream(id)?.softDeleteSync();
+    this.state.getExistingStream(id)?.softDelete();
   }
 
   async addEdge(parent: StreamId, child: StreamId): Promise<void> {

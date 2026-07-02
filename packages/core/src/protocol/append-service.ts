@@ -1,8 +1,9 @@
 /** Append-side plan building for one storage-bound stream snapshot. */
 
-import type { MutationPlan } from "../types/factory.ts";
+import type { AppendPlan } from "../types/storage-adapter.ts";
 import type { AppendOptions, AppendResult } from "../types/protocol.ts";
 import type { Clock, ProducerState, StreamRecord } from "../types/storage.ts";
+import type { AfterCommitEffects } from "./helpers/after-commit-effects.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
 import { allocate as allocateOffsets } from "./helpers/offset-generator.ts";
@@ -14,7 +15,13 @@ import {
 
 export type AppendDecision =
   | { kind: "terminal"; result: AppendResult }
-  | { kind: "commit"; plan: MutationPlan; toResult: (record: StreamRecord) => AppendResult };
+  | {
+      kind: "append";
+      plan: AppendPlan;
+      /** Core-side effects run by core after the adapter commit; never on the seam. */
+      afterCommit: AfterCommitEffects;
+      toResult: (record: StreamRecord) => AppendResult;
+    };
 
 export function appendedResult(
   offset: string,
@@ -137,7 +144,7 @@ export class AppendService {
       ...(wantClose ? { closed: true, closedAt: now } : {}),
       ...(expiresAtMs !== undefined ? { expiresAtMs } : {}),
     };
-    const plan: MutationPlan = {
+    const plan: AppendPlan = {
       preconditions: {
         expectedOffset: options.expectedOffset ?? record.currentOffset,
         expectedClosed: false,
@@ -151,21 +158,18 @@ export class AppendService {
             }
           : {}),
       },
-      appendMessages: messages,
+      messages,
       recordPatch: {
         currentOffset: allocation.nextOffset,
         counter: allocation.endCounter,
         lifecycle,
       },
-      afterCommit: {
-        notify: wantClose ? "closed" : "message",
-        ...(expiresAtMs !== undefined ? { scheduleExpiryAt: expiresAtMs } : {}),
-      },
     };
 
     return {
-      kind: "commit",
+      kind: "append",
       plan,
+      afterCommit: expiresAtMs !== undefined ? { scheduleExpiryAt: expiresAtMs } : {},
       toResult: () => appendedResult(allocation.nextOffset, producerValidation, wantClose),
     };
   }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ProtocolStream, StreamProtocol } from "../protocol.ts";
-import { createMemoryStreamFactory } from "../storage/memory/factory.ts";
+import { createMemoryStorageAdapter } from "../storage/memory/adapter.ts";
 
 describe("StreamProtocol factory", () => {
   it("creates and then resolves a bound protocol stream", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
     const created = await protocol.create("alpha", {
       contentType: "text/plain",
       initialData: new TextEncoder().encode("hello"),

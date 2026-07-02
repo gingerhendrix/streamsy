@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { StreamRecord } from "../../types/storage.ts";
 import { StreamProtocol, ZERO_OFFSET } from "../../protocol.ts";
-import { createMemoryStreamFactory } from "./factory.ts";
+import { createMemoryStorageAdapter } from "./adapter.ts";
+
+const OFFSET_1 = "0000000000000001_0000000000000000";
 
 function record(id: string, forkedFrom?: string): StreamRecord {
   return {
@@ -13,90 +15,73 @@ function record(id: string, forkedFrom?: string): StreamRecord {
   };
 }
 
-describe("createMemoryStreamFactory", () => {
-  it("returns storage streams bound to ids", async () => {
-    const factory = createMemoryStreamFactory();
-    const stream = await factory.getStream("s");
-    expect(stream.id).toBe("s");
-    expect(await stream.getRecord()).toBeNull();
+describe("createMemoryStorageAdapter", () => {
+  it("exposes flat per-stream reads bound to ids", async () => {
+    const adapter = createMemoryStorageAdapter();
+    expect(await adapter.getRecord("s")).toBeNull();
   });
 
-  it("commits create, message, record, and producer mutations atomically", async () => {
-    const factory = createMemoryStreamFactory();
-    const stream = await factory.getStream("s");
-    const committed = await stream.commit({
-      createRecord: record("s"),
+  it("appends messages, record patch, and producer CAS atomically under offset preconditions", async () => {
+    const adapter = createMemoryStorageAdapter();
+    const created = await adapter.create({ record: record("s") });
+    expect(created.status).toBe("created");
+
+    const appended = await adapter.append("s", {
       preconditions: {
-        producer: {
-          producerId: "p",
-          expected: undefined,
-          next: { epoch: 1, lastSeq: 0 },
-        },
+        expectedOffset: ZERO_OFFSET,
+        producer: { producerId: "p", expected: undefined, next: { epoch: 1, lastSeq: 0 } },
       },
-      appendMessages: [
-        {
-          data: new TextEncoder().encode("a"),
-          offset: "0000000000000001_0000000000000000",
-          timestamp: 1,
-        },
-      ],
-      recordPatch: {
-        currentOffset: "0000000000000001_0000000000000000",
-        counter: 1,
-      },
+      messages: [{ data: new TextEncoder().encode("a"), offset: OFFSET_1, timestamp: 1 }],
+      recordPatch: { currentOffset: OFFSET_1, counter: 1 },
     });
 
-    expect(committed.status).toBe("committed");
-    expect(await stream.getProducerState("p")).toEqual({ epoch: 1, lastSeq: 0 });
-    expect(await stream.listMessages()).toHaveLength(1);
+    expect(appended.status).toBe("appended");
+    expect(await adapter.getProducerState("s", "p")).toEqual({ epoch: 1, lastSeq: 0 });
+    expect(await adapter.listMessages("s")).toHaveLength(1);
 
-    const stale = await stream.commit({
+    // A stale offset precondition fails and writes nothing.
+    const stale = await adapter.append("s", {
       preconditions: { expectedOffset: ZERO_OFFSET },
       recordPatch: { lifecycle: { closed: true } },
     });
 
     expect(stale.status).toBe("precondition-failed");
-    expect((await stream.getRecord())?.lifecycle.closed).toBeUndefined();
+    if (stale.status === "precondition-failed") expect(stale.reason).toBe("offset");
+    expect((await adapter.getRecord("s"))?.lifecycle.closed).toBeUndefined();
   });
 
-  it("uses factory fork/delete verbs with in-memory lineage edges", async () => {
-    const factory = createMemoryStreamFactory();
-    await factory.create({ record: record("parent") });
-    const forked = await factory.fork?.({
+  it("uses adapter fork/delete verbs with in-memory lineage edges", async () => {
+    const adapter = createMemoryStorageAdapter();
+    await adapter.create({ record: record("parent") });
+    const forked = await adapter.fork?.({
       child: record("child", "parent"),
       sourceId: "parent",
       precondition: { sourceLiveAtOffset: ZERO_OFFSET },
     });
     expect(forked?.status).toBe("created");
 
-    const retained = await factory.delete({ streamId: "parent", reason: "delete" });
+    const retained = await adapter.delete({ streamId: "parent", reason: "delete" });
     expect(retained.status).toBe("retained-soft-deleted");
-    expect((await (await factory.getStream("parent")).getRecord())?.lifecycle.softDeleted).toBe(
-      true,
-    );
+    expect((await adapter.getRecord("parent"))?.lifecycle.softDeleted).toBe(true);
 
-    const purged = await factory.delete({ streamId: "child", reason: "delete" });
+    const purged = await adapter.delete({ streamId: "child", reason: "delete" });
     expect(purged.status).toBe("purged");
-    expect(await (await factory.getStream("parent")).getRecord()).toBeNull();
+    expect(await adapter.getRecord("parent")).toBeNull();
   });
 
   it("retains soft-deleted fork ancestors until descendants purge", async () => {
-    const factory = createMemoryStreamFactory();
-    const protocol = new StreamProtocol({ storage: { factory } });
+    const adapter = createMemoryStorageAdapter();
+    const protocol = new StreamProtocol({ storage: { adapter } });
 
     await seedThreeLevelForkWithMessages(protocol);
 
-    const childDelete = await factory.delete({ streamId: "child", reason: "delete" });
+    const childDelete = await adapter.delete({ streamId: "child", reason: "delete" });
     expect(childDelete.status).toBe("retained-soft-deleted");
 
-    const parentDelete = await factory.delete({ streamId: "parent", reason: "delete" });
+    const parentDelete = await adapter.delete({ streamId: "parent", reason: "delete" });
     expect(parentDelete.status).toBe("retained-soft-deleted");
-    expect((await (await factory.getStream("parent")).getRecord())?.lifecycle.softDeleted).toBe(
-      true,
-    );
-    expect((await (await factory.getStream("child")).getRecord())?.lifecycle.softDeleted).toBe(
-      true,
-    );
+    expect((await adapter.getRecord("parent"))?.lifecycle.softDeleted).toBe(true);
+    expect((await adapter.getRecord("child"))?.lifecycle.softDeleted).toBe(true);
 
     const grandchild = await protocol.get("grandchild");
     expect(grandchild.status).toBe("ok");
@@ -109,11 +94,11 @@ describe("createMemoryStreamFactory", () => {
       "child",
     ]);
 
-    const grandchildDelete = await factory.delete({ streamId: "grandchild", reason: "delete" });
+    const grandchildDelete = await adapter.delete({ streamId: "grandchild", reason: "delete" });
     expect(grandchildDelete.status).toBe("purged");
-    expect(await (await factory.getStream("grandchild")).getRecord()).toBeNull();
-    expect(await (await factory.getStream("child")).getRecord()).toBeNull();
-    expect(await (await factory.getStream("parent")).getRecord()).toBeNull();
+    expect(await adapter.getRecord("grandchild")).toBeNull();
+    expect(await adapter.getRecord("child")).toBeNull();
+    expect(await adapter.getRecord("parent")).toBeNull();
   });
 });
 

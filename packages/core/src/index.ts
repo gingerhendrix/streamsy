@@ -1,7 +1,9 @@
 /** @streamsy/core */
 export { createStreamProtocol, StreamProtocol, ZERO_OFFSET } from "./protocol.ts";
-export { createMemoryStreamFactory } from "./storage/memory/factory.ts";
-export type { MemoryStreamFactoryOptions } from "./storage/memory/factory.ts";
+export { createMemoryStorageAdapter } from "./storage/memory/adapter.ts";
+export type { MemoryStorageAdapterOptions } from "./storage/memory/adapter.ts";
+export { bindStream } from "./protocol/helpers/bind-stream.ts";
+export type { BoundStream } from "./protocol/helpers/bind-stream.ts";
 export { createHttpHandler, HttpHandler } from "./http.ts";
 export { createReadOnlyHttpHandler, ReadOnlyHttpHandler } from "./read-only-http.ts";
 
@@ -12,8 +14,24 @@ export {
   notSupportedFromError,
   NotSupportedError,
   unsupported,
-} from "./types/factory.ts";
+} from "./types/storage-adapter.ts";
+// Storage-seam building blocks for adapter authors: `runAwaitChangeLoop` is the
+// contract-faithful level-triggered `awaitChange` loop (an adapter supplies
+// `readRecord` + `waitForWake`); `buildChangeSnapshot` / `changeSnapshotDiffers`
+// are the shared primitives it is built from; `compareOffsets` implements the
+// seam's lexicographic offset-order guarantee.
+export { buildChangeSnapshot, changeSnapshotDiffers } from "./protocol/helpers/change-snapshot.ts";
+export { runAwaitChangeLoop } from "./protocol/helpers/await-change-loop.ts";
+export type { AwaitChangeLoopDeps } from "./protocol/helpers/await-change-loop.ts";
+export { compareOffsets } from "./protocol/helpers/offset-generator.ts";
 export { maybeNotSupportedResponse, notSupportedResponse } from "./http/not-supported.ts";
+
+// Reusable storage-adapter conformance kit (testing utility for adapter authors).
+export { runStorageAdapterContract } from "./testing/storage-adapter-contract.ts";
+export type {
+  MakeStorageAdapter,
+  StorageAdapterContractHarness,
+} from "./testing/storage-adapter-contract.ts";
 
 export type { StreamProtocolDeps, StreamProtocolOptions } from "./protocol.ts";
 export type {
@@ -51,30 +69,28 @@ export type {
   StoredMessage,
   ProducerState,
   ListMessagesOptions,
-  StreamEventType,
-  WaitForEventOptions,
-  WaitForEventResult,
+  StreamChangeSnapshot,
+  AwaitChangeOptions,
+  AwaitChangeResult,
   Clock,
 } from "./types/storage.ts";
 
 export type {
-  Stream,
-  StreamFactory,
+  StorageAdapter,
   StreamReader,
-  StreamMutator,
-  StreamEventHub,
+  StreamAppender,
+  StreamLiveWaiter,
   StreamExpiryScheduler,
-  AfterCommitEffects,
-  MutationPlan,
-  CommitResult,
+  AppendPlan,
   CreatePlan,
-  CreateCommit,
   ForkPlan,
-  ForkCommit,
   DeletePlan,
-  DeleteCommit,
+  StorageAppendResult,
+  StorageCreateResult,
+  StorageForkResult,
+  StorageDeleteResult,
   NotSupportedResult,
-} from "./types/factory.ts";
+} from "./types/storage-adapter.ts";
 
 export {
   cascadeReclaim,

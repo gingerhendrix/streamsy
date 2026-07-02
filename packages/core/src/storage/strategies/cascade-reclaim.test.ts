@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DeletePlan } from "../../types/factory.ts";
+import type { DeletePlan } from "../../types/storage-adapter.ts";
 import type { StreamId, StreamRecord } from "../../types/storage.ts";
 import { cascadeReclaim } from "./cascade-reclaim.ts";
 import { refCountLineage } from "./ref-count-lineage.ts";

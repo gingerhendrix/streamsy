@@ -4,17 +4,17 @@ Streamsy is a work-in-progress Durable Streams server implementation. It is curr
 
 ## Status
 
-WIP. The current local implementation has been validated against `@durable-streams/server-conformance-tests@0.3.0` with all storage backends passing the full conformance suite:
+WIP. The current local implementation has been validated against `@durable-streams/server-conformance-tests@0.3.5` with all storage backends passing the full conformance suite:
 
-- in-memory storage (bundled with `@streamsy/core`): 299/299 passing
-- `@streamsy/storage-sqlite` (Bun `bun:sqlite` storage): 299/299 passing
-- `@streamsy/storage-durable-object` (Cloudflare Durable Object storage): 299/299 passing
+- in-memory storage (bundled with `@streamsy/core`): 326/326 passing
+- `@streamsy/storage-sqlite` (Bun `bun:sqlite` storage): 326/326 passing
+- `@streamsy/storage-durable-object` (Cloudflare Durable Object storage): 326/326 passing
 
 The API and package boundaries are not yet stable. The public packages are prepared for npm publishing under the `@streamsy/*` scope; the conformance harness and examples remain private.
 
 ## Packages
 
-- `@streamsy/core` (`packages/core`) — public protocol and HTTP facades, shared protocol/storage types, and the in-memory storage adapter (`createMemoryStreamFactory`) used for local development, examples, and conformance testing.
+- `@streamsy/core` (`packages/core`) — public protocol and HTTP facades, shared protocol/storage types, and the in-memory storage adapter (`createMemoryStorageAdapter`) used for local development, examples, and conformance testing.
 - `@streamsy/json` (`packages/json`) — typed JSON protocol and stream wrappers (`JsonProtocol<T>`/`JsonStream<T>`) that encode/decode `application/json` messages through a codec or Standard Schema.
 - `@streamsy/state` (`packages/state`) — Durable State protocol and stream wrappers (`DurableStateProtocol<S>`/`DurableStateStream<S>`) for typed change/control messages over collections.
 - `@streamsy/storage-sqlite` (`packages/storage-sqlite`) — Bun SQLite (`bun:sqlite`) storage adapter providing durable local persistence, automatic migrations, in-process mutation locking, live-read notification, and lazy/in-process expiry. Requires the Bun runtime.
@@ -25,15 +25,19 @@ The API and package boundaries are not yet stable. The public packages are prepa
 
 Streamsy applications should usually compose:
 
-1. a `StreamFactory` from a storage package (or the in-memory factory from `@streamsy/core`);
-2. a protocol facade from `createStreamProtocol({ storage: { factory } })`;
+1. a `StorageAdapter` from a storage package (or the in-memory adapter from `@streamsy/core`);
+2. a protocol facade from `createStreamProtocol({ storage: { adapter } })`;
 3. an HTTP facade from `createHttpHandler({ protocol, pathPrefix })` when serving the Durable Streams HTTP protocol.
 
 ```ts
-import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import {
+  createHttpHandler,
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+} from "@streamsy/core";
 
-const factory = createMemoryStreamFactory();
-const protocol = createStreamProtocol({ storage: { factory } });
+const adapter = createMemoryStorageAdapter();
+const protocol = createStreamProtocol({ storage: { adapter } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 
 Bun.serve({ fetch: (request) => handler.fetch(request) });

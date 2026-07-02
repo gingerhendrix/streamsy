@@ -87,9 +87,8 @@ describe("ForkPlanBuilder", () => {
     expect(decision.plan.initialMessages?.map((m) => m.offset)).toEqual([
       "0000000000000003_0000000000000000",
     ]);
-    expect(decision.plan.afterCommit).toEqual({
+    expect(decision.afterCommit).toEqual({
       scheduleExpiryAt: 11_000,
-      notify: "message",
     });
   });
 

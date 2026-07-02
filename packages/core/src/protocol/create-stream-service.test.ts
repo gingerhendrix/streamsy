@@ -39,10 +39,8 @@ describe("CreateStreamService.plan", () => {
     expect(decision.plan.initialMessages?.map((m) => m.offset)).toEqual([
       "0000000000000001_0000000000000000",
     ]);
-    expect(decision.plan.closeAfter).toBe(true);
-    expect(decision.plan.afterCommit).toEqual({
+    expect(decision.afterCommit).toEqual({
       scheduleExpiryAt: 11_000,
-      notify: "closed",
     });
   });
 

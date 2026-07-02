@@ -1,16 +1,23 @@
 /** Live-read orchestration for one storage-bound stream. */
 
 import type { ReadLiveOptions, ReadLiveResult } from "../types/protocol.ts";
-import type { Clock, Offset, StoredMessage, StreamRecord } from "../types/storage.ts";
-import { compareOffsets } from "./helpers/offset-generator.ts";
+import type {
+  AwaitChangeOptions,
+  AwaitChangeResult,
+  Clock,
+  Offset,
+  StoredMessage,
+  StreamChangeSnapshot,
+  StreamRecord,
+} from "../types/storage.ts";
+import { compareOffsets, isValidOffset, ZERO_OFFSET } from "./helpers/offset-generator.ts";
 import { generateCursor } from "./helpers/cursor-generator.ts";
+import { raceAbortAwaitChange } from "./helpers/race-abort.ts";
 
 /** Narrow view of the storage stream the live-read service depends on. */
 export interface LiveReadStore {
   getRecord(): Promise<StreamRecord | null>;
-  waitForEvent(
-    options: import("../types/storage.ts").WaitForEventOptions,
-  ): Promise<import("../types/storage.ts").WaitForEventResult>;
+  awaitChange(options: AwaitChangeOptions): Promise<AwaitChangeResult>;
 }
 
 export type LiveReadChain = (
@@ -76,7 +83,16 @@ export class LiveReadService {
       };
     }
 
-    const immediate = await this.deps.readOwn(options.offset);
+    // Normalize the reader's parked position to a canonical offset before the
+    // offset-comparison wait path. The HTTP layer passes the start sentinel `"0"`
+    // (and other non-canonical forms), which sorts *below* `ZERO_OFFSET` in a raw
+    // string compare; left unnormalized, `awaitChange` and the visibility guard
+    // would see a phantom "tail advanced" on an empty stream. `listMessages`
+    // filtering (`offset > after`) is unaffected since every real offset exceeds
+    // both `"0"` and `ZERO_OFFSET`.
+    const fromOffset = isValidOffset(options.offset) ? options.offset : ZERO_OFFSET;
+
+    const immediate = await this.deps.readOwn(fromOffset);
     if (immediate.messages.length > 0)
       return {
         status: "ok",
@@ -85,24 +101,39 @@ export class LiveReadService {
         cursor: generateCursor(this.deps.clock, options.cursor),
       };
 
-    const wait = await this.deps.store.waitForEvent({
-      timeoutMs: this.deps.longPollTimeoutMs,
-      signal: options.signal,
-    });
+    // Control flow has already returned for the closed, soft-deleted, fork-catchup
+    // and has-messages cases, so at the wait point `record` is known open and
+    // live: both observed flags are false. Passing them lets `awaitChange` report
+    // a change the moment the stream transitions to closed / soft-deleted / purged.
+    const observed: StreamChangeSnapshot = {
+      present: true,
+      currentOffset: record.currentOffset,
+      closed: false,
+      softDeleted: false,
+    };
+    const wait = await raceAbortAwaitChange(
+      this.deps.store.awaitChange({
+        fromOffset,
+        observedClosed: observed.closed,
+        observedSoftDeleted: observed.softDeleted,
+        timeoutMs: this.deps.longPollTimeoutMs,
+      }),
+      observed,
+      options.signal,
+    );
     const latest = await this.deps.store.getRecord();
     if (!latest)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (latest.lifecycle.softDeleted)
       return { status: "gone", messages: [], nextOffset: "", upToDate: false, cursor: "" };
-    const r = await this.deps.readOwn(options.offset);
+    const r = await this.deps.readOwn(fromOffset);
     const reachedTail = r.nextOffset === latest.currentOffset;
     const hasMessages = r.messages.length > 0;
     return {
-      status: hasMessages
-        ? "ok"
-        : wait.status === "timeout" || wait.status === "aborted"
-          ? "timeout"
-          : "ok",
+      // Caller-local abort surfaces as a timeout-shaped result, so the old
+      // `timeout | aborted` mapping collapses to a single `timeout` check —
+      // behaviorally identical to the previous edge-triggered path.
+      status: hasMessages ? "ok" : wait.status === "timeout" ? "timeout" : "ok",
       messages: r.messages,
       nextOffset: r.nextOffset,
       upToDate: true,

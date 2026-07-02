@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { StreamProtocol } from "../../protocol.ts";
-import { createMemoryStreamFactory } from "./factory.ts";
+import { createMemoryStorageAdapter } from "./adapter.ts";
 
 describe("memory protocol concurrency", () => {
   it("retries concurrent non-CAS appends until all writers commit", async () => {
-    const protocol = new StreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+    const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
     await protocol.create("s", { contentType: "text/plain" });
     const lookup = await protocol.get("s");
     expect(lookup.status).toBe("ok");

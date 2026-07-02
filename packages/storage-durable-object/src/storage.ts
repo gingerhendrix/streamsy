@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { StreamProtocol } from "@streamsy/core";
-import { createDurableObjectStreamFactory } from "./factory.ts";
+import { createDurableObjectStorageAdapter } from "./adapter.ts";
 import {
   CHILD_PREFIX,
   RECORD_KEY,
@@ -13,25 +13,51 @@ import { MessageStore } from "./stores/message-store.ts";
 import { ProducerStore } from "./stores/producer-store.ts";
 import { RecordStore } from "./stores/record-store.ts";
 import { AlarmScheduler } from "./utils/alarm-scheduler.ts";
+import { runAwaitChangeLoop } from "@streamsy/core";
 import { DurableObjectNotifier } from "./utils/notifier.ts";
 import type {
-  CommitResult,
+  AppendPlan,
+  AwaitChangeOptions,
+  AwaitChangeResult,
   ListMessagesOptions,
-  MutationPlan,
   ProducerState,
+  StorageAppendResult,
   StoredMessage,
-  StreamEventType,
   StreamId,
   StreamRecord,
-  WaitForEventOptions,
-  WaitForEventResult,
+  StreamRecordPatch,
 } from "@streamsy/core";
 
 export interface DurableObjectStreamStoreEnv {
   STREAM_DO: DurableObjectNamespace<DurableObjectStreamStorage>;
 }
 
-/** Per-stream Durable Object: durable fact storage plus DO runtime capabilities. */
+type FailureReason = "offset" | "closed" | "producer";
+
+/**
+ * Adapter-internal write engine input. Superset of `AppendPlan` with an optional
+ * `createRecord` — `create`/`fork` reuse the engine to insert the record, while
+ * the public `append` never carries `createRecord`.
+ */
+interface WritePlan {
+  createRecord?: StreamRecord;
+  preconditions: AppendPlan["preconditions"];
+  messages?: StoredMessage[];
+  recordPatch?: StreamRecordPatch;
+}
+
+type WriteResult =
+  | { status: "committed"; record: StreamRecord }
+  | { status: "precondition-failed"; record: StreamRecord | null; reason?: FailureReason };
+
+/**
+ * Per-stream Durable Object: durable fact storage plus DO runtime capabilities.
+ *
+ * Every stream-facing RPC method takes `streamId` as its first argument and is
+ * self-initializing — the first call binds the DO to its id (persisted under
+ * `STREAM_ID_KEY`), so there is no separate `init` round-trip. This matches the
+ * flat `StorageAdapter` seam, whose routing already passes the id to each call.
+ */
 export class DurableObjectStreamStorage extends DurableObject<DurableObjectStreamStoreEnv> {
   id!: StreamId;
 
@@ -49,7 +75,11 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     this.alarms = new AlarmScheduler(ctx.storage);
   }
 
-  async init(streamId: StreamId): Promise<void> {
+  /**
+   * Bind this Durable Object to its stream id on first access (lazy self-init),
+   * keyed on the name the DO was routed by. Subsequent calls validate the id.
+   */
+  private ensureInit(streamId: StreamId): void {
     const existing = this.ctx.storage.kv.get<StreamId>(STREAM_ID_KEY);
     if (existing && existing !== streamId) {
       throw new Error(`Durable Object already initialized for stream ${existing}`);
@@ -73,22 +103,43 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
       // Required for fork-aware GC. Worker bindings must expose STREAM_DO.
       throw new Error("DurableObjectStreamStorage.alarm requires env.STREAM_DO binding");
     }
-    const factory = createDurableObjectStreamFactory({ namespace: this.env.STREAM_DO });
-    const protocol = new StreamProtocol({ storage: { factory } });
+    const adapter = createDurableObjectStorageAdapter({ namespace: this.env.STREAM_DO });
+    const protocol = new StreamProtocol({ storage: { adapter } });
     await protocol.handleScheduledExpiry(record.id);
   }
 
-  async getRecord(): Promise<StreamRecord | null> {
+  async getRecord(streamId: StreamId): Promise<StreamRecord | null> {
+    this.ensureInit(streamId);
     return this.records.getRecord();
   }
 
-  async commit(plan: MutationPlan): Promise<CommitResult> {
-    const id = await this.requireStreamId();
+  /** Public append intent (no `createRecord`). */
+  async append(streamId: StreamId, plan: AppendPlan): Promise<StorageAppendResult> {
+    const out = await this.applyMutation(streamId, {
+      preconditions: plan.preconditions,
+      messages: plan.messages,
+      recordPatch: plan.recordPatch,
+    });
+    if (out.status === "committed") return { status: "appended", record: out.record };
+    // `reason` is required on the seam; an unattributable failure (the record
+    // was concurrently purged) reports "offset" per the seam contract.
+    return { status: "precondition-failed", record: out.record, reason: out.reason ?? "offset" };
+  }
+
+  /**
+   * Adapter-internal write engine shared by `append` (no `createRecord`) and the
+   * `create`/`fork` intents (with `createRecord`). One serialized actor turn is
+   * the atomic boundary.
+   */
+  async applyMutation(streamId: StreamId, plan: WritePlan): Promise<WriteResult> {
+    this.ensureInit(streamId);
     let record = (this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null) as StreamRecord | null;
 
     if (plan.createRecord) {
-      if (plan.createRecord.id !== id) {
-        throw new Error(`Record id ${plan.createRecord.id} does not match bound stream ${id}`);
+      if (plan.createRecord.id !== streamId) {
+        throw new Error(
+          `Record id ${plan.createRecord.id} does not match bound stream ${streamId}`,
+        );
       }
       if (record) return { status: "precondition-failed", record };
       this.ctx.storage.kv.put(RECORD_KEY, plan.createRecord);
@@ -100,22 +151,22 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
       plan.preconditions.expectedOffset !== undefined &&
       plan.preconditions.expectedOffset !== record.currentOffset
     )
-      return { status: "precondition-failed", record };
+      return { status: "precondition-failed", record, reason: "offset" };
     if (
       plan.preconditions.expectedClosed !== undefined &&
       plan.preconditions.expectedClosed !== (record.lifecycle.closed === true)
     )
-      return { status: "precondition-failed", record };
+      return { status: "precondition-failed", record, reason: "closed" };
 
     const producer = plan.preconditions.producer;
     if (producer) {
       const current = this.ctx.storage.kv.get<ProducerState>(producerKey(producer.producerId));
       if (!producerStatesEqual(current, producer.expected))
-        return { status: "precondition-failed", record };
+        return { status: "precondition-failed", record, reason: "producer" };
     }
 
-    if (plan.appendMessages) {
-      for (const message of plan.appendMessages) {
+    if (plan.messages) {
+      for (const message of plan.messages) {
         this.ctx.storage.kv.put(messageKey(message.offset), message);
       }
     }
@@ -133,56 +184,83 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     }
     if (producer) this.ctx.storage.kv.put(producerKey(producer.producerId), producer.next);
 
+    // Wake DO-local `awaitChange` waiters now that durable facts are visible.
+    // Over-waking is safe: a woken waiter re-reads and re-parks if nothing
+    // relevant changed.
+    this.notifier.wake();
     return { status: "committed", record: updated };
   }
 
-  async purgeSelf(): Promise<void> {
+  async purgeSelf(streamId: StreamId): Promise<void> {
+    this.ensureInit(streamId);
     await this.records.deleteRecord();
     await this.messages.deleteMessages();
     await this.producers.deleteProducerStates();
     await this.deleteChildEdges();
     await this.alarms.cancel();
+    this.notifier.wake();
   }
 
-  async softDelete(): Promise<void> {
+  async softDelete(streamId: StreamId): Promise<void> {
+    this.ensureInit(streamId);
     await this.records.updateRecord({ lifecycle: { softDeleted: true } });
+    this.notifier.wake();
   }
 
-  async listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
-    await this.requireStreamId();
+  async listMessages(streamId: StreamId, options?: ListMessagesOptions): Promise<StoredMessage[]> {
+    this.ensureInit(streamId);
     return this.messages.listMessages(options);
   }
 
-  getProducerState(producerId: string): Promise<ProducerState | undefined> {
+  getProducerState(streamId: StreamId, producerId: string): Promise<ProducerState | undefined> {
+    this.ensureInit(streamId);
     return this.producers.getProducerState(producerId);
   }
 
-  async waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
-    await this.requireStreamId();
-    return this.notifier.waitForEvent(options);
+  /**
+   * Level-triggered live wait. Fully serializable in and out — no `AbortSignal`
+   * or other non-serializable value crosses the RPC boundary. Re-reads durable
+   * state first (so a write that landed between the caller's observation and this
+   * call is never missed), then parks on the DO-local wake bus until the state
+   * advances or the budget expires. The total budget is capped at the DO
+   * long-poll cap, so a single RPC never strands the actor for a longer caller
+   * timeout — core re-issues `awaitChange` on its next poll cycle.
+   */
+  async awaitChange(streamId: StreamId, options: AwaitChangeOptions): Promise<AwaitChangeResult> {
+    this.ensureInit(streamId);
+    return runAwaitChangeLoop(
+      {
+        readRecord: () =>
+          (this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null) as StreamRecord | null,
+        waitForWake: (timeoutMs) => this.notifier.waitForWake(timeoutMs),
+        totalCapMs: this.notifier.longPollTimeoutMs,
+      },
+      options,
+    );
   }
 
-  notify(type: StreamEventType): void {
-    return this.notifier.notify(type);
-  }
-
-  scheduleExpiry(at: number): Promise<void> {
+  scheduleExpiry(streamId: StreamId, at: number): Promise<void> {
+    this.ensureInit(streamId);
     return this.alarms.schedule(at);
   }
 
-  cancelExpiry(): Promise<void> {
+  cancelExpiry(streamId: StreamId): Promise<void> {
+    this.ensureInit(streamId);
     return this.alarms.cancel();
   }
 
-  async addChildEdge(childId: StreamId): Promise<void> {
+  async addChildEdge(streamId: StreamId, childId: StreamId): Promise<void> {
+    this.ensureInit(streamId);
     this.ctx.storage.kv.put(childKey(childId), true);
   }
 
-  async dropChildEdge(childId: StreamId): Promise<void> {
+  async dropChildEdge(streamId: StreamId, childId: StreamId): Promise<void> {
+    this.ensureInit(streamId);
     this.ctx.storage.kv.delete(childKey(childId));
   }
 
-  async countChildEdges(): Promise<number> {
+  async countChildEdges(streamId: StreamId): Promise<number> {
+    this.ensureInit(streamId);
     let count = 0;
     for (const _ of this.ctx.storage.kv.list({ prefix: CHILD_PREFIX })) count++;
     return count;

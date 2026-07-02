@@ -7,7 +7,7 @@
 
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { describe, beforeAll, afterAll } from "vitest";
-import { StreamProtocol, HttpHandler, createMemoryStreamFactory } from "@streamsy/core";
+import { StreamProtocol, HttpHandler, createMemoryStorageAdapter } from "@streamsy/core";
 
 let server: { stop: () => void; port: number | undefined } | null = null;
 
@@ -18,8 +18,8 @@ describe("Memory Storage Server Implementation", () => {
   };
 
   beforeAll(async () => {
-    const factory = createMemoryStreamFactory();
-    const protocol = new StreamProtocol({ storage: { factory }, longPollTimeoutMs: 1500 });
+    const adapter = createMemoryStorageAdapter();
+    const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 1500 });
     const handler = new HttpHandler({ protocol, pathPrefix: "/" });
 
     // Use globalThis.Bun for Bun runtime, fall back to node:http

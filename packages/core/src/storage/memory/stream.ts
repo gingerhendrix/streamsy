@@ -1,21 +1,43 @@
-import type { CommitResult, MutationPlan, Stream } from "../../types/factory.ts";
+import type { AppendPlan, StorageAppendResult } from "../../types/storage-adapter.ts";
 import type {
+  AwaitChangeOptions,
+  AwaitChangeResult,
   ListMessagesOptions,
   ProducerState,
   StoredMessage,
-  StreamEventType,
   StreamId,
   StreamRecord,
-  WaitForEventOptions,
-  WaitForEventResult,
+  StreamRecordPatch,
 } from "../../types/storage.ts";
+import { runAwaitChangeLoop } from "../../protocol/helpers/await-change-loop.ts";
 import { MessageStore } from "./stores/message-store.ts";
 import { ProducerStore } from "./stores/producer-store.ts";
 import { RecordStore } from "./stores/record-store.ts";
 import { MemoryNotifier } from "./utils/notifier.ts";
 import { TimeoutScheduler } from "./utils/timeout-scheduler.ts";
 
-export class MemoryStream implements Stream {
+/**
+ * Adapter-internal write engine input. Superset of {@link AppendPlan} with an
+ * optional `createRecord` — the `create`/`fork` intents reuse the same engine to
+ * insert the record, while the public `append` never carries `createRecord`.
+ */
+interface WritePlan {
+  createRecord?: StreamRecord;
+  preconditions: AppendPlan["preconditions"];
+  messages?: StoredMessage[];
+  recordPatch?: StreamRecordPatch;
+}
+
+type WriteResult =
+  | { status: "committed"; record: StreamRecord }
+  | {
+      status: "precondition-failed";
+      record: StreamRecord | null;
+      reason?: "offset" | "closed" | "producer";
+    };
+
+/** Adapter-private per-stream handle. Not on the seam — owned by the memory state. */
+export class MemoryStream {
   private readonly records: RecordStore;
   private readonly messages: MessageStore;
   private readonly producers: ProducerStore;
@@ -34,27 +56,36 @@ export class MemoryStream implements Stream {
     this.timeout = new TimeoutScheduler(onScheduledExpiry);
   }
 
-  getRecord(): Promise<StreamRecord | null> {
+  getRecord(): StreamRecord | null {
     return this.records.getRecord();
   }
 
-  getRecordSync(): StreamRecord | null {
-    return this.records.getRecordSync();
+  /** Public append intent (no `createRecord`). */
+  append(plan: AppendPlan): StorageAppendResult {
+    const out = this.applyMutation({
+      preconditions: plan.preconditions,
+      messages: plan.messages,
+      recordPatch: plan.recordPatch,
+    });
+    if (out.status === "committed") return { status: "appended", record: out.record };
+    // `reason` is required on the seam; an unattributable failure (the record
+    // was concurrently purged) reports "offset" per the seam contract.
+    return { status: "precondition-failed", record: out.record, reason: out.reason ?? "offset" };
   }
 
-  commit(plan: MutationPlan): Promise<CommitResult> {
-    return Promise.resolve(this.commitSync(plan));
-  }
-
-  commitSync(plan: MutationPlan): CommitResult {
-    let record = this.records.getRecordSync();
+  /**
+   * Adapter-internal write engine shared by `append` (no `createRecord`) and the
+   * `create`/`fork` intents (with `createRecord`).
+   */
+  applyMutation(plan: WritePlan): WriteResult {
+    let record = this.records.getRecord();
 
     if (plan.createRecord) {
       if (record) return { status: "precondition-failed", record };
-      const created = this.records.createRecordSync(plan.createRecord);
+      const created = this.records.createRecord(plan.createRecord);
       if (created.status === "exists")
         return { status: "precondition-failed", record: created.record };
-      record = this.records.getRecordSync();
+      record = this.records.getRecord();
     }
 
     if (!record) return { status: "precondition-failed", record: null };
@@ -62,54 +93,67 @@ export class MemoryStream implements Stream {
       plan.preconditions.expectedOffset !== undefined &&
       plan.preconditions.expectedOffset !== record.currentOffset
     )
-      return { status: "precondition-failed", record };
+      return { status: "precondition-failed", record, reason: "offset" };
     if (
       plan.preconditions.expectedClosed !== undefined &&
       plan.preconditions.expectedClosed !== (record.lifecycle.closed === true)
     )
-      return { status: "precondition-failed", record };
+      return { status: "precondition-failed", record, reason: "closed" };
 
     const producer = plan.preconditions.producer;
     if (producer) {
-      const current = this.producers.getProducerStateSync(producer.producerId);
+      const current = this.producers.getProducerState(producer.producerId);
       if (!producerStatesEqual(current, producer.expected))
-        return { status: "precondition-failed", record };
+        return { status: "precondition-failed", record, reason: "producer" };
     }
 
-    if (plan.appendMessages && plan.appendMessages.length > 0)
-      this.messages.appendMessagesSync(plan.appendMessages);
-    if (plan.recordPatch) record = this.records.updateRecordSync(plan.recordPatch);
-    if (producer) this.producers.setProducerStateSync(producer.producerId, producer.next);
+    if (plan.messages && plan.messages.length > 0) this.messages.appendMessages(plan.messages);
+    if (plan.recordPatch) record = this.records.updateRecord(plan.recordPatch);
+    if (producer) this.producers.setProducerState(producer.producerId, producer.next);
 
-    return { status: "committed", record: this.records.getRecordSync() ?? record };
+    // Wake `awaitChange` waiters now that durable facts are visible. Over-waking
+    // is safe: a woken waiter re-reads and re-parks if nothing relevant changed.
+    this.notifier.wake();
+    return { status: "committed", record: this.records.getRecord() ?? record };
   }
 
-  listMessages(options?: ListMessagesOptions): Promise<StoredMessage[]> {
+  listMessages(options?: ListMessagesOptions): StoredMessage[] {
     return this.messages.listMessages(options);
   }
 
-  getProducerState(producerId: string): Promise<ProducerState | undefined> {
+  getProducerState(producerId: string): ProducerState | undefined {
     return this.producers.getProducerState(producerId);
   }
 
-  purgeSelfSync(): void {
-    this.messages.deleteMessagesSync();
-    this.producers.deleteProducerStatesSync();
-    this.records.deleteRecordSync();
+  purgeSelf(): void {
+    this.messages.deleteMessages();
+    this.producers.deleteProducerStates();
+    this.records.deleteRecord();
     this.timeout.cancel();
     this.deleteFromState();
+    this.notifier.wake();
   }
 
-  softDeleteSync(): void {
-    this.records.updateRecordSync({ lifecycle: { softDeleted: true } });
+  softDelete(): void {
+    this.records.updateRecord({ lifecycle: { softDeleted: true } });
+    this.notifier.wake();
   }
 
-  waitForEvent(options: WaitForEventOptions): Promise<WaitForEventResult> {
-    return this.notifier.waitForEvent(options);
-  }
-
-  notify(type: StreamEventType): Promise<void> | void {
-    return this.notifier.notify(type);
+  /**
+   * Level-triggered live wait via the shared exported loop: re-read durable
+   * state first (so a mutation that landed between the caller's observation and
+   * this call is never missed), then park on the wake bus until the state
+   * advances or the budget expires. Read and park are synchronous with the wake
+   * bus here, so no per-park cap is needed.
+   */
+  awaitChange(options: AwaitChangeOptions): Promise<AwaitChangeResult> {
+    return runAwaitChangeLoop(
+      {
+        readRecord: () => this.records.getRecord(),
+        waitForWake: (timeoutMs) => this.notifier.waitForWake(timeoutMs),
+      },
+      options,
+    );
   }
 
   scheduleExpiry(at: number): Promise<void> | void {
