@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Public protocol and HTTP facades for Streamsy durable streams.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {

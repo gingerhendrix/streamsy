@@ -58,6 +58,7 @@ jobs:
             packages/state
             packages/storage-sqlite
             packages/storage-durable-object
+            packages/storage-fs
           )
 
           for pkg in "${PACKAGES[@]}"; do
@@ -77,6 +78,7 @@ jobs:
             packages/state
             packages/storage-sqlite
             packages/storage-durable-object
+            packages/storage-fs
           )
 
           for pkg in "${PACKAGES[@]}"; do

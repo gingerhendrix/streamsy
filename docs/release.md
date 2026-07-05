@@ -9,10 +9,11 @@ Current public npm packages:
 - `@streamsy/state` (`packages/state`)
 - `@streamsy/storage-sqlite` (`packages/storage-sqlite`)
 - `@streamsy/storage-durable-object` (`packages/storage-durable-object`)
+- `@streamsy/storage-fs` (`packages/storage-fs`)
 
 `@streamsy/conformance-tests` and everything under `examples/*` remain private and are not published.
 
-`@streamsy/storage-memory` was removed from the repo after `0.0.2`; memory storage now lives in `@streamsy/core`. Do not publish a new `@streamsy/storage-memory` version. Deprecate the old npm package after the replacement release is available.
+`@streamsy/storage-memory` was removed from the repo after `0.0.2`; memory storage now lives in `@streamsy/core`. Do not publish a new `@streamsy/storage-memory` version. Deprecate the old npm package only when the replacement release and migration wording require it.
 
 ## Prerequisites
 
@@ -59,6 +60,7 @@ bun run format:check
 bun run test:unit
 bun run test:conformance:memory
 bun run test:conformance:sqlite
+bun run test:conformance:fs
 bun run pack:dry-run
 ```
 
@@ -76,9 +78,11 @@ npm trusted publishing is configured per package after that package exists on np
 
 Local/manual publishes cannot create npm provenance attestations because provenance requires a supported cloud CI/CD runner with OIDC. The first manual publish should therefore use normal npm authentication and `--access public`; provenance starts with the trusted-publishing workflow after the package exists and trusted publishing is configured.
 
-### First release of the current new packages
+### Streamsy 0.2.0 first publish: `@streamsy/storage-fs`
 
-For the first release containing `@streamsy/json` and `@streamsy/state`, use this sequence from a clean release commit. It manually publishes only those two new package names, then the later tag workflow skips them as already published and publishes the existing packages with provenance.
+For `0.2.0`, `@streamsy/storage-fs` is the new package name. First-publish only `@streamsy/storage-fs@0.2.0` manually from the reviewed release commit. Then configure npm trusted publishing for `@streamsy/storage-fs`, push `main`, and push tag `v0.2.0`.
+
+The tag workflow includes all six public packages. It skips package versions that are already present on npm, so the workflow should skip the manually-published `@streamsy/storage-fs@0.2.0` and publish/provenance-attest the existing package names that are not yet at `0.2.0`.
 
 ```bash
 cd /home/gareth/Documents/Personal/repos/streamsy/main
@@ -86,6 +90,7 @@ cd /home/gareth/Documents/Personal/repos/streamsy/main
 # Confirm you are on the reviewed release commit and all versions match.
 git status --short --branch
 VERSION=$(node -p "require('./package.json').version")
+test "$VERSION" = "0.2.0"
 echo "Releasing ${VERSION}"
 node - <<'NODE'
 const paths = [
@@ -95,6 +100,7 @@ const paths = [
   'packages/state/package.json',
   'packages/storage-sqlite/package.json',
   'packages/storage-durable-object/package.json',
+  'packages/storage-fs/package.json',
 ];
 const root = require('./package.json').version;
 for (const path of paths) {
@@ -114,27 +120,21 @@ bun run format:check
 bun run test:unit
 bun run test:conformance:memory
 bun run test:conformance:sqlite
+bun run test:conformance:fs
 bun run pack:dry-run
 
 set -euo pipefail
-for pkg in \
-  packages/json \
-  packages/state
-do
-  echo "First-publishing $pkg..."
-  (
-    cd "$pkg"
-    TARBALL=$(bun pm pack --quiet | tail -n 1)
-    npm publish "$TARBALL" --access public
-    rm -f "$TARBALL"
-  )
-done
+(
+  cd packages/storage-fs
+  TARBALL=$(bun pm pack --quiet | tail -n 1)
+  npm publish "$TARBALL" --access public
+  rm -f "$TARBALL"
+)
 
-npm view "@streamsy/json@${VERSION}" version repository
-npm view "@streamsy/state@${VERSION}" version repository
+npm view "@streamsy/storage-fs@${VERSION}" version repository
 ```
 
-After those first publishes succeed, configure trusted publishing for `@streamsy/json` and `@streamsy/state` using the settings below, then push the release tag.
+After the first publish succeeds, configure trusted publishing for `@streamsy/storage-fs` using the settings below, then push `main` and the release tag.
 
 ## Configure npm trusted publishing
 
@@ -153,7 +153,7 @@ The repository workflow is `.github/workflows/publish.yml`. A `v*` tag triggers 
 
 ## Automated release after trusted publishing is configured
 
-Use this for normal releases after all package names in the release train already exist on npm and have trusted publishing configured.
+Use this after the new package has been first-published and trusted publishing has been configured. For `0.2.0`, this means after `@streamsy/storage-fs@0.2.0` exists on npm and has trusted publishing configured.
 
 ```bash
 cd /home/gareth/Documents/Personal/repos/streamsy/main
@@ -170,6 +170,7 @@ bun run format:check
 bun run test:unit
 bun run test:conformance:memory
 bun run test:conformance:sqlite
+bun run test:conformance:fs
 bun run pack:dry-run
 
 git push origin main
@@ -188,7 +189,8 @@ for name in \
   @streamsy/json \
   @streamsy/state \
   @streamsy/storage-sqlite \
-  @streamsy/storage-durable-object
+  @streamsy/storage-durable-object \
+  @streamsy/storage-fs
 do
   npm view "${name}@${VERSION}" version repository dist.integrity
   npm view "${name}@${VERSION}" dist.attestations --json
