@@ -1,13 +1,10 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared'
+import { StreamsyLogo } from '#/components/streamsy-logo'
 
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: (
-        <span className="font-logotype text-[44px] font-medium leading-none tracking-wide normal-case">
-          streamsy
-        </span>
-      ),
+      title: <StreamsyLogo className="mx-auto h-15 w-auto" />,
       url: '/docs',
     },
   }

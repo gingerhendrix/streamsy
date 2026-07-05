@@ -207,6 +207,13 @@ export class JsonProtocol<T> {
   }
 }
 
+/**
+ * Creates a JSON protocol for a given schema and underlying protocol.
+ * @param protocol The underlying stream protocol factory.
+ * @param schema The JSON schema to use for encoding and decoding messages.
+ * @param options Optional settings, including the content type (default is "application/json").
+ * @returns A JsonProtocol instance that can create and manage JSON streams.
+ */
 export function createJsonProtocol<T>(
   protocol: StreamProtocolFactory,
   schema: JsonSchema<T>,
