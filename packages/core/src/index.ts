@@ -42,6 +42,9 @@ export type {
 
 export type {
   StreamProtocolFactory,
+  CommitEvent,
+  AfterCommitHook,
+  CommitObservable,
   ProtocolStream,
   ProtocolGetResult,
   CreateOptions,

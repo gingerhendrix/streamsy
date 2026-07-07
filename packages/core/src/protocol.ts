@@ -1,8 +1,10 @@
 /** Core-owned durable streams protocol and lifecycle policy. */
 
 import type {
+  AfterCommitHook,
   AppendOptions,
   AppendResult,
+  CommitEvent,
   CreateOptions,
   CreateOutcome,
   CreateResult,
@@ -88,6 +90,7 @@ interface ProtocolStreamDeps {
   expiryPolicy: ExpiryPolicy;
   recordFactory: StreamRecordFactory;
   resolveStorageStream: (streamId: string) => BoundStream;
+  emitAfterCommit: (record: StreamRecord) => void;
 }
 
 export class ProtocolStream implements ProtocolStreamApi {
@@ -140,6 +143,7 @@ export class ProtocolStream implements ProtocolStreamApi {
       return this.createService.resultForExisting(commit.record, options);
 
     await runAfterCommit(decision.afterCommit, this.deps.storage);
+    this.deps.emitAfterCommit(commit.record);
     return decision.toResult(commit.record);
   }
 
@@ -159,6 +163,7 @@ export class ProtocolStream implements ProtocolStreamApi {
       const out = await this.deps.storage.append(decision.plan);
       if (out.status === "appended") {
         await runAfterCommit(decision.afterCommit, this.deps.storage);
+        this.deps.emitAfterCommit(out.record);
         return decision.toResult(out.record);
       }
 
@@ -267,6 +272,7 @@ export class ProtocolStream implements ProtocolStreamApi {
     }
 
     await runAfterCommit(decision.afterCommit, this.deps.storage);
+    this.deps.emitAfterCommit(commit.record);
     return decision.toResult(commit.record);
   }
 }
@@ -276,6 +282,7 @@ export class StreamProtocol implements StreamProtocolFactory {
   private longPollTimeoutMs: number;
   private expiryPolicy: ExpiryPolicy;
   private recordFactory: StreamRecordFactory;
+  private hooks = new Set<AfterCommitHook>();
 
   constructor(private deps: StreamProtocolDeps) {
     this.clock = deps.clock ?? systemClock;
@@ -309,6 +316,13 @@ export class StreamProtocol implements StreamProtocolFactory {
     return { status: "ok", stream: this.boundProtocolStream(storage) };
   }
 
+  onAfterCommit(hook: AfterCommitHook): () => void {
+    this.hooks.add(hook);
+    return () => {
+      this.hooks.delete(hook);
+    };
+  }
+
   /** Called by adapter schedulers/alarms; core decides whether expiry applies. */
   async handleScheduledExpiry(streamId: string): Promise<void> {
     const storage = this.storageStream(streamId);
@@ -335,11 +349,28 @@ export class StreamProtocol implements StreamProtocolFactory {
       expiryPolicy: this.expiryPolicy,
       recordFactory: this.recordFactory,
       resolveStorageStream: (id) => this.storageStream(id),
+      emitAfterCommit: (record) => this.emitAfterCommit(record),
     });
   }
 
   /** Bind the flat adapter to one id for ergonomic core-side per-stream calls. */
   private storageStream(streamId: string): BoundStream {
     return bindStream(this.deps.storage.adapter, streamId);
+  }
+
+  private emitAfterCommit(record: StreamRecord): void {
+    const event: CommitEvent = {
+      streamId: record.id,
+      offset: record.currentOffset,
+      closed: record.lifecycle.closed === true,
+      softDeleted: record.lifecycle.softDeleted === true,
+    };
+    for (const hook of this.hooks) {
+      try {
+        hook(event);
+      } catch (error) {
+        console.warn("after-commit hook failed", error);
+      }
+    }
   }
 }

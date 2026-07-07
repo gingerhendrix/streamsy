@@ -10,6 +10,21 @@
 import type { NotSupportedResult } from "./storage-adapter.ts";
 import type { StoredMessage, StreamId } from "./storage.ts";
 
+// === Commit Observation ===
+
+export interface CommitEvent {
+  streamId: StreamId;
+  offset: string;
+  closed: boolean;
+  softDeleted: boolean;
+}
+
+export type AfterCommitHook = (commit: CommitEvent) => void;
+
+export interface CommitObservable {
+  onAfterCommit(hook: AfterCommitHook): () => void;
+}
+
 // === Protocol Inputs ===
 
 export interface CreateOptions {
@@ -222,7 +237,7 @@ export type ProtocolGetResult =
   | { status: "gone" }
   | NotSupportedResult;
 
-export interface StreamProtocolFactory {
+export interface StreamProtocolFactory extends CommitObservable {
   create(streamId: string, options: CreateOptions): Promise<CreateResult>;
   get(streamId: string): Promise<ProtocolGetResult>;
 }
