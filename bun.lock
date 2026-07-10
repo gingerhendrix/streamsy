@@ -83,7 +83,7 @@
     },
     "packages/core": {
       "name": "@streamsy/core",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -91,7 +91,7 @@
     },
     "packages/json": {
       "name": "@streamsy/json",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.1.0",
       },
@@ -100,9 +100,20 @@
         "vitest": "^4.0.16",
       },
     },
+    "packages/materialize": {
+      "name": "@streamsy/materialize",
+      "version": "0.2.0",
+      "dependencies": {
+        "@streamsy/core": "0.2.0",
+      },
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "packages/state": {
       "name": "@streamsy/state",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.1.0",
         "@streamsy/json": "0.1.0",
@@ -114,7 +125,7 @@
     },
     "packages/storage-durable-object": {
       "name": "@streamsy/storage-durable-object",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.1.0",
       },
@@ -126,7 +137,7 @@
     },
     "packages/storage-fs": {
       "name": "@streamsy/storage-fs",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.1.0",
       },
@@ -137,7 +148,7 @@
     },
     "packages/storage-sqlite": {
       "name": "@streamsy/storage-sqlite",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.1.0",
       },
@@ -698,6 +709,8 @@
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
     "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
+
+    "@streamsy/materialize": ["@streamsy/materialize@workspace:packages/materialize"],
 
     "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
 
