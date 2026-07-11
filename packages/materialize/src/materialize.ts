@@ -40,7 +40,12 @@ export interface MaterializeResult<State> {
   cursor: Offset;
 }
 
-/** Fold records in the after-exclusive range `(from, to]` from one stream. */
+/**
+ * Fold records in the after-exclusive range `(from, to]` from one stream.
+ *
+ * Rejects on the first source, read, decode, or evolve failure. Nothing is
+ * committed by this pure fold, so callers can safely re-run it.
+ */
 export async function materialize<State, Event>(
   options: MaterializeOptions<State, Event>,
 ): Promise<MaterializeResult<State>> {

@@ -12,7 +12,9 @@ const sum: Materializer<number, number> = {
 
 describe("streamCheckpointStore", () => {
   test("roundtrips checkpoints and latest record wins", async () => {
-    const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
+    const protocol = createStreamProtocol({
+      storage: { adapter: createMemoryStorageAdapter() },
+    });
     const store = streamCheckpointStore<number>({ protocol });
     expect(await store.load("totals")).toBeNull();
 
@@ -29,10 +31,31 @@ describe("streamCheckpointStore", () => {
     expect(await store.load("totals")).toEqual(latest);
   });
 
+  test("fails fast with view context when the latest record is malformed", async () => {
+    const protocol = createStreamProtocol({
+      storage: { adapter: createMemoryStorageAdapter() },
+    });
+    const created = await protocol.create("__streamsy/views/bad%2Fview/checkpoint", {
+      contentType: "text/plain",
+    });
+    if (created.status !== "created") throw new Error(`create failed: ${created.status}`);
+    const appended = await created.stream.append({
+      contentType: "text/plain",
+      data: encoder.encode("{not-json"),
+    });
+    if (appended.status !== "appended") throw new Error(`append failed: ${appended.status}`);
+
+    await expect(streamCheckpointStore<number>({ protocol }).load("bad/view")).rejects.toThrow(
+      "Cannot load checkpoint for bad/view: latest record is malformed",
+    );
+  });
+
   test("a recreated protocol loads a checkpoint and resumes without replaying it", async () => {
     const adapter = createMemoryStorageAdapter();
     let protocol = createStreamProtocol({ storage: { adapter } });
-    const created = await protocol.create("numbers", { contentType: "text/plain" });
+    const created = await protocol.create("numbers", {
+      contentType: "text/plain",
+    });
     if (created.status !== "created") throw new Error(`create failed: ${created.status}`);
     const first = await created.stream.append({
       contentType: "text/plain",

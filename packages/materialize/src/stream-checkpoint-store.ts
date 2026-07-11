@@ -5,6 +5,7 @@ const CONTENT_TYPE = "application/json";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/** `snapshot`, when present, must be JSON-serializable. */
 export interface Checkpoint<State> {
   cursors: Record<StreamId, Offset>;
   appliedThrough?: Offset;
@@ -26,7 +27,18 @@ function defaultStreamId(viewId: string): StreamId {
   return `__streamsy/views/${encodeURIComponent(viewId)}/checkpoint`;
 }
 
-/** A replay-tolerant checkpoint store where the latest complete record wins. */
+/**
+ * A replay-tolerant checkpoint store where the last appended complete record wins.
+ *
+ * `State` must be JSON-serializable. The default stream id is
+ * `__streamsy/views/${encodeURIComponent(viewId)}/checkpoint`. Loading is
+ * fail-fast on a malformed latest record and costs O(saves); future stream
+ * compaction is the planned way to bound that cost.
+ *
+ * Loading is last-write-wins, not max-cursor-wins. A stale replay can therefore
+ * regress a cursor, which is safe for level-triggered, idempotent consumers
+ * because it only causes records to be read again.
+ */
 export function streamCheckpointStore<State>(
   options: StreamCheckpointStoreOptions,
 ): CheckpointStore<State> {
@@ -46,12 +58,20 @@ export function streamCheckpointStore<State>(
       }
       const latest = read.messages.at(-1);
       if (!latest) return null;
-      return JSON.parse(decoder.decode(latest.data)) as Checkpoint<State>;
+      try {
+        return JSON.parse(decoder.decode(latest.data)) as Checkpoint<State>;
+      } catch (error) {
+        throw new Error(`Cannot load checkpoint for ${viewId}: latest record is malformed`, {
+          cause: error,
+        });
+      }
     },
 
     async save(viewId, checkpoint) {
       const streamId = idFor(viewId);
-      const created = await options.protocol.create(streamId, { contentType: CONTENT_TYPE });
+      const created = await options.protocol.create(streamId, {
+        contentType: CONTENT_TYPE,
+      });
       if (created.status !== "created" && created.status !== "exists") {
         throw new Error(
           `Cannot create checkpoint stream for ${viewId}: status is ${created.status}`,
