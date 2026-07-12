@@ -1,4 +1,13 @@
 {
   "title": "Reference",
-  "pages": ["index", "json"]
+  "pages": [
+    "index",
+    "core",
+    "json",
+    "materialize",
+    "state",
+    "storage-durable-object",
+    "storage-fs",
+    "storage-sqlite"
+  ]
 }
