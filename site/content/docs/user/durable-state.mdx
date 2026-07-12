@@ -14,7 +14,7 @@ bun add @streamsy/state
 A schema maps each collection name to a value codec/Standard Schema, an optional wire `type`, and a `primaryKey`:
 
 ```ts
-import { createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
 import { createDurableStateProtocol, type JsonCodec } from "@streamsy/state";
 
 type Issue = { id: string; title: string; status: "open" | "closed" };
@@ -30,7 +30,7 @@ const issueCodec: JsonCodec<Issue> = {
   },
 };
 
-const protocol = createStreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
 const state = createDurableStateProtocol(protocol, {
   issues: { type: "issue", schema: issueCodec, primaryKey: "id" },
 });

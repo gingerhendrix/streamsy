@@ -5,15 +5,15 @@ description: Compose a Durable Streams HTTP server with @streamsy/core, then cho
 
 A Streamsy server is composed from three pieces:
 
-1. a **`StreamFactory`** from a storage package (where messages are persisted);
-2. a **protocol facade** from `createStreamProtocol({ storage: { factory } })` (the Durable Streams operations);
+1. a **`StorageAdapter`** from a storage package (where messages are persisted);
+2. a **protocol facade** from `createStreamProtocol({ storage: { adapter } })` (the Durable Streams operations);
 3. an **HTTP facade** from `createHttpHandler({ protocol, pathPrefix })` (serves the protocol over HTTP).
 
-The protocol and HTTP facades never change — only the factory you pass decides where data lives.
+The protocol and HTTP facades never change — only the adapter you pass decides where data lives.
 
 ## Install
 
-Streamsy targets the Bun runtime. Start with the core package, which bundles the in-memory factory:
+Streamsy targets the Bun runtime. Start with the core package, which bundles the in-memory adapter:
 
 ```bash
 bun add @streamsy/core
@@ -22,16 +22,16 @@ bun add @streamsy/core
 ## Compose the server
 
 ```ts
-import { createHttpHandler, createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createHttpHandler, createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
 
-const factory = createMemoryStreamFactory();
-const protocol = createStreamProtocol({ storage: { factory } });
+const adapter = createMemoryStorageAdapter();
+const protocol = createStreamProtocol({ storage: { adapter } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 
 Bun.serve({ fetch: (request) => handler.fetch(request) });
 ```
 
-The server now speaks the Durable Streams HTTP protocol on the configured `pathPrefix`. The in-memory factory keeps everything in process — ideal for development, examples, and conformance testing, but not durable across restarts.
+The server now speaks the Durable Streams HTTP protocol on the configured `pathPrefix`. The in-memory adapter keeps everything in process — ideal for development, examples, and conformance testing, but not durable across restarts.
 
 ## Use the protocol directly
 
@@ -50,7 +50,7 @@ Results are discriminated unions keyed on `status` (`"created"`, `"exists"`, `"o
 
 ## Choose a durable backend
 
-To persist data, swap `createMemoryStreamFactory()` for a durable factory. Nothing else in the composition changes.
+To persist data, swap `createMemoryStorageAdapter()` for a durable adapter. Nothing else in the composition changes.
 
 ### Bun SQLite — `@streamsy/storage-sqlite`
 
@@ -62,15 +62,15 @@ bun add @streamsy/storage-sqlite
 
 ```ts
 import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createSqliteStreamFactory } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 
-const factory = createSqliteStreamFactory({ filename: "streams.db" }); // omit for :memory:
-const protocol = createStreamProtocol({ storage: { factory } });
+const adapter = createSqliteStorageAdapter({ filename: "streams.db" }); // omit for :memory:
+const protocol = createStreamProtocol({ storage: { adapter } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 
 Bun.serve({ fetch: (request) => handler.fetch(request) });
 
-// factory.close() closes the underlying database connection.
+// adapter.close() closes the underlying database connection.
 ```
 
 ### Cloudflare Durable Object — `@streamsy/storage-durable-object`
@@ -84,7 +84,7 @@ bun add @streamsy/storage-durable-object
 ```ts
 import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
 import {
-  createDurableObjectStreamFactory,
+  createDurableObjectStorageAdapter,
   DurableObjectStreamStorage,
 } from "@streamsy/storage-durable-object";
 
@@ -97,15 +97,15 @@ interface Env {
 
 export default {
   fetch(request: Request, env: Env) {
-    const factory = createDurableObjectStreamFactory({ namespace: env.STREAMS });
-    const protocol = createStreamProtocol({ storage: { factory } });
+    const adapter = createDurableObjectStorageAdapter({ namespace: env.STREAMS });
+    const protocol = createStreamProtocol({ storage: { adapter } });
     const handler = createHttpHandler({ protocol, pathPrefix: "/" });
     return handler.fetch(request);
   },
 };
 ```
 
-Bind `STREAMS` to the `DurableObjectStreamStorage` class in your Wrangler config (with a SQLite-backed migration). The factory routes each stream id to its Durable Object via `namespace.idFromName(streamId)`.
+Bind `STREAMS` to the `DurableObjectStreamStorage` class in your Wrangler config (with a SQLite-backed migration). The adapter routes each stream id to its Durable Object via `namespace.idFromName(streamId)`.
 
 ## Typed layers
 

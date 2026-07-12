@@ -3,7 +3,7 @@ title: JSON mode
 description: Typed JSON streams with @streamsy/json — JsonProtocol, JsonStream, codecs, and Standard Schema.
 ---
 
-`@streamsy/json` wraps a `StreamProtocolFactory` so messages are typed JavaScript values instead of raw bytes. Values are encoded to / decoded from `application/json` through a **codec** or a **Standard Schema**, and streams are tagged with the `application/json` content type.
+`@streamsy/json` wraps a `StreamProtocolAdapter` so messages are typed JavaScript values instead of raw bytes. Values are encoded to / decoded from `application/json` through a **codec** or a **Standard Schema**, and streams are tagged with the `application/json` content type.
 
 ```bash
 bun add @streamsy/json
@@ -14,7 +14,7 @@ bun add @streamsy/json
 `createJsonProtocol(protocol, schema)` returns a `JsonProtocol<T>` over an existing protocol factory:
 
 ```ts
-import { createMemoryStreamFactory, createStreamProtocol } from "@streamsy/core";
+import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
 import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 
 type User = { id: string; name: string };
@@ -35,7 +35,7 @@ const userCodec: JsonCodec<User> = {
   },
 };
 
-const protocol = createStreamProtocol({ storage: { factory: createMemoryStreamFactory() } });
+const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
 const users = createJsonProtocol(protocol, userCodec);
 ```
 
