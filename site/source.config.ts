@@ -1,4 +1,6 @@
 import { defineConfig, defineDocs } from 'fumadocs-mdx/config'
+import { remarkAutoFunctionTable } from './src/lib/remark-auto-function-table'
+
 import {
   createFileSystemGeneratorCache,
   createGenerator,
@@ -23,6 +25,10 @@ const generator = createGenerator({
 
 export default defineConfig({
   mdxOptions: {
-    remarkPlugins: [[remarkAutoTypeTable, { generator }]],
+    remarkPlugins: [
+      remarkAutoFunctionTable,
+      [remarkAutoTypeTable, { generator }],
+      [remarkAutoTypeTable, { name: 'auto-argument-table', outputName: 'ArgumentTable', generator }],
+    ],
   },
 })

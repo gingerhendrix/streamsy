@@ -1,5 +1,6 @@
 import defaultMdxComponents from 'fumadocs-ui/mdx'
 import { TypeTable } from 'fumadocs-ui/components/type-table'
+import { ArgumentTable } from './argument-table'
 import type { MDXComponents } from 'mdx/types'
 
 export function getMDXComponents(components?: MDXComponents) {
@@ -8,6 +9,7 @@ export function getMDXComponents(components?: MDXComponents) {
     // `remarkAutoTypeTable` (see source.config.ts) compiles `<auto-type-table>`
     // tags into this `TypeTable` component at build time.
     TypeTable,
+    ArgumentTable,
     ...components,
   } satisfies MDXComponents
 }
