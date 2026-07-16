@@ -6,6 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:memory": "vitest --run src/memory.conformance.test.ts",
+    "test:client": "vitest --run src/client.conformance.test.ts",
     "test:fs": "vitest --run src/fs.conformance.test.ts -t '^(?!.*Fork - )'",
     "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
     "test:do": "STAGE=conformance node src/deploy-test-destroy.ts",
@@ -18,6 +19,7 @@
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.5",
+    "@streamsy/client": "workspace:*",
     "@streamsy/core": "workspace:*",
     "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",

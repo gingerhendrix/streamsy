@@ -7,6 +7,36 @@ export type { BoundStream } from "./protocol/helpers/bind-stream.ts";
 export { createHttpHandler, HttpHandler } from "./http.ts";
 export { createReadOnlyHttpHandler, ReadOnlyHttpHandler } from "./read-only-http.ts";
 
+export { directProtocolClient, hasStreamsyProtocol, ClientReadSession } from "./client/index.ts";
+export type {
+  AppendStreamOptions,
+  ByteStreamBatch,
+  ClientAppendResult,
+  ClientCloseResult,
+  ClientCreateResult,
+  ClientErrorCode,
+  ClientFailure,
+  ClientHeadResult,
+  ClientLiveMode,
+  ClientReadResult,
+  ClientRequestOptions,
+  CloseStreamOptions,
+  CreateStreamOptions,
+  JsonPrimitive,
+  JsonStreamBatch,
+  JsonValue,
+  ReadEndResult,
+  ReadStreamOptions,
+  StreamBatch,
+  StreamBatchMeta,
+  StreamOffset,
+  StreamProtocolClient,
+  StreamProtocolHandle,
+  StreamReadSession,
+  StreamsyProtocolClient,
+  TextStreamBatch,
+} from "./client/index.ts";
+
 export {
   isNotSupported,
   isNotSupportedError,

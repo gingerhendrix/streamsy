@@ -17,6 +17,8 @@ import {
   reverseIndexLineage,
   ttlOnlyReclaim,
   compareOffsets,
+  directProtocolClient,
+  hasStreamsyProtocol,
   runAwaitChangeLoop,
   type AppendPlan,
   type CreatePlan,
@@ -28,7 +30,9 @@ import {
   type StorageForkResult,
   type LineagePolicy,
   type LineageStore,
+  type StreamProtocolClient,
 } from "@streamsy/core";
+import { officialProtocolClient, protocolPathUrl } from "@streamsy/client";
 import { createJsonProtocol, JsonProtocol } from "@streamsy/json";
 import { createDurableStateProtocol, DurableStateProtocol } from "@streamsy/state";
 
@@ -74,6 +78,14 @@ describe("public API import guard", () => {
     expect(bindStream).toBeTypeOf("function");
     expect(compareOffsets).toBeTypeOf("function");
     expect(runAwaitChangeLoop).toBeTypeOf("function");
+    const direct: StreamProtocolClient = directProtocolClient(protocol);
+    expect(hasStreamsyProtocol(direct)).toBe(true);
+    const official: StreamProtocolClient = officialProtocolClient({
+      urlFor: (id) => protocolPathUrl("https://example.com/streams", id),
+    });
+    expect(official.stream("guard").id).toBe("guard");
+    await official.close();
+    await direct.close();
     const created = await protocol.create("guard", {});
     expect(created.status).toBe("created");
     if (created.status === "created") {

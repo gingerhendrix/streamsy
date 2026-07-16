@@ -1,0 +1,45 @@
+{
+  "name": "@streamsy/client",
+  "version": "0.2.0",
+  "description": "Durable Streams protocol client adapter for Streamsy consumers.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/client"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external @durable-streams/client",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src"
+  },
+  "dependencies": {
+    "@durable-streams/client": "^0.2.6",
+    "@streamsy/core": "0.2.0"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

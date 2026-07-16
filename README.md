@@ -11,6 +11,7 @@ Streamsy provides a server implementation of the Durable Streams protocol with:
 - support for any runtime/framework that supports Web Standards `fetch`
 - pluggable storage backends with in-memory, SQLite, and Durable Object implementations
 - TypeScript interfaces for direct protocol access, including support for JSON mode with typed codecs and Standard Schema support
+- a transport-neutral protocol client (`@streamsy/core` `directProtocolClient`, `@streamsy/client` `officialProtocolClient`) with checkpointed batch reads and result-object outcomes
 
 ## License
 
