@@ -1,87 +1,95 @@
-import { compareOffsets, ZERO_OFFSET } from "@streamsy/core";
-import type { Offset, StoredMessage, StreamId, StreamProtocolFactory } from "@streamsy/core";
+import type {
+  JsonValue,
+  StreamBatch,
+  StreamId,
+  StreamOffset,
+  StreamProtocolClient,
+} from "@streamsy/core";
 
 export interface Materializer<State, Event> {
   initial: () => State;
-  evolve: (state: State, event: Event, meta: RecordMeta) => State;
+  evolve: (state: State, event: Event, meta: BatchMeta) => State;
 }
 
-export interface RecordMeta {
+/** Metadata shared by every event decoded from one client delivery batch. */
+export interface BatchMeta {
   streamId: StreamId;
-  offset: Offset;
-  timestamp: number;
+  /** After-exclusive resume token for the complete batch. */
+  offset: StreamOffset;
 }
 
-/** A single stream read through Streamsy's existing protocol factory seam. */
+/** A single stream read through the transport-neutral protocol client seam. */
 export interface StreamSource {
-  protocol: StreamProtocolFactory;
+  client: StreamProtocolClient;
   streamId: StreamId;
 }
 
 /** Open observer seam. Concrete target integrations live with their targets. */
 export interface Output<State> {
   readonly kind: string;
-  emit(prev: State, next: State, meta: RecordMeta): Promise<void> | void;
-  appliedThrough?(): Promise<Offset | null>;
+  emit(prev: State, next: State, meta: BatchMeta): Promise<void> | void;
+  appliedThrough?(): Promise<StreamOffset | null>;
   readonly supportsFusedCheckpoint?: boolean;
 }
 
-export interface MaterializeOptions<State, Event> {
+export interface MaterializeOptions<State, Event, Json extends JsonValue = JsonValue> {
   source: StreamSource;
-  decode: (message: StoredMessage, meta: RecordMeta) => Event;
+  /** Decode one content-aware client batch into zero or more domain events. */
+  decode: (batch: StreamBatch<Json>, meta: BatchMeta) => Iterable<Event>;
   view: Materializer<State, Event>;
-  from?: Offset;
-  to?: Offset;
+  /** After-exclusive client resume token. Omission reads from the stream start. */
+  from?: StreamOffset;
   initialState?: State;
 }
 
 export interface MaterializeResult<State> {
   state: State;
-  cursor: Offset;
+  /** After-exclusive token at the last completely consumed delivery batch. */
+  cursor: StreamOffset;
 }
 
 /**
- * Fold records in the after-exclusive range `(from, to]` from one stream.
+ * Fold all currently available batches from one stream.
  *
- * Rejects on the first source, read, decode, or evolve failure. Nothing is
- * committed by this pure fold, so callers can safely re-run it.
+ * The client owns transport, content decoding, and resume-token semantics. This
+ * fold rejects on source/read/session, decode, or evolve failure and commits
+ * nothing, so callers can safely resume from the last persisted batch cursor.
  */
-export async function materialize<State, Event>(
-  options: MaterializeOptions<State, Event>,
+export async function materialize<State, Event, Json extends JsonValue = JsonValue>(
+  options: MaterializeOptions<State, Event, Json>,
 ): Promise<MaterializeResult<State>> {
-  const from = options.from ?? ZERO_OFFSET;
-  if (options.to !== undefined && compareOffsets(options.to, from) < 0) {
-    throw new RangeError(`Materialize 'to' offset ${options.to} precedes 'from' offset ${from}`);
-  }
-
-  const result = await options.source.protocol.get(options.source.streamId);
-  if (result.status !== "ok") {
-    throw new Error(
-      `Cannot materialize stream ${options.source.streamId}: source status is ${result.status}`,
-    );
-  }
-
-  const read = await result.stream.read({ offset: from });
+  const handle = options.source.client.stream(options.source.streamId);
+  const read = await handle.read<Json>({ offset: options.from, live: false });
   if (read.status !== "ok") {
     throw new Error(
-      `Cannot materialize stream ${options.source.streamId}: read status is ${read.status}`,
+      `Cannot materialize stream ${options.source.streamId}: read status is ${describe(read)}`,
     );
   }
 
   let state = options.initialState ?? options.view.initial();
-  let cursor = from;
+  let cursor = read.session.offset;
 
-  for (const message of read.messages) {
-    if (options.to !== undefined && compareOffsets(message.offset, options.to) > 0) break;
-    const meta: RecordMeta = {
+  for await (const batch of read.session) {
+    const meta: BatchMeta = {
       streamId: options.source.streamId,
-      offset: message.offset,
-      timestamp: message.timestamp,
+      offset: batch.offset,
     };
-    const event = options.decode(message, meta);
-    state = options.view.evolve(state, event, meta);
-    cursor = message.offset;
+    for (const event of options.decode(batch, meta)) {
+      state = options.view.evolve(state, event, meta);
+    }
+    cursor = batch.offset;
+  }
+
+  const end = await read.session.done;
+  if (end.status !== "done") {
+    throw new Error(
+      `Cannot materialize stream ${options.source.streamId}: session status is ${describe(end)}`,
+    );
   }
 
   return { state, cursor };
+}
+
+function describe(result: { status: string; code?: string }): string {
+  return result.code === undefined ? result.status : `${result.status} (${result.code})`;
 }

@@ -5,7 +5,7 @@ export type {
   MaterializeResult,
   Materializer,
   Output,
-  RecordMeta,
+  BatchMeta,
   StreamSource,
 } from "./materializer/materialize.ts";
 export type {

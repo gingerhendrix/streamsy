@@ -1,10 +1,13 @@
-import { createMemoryStorageAdapter, createStreamProtocol, ZERO_OFFSET } from "@streamsy/core";
-import type { StreamProtocolFactory } from "@streamsy/core";
+import {
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+  directProtocolClient,
+} from "@streamsy/core";
+import type { JsonValue, StreamProtocolClient } from "@streamsy/core";
 import { describe, expect, test } from "vitest";
 import { materialize, type Materializer } from "./materialize.ts";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 const sum: Materializer<number, number> = {
   initial: () => 0,
@@ -16,103 +19,73 @@ async function sourceWith(values: number[]) {
     storage: { adapter: createMemoryStorageAdapter() },
   });
   const created = await protocol.create("numbers", {
-    contentType: "text/plain",
+    contentType: "application/json",
   });
   if (created.status !== "created") throw new Error(`create failed: ${created.status}`);
   const offsets: string[] = [];
   for (const value of values) {
     const appended = await created.stream.append({
-      contentType: "text/plain",
-      data: encoder.encode(String(value)),
+      contentType: "application/json",
+      data: encoder.encode(JSON.stringify(value)),
     });
     if (appended.status !== "appended") throw new Error(`append failed: ${appended.status}`);
     offsets.push(appended.offset);
   }
-  return { protocol, offsets };
+  return { protocol, client: directProtocolClient(protocol), offsets };
+}
+
+function decodeNumbers(batch: { kind: string; items?: readonly JsonValue[] }): Iterable<number> {
+  if (batch.kind !== "json") throw new Error(`expected json batch, received ${batch.kind}`);
+  return batch.items as readonly number[];
 }
 
 function fold(
-  protocol: StreamProtocolFactory,
-  options: { from?: string; to?: string; initialState?: number } = {},
+  client: StreamProtocolClient,
+  options: { from?: string; initialState?: number } = {},
 ) {
   return materialize({
-    source: { protocol, streamId: "numbers" },
-    decode: (message) => Number(decoder.decode(message.data)),
+    source: { client, streamId: "numbers" },
+    decode: decodeNumbers,
     view: sum,
     ...options,
   });
 }
 
 describe("materialize", () => {
-  test("folds one stream with bounded (from, to] semantics", async () => {
-    const { protocol, offsets } = await sourceWith([1, 2, 4, 8]);
-    const result = await fold(protocol, { from: offsets[0], to: offsets[2] });
-    expect(result).toEqual({ state: 6, cursor: offsets[2] });
+  test("folds all currently available client batches", async () => {
+    const { client, offsets } = await sourceWith([1, 2, 4, 8]);
+    await expect(fold(client)).resolves.toEqual({ state: 15, cursor: offsets[3] });
   });
 
-  test("folds through the tail when to is beyond it", async () => {
-    const { protocol, offsets } = await sourceWith([1, 2, 4]);
-    const beyondTail = "ffffffffffffffff_ffffffffffffffff";
-    await expect(fold(protocol, { from: offsets[0], to: beyondTail })).resolves.toEqual({
-      state: 6,
-      cursor: offsets[2],
-    });
-  });
-
-  test("returns an empty fold when from equals to", async () => {
-    const { protocol, offsets } = await sourceWith([1, 2]);
-    await expect(fold(protocol, { from: offsets[0], to: offsets[0] })).resolves.toEqual({
-      state: 0,
-      cursor: offsets[0],
-    });
-  });
-
-  test("returns an empty fold when from is beyond the tail", async () => {
-    const { protocol } = await sourceWith([1, 2]);
-    const beyondTail = "ffffffffffffffff_ffffffffffffffff";
-    await expect(fold(protocol, { from: beyondTail })).resolves.toEqual({
-      state: 0,
-      cursor: beyondTail,
-    });
-  });
-
-  test("rejects when to precedes from", async () => {
-    const { protocol, offsets } = await sourceWith([1, 2]);
-    await expect(fold(protocol, { from: offsets[1], to: offsets[0] })).rejects.toBeInstanceOf(
-      RangeError,
-    );
-  });
-
-  test("returns initial state and the starting cursor for an empty stream", async () => {
-    const { protocol } = await sourceWith([]);
-    await expect(fold(protocol)).resolves.toEqual({
-      state: 0,
-      cursor: ZERO_OFFSET,
-    });
-  });
-
-  test("resumes from initialState and an after-exclusive cursor", async () => {
-    const { protocol, offsets } = await sourceWith([1, 2, 4]);
-    await expect(fold(protocol, { from: offsets[1], initialState: 10 })).resolves.toEqual({
+  test("resumes from initialState and an after-exclusive client cursor", async () => {
+    const { client, offsets } = await sourceWith([1, 2, 4]);
+    await expect(fold(client, { from: offsets[1], initialState: 10 })).resolves.toEqual({
       state: 14,
       cursor: offsets[2],
     });
   });
 
-  test("resume at the tail folds no records and keeps the resume cursor", async () => {
-    const { protocol, offsets } = await sourceWith([1, 2, 4]);
-    await expect(fold(protocol, { from: offsets[2], initialState: 7 })).resolves.toEqual({
+  test("resume at the tail folds no events and keeps the resume cursor", async () => {
+    const { client, offsets } = await sourceWith([1, 2, 4]);
+    await expect(fold(client, { from: offsets[2], initialState: 7 })).resolves.toEqual({
       state: 7,
       cursor: offsets[2],
     });
   });
 
+  test("returns the client start cursor for an empty stream", async () => {
+    const { client } = await sourceWith([]);
+    const result = await fold(client);
+    expect(result.state).toBe(0);
+    expect(result.cursor).toBeTruthy();
+  });
+
   test("surfaces decode errors", async () => {
-    const { protocol } = await sourceWith([1]);
+    const { client } = await sourceWith([1]);
     const failure = new Error("bad event");
     await expect(
       materialize({
-        source: { protocol, streamId: "numbers" },
+        source: { client, streamId: "numbers" },
         decode: () => {
           throw failure;
         },
@@ -121,10 +94,19 @@ describe("materialize", () => {
     ).rejects.toBe(failure);
   });
 
+  test("reports missing streams through the client result contract", async () => {
+    const protocol = createStreamProtocol({
+      storage: { adapter: createMemoryStorageAdapter() },
+    });
+    await expect(fold(directProtocolClient(protocol))).rejects.toThrow(
+      "Cannot materialize stream numbers: read status is not-found",
+    );
+  });
+
   test("replay is deterministic", async () => {
-    const { protocol } = await sourceWith([1, 2, 4, 8]);
-    const first = await fold(protocol);
-    const second = await fold(protocol);
+    const { client } = await sourceWith([1, 2, 4, 8]);
+    const first = await fold(client);
+    const second = await fold(client);
     expect(second).toEqual(first);
   });
 });
