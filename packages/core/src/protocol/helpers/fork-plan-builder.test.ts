@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CreateOptions } from "../../types/protocol.ts";
 import type { StoredMessage, StreamRecord } from "../../types/storage.ts";
 import { ForkPlanBuilder } from "./fork-plan-builder.ts";
-import { ZERO_OFFSET, formatCounter, parseCounter } from "./offset-generator.ts";
+import { defaultOffsetGenerator, ZERO_OFFSET, formatCounter, parseCounter } from "./offset-generator.ts";
 
 const clock = { now: () => 1_000, date: (value?: number | string) => new Date(value ?? 1_000) };
 
@@ -57,7 +57,7 @@ function newRecord(
 
 describe("ForkPlanBuilder", () => {
   it("returns source validation failures without a plan", () => {
-    const builder = new ForkPlanBuilder({ clock, newRecord });
+    const builder = new ForkPlanBuilder({ clock, offsets: defaultOffsetGenerator, newRecord });
 
     expect(builder.build("child", "source", null, {})).toMatchObject({
       kind: "terminal",
@@ -72,7 +72,7 @@ describe("ForkPlanBuilder", () => {
   });
 
   it("builds a fork plan with inherited expiry, source liveness precondition, and initial messages", () => {
-    const builder = new ForkPlanBuilder({ clock, newRecord });
+    const builder = new ForkPlanBuilder({ clock, offsets: defaultOffsetGenerator, newRecord });
     const decision = builder.build("child", "source", source(), {
       initialData: new TextEncoder().encode("child"),
     });
@@ -93,7 +93,7 @@ describe("ForkPlanBuilder", () => {
   });
 
   it("rejects fork offsets beyond the source tail", () => {
-    const builder = new ForkPlanBuilder({ clock, newRecord });
+    const builder = new ForkPlanBuilder({ clock, offsets: defaultOffsetGenerator, newRecord });
 
     expect(
       builder.build("child", "source", source(), {
@@ -109,7 +109,7 @@ describe("ForkPlanBuilder", () => {
   });
 
   describe("sub-offset materialization", () => {
-    const builder = new ForkPlanBuilder({ clock, newRecord });
+    const builder = new ForkPlanBuilder({ clock, offsets: defaultOffsetGenerator, newRecord });
 
     it("materializes a binary sub-offset prefix as the child's own first message", () => {
       const decision = builder.build(

@@ -6,7 +6,7 @@ import type { Clock, ProducerState, StreamRecord } from "../types/storage.ts";
 import type { AfterCommitEffects } from "./helpers/after-commit-effects.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
-import { allocate as allocateOffsets } from "./helpers/offset-generator.ts";
+import { allocate as allocateOffsets, type OffsetGenerator } from "./helpers/offset-generator.ts";
 import {
   rejectionToAppendResult,
   validateProducer,
@@ -47,6 +47,7 @@ function expectedOffsetConflict(record: StreamRecord, options: AppendOptions): A
 
 export interface AppendServiceDeps {
   clock: Clock;
+  offsets: OffsetGenerator;
 }
 
 export class AppendService {
@@ -130,7 +131,12 @@ export class AppendService {
     producerValidation: ProducerValidation | undefined,
     wantClose: boolean,
   ): AppendDecision {
-    const allocation = allocateOffsets(record.counter, data.length);
+    const allocation = allocateOffsets(
+      this.deps.offsets,
+      record.currentOffset,
+      record.counter,
+      data.length,
+    );
     const now = this.deps.clock.now();
     const messages = data.map((bytes, i) => ({
       data: bytes,

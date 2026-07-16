@@ -6,7 +6,7 @@ import type { Clock, StoredMessage, StreamRecord } from "../types/storage.ts";
 import type { AfterCommitEffects } from "./helpers/after-commit-effects.ts";
 import { configMatches } from "./helpers/create-config-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
-import { allocate as allocateOffsets } from "./helpers/offset-generator.ts";
+import { allocate as allocateOffsets, type OffsetGenerator } from "./helpers/offset-generator.ts";
 
 export type CreateDecision =
   | { kind: "terminal"; result: CreateOutcome }
@@ -22,6 +22,7 @@ export type CreateDecision =
 export interface CreateStreamServiceDeps {
   clock: Clock;
   newRecord(contentType: string, options: CreateOptions): StreamRecord;
+  offsets: OffsetGenerator;
 }
 
 export class CreateStreamService {
@@ -32,7 +33,12 @@ export class CreateStreamService {
     if (options.forkedFrom) return { kind: "fork" };
 
     const contentType = options.contentType ?? "application/octet-stream";
-    const initialMessages = this.initialMessages(options.initialData, contentType, 0);
+    const initialMessages = this.initialMessages(
+      options.initialData,
+      contentType,
+      this.deps.offsets.initialOffset,
+      0,
+    );
     const wantClosed = options.closed === true;
     const newRecord = this.deps.newRecord(contentType, options);
     const finalRecord = this.withInitialTail(newRecord, initialMessages, wantClosed);
@@ -87,10 +93,16 @@ export class CreateStreamService {
   private initialMessages(
     initialData: Uint8Array | undefined,
     contentType: string,
+    previousOffset: string,
     startCounter: number,
   ): StoredMessage[] {
     const framed = initialData ? frameMessages(initialData, contentType) : [];
-    const allocation = allocateOffsets(startCounter, framed.length);
+    const allocation = allocateOffsets(
+      this.deps.offsets,
+      previousOffset,
+      startCounter,
+      framed.length,
+    );
     const now = this.deps.clock.now();
     return framed.map((data, i) => ({
       data,
@@ -104,11 +116,11 @@ export class CreateStreamService {
     initialMessages: StoredMessage[],
     closed: boolean,
   ): StreamRecord {
-    const allocation = allocateOffsets(record.counter, initialMessages.length);
+    const lastMessage = initialMessages[initialMessages.length - 1];
     return {
       ...record,
-      currentOffset: allocation.nextOffset,
-      counter: allocation.endCounter,
+      currentOffset: lastMessage?.offset ?? record.currentOffset,
+      counter: record.counter + initialMessages.length,
       lifecycle: {
         ...record.lifecycle,
         ...(closed ? { closed: true, closedAt: this.deps.clock.now() } : {}),

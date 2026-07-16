@@ -16,8 +16,8 @@ const protocol = createStreamProtocol({ storage: { adapter } });
 const handler = createHttpHandler({ protocol, pathPrefix: "/" });
 ```
 
-`createStreamProtocol({ storage: { adapter }, clock?, longPollTimeoutMs? })` returns a protocol
-factory. Optional `clock` and `longPollTimeoutMs` are provided inline on the dependency object.
+`createStreamProtocol({ storage: { adapter }, clock?, longPollTimeoutMs?, offsetGenerator? })` returns a
+protocol factory. Optional dependencies are provided inline on the dependency object.
 
 On success, `create` returns the bound protocol stream directly; existing streams are resolved with
 `get`:
@@ -37,13 +37,48 @@ if (lookup.status === "ok") {
 
 `PUT` uses `protocol.create(...)`. Existing-stream HTTP methods resolve with `protocol.get(...)` first, then call the returned bound protocol stream.
 
+## Offset generation
+
+Offsets are opaque strings ordered by ordinary lexicographic comparison. The default
+`defaultOffsetGenerator` preserves Streamsy's existing wire values
+(`0000000000000000_0000000000000000`, then fixed-width counter values). Default HTTP validation
+accepts only that canonical fixed-width form, so non-canonical values such as `1_0` are rejected
+rather than being used as unsafe lexical boundaries.
+
+Supply `offsetGenerator` to use another scheme such as monotonic ULIDs:
+
+```ts
+import { monotonicFactory } from "ulid";
+import { createStreamProtocol, type OffsetGenerator } from "@streamsy/core";
+
+const ulid = monotonicFactory();
+const offsetGenerator: OffsetGenerator = {
+  // Must be a valid token that sorts before every value returned by `next`.
+  initialOffset: "00000000000000000000000000",
+  next: () => ulid(),
+  isValid: (offset) => /^[0-9A-HJKMNP-TV-Z]{26}$/.test(offset),
+};
+
+const protocol = createStreamProtocol({
+  storage: { adapter },
+  offsetGenerator,
+});
+```
+
+Core calls `next(previous)` once for every logical message in a mutation (including JSON batch
+items), chains the returned strings, and rejects a value before storage if it is invalid, reserved,
+contains a protocol delimiter, or is not strictly lexicographically greater than `previous`.
+Generators do not parse or update `StreamRecord.counter`; that persisted field remains only for
+backwards-compatible adapter records. Use one offset scheme for the lifetime of persisted streams;
+switching generators over existing data is not an automatic migration.
+
 ## Optimistic concurrency: `expectedOffset` (Streamsy extension)
 
 `AppendOptions.expectedOffset` is a compare-and-swap precondition: the append succeeds only if the
 stream's tail offset still equals the given offset. On mismatch nothing is written (messages, close
 flag, and producer state are untouched) and the append returns
 `{ status: "conflict", conflictReason: "expected-offset", offset }`, where `offset` is the actual
-tail. `ZERO_OFFSET` means "append only if the stream is still empty". The check is atomic with the
+tail. `ZERO_OFFSET` means "append only if a default-generator stream is still empty". For a custom scheme, use `protocol.offsetGenerator.initialOffset`. The check is atomic with the
 append because the protocol builds a declarative mutation plan and the storage adapter commits that
 plan with an atomic per-stream compare-and-swap.
 
@@ -94,7 +129,7 @@ Storage authors implement:
 - **reads**: `getRecord(streamId)`, `listMessages(streamId, options?)`,
   `getProducerState(streamId, producerId)`.
 - **write**: `append(streamId, AppendPlan)` applies one atomic mutation — pre-framed messages, the
-  required record patch (offset/counter advance, with `lifecycle.closed` folding a close, and a
+  required record patch (offset advance plus the compatibility counter, with `lifecycle.closed` folding a close, and a
   lifecycle-only TTL renewal as the one shape that patches without advancing), an
   optional producer compare-and-set, all guarded by `preconditions` (`expectedOffset` /
   `expectedClosed` / producer CAS). It returns `appended` with the fresh record or
@@ -142,7 +177,7 @@ Protocol-bound streams are distinct from storage-bound streams:
 
 Core exports include:
 
-- `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`
+- `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`, `defaultOffsetGenerator`, `InvalidGeneratedOffsetError`, and the `OffsetGenerator` type
 - protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadLiveResult`, `MetadataResult`, and `DeleteResult`
 - the flat storage-adapter seam: `StorageAdapter` (with the grouping facets `StreamReader`, `StreamAppender`, `StreamLiveWaiter`, `StreamExpiryScheduler`), plan types `AppendPlan`, `CreatePlan`, `ForkPlan`, `DeletePlan`, adapter result types `StorageAppendResult`, `StorageCreateResult`, `StorageForkResult`, `StorageDeleteResult`, and the live-wait types `StreamChangeSnapshot`, `AwaitChangeOptions`, `AwaitChangeResult`
 - the core-internal per-stream binding for adapter authors and tests: `bindStream` and `BoundStream`

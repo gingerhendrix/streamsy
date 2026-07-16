@@ -107,7 +107,13 @@ describe("ReadOnlyHttpHandler", () => {
       nextOffset: "1_0",
     }));
     const get = vi.fn<StreamProtocolFactory["get"]>(async () => ({ status: "ok", stream }));
-    const protocol: StreamProtocolFactory = { create, get, onAfterCommit: () => () => {} };
+    const protocol: StreamProtocolFactory = {
+      create,
+      get,
+      onAfterCommit: () => () => {},
+      offsetGenerator: { initialOffset: "0_0", next: () => "1_0", isValid: () => true },
+      isValidOffset: () => true,
+    };
     const handler = createReadOnlyHttpHandler({ protocol });
 
     const response = await handler.fetch(new Request("http://x/example", { method: "GET" }));

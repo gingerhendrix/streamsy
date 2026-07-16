@@ -3,6 +3,7 @@ import { EtagBuilder } from "../http/etag-builder.ts";
 import { MessageBodyCodec } from "../http/message-body-codec.ts";
 import { ProducerHeaderParser } from "../http/producer-header-parser.ts";
 import { ReadQueryParser } from "../http/read-query-parser.ts";
+import { defaultOffsetGenerator } from "../protocol/helpers/offset-generator.ts";
 import { RequestBodyReader } from "../http/request-body-reader.ts";
 import { HttpResponseFactory } from "../http/responses.ts";
 import { SseEventEncoder } from "../http/sse-event-encoder.ts";
@@ -138,7 +139,7 @@ describe("HTTP EtagBuilder", () => {
 
 describe("HTTP ReadQueryParser", () => {
   it("rejects malformed offsets and accepts the documented sentinels", () => {
-    const parser = new ReadQueryParser();
+    const parser = new ReadQueryParser((offset) => defaultOffsetGenerator.isValid(offset));
     const bad = parser.parse(new URL("http://x/s?offset=abc"));
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.response.status).toBe(400);
@@ -147,14 +148,15 @@ describe("HTTP ReadQueryParser", () => {
       ok: true,
       offset: "now",
     });
-    expect(parser.parse(new URL("http://x/s?offset=1_0"))).toMatchObject({
-      ok: true,
-      offset: "1_0",
-    });
+    const short = parser.parse(new URL("http://x/s?offset=1_0"));
+    expect(short.ok).toBe(false);
+    expect(
+      parser.parse(new URL("http://x/s?offset=0000000000000001_0000000000000000")),
+    ).toMatchObject({ ok: true });
   });
 
   it("classifies live mode and surfaces cursor", () => {
-    const parser = new ReadQueryParser();
+    const parser = new ReadQueryParser((offset) => defaultOffsetGenerator.isValid(offset));
     expect(parser.parse(new URL("http://x/s?offset=-1&live=long-poll&cursor=c1"))).toMatchObject({
       ok: true,
       live: "long-poll",

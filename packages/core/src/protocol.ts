@@ -31,7 +31,13 @@ import { CreateStreamService } from "./protocol/create-stream-service.ts";
 import { ForkPlanBuilder } from "./protocol/helpers/fork-plan-builder.ts";
 import { StreamMessageReader } from "./protocol/storage/stream-message-reader.ts";
 import { StreamRecordFactory } from "./protocol/storage/stream-record-factory.ts";
-import { compareOffsets, isValidOffset, ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
+import {
+  assertValidOffsetGenerator,
+  compareOffsets,
+  defaultOffsetGenerator,
+  isValidOffset,
+  type OffsetGenerator,
+} from "./protocol/helpers/offset-generator.ts";
 import { runAfterCommit } from "./protocol/helpers/after-commit-effects.ts";
 
 export { ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
@@ -44,6 +50,8 @@ type DeleteStatus = "purged" | "retained-soft-deleted" | "not-found" | "gone";
 export interface StreamProtocolOptions {
   clock?: Clock;
   longPollTimeoutMs?: number;
+  /** Opaque offset scheme; defaults to Streamsy's fixed-width counter format. */
+  offsetGenerator?: OffsetGenerator;
 }
 
 export interface StreamProtocolDeps extends StreamProtocolOptions {
@@ -91,6 +99,7 @@ interface ProtocolStreamDeps {
   recordFactory: StreamRecordFactory;
   resolveStorageStream: (streamId: string) => BoundStream;
   emitAfterCommit: (record: StreamRecord) => void;
+  offsets: OffsetGenerator;
 }
 
 export class ProtocolStream implements ProtocolStreamApi {
@@ -108,7 +117,7 @@ export class ProtocolStream implements ProtocolStreamApi {
       resolve: deps.resolveStorageStream,
       expiryPolicy: deps.expiryPolicy,
     });
-    this.appendService = new AppendService({ clock: deps.clock });
+    this.appendService = new AppendService({ clock: deps.clock, offsets: deps.offsets });
     this.readService = new ReadService({
       readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
     });
@@ -116,16 +125,19 @@ export class ProtocolStream implements ProtocolStreamApi {
       store: liveReadStore(deps.storage),
       clock: deps.clock,
       longPollTimeoutMs: deps.longPollTimeoutMs,
+      offsets: deps.offsets,
       readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
       readOwn: (after) => messageReader.readOwn(after),
     });
     this.createService = new CreateStreamService({
       clock: deps.clock,
+      offsets: deps.offsets,
       newRecord: (contentType, opts) =>
         deps.recordFactory.newRecord(deps.storage.id, contentType, opts, undefined),
     });
     this.forkPlanBuilder = new ForkPlanBuilder({
       clock: deps.clock,
+      offsets: deps.offsets,
       newRecord: (streamId, contentType, opts, fork) =>
         deps.recordFactory.newRecord(streamId, contentType, opts, fork),
     });
@@ -180,7 +192,8 @@ export class ProtocolStream implements ProtocolStreamApi {
           };
         }
       } else {
-        const previousOffset = decision.plan.preconditions.expectedOffset ?? ZERO_OFFSET;
+        const previousOffset =
+          decision.plan.preconditions.expectedOffset ?? this.deps.offsets.initialOffset;
         const madeProgress = compareOffsets(lastRecord.currentOffset, previousOffset) > 0;
         noProgressAttempts = madeProgress ? 0 : noProgressAttempts + 1;
         if (noProgressAttempts >= MAX_NO_PROGRESS_ATTEMPTS) return { status: "busy" };
@@ -236,7 +249,7 @@ export class ProtocolStream implements ProtocolStreamApi {
     const subOffset = options.forkSubOffset;
     if (subOffset === undefined || subOffset <= 0 || !source) return undefined;
     const forkOffset = options.forkOffset ?? source.currentOffset;
-    if (!isValidOffset(forkOffset)) return undefined;
+    if (!isValidOffset(this.deps.offsets, forkOffset)) return undefined;
     const reader = new StreamMessageReader({
       stream: sourceStream,
       resolve: this.deps.resolveStorageStream,
@@ -282,10 +295,13 @@ export class StreamProtocol implements StreamProtocolFactory {
   private longPollTimeoutMs: number;
   private expiryPolicy: ExpiryPolicy;
   private recordFactory: StreamRecordFactory;
+  readonly offsetGenerator: OffsetGenerator;
   private hooks = new Set<AfterCommitHook>();
 
   constructor(private deps: StreamProtocolDeps) {
     this.clock = deps.clock ?? systemClock;
+    this.offsetGenerator = deps.offsetGenerator ?? defaultOffsetGenerator;
+    assertValidOffsetGenerator(this.offsetGenerator);
     this.longPollTimeoutMs = deps.longPollTimeoutMs ?? LONG_POLL_TIMEOUT_MS;
     this.expiryPolicy = new ExpiryPolicy({
       resolve: (id) => this.storageStream(id),
@@ -295,7 +311,12 @@ export class StreamProtocol implements StreamProtocolFactory {
     this.recordFactory = new StreamRecordFactory({
       clock: this.clock,
       expiryPolicy: this.expiryPolicy,
+      offsets: this.offsetGenerator,
     });
+  }
+
+  isValidOffset(offset: string): boolean {
+    return isValidOffset(this.offsetGenerator, offset);
   }
 
   async create(streamId: string, options: CreateOptions): Promise<CreateResult> {
@@ -350,6 +371,7 @@ export class StreamProtocol implements StreamProtocolFactory {
       recordFactory: this.recordFactory,
       resolveStorageStream: (id) => this.storageStream(id),
       emitAfterCommit: (record) => this.emitAfterCommit(record),
+      offsets: this.offsetGenerator,
     });
   }
 

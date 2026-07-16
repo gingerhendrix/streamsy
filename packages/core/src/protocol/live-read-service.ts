@@ -10,7 +10,7 @@ import type {
   StreamChangeSnapshot,
   StreamRecord,
 } from "../types/storage.ts";
-import { compareOffsets, isValidOffset, ZERO_OFFSET } from "./helpers/offset-generator.ts";
+import { compareOffsets, isValidOffset, type OffsetGenerator } from "./helpers/offset-generator.ts";
 import { generateCursor } from "./helpers/cursor-generator.ts";
 import { raceAbortAwaitChange } from "./helpers/race-abort.ts";
 
@@ -38,6 +38,7 @@ export interface LiveReadServiceDeps extends LiveReadDeps {
   store: LiveReadStore;
   clock: Clock;
   longPollTimeoutMs: number;
+  offsets: OffsetGenerator;
 }
 
 export class LiveReadService {
@@ -85,12 +86,14 @@ export class LiveReadService {
 
     // Normalize the reader's parked position to a canonical offset before the
     // offset-comparison wait path. The HTTP layer passes the start sentinel `"0"`
-    // (and other non-canonical forms), which sorts *below* `ZERO_OFFSET` in a raw
+    // (and other non-canonical forms), which sorts *below* `initialOffset` in a raw
     // string compare; left unnormalized, `awaitChange` and the visibility guard
     // would see a phantom "tail advanced" on an empty stream. `listMessages`
     // filtering (`offset > after`) is unaffected since every real offset exceeds
-    // both `"0"` and `ZERO_OFFSET`.
-    const fromOffset = isValidOffset(options.offset) ? options.offset : ZERO_OFFSET;
+    // both `"0"` and `initialOffset`.
+    const fromOffset = isValidOffset(this.deps.offsets, options.offset)
+      ? options.offset
+      : this.deps.offsets.initialOffset;
 
     const immediate = await this.deps.readOwn(fromOffset);
     if (immediate.messages.length > 0)

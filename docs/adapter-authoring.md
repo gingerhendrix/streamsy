@@ -102,12 +102,22 @@ export function createExampleStorageAdapter(): StorageAdapter {
 
 ## The offset contract
 
-`Offset` is a **fixed-width, lexicographically ordered string** of the form
-`<counter:16>_<sub:16>` (both parts zero-padded decimals). This is a seam
-guarantee: **lexicographic order = offset order**, so adapters compare and
-window offsets inside their own storage engines — SQL `WHERE offset > ?`,
-key-range scans, or plain string comparison are all correct. `compareOffsets`
-and `ZERO_OFFSET` are exported from the root for in-process comparisons.
+`Offset` is an opaque, case-sensitive string. The only ordering guarantee at
+the adapter seam is: **ordinary lexicographic order = stream order**. Adapters
+must not parse, normalize, pad, or otherwise interpret offsets. SQL
+`WHERE offset > ?`, key-range scans, and plain string comparison are all
+correct. `compareOffsets` is exported for in-process comparisons.
+
+Core's default generator retains the historic `<counter:16>_<sub:16>` values,
+and `ZERO_OFFSET` is its empty-stream tail. Applications can inject another
+`OffsetGenerator` (for example monotonic ULIDs), including its own
+`initialOffset` and boundary validator. Core allocates offsets before crossing
+the storage seam and verifies generated values are safe, valid for that scheme,
+and strictly increasing. Adapters require no generator-specific configuration.
+
+`StreamRecord.counter` is retained for persisted-record compatibility and is
+incremented with message-bearing mutations, but generation and ordering do not
+depend on it. A custom generator never has to parse an offset into a number.
 
 `ListMessagesOptions` windowing is pinned as:
 
@@ -124,7 +134,7 @@ treats offset _inequality_, not just advance, as change.
 `append` is Streamsy's only per-stream write. It commits, in **one** transaction:
 
 - the optional `messages` (already framed by core),
-- the **required** `recordPatch` (offset/counter advance; a pure close folds in
+- the **required** `recordPatch` (offset advance and compatibility-counter update; a pure close folds in
   via `recordPatch.lifecycle.closed`),
 - an optional producer compare-and-set,
 
@@ -177,7 +187,7 @@ Rules:
 ### TTL "touch": a lifecycle-only append
 
 A TTL renewal is a valid `append` whose `recordPatch` carries **only** lifecycle
-state (the new `expiresAtMs`) and does **not** advance `currentOffset` / `counter`
+state (the new `expiresAtMs`) and does **not** advance `currentOffset` or the compatibility `counter`
 or add messages. Core's `ExpiryPolicy.touch` issues exactly this on a sliding-TTL
 read:
 

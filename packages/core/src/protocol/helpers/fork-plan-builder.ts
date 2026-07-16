@@ -10,7 +10,7 @@ import {
   allocate as allocateOffsets,
   compareOffsets,
   isValidOffset,
-  ZERO_OFFSET,
+  type OffsetGenerator,
 } from "./offset-generator.ts";
 
 export interface ForkDescriptor {
@@ -31,6 +31,7 @@ export type ForkBuildResult =
 
 export interface ForkPlanBuilderDeps {
   clock: Clock;
+  offsets: OffsetGenerator;
   newRecord(
     streamId: StreamId,
     contentType: string,
@@ -89,7 +90,7 @@ export class ForkPlanBuilder {
     }
 
     const forkOffset = options.forkOffset ?? source.currentOffset;
-    if (!isValidOffset(forkOffset)) {
+    if (!isValidOffset(this.deps.offsets, forkOffset)) {
       return {
         kind: "terminal",
         result: {
@@ -101,7 +102,7 @@ export class ForkPlanBuilder {
       };
     }
     if (
-      compareOffsets(forkOffset, ZERO_OFFSET) < 0 ||
+      compareOffsets(forkOffset, this.deps.offsets.initialOffset) < 0 ||
       compareOffsets(forkOffset, source.currentOffset) > 0
     ) {
       return {
@@ -159,6 +160,7 @@ export class ForkPlanBuilder {
       prefix.messages,
       options.initialData,
       contentType,
+      baseRecord.currentOffset,
       baseRecord.counter,
     );
     const child = this.withInitialTail(baseRecord, initialMessages);
@@ -215,10 +217,16 @@ export class ForkPlanBuilder {
     prefix: Uint8Array[],
     initialData: Uint8Array | undefined,
     contentType: string,
+    previousOffset: string,
     startCounter: number,
   ): StoredMessage[] {
     const framed = [...prefix, ...(initialData ? frameMessages(initialData, contentType) : [])];
-    const allocation = allocateOffsets(startCounter, framed.length);
+    const allocation = allocateOffsets(
+      this.deps.offsets,
+      previousOffset,
+      startCounter,
+      framed.length,
+    );
     const now = this.deps.clock.now();
     return framed.map((data, i) => ({
       data,
@@ -228,11 +236,11 @@ export class ForkPlanBuilder {
   }
 
   private withInitialTail(record: StreamRecord, initialMessages: StoredMessage[]): StreamRecord {
-    const allocation = allocateOffsets(record.counter, initialMessages.length);
+    const lastMessage = initialMessages[initialMessages.length - 1];
     return {
       ...record,
-      currentOffset: allocation.nextOffset,
-      counter: allocation.endCounter,
+      currentOffset: lastMessage?.offset ?? record.currentOffset,
+      counter: record.counter + initialMessages.length,
     };
   }
 }

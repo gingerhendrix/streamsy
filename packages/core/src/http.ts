@@ -37,7 +37,7 @@ export class HttpHandler implements HttpHandlerInterface {
     const bodyReader = new RequestBodyReader(options.maxMessageSize ?? 1024 * 1024, responses);
     const bodyCodec = new MessageBodyCodec();
     const producerHeaders = new ProducerHeaderParser();
-    const readQuery = new ReadQueryParser();
+    const readQuery = new ReadQueryParser((offset) => options.protocol.isValidOffset(offset));
     const etags = new EtagBuilder();
     const sseEvents = new SseEventEncoder(bodyCodec);
     const longPoll = new LongPollHttpService({ responses, bodyCodec });
@@ -56,6 +56,7 @@ export class HttpHandler implements HttpHandlerInterface {
         responses,
         bodyReader,
         producerHeaders,
+        isValidOffset: (offset) => options.protocol.isValidOffset(offset),
       }),
       read: new ReadHttpService({
         responses,

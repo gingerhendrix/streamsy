@@ -23,7 +23,12 @@ export {
 export { buildChangeSnapshot, changeSnapshotDiffers } from "./protocol/helpers/change-snapshot.ts";
 export { runAwaitChangeLoop } from "./protocol/helpers/await-change-loop.ts";
 export type { AwaitChangeLoopDeps } from "./protocol/helpers/await-change-loop.ts";
-export { compareOffsets } from "./protocol/helpers/offset-generator.ts";
+export {
+  compareOffsets,
+  defaultOffsetGenerator,
+  InvalidGeneratedOffsetError,
+} from "./protocol/helpers/offset-generator.ts";
+export type { OffsetGenerator } from "./protocol/helpers/offset-generator.ts";
 export { maybeNotSupportedResponse, notSupportedResponse } from "./http/not-supported.ts";
 
 // Reusable storage-adapter conformance kit (testing utility for adapter authors).

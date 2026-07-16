@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CreateOptions } from "../types/protocol.ts";
 import type { StreamRecord } from "../types/storage.ts";
 import { CreateStreamService } from "./create-stream-service.ts";
-import { ZERO_OFFSET } from "./helpers/offset-generator.ts";
+import { defaultOffsetGenerator, ZERO_OFFSET } from "./helpers/offset-generator.ts";
 
 const clock = { now: () => 1_000, date: (value?: number | string) => new Date(value ?? 1_000) };
 
@@ -24,7 +24,7 @@ function newRecord(contentType: string, options: CreateOptions): StreamRecord {
 
 describe("CreateStreamService.plan", () => {
   it("builds a CreatePlan with framed initial data, final tail, and after-commit effects", () => {
-    const service = new CreateStreamService({ clock, newRecord });
+    const service = new CreateStreamService({ clock, offsets: defaultOffsetGenerator, newRecord });
     const decision = service.plan(null, {
       contentType: "text/plain",
       ttlSeconds: 10,
@@ -45,7 +45,7 @@ describe("CreateStreamService.plan", () => {
   });
 
   it("maps an existing compatible record to exists", () => {
-    const service = new CreateStreamService({ clock, newRecord });
+    const service = new CreateStreamService({ clock, offsets: defaultOffsetGenerator, newRecord });
     const existing = newRecord("text/plain", { contentType: "text/plain" });
 
     expect(service.plan(existing, { contentType: "text/plain" })).toEqual({
@@ -60,7 +60,7 @@ describe("CreateStreamService.plan", () => {
   });
 
   it("returns a fork decision for absent fork creates", () => {
-    const service = new CreateStreamService({ clock, newRecord });
+    const service = new CreateStreamService({ clock, offsets: defaultOffsetGenerator, newRecord });
 
     expect(service.plan(null, { forkedFrom: "source" })).toEqual({ kind: "fork" });
   });

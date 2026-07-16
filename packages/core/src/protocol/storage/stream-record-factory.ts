@@ -2,7 +2,7 @@
 
 import type { CreateOptions } from "../../types/protocol.ts";
 import type { Clock, StreamRecord } from "../../types/storage.ts";
-import { ZERO_OFFSET, parseCounter } from "../helpers/offset-generator.ts";
+import type { OffsetGenerator } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
 export interface ForkRecordDescriptor {
@@ -15,6 +15,7 @@ export interface ForkRecordDescriptor {
 export interface StreamRecordFactoryDeps {
   clock: Clock;
   expiryPolicy: ExpiryPolicy;
+  offsets: OffsetGenerator;
 }
 
 export class StreamRecordFactory {
@@ -44,8 +45,10 @@ export class StreamRecordFactory {
           : {}),
         expiresAtMs: this.deps.expiryPolicy.computeExpiresAtMs(config),
       },
-      currentOffset: forkOffset ?? ZERO_OFFSET,
-      counter: forkOffset ? parseCounter(forkOffset) : 0,
+      currentOffset: forkOffset ?? this.deps.offsets.initialOffset,
+      // Kept as adapter metadata for backwards compatibility. Offset generation
+      // no longer interprets or depends on this numeric field.
+      counter: 0,
     };
   }
 }

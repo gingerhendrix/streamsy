@@ -9,6 +9,7 @@
 
 import type { NotSupportedResult } from "./storage-adapter.ts";
 import type { StoredMessage, StreamId } from "./storage.ts";
+import type { OffsetGenerator } from "../protocol/helpers/offset-generator.ts";
 
 // === Commit Observation ===
 
@@ -238,6 +239,8 @@ export type ProtocolGetResult =
   | NotSupportedResult;
 
 export interface StreamProtocolFactory extends CommitObservable {
+  readonly offsetGenerator: OffsetGenerator;
+  isValidOffset(offset: string): boolean;
   create(streamId: string, options: CreateOptions): Promise<CreateResult>;
   get(streamId: string): Promise<ProtocolGetResult>;
 }

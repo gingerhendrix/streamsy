@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AppendOptions } from "../types/protocol.ts";
 import type { StreamRecord } from "../types/storage.ts";
 import { AppendService } from "./append-service.ts";
-import { ZERO_OFFSET } from "./helpers/offset-generator.ts";
+import { defaultOffsetGenerator, ZERO_OFFSET } from "./helpers/offset-generator.ts";
 
 const encode = (s: string) => new TextEncoder().encode(s);
 const clock = { now: () => 1_000, date: (value?: number | string) => new Date(value ?? 1_000) };
@@ -28,7 +28,7 @@ function append(overrides: Partial<AppendOptions> = {}): AppendOptions {
 
 describe("AppendService.plan", () => {
   it("returns terminal not-found and gone results without a write plan", () => {
-    const service = new AppendService({ clock });
+    const service = new AppendService({ clock, offsets: defaultOffsetGenerator });
 
     expect(service.plan(null, append(), undefined)).toEqual({
       kind: "terminal",
@@ -43,7 +43,7 @@ describe("AppendService.plan", () => {
   });
 
   it("keeps close-only on an already closed stream idempotent regardless of expectedOffset", () => {
-    const service = new AppendService({ clock });
+    const service = new AppendService({ clock, offsets: defaultOffsetGenerator });
     const decision = service.plan(
       record({ currentOffset: "0000000000000001_0000000000000000", lifecycle: { closed: true } }),
       append({ data: new Uint8Array(), close: true, expectedOffset: ZERO_OFFSET }),
@@ -61,7 +61,7 @@ describe("AppendService.plan", () => {
   });
 
   it("reports content-type and closed conflicts before expected-offset conflicts", () => {
-    const service = new AppendService({ clock });
+    const service = new AppendService({ clock, offsets: defaultOffsetGenerator });
 
     expect(
       service.plan(
@@ -95,7 +95,7 @@ describe("AppendService.plan", () => {
   });
 
   it("builds an append plan with allocated messages, CAS, and TTL touch", () => {
-    const service = new AppendService({ clock });
+    const service = new AppendService({ clock, offsets: defaultOffsetGenerator });
     const decision = service.plan(record(), append(), undefined);
     if (decision.kind !== "append") throw new Error("expected append plan");
 
@@ -116,7 +116,7 @@ describe("AppendService.plan", () => {
   });
 
   it("encodes accepted producer state as an atomic precondition", () => {
-    const service = new AppendService({ clock });
+    const service = new AppendService({ clock, offsets: defaultOffsetGenerator });
     const decision = service.plan(
       record(),
       append({ producer: { producerId: "p", producerEpoch: 1, producerSeq: 1 } }),
@@ -137,7 +137,7 @@ describe("AppendService.plan", () => {
   });
 
   it("returns duplicate producer acknowledgements without a write plan", () => {
-    const service = new AppendService({ clock });
+    const service = new AppendService({ clock, offsets: defaultOffsetGenerator });
     const decision = service.plan(
       record({ currentOffset: "0000000000000001_0000000000000000" }),
       append({ producer: { producerId: "p", producerEpoch: 1, producerSeq: 0 } }),

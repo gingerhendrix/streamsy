@@ -1,5 +1,4 @@
 import type { AppendResult } from "../../types/protocol.ts";
-import { isValidOffset } from "../../protocol/helpers/offset-generator.ts";
 import type { BoundHttpRouteContext } from "../types.ts";
 import { maybeNotSupportedResponse } from "../not-supported.ts";
 import { ProducerHeaderParser, type ProducerHeaderResult } from "../producer-header-parser.ts";
@@ -12,6 +11,7 @@ export class AppendHttpService {
       responses: HttpResponseFactory;
       bodyReader: RequestBodyReader;
       producerHeaders: ProducerHeaderParser;
+      isValidOffset: (offset: string) => boolean;
     },
   ) {}
 
@@ -48,7 +48,7 @@ export class AppendHttpService {
       return { ok: false, response: this.deps.responses.badRequest("Invalid producer headers") };
     // Streamsy extension: optimistic-concurrency precondition (see docs/api.md).
     const expectedOffset = request.headers.get("stream-expected-offset") ?? undefined;
-    if (expectedOffset !== undefined && !isValidOffset(expectedOffset))
+    if (expectedOffset !== undefined && !this.deps.isValidOffset(expectedOffset))
       return { ok: false, response: this.deps.responses.badRequest("Invalid expected offset") };
     return {
       ok: true,

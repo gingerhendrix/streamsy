@@ -32,7 +32,7 @@ export class ReadOnlyHttpHandler implements HttpHandlerInterface {
     const path = new StreamPathService(options.pathPrefix ?? "/");
     const responses = new HttpResponseFactory();
     const bodyCodec = new MessageBodyCodec();
-    const readQuery = new ReadQueryParser();
+    const readQuery = new ReadQueryParser((offset) => options.protocol.isValidOffset(offset));
     const etags = new EtagBuilder();
     const sseEvents = new SseEventEncoder(bodyCodec);
     const longPoll = new LongPollHttpService({ responses, bodyCodec });

@@ -54,7 +54,12 @@ import type {
   StreamId,
   StreamRecord,
 } from "../types/storage.ts";
-import { allocate, formatCounter, ZERO_OFFSET } from "../protocol/helpers/offset-generator.ts";
+import {
+  allocate,
+  defaultOffsetGenerator,
+  formatCounter,
+  ZERO_OFFSET,
+} from "../protocol/helpers/offset-generator.ts";
 import { buildChangeSnapshot } from "../protocol/helpers/change-snapshot.ts";
 import { raceAbortAwaitChange } from "../protocol/helpers/race-abort.ts";
 
@@ -140,7 +145,12 @@ async function currentRecord(adapter: StorageAdapter, id: StreamId): Promise<Str
 
 /** Build an append plan that advances the tail by `texts.length` messages. */
 function advancePlan(record: StreamRecord, texts: string[]): AppendPlan {
-  const allocation = allocate(record.counter, texts.length);
+  const allocation = allocate(
+    defaultOffsetGenerator,
+    record.currentOffset,
+    record.counter,
+    texts.length,
+  );
   return {
     preconditions: { expectedOffset: record.currentOffset, expectedClosed: false },
     messages: texts.map((value, index) => ({
@@ -382,7 +392,7 @@ function runReadContract(makeAdapter: MakeStorageAdapter, harness: StorageAdapte
 
       const all = await adapter.listMessages("s");
       assert(all.length === 4, "four messages listable");
-      // Offsets are fixed-width strings; lexicographic order IS offset order.
+      // Offsets are opaque strings; lexicographic order IS offset order.
       const sorted = all.map((m) => m.offset).toSorted();
       assert(
         all.every((m, i) => m.offset === sorted[i]),

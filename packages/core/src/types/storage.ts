@@ -9,14 +9,10 @@
 export type StreamId = string;
 
 /**
- * Public stream offset. **Seam guarantee**: offsets are fixed-width,
- * lexicographically ordered strings of the form `<counter:16>_<sub:16>` where
- * both parts are zero-padded decimals, so **lexicographic order = offset
- * order**. Adapters rely on this to compare and window offsets inside their own
- * storage engines (SQL `WHERE offset > ?`, key-range scans, line filtering).
- * `compareOffsets` and `ZERO_OFFSET` are exported from the package root.
- * Within one stream incarnation an offset only ever advances; a purge followed
- * by a re-create restarts the offset sequence.
+ * Opaque, case-sensitive stream position. Within one stream incarnation,
+ * generated offsets are unique and strictly increasing under ordinary string
+ * comparison. Adapters must store, sort, and window them lexicographically;
+ * they must not parse or normalize generator-specific structure.
  */
 export type Offset = string;
 
@@ -67,6 +63,11 @@ export interface StreamRecord {
   config: StreamConfig;
   lifecycle: StreamLifecycleState;
   currentOffset: Offset;
+  /**
+   * Deprecated adapter metadata retained for persisted-record compatibility.
+   * Core increments it for message-bearing mutations but never derives or
+   * orders offsets from it.
+   */
   counter: number;
 }
 
