@@ -1,18 +1,18 @@
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
-import { RootProvider } from 'fumadocs-ui/provider/tanstack'
-import appCss from '../styles.css?url'
+import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
+import { RootProvider } from "fumadocs-ui/provider/tanstack";
+import appCss from "../styles.css?url";
 
 export const Route = createRootRoute({
   head: () => ({
     meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'Streamsy Docs' },
+      { charSet: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { title: "Streamsy Docs" },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    links: [{ rel: "stylesheet", href: appCss }],
   }),
   shellComponent: RootDocument,
-})
+});
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
@@ -25,5 +25,5 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <Scripts />
       </body>
     </html>
-  )
+  );
 }

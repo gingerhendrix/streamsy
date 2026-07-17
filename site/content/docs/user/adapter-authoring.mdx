@@ -42,12 +42,12 @@ export interface StorageAdapter
 }
 ```
 
-| Surface | Methods | Adapter job |
-| --- | --- | --- |
-| `StreamReader` | `getRecord`, `listMessages`, `getProducerState` | Return durable facts for the supplied stream id. |
-| `StreamAppender` | `append(streamId, plan)` | Apply one atomic per-stream append. This is the main write seam. |
-| `StreamLiveWaiter` | `awaitChange(streamId, options)` | Wait until the level-triggered stream snapshot changes. |
-| `StreamExpiryScheduler` | `scheduleExpiry`, `cancelExpiry` | Schedule or cancel active expiry work. |
+| Surface                 | Methods                                         | Adapter job                                                      |
+| ----------------------- | ----------------------------------------------- | ---------------------------------------------------------------- |
+| `StreamReader`          | `getRecord`, `listMessages`, `getProducerState` | Return durable facts for the supplied stream id.                 |
+| `StreamAppender`        | `append(streamId, plan)`                        | Apply one atomic per-stream append. This is the main write seam. |
+| `StreamLiveWaiter`      | `awaitChange(streamId, options)`                | Wait until the level-triggered stream snapshot changes.          |
+| `StreamExpiryScheduler` | `scheduleExpiry`, `cancelExpiry`                | Schedule or cancel active expiry work.                           |
 
 Private record/message/producer stores are fine internally, but the public storage contract is the flat `StorageAdapter`.
 
@@ -101,14 +101,14 @@ Deletion may purge messages, producer state, records, timers, and adapter-privat
 
 Core exports helpers for common reclaim policies:
 
-| Strategy | Use when |
-| --- | --- |
-| `plainPurge(store, plan)` | Forks are unsupported or dependencies do not matter. |
-| `cascadeReclaim(store, plan, lineage)` | Parents must remain while children depend on them. |
-| `refCountLineage(store)` | The backend stores parent-child edges or counts. |
-| `reverseIndexLineage(query)` | The backend can query children by `forked_from`. |
-| `copyOnForkReclaim()` | Forks materialize independent copies. |
-| `ttlOnlyReclaim()` | The backend retains expired ancestry rather than actively reclaiming it. |
+| Strategy                               | Use when                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `plainPurge(store, plan)`              | Forks are unsupported or dependencies do not matter.                     |
+| `cascadeReclaim(store, plan, lineage)` | Parents must remain while children depend on them.                       |
+| `refCountLineage(store)`               | The backend stores parent-child edges or counts.                         |
+| `reverseIndexLineage(query)`           | The backend can query children by `forked_from`.                         |
+| `copyOnForkReclaim()`                  | Forks materialize independent copies.                                    |
+| `ttlOnlyReclaim()`                     | The backend retains expired ancestry rather than actively reclaiming it. |
 
 The strategies are adapter-composed; core does not mandate one storage layout.
 

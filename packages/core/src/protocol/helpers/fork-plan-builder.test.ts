@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { CreateOptions } from "../../types/protocol.ts";
 import type { StoredMessage, StreamRecord } from "../../types/storage.ts";
 import { ForkPlanBuilder } from "./fork-plan-builder.ts";
-import { defaultOffsetGenerator, ZERO_OFFSET, formatCounter, parseCounter } from "./offset-generator.ts";
+import {
+  defaultOffsetGenerator,
+  ZERO_OFFSET,
+  formatCounter,
+  parseCounter,
+} from "./offset-generator.ts";
 
 const clock = { now: () => 1_000, date: (value?: number | string) => new Date(value ?? 1_000) };
 

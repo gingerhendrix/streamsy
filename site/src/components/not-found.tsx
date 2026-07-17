@@ -1,6 +1,6 @@
-import { Link } from '@tanstack/react-router'
-import { HomeLayout } from 'fumadocs-ui/layouts/home'
-import { baseOptions } from '#/lib/layout.shared'
+import { Link } from "@tanstack/react-router";
+import { HomeLayout } from "fumadocs-ui/layouts/home";
+import { baseOptions } from "#/lib/layout.shared";
 
 export function NotFound() {
   return (
@@ -14,12 +14,12 @@ export function NotFound() {
         </p>
         <Link
           to="/docs/$"
-          params={{ _splat: '' }}
+          params={{ _splat: "" }}
           className="mt-4 rounded-lg bg-fd-primary px-4 py-2 text-sm font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
         >
           Back to Docs
         </Link>
       </div>
     </HomeLayout>
-  )
+  );
 }

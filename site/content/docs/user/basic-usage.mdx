@@ -22,7 +22,11 @@ bun add @streamsy/core
 ## Compose the server
 
 ```ts
-import { createHttpHandler, createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
+import {
+  createHttpHandler,
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+} from "@streamsy/core";
 
 const adapter = createMemoryStorageAdapter();
 const protocol = createStreamProtocol({ storage: { adapter } });
