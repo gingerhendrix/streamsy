@@ -1,6 +1,10 @@
-# @streamsy/materialize
+# @streamsy/experimental
 
-Pure, bounded folds and checkpoint storage for Streamsy streams.
+Experimental Streamsy primitives are exposed through explicit subpath exports while they mature.
+
+## Materializer
+
+Import the materializer API from `@streamsy/experimental/materializer`. It provides pure, bounded folds and checkpoint storage for Streamsy streams.
 
 `materialize()` folds records in the after-exclusive range `(from, to]`. It
 rejects on the first source, read, decode, or evolve failure. The pure fold

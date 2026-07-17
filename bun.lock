@@ -89,8 +89,8 @@
         "vitest": "^4.0.16",
       },
     },
-    "packages/json": {
-      "name": "@streamsy/json",
+    "packages/experimental": {
+      "name": "@streamsy/experimental",
       "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.2.0",
@@ -100,8 +100,8 @@
         "vitest": "^4.0.16",
       },
     },
-    "packages/materialize": {
-      "name": "@streamsy/materialize",
+    "packages/json": {
+      "name": "@streamsy/json",
       "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.2.0",
@@ -708,9 +708,9 @@
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
-    "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
+    "@streamsy/experimental": ["@streamsy/experimental@workspace:packages/experimental"],
 
-    "@streamsy/materialize": ["@streamsy/materialize@workspace:packages/materialize"],
+    "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
 
     "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
 

@@ -35,7 +35,7 @@
     "format:check": "oxfmt . --check",
     "test": "bun run test:unit",
     "test:conformance": "bun run test:conformance:memory && bun run test:conformance:fs && bun run test:conformance:sqlite && bun run test:conformance:do",
-    "test:unit": "bun run --cwd packages/core test:unit && bun run --cwd packages/json test:unit && bun run --cwd packages/materialize test:unit && bun run --cwd packages/state test:unit && bun run --cwd packages/storage-sqlite test:unit && bun run --cwd packages/storage-fs test:unit && bun run --cwd packages/storage-durable-object test:unit",
+    "test:unit": "bun run --cwd packages/core test:unit && bun run --cwd packages/json test:unit && bun run --cwd packages/experimental test:unit && bun run --cwd packages/state test:unit && bun run --cwd packages/storage-sqlite test:unit && bun run --cwd packages/storage-fs test:unit && bun run --cwd packages/storage-durable-object test:unit",
     "smoke:memory-server:http": "bun run --cwd examples/memory-server smoke:http",
     "smoke:issue-tracker": "bun run --cwd examples/issue-tracker-demo smoke:http",
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
@@ -43,8 +43,8 @@
     "test:conformance:fs": "bun run --cwd packages/conformance-tests test:fs",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
     "test:conformance:do": "bun run --cwd packages/conformance-tests test:do",
-    "build": "bun run --cwd packages/core build && bun run --cwd packages/json build && bun run --cwd packages/materialize build && bun run --cwd packages/state build && bun run --cwd packages/storage-sqlite build && bun run --cwd packages/storage-fs build && bun run --cwd packages/storage-durable-object build",
-    "pack:dry-run": "for dir in packages/core packages/json packages/materialize packages/state packages/storage-sqlite packages/storage-fs packages/storage-durable-object; do (cd \"$dir\" && bun pm pack --dry-run); done"
+    "build": "bun run --cwd packages/core build && bun run --cwd packages/json build && bun run --cwd packages/experimental build && bun run --cwd packages/state build && bun run --cwd packages/storage-sqlite build && bun run --cwd packages/storage-fs build && bun run --cwd packages/storage-durable-object build",
+    "pack:dry-run": "for dir in packages/core packages/json packages/experimental packages/state packages/storage-sqlite packages/storage-fs packages/storage-durable-object; do (cd \"$dir\" && bun pm pack --dry-run); done"
   },
   "devDependencies": {
     "oxfmt": "^0.48.0",
