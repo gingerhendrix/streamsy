@@ -58,6 +58,7 @@ jobs:
             packages/core
             packages/client
             packages/json
+            packages/experimental
             packages/state
             packages/storage-sqlite
             packages/storage-durable-object
@@ -79,6 +80,7 @@ jobs:
             packages/core
             packages/client
             packages/json
+            packages/experimental
             packages/state
             packages/storage-sqlite
             packages/storage-durable-object

@@ -7,6 +7,7 @@ Current public npm packages:
 - `@streamsy/core` (`packages/core`)
 - `@streamsy/client` (`packages/client`)
 - `@streamsy/json` (`packages/json`)
+- `@streamsy/experimental` (`packages/experimental`)
 - `@streamsy/state` (`packages/state`)
 - `@streamsy/storage-sqlite` (`packages/storage-sqlite`)
 - `@streamsy/storage-durable-object` (`packages/storage-durable-object`)
@@ -80,11 +81,11 @@ npm trusted publishing is configured per package after that package exists on np
 
 Local/manual publishes cannot create npm provenance attestations because provenance requires a supported cloud CI/CD runner with OIDC. The first manual publish should therefore use normal npm authentication and `--access public`; provenance starts with the trusted-publishing workflow after the package exists and trusted publishing is configured.
 
-### Streamsy 0.2.0 first publish: `@streamsy/storage-fs` and `@streamsy/client`
+### Streamsy 0.2.0 first publish: `@streamsy/storage-fs`, `@streamsy/client`, and `@streamsy/experimental`
 
-For `0.2.0`, `@streamsy/storage-fs` and `@streamsy/client` are new package names. First-publish both manually from the reviewed release commit. Then configure npm trusted publishing for both packages, push `main`, and push tag `v0.2.0`.
+For `0.2.0`, `@streamsy/storage-fs`, `@streamsy/client`, and `@streamsy/experimental` are new package names. First-publish all three manually from the reviewed release commit. Then configure npm trusted publishing for all three packages, push `main`, and push tag `v0.2.0`.
 
-The tag workflow includes all seven public packages. It skips package versions that are already present on npm, so the workflow should skip the manually-published new packages and publish/provenance-attest the existing package names that are not yet at `0.2.0`.
+The tag workflow includes all eight public packages. It skips package versions that are already present on npm, so the workflow should skip the manually-published new packages and publish/provenance-attest the existing package names that are not yet at `0.2.0`.
 
 ```bash
 cd /home/gareth/Documents/Personal/repos/streamsy/main
@@ -100,6 +101,7 @@ const paths = [
   'packages/core/package.json',
   'packages/client/package.json',
   'packages/json/package.json',
+  'packages/experimental/package.json',
   'packages/state/package.json',
   'packages/storage-sqlite/package.json',
   'packages/storage-durable-object/package.json',
@@ -128,7 +130,7 @@ bun run test:conformance:fs
 bun run pack:dry-run
 
 set -euo pipefail
-for package in packages/storage-fs packages/client; do
+for package in packages/storage-fs packages/client packages/experimental; do
   (
     cd "$package"
     TARBALL=$(bun pm pack --quiet | tail -n 1)
@@ -139,9 +141,10 @@ done
 
 npm view "@streamsy/storage-fs@${VERSION}" version repository
 npm view "@streamsy/client@${VERSION}" version repository
+npm view "@streamsy/experimental@${VERSION}" version repository
 ```
 
-After the first publishes succeed, configure trusted publishing for both new packages using the settings below, then push `main` and the release tag.
+After the first publishes succeed, configure trusted publishing for all three new packages using the settings below, then push `main` and the release tag.
 
 ## Configure npm trusted publishing
 
@@ -160,7 +163,7 @@ The repository workflow is `.github/workflows/publish.yml`. A `v*` tag triggers 
 
 ## Automated release after trusted publishing is configured
 
-Use this after new packages have been first-published and trusted publishing has been configured. For `0.2.0`, this means after `@streamsy/storage-fs@0.2.0` and `@streamsy/client@0.2.0` exist on npm and have trusted publishing configured.
+Use this after new packages have been first-published and trusted publishing has been configured. For `0.2.0`, this means after `@streamsy/storage-fs@0.2.0`, `@streamsy/client@0.2.0`, and `@streamsy/experimental@0.2.0` exist on npm and have trusted publishing configured.
 
 ```bash
 cd /home/gareth/Documents/Personal/repos/streamsy/main
@@ -196,6 +199,7 @@ for name in \
   @streamsy/core \
   @streamsy/client \
   @streamsy/json \
+  @streamsy/experimental \
   @streamsy/state \
   @streamsy/storage-sqlite \
   @streamsy/storage-durable-object \
