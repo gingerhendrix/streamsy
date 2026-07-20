@@ -1,0 +1,16 @@
+{
+  "name": "risk-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Deterministic, headless event-sourced game kernel for the Streamsy Risk demo.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run src",
+    "test:unit": "vitest --run src"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

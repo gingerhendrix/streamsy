@@ -60,6 +60,14 @@
         "typescript": "catalog:",
       },
     },
+    "examples/risk-demo": {
+      "name": "risk-demo",
+      "version": "0.0.1",
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "packages/client": {
       "name": "@streamsy/client",
       "version": "0.2.0",
@@ -1054,6 +1062,8 @@
     "retry": ["retry@0.12.0", "", {}, "sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow=="],
 
     "reusify": ["reusify@1.1.0", "", {}, "sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw=="],
+
+    "risk-demo": ["risk-demo@workspace:examples/risk-demo"],
 
     "rolldown": ["rolldown@1.0.0-beta.8-commit.151352b", "", { "dependencies": { "@oxc-project/types": "0.66.0", "@valibot/to-json-schema": "1.0.0", "ansis": "^3.17.0", "valibot": "1.0.0" }, "optionalDependencies": { "@rolldown/binding-darwin-arm64": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-darwin-x64": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-freebsd-x64": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-linux-arm-gnueabihf": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-linux-arm64-gnu": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-linux-arm64-musl": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-linux-x64-gnu": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-linux-x64-musl": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-wasm32-wasi": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-win32-arm64-msvc": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-win32-ia32-msvc": "1.0.0-beta.8-commit.151352b", "@rolldown/binding-win32-x64-msvc": "1.0.0-beta.8-commit.151352b" }, "peerDependencies": { "@oxc-project/runtime": "0.66.0" }, "optionalPeers": ["@oxc-project/runtime"], "bin": { "rolldown": "bin/cli.mjs" } }, "sha512-TCb6GVaFBk4wB0LERofFDxTO5X1/Sgahr7Yn5UA9XjuFtCwL1CyEhUHX5lUIstcMxjbkLjn2z4TAGwisr6Blvw=="],
 
