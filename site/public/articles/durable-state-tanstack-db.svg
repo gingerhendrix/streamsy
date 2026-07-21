@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 350" width="780" height="350" role="img" aria-labelledby="title desc">
+  <title id="title">Durable State and TanStack DB sync architecture</title>
+  <desc id="desc">A server exchanges an ordered stream of collection changes with TanStack DB through the Durable State protocol over Durable Streams. TanStack DB serves live queries to the UI and supports optimistic mutations.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .heading { fill: #64748b; font: 700 18px ui-sans-serif, system-ui, sans-serif; letter-spacing: .02em; }
+      .caption { fill: #64748b; font: 500 13px ui-sans-serif, system-ui, sans-serif; }
+      .node-title { fill: #f8fafc; font: 700 18px ui-sans-serif, system-ui, sans-serif; }
+      .node-subtitle { fill: #e2e8f0; font: 500 12px ui-sans-serif, system-ui, sans-serif; }
+      .protocol { fill: #f8fafc; font: 700 13px ui-sans-serif, system-ui, sans-serif; }
+      .protocol-sub { fill: #e2e8f0; font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .flow-label { fill: #f8fafc; font: 700 11px ui-sans-serif, system-ui, sans-serif; letter-spacing: .06em; }
+      .node { fill: #3f4756; stroke: #94a3b8; stroke-width: 1.5; }
+      .flow { fill: none; stroke: #64748b; stroke-width: 3; marker-start: url(#arrow); marker-end: url(#arrow); }
+      .badge-network { fill: #8a5a44; stroke: #d6a184; stroke-width: 1; }
+      .badge-local { fill: #416f68; stroke: #83b8ad; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <text class="heading" x="40" y="42">Sync-based architecture</text>
+  <text class="caption" x="40" y="66">Durable transport keeps a reactive client database aligned with the server.</text>
+
+  <rect class="badge-network" x="190" y="93" width="224" height="54" rx="14"/>
+  <text class="protocol" x="302" y="116" text-anchor="middle">Durable State protocol</text>
+  <text class="protocol-sub" x="302" y="135" text-anchor="middle">over Durable Streams</text>
+
+  <rect class="node" x="40" y="175" width="150" height="108" rx="14"/>
+  <text class="node-title" x="115" y="223" text-anchor="middle">Server</text>
+  <text class="node-subtitle" x="115" y="247" text-anchor="middle">canonical changes</text>
+
+  <rect class="node" x="414" y="175" width="200" height="108" rx="14"/>
+  <text class="node-title" x="514" y="215" text-anchor="middle">TanStack DB</text>
+  <text class="node-subtitle" x="514" y="239" text-anchor="middle">local collections</text>
+  <text class="node-subtitle" x="514" y="258" text-anchor="middle">+ optimistic mutations</text>
+
+  <rect class="node" x="664" y="175" width="86" height="108" rx="14"/>
+  <text class="node-title" x="707" y="223" text-anchor="middle">UI</text>
+  <text class="node-subtitle" x="707" y="247" text-anchor="middle">reactive</text>
+
+  <path class="flow" d="M 206 229 H 398"/>
+  <path class="flow" d="M 624 229 H 654"/>
+
+  <text class="caption" x="302" y="310" text-anchor="middle">ordered collection changes · resumable offset</text>
+
+  <rect class="badge-local" x="614" y="135" width="100" height="26" rx="13"/>
+  <text class="flow-label" x="664" y="153" text-anchor="middle">LIVE QUERIES</text>
+  <text class="caption" x="639" y="310" text-anchor="middle">local query path</text>
+</svg>

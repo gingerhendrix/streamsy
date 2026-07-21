@@ -1,0 +1,141 @@
+---
+title: Super Simple Sync with Durable State and TanStack DB
+description: Composing Durable Streams, Durable State, and TanStack DB into the simplest sync engine.
+date: 2026-07-19
+---
+
+# Super Simple Sync with Durable State and TanStack DB
+
+Sync engines are taking off. In 2026 you are spoiled for choice: [Zero](https://zero.rocicorp.dev), [Electric](https://electric-sql.com), [PowerSync](https://www.powersync.com), and [LiveStore](https://livestore.dev), to name a few. However, what if you don't need a full sync engine? Maybe you just need a little sync, or you want to build your own. The good news is that there are now simple primitives which can be composed into a sync engine without having to adopt a whole stack.
+
+First, let's quickly review what we mean by a sync engine. There are really two ways to look at it:
+
+- From the developer perspective, a sync engine decouples data transport from local state management. It allows you to write your application as if the state were local, while the sync engine handles the details of keeping that state in sync with a remote source.
+- From the user perspective, a sync engine provides a local-first experience, with instantaneous loads and real-time updates.
+
+![Request-based architecture puts the network on the query path, while sync-based architecture keeps queries local.](/articles/sync-vs-request-architecture.svg)
+
+## The three pieces
+
+### TanStack DB: the local database
+
+The easiest way to think about [TanStack DB](https://tanstack.com/db/latest) is that it solves the client-side part of the sync engine. It gives us:
+
+- typed local collections;
+- live, reactive queries;
+- optimistic mutations;
+- one local place to merge confirmed server changes.
+
+The UI mostly does not care whether an item arrived during initial catch-up, live tailing, or an optimistic mutation. It reads from local collections. A sync adapter is responsible for keeping the collections' confirmed state aligned with the server.
+
+### Durable Streams: the transport
+
+[Durable Streams](https://durablestreams.com) is a protocol for persistent, addressable append-only streams over HTTP. It takes care of the low-level details for reading and writing to streams. The key feature is resumable catch-up and live reads over SSE. Reading from a stored offset handles both scenarios with the same protocol. The combination of append-only streams with resumable reads is useful in a surprising number of applications (durable LLM responses, chat logs, event sourcing, etc.), and is all we need to build a sync protocol.
+
+### Durable State: the contents of the stream
+
+A byte stream is not yet a sync protocol. The client needs to know whether a message inserts, updates, or deletes an item, and which local collection owns it.
+
+[Durable State](/docs/user/durable-state) supplies that collection-change vocabulary. An illustrative change might look like this:
+
+```json
+{
+  "type": "task",
+  "key": "task:456",
+  "value": {
+    "id": "task:456",
+    "projectId": "project:123",
+    "title": "Write launch checklist",
+    "status": "open"
+  },
+  "headers": {
+    "operation": "insert",
+    "txid": "01K2..."
+  }
+}
+```
+
+Where:
+
+- `type` selects a collection;
+- `key` identifies an entity in that collection;
+- `operation` is insert, update, or delete;
+- `value` is the new entity value when applicable;
+- `txid` can correlate all changes produced by one accepted mutation.
+
+A single ordered stream can contain several entity types. `type + key` is enough to route each change into the correct local record.
+
+## Putting it all together
+
+![Durable State synchronizes ordered collection changes over Durable Streams into TanStack DB, which serves live queries to the UI.](/articles/durable-state-tanstack-db.svg)
+
+On the client, we need to synchronise local TanStack DB collections with the remote state. We could [write our own sync adapter](https://tanstack.com/db/latest/docs/guides/collection-options-creator#2-sync-implementation) by providing a `sync` function:
+
+```ts
+const sync: SyncConfig<T>["sync"] = (params) => {
+  const { begin, write, commit, markReady, collection } = params;
+
+  // Connect to remote stream
+  // Read from the stream and write to the local collection
+
+  // Return a cleanup function
+  return () => {
+    connection.close();
+  };
+};
+```
+
+However, the wonderful folks behind Durable Streams have already done this for us with [StreamDB](https://durablestreams.com/stream-db). We simply need to provide a schema and the URL of our Durable State stream.
+
+```ts
+import { createStreamDB } from "@durable-streams/state/db";
+
+const db = createStreamDB({
+  streamOptions: {
+    url: "https://api.example.com/streams/my-stream",
+    contentType: "application/json",
+  },
+  state: schema,
+});
+
+await db.preload();
+```
+
+The client `schema` describes the same task collection and entity shape that the server registers below.
+
+On the server, we need a Durable Streams server implementation — for example [Streamsy](https://github.com/gingerhendrix/streamsy), or [any other implementation](https://github.com/durable-streams/durable-streams#servers--tools). With Streamsy it looks like this:
+
+```ts
+import {
+  createHttpHandler,
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+} from "@streamsy/core";
+import { createDurableStateProtocol } from "@streamsy/state";
+import { taskCodec } from "./schema";
+
+const adapter = createMemoryStorageAdapter();
+const protocol = createStreamProtocol({ storage: { adapter } });
+const state = createDurableStateProtocol(protocol, {
+  tasks: { type: "task", schema: taskCodec, primaryKey: "id" },
+});
+
+await state.create("my-stream");
+
+const handler = createHttpHandler({
+  protocol: state.protocol,
+  pathPrefix: "/streams",
+});
+
+Bun.serve({ fetch: (request) => handler.fetch(request) });
+```
+
+This uses the in-memory adapter for brevity; swap in Streamsy's `@streamsy/storage-sqlite` adapter for a real deployment.
+
+### Ch-ch-ch-ch-changes
+
+The astute reader will have noticed that we have not yet discussed how server-side state is updated. The hand-wavy answer is that we append the same Durable State insert, update, and delete messages used to synchronise the client. How those messages are generated is up to the application: we might write them directly through a mutation API, or treat Durable State as a projection of another source of truth, such as a publication stream from a relational database. There is lots more to explore here in future articles.
+
+## Conclusion
+
+Three easy pieces connected with a few lines of code are all it takes to get started building sync-based applications. There are many more details to consider, and many possible architectures we can build on top, but these three pieces give us a solid foundation.

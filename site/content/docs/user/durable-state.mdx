@@ -3,7 +3,7 @@ title: Durable State
 description: Typed change and control messages over collections with @streamsy/state — DurableStateProtocol and DurableStateStream.
 ---
 
-`@streamsy/state` is a typed layer on top of [JSON mode](/docs/user/json-mode). Instead of arbitrary JSON values, a Durable State stream carries **change messages** (insert / update / delete over named collections) and **control messages** (snapshot boundaries, reset). The message shape follows the Durable State synchronization convention, so a client materializer can replay the stream into local collections.
+`@streamsy/state` is a typed layer on top of [JSON mode](/docs/user/json-mode). Instead of arbitrary JSON values, a Durable State stream carries **change messages** (insert / update / delete over named collections) and **control messages** (snapshot boundaries, reset). The message shape follows the Durable State synchronization convention, so application code can replay the stream into local collections. This package provides the typed wire vocabulary over Streamsy; it is not a complete browser sync runtime.
 
 ```bash
 bun add @streamsy/state
@@ -65,10 +65,12 @@ await stream.state.delete("issues", "i1");
 - `insert(type, value, { key?, headers? })`
 - `update(type, value, { key?, oldValue?, headers? })`
 - `delete(type, key, { oldValue?, headers? })`
-- `snapshotStart({ offset?, headers? })`, `snapshotEnd(...)`, `reset(...)` — control messages
+- `snapshotStart({ offset?, headers? })`, `snapshotEnd(...)`, `reset(...)` — wire-level control messages
 - `append(message)` — append a pre-built `DurableStateMessage` (validated)
 
 Keys are derived from the value via `primaryKey` unless you pass an explicit `key`. Values are validated through the codec **before** append, so an invalid value throws rather than writing a bad message. The optional `headers` carry sync metadata (`txid`, `timestamp`, `from`).
+
+The snapshot/reset methods only encode and append the Durable State control vocabulary. Streamsy does not currently build snapshots, compact retained history, bootstrap a client from a snapshot, or recover a stale cursor automatically; applications adopting those controls must define that lifecycle themselves.
 
 ## Message shape
 
@@ -107,4 +109,6 @@ if (read.status === "ok") {
 }
 ```
 
-`DurableStateStream<S>` also exposes `readLive(options)`, `metadata()`, `delete()`, and the underlying `json` / `stream` handles for byte- or JSON-level access. This change/control stream is the server-side half of a sync setup: a client materializer (StreamDB-style) consumes it to rebuild collections — see the issue-tracker example for an end-to-end multi-user pattern.
+`DurableStateStream<S>` also exposes `readLive(options)`, `metadata()`, `delete()`, and the underlying `json` / `stream` handles for byte- or JSON-level access. Application code can fold these messages into its own collections. Streamsy does not currently ship a generic TanStack DB adapter in `@streamsy/state`.
+
+For the design behind that client fold, read [Super Simple Sync with Durable State and TanStack DB](/articles/the-simplest-possible-sync-engine). The repository's [issue-tracker demo](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo) shows the end-to-end multi-user shape using Streamsy as transport and the official `@durable-streams/state/db` package for its browser StreamDB/TanStack DB adapter.

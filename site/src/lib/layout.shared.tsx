@@ -7,5 +7,9 @@ export function baseOptions(): BaseLayoutProps {
       title: <StreamsyLogo className="mx-auto h-15 w-auto" />,
       url: "/docs",
     },
+    links: [
+      { text: "Docs", url: "/docs", active: "nested-url" },
+      { text: "Articles", url: "/articles", active: "nested-url" },
+    ],
   };
 }

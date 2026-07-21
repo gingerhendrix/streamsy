@@ -2,7 +2,7 @@
 
 Durable State protocol and stream wrappers for [Streamsy](https://github.com/gingerhendrix/streamsy) durable streams.
 
-`DurableStateProtocol<S>`/`DurableStateStream<S>` wrap a `@streamsy/core` `StreamProtocolFactory` with a typed Durable State layer: schema-validated collections with standards-shaped change messages (`insert`/`update`/`delete`) and control messages (`snapshot-start`/`snapshot-end`/`reset`).
+`DurableStateProtocol<S>`/`DurableStateStream<S>` wrap a `@streamsy/core` `StreamProtocolFactory` with a typed Durable State layer: schema-validated collections with standards-shaped change messages (`insert`/`update`/`delete`) and control messages (`snapshot-start`/`snapshot-end`/`reset`). The control methods append the wire vocabulary only; the package does not implement snapshot construction, retention/compaction, snapshot bootstrap, or a browser database adapter.
 
 ## Usage
 
