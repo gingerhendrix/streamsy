@@ -78,10 +78,22 @@ export interface DemoSummary {
   staleCommand: { code: string; rejected: boolean } | null;
   crashRecovery: {
     crashAtSeq: number;
-    committedBeforeCrash: number;
-    committedAfterRecovery: number;
+    /** Canonical events the projection had to apply. */
+    canonicalEvents: number;
+    /** Change messages committed at the moment of the crash (narrative only). */
+    committedAtCrash: number;
+    /** Transitions/messages a clean control build of the SAME log produces. */
+    expectedTransitions: number;
+    expectedOutputMessages: number;
+    /** What the crashed-then-recovered generation actually contains. */
+    actualTransitions: number;
+    actualOutputMessages: number;
+    /** Source ordinals applied more than once — must be empty. */
+    duplicateSourceSeqs: number[];
+    /** True if any transition was applied twice (see fields above). */
     doubleApplied: boolean;
     boardEqual: boolean;
+    watermarkEqual: boolean;
   };
   rebuild: {
     fromGeneration: string;
@@ -108,19 +120,97 @@ interface Capture {
   request: unknown;
 }
 
-async function outputCount(protocol: StreamProtocolFactory, streamId: string): Promise<number> {
+/**
+ * What a projection stream actually contains, decoded from its committed bytes.
+ *
+ * Every transition appends exactly one `projectionMeta` row carrying the applied
+ * `sourceSeq`, so counting those rows — and looking for a repeated `sourceSeq` —
+ * is a *direct* test for a double-applied transition, independent of how many
+ * change messages a transition happens to produce.
+ */
+export interface ProjectionOutputAnalysis {
+  /** Total Durable-State change messages committed to the stream. */
+  outputMessages: number;
+  /** One per applied transition (`projectionMeta` rows). */
+  transitions: number;
+  /** The applied source ordinals, in stream order. */
+  sourceSeqs: number[];
+  /** Any source ordinal applied more than once — must be empty. */
+  duplicateSourceSeqs: number[];
+  /** The watermark of the last transition. */
+  lastSourceThroughOffset: string | null;
+}
+
+const decoder = new TextDecoder();
+
+/**
+ * True when `actual` shows a transition applied more than once, judged against a
+ * clean `control` build of the same canonical log. A double-apply repeats a
+ * `sourceSeq` and/or pushes the transition/message counts above the control — so
+ * unlike a bare "did the count grow?" check, this discriminates.
+ */
+export function detectDoubleApply(
+  actual: ProjectionOutputAnalysis,
+  control: ProjectionOutputAnalysis,
+): boolean {
+  return (
+    actual.duplicateSourceSeqs.length > 0 ||
+    actual.transitions !== control.transitions ||
+    actual.outputMessages !== control.outputMessages
+  );
+}
+
+/** Decode a projection stream into {@link ProjectionOutputAnalysis}. */
+export async function analyzeProjectionOutput(
+  protocol: StreamProtocolFactory,
+  streamId: string,
+): Promise<ProjectionOutputAnalysis> {
+  const empty: ProjectionOutputAnalysis = {
+    outputMessages: 0,
+    transitions: 0,
+    sourceSeqs: [],
+    duplicateSourceSeqs: [],
+    lastSourceThroughOffset: null,
+  };
   const got = await protocol.get(streamId);
-  if (got.status !== "ok") return 0;
-  let count = 0;
+  if (got.status !== "ok") return empty;
+
+  let outputMessages = 0;
+  const sourceSeqs: number[] = [];
+  let lastSourceThroughOffset: string | null = null;
   let offset: string | undefined;
   for (;;) {
     const read = await got.stream.read({ offset });
     if (read.status !== "ok") break;
-    count += read.messages.length;
+    for (const message of read.messages) {
+      outputMessages += 1;
+      const row = JSON.parse(decoder.decode(message.data)) as {
+        type?: string;
+        value?: { sourceSeq?: number; sourceThroughOffset?: string };
+      };
+      if (row.type === "projectionMeta" && typeof row.value?.sourceSeq === "number") {
+        sourceSeqs.push(row.value.sourceSeq);
+        lastSourceThroughOffset = row.value.sourceThroughOffset ?? null;
+      }
+    }
     if (read.upToDate || read.messages.length === 0) break;
     offset = read.nextOffset;
   }
-  return count;
+
+  const seen = new Set<number>();
+  const duplicateSourceSeqs: number[] = [];
+  for (const s of sourceSeqs) {
+    if (seen.has(s)) duplicateSourceSeqs.push(s);
+    else seen.add(s);
+  }
+
+  return {
+    outputMessages,
+    transitions: sourceSeqs.length,
+    sourceSeqs,
+    duplicateSourceSeqs,
+    lastSourceThroughOffset,
+  };
 }
 
 export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<SignatureDemoResult> {
@@ -364,7 +454,7 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
   } catch {
     crashed = true;
   }
-  const committedBeforeCrash = await outputCount(deps.protocol, crashStreamId);
+  const atCrash = await analyzeProjectionOutput(deps.protocol, crashStreamId);
   const recovered = new ProjectionRuntime({
     protocol: deps.protocol,
     adapter: createBoardProjectionAdapter({
@@ -375,18 +465,42 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
     }),
   });
   await recovered.catchUp();
-  const committedAfterRecovery = await outputCount(deps.protocol, crashStreamId);
+  const afterRecovery = await analyzeProjectionOutput(deps.protocol, crashStreamId);
+
+  // Control: materialize the SAME canonical log into a clean generation that
+  // never crashed. It defines exactly what the crashed generation should contain.
+  const controlGen = "crash-control";
+  const controlStreamId = boardStreamId(gameId, controlGen);
+  const control = new ProjectionRuntime({
+    protocol: deps.protocol,
+    adapter: createBoardProjectionAdapter({
+      gameId,
+      sourceStreamId: eventStreamId(gameId),
+      outputStreamId: controlStreamId,
+      generation: controlGen,
+    }),
+  });
+  await control.catchUp();
+  const controlAnalysis = await analyzeProjectionOutput(deps.protocol, controlStreamId);
+
   const recoveredView = projectionBoardView(recovered.currentState());
   const authoritativeView = aggregateBoardView(foldAggregate(events));
+  const doubleApplied = detectDoubleApply(afterRecovery, controlAnalysis);
   const crashRecovery = {
     crashAtSeq,
-    committedBeforeCrash,
-    committedAfterRecovery,
-    // The crashed transition committed once; recovery only appended what remained.
-    doubleApplied: committedAfterRecovery < committedBeforeCrash,
+    canonicalEvents: events.length,
+    committedAtCrash: atCrash.outputMessages,
+    expectedTransitions: controlAnalysis.transitions,
+    expectedOutputMessages: controlAnalysis.outputMessages,
+    actualTransitions: afterRecovery.transitions,
+    actualOutputMessages: afterRecovery.outputMessages,
+    duplicateSourceSeqs: afterRecovery.duplicateSourceSeqs,
+    doubleApplied,
     boardEqual: boardsEqual(recoveredView, authoritativeView),
+    watermarkEqual:
+      afterRecovery.lastSourceThroughOffset === controlAnalysis.lastSourceThroughOffset,
   };
-  emit("crash-recovery", { ...crashRecovery, crashed });
+  emit("crash-recovery", { ...crashRecovery, crashed, controlGeneration: controlGen });
 
   // --- 8. rebuild into a fresh generation, verify, cut over ----------------
   const rebuilt = await rebuildBoardGeneration(

@@ -175,6 +175,32 @@ to double-apply on recovery; a fresh-generation rebuild verified + cut over with
 retained; and the agent-only game finishing with a winner + final watermark. Trace output is never
 committed — it prints to stdout (or `TRACE_FILE`).
 
+**How the no-double-apply claim is proven.** The crashed generation is decoded from its committed
+bytes (`analyzeProjectionOutput`): every transition writes exactly one `projectionMeta` row carrying
+its applied `sourceSeq`, so the proof compares the recovered stream against a **clean control
+generation** built from the same canonical log and reports the discriminating fields —
+`canonicalEvents`, `expectedTransitions`/`actualTransitions`,
+`expectedOutputMessages`/`actualOutputMessages`, `duplicateSourceSeqs`, and `watermarkEqual`.
+`doubleApplied` is `detectDoubleApply(actual, control)`: true if any `sourceSeq` repeats or the
+transition/message counts exceed the control. A representative `crash-recovery` trace line:
+
+```json
+{
+  "step": "crash-recovery",
+  "crashAtSeq": 19,
+  "canonicalEvents": 39,
+  "committedAtCrash": 64,
+  "expectedTransitions": 39,
+  "actualTransitions": 39,
+  "expectedOutputMessages": 115,
+  "actualOutputMessages": 115,
+  "duplicateSourceSeqs": [],
+  "doubleApplied": false,
+  "boardEqual": true,
+  "watermarkEqual": true
+}
+```
+
 ```bash
 bun run --cwd examples/risk-demo proof                     # memory Streamsy storage, prints JSONL + summary
 DB_PATH=./proof.sqlite bun run --cwd examples/risk-demo proof   # real SQLite durability
@@ -183,7 +209,9 @@ DB_PATH=./proof.sqlite bun run --cwd examples/risk-demo proof   # real SQLite du
 Tests: `src/rebuild.test.ts` (equivalence, cutover, rollback-on-failure, retention, chained
 rebuilds), `server/rebuild-persistence.test.ts` (`bun test`, cutover survives a SQLite restart),
 `src/board-sync.test.ts` (immediate/delayed/null/wrong-stream/timeout/abort), `src/long-poll.test.ts`
-(deterministic long-poll wake), and `src/signature-demo.test.ts` (the full sequence + determinism).
+(deterministic long-poll wake), and `src/signature-demo.test.ts` (the full sequence, determinism, and
+a **negative control** that genuinely double-applies a transition and asserts `detectDoubleApply`
+flags it — so `doubleApplied=false` is a real claim, not a tautology).
 
 ## Core guarantees (all covered by tests)
 
@@ -252,29 +280,29 @@ DB_PATH=./proof.sqlite TRACE_FILE=./trace.jsonl bun run --cwd examples/risk-demo
 
 ## Acceptance matrix (concept tests → concrete evidence)
 
-| Concept acceptance test                                    | Where it is proven                                                                                                                 |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Canonical deterministic replay                             | `src/kernel.test.ts`; `src/materializer/board-projection.test.ts`                                                                  |
-| Projection ⇄ aggregate equivalence                         | `src/materializer/board-projection.test.ts`; `src/kernel.test.ts`                                                                  |
-| Atomic state + watermark                                   | `src/materializer/board-projection.test.ts` (self-contained reload); `packages/experimental/src/projection/runtime.test.ts`        |
-| Crash immediately after output commit (no double-apply)    | `server/signature-demo.ts` → `src/signature-demo.test.ts`; `scripts/proof.ts` (`crash-recovery` trace); `board-projection.test.ts` |
-| Ambiguous append retry classified `duplicate`              | `packages/experimental/src/projection/runtime.test.ts`; `server/turn-notifier.ts` rebuild path (`src/turns.test.ts`)               |
-| Concurrent materializers (single transition)               | `packages/experimental/src/projection/runtime.test.ts` (CAS/epoch)                                                                 |
-| Poison event halts visibly                                 | `packages/experimental/src/projection/runtime.test.ts`                                                                             |
-| Projection catch-up gap-free                               | `src/materializer/board-projection.test.ts`                                                                                        |
-| Generation rebuild equivalence + watermark                 | `src/rebuild.test.ts`; `server/rebuild-persistence.test.ts`; `scripts/proof.ts` (`generation-rebuild`)                             |
-| Durable cutover + rollback-on-failure + retention          | `src/rebuild.test.ts`; `server/rebuild-persistence.test.ts` (restart)                                                              |
-| Causal `syncedThrough(ack)`                                | `src/board-sync.test.ts`; `src/signature-demo.test.ts` (`causalWait`)                                                              |
-| Command CAS race                                           | `src/api.test.ts`                                                                                                                  |
-| Command idempotency (no double append/roll)                | `src/api.test.ts`; `src/signature-demo.test.ts` (`idempotentRetry`)                                                                |
-| Authorization isolation                                    | `src/api.test.ts`; `scripts/http-smoke.ts`                                                                                         |
-| Restart (events/projections/watermarks/tokens/generations) | `server/persistence.test.ts`; `server/rebuild-persistence.test.ts`; `scripts/http-smoke.ts`                                        |
-| Agent-only complete game                                   | `src/agent.test.ts`; `src/signature-demo.test.ts`                                                                                  |
-| Turn-stream cursor resume                                  | `src/agent.test.ts`; `server/persistence.test.ts`; `signature-demo` (`agent-cursor-restart`)                                       |
-| Stale/duplicate wake safety                                | `src/turns.test.ts`; `src/signature-demo.test.ts` (`STALE_TURN`)                                                                   |
-| Long-poll wake                                             | `src/long-poll.test.ts`                                                                                                            |
-| Notification replay idempotency                            | `src/turns.test.ts`; `server/persistence.test.ts`                                                                                  |
-| Capability isolation on turn streams                       | `src/turns.test.ts`                                                                                                                |
+| Concept acceptance test                                    | Where it is proven                                                                                                                                                       |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Canonical deterministic replay                             | `src/kernel.test.ts`; `src/materializer/board-projection.test.ts`                                                                                                        |
+| Projection ⇄ aggregate equivalence                         | `src/materializer/board-projection.test.ts`; `src/kernel.test.ts`                                                                                                        |
+| Atomic state + watermark                                   | `src/materializer/board-projection.test.ts` (self-contained reload); `packages/experimental/src/projection/runtime.test.ts`                                              |
+| Crash immediately after output commit (no double-apply)    | `src/signature-demo.test.ts` (control-build comparison + duplicate-transition negative control); `scripts/proof.ts` (`crash-recovery` trace); `board-projection.test.ts` |
+| Ambiguous append retry classified `duplicate`              | `packages/experimental/src/projection/runtime.test.ts`; `server/turn-notifier.ts` rebuild path (`src/turns.test.ts`)                                                     |
+| Concurrent materializers (single transition)               | `packages/experimental/src/projection/runtime.test.ts` (CAS/epoch)                                                                                                       |
+| Poison event halts visibly                                 | `packages/experimental/src/projection/runtime.test.ts`                                                                                                                   |
+| Projection catch-up gap-free                               | `src/materializer/board-projection.test.ts`                                                                                                                              |
+| Generation rebuild equivalence + watermark                 | `src/rebuild.test.ts`; `server/rebuild-persistence.test.ts`; `scripts/proof.ts` (`generation-rebuild`)                                                                   |
+| Durable cutover + rollback-on-failure + retention          | `src/rebuild.test.ts`; `server/rebuild-persistence.test.ts` (restart)                                                                                                    |
+| Causal `syncedThrough(ack)`                                | `src/board-sync.test.ts`; `src/signature-demo.test.ts` (`causalWait`)                                                                                                    |
+| Command CAS race                                           | `src/api.test.ts`                                                                                                                                                        |
+| Command idempotency (no double append/roll)                | `src/api.test.ts`; `src/signature-demo.test.ts` (`idempotentRetry`)                                                                                                      |
+| Authorization isolation                                    | `src/api.test.ts`; `scripts/http-smoke.ts`                                                                                                                               |
+| Restart (events/projections/watermarks/tokens/generations) | `server/persistence.test.ts`; `server/rebuild-persistence.test.ts`; `scripts/http-smoke.ts`                                                                              |
+| Agent-only complete game                                   | `src/agent.test.ts`; `src/signature-demo.test.ts`                                                                                                                        |
+| Turn-stream cursor resume                                  | `src/agent.test.ts`; `server/persistence.test.ts`; `signature-demo` (`agent-cursor-restart`)                                                                             |
+| Stale/duplicate wake safety                                | `src/turns.test.ts`; `src/signature-demo.test.ts` (`STALE_TURN`)                                                                                                         |
+| Long-poll wake                                             | `src/long-poll.test.ts`                                                                                                                                                  |
+| Notification replay idempotency                            | `src/turns.test.ts`; `server/persistence.test.ts`                                                                                                                        |
+| Capability isolation on turn streams                       | `src/turns.test.ts`                                                                                                                                                      |
 
 ## Remaining limitations (Batch 5)
 

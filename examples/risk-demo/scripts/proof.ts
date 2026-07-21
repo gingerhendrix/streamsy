@@ -53,6 +53,17 @@ function checkInvariants(summary: DemoSummary): string[] {
   require(summary.crashRecovery
     .boardEqual, "post-crash board did not equal the authoritative fold");
   require(!summary.crashRecovery.doubleApplied, "crash-after-output double-applied a transition");
+  require(summary.crashRecovery.duplicateSourceSeqs.length ===
+    0, `a source ordinal was applied twice: ${summary.crashRecovery.duplicateSourceSeqs.join(", ")}`);
+  require(summary.crashRecovery.actualTransitions ===
+    summary.crashRecovery
+      .canonicalEvents, "recovered projection does not have exactly one transition per canonical event");
+  require(summary.crashRecovery.actualTransitions === summary.crashRecovery.expectedTransitions &&
+    summary.crashRecovery.actualOutputMessages ===
+      summary.crashRecovery
+        .expectedOutputMessages, "recovered projection differs from a clean control build of the same log");
+  require(summary.crashRecovery
+    .watermarkEqual, "recovered watermark differs from the control build");
   require(summary.rebuild.boardEqual &&
     summary.rebuild.watermarkEqual, "rebuild verification failed");
   require(summary.rebuild.activeGeneration ===
