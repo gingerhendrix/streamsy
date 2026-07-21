@@ -101,16 +101,20 @@ function movePlayerId(event: GameEvent): string | undefined {
 }
 
 /**
- * Pure projection step: apply one event observed at `offset` and return a new
- * projection state (the previous state is not mutated).
+ * Pure projection step: apply one event observed at `sourceOffset` and return a
+ * new projection state (the previous state is not mutated).
+ *
+ * `sourceOffset` is the canonical source offset the event sits at. In the pure
+ * kernel it is the event's positional index (see {@link projectEvents}); when the
+ * projection is materialized off a Streamsy stream (Batch 2) it is the real
+ * stream offset, so the embedded `sourceThroughOffset` is a genuine watermark.
  */
 export function projectEvent(
   previous: ProjectionState,
   event: GameEvent,
-  offset: number,
+  sourceOffset: string,
 ): ProjectionState {
   const state = structuredClone(previous);
-  const sourceOffset = String(offset);
 
   switch (event.type) {
     case "GameCreated": {
@@ -208,7 +212,7 @@ export function projectEvent(
 export function projectEvents(events: readonly GameEvent[]): ProjectionState {
   let state = initialProjection();
   for (let index = 0; index < events.length; index += 1) {
-    state = projectEvent(state, events[index]!, index);
+    state = projectEvent(state, events[index]!, String(index));
   }
   return state;
 }

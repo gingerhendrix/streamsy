@@ -22,13 +22,18 @@
       "types": "./dist/materializer.d.ts",
       "import": "./dist/materializer.js",
       "default": "./dist/materializer.js"
+    },
+    "./projection": {
+      "types": "./dist/projection.d.ts",
+      "import": "./dist/projection.js",
+      "default": "./dist/projection.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
+    "build": "tsdown src/materializer.ts src/projection.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },

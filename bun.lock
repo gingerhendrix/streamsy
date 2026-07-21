@@ -63,6 +63,10 @@
     "examples/risk-demo": {
       "name": "risk-demo",
       "version": "0.0.1",
+      "dependencies": {
+        "@streamsy/core": "workspace:*",
+        "@streamsy/experimental": "workspace:*",
+      },
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",

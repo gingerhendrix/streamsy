@@ -9,6 +9,10 @@
     "test": "vitest --run src",
     "test:unit": "vitest --run src"
   },
+  "dependencies": {
+    "@streamsy/core": "workspace:*",
+    "@streamsy/experimental": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "catalog:",
     "vitest": "^4.0.16"

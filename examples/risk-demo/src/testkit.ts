@@ -5,10 +5,12 @@
  */
 
 import type { Command } from "./commands.ts";
-import { RiskGame } from "./engine.ts";
+import type { GameEvent } from "./events.ts";
+import { RiskGame, applyCommand } from "./engine.ts";
 import type { CommandOutcome } from "./engine.ts";
 import { foldAggregate, buildTurnId } from "./aggregate.ts";
 import type { AggregateState } from "./aggregate.ts";
+import { RULES, TERRITORIES } from "./map.ts";
 import { createSeededRng } from "./rng.ts";
 
 let commandCounter = 0;
@@ -88,4 +90,88 @@ export function placeAllReinforcements(scripted: ScriptedGame): string {
     throw new Error(`reinforce rejected: ${outcome.error.code}`);
   }
   return target;
+}
+
+function enemyNeighbours(state: AggregateState, territoryId: string, ownerId: string): string[] {
+  return TERRITORIES.find((t) => t.id === territoryId)!.adjacent.filter(
+    (adj) => state.territories[adj]!.ownerId !== ownerId,
+  );
+}
+
+/**
+ * Drive a full two-player game to a win with a greedy deterministic auto-player
+ * and return the canonical event log. Shared by kernel and materializer tests.
+ */
+export function recordFullGameEvents(seed = 1234): GameEvent[] {
+  const rng = createSeededRng(seed);
+  let events: GameEvent[] = [];
+  const submit = (command: Command): void => {
+    const result = applyCommand(events, command, rng);
+    if (result.outcome.status === "rejected") {
+      throw new Error(`unexpected rejection: ${result.outcome.error.code}`);
+    }
+    events = result.events;
+  };
+
+  submit({
+    type: "create-game",
+    commandId: nextCommandId(),
+    gameId: "game-1",
+    hostPlayerId: "p1",
+    hostName: "Player 1",
+    hostColor: "red",
+  });
+  submit({
+    type: "join-game",
+    commandId: nextCommandId(),
+    playerId: "p2",
+    name: "Player 2",
+    color: "blue",
+  });
+  submit({ type: "start-game", commandId: nextCommandId() });
+
+  for (let guard = 0; guard < 1000; guard += 1) {
+    const s = foldAggregate(events);
+    if (s.status === "finished") return events;
+    const active = s.activePlayerId!;
+    const turnId = buildTurnId(s.round, active);
+
+    if (s.phase === "reinforce") {
+      const frontier =
+        Object.values(s.territories).find(
+          (t) => t.ownerId === active && enemyNeighbours(s, t.id, active).length > 0,
+        ) ?? Object.values(s.territories).find((t) => t.ownerId === active)!;
+      submit({
+        type: "reinforce",
+        commandId: nextCommandId(),
+        turnId,
+        playerId: active,
+        territoryId: frontier.id,
+        armies: s.reinforcementsRemaining,
+      });
+      continue;
+    }
+
+    if (s.phase === "attack") {
+      const from = Object.values(s.territories).find(
+        (t) => t.ownerId === active && t.armies >= 2 && enemyNeighbours(s, t.id, active).length > 0,
+      );
+      if (from) {
+        submit({
+          type: "attack",
+          commandId: nextCommandId(),
+          turnId,
+          playerId: active,
+          from: from.id,
+          to: enemyNeighbours(s, from.id, active)[0]!,
+          attackerDice: Math.min(RULES.maxAttackerDice, from.armies - 1),
+        });
+        continue;
+      }
+    }
+
+    submit({ type: "end-turn", commandId: nextCommandId(), turnId, playerId: active });
+  }
+
+  throw new Error("game did not converge");
 }
