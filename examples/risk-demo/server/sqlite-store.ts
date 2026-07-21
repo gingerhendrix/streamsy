@@ -11,7 +11,14 @@ import type { Database } from "bun:sqlite";
 
 import type { GameEvent } from "../src/events.ts";
 import type { DecisionError } from "../src/decide.ts";
-import type { CapabilityRow, CommandRow, GameRow, Stores } from "./stores.ts";
+import type {
+  CapabilityRow,
+  CommandRow,
+  GameRow,
+  GenerationRow,
+  GenerationStatus,
+  Stores,
+} from "./stores.ts";
 import type { CapabilityRole } from "./capabilities.ts";
 
 const SCHEMA = `
@@ -40,6 +47,16 @@ create table if not exists risk_commands (
   error_json text,
   created_at integer not null,
   primary key (game_id, command_id)
+);
+create table if not exists risk_generations (
+  game_id text not null,
+  generation text not null,
+  stream_id text not null,
+  reducer_version text not null,
+  status text not null,
+  source_through_offset text,
+  created_at integer not null,
+  primary key (game_id, generation)
 );
 `;
 
@@ -71,6 +88,28 @@ interface CommandDbRow {
   created_at: number;
 }
 
+interface GenerationDbRow {
+  game_id: string;
+  generation: string;
+  stream_id: string;
+  reducer_version: string;
+  status: string;
+  source_through_offset: string | null;
+  created_at: number;
+}
+
+function generationFromDb(r: GenerationDbRow): GenerationRow {
+  return {
+    gameId: r.game_id,
+    generation: r.generation,
+    streamId: r.stream_id,
+    reducerVersion: r.reducer_version,
+    status: r.status as GenerationStatus,
+    sourceThroughOffset: r.source_through_offset ?? null,
+    createdAt: r.created_at,
+  };
+}
+
 export function migrateRiskSchema(db: Database): void {
   db.run(SCHEMA);
 }
@@ -99,6 +138,37 @@ export function createSqliteStores(db: Database): Stores {
   );
   const selectCommand = db.query<CommandDbRow, [string, string]>(
     "select * from risk_commands where game_id = ? and command_id = ?",
+  );
+  const insertGeneration = db.query(
+    `insert or replace into risk_generations
+       (game_id, generation, stream_id, reducer_version, status, source_through_offset, created_at)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const selectGeneration = db.query<GenerationDbRow, [string, string]>(
+    "select * from risk_generations where game_id = ? and generation = ?",
+  );
+  const listGenerations = db.query<GenerationDbRow, [string]>(
+    "select * from risk_generations where game_id = ? order by created_at asc",
+  );
+  const retireActive = db.query(
+    "update risk_generations set status = 'retired' where game_id = ? and status = 'active'",
+  );
+  const markActive = db.query(
+    `update risk_generations
+       set status = 'active', source_through_offset = ?
+       where game_id = ? and generation = ?`,
+  );
+  const repointGame = db.query("update risk_games set generation = ? where game_id = ?");
+  // One transaction repoints the active generation: retire the old, activate the
+  // new, and move the game's pointer together — a cutover is all-or-nothing.
+  const activateTx = db.transaction(
+    (gameId: string, generation: string, sourceThroughOffset: string | null) => {
+      const target = selectGeneration.get(gameId, generation);
+      if (!target) throw new Error(`unknown generation ${gameId}/${generation}`);
+      retireActive.run(gameId);
+      markActive.run(sourceThroughOffset, gameId, generation);
+      repointGame.run(generation, gameId);
+    },
   );
 
   return {
@@ -174,6 +244,29 @@ export function createSqliteStores(db: Database): Stores {
           error: r.error_json ? (JSON.parse(r.error_json) as DecisionError) : undefined,
           createdAt: r.created_at,
         };
+      },
+    },
+    generations: {
+      put(row: GenerationRow) {
+        insertGeneration.run(
+          row.gameId,
+          row.generation,
+          row.streamId,
+          row.reducerVersion,
+          row.status,
+          row.sourceThroughOffset ?? null,
+          row.createdAt,
+        );
+      },
+      get(gameId, generation) {
+        const r = selectGeneration.get(gameId, generation);
+        return r ? generationFromDb(r) : null;
+      },
+      list(gameId) {
+        return listGenerations.all(gameId).map(generationFromDb);
+      },
+      activate(gameId, generation, sourceThroughOffset) {
+        activateTx(gameId, generation, sourceThroughOffset);
       },
     },
   };

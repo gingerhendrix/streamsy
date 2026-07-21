@@ -9,6 +9,8 @@
     "start": "NODE_ENV=production bun server/index.ts",
     "agent": "bun run scripts/agent.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
+    "proof": "bun run scripts/proof.ts",
+    "rebuild": "bun run scripts/rebuild.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest --run src",
     "test:unit": "vitest --run src",

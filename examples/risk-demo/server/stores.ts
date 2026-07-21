@@ -40,6 +40,20 @@ export interface CommandRow {
   createdAt: number;
 }
 
+export type GenerationStatus = "building" | "active" | "retired" | "failed";
+
+/** One board-projection generation for a game (the active one is retained + others too). */
+export interface GenerationRow {
+  gameId: string;
+  generation: string;
+  streamId: string;
+  reducerVersion: string;
+  status: GenerationStatus;
+  /** Canonical watermark the generation was verified through, or null while building. */
+  sourceThroughOffset: string | null;
+  createdAt: number;
+}
+
 export interface CapabilityStore {
   put(row: CapabilityRow): void;
   getByTokenId(tokenId: string): CapabilityRow | null;
@@ -55,10 +69,30 @@ export interface CommandStore {
   get(gameId: string, commandId: string): CommandRow | null;
 }
 
+export interface GenerationStore {
+  put(row: GenerationRow): void;
+  get(gameId: string, generation: string): GenerationRow | null;
+  list(gameId: string): GenerationRow[];
+  /**
+   * Atomically make `generation` the active board projection for `gameId`:
+   * mark it `active` with its verified `sourceThroughOffset`, retire any
+   * previously-active generation, and repoint the game row's active-generation
+   * pointer — all in one transaction. Old generations' streams are retained,
+   * never deleted, so a cutover is reversible.
+   */
+  activate(
+    gameId: string,
+    generation: string,
+    sourceThroughOffset: string | null,
+    now: number,
+  ): void;
+}
+
 export interface Stores {
   capabilities: CapabilityStore;
   games: GameStore;
   commands: CommandStore;
+  generations: GenerationStore;
 }
 
 function commandKey(gameId: string, commandId: string): string {
@@ -69,6 +103,7 @@ export function createInMemoryStores(): Stores {
   const capabilities = new Map<string, CapabilityRow>();
   const games = new Map<string, GameRow>();
   const commands = new Map<string, CommandRow>();
+  const generations = new Map<string, GenerationRow>();
 
   return {
     capabilities: {
@@ -82,6 +117,26 @@ export function createInMemoryStores(): Stores {
     commands: {
       put: (row) => void commands.set(commandKey(row.gameId, row.commandId), row),
       get: (gameId, commandId) => commands.get(commandKey(gameId, commandId)) ?? null,
+    },
+    generations: {
+      put: (row) => void generations.set(commandKey(row.gameId, row.generation), { ...row }),
+      get: (gameId, generation) => generations.get(commandKey(gameId, generation)) ?? null,
+      list: (gameId) =>
+        [...generations.values()]
+          .filter((r) => r.gameId === gameId)
+          .toSorted((a, b) => a.createdAt - b.createdAt),
+      activate: (gameId, generation, sourceThroughOffset, now) => {
+        const target = generations.get(commandKey(gameId, generation));
+        if (!target) throw new Error(`unknown generation ${gameId}/${generation}`);
+        for (const row of generations.values()) {
+          if (row.gameId === gameId && row.status === "active") row.status = "retired";
+        }
+        target.status = "active";
+        target.sourceThroughOffset = sourceThroughOffset;
+        target.createdAt = target.createdAt || now;
+        const game = games.get(gameId);
+        if (game) games.set(gameId, { ...game, generation });
+      },
     },
   };
 }

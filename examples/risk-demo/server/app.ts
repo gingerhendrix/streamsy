@@ -29,6 +29,7 @@ import {
 import { submitCommand, readCanonical, type SubmitResult } from "./command-service.ts";
 import { createBoardRuntimeCache, materializeBoard, type BoardRuntimeCache } from "./board.ts";
 import { catchUpTurns, readTurns } from "./turn-notifier.ts";
+import { BOARD_REDUCER_VERSION } from "../src/materializer/board-projection.ts";
 import { eventStreamId, boardStreamId, BOARD_GENERATION } from "./names.ts";
 import { openApiDocument } from "./openapi.ts";
 import {
@@ -88,6 +89,11 @@ export function buildApp(deps: AppDeps): App {
   const now = deps.now ?? (() => Date.now());
   const boardCache = deps.boardCache ?? createBoardRuntimeCache();
   const service = { protocol: deps.protocol, commands: deps.stores.commands, rng, now };
+
+  /** The durable active board generation for a game (defaults to v1). */
+  function activeGeneration(gameId: string): string {
+    return deps.stores.games.get(gameId)?.generation ?? BOARD_GENERATION;
+  }
 
   async function authenticate(request: Request): Promise<CapabilityRow | null> {
     const token = bearerToken(request.headers.get("authorization"));
@@ -159,6 +165,18 @@ export function buildApp(deps: AppDeps): App {
       sourceStreamId: eventStreamId(gameId),
       projectionStreamId: boardStreamId(gameId),
       generation: BOARD_GENERATION,
+      createdAt: now(),
+    });
+    // Record the initial board generation as the durable active pointer. Later
+    // generations are appended by the rebuild service and the active one is
+    // repointed atomically on cutover.
+    deps.stores.generations.put({
+      gameId,
+      generation: BOARD_GENERATION,
+      streamId: boardStreamId(gameId, BOARD_GENERATION),
+      reducerVersion: BOARD_REDUCER_VERSION,
+      status: "active",
+      sourceThroughOffset: null,
       createdAt: now(),
     });
     const token = await issueAndStore(gameId, hostPlayerId, "host");
@@ -240,12 +258,18 @@ export function buildApp(deps: AppDeps): App {
   async function getBoard(_request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     if (!deps.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const board = await materializeBoard(deps.protocol, boardCache, gameId);
+    const board = await materializeBoard(
+      deps.protocol,
+      boardCache,
+      gameId,
+      activeGeneration(gameId),
+    );
     const view = projectionBoardView(board.state);
     return json({
       gameId,
       sourceStreamId: board.sourceStreamId,
       sourceThroughOffset: board.sourceThroughOffset,
+      generation: board.generation,
       game: board.state.game,
       players: board.state.players,
       territories: board.state.territories,
@@ -262,7 +286,12 @@ export function buildApp(deps: AppDeps): App {
     if (!state.players.some((p) => p.id === cap.playerId)) {
       return error(404, "NOT_FOUND", "Player is not part of this game.");
     }
-    const board = await materializeBoard(deps.protocol, boardCache, gameId);
+    const board = await materializeBoard(
+      deps.protocol,
+      boardCache,
+      gameId,
+      activeGeneration(gameId),
+    );
     const context = buildDecisionContext(state, cap.playerId, {
       sourceStreamId: board.sourceStreamId,
       sourceThroughOffset: board.sourceThroughOffset,
