@@ -1,12 +1,13 @@
-# Streamsy Risk Demo — kernel + projection materializer (Batches 1–2)
+# Streamsy Risk Demo — kernel, materializer, and durable command API (Batches 1–3)
 
 A **deterministic, headless** event-sourced kernel for the Streamsy Risk demo. It is the
 executable specification the later batches build on: canonical domain events are the source of
 truth, and both the command-side decision model and the read-side board projection are pure folds
 over those events.
 
-There is **no REST, capability, turn stream, or UI** here yet — those arrive in Batches 3–5.
-Batch 2 adds the replay-safe **board projection materializer** on top of the pure kernel.
+There is **no turn-notification stream, agent harness, or UI** here yet — those arrive in
+Batches 4–5. Batch 2 adds the replay-safe **board projection materializer**; Batch 3 adds the
+durable **command & capability REST API**.
 
 ## What it provides
 
@@ -22,6 +23,8 @@ Batch 2 adds the replay-safe **board projection materializer** on top of the pur
 | Command driver      | `engine.ts`                        | Fold → dedupe → decide → append → acknowledge      |
 | Board projection    | `projection.ts`                    | Independent query-shaped read model + equivalence  |
 | Board materializer  | `materializer/board-projection.ts` | Streamsy-backed projection adapter (Batch 2)       |
+| Legal actions       | `legal-actions.ts`, `decision.ts`  | Structured agent affordances + decision context    |
+| Command API         | `server/*.ts`                      | Durable REST command/capability API (Batch 3)      |
 
 ## Batch 2 — replay-safe board materializer
 
@@ -48,6 +51,48 @@ protocol (`createMemoryStorageAdapter`) and assert projection⇄aggregate equiva
 commit recovery, incremental catch-up, and generation rebuild. The replay-safety primitives
 themselves (atomic watermark, duplicate/CAS classification, poison halt) are proven in
 `packages/experimental/src/projection/runtime.test.ts`.
+
+## Batch 3 — durable command & capability API
+
+`server/` is a headless HTTP API (a web-standard `buildApp(deps)` fetch handler, hosted by
+`server/index.ts` under Bun). Endpoints:
+
+| Method | Path                                  | Auth   | Purpose                                                        |
+| ------ | ------------------------------------- | ------ | -------------------------------------------------------------- |
+| `POST` | `/v1/games`                           | —      | Create a game; returns host player + one-time host capability. |
+| `POST` | `/v1/games/{id}/players`              | —      | Join; returns player + one-time player capability.             |
+| `POST` | `/v1/games/{id}/start`                | host   | Start the game.                                                |
+| `GET`  | `/v1/games/{id}`                      | —      | Metadata & status.                                             |
+| `GET`  | `/v1/games/{id}/board`                | —      | Projected board + canonical `sourceThroughOffset`.             |
+| `GET`  | `/v1/games/{id}/decision`             | player | Fresh turn/board/legal-action context.                         |
+| `POST` | `/v1/games/{id}/commands`             | player | Submit a typed command (idempotent by `commandId`).            |
+| `GET`  | `/v1/games/{id}/commands/{commandId}` | player | Recover an accepted/rejected result.                           |
+| `GET`  | `/openapi.json`                       | —      | OpenAPI 3.1 + JSON Schemas for commands/acks/decision/errors.  |
+
+Guarantees:
+
+- **Authoritative decision loop** — every mutation authenticates a bearer capability into
+  `{gameId, playerId, role}`, then folds canonical Streamsy history to its exact head, dedupes the
+  `commandId` before rolling dice, validates with the Batch 1 kernel, resolves randomness once, and
+  CAS-appends the event batch at the folded head (`expectedOffset`), refolding/retrying on conflict.
+  Acks carry the real canonical `sourceStreamId` + committed `sourceOffset` (not positional indexes).
+- **Idempotency** — a retried `commandId` returns the original events/offset/dice with no second
+  append; idempotency is anchored in the canonical stream, so it holds even after a crash that lost
+  the command-log row. A `commandId` reused with a different payload is rejected `COMMAND_ID_REUSED`.
+- **Capability security** — a token is `rsk_<tokenId>_<secret>`; only the tokenId and a SHA-256
+  verifier hash are stored, never the raw token, and verification is constant-time. Tokens never
+  enter canonical events, the projection, or responses after issuance. A capability is scoped to one
+  `{gameId, playerId}`; the acting player id is always derived from the token.
+- **Durability** — one SQLite database (`@streamsy/storage-sqlite`) holds the canonical event
+  streams, the board projection streams, and the capability/game/command tables together, so
+  everything survives restart.
+
+Tests: `src/api.test.ts` (vitest, storage-agnostic) covers authz isolation, happy path,
+idempotent retry + recovery, `COMMAND_ID_REUSED`, stale-turn/illegal-phase codes, board catch-up to
+the ack offset, a concurrent-command CAS race, OpenAPI discovery, and raw-token secrecy.
+`server/persistence.test.ts` (`bun test`, real temp SQLite file) proves events, projection, command
+recovery, and capability verifiers all survive a restart. `scripts/http-smoke.ts` drives the real
+server end-to-end over HTTP including a kill/respawn against the same database file.
 
 ## Core guarantees (all covered by tests)
 
@@ -82,7 +127,15 @@ themselves (atomic watermark, duplicate/CAS classification, poison halt) are pro
 ## Running
 
 ```bash
-bun run build                                # build @streamsy/* dists (needed by the materializer)
-bun run --cwd examples/risk-demo test        # vitest suite (kernel + materializer)
+bun run build                                # build @streamsy/* dists (needed by materializer/API)
+bun run --cwd examples/risk-demo test        # vitest suite (kernel + materializer + API)
+bun run --cwd examples/risk-demo test:sqlite # bun test: SQLite durability + restart proof
+bun run --cwd examples/risk-demo smoke:http  # spawn real server, drive HTTP, restart
 bun run --cwd examples/risk-demo typecheck   # tsc --noEmit
+
+# Serve (SQLite file for durability; :memory: by default):
+DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
 ```
+
+> `src/**` tests run under vitest and stay storage-agnostic (in-memory Streamsy + stores).
+> `bun:sqlite`-backed tests live under `server/**` and run with `bun test`.

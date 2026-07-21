@@ -2,8 +2,8 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
-    "types": []
+    "types": ["bun-types"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "server/**/*", "scripts/**/*"],
   "exclude": ["node_modules"]
 }
