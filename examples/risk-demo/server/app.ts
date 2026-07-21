@@ -28,6 +28,7 @@ import {
 } from "./capabilities.ts";
 import { submitCommand, readCanonical, type SubmitResult } from "./command-service.ts";
 import { createBoardRuntimeCache, materializeBoard, type BoardRuntimeCache } from "./board.ts";
+import { catchUpTurns, readTurns } from "./turn-notifier.ts";
 import { eventStreamId, boardStreamId, BOARD_GENERATION } from "./names.ts";
 import { openApiDocument } from "./openapi.ts";
 import {
@@ -209,6 +210,7 @@ export function buildApp(deps: AppDeps): App {
     const command: Command = { type: "start-game", commandId: body.commandId ?? randomId("cmd") };
     const result = await submitCommand(service, eventStreamId(gameId), command);
     if (result.status === "rejected") return rejection(result);
+    await catchUpTurns(deps.protocol, gameId);
     return json(ackBody(result), 200);
   }
 
@@ -290,7 +292,25 @@ export function buildApp(deps: AppDeps): App {
 
     const result = await submitCommand(service, eventStreamId(gameId), command);
     if (result.status === "rejected") return rejection(result);
+    await catchUpTurns(deps.protocol, gameId);
     return json(ackBody(result, body.turnId), 200);
+  }
+
+  async function getTurns(request: Request, params: Record<string, string>): Promise<Response> {
+    const gameId = params.gameId!;
+    const cap = await requireCapability(request, gameId);
+    if (cap instanceof Response) return cap;
+    const url = new URL(request.url);
+    const cursor = url.searchParams.get("offset") ?? url.searchParams.get("cursor") ?? undefined;
+    const waitMs = Number.parseInt(url.searchParams.get("wait") ?? "0", 10) || 0;
+    // Produce any wakes owed by already-committed events, then read/long-poll.
+    await catchUpTurns(deps.protocol, gameId);
+    const result = await readTurns(deps.protocol, gameId, cap.playerId, {
+      cursor,
+      waitMs,
+      signal: request.signal,
+    });
+    return json(result);
   }
 
   async function getCommand(request: Request, params: Record<string, string>): Promise<Response> {
@@ -338,6 +358,7 @@ export function buildApp(deps: AppDeps): App {
     { method: "GET", pattern: "/v1/games/:gameId/decision", handler: getDecision },
     { method: "POST", pattern: "/v1/games/:gameId/commands", handler: postCommand },
     { method: "GET", pattern: "/v1/games/:gameId/commands/:commandId", handler: getCommand },
+    { method: "GET", pattern: "/v1/games/:gameId/players/me/turns", handler: getTurns },
   ];
 
   return { fetch: createRouter(routes) };

@@ -37,7 +37,7 @@ async function startServer(port: number, dbPath: string): Promise<Server> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(baseUrl);
+      const res = await fetch(`${baseUrl}/healthz`);
       if (res.status === 200) break;
     } catch {
       // not up yet
@@ -118,6 +118,20 @@ async function main(): Promise<void> {
 
     const board = await api(server.baseUrl, "GET", `/v1/games/${gameId}/board`);
     assert(board.body.sourceThroughOffset === committedOffset, "board watermark != ack offset");
+
+    // Turn stream: the active player has a durable TurnAvailable wake.
+    const turns = await api(server.baseUrl, "GET", `/v1/games/${gameId}/players/me/turns`, {
+      token: tokenByPlayer[active],
+    });
+    assert(
+      turns.body.notifications.some((n: any) => n.type === "TurnAvailable"),
+      "no TurnAvailable wake for active player",
+    );
+
+    // The React board SPA is served and mounts on #root.
+    const spa = await fetch(`${server.baseUrl}/`);
+    const html = await spa.text();
+    assert(spa.status === 200 && html.includes('id="root"'), "board SPA did not render");
 
     // Authorization: another player's token cannot play the active turn.
     const inactive = active === hostId ? joined.body.player.id : hostId;

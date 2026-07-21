@@ -138,3 +138,47 @@ test("SQLite preserves events, projections, command recovery, and capabilities a
 
   second.close();
 });
+
+test("turn-stream cursor resume and rebuild idempotency survive restart", async () => {
+  const first = openApp();
+  const created = await call(first.app, "POST", "/v1/games", { body: { name: "A", color: "red" } });
+  const gameId: string = created.body.game.id;
+  const hostToken: string = created.body.capability;
+  const hostId: string = created.body.player.id;
+  await call(first.app, "POST", `/v1/games/${gameId}/players`, {
+    body: { name: "B", color: "blue" },
+  });
+  await call(first.app, "POST", `/v1/games/${gameId}/start`, { token: hostToken, body: {} });
+
+  // Read the host's own durable turn stream and remember the cursor. (The host
+  // has one wake if it drew the first turn, otherwise zero — the invariant below
+  // holds either way.)
+  const initial = await call(first.app, "GET", `/v1/games/${gameId}/players/me/turns`, {
+    token: hostToken,
+  });
+  const cursor: string = initial.body.cursor;
+  const wakeCount: number = initial.body.notifications.length;
+  first.close();
+
+  // --- restart: reopen the same database file ---
+  const second = openApp();
+
+  // Resuming from the saved cursor yields nothing new (no missed/duplicate wake).
+  const resumed = await call(
+    second.app,
+    "GET",
+    `/v1/games/${gameId}/players/me/turns?offset=${cursor}`,
+    { token: hostToken },
+  );
+  expect(resumed.body.notifications).toHaveLength(0);
+
+  // Reading from the start after restart still yields the SAME wakes: the notifier
+  // rebuilt from canonical history without appending duplicates.
+  const rebuilt = await call(second.app, "GET", `/v1/games/${gameId}/players/me/turns`, {
+    token: hostToken,
+  });
+  expect(rebuilt.body.notifications).toHaveLength(wakeCount);
+  for (const note of rebuilt.body.notifications) expect(note.playerId).toBe(hostId);
+
+  second.close();
+});

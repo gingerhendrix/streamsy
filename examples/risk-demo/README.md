@@ -1,30 +1,33 @@
-# Streamsy Risk Demo — kernel, materializer, and durable command API (Batches 1–3)
+# Streamsy Risk Demo — kernel, materializer, command API, turn streams & clients (Batches 1–4)
 
 A **deterministic, headless** event-sourced kernel for the Streamsy Risk demo. It is the
 executable specification the later batches build on: canonical domain events are the source of
 truth, and both the command-side decision model and the read-side board projection are pure folds
 over those events.
 
-There is **no turn-notification stream, agent harness, or UI** here yet — those arrive in
-Batches 4–5. Batch 2 adds the replay-safe **board projection materializer**; Batch 3 adds the
-durable **command & capability REST API**.
+Batch 2 adds the replay-safe **board projection materializer**; Batch 3 adds the durable
+**command & capability REST API**; Batch 4 adds **per-player turn-notification streams**, a
+**coding-agent harness**, and a **React board**. Batch 5 (rebuild/demo polish) is still to come.
 
 ## What it provides
 
-| Piece               | Module                             | Role                                               |
-| ------------------- | ---------------------------------- | -------------------------------------------------- |
-| Fixed map + ruleset | `map.ts`                           | Six-territory `demo-map-v1`, `risk-demo-v1` limits |
-| Canonical events    | `events.ts`                        | Immutable domain facts (the source of truth)       |
-| Commands            | `commands.ts`                      | Command envelopes + stable `RiskErrorCode`s        |
-| Injected RNG        | `rng.ts`                           | `Rng` seam + deterministic `mulberry32` seed       |
-| Dice                | `dice.ts`                          | Standard single-throw combat resolution            |
-| Aggregate fold      | `aggregate.ts`                     | Authoritative decision model (`foldAggregate`)     |
-| Decision/validation | `decide.ts`                        | Pure `decide(state, command, rng)`                 |
-| Command driver      | `engine.ts`                        | Fold → dedupe → decide → append → acknowledge      |
-| Board projection    | `projection.ts`                    | Independent query-shaped read model + equivalence  |
-| Board materializer  | `materializer/board-projection.ts` | Streamsy-backed projection adapter (Batch 2)       |
-| Legal actions       | `legal-actions.ts`, `decision.ts`  | Structured agent affordances + decision context    |
-| Command API         | `server/*.ts`                      | Durable REST command/capability API (Batch 3)      |
+| Piece               | Module                                | Role                                               |
+| ------------------- | ------------------------------------- | -------------------------------------------------- |
+| Fixed map + ruleset | `map.ts`                              | Six-territory `demo-map-v1`, `risk-demo-v1` limits |
+| Canonical events    | `events.ts`                           | Immutable domain facts (the source of truth)       |
+| Commands            | `commands.ts`                         | Command envelopes + stable `RiskErrorCode`s        |
+| Injected RNG        | `rng.ts`                              | `Rng` seam + deterministic `mulberry32` seed       |
+| Dice                | `dice.ts`                             | Standard single-throw combat resolution            |
+| Aggregate fold      | `aggregate.ts`                        | Authoritative decision model (`foldAggregate`)     |
+| Decision/validation | `decide.ts`                           | Pure `decide(state, command, rng)`                 |
+| Command driver      | `engine.ts`                           | Fold → dedupe → decide → append → acknowledge      |
+| Board projection    | `projection.ts`                       | Independent query-shaped read model + equivalence  |
+| Board materializer  | `materializer/board-projection.ts`    | Streamsy-backed projection adapter (Batch 2)       |
+| Legal actions       | `legal-actions.ts`, `decision.ts`     | Structured agent affordances + decision context    |
+| Command API         | `server/*.ts`                         | Durable REST command/capability API (Batch 3)      |
+| Turn notifications  | `server/turn-notifier.ts`             | Per-player durable wake streams (Batch 4)          |
+| Agent harness       | `server/agent.ts`, `scripts/agent.ts` | HTTP-only coding-agent player (Batch 4)            |
+| React board         | `public/`, `src/ui/*`                 | Playable/spectator board from the projection (B4)  |
 
 ## Batch 2 — replay-safe board materializer
 
@@ -94,6 +97,40 @@ the ack offset, a concurrent-command CAS race, OpenAPI discovery, and raw-token 
 recovery, and capability verifiers all survive a restart. `scripts/http-smoke.ts` drives the real
 server end-to-end over HTTP including a kill/respawn against the same database file.
 
+## Batch 4 — turn streams, agent harness, and board
+
+**Per-player turn notifications** (`server/turn-notifier.ts`): a derived, rebuildable fan-out of
+canonical history into one durable Streamsy stream per player,
+`games/<id>/players/<pid>/turns`, read at `GET /v1/games/{id}/players/me/turns` (player capability,
+`?offset=<cursor>&wait=<ms>` for durable-cursor resume + long-poll). A `TurnAvailable` wake is
+produced exactly when control passes to a player (`GameStarted` → first player; each `TurnEnded` →
+next player), carrying `turnId`, `round`, and the canonical `causedBySourceOffset`. Each player's
+stream is appended under producer identity `risk-turns:<gameId>:<playerId>` with `producerSeq` = the
+player's wake ordinal, so a crash/restart/rebuild re-derives the same wakes and Streamsy classifies
+re-appends `duplicate` — no second notification. Wakes are hints only: a delayed/duplicate/stale
+wake is safe because acting on a stale `turnId` is rejected (`STALE_TURN`/`NOT_YOUR_TURN`) and every
+command is revalidated against canonical history. `/me/turns` derives the player from the token, so
+one capability can never read another player's stream. This uses the append/producer/CAS primitives
+directly rather than `ProjectionRuntime` because wakes are sparse and fan out per player.
+
+**Coding-agent harness** (`server/agent.ts`, runnable via `scripts/agent.ts`): follows its turn
+stream from a persisted cursor, on wake fetches fresh `/decision`, chooses from structured
+`legalActions` with a deterministic strategy (reinforce a frontier → attack forward → end turn), and
+submits stable-`commandId` commands until control passes. `commandId` is derived from the observed
+board state (`playerId:turnId:<fingerprint>`), so a resume from the saved cursor re-derives the same
+id for an un-committed action (idempotent) and a fresh id once the board changes — only the cursor
+needs to persist. It plays using ONLY the HTTP resources + turn stream, never the kernel.
+
+**React board** (`public/index.html`, `src/ui/*`): a modest playable/spectator board served by the
+Bun server (`GET /` → bundled SPA; API under `/v1/*`). It renders the fixed six-territory map with
+owner colours + army counts and game/turn/phase, driven only by `GET /board` (polled), with
+join/start/action controls generated from `/decision`. Two tabs converge by polling.
+
+Tests: `src/turns.test.ts` (wake targeting, cursor resume, replay idempotency, stale-wake safety),
+`src/agent.test.ts` (a complete agent-only game over HTTP, restart-from-cursor resume, duplicate-wake
+tolerance), plus `server/persistence.test.ts` (turn-stream cursor resume + rebuild across a real
+SQLite restart) and `scripts/http-smoke.ts` (turn-stream wake + SPA render over the real server).
+
 ## Core guarantees (all covered by tests)
 
 - **Deterministic replay** — folding the same events (including recorded dice) always yields the
@@ -128,13 +165,17 @@ server end-to-end over HTTP including a kill/respawn against the same database f
 
 ```bash
 bun run build                                # build @streamsy/* dists (needed by materializer/API)
-bun run --cwd examples/risk-demo test        # vitest suite (kernel + materializer + API)
-bun run --cwd examples/risk-demo test:sqlite # bun test: SQLite durability + restart proof
-bun run --cwd examples/risk-demo smoke:http  # spawn real server, drive HTTP, restart
+bun run --cwd examples/risk-demo test        # vitest suite (kernel, materializer, API, turns, agent)
+bun run --cwd examples/risk-demo test:sqlite # bun test: SQLite durability + restart proofs
+bun run --cwd examples/risk-demo smoke:http  # spawn real server, drive HTTP + SPA, restart
 bun run --cwd examples/risk-demo typecheck   # tsc --noEmit
 
-# Serve (SQLite file for durability; :memory: by default):
+# Serve the API + React board (SQLite file for durability; :memory: by default):
 DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
+
+# Run a standalone coding agent against a live server (file-persisted cursor):
+GAME_ID=game_xxx PLAYER_ID=p_xxx PLAYER_TOKEN=rsk_... CURSOR_FILE=./p1.cursor \
+  bun run --cwd examples/risk-demo agent
 ```
 
 > `src/**` tests run under vitest and stay storage-agnostic (in-memory Streamsy + stores).
