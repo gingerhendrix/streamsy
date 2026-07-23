@@ -14,6 +14,7 @@ import type { AggregateState, GamePhase, GameStatus } from "./aggregate.ts";
 
 export interface ProjectedGame {
   id?: string;
+  hostPlayerId?: string;
   status: GameStatus;
   phase?: GamePhase;
   activePlayerId?: string;
@@ -132,6 +133,7 @@ export function projectEvent(
   switch (event.type) {
     case "GameCreated": {
       state.game.id = event.gameId;
+      state.game.hostPlayerId = event.hostPlayerId;
       state.players.push({
         id: event.hostPlayerId,
         name: event.hostName,

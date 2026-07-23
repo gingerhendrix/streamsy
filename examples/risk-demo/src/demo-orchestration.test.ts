@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { REQUIRED_WORKSPACE_DISTS, missingWorkspaceDists, spectatorUrl } from "../scripts/demo.ts";
-import { acknowledgementNotice, didGameStatusChange } from "./ui/App.tsx";
+import {
+  DEMO_COMMAND_PACE_MS,
+  DEMO_LEAD_IN_MS,
+  REQUIRED_WORKSPACE_DISTS,
+  missingWorkspaceDists,
+  spectatorUrl,
+} from "../scripts/demo.ts";
+import { projectEvents } from "./projection.ts";
+import { startGame } from "./testkit.ts";
+import { acknowledgementNotice, didGameStatusChange, playerRoleLabel } from "./ui/App.tsx";
 
 describe("one-command demo helpers", () => {
   it("reports exactly the workspace outputs that need building", () => {
@@ -18,6 +26,12 @@ describe("one-command demo helpers", () => {
       "http://127.0.0.1:4321/?game=game_a%26b",
     );
   });
+
+  it("reserves a human lead-in and paces individual commands", () => {
+    expect(DEMO_LEAD_IN_MS).toBeGreaterThanOrEqual(8_000);
+    expect(DEMO_COMMAND_PACE_MS).toBeGreaterThanOrEqual(1_000);
+    expect(DEMO_COMMAND_PACE_MS).toBeLessThanOrEqual(1_500);
+  });
 });
 
 describe("action notices", () => {
@@ -31,5 +45,17 @@ describe("action notices", () => {
     expect(didGameStatusChange("lobby", "lobby")).toBe(false);
     expect(didGameStatusChange("lobby", "playing")).toBe(true);
     expect(didGameStatusChange("playing", "finished")).toBe(true);
+  });
+});
+
+describe("lobby roles", () => {
+  it("labels the authoritative creator as host regardless of player ordering", () => {
+    const scripted = startGame(2);
+    const board = projectEvents(scripted.game.log);
+    const [creatorId, joinerId] = scripted.playerIds;
+
+    expect(board.game.hostPlayerId).toBe(creatorId);
+    expect(playerRoleLabel(board.game.hostPlayerId, joinerId!)).toBe("Player");
+    expect(playerRoleLabel(board.game.hostPlayerId, creatorId!)).toBe("Host");
   });
 });

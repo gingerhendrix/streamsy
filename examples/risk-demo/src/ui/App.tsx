@@ -99,6 +99,10 @@ export function didGameStatusChange(previous: GameStatus | null, current: GameSt
   return previous !== null && previous !== current;
 }
 
+export function playerRoleLabel(hostPlayerId: string | undefined, playerId: string): string {
+  return playerId === hostPlayerId ? "Host" : "Player";
+}
+
 const compactOffsetPart = (part: string): string => part.replace(/^0+(?=\d)/, "");
 
 function shortOffset(offset: string | null | undefined): string {
@@ -440,6 +444,7 @@ export function App() {
             {board.game.status === "lobby" ? (
               <Lobby
                 players={board.players}
+                hostPlayerId={board.game.hostPlayerId}
                 identity={identity}
                 name={name}
                 color={color}
@@ -549,6 +554,7 @@ function StoryStep({ number, title, copy }: { number: string; title: string; cop
 
 function Lobby(props: {
   players: ProjectedPlayer[];
+  hostPlayerId?: string;
   identity: Identity | null;
   name: string;
   color: string;
@@ -579,7 +585,7 @@ function Lobby(props: {
         </button>
       </div>
       <div className="lobby-players">
-        {props.players.map((player, index) => (
+        {props.players.map((player) => (
           <div className="lobby-player" key={player.id}>
             <span className="avatar" style={{ background: player.color }}>
               {player.name.slice(0, 1).toUpperCase()}
@@ -587,7 +593,7 @@ function Lobby(props: {
             <div>
               <b>{player.name}</b>
               <small>
-                {index === 0 ? "Host" : "Player"}
+                {playerRoleLabel(props.hostPlayerId, player.id)}
                 {player.id === props.identity?.playerId ? " · you" : ""}
               </small>
             </div>

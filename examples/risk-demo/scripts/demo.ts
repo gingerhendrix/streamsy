@@ -138,6 +138,13 @@ interface DemoPlayer {
   name: string;
 }
 
+export const DEMO_LEAD_IN_MS = 10_000;
+export const DEMO_COMMAND_PACE_MS = 1_500;
+
+function actionLabel(action: Record<string, unknown>): string {
+  return typeof action.type === "string" ? action.type.replaceAll("-", " ") : "command";
+}
+
 async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]): Promise<void> {
   const { createAgent } = await import("../server/agent.ts");
   const call = (method: string, path: string, options = {}) => api(baseUrl, method, path, options);
@@ -150,9 +157,18 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
         playerId: player.id,
         token: player.token,
         state: {},
+        onCommandCommitted: async (action) => {
+          console.log(
+            `  ✓ ${player.name}: ${actionLabel(action)} committed · next action in ${DEMO_COMMAND_PACE_MS / 1_000}s`,
+          );
+          await Bun.sleep(DEMO_COMMAND_PACE_MS);
+        },
       }),
     ]),
   );
+
+  console.log(`Agents start in ${DEMO_LEAD_IN_MS / 1_000} seconds — open the board now.\n`);
+  await Bun.sleep(DEMO_LEAD_IN_MS);
 
   for (let turn = 1; turn <= 500; turn += 1) {
     const meta = await api(baseUrl, "GET", `/v1/games/${gameId}`);
@@ -172,7 +188,6 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
     await agent.awaitTurn(0);
     console.log(`→ Round ${meta.body.round}: ${active.name} is playing`);
     await agent.playTurn();
-    await Bun.sleep(700);
   }
   throw new Error("demo agents exceeded the 500-turn safety limit");
 }

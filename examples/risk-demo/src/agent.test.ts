@@ -159,4 +159,25 @@ describe("coding-agent harness", () => {
     const after = await s.http("GET", `/v1/games/${s.gameId}`);
     expect(after.body.activePlayerId).not.toBe(active);
   });
+
+  it("runs the pacing hook after every successful command", async () => {
+    const s = await setup(1234);
+    const active = (await s.http("GET", `/v1/games/${s.gameId}`)).body.activePlayerId;
+    const committed: string[] = [];
+    const agent = createAgent({
+      call: s.http,
+      gameId: s.gameId,
+      playerId: active,
+      token: s.tokenByPlayer[active]!,
+      onCommandCommitted: (action) => {
+        committed.push(String(action.type));
+      },
+    });
+
+    await agent.playTurn();
+
+    expect(committed[0]).toBe("reinforce");
+    expect(committed.at(-1)).toBe("end-turn");
+    expect(committed.length).toBeGreaterThan(1);
+  });
 });

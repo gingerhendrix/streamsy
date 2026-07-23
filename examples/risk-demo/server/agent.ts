@@ -35,6 +35,8 @@ export interface CreateAgentOptions {
   token: string;
   /** Mutated in place; snapshot `{ cursor }` to simulate a restart. */
   state?: AgentState;
+  /** Optional observer hook after each successful command; used to pace the live demo. */
+  onCommandCommitted?: (action: Record<string, unknown>) => void | Promise<void>;
 }
 
 export interface Agent {
@@ -142,6 +144,7 @@ export function createAgent(options: CreateAgentOptions): Agent {
       });
       // Any rejection (stale turn, game finished, illegal) means control passed on.
       if (submitted.status !== 200) return;
+      await options.onCommandCommitted?.(action);
       if (action.type === "end-turn") return;
     }
     throw new Error(`agent ${playerId} exceeded ${maxSteps} steps in one turn`);
