@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { getRequestUrl } from "@tanstack/react-start/server";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import { DocsBody } from "fumadocs-ui/layouts/docs/page";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
@@ -24,6 +25,14 @@ export const Route = createFileRoute("/articles/$slug")({
           { property: "og:type", content: "article" },
           { property: "og:title", content: loaderData.title },
           { property: "og:description", content: loaderData.description ?? "" },
+          { property: "og:image", content: loaderData.image },
+          { property: "og:image:width", content: "1200" },
+          { property: "og:image:height", content: "630" },
+          { property: "og:image:type", content: "image/webp" },
+          { name: "twitter:card", content: "summary_large_image" },
+          { name: "twitter:title", content: loaderData.title },
+          { name: "twitter:description", content: loaderData.description ?? "" },
+          { name: "twitter:image", content: loaderData.image },
         ]
       : [],
   }),
@@ -34,7 +43,20 @@ const serverLoader = createServerFn({ method: "GET" })
   .handler(async ({ data: slug }) => {
     const page = articlesSource.getPage([slug]);
     if (!page) throw notFound();
-    return { path: page.path, title: page.data.title, description: page.data.description };
+
+    let image = "/og.webp";
+    try {
+      image = new URL(image, getRequestUrl().origin).href;
+    } catch {
+      // Fall back to the relative path if request context is unavailable.
+    }
+
+    return {
+      path: page.path,
+      title: page.data.title,
+      description: page.data.description,
+      image,
+    };
   });
 
 const clientLoader = browserCollections.articles.createClientLoader({
