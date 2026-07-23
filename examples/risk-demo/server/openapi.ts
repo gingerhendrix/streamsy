@@ -121,7 +121,7 @@ const schemas = {
   },
   CommandAck: {
     type: "object",
-    required: ["status", "commandId", "sourceStreamId", "sourceOffset", "events"],
+    required: ["status", "commandId", "sourceStreamId", "sourceOffset", "txid", "events"],
     properties: {
       status: { enum: ["accepted", "duplicate"] },
       commandId: { type: "string" },
@@ -129,6 +129,10 @@ const schemas = {
       sourceOffset: {
         type: "string",
         description: "Committed final canonical offset of the batch.",
+      },
+      txid: {
+        type: "string",
+        description: "Identity of the command’s final board-projection transition.",
       },
       events: { type: "array", items: { type: "object" } },
     },

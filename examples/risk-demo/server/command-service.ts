@@ -7,6 +7,7 @@ import type { Command } from "../src/commands.ts";
 import { decide, type DecisionError } from "../src/decide.ts";
 import type { GameEvent } from "../src/events.ts";
 import type { Rng } from "../src/rng.ts";
+import { boardProjectionTxId } from "../src/transaction.ts";
 import type { CommandStore } from "./stores.ts";
 import type { StreamProtocolFactory } from "@streamsy/core";
 
@@ -21,6 +22,7 @@ export type SubmitResult =
       commandId: string;
       sourceStreamId: string;
       sourceOffset: string;
+      txid: string;
       events: GameEvent[];
     }
   | { status: "rejected"; commandId: string; error: DecisionError };
@@ -56,7 +58,12 @@ export async function submitCommand(
 ): Promise<SubmitResult> {
   const gameId = "gameId" in command ? command.gameId : sourceStreamId.split("/")[1]!;
   try {
-    return await commandLog(deps, sourceStreamId, gameId).submit(command);
+    const result = await commandLog(deps, sourceStreamId, gameId).submit(command);
+    if (result.status === "rejected") return result;
+    return {
+      ...result,
+      txid: boardProjectionTxId(result.commandId, result.sourceOffset),
+    };
   } catch (error) {
     if (error instanceof CommandIdReuseError) {
       return {

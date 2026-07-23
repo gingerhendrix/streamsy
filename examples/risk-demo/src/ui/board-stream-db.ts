@@ -1,5 +1,9 @@
 import { createStateSchema } from "@durable-streams/state";
-import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
+import {
+  createStreamDB,
+  type CreateStreamDBOptions,
+  type StreamDB,
+} from "@durable-streams/state/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { useEffect, useState } from "react";
 import { z } from "zod";
@@ -91,9 +95,61 @@ export const riskBoardState = createStateSchema({
 export type RiskBoardDb = StreamDB<typeof riskBoardState>;
 export type SyncStatus = "idle" | "connecting" | "catching-up" | "live" | "error";
 
+type RiskBoardDbOptions = CreateStreamDBOptions<typeof riskBoardState>;
+type RiskBoardDbFactory = (options: RiskBoardDbOptions) => RiskBoardDb;
+
+export interface RiskBoardSession {
+  readonly db: RiskBoardDb;
+  readonly collections: RiskBoardDb["collections"];
+  readonly offset: string;
+  preload(): Promise<void>;
+  awaitTxId(txid: string, timeoutMs?: number): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface CreateRiskBoardSessionOptions {
+  streamId: string;
+  onBeforeBatch?: NonNullable<RiskBoardDbOptions["onBeforeBatch"]>;
+  onBatch?: NonNullable<RiskBoardDbOptions["onBatch"]>;
+  /** Test seam; production always uses the official Stream DB factory. */
+  createDb?: RiskBoardDbFactory;
+}
+
 function streamUrl(streamId: string): string {
   const path = streamId.split("/").map(encodeURIComponent).join("/");
   return new URL(`/streams/${path}`, window.location.origin).toString();
+}
+
+/** Open one owned, typed materialization of a Risk board projection stream. */
+export function createRiskBoardSession(options: CreateRiskBoardSessionOptions): RiskBoardSession {
+  const db = (options.createDb ?? createStreamDB)({
+    streamOptions: {
+      url: streamUrl(options.streamId),
+      contentType: "application/json",
+      warnOnHttp: false,
+    },
+    live: "long-poll",
+    state: riskBoardState,
+    onBeforeBatch: options.onBeforeBatch,
+    onBatch: options.onBatch,
+  });
+  let closing: Promise<void> | undefined;
+
+  return {
+    db,
+    collections: db.collections,
+    get offset() {
+      return db.offset;
+    },
+    preload: () => db.preload(),
+    awaitTxId: (txid, timeoutMs) => db.utils.awaitTxId(txid, timeoutMs),
+    close: () => {
+      closing ??= (async () => {
+        db.close();
+      })();
+      return closing;
+    },
+  };
 }
 
 interface QueryRows {
@@ -120,39 +176,36 @@ export function boardRowsFromQueries(rows: QueryRows): BoardRows | null {
 }
 
 export interface RiskBoardStreamResult {
-  db: RiskBoardDb | null;
+  session: RiskBoardSession | null;
   rows: BoardRows | null;
   status: SyncStatus;
   streamOffset: string | null;
   error: string | null;
 }
 
-/** Own one StreamDB connection per active projection generation. */
+/** Own one StreamDB session per active projection generation. */
 export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResult {
-  const [session, setSession] = useState<{ streamId: string; db: RiskBoardDb } | null>(null);
+  const [active, setActive] = useState<{
+    streamId: string;
+    session: RiskBoardSession;
+  } | null>(null);
   const [status, setStatus] = useState<SyncStatus>("idle");
   const [streamOffset, setStreamOffset] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const db = session?.streamId === streamId ? session.db : null;
+  const session = active?.streamId === streamId ? active.session : null;
 
   useEffect(() => {
     setError(null);
     setStreamOffset(null);
     if (!streamId) {
-      setSession(null);
+      setActive(null);
       setStatus("idle");
       return;
     }
 
     let cancelled = false;
-    const created = createStreamDB({
-      streamOptions: {
-        url: streamUrl(streamId),
-        contentType: "application/json",
-        warnOnHttp: false,
-      },
-      live: "long-poll",
-      state: riskBoardState,
+    const created = createRiskBoardSession({
+      streamId,
       onBeforeBatch: () => {
         if (!cancelled) setStatus("catching-up");
       },
@@ -162,7 +215,7 @@ export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResu
         setStatus(batch.upToDate ? "live" : "catching-up");
       },
     });
-    setSession({ streamId, db: created });
+    setActive({ streamId, session: created });
     setStatus("connecting");
 
     void created.preload().then(
@@ -180,29 +233,30 @@ export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResu
 
     return () => {
       cancelled = true;
-      created.close();
+      void created.close();
     };
   }, [streamId]);
 
   const games = useLiveQuery(
-    (query) => (db ? query.from({ games: db.collections.games }) : undefined),
-    [db],
+    (query) => (session ? query.from({ games: session.collections.games }) : undefined),
+    [session],
   );
   const players = useLiveQuery(
-    (query) => (db ? query.from({ players: db.collections.players }) : undefined),
-    [db],
+    (query) => (session ? query.from({ players: session.collections.players }) : undefined),
+    [session],
   );
   const territories = useLiveQuery(
-    (query) => (db ? query.from({ territories: db.collections.territories }) : undefined),
-    [db],
+    (query) => (session ? query.from({ territories: session.collections.territories }) : undefined),
+    [session],
   );
   const moves = useLiveQuery(
-    (query) => (db ? query.from({ moves: db.collections.moves }) : undefined),
-    [db],
+    (query) => (session ? query.from({ moves: session.collections.moves }) : undefined),
+    [session],
   );
   const projectionMeta = useLiveQuery(
-    (query) => (db ? query.from({ projectionMeta: db.collections.projectionMeta }) : undefined),
-    [db],
+    (query) =>
+      session ? query.from({ projectionMeta: session.collections.projectionMeta }) : undefined,
+    [session],
   );
 
   const rows = boardRowsFromQueries({
@@ -213,5 +267,5 @@ export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResu
     projectionMeta: projectionMeta.data ?? [],
   });
 
-  return { db, rows, status, streamOffset, error };
+  return { session, rows, status, streamOffset, error };
 }

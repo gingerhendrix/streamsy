@@ -4,6 +4,7 @@ import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core
 import { buildApp, type App } from "../server/app.ts";
 import { createInMemoryStores, type Stores } from "../server/stores.ts";
 import { createSeededRng } from "./rng.ts";
+import { boardProjectionTxId } from "./transaction.ts";
 
 interface Harness {
   app: App;
@@ -151,6 +152,7 @@ describe("risk command API", () => {
     expect(res.body.sourceStreamId).toBe(`games/${game.gameId}/events`);
     expect(typeof res.body.sourceOffset).toBe("string");
     expect(res.body.sourceOffset).not.toBe("");
+    expect(res.body.txid).toBe(boardProjectionTxId("cmd-1", res.body.sourceOffset));
   });
 
   it("enforces capability isolation across players and games", async () => {
@@ -357,6 +359,7 @@ describe("risk command API", () => {
     const schemas = res.body.components.schemas;
     expect(schemas.GameCommand.properties.action.oneOf).toHaveLength(4);
     expect(schemas.CommandAck.properties.sourceOffset).toBeDefined();
+    expect(schemas.CommandAck.properties.txid).toBeDefined();
     expect(schemas.ErrorResponse.properties.error.properties.code.enum).toContain("STALE_TURN");
   });
 

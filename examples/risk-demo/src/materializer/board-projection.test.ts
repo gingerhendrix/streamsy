@@ -12,6 +12,7 @@ import {
   type ProjectionState,
 } from "../projection.ts";
 import { recordFullGameEvents } from "../testkit.ts";
+import { boardProjectionTxId } from "../transaction.ts";
 import { createBoardProjectionAdapter, writeCanonicalEvents } from "./board-projection.ts";
 
 const SOURCE = "games/game-1/events";
@@ -57,6 +58,30 @@ describe("board projection materializer", () => {
     const expected = aggregateBoardView(foldAggregate(events));
     expect(boardsEqual(projectionView(runtime), expected)).toBe(true);
     expect(runtime.currentState().game.status).toBe("finished");
+  });
+
+  it("marks each projection transition with its command and exact source position", async () => {
+    const events = recordFullGameEvents(1234).slice(0, 3);
+    const protocol = newProtocol();
+    const offsets = await writeCanonicalEvents(protocol, SOURCE, events);
+    await new ProjectionRuntime({ protocol, adapter: adapterFor() }).catchUp();
+
+    const output = await protocol.get(OUTPUT);
+    expect(output.status).toBe("ok");
+    if (output.status !== "ok") return;
+    const read = await output.stream.read({});
+    expect(read.status).toBe("ok");
+    if (read.status !== "ok") return;
+    const messages = read.messages.map(
+      (message) =>
+        JSON.parse(new TextDecoder().decode(message.data)) as { headers: { txid?: string } },
+    );
+    const finalTxId = boardProjectionTxId(events.at(-1)!.commandId, offsets.at(-1)!);
+
+    expect(messages.at(-1)?.headers.txid).toBe(finalTxId);
+    expect(messages.filter((message) => message.headers.txid === finalTxId).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("keeps the atomic watermark equal to the aggregate board at every prefix", async () => {

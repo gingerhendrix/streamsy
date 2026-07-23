@@ -35,6 +35,8 @@ export interface DurableStateProjectionAdapterOptions<
   initial(): State;
   reduce(state: State, event: Event, meta: ProjectionMeta): State;
   rows(state: State): readonly DurableStateProjectionRow[];
+  /** Optional identity attached to every change in a projected source transition. */
+  txid?(event: Event, meta: ProjectionMeta): string | undefined;
   meta: { type: keyof ValuesByWireType<Schema> & string; key: string };
 }
 
@@ -46,17 +48,25 @@ function change(
   row: DurableStateProjectionRow,
   operation: "insert" | "update",
   offset: string,
+  txid?: string,
 ): ChangeMessage<string, unknown> {
-  return { ...row, headers: { operation, offset } } as ChangeMessage<string, unknown>;
+  return { ...row, headers: { operation, offset, ...(txid ? { txid } : {}) } } as ChangeMessage<
+    string,
+    unknown
+  >;
 }
 
-function deletion(row: DurableStateProjectionRow, offset: string): ChangeMessage<string, unknown> {
+function deletion(
+  row: DurableStateProjectionRow,
+  offset: string,
+  txid?: string,
+): ChangeMessage<string, unknown> {
   return {
     type: row.type,
     key: row.key,
     value: null,
     old_value: row.value,
-    headers: { operation: "delete", offset },
+    headers: { operation: "delete", offset, ...(txid ? { txid } : {}) },
   } as ChangeMessage<string, unknown>;
 }
 
@@ -78,6 +88,7 @@ export function durableStateProjectionAdapter<State, Event, Schema extends Durab
   function encodeTransition(
     transition: ProjectionTransition<State, Event>,
   ): ChangeMessage<string, unknown>[] {
+    const txid = options.txid?.(transition.event, transition.meta);
     const before = new Map(
       options.rows(transition.prev).map((row) => [`${row.type}\0${row.key}`, row]),
     );
@@ -87,14 +98,14 @@ export function durableStateProjectionAdapter<State, Event, Schema extends Durab
       if (!codec) throw new Error(`unknown Durable State row type: ${row.type}`);
       codec.decode(row.value);
       const previous = before.get(`${row.type}\0${row.key}`);
-      if (!previous) changes.push(change(row, "insert", transition.meta.sourceThroughOffset));
+      if (!previous) changes.push(change(row, "insert", transition.meta.sourceThroughOffset, txid));
       else if (!equal(previous.value, row.value)) {
-        changes.push(change(row, "update", transition.meta.sourceThroughOffset));
+        changes.push(change(row, "update", transition.meta.sourceThroughOffset, txid));
       }
       before.delete(`${row.type}\0${row.key}`);
     }
     for (const removed of before.values()) {
-      changes.push(deletion(removed, transition.meta.sourceThroughOffset));
+      changes.push(deletion(removed, transition.meta.sourceThroughOffset, txid));
     }
     const checkpoint: DurableStateProjectionMetaRow<State> = {
       ...transition.meta,
@@ -108,6 +119,7 @@ export function durableStateProjectionAdapter<State, Event, Schema extends Durab
         { type: options.meta.type, key: options.meta.key, value: checkpoint },
         "update",
         transition.meta.sourceThroughOffset,
+        txid,
       ),
     );
     return changes;

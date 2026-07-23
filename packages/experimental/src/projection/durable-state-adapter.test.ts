@@ -24,6 +24,7 @@ describe("durableStateProjectionAdapter", () => {
       initial: (): State => ({ rows: [] }),
       reduce: (state, event) => ({ rows: [...state.rows, event] }),
       rows: (state) => state.rows.map((value) => ({ type: "row", key: value.id, value })),
+      txid: (event, transitionMeta) => `${event.id}:${transitionMeta.sourceThroughOffset}`,
       meta: { type: "projectionMeta", key: "main" },
     });
     const meta = {
@@ -41,6 +42,9 @@ describe("durableStateProjectionAdapter", () => {
       "row",
       "projectionMeta",
     ]);
+    expect(
+      encoded.map((message) => (message as { headers: { txid?: string } }).headers.txid),
+    ).toEqual(["a:2", "a:2"]);
     const bytes = encoded.map((message) => new TextEncoder().encode(JSON.stringify(message)));
     expect(adapter.decodeCheckpoint(bytes)).toEqual({
       state: next,

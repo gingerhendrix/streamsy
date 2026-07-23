@@ -22,6 +22,7 @@ import {
 } from "./command-service.ts";
 import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } from "./http.ts";
 import { BOARD_GENERATION, boardStreamId, eventStreamId } from "./names.ts";
+import { boardProjectionTxId } from "../src/transaction.ts";
 import { openApiDocument } from "./openapi.ts";
 import { catchUpTurns, readTurns } from "./turn-notifier.ts";
 import type { AppContext } from "./app.ts";
@@ -228,11 +229,13 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const row = await recoverCommand(ctx.commandService, eventStreamId(gameId), gameId, commandId);
     if (!row) return error(404, "NOT_FOUND", "Unknown command.");
     if (row.status === "accepted") {
+      if (!row.sourceOffset) return error(500, "INTERNAL", "Accepted command has no offset.");
       return json({
         status: "accepted",
         commandId,
         sourceStreamId: eventStreamId(gameId),
         sourceOffset: row.sourceOffset,
+        txid: boardProjectionTxId(commandId, row.sourceOffset),
         events: row.events,
       });
     }

@@ -285,12 +285,18 @@ export function App() {
       token: identity.token,
       body: {},
     });
+    if (result.status === 200 && !isError(result.body)) {
+      try {
+        if (!live.session) throw new Error("Board session is not connected.");
+        await live.session.awaitTxId(result.body.txid);
+        setNotice("Game started — watch the live board deal territories.");
+      } catch {
+        setNotice("Game started, but the live board is still catching up.");
+      }
+    } else {
+      setNotice(errorMessage(result.body, "Could not start the game."));
+    }
     setBusy(false);
-    setNotice(
-      result.status === 200
-        ? "Game started — watch the live board deal territories."
-        : errorMessage(result.body, "Could not start the game."),
-    );
     await refreshGame();
   };
 
@@ -306,12 +312,18 @@ export function App() {
       token: identity.token,
       body,
     });
+    if (result.status === 200 && !isError(result.body)) {
+      try {
+        if (!live.session) throw new Error("Board session is not connected.");
+        await live.session.awaitTxId(result.body.txid);
+        setNotice(acknowledgementNotice(action.type));
+      } catch {
+        setNotice(`${acknowledgementNotice(action.type)} Live board still catching up.`);
+      }
+    } else {
+      setNotice(errorMessage(result.body, "Move rejected."));
+    }
     setBusy(false);
-    setNotice(
-      result.status === 200
-        ? acknowledgementNotice(action.type)
-        : errorMessage(result.body, "Move rejected."),
-    );
     await refreshGame();
   };
 

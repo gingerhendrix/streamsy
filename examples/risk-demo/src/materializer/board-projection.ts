@@ -9,6 +9,7 @@ import type { DurableStateSchemaMap } from "@streamsy/state";
 
 import type { GameEvent } from "../events.ts";
 import { RULESET } from "../map.ts";
+import { boardProjectionTxId } from "../transaction.ts";
 import {
   initialProjection,
   projectEvent,
@@ -63,6 +64,7 @@ export function createBoardProjectionAdapter(
     schema: boardSchema,
     initial: initialProjection,
     reduce: (state, event, meta) => projectEvent(state, event, meta.sourceThroughOffset),
+    txid: (event, meta) => boardProjectionTxId(event.commandId, meta.sourceThroughOffset),
     rows: (state) => [
       { type: "game", key: state.game.id ?? options.gameId, value: state.game },
       ...state.players.map((value) => ({ type: "player", key: value.id, value })),

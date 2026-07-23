@@ -99,6 +99,8 @@ export interface CommandAck {
   commandId: string;
   sourceStreamId: string;
   sourceOffset: string;
+  /** Final board-projection transition for this accepted command. */
+  txid: string;
   events: GameEvent[];
   turnId?: string;
 }
