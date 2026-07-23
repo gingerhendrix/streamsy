@@ -15,7 +15,7 @@ import {
 import type { LegalAction } from "../legal-actions.ts";
 import { TERRITORIES } from "../map.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../projection.ts";
-import { boardStateSchema, useDurableState } from "./use-durable-state.ts";
+import { useRiskBoardStream } from "./board-stream-db.ts";
 
 interface Identity {
   gameId: string;
@@ -139,7 +139,7 @@ export function App() {
   const [color, setColor] = useState(COLORS[0]!);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const live = useDurableState(game?.boardStreamId ?? null, boardStateSchema);
+  const live = useRiskBoardStream(game?.boardStreamId ?? null);
   const board = live.rows;
 
   useEffect(() => {

@@ -17,14 +17,17 @@
     "test:sqlite": "bun test server"
   },
   "dependencies": {
-    "@streamsy/client": "workspace:*",
+    "@durable-streams/state": "^0.3.1",
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
     "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
-    "react": "latest",
-    "react-dom": "latest"
+    "@tanstack/db": "0.6.8",
+    "@tanstack/react-db": "^0.1.83",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "zod": "^4.4.1"
   },
   "devDependencies": {
     "@types/react": "latest",
