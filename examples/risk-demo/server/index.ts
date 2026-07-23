@@ -10,6 +10,7 @@
  * Prints `LISTENING <port>` once serving (used by the smoke/restart harness).
  */
 
+import { rmSync } from "node:fs";
 import { createStreamProtocol } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 
@@ -19,6 +20,7 @@ import index from "../public/index.html";
 
 const port = Number.parseInt(process.env.PORT ?? "1339", 10);
 const dbPath = process.env.DB_PATH ?? ":memory:";
+const deleteDbOnExit = process.env.DELETE_DB_ON_EXIT === "1";
 
 const adapter = createSqliteStorageAdapter({ filename: dbPath });
 const protocol = createStreamProtocol({ storage: { adapter } });
@@ -52,10 +54,13 @@ const server = Bun.serve({
 const shutdown = (): void => {
   server.stop(true);
   adapter.close();
+  if (deleteDbOnExit && dbPath !== ":memory:") {
+    for (const path of [dbPath, `${dbPath}-shm`, `${dbPath}-wal`]) rmSync(path, { force: true });
+  }
   process.exit(0);
 };
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
 
 console.log(`LISTENING ${server.port}`);
 

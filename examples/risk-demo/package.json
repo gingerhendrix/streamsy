@@ -5,6 +5,7 @@
   "description": "Deterministic, headless event-sourced Streamsy Risk demo: kernel, projection materializer, and durable command API.",
   "type": "module",
   "scripts": {
+    "demo": "bash scripts/run-demo.sh",
     "dev": "bun --hot server/index.ts",
     "start": "NODE_ENV=production bun server/index.ts",
     "agent": "bun run scripts/agent.ts",

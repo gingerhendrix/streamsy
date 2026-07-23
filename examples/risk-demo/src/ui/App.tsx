@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   friendlyError,
@@ -12,6 +12,7 @@ import {
   type PlayAction,
   type PlayCommandRequest,
 } from "../api.ts";
+import type { GameStatus } from "../aggregate.ts";
 import type { LegalAction } from "../legal-actions.ts";
 import { TERRITORIES } from "../map.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../projection.ts";
@@ -89,6 +90,15 @@ function errorMessage(body: unknown, fallback: string): string {
   return friendlyError(body.error.code as ApiErrorCode, body.error.message);
 }
 
+export function acknowledgementNotice(actionType: string): string {
+  const action = actionType.replaceAll("-", " ");
+  return `${action.charAt(0).toUpperCase()}${action.slice(1)} committed to the stream.`;
+}
+
+export function didGameStatusChange(previous: GameStatus | null, current: GameStatus): boolean {
+  return previous !== null && previous !== current;
+}
+
 const compactOffsetPart = (part: string): string => part.replace(/^0+(?=\d)/, "");
 
 function shortOffset(offset: string | null | undefined): string {
@@ -139,8 +149,16 @@ export function App() {
   const [color, setColor] = useState(COLORS[0]!);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const previousStatus = useRef<GameStatus | null>(null);
   const live = useRiskBoardStream(game?.boardStreamId ?? null);
   const board = live.rows;
+
+  useEffect(() => {
+    const current = board?.game.status;
+    if (!current) return;
+    if (didGameStatusChange(previousStatus.current, current)) setNotice("");
+    previousStatus.current = current;
+  }, [board?.game.status]);
 
   useEffect(() => {
     if (identity || !board) return;
@@ -287,7 +305,7 @@ export function App() {
     setBusy(false);
     setNotice(
       result.status === 200
-        ? `${action.type.replace("-", " ")} committed to the stream.`
+        ? acknowledgementNotice(action.type)
         : errorMessage(result.body, "Move rejected."),
     );
     await refreshGame();
