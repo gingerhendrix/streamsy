@@ -2,9 +2,9 @@
  * End-to-end HTTP smoke for the durable Risk API.
  *
  * Spawns the real Bun server against a temp SQLite file, drives create → join →
- * start → decision → command → board → recovery over HTTP, then kills the server,
+ * start → decision → command → board → duplicate retry over HTTP, then kills the server,
  * respawns it against the SAME database file, and proves events, board projection,
- * command recovery, and capability verifiers all survived the restart.
+ * idempotent command retries and capability verifiers all survived the restart.
  *
  *   bun run scripts/http-smoke.ts
  */
@@ -105,13 +105,14 @@ async function main(): Promise<void> {
     const reinforce = decision.body.legalActions.find((a: any) => a.type === "reinforce");
     assert(reinforce, "expected a reinforce action");
 
+    const commandBody = {
+      commandId: "smoke-cmd",
+      turnId: decision.body.turn.id,
+      action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 2 },
+    };
     const ack = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
       token: tokenByPlayer[active],
-      body: {
-        commandId: "smoke-cmd",
-        turnId: decision.body.turn.id,
-        action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 2 },
-      },
+      body: commandBody,
     });
     assert(ack.status === 200 && ack.body.status === "accepted", `command: ${ack.status}`);
     const committedOffset: string = ack.body.sourceOffset;
@@ -148,10 +149,15 @@ async function main(): Promise<void> {
     const metaAfter = await api(server.baseUrl, "GET", `/v1/games/${gameId}`);
     assert(metaAfter.body.status === "playing", "status lost across restart");
 
-    const recovered = await api(server.baseUrl, "GET", `/v1/games/${gameId}/commands/smoke-cmd`, {
-      token: tokenByPlayer[hostId],
+    const retry = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
+      token: tokenByPlayer[active],
+      body: commandBody,
     });
-    assert(recovered.body.sourceOffset === committedOffset, "command recovery lost across restart");
+    assert(retry.body.status === "duplicate", "command retry was not deduplicated after restart");
+    assert(
+      retry.body.sourceOffset === committedOffset,
+      "command retry offset changed after restart",
+    );
 
     const boardAfter = await api(server.baseUrl, "GET", `/v1/games/${gameId}/board`);
     assert(

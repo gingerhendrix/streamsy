@@ -281,12 +281,6 @@ export const openApiDocument = {
         },
       },
     },
-    "/v1/games/{gameId}/commands/{commandId}": {
-      get: {
-        summary: "Recover a previously accepted or rejected command result.",
-        responses: { "200": jsonResponse("CommandAck") },
-      },
-    },
   },
   components: { schemas },
 } as const;

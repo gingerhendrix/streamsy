@@ -49,7 +49,7 @@ async function call(
   return { status: res.status, body: await res.json() };
 }
 
-test("SQLite preserves events, projections, command recovery, and capabilities across restart", async () => {
+test("SQLite preserves events, projections, command retries, and capabilities across restart", async () => {
   const first = openApp();
 
   const created = await call(first.app, "POST", "/v1/games", {
@@ -76,13 +76,14 @@ test("SQLite preserves events, projections, command recovery, and capabilities a
     token: tokenByPlayer[active]!,
   });
   const reinforce = decision.body.legalActions.find((a: any) => a.type === "reinforce");
+  const commandBody = {
+    commandId: "persist-cmd",
+    turnId: decision.body.turn.id,
+    action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 2 },
+  };
   const ack = await call(first.app, "POST", `/v1/games/${gameId}/commands`, {
     token: tokenByPlayer[active]!,
-    body: {
-      commandId: "persist-cmd",
-      turnId: decision.body.turn.id,
-      action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 2 },
-    },
+    body: commandBody,
   });
   expect(ack.status).toBe(200);
   const committedOffset: string = ack.body.sourceOffset;
@@ -106,13 +107,6 @@ test("SQLite preserves events, projections, command recovery, and capabilities a
   expect(metaAfter.body.status).toBe("playing");
   expect(metaAfter.body.activePlayerId).toBe(active);
 
-  // Command recovery survived and points at the same canonical offset.
-  const recovered = await call(second.app, "GET", `/v1/games/${gameId}/commands/persist-cmd`, {
-    token: hostToken,
-  });
-  expect(recovered.status).toBe(200);
-  expect(recovered.body.sourceOffset).toBe(committedOffset);
-
   // The capability verifier survived: the original token still authenticates.
   const decisionAfter = await call(second.app, "GET", `/v1/games/${gameId}/decision`, {
     token: hostToken,
@@ -127,12 +121,9 @@ test("SQLite preserves events, projections, command recovery, and capabilities a
   // A retry of the persisted command is still idempotent after restart.
   const retry = await call(second.app, "POST", `/v1/games/${gameId}/commands`, {
     token: tokenByPlayer[active]!,
-    body: {
-      commandId: "persist-cmd",
-      turnId: decision.body.turn.id,
-      action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 2 },
-    },
+    body: commandBody,
   });
+  expect(retry.status).toBe(200);
   expect(retry.body.status).toBe("duplicate");
   expect(retry.body.sourceOffset).toBe(committedOffset);
 

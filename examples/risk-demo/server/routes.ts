@@ -14,15 +14,9 @@ import { MAP_VERSION, RULESET } from "../src/map.ts";
 import { projectionBoardView } from "../src/projection.ts";
 import { BOARD_REDUCER_VERSION } from "../src/materializer/board-projection.ts";
 import { materializeBoard } from "./board.ts";
-import {
-  readCanonical,
-  recoverCommand,
-  submitCommand,
-  type SubmitResult,
-} from "./command-service.ts";
+import { readCanonical, submitCommand, type SubmitResult } from "./command-service.ts";
 import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } from "./http.ts";
 import { BOARD_GENERATION, boardStreamId, eventStreamId } from "./names.ts";
-import { boardProjectionTxId } from "../src/transaction.ts";
 import { openApiDocument } from "./openapi.ts";
 import { catchUpTurns, readTurns } from "./turn-notifier.ts";
 import type { AppContext } from "./app.ts";
@@ -221,28 +215,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     );
   }
 
-  async function getCommand(request: Request, params: Record<string, string>): Promise<Response> {
-    const gameId = params.gameId!;
-    const cap = await ctx.requireCapability(request, gameId);
-    if (cap instanceof Response) return cap;
-    const commandId = params.commandId!;
-    const row = await recoverCommand(ctx.commandService, eventStreamId(gameId), gameId, commandId);
-    if (!row) return error(404, "NOT_FOUND", "Unknown command.");
-    if (row.status === "accepted") {
-      if (!row.sourceOffset) return error(500, "INTERNAL", "Accepted command has no offset.");
-      return json({
-        status: "accepted",
-        commandId,
-        sourceStreamId: eventStreamId(gameId),
-        sourceOffset: row.sourceOffset,
-        txid: boardProjectionTxId(commandId, row.sourceOffset),
-        events: row.events,
-      });
-    }
-    const code = (row.error?.code ?? "ILLEGAL_ACTION") as ErrorCode;
-    return error(statusForCode(code), code, row.error?.message ?? "rejected");
-  }
-
   return [
     { method: "GET", pattern: "/", handler: () => json({ name: "risk-demo", ok: true }) },
     { method: "GET", pattern: "/openapi.json", handler: () => json(openApiDocument) },
@@ -253,7 +225,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     { method: "GET", pattern: "/v1/games/:gameId/board", handler: getBoard },
     { method: "GET", pattern: "/v1/games/:gameId/decision", handler: getDecision },
     { method: "POST", pattern: "/v1/games/:gameId/commands", handler: postCommand },
-    { method: "GET", pattern: "/v1/games/:gameId/commands/:commandId", handler: getCommand },
     { method: "GET", pattern: "/v1/games/:gameId/players/me/turns", handler: getTurns },
   ];
 }

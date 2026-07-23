@@ -1,6 +1,7 @@
-export { CommandIdReuseError, createCommandLog } from "./command-log.ts";
+export { CommandIdReuseError, createCommandLog, readCommandHistory } from "./command-log.ts";
 export type {
   CommandDecision,
+  CommandHistoryOptions,
   CommandLogOptions,
   CommandLogRecord,
   CommandLogResult,

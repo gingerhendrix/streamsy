@@ -111,8 +111,6 @@ export interface FaultHooks {
 export interface ProjectionRuntimeOptions<State, Event> {
   protocol: StreamProtocolFactory;
   adapter: ProjectionAdapter<State, Event>;
-  /** Producer epoch; bump to fence a superseded writer. Defaults to `1`. */
-  producerEpoch?: number;
   faults?: FaultHooks;
 }
 
@@ -127,7 +125,7 @@ export interface ProjectionRuntimeStatus {
   /** 0-based ordinal of the last applied source event, or -1 if none. */
   sourceSeq: number;
   outputTail: StreamOffset;
-  /** Set when a poison event or fencing halted the projection. */
+  /** Set when a poison event halted the projection. */
   lastError: { sourceSeq: number; sourceOffset: StreamOffset; message: string } | null;
 }
 
@@ -153,7 +151,6 @@ function describe(result: { status: string }): string {
 export class ProjectionRuntime<State, Event> {
   private readonly protocol: StreamProtocolFactory;
   private readonly adapter: ProjectionAdapter<State, Event>;
-  private readonly producerEpoch: number;
   private readonly faults: FaultHooks;
   private readonly contentType: string;
   private readonly producerId: string;
@@ -171,7 +168,6 @@ export class ProjectionRuntime<State, Event> {
   constructor(options: ProjectionRuntimeOptions<State, Event>) {
     this.protocol = options.protocol;
     this.adapter = options.adapter;
-    this.producerEpoch = options.producerEpoch ?? 1;
     this.faults = options.faults ?? {};
     this.contentType = options.adapter.outputContentType ?? CONTENT_TYPE;
     this.producerId = `${this.adapter.processorId}::${this.adapter.generation}::${this.adapter.sourceStreamId}`;
@@ -320,7 +316,7 @@ export class ProjectionRuntime<State, Event> {
       contentType: this.contentType,
       producer: {
         producerId: this.producerId,
-        producerEpoch: this.producerEpoch,
+        producerEpoch: 1,
         producerSeq: meta.sourceSeq,
       },
       expectedOffset: this.outputTail,
@@ -341,15 +337,6 @@ export class ProjectionRuntime<State, Event> {
       case "conflict": {
         if (result.conflictReason === "expected-offset") return "reload";
         throw new Error(`projection append conflict: ${result.conflictReason}`);
-      }
-      case "stale-epoch": {
-        this.stopped = true;
-        this.lastError = {
-          sourceSeq: meta.sourceSeq,
-          sourceOffset: message.offset,
-          message: `fenced by newer epoch ${result.currentEpoch}`,
-        };
-        return "halt";
       }
       default:
         throw new Error(`unexpected projection append status: ${describe(result)}`);

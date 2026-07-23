@@ -57,7 +57,8 @@ cutovers; it does not drive board state.
 - **Deterministic replay:** dice, territory allocation, and turn order are recorded once in canonical
   events. Replaying never calls the RNG.
 - **Idempotent commands:** retrying a `commandId` returns the original outcome and source offset;
-  reusing it for different input is rejected.
+  reusing it for different input is rejected. Re-submit the same payload to recover after a lost
+  response.
 - **Turn preconditions:** stale or out-of-turn commands are rejected before they can affect a later
   turn.
 - **Causal reads:** a command ack's canonical offset can be passed to `syncedThrough` to wait until
@@ -75,7 +76,7 @@ cutovers; it does not drive board state.
 | --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Watchable product demo      | `bun run demo:risk`                                         | Fresh workspace outputs are bootstrapped; spectator URL is printed; agents play; Ctrl-C cleans up |
 | Risk unit/integration suite | `bun run --cwd examples/risk-demo test`                     | Kernel, API, materializer, turn streams, agents, rebuild, Stream DB shaping, and proof tests      |
-| SQLite durability           | `bun run --cwd examples/risk-demo test:sqlite`              | Persistence, cursor resume, command recovery, and generation cutover survive restart              |
+| SQLite durability           | `bun run --cwd examples/risk-demo test:sqlite`              | Persistence, cursor resume, duplicate command retry, and generation cutover survive restart       |
 | Real HTTP smoke             | `bun run --cwd examples/risk-demo smoke:http`               | Server, SPA, auth, command/board flow, and SQLite restart                                         |
 | Signature proof             | `bun run --cwd examples/risk-demo proof`                    | Recorded dice, duplicate retry, stale rejection, causal sync, crash recovery, rebuild, and winner |
 | Static checks               | `bun run typecheck && bun run lint && bun run format:check` | Workspace build/types plus repository lint and format                                             |

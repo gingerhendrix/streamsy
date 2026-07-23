@@ -44,6 +44,40 @@ export interface CommandLogOptions<State, Event, Command, Rejection> {
   maxAttempts?: number;
 }
 
+export interface CommandHistoryOptions<Event> {
+  protocol: StreamProtocolFactory;
+  streamId: string;
+  eventSchema: JsonSchema<Event>;
+  eventCommandIdOf(event: Event): string;
+}
+
+export async function readCommandHistory<Event>(options: CommandHistoryOptions<Event>) {
+  const json = createJsonProtocol(options.protocol, options.eventSchema);
+  const got = await json.get(options.streamId);
+  if (got.status === "not-found") {
+    return {
+      events: [] as Event[],
+      head: ZERO_OFFSET,
+      byCommand: new Map<string, { events: Event[]; lastOffset: string }>(),
+    };
+  }
+  if (got.status !== "ok") throw new Error(`cannot read command stream: ${got.status}`);
+  const history = await got.stream.readAll();
+  const byCommand = new Map<string, { events: Event[]; lastOffset: string }>();
+  for (const message of history.messages) {
+    const event = message.value;
+    const commandId = options.eventCommandIdOf(event);
+    const prior = byCommand.get(commandId);
+    if (prior) {
+      prior.events.push(event);
+      prior.lastOffset = message.offset;
+    } else {
+      byCommand.set(commandId, { events: [event], lastOffset: message.offset });
+    }
+  }
+  return { events: history.values, head: history.head, byCommand };
+}
+
 async function hashPayload(payload: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -55,51 +89,7 @@ export function createCommandLog<State, Event, Command, Rejection>(
 ) {
   const json = createJsonProtocol(options.protocol, options.eventSchema);
 
-  async function readAll() {
-    const got = await json.get(options.streamId);
-    if (got.status === "not-found") {
-      return {
-        events: [] as Event[],
-        head: ZERO_OFFSET,
-        byCommand: new Map<string, { events: Event[]; lastOffset: string }>(),
-      };
-    }
-    if (got.status !== "ok") throw new Error(`cannot read command stream: ${got.status}`);
-    const history = await got.stream.readAll();
-    const byCommand = new Map<string, { events: Event[]; lastOffset: string }>();
-    for (const message of history.messages) {
-      const event = message.value;
-      const commandId = options.eventCommandIdOf(event);
-      const prior = byCommand.get(commandId);
-      if (prior) {
-        prior.events.push(event);
-        prior.lastOffset = message.offset;
-      } else {
-        byCommand.set(commandId, { events: [event], lastOffset: message.offset });
-      }
-    }
-    return { events: history.values, head: history.head, byCommand };
-  }
-
-  async function get(commandId: string) {
-    const cached = options.store?.get(commandId);
-    if (cached) return cached;
-    const history = await readAll();
-    const prior = history.byCommand.get(commandId);
-    if (!prior) return null;
-    // Canonical events prove that the command was accepted, but they do not
-    // retain its original payload. After an optional ack cache is lost, get()
-    // can recover the ack but cannot later detect a different payload reusing
-    // this commandId. Applications needing that check must durably retain the
-    // command payload hash alongside the canonical log.
-    return {
-      commandId,
-      payloadHash: "",
-      status: "accepted" as const,
-      sourceOffset: prior.lastOffset,
-      events: prior.events,
-    };
-  }
+  const readAll = () => readCommandHistory(options);
 
   async function submit(command: Command): Promise<CommandLogResult<Event, Rejection>> {
     const commandId = options.commandIdOf(command);
@@ -176,7 +166,7 @@ export function createCommandLog<State, Event, Command, Rejection>(
     throw new Error(`command ${commandId} could not commit after bounded retries`);
   }
 
-  return { submit, get, readAll };
+  return { submit, readAll };
 }
 
 export class CommandIdReuseError extends Error {

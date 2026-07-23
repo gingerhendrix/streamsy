@@ -225,13 +225,6 @@ describe("risk command API", () => {
     expect(retry.body.status).toBe("duplicate");
     expect(retry.body.sourceOffset).toBe(first.body.sourceOffset);
     expect(retry.body.events).toEqual(first.body.events);
-
-    // Recovery endpoint returns the same accepted result.
-    const recovered = await call(app, "GET", `/v1/games/${game.gameId}/commands/attack-once`, {
-      token,
-    });
-    expect(recovered.status).toBe(200);
-    expect(recovered.body.sourceOffset).toBe(first.body.sourceOffset);
   });
 
   it("rejects a reused commandId that carries a different payload", async () => {

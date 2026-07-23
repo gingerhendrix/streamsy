@@ -1,5 +1,9 @@
 /** Risk bindings for the generic Streamsy event-sourced command log. */
-import { CommandIdReuseError, createCommandLog } from "@streamsy/experimental/command";
+import {
+  CommandIdReuseError,
+  createCommandLog,
+  readCommandHistory,
+} from "@streamsy/experimental/command";
 import type { JsonCodec } from "@streamsy/json";
 
 import { foldAggregate } from "../src/aggregate.ts";
@@ -77,19 +81,10 @@ export async function submitCommand(
 }
 
 export async function readCanonical(protocol: StreamProtocolFactory, sourceStreamId: string) {
-  const noStore: CommandStore = { get: () => null, put: () => undefined };
-  return commandLog(
-    { protocol, commands: noStore, rng: { nextInt: () => 0 }, now: () => 0 },
-    sourceStreamId,
-    sourceStreamId.split("/")[1] ?? sourceStreamId,
-  ).readAll();
-}
-
-export function recoverCommand(
-  deps: CommandServiceDeps,
-  sourceStreamId: string,
-  gameId: string,
-  commandId: string,
-) {
-  return commandLog(deps, sourceStreamId, gameId).get(commandId);
+  return readCommandHistory({
+    protocol,
+    streamId: sourceStreamId,
+    eventSchema,
+    eventCommandIdOf: (event: GameEvent) => event.commandId,
+  });
 }

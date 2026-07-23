@@ -42,7 +42,6 @@ export interface RebuildOptions {
   /** Target generation id. Defaults to the next id after the active one. */
   generation?: string;
   now?: () => number;
-  producerEpoch?: number;
   /** Adapter factory (overridable so a corrupt reducer can be exercised in tests). */
   makeAdapter?: (
     options: BoardProjectionAdapterOptions,
@@ -126,7 +125,6 @@ export async function rebuildBoardGeneration(
   const runtime = new ProjectionRuntime({
     protocol: deps.protocol,
     adapter,
-    producerEpoch: options.producerEpoch,
   });
   await runtime.catchUp();
   const status = await runtime.status();

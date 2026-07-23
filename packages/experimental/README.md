@@ -61,8 +61,8 @@ and their watermark can never commit apart.
 ### Replay-safe identity and concurrency
 
 Each transition appends under producer identity
-`producerId = <processorId>::<generation>::<sourceStreamId>`, `producerEpoch`
-(default `1`, bump to fence), and `producerSeq = <0-based source ordinal>`.
+`producerId = <processorId>::<generation>::<sourceStreamId>` and
+`producerSeq = <0-based source ordinal>`.
 
 - **Ambiguous append retry** → re-appending an already-committed transition
   returns `duplicate` (no second write).
