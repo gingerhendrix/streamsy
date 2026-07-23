@@ -17,6 +17,7 @@
     "test:sqlite": "bun test server"
   },
   "dependencies": {
+    "@streamsy/client": "workspace:*",
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
     "@streamsy/json": "workspace:*",

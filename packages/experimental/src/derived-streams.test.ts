@@ -36,4 +36,45 @@ describe("derived streams", () => {
     });
     expect(resumed.values).toEqual([{ value: 3 }]);
   });
+
+  it("bounds retries when an output producer cannot converge", async () => {
+    const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
+    const source = await createJsonProtocol(protocol, sourceSchema).getOrCreate("source");
+    await source.append({ key: "a", value: 1 });
+    const output = await createJsonProtocol(protocol, outputSchema).getOrCreate("derived/a");
+    const get = protocol.get.bind(protocol);
+    protocol.get = async (streamId) => {
+      const result = await get(streamId);
+      if (streamId !== output.id || result.status !== "ok") return result;
+      return {
+        ...result,
+        stream: {
+          id: result.stream.id,
+          append: async () => ({
+            status: "conflict",
+            conflictReason: "expected-offset" as const,
+            offset: "0_0",
+          }),
+          read: (options) => result.stream.read(options),
+          readLive: (options) => result.stream.readLive(options),
+          metadata: () => result.stream.metadata(),
+          delete: () => result.stream.delete(),
+        },
+      };
+    };
+
+    await expect(
+      catchUpDerived({
+        protocol,
+        sourceStreamId: "source",
+        sourceSchema,
+        outputSchema,
+        derive: (messages) =>
+          new Map([["a", messages.map((message) => ({ value: message.value.value }))]]),
+        streamIdFor: (key) => `derived/${key}`,
+        producerIdFor: (key) => `producer/${key}`,
+        maxAttempts: 2,
+      }),
+    ).rejects.toThrow("could not converge after bounded retries");
+  });
 });

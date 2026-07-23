@@ -41,7 +41,20 @@ export interface ProjectedMove {
   kind: GameEventType;
   playerId?: string;
   sourceOffset: string;
+  territoryId?: string;
+  from?: string;
+  to?: string;
+  armies?: number;
+  attackerRolls?: number[];
+  defenderRolls?: number[];
+  attackerLosses?: number;
+  defenderLosses?: number;
+  territoryCaptured?: boolean;
+  nextPlayerId?: string;
 }
+
+/** A compact demo feed: bounded so projection checkpoints stay O(1) in game length. */
+export const MOVE_FEED_LIMIT = 30;
 
 export interface ProjectionState {
   game: ProjectedGame;
@@ -198,13 +211,39 @@ export function projectEvent(
     }
   }
 
+  const detail = (() => {
+    switch (event.type) {
+      case "ArmiesReinforced":
+        return { territoryId: event.territoryId, armies: event.armies };
+      case "AttackResolved":
+        return {
+          from: event.from,
+          to: event.to,
+          attackerRolls: event.attackerRolls,
+          defenderRolls: event.defenderRolls,
+          attackerLosses: event.attackerLosses,
+          defenderLosses: event.defenderLosses,
+          territoryCaptured: event.territoryCaptured,
+        };
+      case "ArmiesFortified":
+        return { from: event.from, to: event.to, armies: event.armies };
+      case "TurnEnded":
+        return { nextPlayerId: event.nextPlayerId };
+      default:
+        return {};
+    }
+  })();
   state.moves.push({
     id: sourceOffset,
     commandId: event.commandId,
     kind: event.type,
     playerId: movePlayerId(event),
     sourceOffset,
+    ...detail,
   });
+  if (state.moves.length > MOVE_FEED_LIMIT) {
+    state.moves.splice(0, state.moves.length - MOVE_FEED_LIMIT);
+  }
   state.sourceThroughOffset = sourceOffset;
   return state;
 }

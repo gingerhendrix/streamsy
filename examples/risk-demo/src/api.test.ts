@@ -102,6 +102,33 @@ async function playToAttack(app: App, game: StartedGame) {
 }
 
 describe("risk command API", () => {
+  it("exposes only the active board projection through the read-only Streamsy facade", async () => {
+    const { app } = harness();
+    const created = await call(app, "POST", "/v1/games", {
+      body: { name: "Alice", color: "red" },
+    });
+    const gameId: string = created.body.game.id;
+
+    const board = await app.fetch(
+      new Request(`${BASE}/streams/games/${gameId}/projections/board/v1`),
+    );
+    expect(board.status).toBe(200);
+    expect(board.headers.get("content-type")).toContain("application/json");
+    const changes = (await board.json()) as Array<{ type: string }>;
+    expect(changes.some((change) => change.type === "game")).toBe(true);
+    expect(changes.some((change) => change.type === "projectionMeta")).toBe(true);
+
+    const canonical = await app.fetch(new Request(`${BASE}/streams/games/${gameId}/events`));
+    expect(canonical.status).toBe(404);
+    const write = await app.fetch(
+      new Request(`${BASE}/streams/games/${gameId}/projections/board/v1`, {
+        method: "POST",
+        body: "{}",
+      }),
+    );
+    expect(write.status).toBe(405);
+  });
+
   it("runs create → join → start → decision → command happy path", async () => {
     const { app } = harness();
     const game = await createJoinStart(app);

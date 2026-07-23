@@ -34,8 +34,9 @@ const server = Bun.serve({
   port,
   idleTimeout: 60,
   routes: {
-    // JSON API + OpenAPI + turn streams are handled by the fetch handler.
+    // JSON API and the scoped, read-only board stream facade share the handler.
     "/v1/*": (request: Request) => app.fetch(request),
+    "/streams/*": (request: Request) => app.fetch(request),
     "/openapi.json": (request: Request) => app.fetch(request),
     "/healthz": () =>
       new Response(JSON.stringify({ ok: true }), {

@@ -14,6 +14,7 @@ import {
   projectEvent,
   type ProjectedGame,
   type ProjectedPlayer,
+  type ProjectedMove,
   type ProjectedTerritory,
   type ProjectionState,
 } from "../projection.ts";
@@ -34,6 +35,7 @@ const boardSchema = {
     primaryKey: "id",
     schema: codec<ProjectedTerritory>(),
   },
+  moves: { type: "move", primaryKey: "id", schema: codec<ProjectedMove>() },
   projectionMeta: {
     primaryKey: () => "board",
     schema: codec<{ snapshot: ProjectionState }>(),
@@ -65,6 +67,7 @@ export function createBoardProjectionAdapter(
       { type: "game", key: state.game.id ?? options.gameId, value: state.game },
       ...state.players.map((value) => ({ type: "player", key: value.id, value })),
       ...state.territories.map((value) => ({ type: "territory", key: value.id, value })),
+      ...state.moves.map((value) => ({ type: "move", key: value.id, value })),
     ],
     meta: { type: "projectionMeta", key: "board" },
   });

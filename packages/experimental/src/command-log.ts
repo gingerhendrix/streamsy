@@ -3,25 +3,25 @@ import { createJsonProtocol, type JsonSchema } from "@streamsy/json";
 
 const MAX_CAS_ATTEMPTS = 8;
 
-export interface CommandLogRecord<Event, Error> {
+export interface CommandLogRecord<Event, Rejection> {
   commandId: string;
   payloadHash: string;
   status: "accepted" | "rejected";
   sourceOffset?: string;
   events?: Event[];
-  error?: Error;
+  error?: Rejection;
 }
 
-export interface CommandLogStore<Event, Error> {
-  get(commandId: string): CommandLogRecord<Event, Error> | null;
-  put(record: CommandLogRecord<Event, Error>): void;
+export interface CommandLogStore<Event, Rejection> {
+  get(commandId: string): CommandLogRecord<Event, Rejection> | null;
+  put(record: CommandLogRecord<Event, Rejection>): void;
 }
 
-export type CommandDecision<Event, Error> =
+export type CommandDecision<Event, Rejection> =
   | { status: "accepted"; events: Event[] }
-  | { status: "rejected"; error: Error };
+  | { status: "rejected"; error: Rejection };
 
-export type CommandLogResult<Event, Error> =
+export type CommandLogResult<Event, Rejection> =
   | {
       status: "accepted" | "duplicate";
       commandId: string;
@@ -29,18 +29,18 @@ export type CommandLogResult<Event, Error> =
       sourceOffset: string;
       events: Event[];
     }
-  | { status: "rejected"; commandId: string; error: Error };
+  | { status: "rejected"; commandId: string; error: Rejection };
 
-export interface CommandLogOptions<State, Event, Command, Error> {
+export interface CommandLogOptions<State, Event, Command, Rejection> {
   protocol: StreamProtocolFactory;
   streamId: string;
   eventSchema: JsonSchema<Event>;
   fold(events: readonly Event[]): State;
-  decide(state: State, command: Command): CommandDecision<Event, Error>;
+  decide(state: State, command: Command): CommandDecision<Event, Rejection>;
   commandIdOf(command: Command): string;
   eventCommandIdOf(event: Event): string;
   payloadOf(command: Command): unknown;
-  store?: CommandLogStore<Event, Error>;
+  store?: CommandLogStore<Event, Rejection>;
   maxAttempts?: number;
 }
 
@@ -50,8 +50,8 @@ async function hashPayload(payload: unknown): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function createCommandLog<State, Event, Command, Error>(
-  options: CommandLogOptions<State, Event, Command, Error>,
+export function createCommandLog<State, Event, Command, Rejection>(
+  options: CommandLogOptions<State, Event, Command, Rejection>,
 ) {
   const json = createJsonProtocol(options.protocol, options.eventSchema);
 
@@ -87,6 +87,11 @@ export function createCommandLog<State, Event, Command, Error>(
     const history = await readAll();
     const prior = history.byCommand.get(commandId);
     if (!prior) return null;
+    // Canonical events prove that the command was accepted, but they do not
+    // retain its original payload. After an optional ack cache is lost, get()
+    // can recover the ack but cannot later detect a different payload reusing
+    // this commandId. Applications needing that check must durably retain the
+    // command payload hash alongside the canonical log.
     return {
       commandId,
       payloadHash: "",
@@ -96,7 +101,7 @@ export function createCommandLog<State, Event, Command, Error>(
     };
   }
 
-  async function submit(command: Command): Promise<CommandLogResult<Event, Error>> {
+  async function submit(command: Command): Promise<CommandLogResult<Event, Rejection>> {
     const commandId = options.commandIdOf(command);
     const payloadHash = await hashPayload(options.payloadOf(command));
     const cached = options.store?.get(commandId);
@@ -105,7 +110,7 @@ export function createCommandLog<State, Event, Command, Error>(
         throw new CommandIdReuseError(commandId);
       }
       if (cached.status === "rejected") {
-        return { status: "rejected", commandId, error: cached.error as Error };
+        return { status: "rejected", commandId, error: cached.error as Rejection };
       }
       return {
         status: "duplicate",

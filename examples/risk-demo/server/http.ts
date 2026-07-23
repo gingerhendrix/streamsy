@@ -3,7 +3,7 @@
  * so the whole app is testable without starting a Bun server).
  */
 
-import type { RiskErrorCode } from "../src/commands.ts";
+import { statusForErrorCode, type ApiErrorCode } from "../src/api.ts";
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -13,15 +13,7 @@ export function json(data: unknown, status = 200, headers: Record<string, string
 }
 
 /** Domain/transport error body with a stable machine-readable code. */
-export type ErrorCode =
-  | RiskErrorCode
-  | "UNAUTHORIZED"
-  | "FORBIDDEN"
-  | "WRONG_GAME"
-  | "NOT_FOUND"
-  | "BAD_REQUEST"
-  | "PROJECTION_UNAVAILABLE"
-  | "INTERNAL";
+export type ErrorCode = ApiErrorCode;
 
 export function error(
   status: number,
@@ -34,34 +26,7 @@ export function error(
 
 /** HTTP status appropriate for a domain rejection code. */
 export function statusForCode(code: string): number {
-  switch (code) {
-    case "NOT_YOUR_TURN":
-    case "STALE_TURN":
-    case "INVALID_PHASE":
-    case "ILLEGAL_ACTION":
-    case "INSUFFICIENT_ARMIES":
-    case "NOT_ADJACENT":
-    case "UNKNOWN_TERRITORY":
-    case "GAME_FINISHED":
-    case "GAME_ALREADY_STARTED":
-    case "GAME_NOT_STARTED":
-    case "NOT_ENOUGH_PLAYERS":
-    case "TOO_MANY_PLAYERS":
-    case "PLAYER_ID_TAKEN":
-      return 409;
-    case "COMMAND_ID_REUSED":
-      return 409;
-    case "UNAUTHORIZED":
-      return 401;
-    case "FORBIDDEN":
-    case "WRONG_GAME":
-      return 403;
-    case "GAME_NOT_FOUND":
-    case "NOT_FOUND":
-      return 404;
-    default:
-      return 400;
-  }
+  return statusForErrorCode(code as ApiErrorCode);
 }
 
 export interface Route {

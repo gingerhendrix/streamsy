@@ -11,7 +11,11 @@ export interface CatchUpDerivedOptions<Source, Key, Output> {
   derive(messages: readonly DerivedSourceMessage<Source>[]): Map<Key, Output[]>;
   streamIdFor(key: Key): string;
   producerIdFor(key: Key): string;
+  /** Maximum reload attempts after duplicate/CAS conflicts. Defaults to 8. */
+  maxAttempts?: number;
 }
+
+const DEFAULT_MAX_ATTEMPTS = 8;
 
 export async function catchUpDerived<Source, Key, Output>(
   options: CatchUpDerivedOptions<Source, Key, Output>,
@@ -26,6 +30,7 @@ export async function catchUpDerived<Source, Key, Output>(
   for (const [key, desired] of options.derive(sourceHistory.messages)) {
     const stream = await outputProtocol.getOrCreate(options.streamIdFor(key));
     let history = await stream.readAll();
+    let attempts = 0;
     for (let seq = history.messages.length; seq < desired.length; seq += 1) {
       const result = await stream.append(desired[seq]!, {
         producer: { producerId: options.producerIdFor(key), producerEpoch: 1, producerSeq: seq },
@@ -39,6 +44,12 @@ export async function catchUpDerived<Source, Key, Output>(
         result.status === "duplicate" ||
         (result.status === "conflict" && result.conflictReason === "expected-offset")
       ) {
+        attempts += 1;
+        if (attempts >= (options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)) {
+          throw new Error(
+            `derived append for ${stream.id} could not converge after bounded retries`,
+          );
+        }
         history = await stream.readAll();
         seq = history.messages.length - 1;
         continue;
