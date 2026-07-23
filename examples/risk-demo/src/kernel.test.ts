@@ -5,7 +5,6 @@ import { buildTurnId, foldAggregate } from "./aggregate.ts";
 import type { AttackCommand, Command } from "./commands.ts";
 import type { GameEvent } from "./events.ts";
 import { resolveAttack } from "./dice.ts";
-import { RiskGame, applyCommand } from "./engine.ts";
 import { RULES, TERRITORIES, TERRITORY_IDS, areAdjacent, reinforcementPool } from "./map.ts";
 import {
   aggregateBoardView,
@@ -14,7 +13,7 @@ import {
   projectionBoardView,
 } from "./projection.ts";
 import { createSeededRng } from "./rng.ts";
-import { nextCommandId, startGame, type ScriptedGame } from "./testkit.ts";
+import { applyCommand, nextCommandId, RiskGame, startGame, type ScriptedGame } from "./testkit.ts";
 
 // ---------------------------------------------------------------------------
 // Map + rng + dice primitives

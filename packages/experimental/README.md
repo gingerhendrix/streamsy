@@ -2,6 +2,17 @@
 
 Experimental Streamsy primitives are exposed through explicit subpath exports while they mature. There is no package-root API.
 
+## Command logs and derived streams
+
+`@streamsy/experimental/command` provides `createCommandLog`, an event-sourced
+command boundary that owns canonical folding, stream-anchored command-id
+deduplication, payload-reuse rejection, expected-offset retry, and optional
+durable acknowledgement caching.
+
+`@streamsy/experimental/derived` provides `catchUpDerived` for replay-safe
+one-source-to-many fan-out using producer sequences, plus cursor-based
+`readDerived` with optional long polling.
+
 ## Materializer
 
 Import the materializer API from `@streamsy/experimental/materializer`.
@@ -35,6 +46,10 @@ pure pieces through a `ProjectionAdapter<State, Event>`:
   atomically as one output batch (must embed the watermark + a resume snapshot);
 - `decodeCheckpoint(messages)` → recover the latest `{ state, sourceThroughOffset,
 sourceSeq }` from the projection stream, or `null` when empty.
+
+For Durable State outputs, `durableStateProjectionAdapter` builds that adapter
+from a Durable State schema, a pure reducer, and row extraction. It owns row
+diffing and the co-committed checkpoint/watermark row.
 
 ### Atomicity
 

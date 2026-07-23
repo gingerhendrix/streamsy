@@ -26,7 +26,12 @@ import {
   sha256Hex,
   type CapabilityRole,
 } from "./capabilities.ts";
-import { submitCommand, readCanonical, type SubmitResult } from "./command-service.ts";
+import {
+  readCanonical,
+  recoverCommand,
+  submitCommand,
+  type SubmitResult,
+} from "./command-service.ts";
 import { createBoardRuntimeCache, materializeBoard, type BoardRuntimeCache } from "./board.ts";
 import { catchUpTurns, readTurns } from "./turn-notifier.ts";
 import { BOARD_REDUCER_VERSION } from "../src/materializer/board-projection.ts";
@@ -348,7 +353,7 @@ export function buildApp(deps: AppDeps): App {
     if (cap instanceof Response) return cap;
     const commandId = params.commandId!;
 
-    const row = deps.stores.commands.get(gameId, commandId);
+    const row = await recoverCommand(service, eventStreamId(gameId), gameId, commandId);
     if (row) {
       if (row.status === "accepted") {
         return json({
@@ -363,17 +368,7 @@ export function buildApp(deps: AppDeps): App {
       return error(statusForCode(code), code, row.error?.message ?? "rejected");
     }
 
-    // Fall back to the canonical stream if the command log lost the row.
-    const { byCommand } = await readCanonical(deps.protocol, eventStreamId(gameId));
-    const prior = byCommand.get(commandId);
-    if (!prior) return error(404, "NOT_FOUND", "Unknown command.");
-    return json({
-      status: "accepted",
-      commandId,
-      sourceStreamId: eventStreamId(gameId),
-      sourceOffset: prior.lastOffset,
-      events: prior.events,
-    });
+    return error(404, "NOT_FOUND", "Unknown command.");
   }
 
   const routes: Route[] = [

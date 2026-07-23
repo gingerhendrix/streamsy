@@ -24,6 +24,7 @@ import type { Rng } from "../src/rng.ts";
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { compareOffsets } from "@streamsy/core";
 import { ProjectionRuntime } from "@streamsy/experimental/projection";
+import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 
 import type { GameEvent } from "../src/events.ts";
 import { foldAggregate } from "../src/aggregate.ts";
@@ -141,7 +142,14 @@ export interface ProjectionOutputAnalysis {
   lastSourceThroughOffset: string | null;
 }
 
-const decoder = new TextDecoder();
+type ProjectionRow = {
+  type?: string;
+  value?: { sourceSeq?: number; sourceThroughOffset?: string };
+};
+const projectionRowSchema: JsonCodec<ProjectionRow> = {
+  encode: (value) => value,
+  decode: (value) => value as ProjectionRow,
+};
 
 /**
  * True when `actual` shows a transition applied more than once, judged against a
@@ -172,29 +180,16 @@ export async function analyzeProjectionOutput(
     duplicateSourceSeqs: [],
     lastSourceThroughOffset: null,
   };
-  const got = await protocol.get(streamId);
+  const got = await createJsonProtocol(protocol, projectionRowSchema).get(streamId);
   if (got.status !== "ok") return empty;
-
-  let outputMessages = 0;
+  const history = await got.stream.readAll();
   const sourceSeqs: number[] = [];
   let lastSourceThroughOffset: string | null = null;
-  let offset: string | undefined;
-  for (;;) {
-    const read = await got.stream.read({ offset });
-    if (read.status !== "ok") break;
-    for (const message of read.messages) {
-      outputMessages += 1;
-      const row = JSON.parse(decoder.decode(message.data)) as {
-        type?: string;
-        value?: { sourceSeq?: number; sourceThroughOffset?: string };
-      };
-      if (row.type === "projectionMeta" && typeof row.value?.sourceSeq === "number") {
-        sourceSeqs.push(row.value.sourceSeq);
-        lastSourceThroughOffset = row.value.sourceThroughOffset ?? null;
-      }
+  for (const row of history.values) {
+    if (row.type === "projectionMeta" && typeof row.value?.sourceSeq === "number") {
+      sourceSeqs.push(row.value.sourceSeq);
+      lastSourceThroughOffset = row.value.sourceThroughOffset ?? null;
     }
-    if (read.upToDate || read.messages.length === 0) break;
-    offset = read.nextOffset;
   }
 
   const seen = new Set<number>();
@@ -205,7 +200,7 @@ export async function analyzeProjectionOutput(
   }
 
   return {
-    outputMessages,
+    outputMessages: history.messages.length,
     transitions: sourceSeqs.length,
     sourceSeqs,
     duplicateSourceSeqs,

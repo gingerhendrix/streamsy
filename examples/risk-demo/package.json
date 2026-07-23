@@ -19,6 +19,8 @@
   "dependencies": {
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
+    "@streamsy/json": "workspace:*",
+    "@streamsy/state": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
     "react": "latest",
     "react-dom": "latest"

@@ -66,6 +66,8 @@
       "dependencies": {
         "@streamsy/core": "workspace:*",
         "@streamsy/experimental": "workspace:*",
+        "@streamsy/json": "workspace:*",
+        "@streamsy/state": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
         "react": "latest",
         "react-dom": "latest",
@@ -125,6 +127,8 @@
       "version": "0.2.0",
       "dependencies": {
         "@streamsy/core": "0.2.0",
+        "@streamsy/json": "0.2.0",
+        "@streamsy/state": "0.2.0",
       },
       "devDependencies": {
         "typescript": "catalog:",

@@ -18,6 +18,16 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./command": {
+      "types": "./dist/command.d.ts",
+      "import": "./dist/command.js",
+      "default": "./dist/command.js"
+    },
+    "./derived": {
+      "types": "./dist/derived.d.ts",
+      "import": "./dist/derived.js",
+      "default": "./dist/derived.js"
+    },
     "./materializer": {
       "types": "./dist/materializer.d.ts",
       "import": "./dist/materializer.js",
@@ -33,12 +43,14 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/materializer.ts src/projection.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
+    "build": "tsdown src/materializer.ts src/projection.ts src/command.ts src/derived.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external @streamsy/json --external @streamsy/state",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "0.2.0"
+    "@streamsy/core": "0.2.0",
+    "@streamsy/json": "0.2.0",
+    "@streamsy/state": "0.2.0"
   },
   "devDependencies": {
     "typescript": "catalog:",

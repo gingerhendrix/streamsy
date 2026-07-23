@@ -6,12 +6,80 @@
 
 import type { Command } from "./commands.ts";
 import type { GameEvent } from "./events.ts";
-import { RiskGame, applyCommand } from "./engine.ts";
-import type { CommandOutcome } from "./engine.ts";
 import { foldAggregate, buildTurnId } from "./aggregate.ts";
 import type { AggregateState } from "./aggregate.ts";
+import { decide, type DecisionError } from "./decide.ts";
 import { RULES, TERRITORIES } from "./map.ts";
-import { createSeededRng } from "./rng.ts";
+import { createSeededRng, type Rng } from "./rng.ts";
+
+export type CommandOutcome =
+  | {
+      status: "accepted" | "duplicate";
+      commandId: string;
+      turnId?: string;
+      sourceOffset: string;
+      events: GameEvent[];
+    }
+  | { status: "rejected"; commandId: string; error: DecisionError };
+
+export function applyCommand(
+  events: readonly GameEvent[],
+  command: Command,
+  rng: Rng,
+): { events: GameEvent[]; outcome: CommandOutcome } {
+  const state = foldAggregate(events);
+  const prior = state.commandIndex[command.commandId];
+  if (prior) {
+    return {
+      events: events.slice(),
+      outcome: {
+        status: "duplicate",
+        commandId: command.commandId,
+        turnId: "turnId" in command ? command.turnId : undefined,
+        sourceOffset: String(prior.lastOffset),
+        events: prior.events.slice(),
+      },
+    };
+  }
+  const decision = decide(state, command, rng);
+  if (decision.status === "rejected") {
+    return {
+      events: events.slice(),
+      outcome: { status: "rejected", commandId: command.commandId, error: decision.error },
+    };
+  }
+  const nextEvents = events.concat(decision.events);
+  return {
+    events: nextEvents,
+    outcome: {
+      status: "accepted",
+      commandId: command.commandId,
+      turnId: "turnId" in command ? command.turnId : undefined,
+      sourceOffset: String(nextEvents.length - 1),
+      events: decision.events,
+    },
+  };
+}
+
+export class RiskGame {
+  private events: GameEvent[] = [];
+
+  constructor(private readonly rng: Rng = createSeededRng(1)) {}
+
+  get log(): readonly GameEvent[] {
+    return this.events;
+  }
+
+  submit(command: Command): CommandOutcome {
+    const result = applyCommand(this.events, command, this.rng);
+    this.events = result.events;
+    return result.outcome;
+  }
+
+  state() {
+    return foldAggregate(this.events);
+  }
+}
 
 let commandCounter = 0;
 

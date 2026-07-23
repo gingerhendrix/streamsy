@@ -14,6 +14,7 @@ export type {
   JsonCreateResult,
   JsonGetResult,
   JsonReadLiveResult,
+  JsonReadAllResult,
   JsonReadResult,
   JsonSchema,
   JsonStoredMessage,

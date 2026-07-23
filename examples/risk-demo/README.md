@@ -22,7 +22,8 @@ proof** that emits machine-readable traces for the accompanying article.
 | Dice                | `dice.ts`                                      | Standard single-throw combat resolution            |
 | Aggregate fold      | `aggregate.ts`                                 | Authoritative decision model (`foldAggregate`)     |
 | Decision/validation | `decide.ts`                                    | Pure `decide(state, command, rng)`                 |
-| Command driver      | `engine.ts`                                    | Fold → dedupe → decide → append → acknowledge      |
+| Command binding     | `server/command-service.ts`                    | Risk fold/decide bound to Streamsy `command-log`   |
+| Kernel test driver  | `testkit.ts`                                   | In-memory helpers used only by tests and proofs    |
 | Board projection    | `projection.ts`                                | Independent query-shaped read model + equivalence  |
 | Board materializer  | `materializer/board-projection.ts`             | Streamsy-backed projection adapter (Batch 2)       |
 | Legal actions       | `legal-actions.ts`, `decision.ts`              | Structured agent affordances + decision context    |

@@ -4,7 +4,7 @@
  * `decide` evaluates a *fresh* command against a folded aggregate state and
  * returns either the canonical events to append or a stable rejection. It is the
  * only place randomness is consumed, and only for `attack`. Idempotent replay of
- * already-accepted commands is handled one layer up (`applyCommand`), so `decide`
+ * already-accepted commands is handled by the command-log layer, so `decide`
  * never rolls dice for a duplicate.
  */
 

@@ -21,24 +21,20 @@ const protocol = createStreamProtocol({
   storage: { adapter: createMemoryStorageAdapter() },
 });
 const json = createJsonProtocol(protocol, userCodec);
-
-const created = await json.create("users", {
+const users = await json.getOrCreate("users", {
   initialMessage: { id: "u1", name: "Alice" },
 });
-if (created.status === "created") {
-  await created.stream.append({ id: "u2", name: "Bob" });
-  const read = await created.stream.read();
-  if (read.status === "ok") {
-    read.messages.map((message) => message.value.name); // ["Alice", "Bob"]
-  }
-}
+await users.append({ id: "u2", name: "Bob" });
+const history = await users.readAll();
+history.values.map((user) => user.name); // ["Alice", "Bob"]
 ```
 
 Values that fail codec or schema validation reject at append with `JsonValidationError`; stored messages that fail to decode or validate on read surface as an `invalid-json` read status.
 
 ## Exports
 
-- `createJsonProtocol`, `JsonProtocol`, `JsonStream`
+- `createJsonProtocol`, `JsonProtocol`, `JsonStream`, including `getOrCreate`,
+  decoded `readAll`, and atomic `appendBatch` helpers
 - `JsonValidationError`, `normalizeJsonCodec`, `JSON_CONTENT_TYPE`
 - types: `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readLive result and option types
 
