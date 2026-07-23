@@ -13,7 +13,7 @@ export const Route = createFileRoute("/articles/")({
       { title: "Articles — Streamsy" },
       {
         name: "description",
-        content: "Long-form writing about streams, sync, and the ideas behind Streamsy.",
+        content: "Streams, sync, incremental view maintenance and all that jazz.",
       },
     ],
   }),
@@ -55,10 +55,10 @@ function ArticlesIndex() {
             Streamsy Articles
           </p>
           <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-            Ideas for durable, local-first software
+            Streams for everything?
           </h1>
           <p className="mt-5 text-lg leading-8 text-fd-muted-foreground">
-            Long-form writing about streams, sync, and the building blocks behind Streamsy.
+            Streams, sync, incremental view maintenance and all that jazz.
           </p>
         </header>
 

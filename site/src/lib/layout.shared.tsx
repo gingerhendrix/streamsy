@@ -4,7 +4,7 @@ import { StreamsyLogo } from "#/components/streamsy-logo";
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: <StreamsyLogo className="mx-auto h-15 w-auto" />,
+      title: <StreamsyLogo className="mx-auto mt-2 h-12 w-auto" />,
       url: "/docs",
     },
     links: [
