@@ -1,18 +1,19 @@
 /**
- * Canonical `risk-demo-v2` setup events.
+ * The canonical `risk-demo-v2` event vocabulary (design spec §5.1).
  *
- * Scope note: this slice covers map generation and canonical setup only. The
- * combat half of the v2 event vocabulary — `AttackDeclared`, `AttackResolved`,
- * `TerritoryOccupied`, and the pending-interaction state machine (design spec
- * §4.4–4.5, §5.1) — lands with the two-stage combat domain slice, together with
- * the v2 aggregate that folds it. Only the events this slice actually appends are
- * defined here, so the union never contains shapes nothing reads.
- *
- * The defining property of these two events: `GameCreated` carries the seed and
- * the generator's *provenance*, while `GameStarted` carries the generator's
+ * The defining property of the two setup events: `GameCreated` carries the seed
+ * and the generator's *provenance*, while `GameStarted` carries the generator's
  * complete *output*. Replay consumes the snapshot and never invokes
  * `hex-generator-v1`, so a later generator version cannot rewrite the board of a
  * game already in progress.
+ *
+ * Combat is two-staged. `AttackDeclared` records the attacker's roll and opens a
+ * defence interrupt with a canonical deadline; a later `AttackResolved` records
+ * the defender's roll and the outcome, whoever produced it (the human defender,
+ * their agent, or the timeout resolver). The same discipline applies as to the
+ * map: every die is generated once by the command service and recorded here, and
+ * `declaredAt`/`defenseDeadlineAt` are injected clock readings recorded as facts.
+ * Replay never rolls and never asks the current clock what should have happened.
  */
 
 import type { GeneratedMap, GeneratorVersionV2, MapVersionV2, RulesetV2 } from "./map-v2.ts";
@@ -55,5 +56,131 @@ export interface GameStartedV2 {
   commandId: string;
 }
 
-/** The subset of the v2 event vocabulary implemented by the map/setup slice. */
+/** The subset of the v2 event vocabulary that establishes the lobby and board. */
 export type GameSetupEventV2 = GameCreatedV2 | PlayerJoinedV2 | GameStartedV2;
+
+export interface ArmiesReinforcedV2 {
+  type: "ArmiesReinforced";
+  turnId: string;
+  playerId: string;
+  territoryId: string;
+  armies: number;
+  commandId: string;
+}
+
+/**
+ * Stage one of a throw: the attacker's dice are already rolled and recorded, and
+ * the defence interrupt is open until `defenseDeadlineAt`.
+ *
+ * `attackId` equals the declaration's `commandId`, which is what lets an
+ * out-of-turn defender — or a duplicate timer delivery — name exactly one attack
+ * and never attach to a later one.
+ */
+export interface AttackDeclaredV2 {
+  type: "AttackDeclared";
+  attackId: string;
+  turnId: string;
+  attackerId: string;
+  defenderId: string;
+  from: string;
+  to: string;
+  attackerDice: number;
+  /** Sorted descending, generated once by the command service. */
+  attackerRolls: number[];
+  /** The legal count `min(2, defending armies)`; the defender does not choose. */
+  defenderDice: number;
+  declaredAt: number;
+  defenseDeadlineAt: number;
+  commandId: string;
+}
+
+/** Who produced the defender's roll. Never inferred by the UI — recorded here. */
+export type DefenseResolutionSource = "human" | "agent-auto" | "timeout";
+
+/**
+ * Stage two: the defender's dice and the outcome of the comparison.
+ *
+ * The attacker's rolls are repeated from `AttackDeclared` deliberately, so a
+ * combat result is self-contained in the move feed. Reducers verify they match
+ * the pending declaration rather than trusting the repetition.
+ */
+export interface AttackResolvedV2 {
+  type: "AttackResolved";
+  attackId: string;
+  turnId: string;
+  attackerId: string;
+  defenderId: string;
+  from: string;
+  to: string;
+  attackerRolls: number[];
+  defenderRolls: number[];
+  attackerLosses: number;
+  defenderLosses: number;
+  territoryCaptured: boolean;
+  resolutionSource: DefenseResolutionSource;
+  commandId: string;
+}
+
+/**
+ * The attacker's required occupation move after a capture. Ownership changes
+ * here, not in `AttackResolved`, so a projected board never claims a territory
+ * before its garrison has been chosen.
+ */
+export interface TerritoryOccupiedV2 {
+  type: "TerritoryOccupied";
+  attackId: string;
+  turnId: string;
+  playerId: string;
+  from: string;
+  to: string;
+  armies: number;
+  previousOwnerId: string;
+  commandId: string;
+}
+
+export interface ArmiesFortifiedV2 {
+  type: "ArmiesFortified";
+  turnId: string;
+  playerId: string;
+  from: string;
+  to: string;
+  armies: number;
+  commandId: string;
+}
+
+export interface PlayerEliminatedV2 {
+  type: "PlayerEliminated";
+  playerId: string;
+  byPlayerId: string;
+  commandId: string;
+}
+
+export interface TurnEndedV2 {
+  type: "TurnEnded";
+  turnId: string;
+  playerId: string;
+  nextPlayerId: string;
+  round: number;
+  commandId: string;
+}
+
+export interface GameWonV2 {
+  type: "GameWon";
+  playerId: string;
+  commandId: string;
+}
+
+export type GameEventV2 =
+  | GameCreatedV2
+  | PlayerJoinedV2
+  | GameStartedV2
+  | ArmiesReinforcedV2
+  | AttackDeclaredV2
+  | AttackResolvedV2
+  | TerritoryOccupiedV2
+  | ArmiesFortifiedV2
+  | PlayerEliminatedV2
+  | TurnEndedV2
+  | GameWonV2;
+
+export type GameEventV2Type = GameEventV2["type"];
