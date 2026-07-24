@@ -187,7 +187,9 @@ describe("risk-demo-v2 board projection surface", () => {
 
   it("keeps a v1 game on the v1 generation and reducer", async () => {
     const h = v2Harness();
-    const created = await call(h.app, "POST", "/v1/games", { body: { name: "Alice" } });
+    const created = await call(h.app, "POST", "/v1/games", {
+      body: { ruleset: "risk-demo-v1", name: "Alice" },
+    });
     const board = await call(h.app, "GET", `/v1/games/${created.body.game.id}/board`);
     expect(board.status).toBe(200);
     expect(board.body.ruleset).toBe("risk-demo-v1");

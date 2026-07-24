@@ -147,8 +147,8 @@ export interface CreateGameRequest {
   color?: string;
   commandId?: string;
   /**
-   * Opt in to `risk-demo-v2`. Absent means `risk-demo-v1`, which stays the
-   * default until the v2 board projection and renderer land.
+   * Ruleset for the new game. Absent means `risk-demo-v2`; pass `risk-demo-v1`
+   * explicitly to create a legacy fixed-map game (design spec §11).
    */
   ruleset?: string;
   controller?: PlayerController;

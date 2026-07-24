@@ -53,7 +53,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
   const first = openApp();
 
   const created = await call(first.app, "POST", "/v1/games", {
-    body: { name: "Alice", color: "red" },
+    body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
   });
   const gameId: string = created.body.game.id;
   const hostId: string = created.body.player.id;
@@ -132,7 +132,9 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
 
 test("turn-stream cursor resume and rebuild idempotency survive restart", async () => {
   const first = openApp();
-  const created = await call(first.app, "POST", "/v1/games", { body: { name: "A", color: "red" } });
+  const created = await call(first.app, "POST", "/v1/games", {
+    body: { ruleset: "risk-demo-v1", name: "A", color: "red" },
+  });
   const gameId: string = created.body.game.id;
   const hostToken: string = created.body.capability;
   const hostId: string = created.body.player.id;

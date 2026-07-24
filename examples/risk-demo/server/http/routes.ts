@@ -97,9 +97,10 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = randomId("game");
     const hostPlayerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
-    // V2 is opt-in per game while the v2 projection and renderer are still
-    // landing; every other creation stays on the fully-playable v1 path.
-    const wantsV2 = body.ruleset === RULESET_V2;
+    // New games are `risk-demo-v2` (design spec §11). V1 is not migrated and not
+    // reinterpreted — it stays selectable by name so existing demo fixtures and
+    // v1-subject tests keep exercising the v1 kernel, renderer, and projection.
+    const wantsV2 = (body.ruleset ?? RULESET_V2) === RULESET_V2;
     const ruleset = wantsV2 ? RULESET_V2 : RULESET;
 
     const result = wantsV2

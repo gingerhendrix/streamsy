@@ -760,7 +760,7 @@ export const openApiDocument = {
     "/v1/games": {
       post: {
         summary:
-          'Create a game; returns the host player and a one-time host capability. Pass `ruleset: "risk-demo-v2"` to opt into v2.',
+          'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a legacy fixed-map game.',
         responses: { "201": jsonResponse("CommandAck") },
       },
     },

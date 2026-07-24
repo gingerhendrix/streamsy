@@ -229,7 +229,7 @@ async function run(): Promise<void> {
   try {
     await waitForServer(baseUrl, server.exited);
     const created = await api(baseUrl, "POST", "/v1/games", {
-      body: { name: "Ada", color: "#e05a47" },
+      body: { ruleset: "risk-demo-v1", name: "Ada", color: "#e05a47" },
     });
     requireStatus(created, 201, "create game");
     const gameId: string = created.body.game.id;

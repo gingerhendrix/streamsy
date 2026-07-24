@@ -41,7 +41,9 @@ interface Setup {
 async function setup(seed: number): Promise<Setup> {
   const app = harness(seed);
   const http = httpFor(app);
-  const created = await http("POST", "/v1/games", { body: { name: "Alice", color: "red" } });
+  const created = await http("POST", "/v1/games", {
+    body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
+  });
   const gameId: string = created.body.game.id;
   const hostId: string = created.body.player.id;
   const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };

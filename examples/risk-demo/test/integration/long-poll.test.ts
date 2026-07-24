@@ -42,7 +42,9 @@ describe("turn-stream long-poll wake", () => {
   it("wakes a blocked player when control passes to them", async () => {
     const app = harness(1234);
     const call = httpFor(app);
-    const created = await call("POST", "/v1/games", { body: { name: "Ada", color: "red" } });
+    const created = await call("POST", "/v1/games", {
+      body: { ruleset: "risk-demo-v1", name: "Ada", color: "red" },
+    });
     const gameId: string = created.body.game.id;
     const hostId: string = created.body.player.id;
     const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };

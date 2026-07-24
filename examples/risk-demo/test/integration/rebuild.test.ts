@@ -41,7 +41,9 @@ async function playedGame(seed: number): Promise<Harness> {
     return { status: res.status, body: await res.json() };
   };
 
-  const created = await http("POST", "/v1/games", { body: { name: "Alice", color: "red" } });
+  const created = await http("POST", "/v1/games", {
+    body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
+  });
   const gameId: string = created.body.game.id;
   const hostToken: string = created.body.capability;
   const hostId: string = created.body.player.id;

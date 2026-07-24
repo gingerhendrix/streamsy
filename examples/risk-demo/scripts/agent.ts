@@ -74,8 +74,15 @@ async function main(): Promise<void> {
       saveState(state);
     } else {
       // Block on the turn stream until control passes to me.
-      await agent.awaitTurn(longPollMs);
+      const wake = await agent.awaitTurn(longPollMs);
       saveState(state);
+      // `risk-demo-v2` asks this seat to act out of turn too. Defence is attempted
+      // whenever canonical state says one is open, not only on a `DefenseAvailable`
+      // wake: the wake is a hint, and a missed one must not leave a human attacker
+      // watching the full 15-second timeout.
+      if (wake?.type === "DefenseAvailable" || meta.body.pendingInteraction?.type === "defense") {
+        if (await agent.defend()) console.log("rolled defence");
+      }
     }
   }
 }

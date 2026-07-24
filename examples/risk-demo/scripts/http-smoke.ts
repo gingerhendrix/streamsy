@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   let server = await startServer(port, dbPath);
   try {
     const created = await api(server.baseUrl, "POST", "/v1/games", {
-      body: { name: "Alice", color: "red" },
+      body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
     });
     assert(created.status === 201, `create game: ${created.status}`);
     const gameId: string = created.body.game.id;

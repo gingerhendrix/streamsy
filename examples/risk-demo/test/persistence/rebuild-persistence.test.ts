@@ -62,7 +62,7 @@ test("a board-generation cutover survives a SQLite restart and keeps the old gen
   const first = openApp();
 
   const created = await call(first.app, "POST", "/v1/games", {
-    body: { name: "Alice", color: "red" },
+    body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
   });
   const gameId: string = created.body.game.id;
   const hostToken: string = created.body.capability;

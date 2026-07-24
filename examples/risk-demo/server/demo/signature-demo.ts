@@ -256,7 +256,9 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
   };
 
   // --- 1. durable game with two HTTP-only agents ---------------------------
-  const created = await call("POST", "/v1/games", { body: { name: "Ada", color: "red" } });
+  const created = await call("POST", "/v1/games", {
+    body: { ruleset: "risk-demo-v1", name: "Ada", color: "red" },
+  });
   const gameId: string = created.body.game.id;
   const hostId: string = created.body.player.id;
   const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };

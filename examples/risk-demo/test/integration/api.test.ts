@@ -46,7 +46,9 @@ interface StartedGame {
 }
 
 async function createJoinStart(app: App): Promise<StartedGame> {
-  const created = await call(app, "POST", "/v1/games", { body: { name: "Alice", color: "red" } });
+  const created = await call(app, "POST", "/v1/games", {
+    body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
+  });
   expect(created.status).toBe(201);
   const gameId: string = created.body.game.id;
   const hostId: string = created.body.player.id;
@@ -106,7 +108,7 @@ describe("risk command API", () => {
   it("exposes only the active board projection through the read-only Streamsy facade", async () => {
     const { app } = harness();
     const created = await call(app, "POST", "/v1/games", {
-      body: { name: "Alice", color: "red" },
+      body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
     });
     const gameId: string = created.body.game.id;
 
@@ -358,7 +360,9 @@ describe("risk command API", () => {
 
   it("never exposes or stores a raw capability token", async () => {
     const { app, stores } = harness();
-    const created = await call(app, "POST", "/v1/games", { body: { name: "Alice", color: "red" } });
+    const created = await call(app, "POST", "/v1/games", {
+      body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
+    });
     const token: string = created.body.capability;
     const secret = token.split("_")[2]!;
 

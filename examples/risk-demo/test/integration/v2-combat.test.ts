@@ -27,14 +27,16 @@ import {
 } from "../v2-harness.ts";
 
 describe("risk-demo-v2 creation seam", () => {
-  it("creates v1 by default and v2 only on explicit opt-in", async () => {
+  it("creates v2 by default and v1 only when asked for by name", async () => {
     const h = v2Harness();
-    const v1 = await call(h.app, "POST", "/v1/games", { body: { name: "Alice" } });
+    const v1 = await call(h.app, "POST", "/v1/games", {
+      body: { ruleset: "risk-demo-v1", name: "Alice" },
+    });
     expect(v1.body.game.ruleset).toBe("risk-demo-v1");
     expect(h.stores.games.get(v1.body.game.id)!.ruleset).toBe("risk-demo-v1");
 
     const v2 = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: RULESET_V2, name: "Alice", mapSeed: "abc" },
+      body: { name: "Alice", mapSeed: "abc" },
     });
     expect(v2.body.game.ruleset).toBe(RULESET_V2);
     expect(v2.body.game.mapVersion).toBe("procedural-hex-v1");
@@ -336,7 +338,9 @@ describe("risk-demo-v2 timer recovery", () => {
 
   it("does not schedule or resolve anything for v1 games", async () => {
     const h = v2Harness();
-    const created = await call(h.app, "POST", "/v1/games", { body: { name: "Alice" } });
+    const created = await call(h.app, "POST", "/v1/games", {
+      body: { ruleset: "risk-demo-v1", name: "Alice" },
+    });
     await h.app.defenseTimers.ensure(created.body.game.id);
     await h.app.defenseTimers.recover();
     expect(h.scheduler.pending()).toEqual([]);
