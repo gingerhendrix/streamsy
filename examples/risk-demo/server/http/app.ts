@@ -13,6 +13,11 @@ import {
 } from "../capabilities.ts";
 import { createBoardRuntimeCache, type BoardRuntimeCache } from "../game/board.ts";
 import type { CommandServiceDeps } from "../game/command-service.ts";
+import {
+  createDefenseTimers,
+  type DefenseTimers,
+  type TimerScheduler,
+} from "../game/defense-timer.ts";
 import { createRouter, error } from "./router.ts";
 import { BOARD_GENERATION, boardStreamId } from "../game/names.ts";
 import { createRiskRoutes } from "./routes.ts";
@@ -24,10 +29,16 @@ export interface AppDeps {
   rng?: Rng;
   now?: () => number;
   boardCache?: BoardRuntimeCache;
+  /** `risk-demo-v2` defence window; injectable so tests need not wait 15s. */
+  defenseTimeoutMs?: number;
+  /** Delayed-execution primitive for defence timeouts; manual in tests. */
+  scheduler?: TimerScheduler;
 }
 
 export interface App {
   fetch: (request: Request) => Promise<Response>;
+  /** Durable defence timers, exposed for restart recovery and for tests. */
+  defenseTimers: DefenseTimers;
 }
 
 export interface AppContext {
@@ -36,6 +47,7 @@ export interface AppContext {
   now: () => number;
   boardCache: BoardRuntimeCache;
   commandService: CommandServiceDeps;
+  defenseTimers: DefenseTimers;
   activeGeneration(gameId: string): string;
   requireCapability(
     request: Request,
@@ -48,12 +60,20 @@ export interface AppContext {
 export function buildApp(deps: AppDeps): App {
   const now = deps.now ?? (() => Date.now());
   const boardCache = deps.boardCache ?? createBoardRuntimeCache();
-  const commandService = {
+  const commandService: CommandServiceDeps = {
     protocol: deps.protocol,
     commands: deps.stores.commands,
     rng: deps.rng ?? createSeededRng(0x1215_9ee5),
     now,
+    defenseTimeoutMs: deps.defenseTimeoutMs,
   };
+  const defenseTimers = createDefenseTimers({
+    protocol: deps.protocol,
+    commandService,
+    games: deps.stores.games,
+    scheduler: deps.scheduler,
+    now,
+  });
 
   async function authenticate(request: Request): Promise<CapabilityRow | null> {
     const token = bearerToken(request.headers.get("authorization"));
@@ -105,6 +125,7 @@ export function buildApp(deps: AppDeps): App {
     now,
     boardCache,
     commandService,
+    defenseTimers,
     activeGeneration: (gameId) => deps.stores.games.get(gameId)?.generation ?? BOARD_GENERATION,
     requireCapability,
     issueAndStore,
@@ -113,6 +134,7 @@ export function buildApp(deps: AppDeps): App {
   const streams = createReadOnlyHttpHandler({ protocol: deps.protocol, pathPrefix: "/streams" });
 
   return {
+    defenseTimers,
     async fetch(request) {
       const url = new URL(request.url);
       if (!url.pathname.startsWith("/streams/")) return api(request);

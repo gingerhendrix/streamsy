@@ -30,6 +30,11 @@ const stores = createSqliteStores(adapter.state.db);
 
 const app = buildApp({ protocol, stores });
 
+// Restart recovery: defence timers are derived from canonical pending state, not
+// stored, so a process that comes back up rebuilds every outstanding timer — and
+// resolves any whose deadline passed while it was down — before serving.
+await app.defenseTimers.recover();
+
 const isDevelopment = process.env.NODE_ENV !== "production";
 
 const server = Bun.serve({
@@ -53,6 +58,7 @@ const server = Bun.serve({
 
 const shutdown = (): void => {
   server.stop(true);
+  app.defenseTimers.stop();
   adapter.close();
   if (deleteDbOnExit && dbPath !== ":memory:") {
     for (const path of [dbPath, `${dbPath}-shm`, `${dbPath}-wal`]) rmSync(path, { force: true });

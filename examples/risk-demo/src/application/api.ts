@@ -1,8 +1,11 @@
 import type { GamePhase, GameStatus } from "../domain/aggregate.ts";
 import type { RiskErrorCode } from "../domain/commands.ts";
+import type { RiskErrorCodeV2 } from "../domain/commands-v2.ts";
+import type { PlayerController } from "../domain/events-v2.ts";
 import type { DecisionContext } from "./decision.ts";
+import type { DecisionContextV2 } from "./decision-v2.ts";
 import type { GameEvent } from "../domain/events.ts";
-import type { MapVersion, Ruleset } from "../domain/map.ts";
+import type { GameEventV2 } from "../domain/events-v2.ts";
 import type {
   ProjectedGame,
   ProjectedMove,
@@ -13,6 +16,7 @@ import type {
 
 export type ApiErrorCode =
   | RiskErrorCode
+  | RiskErrorCodeV2
   | "UNAUTHORIZED"
   | "FORBIDDEN"
   | "WRONG_GAME"
@@ -39,6 +43,15 @@ const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
   NOT_ADJACENT: "Those territories are not connected.",
   INSUFFICIENT_ARMIES: "There are not enough armies for that move.",
   COMMAND_ID_REUSED: "That move identifier was already used for a different move.",
+  MAP_GENERATION_FAILED: "The map could not be generated for this game.",
+  PENDING_DEFENSE: "An attack is waiting for the defender to roll.",
+  PENDING_OCCUPATION: "The captured country must be occupied before anything else.",
+  NOT_DEFENDING_PLAYER: "Only the defending player can roll for that attack.",
+  ATTACK_ID_MISMATCH: "That attack is not the one currently open.",
+  ATTACK_ALREADY_RESOLVED: "That attack has already been resolved.",
+  DEFENSE_DEADLINE_EXPIRED: "The defence window closed before that roll arrived.",
+  INVALID_OCCUPATION: "That number of armies cannot be moved into the captured country.",
+  NO_FRIENDLY_PATH: "No path of your own countries connects those territories.",
   UNAUTHORIZED: "Your player session is missing or has expired.",
   FORBIDDEN: "Your player role cannot perform that action.",
   WRONG_GAME: "This player session belongs to another game.",
@@ -68,6 +81,16 @@ export function statusForErrorCode(code: ApiErrorCode): number {
     case "TOO_MANY_PLAYERS":
     case "PLAYER_ID_TAKEN":
     case "COMMAND_ID_REUSED":
+    // The v2 combat interrupt: every one of these means "the canonical board
+    // moved on, or is waiting on someone else" — a conflict, not a bad request.
+    case "PENDING_DEFENSE":
+    case "PENDING_OCCUPATION":
+    case "NOT_DEFENDING_PLAYER":
+    case "ATTACK_ID_MISMATCH":
+    case "ATTACK_ALREADY_RESOLVED":
+    case "DEFENSE_DEADLINE_EXPIRED":
+    case "INVALID_OCCUPATION":
+    case "NO_FRIENDLY_PATH":
       return 409;
     case "UNAUTHORIZED":
       return 401;
@@ -101,7 +124,7 @@ export interface CommandAck {
   sourceOffset: string;
   /** Final board-projection transition for this accepted command. */
   txid: string;
-  events: GameEvent[];
+  events: Array<GameEvent | GameEventV2>;
   turnId?: string;
 }
 
@@ -109,16 +132,29 @@ export interface CreateGameRequest {
   name?: string;
   color?: string;
   commandId?: string;
+  /**
+   * Opt in to `risk-demo-v2`. Absent means `risk-demo-v1`, which stays the
+   * default until the v2 board projection and renderer land.
+   */
+  ruleset?: string;
+  controller?: PlayerController;
+  /** Explicit map seed, for demos and deterministic tests only. */
+  mapSeed?: string;
 }
 
 export interface CreateGameResponse {
-  game: { id: string; ruleset: Ruleset; mapVersion: MapVersion };
+  game: { id: string; ruleset: string; mapVersion: string };
   player: PlayerIdentity;
   capability: string;
   ack: CommandAck;
 }
 
-export type JoinGameRequest = CreateGameRequest;
+export interface JoinGameRequest {
+  name?: string;
+  color?: string;
+  commandId?: string;
+  controller?: PlayerController;
+}
 
 export interface JoinGameResponse {
   player: PlayerIdentity;
@@ -129,8 +165,8 @@ export interface JoinGameResponse {
 export interface GameResponse {
   gameId: string;
   status: GameStatus;
-  ruleset: Ruleset;
-  mapVersion: MapVersion;
+  ruleset: string;
+  mapVersion: string;
   round: number;
   activePlayerId?: string;
   phase?: GamePhase;
@@ -138,6 +174,8 @@ export interface GameResponse {
   generation: string;
   boardStreamId: string;
   players: Array<Pick<ProjectedPlayer, "id" | "name" | "color" | "eliminated">>;
+  /** Present only for `risk-demo-v2`: the open combat interrupt, if any. */
+  pendingInteraction?: DecisionContextV2["pendingInteraction"];
 }
 
 export interface BoardResponse {

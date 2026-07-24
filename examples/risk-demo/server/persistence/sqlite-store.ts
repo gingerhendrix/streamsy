@@ -9,9 +9,9 @@
 
 import type { Database } from "bun:sqlite";
 
-import type { GameEvent } from "../../src/domain/events.ts";
-import type { DecisionError } from "../../src/domain/decide.ts";
 import type {
+  AnyDecisionError,
+  AnyGameEvent,
   CapabilityRow,
   CommandRow,
   GameRow,
@@ -35,6 +35,7 @@ create table if not exists risk_games (
   source_stream_id text not null,
   projection_stream_id text not null,
   generation text not null,
+  ruleset text not null default 'risk-demo-v1',
   created_at integer not null
 );
 create table if not exists risk_commands (
@@ -74,7 +75,19 @@ interface GameDbRow {
   source_stream_id: string;
   projection_stream_id: string;
   generation: string;
+  ruleset: string;
   created_at: number;
+}
+
+function gameFromDb(r: GameDbRow): GameRow {
+  return {
+    gameId: r.game_id,
+    sourceStreamId: r.source_stream_id,
+    projectionStreamId: r.projection_stream_id,
+    generation: r.generation,
+    ruleset: r.ruleset,
+    createdAt: r.created_at,
+  };
 }
 
 interface CommandDbRow {
@@ -112,6 +125,13 @@ function generationFromDb(r: GenerationDbRow): GenerationRow {
 
 export function migrateRiskSchema(db: Database): void {
   db.run(SCHEMA);
+  // `create table if not exists` cannot widen an existing table, so a database
+  // written before v2 needs the ruleset column added explicitly. Every such game
+  // is v1 by construction, which is exactly the column default.
+  const columns = db.query<{ name: string }, []>("pragma table_info(risk_games)").all();
+  if (!columns.some((column) => column.name === "ruleset")) {
+    db.run("alter table risk_games add column ruleset text not null default 'risk-demo-v1'");
+  }
 }
 
 export function createSqliteStores(db: Database): Stores {
@@ -127,10 +147,11 @@ export function createSqliteStores(db: Database): Stores {
   );
   const insertGame = db.query(
     `insert or replace into risk_games
-       (game_id, source_stream_id, projection_stream_id, generation, created_at)
-       values (?, ?, ?, ?, ?)`,
+       (game_id, source_stream_id, projection_stream_id, generation, ruleset, created_at)
+       values (?, ?, ?, ?, ?, ?)`,
   );
   const selectGame = db.query<GameDbRow, [string]>("select * from risk_games where game_id = ?");
+  const listGames = db.query<GameDbRow, []>("select * from risk_games order by created_at asc");
   const insertCommand = db.query(
     `insert or replace into risk_commands
        (game_id, command_id, payload_hash, status, source_offset, events_json, error_json, created_at)
@@ -203,19 +224,16 @@ export function createSqliteStores(db: Database): Stores {
           row.sourceStreamId,
           row.projectionStreamId,
           row.generation,
+          row.ruleset,
           row.createdAt,
         );
       },
       get(gameId) {
         const r = selectGame.get(gameId);
-        if (!r) return null;
-        return {
-          gameId: r.game_id,
-          sourceStreamId: r.source_stream_id,
-          projectionStreamId: r.projection_stream_id,
-          generation: r.generation,
-          createdAt: r.created_at,
-        };
+        return r ? gameFromDb(r) : null;
+      },
+      list() {
+        return listGames.all().map(gameFromDb);
       },
     },
     commands: {
@@ -240,8 +258,8 @@ export function createSqliteStores(db: Database): Stores {
           payloadHash: r.payload_hash,
           status: r.status as CommandRow["status"],
           sourceOffset: r.source_offset ?? undefined,
-          events: r.events_json ? (JSON.parse(r.events_json) as GameEvent[]) : undefined,
-          error: r.error_json ? (JSON.parse(r.error_json) as DecisionError) : undefined,
+          events: r.events_json ? (JSON.parse(r.events_json) as AnyGameEvent[]) : undefined,
+          error: r.error_json ? (JSON.parse(r.error_json) as AnyDecisionError) : undefined,
           createdAt: r.created_at,
         };
       },

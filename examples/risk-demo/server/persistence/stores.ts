@@ -10,7 +10,13 @@
 
 import type { CapabilityRole } from "../capabilities.ts";
 import type { GameEvent } from "../../src/domain/events.ts";
+import type { GameEventV2 } from "../../src/domain/events-v2.ts";
 import type { DecisionError } from "../../src/domain/decide.ts";
+import type { DecisionErrorV2 } from "../../src/domain/decide-v2.ts";
+
+/** The command log stores whichever ruleset's events/rejections a game speaks. */
+export type AnyGameEvent = GameEvent | GameEventV2;
+export type AnyDecisionError = DecisionError | DecisionErrorV2;
 
 export interface CapabilityRow {
   tokenId: string;
@@ -26,6 +32,12 @@ export interface GameRow {
   sourceStreamId: string;
   projectionStreamId: string;
   generation: string;
+  /**
+   * Which canonical ruleset this stream speaks. Recorded here so the command
+   * service can pick the right fold/decide pair without first reading the stream;
+   * the authoritative copy is still the `ruleset` field in `GameCreated`.
+   */
+  ruleset: string;
   createdAt: number;
 }
 
@@ -35,8 +47,8 @@ export interface CommandRow {
   payloadHash: string;
   status: "accepted" | "rejected";
   sourceOffset?: string;
-  events?: GameEvent[];
-  error?: DecisionError;
+  events?: AnyGameEvent[];
+  error?: AnyDecisionError;
   createdAt: number;
 }
 
@@ -62,6 +74,8 @@ export interface CapabilityStore {
 export interface GameStore {
   put(row: GameRow): void;
   get(gameId: string): GameRow | null;
+  /** Every known game, oldest first. Used by restart recovery to rebuild timers. */
+  list(): GameRow[];
 }
 
 export interface CommandStore {
@@ -113,6 +127,7 @@ export function createInMemoryStores(): Stores {
     games: {
       put: (row) => void games.set(row.gameId, row),
       get: (gameId) => games.get(gameId) ?? null,
+      list: () => [...games.values()].toSorted((a, b) => a.createdAt - b.createdAt),
     },
     commands: {
       put: (row) => void commands.set(commandKey(row.gameId, row.commandId), row),
