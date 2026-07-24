@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { ProjectedMoveV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
 import {
+  agentHarnessCommand,
   countdownFraction,
   countdownLabel,
   countdownSeconds,
+  defenseAttribution,
   dicePairs,
   diceOutcomeText,
   moveDetailV2,
@@ -101,6 +103,16 @@ describe("dice", () => {
     expect(resolutionLabel("agent-auto", "Mina")).toBe("Agent auto-rolled");
     expect(resolutionLabel("human", "Mina")).toBe("Rolled by Mina");
   });
+
+  it("attributes a defence in a sentence the same way the combat card does", () => {
+    expect(defenseAttribution("human", "Mina", "Ashfell")).toBe("Mina defended Ashfell");
+    expect(defenseAttribution("agent-auto", "Mina", "Ashfell")).toBe(
+      "Mina auto-rolled the defence of Ashfell",
+    );
+    expect(defenseAttribution("timeout", "Mina", "Ashfell")).toBe(
+      "Ashfell was auto-rolled — Mina’s window expired",
+    );
+  });
 });
 
 describe("reveal plan", () => {
@@ -196,7 +208,7 @@ describe("current-turn ledger", () => {
         },
         NAMES,
       ),
-    ).toBe("3 vs 5 — 1 attacker lost");
+    ).toBe("3 vs 5 — 1 attacker lost · Auto-rolled after timeout");
   });
 });
 
@@ -221,6 +233,32 @@ describe("game history", () => {
   it("never puts a source offset in player-facing text", () => {
     const text = moveTextV2(move({ kind: "GameStarted" }), NAMES);
     expect(text).not.toContain(move({}).sourceOffset);
+  });
+
+  it("never lets a lapsed defence window read as a human roll", () => {
+    const resolved = {
+      kind: "AttackResolved" as const,
+      playerId: "p2",
+      from: "t1",
+      to: "t2",
+      attackerRolls: [6, 2],
+      defenderRolls: [3],
+      attackerLosses: 0,
+      defenderLosses: 1,
+      territoryCaptured: false,
+    };
+    expect(moveTextV2(move({ ...resolved, resolutionSource: "human" }), NAMES)).toBe(
+      "Mina defended Northgate",
+    );
+    expect(moveTextV2(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
+      "Northgate was auto-rolled — Mina’s window expired",
+    );
+    expect(moveTextV2(move({ ...resolved, resolutionSource: "agent-auto" }), NAMES)).toBe(
+      "Mina auto-rolled the defence of Northgate",
+    );
+    expect(moveDetailV2(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
+      "6 · 2 vs 3 — 1 defender lost · Auto-rolled after timeout",
+    );
   });
 
   it("adds a dice line only for a resolved throw", () => {
@@ -272,5 +310,33 @@ describe("map and seat language", () => {
     expect(seatStatusLabel({ ...base, spectating: false, mode: "waiting" })).toBe(
       "Waiting for Ada",
     );
+  });
+});
+
+describe("agent harness command", () => {
+  it("carries the origin the page was served from, so a non-default PORT works", () => {
+    expect(
+      agentHarnessCommand({
+        origin: "http://localhost:22392",
+        gameId: "game_1",
+        playerId: "p_1",
+        token: "rsk_abc",
+      }),
+    ).toBe(
+      "BASE_URL=http://localhost:22392 GAME_ID=game_1 PLAYER_ID=p_1 PLAYER_TOKEN=rsk_abc " +
+        "bun run --cwd examples/risk-demo agent",
+    );
+  });
+
+  it("trims a trailing slash and can name a cursor file", () => {
+    const command = agentHarnessCommand({
+      origin: "http://127.0.0.1:1339/",
+      gameId: "game_1",
+      playerId: "p_1",
+      token: "rsk_abc",
+      cursorFile: "./agent.cursor",
+    });
+    expect(command).toContain("BASE_URL=http://127.0.0.1:1339 GAME_ID=game_1");
+    expect(command).toContain("CURSOR_FILE=./agent.cursor bun run --cwd examples/risk-demo agent");
   });
 });

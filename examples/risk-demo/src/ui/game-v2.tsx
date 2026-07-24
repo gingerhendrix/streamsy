@@ -37,6 +37,7 @@ import { useRiskBoardV2Stream } from "./board-stream-db.ts";
 import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
 import {
+  agentHarnessCommand,
   moveDetailV2,
   moveTextV2,
   revealPlan,
@@ -66,6 +67,15 @@ type Selection =
 
 /** Which manoeuvre a click means during the attack phase; both share sources. */
 type Intent = "attack" | "fortify";
+
+/** A seat opened for the machine harness, with the capability that drives it. */
+interface AgentSeat {
+  playerId: string;
+  name: string;
+  token: string;
+}
+
+const AGENT_COLORS = ["#8b5cf6", "#22c1a5", "#d49b35", "#3b82f6"];
 
 export interface GameV2ScreenProps {
   gameId: string;
@@ -120,7 +130,9 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const [now, setNow] = useState(() => Date.now());
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [agentSeat, setAgentSeat] = useState<{ playerId: string; token: string } | null>(null);
+  // A lobby may open more than one agent seat — an agent-versus-agent game is how
+  // the demo runs itself to a winner without a human at the keyboard.
+  const [agentSeats, setAgentSeats] = useState<AgentSeat[]>([]);
   const reducedMotion = usePrefersReducedMotion();
 
   const offset = board?.meta?.sourceThroughOffset ?? null;
@@ -309,15 +321,26 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   /** Open an agent seat and hand back the command that drives it. */
   const addAgentSeat = async () => {
     setBusy(true);
+    const taken = new Set((board?.players ?? []).map((player) => player.color.toLowerCase()));
+    const seat = agentSeats.length + 1;
     const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
-      body: { name: "Agent", color: "#8b5cf6", controller: "agent" },
+      body: {
+        name: `Agent ${seat}`,
+        color: AGENT_COLORS.find((color) => !taken.has(color.toLowerCase())) ?? AGENT_COLORS[0],
+        controller: "agent",
+      },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not open an agent seat."));
       return;
     }
-    setAgentSeat({ playerId: result.body.player.id, token: result.body.capability });
+    const opened: AgentSeat = {
+      playerId: result.body.player.id,
+      name: result.body.player.name,
+      token: result.body.capability,
+    };
+    setAgentSeats((seats) => [...seats, opened]);
     setNotice("Agent seat opened — run the harness command to bring it online.");
   };
 
@@ -495,7 +518,8 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           color={props.color}
           controller={props.controller}
           busy={busy}
-          agentSeat={agentSeat}
+          agentSeats={agentSeats}
+          origin={window.location.origin}
           gameId={gameId}
           onName={props.onName}
           onColor={props.onColor}
@@ -1037,7 +1061,9 @@ function LobbyV2(props: {
   controller: PlayerController;
   busy: boolean;
   gameId: string;
-  agentSeat: { playerId: string; token: string } | null;
+  agentSeats: AgentSeat[];
+  /** Where this page was served from; the harness needs it as `BASE_URL` (D1). */
+  origin: string;
   onName(value: string): void;
   onColor(value: string): void;
   onController(value: PlayerController): void;
@@ -1124,14 +1150,19 @@ function LobbyV2(props: {
         </div>
       )}
 
-      {props.agentSeat && (
-        <div className="agent-seat">
-          <b>Agent seat ready.</b> Run the harness in a terminal:
+      {props.agentSeats.map((seat) => (
+        <div className="agent-seat" key={seat.playerId}>
+          <b>{seat.name} is seated.</b> Run the harness in a terminal:
           <code>
-            {`GAME_ID=${props.gameId} PLAYER_ID=${props.agentSeat.playerId} PLAYER_TOKEN=${props.agentSeat.token} bun run --cwd examples/risk-demo agent`}
+            {agentHarnessCommand({
+              origin: props.origin,
+              gameId: props.gameId,
+              playerId: seat.playerId,
+              token: seat.token,
+            })}
           </code>
         </div>
-      )}
+      ))}
     </section>
   );
 }

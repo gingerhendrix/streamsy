@@ -107,15 +107,36 @@ export function dicePairs(
   return pairs;
 }
 
+/** The two ways a roll happens without anyone clicking; the only copy for them. */
+const AUTO_ROLL_LABELS: Record<Exclude<DefenseResolutionSource, "human">, string> = {
+  "agent-auto": "Agent auto-rolled",
+  timeout: "Auto-rolled after timeout",
+};
+
 /** How the defence roll was authorised — never implying a human clicked when none did. */
 export function resolutionLabel(source: DefenseResolutionSource, defenderName: string): string {
+  return source === "human" ? `Rolled by ${defenderName}` : AUTO_ROLL_LABELS[source];
+}
+
+/**
+ * The same fact as a sentence about a country, for the history feed.
+ *
+ * Design spec §8.5.6: a defence the human never touched must not read as one they
+ * did. The combat card has always branched on this; history and the ledger now
+ * say it too, so a player scrolling back cannot mistake a lapsed window for a roll.
+ */
+export function defenseAttribution(
+  source: DefenseResolutionSource,
+  defenderName: string,
+  territoryName: string,
+): string {
   switch (source) {
     case "human":
-      return `Rolled by ${defenderName}`;
+      return `${defenderName} defended ${territoryName}`;
     case "agent-auto":
-      return "Agent auto-rolled";
+      return `${defenderName} auto-rolled the defence of ${territoryName}`;
     case "timeout":
-      return "Auto-rolled after timeout";
+      return `${territoryName} was auto-rolled — ${defenderName}’s window expired`;
   }
 }
 
@@ -152,7 +173,12 @@ export interface LedgerEntry {
 const plural = (count: number, one: string, many = `${one}s`): string =>
   `${count} ${count === 1 ? one : many}`;
 
-/** `"⚄ 6 · 5 · 2 vs 4 · 3 — Ashfell held, 1 attacker lost"`. */
+/**
+ * `"⚄ 6 · 5 · 2 vs 4 · 3 — Ashfell held, 1 attacker lost"`.
+ *
+ * A defence nobody clicked is named as such, so the dice line under a ledger or
+ * history row carries the same truth as the combat card did while it was live.
+ */
 export function diceOutcomeText(dice: ProjectedDiceV2, names: NameLookup): string {
   const losses = [
     dice.attackerLosses > 0 ? `${plural(dice.attackerLosses, "attacker")} lost` : null,
@@ -163,7 +189,9 @@ export function diceOutcomeText(dice: ProjectedDiceV2, names: NameLookup): strin
     : losses.length > 0
       ? losses.join(", ")
       : "no losses";
-  return `${dice.attackerRolls.join(" · ")} vs ${dice.defenderRolls.join(" · ")} — ${outcome}`;
+  const authorised =
+    dice.resolutionSource === "human" ? "" : ` · ${AUTO_ROLL_LABELS[dice.resolutionSource]}`;
+  return `${dice.attackerRolls.join(" · ")} vs ${dice.defenderRolls.join(" · ")} — ${outcome}${authorised}`;
 }
 
 /**
@@ -258,7 +286,12 @@ export function moveTextV2(move: ProjectedMoveV2, names: NameLookup): string {
     case "AttackDeclared":
       return `${who} attacked ${names.territory(move.from ?? "")} → ${names.territory(move.to ?? "")}`;
     case "AttackResolved":
-      return `${who} defended ${names.territory(move.to ?? "")}`;
+      // `playerId` on this row is the *defender* — the person the copy is about.
+      return defenseAttribution(
+        move.resolutionSource ?? "human",
+        who,
+        names.territory(move.to ?? ""),
+      );
     case "TerritoryOccupied":
       return `${who} occupied ${names.territory(move.to ?? "")} with ${move.armies}`;
     case "ArmiesFortified":
@@ -311,6 +344,37 @@ export function terrainMix(terrains: readonly Terrain[]): string {
     .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([terrain, count]) => `${count} ${TERRAIN_LABELS[terrain]}`)
     .join(" · ");
+}
+
+// ---------------------------------------------------------------------------
+// Lobby tooling
+// ---------------------------------------------------------------------------
+
+/**
+ * The copy-pasteable command that brings an agent seat online.
+ *
+ * `BASE_URL` is not optional in practice: the harness defaults to port 1339, and
+ * this demo's server takes its port from `$PORT`, so a printed command without an
+ * origin fails for anyone who did not happen to run on the default (D1). The
+ * server that served this page knows where it is, so the origin comes from there
+ * rather than from the player.
+ */
+export function agentHarnessCommand(options: {
+  origin: string;
+  gameId: string;
+  playerId: string;
+  token: string;
+  cursorFile?: string;
+}): string {
+  const origin = options.origin.replace(/\/+$/, "");
+  return [
+    `BASE_URL=${origin}`,
+    `GAME_ID=${options.gameId}`,
+    `PLAYER_ID=${options.playerId}`,
+    `PLAYER_TOKEN=${options.token}`,
+    ...(options.cursorFile ? [`CURSOR_FILE=${options.cursorFile}`] : []),
+    "bun run --cwd examples/risk-demo agent",
+  ].join(" ");
 }
 
 // ---------------------------------------------------------------------------
