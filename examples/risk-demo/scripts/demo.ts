@@ -163,9 +163,9 @@ export const DEMO_GUEST_REQUEST = {
 
 export const DEMO_LEAD_IN_MS = 10_000;
 /**
- * A v2 game is roughly 250–400 commands — a bigger map and one throw per attack —
+ * A v2 game is roughly 250–550 commands — a bigger map and one throw per attack —
  * so the pace is a second rather than the v1 second and a half, which keeps a
- * complete watchable game to a handful of minutes.
+ * complete watchable game to something between five and ten minutes.
  */
 export const DEMO_COMMAND_PACE_MS = 1_000;
 

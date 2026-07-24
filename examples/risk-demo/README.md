@@ -19,8 +19,8 @@ generated hex map, and runs Ada and Bob as in-process HTTP agents. Open the prom
 spectator URL; the server and final board stay available until Ctrl-C. Temporary SQLite data is
 removed on shutdown.
 
-A complete agent-versus-agent game takes roughly four to six minutes at the demo's one-command-per-
-second pace. Every attack pauses for a defence roll, so the board shows declaration, both sides'
+A complete agent-versus-agent game runs 250–550 commands, so at the demo's one-command-per-second
+pace it takes roughly five to ten minutes — a measured run finished in 23 rounds and 8.8 minutes. Every attack pauses for a defence roll, so the board shows declaration, both sides'
 recorded dice, the losses, and — on a capture — the occupation the attacker had to choose.
 
 ![The live Streamsy Risk spectator board](docs/risk-demo.png)
