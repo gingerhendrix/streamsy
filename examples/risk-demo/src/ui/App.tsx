@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  friendlyError,
-  type ApiErrorCode,
-  type ApiErrorResponse,
   type CommandAck,
   type CreateGameResponse,
   type DecisionResponse,
@@ -14,24 +11,31 @@ import {
 } from "../application/api.ts";
 import type { GameStatus } from "../domain/aggregate.ts";
 import type { LegalAction } from "../application/legal-actions.ts";
+import type { PlayerController } from "../domain/events-v2.ts";
 import { TERRITORIES } from "../domain/map.ts";
+import { RULESET_V2 } from "../domain/map-v2.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
+import { GameV2Screen } from "./game-v2.tsx";
+import {
+  COLORS,
+  PlayerFields,
+  STORAGE_KEY,
+  SyncPill,
+  TopBar,
+  acknowledgementNotice,
+  api,
+  errorMessage,
+  gameFromUrl,
+  isError,
+  loadIdentity,
+  playerRoleLabel,
+  shortOffset,
+  type Identity,
+} from "./shared.tsx";
 
-interface Identity {
-  gameId: string;
-  playerId: string;
-  token: string;
-  role: "host" | "player";
-}
+export { acknowledgementNotice, playerRoleLabel, shortOffset } from "./shared.tsx";
 
-interface ApiResult<T> {
-  status: number;
-  body: T | ApiErrorResponse;
-}
-
-const STORAGE_KEY = "risk-demo-identity";
-const COLORS = ["#e05a47", "#3b82f6", "#d49b35", "#8b5cf6"];
 const POSITIONS: Record<string, { x: number; y: number }> = {
   alpha: { x: 15, y: 25 },
   bravo: { x: 50, y: 18 },
@@ -41,76 +45,8 @@ const POSITIONS: Record<string, { x: number; y: number }> = {
   foxtrot: { x: 84, y: 75 },
 };
 
-function loadIdentity(): Identity | null {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Identity) : null;
-  } catch {
-    return null;
-  }
-}
-
-function gameFromUrl(): string {
-  return new URLSearchParams(window.location.search).get("game") ?? "";
-}
-
-async function api<T>(
-  method: string,
-  path: string,
-  options: { token?: string; body?: unknown } = {},
-): Promise<ApiResult<T>> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  return {
-    status: response.status,
-    body: (await response.json().catch(() => ({
-      status: "rejected",
-      error: { code: "INTERNAL", message: "Invalid server response." },
-    }))) as T | ApiErrorResponse,
-  };
-}
-
-function isError(body: unknown): body is ApiErrorResponse {
-  return Boolean(
-    body &&
-    typeof body === "object" &&
-    "status" in body &&
-    body.status === "rejected" &&
-    "error" in body,
-  );
-}
-
-function errorMessage(body: unknown, fallback: string): string {
-  if (!isError(body)) return fallback;
-  return friendlyError(body.error.code as ApiErrorCode, body.error.message);
-}
-
-export function acknowledgementNotice(actionType: string): string {
-  const action = actionType.replaceAll("-", " ");
-  return `${action.charAt(0).toUpperCase()}${action.slice(1)} committed to the stream.`;
-}
-
 export function didGameStatusChange(previous: GameStatus | null, current: GameStatus): boolean {
   return previous !== null && previous !== current;
-}
-
-export function playerRoleLabel(hostPlayerId: string | undefined, playerId: string): string {
-  return playerId === hostPlayerId ? "Host" : "Player";
-}
-
-const compactOffsetPart = (part: string): string => part.replace(/^0+(?=\d)/, "");
-
-function shortOffset(offset: string | null | undefined): string {
-  if (!offset) return "awaiting first event";
-  const [commit, item] = offset.split("_");
-  return item === undefined
-    ? compactOffsetPart(offset)
-    : `#${compactOffsetPart(commit!)}·${compactOffsetPart(item)}`;
 }
 
 function moveText(move: ProjectedMove, players: ProjectedPlayer[]): string {
@@ -151,10 +87,14 @@ export function App() {
   const [decision, setDecision] = useState<DecisionResponse | null>(null);
   const [name, setName] = useState("Player");
   const [color, setColor] = useState(COLORS[0]!);
+  const [controller, setController] = useState<PlayerController>("human");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const previousStatus = useRef<GameStatus | null>(null);
-  const live = useRiskBoardStream(game?.boardStreamId ?? null);
+  // The renderer is chosen from the game's canonical ruleset, never inferred from
+  // missing rows (design spec §11) — so only a v1 game opens the v1 board stream.
+  const isV2 = game?.ruleset === RULESET_V2;
+  const live = useRiskBoardStream(isV2 ? null : (game?.boardStreamId ?? null));
   const board = live.rows;
 
   useEffect(() => {
@@ -226,20 +166,22 @@ export function App() {
       setDecision(null);
       return;
     }
-    const controller = new AbortController();
+    const aborter = new AbortController();
     void api<DecisionResponse>("GET", `/v1/games/${identity.gameId}/decision`, {
       token: identity.token,
     }).then((result) => {
-      if (!controller.signal.aborted && result.status === 200 && !isError(result.body)) {
+      if (!aborter.signal.aborted && result.status === 200 && !isError(result.body)) {
         setDecision(result.body);
       }
     });
-    return () => controller.abort();
+    return () => aborter.abort();
   }, [identity, board?.game.activePlayerId, board?.meta?.sourceThroughOffset]);
 
   const createGame = async () => {
     setBusy(true);
-    const result = await api<CreateGameResponse>("POST", "/v1/games", { body: { name, color } });
+    const result = await api<CreateGameResponse>("POST", "/v1/games", {
+      body: { name, color, controller },
+    });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not create the game."));
@@ -353,10 +295,17 @@ export function App() {
           </div>
           <h1>Risk, resolved as a stream.</h1>
           <p className="hero-copy">
-            Six territories. Recorded dice. A board that rebuilds and synchronises live from a
-            durable projection.
+            A procedurally generated hex map. Recorded dice. A board that rebuilds and synchronises
+            live from a durable projection.
           </p>
-          <PlayerFields name={name} color={color} onName={setName} onColor={setColor} />
+          <PlayerFields
+            name={name}
+            color={color}
+            controller={controller}
+            onName={setName}
+            onColor={setColor}
+            onController={setController}
+          />
           <button className="primary big" onClick={createGame} disabled={busy}>
             {busy ? "Creating…" : "Create a game"}
           </button>
@@ -398,25 +347,34 @@ export function App() {
     );
   }
 
+  if (isV2 && game) {
+    return (
+      <GameV2Screen
+        gameId={gameId}
+        game={game}
+        identity={identity}
+        onIdentity={persist}
+        refreshGame={refreshGame}
+        name={name}
+        color={color}
+        controller={controller}
+        onName={setName}
+        onColor={setColor}
+        onController={setController}
+        onCopyInvite={copyInvite}
+      />
+    );
+  }
+
   return (
     <main className="game-shell">
-      <header className="topbar">
-        <div>
-          <div className="brand">
-            <span className="brand-mark">S</span> Streamsy <b>Risk</b>
-          </div>
-          <div className="game-code">
-            Game <code>{gameId}</code>
-          </div>
-        </div>
-        <div className={`sync-pill ${live.status}`} title={live.error ?? undefined}>
-          <span className="sync-light" />
-          <span>
-            <b>{live.status === "live" ? "Live" : live.status.replace("-", " ")}</b>
-            <small>{shortOffset(board?.meta?.sourceThroughOffset ?? live.streamOffset)}</small>
-          </span>
-        </div>
-      </header>
+      <TopBar gameId={gameId}>
+        <SyncPill
+          status={live.status}
+          offset={board?.meta?.sourceThroughOffset ?? live.streamOffset}
+          error={live.error}
+        />
+      </TopBar>
 
       {!board ? (
         <section className="honest-empty">
@@ -513,42 +471,6 @@ export function App() {
         </div>
       )}
     </main>
-  );
-}
-
-function PlayerFields(props: {
-  name: string;
-  color: string;
-  onName(value: string): void;
-  onColor(value: string): void;
-}) {
-  return (
-    <div className="player-fields">
-      <label>
-        <span>Your name</span>
-        <input
-          value={props.name}
-          maxLength={24}
-          onChange={(event) => props.onName(event.target.value)}
-        />
-      </label>
-      <fieldset>
-        <legend>Colour</legend>
-        <div className="swatches">
-          {COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={color === props.color ? "swatch selected" : "swatch"}
-              style={{ backgroundColor: color }}
-              onClick={() => props.onColor(color)}
-              aria-label={`Choose ${color}`}
-              aria-pressed={color === props.color}
-            />
-          ))}
-        </div>
-      </fieldset>
-    </div>
   );
 }
 
