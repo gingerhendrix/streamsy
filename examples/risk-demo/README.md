@@ -52,6 +52,20 @@ cutovers; it does not drive board state.
 - `server/demo/signature-demo.ts` runs the complete deterministic guarantee proof.
 - `src/ui/board-stream-db.ts` is the official Stream DB + TanStack DB integration.
 
+### `risk-demo-v2` map kernel (in progress)
+
+The v2 ruleset replaces the fixed six-territory board with a seeded procedural hex map.
+The kernel is complete and tested but not yet wired into game creation — the v2 aggregate,
+projection, and renderer arrive in later slices, so every game the server creates today is
+still `risk-demo-v1`.
+
+- `src/domain/hex-generator.ts` is `hex-generator-v1`: a pure, seeded generator producing a
+  connected hex map with variable-sized countries, connected continents, and visual-only terrain.
+- `src/domain/generator-rng.ts` provides the integer PRNG and its independent named substreams.
+- `src/domain/setup-v2.ts` deals the board and allocates armies deterministically from the seed.
+- `src/domain/events-v2.ts` records the seed on `GameCreated` and the whole map snapshot on
+  `GameStarted`, so replay never re-runs the generator.
+
 ## Guarantees
 
 - **Deterministic replay:** dice, territory allocation, and turn order are recorded once in canonical

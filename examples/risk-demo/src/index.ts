@@ -20,3 +20,17 @@ export * from "./domain/commands.ts";
 export * from "./domain/aggregate.ts";
 export * from "./domain/decide.ts";
 export * from "./board/projection.ts";
+
+/**
+ * `risk-demo-v2` map kernel. Version-discriminated alongside v1: v2 applies to new
+ * games only, and the aggregate/projection that fold its combat events arrive in
+ * later slices. The generator runs once per game inside the start-game command
+ * service; replay reads the map snapshot recorded in `GameStarted`.
+ */
+export * from "./domain/hex.ts";
+export * from "./domain/generator-rng.ts";
+export * from "./domain/map-names.ts";
+export * from "./domain/map-v2.ts";
+export * from "./domain/hex-generator.ts";
+export * from "./domain/setup-v2.ts";
+export * from "./domain/events-v2.ts";
