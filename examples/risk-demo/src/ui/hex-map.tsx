@@ -270,7 +270,9 @@ export function HexMap(props: HexMapProps) {
     (event: ReactPointerEvent<SVGSVGElement>) => {
       if (!onView || event.button !== 0) return;
       pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      event.currentTarget.setPointerCapture?.(event.pointerId);
+      // Capture is claimed only once a drag really starts (see `onPointerMove`).
+      // Capturing here would retarget the click that follows a stationary press,
+      // and selecting a country is what that press is for.
       if (pointers.current.size === 1) {
         dragged.current = false;
         setDragging(true);
@@ -305,7 +307,11 @@ export function HexMap(props: HexMapProps) {
       }
 
       const delta = { x: current.x - previous.x, y: current.y - previous.y };
-      if (Math.abs(delta.x) + Math.abs(delta.y) > 2) dragged.current = true;
+      if (!dragged.current && Math.abs(delta.x) + Math.abs(delta.y) > 2) {
+        dragged.current = true;
+        // Now that this is a drag, keep receiving moves even past the map's edge.
+        svgRef.current?.setPointerCapture?.(event.pointerId);
+      }
       onView(panBy(viewRef.current, clientDeltaToViewBox(delta, rectOf(), geometry.box)));
     },
     [onView, rectOf, geometry.box],

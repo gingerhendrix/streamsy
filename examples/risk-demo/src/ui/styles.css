@@ -837,7 +837,9 @@ code {
   display: block;
   width: 100%;
   height: clamp(420px, 58vh, 720px);
-  touch-action: pan-x pan-y;
+  /* The map handles its own drag and pinch, so the browser must not also scroll
+     or zoom the page underneath the gesture. */
+  touch-action: none;
 }
 .hex-map .country-edge {
   fill: none;
