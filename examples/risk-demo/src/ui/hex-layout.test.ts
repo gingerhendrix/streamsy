@@ -1,0 +1,133 @@
+import { describe, expect, it } from "vitest";
+
+import { AXIAL_NEIGHBORS } from "../domain/hex.ts";
+import {
+  EDGE_NEIGHBORS,
+  SQRT3,
+  attackArrowPath,
+  hexCenter,
+  hexCorners,
+  hexPolygonPoints,
+  hexesViewBox,
+  regionOutlinePath,
+  viewBoxAttribute,
+} from "./hex-layout.ts";
+
+const RADIUS = 10;
+
+/** Count how many vertices a path's subpaths declare, per subpath. */
+function subpathVertexCounts(path: string): number[] {
+  return path
+    .split("Z")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => (part.match(/[ML]/g) ?? []).length);
+}
+
+describe("pointy-top hex geometry", () => {
+  it("places the origin at zero and steps by the pointy-top basis", () => {
+    expect(hexCenter({ q: 0, r: 0 }, RADIUS)).toEqual({ x: 0, y: 0 });
+    // +q is due east; +r is south-east.
+    expect(hexCenter({ q: 1, r: 0 }, RADIUS)).toEqual({ x: RADIUS * SQRT3, y: 0 });
+    const southEast = hexCenter({ q: 0, r: 1 }, RADIUS);
+    expect(southEast.x).toBeCloseTo((RADIUS * SQRT3) / 2, 9);
+    expect(southEast.y).toBeCloseTo(RADIUS * 1.5, 9);
+  });
+
+  it("uses the same six directions as the domain, in corner order", () => {
+    const canonical = AXIAL_NEIGHBORS.map(([dq, dr]) => `${dq}:${dr}`).toSorted();
+    const edges = EDGE_NEIGHBORS.map(([dq, dr]) => `${dq}:${dr}`).toSorted();
+    expect(edges).toEqual(canonical);
+  });
+
+  it("puts edge i exactly halfway to the neighbour it faces", () => {
+    const hex = { q: 2, r: -1 };
+    const corners = hexCorners(hex, RADIUS);
+    const center = hexCenter(hex, RADIUS);
+    EDGE_NEIGHBORS.forEach(([dq, dr], edge) => {
+      const neighbour = hexCenter({ q: hex.q + dq, r: hex.r + dr }, RADIUS);
+      const start = corners[edge]!;
+      const end = corners[(edge + 1) % 6]!;
+      expect((start.x + end.x) / 2).toBeCloseTo((center.x + neighbour.x) / 2, 9);
+      expect((start.y + end.y) / 2).toBeCloseTo((center.y + neighbour.y) / 2, 9);
+    });
+  });
+
+  it("emits six polygon points per tile", () => {
+    expect(hexPolygonPoints({ q: 0, r: 0 }, RADIUS).split(" ")).toHaveLength(6);
+  });
+});
+
+describe("region outlines", () => {
+  it("traces a lone tile as one closed six-sided loop", () => {
+    const path = regionOutlinePath([{ q: 0, r: 0 }], RADIUS);
+    expect(subpathVertexCounts(path)).toEqual([6]);
+    expect(path.trimEnd().endsWith("Z")).toBe(true);
+  });
+
+  it("drops the shared edge between two touching tiles", () => {
+    // Ten outer edges remain once the pair's shared edge is excluded.
+    const path = regionOutlinePath(
+      [
+        { q: 0, r: 0 },
+        { q: 1, r: 0 },
+      ],
+      RADIUS,
+    );
+    expect(subpathVertexCounts(path)).toEqual([10]);
+  });
+
+  it("traces a ring and its hole as two separate loops", () => {
+    const ring = EDGE_NEIGHBORS.map(([dq, dr]) => ({ q: dq, r: dr }));
+    const counts = subpathVertexCounts(regionOutlinePath(ring, RADIUS)).toSorted((a, b) => a - b);
+    // The enclosed hole is a six-sided inner loop; the outer rim has eighteen edges.
+    expect(counts).toEqual([6, 18]);
+  });
+
+  it("has nothing to draw for an empty region", () => {
+    expect(regionOutlinePath([], RADIUS)).toBe("");
+  });
+
+  it("is unaffected by the order tiles arrive in", () => {
+    const tiles = [
+      { q: 0, r: 0 },
+      { q: 1, r: 0 },
+      { q: 0, r: 1 },
+    ];
+    expect(subpathVertexCounts(regionOutlinePath(tiles, RADIUS))).toEqual(
+      subpathVertexCounts(regionOutlinePath(tiles.toReversed(), RADIUS)),
+    );
+  });
+});
+
+describe("view box", () => {
+  it("contains every corner of every tile", () => {
+    const tiles = [
+      { q: 0, r: 0 },
+      { q: 3, r: -1 },
+      { q: -2, r: 2 },
+    ];
+    const box = hexesViewBox(tiles, RADIUS, 0);
+    for (const tile of tiles) {
+      for (const corner of hexCorners(tile, RADIUS)) {
+        expect(corner.x).toBeGreaterThanOrEqual(box.minX - 1e-9);
+        expect(corner.x).toBeLessThanOrEqual(box.minX + box.width + 1e-9);
+        expect(corner.y).toBeGreaterThanOrEqual(box.minY - 1e-9);
+        expect(corner.y).toBeLessThanOrEqual(box.minY + box.height + 1e-9);
+      }
+    }
+  });
+
+  it("stays a valid box when there are no tiles yet", () => {
+    expect(viewBoxAttribute(hexesViewBox([], RADIUS))).toBe("0 0 1 1");
+  });
+});
+
+describe("attack route", () => {
+  it("bows a quadratic curve between the two label anchors", () => {
+    const path = attackArrowPath({ x: 0, y: 0 }, { x: 100, y: 0 });
+    expect(path).toMatch(/^M 0 0 Q [\d.-]+ [\d.-]+ 100 0$/);
+    // The bow is perpendicular to the run, so a horizontal route bends vertically.
+    expect(path).toContain("Q 50 16");
+  });
+});

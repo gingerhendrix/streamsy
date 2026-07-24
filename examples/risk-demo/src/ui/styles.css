@@ -784,3 +784,637 @@ code {
     flex-direction: column;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * risk-demo-v2 playing surface
+ *
+ * Board plus a sticky current-turn rail on desktop; the rail becomes a bottom
+ * sheet on narrow screens. The map itself never reflows — its viewBox is derived
+ * from axial coordinates, so zoom/pan transforms a group inside a stable box.
+ * ------------------------------------------------------------------------- */
+
+.game-layout-v2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 372px;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  align-items: start;
+}
+.board-column {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  min-width: 0;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.spectating-badge {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 0.42rem 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c4ced9;
+}
+
+/* --- map ----------------------------------------------------------------- */
+
+.hex-map-frame {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.6rem;
+  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(11, 17, 24, 0.95));
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+.hex-map {
+  display: block;
+  width: 100%;
+  height: clamp(420px, 58vh, 720px);
+  touch-action: pan-x pan-y;
+}
+.hex-map .country-edge {
+  fill: none;
+  stroke: rgba(6, 12, 18, 0.85);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+}
+.hex-map .continent-edge-outer {
+  fill: none;
+  stroke: rgba(3, 8, 12, 0.92);
+  stroke-width: 7;
+  stroke-linejoin: round;
+}
+.hex-map .continent-edge-inner {
+  fill: none;
+  stroke: rgba(226, 238, 250, 0.72);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-dasharray: 14 7;
+}
+.hex-map .highlight {
+  --owner: var(--accent);
+  pointer-events: none;
+  stroke-linejoin: round;
+}
+.hex-map .highlight.source {
+  fill: rgba(101, 223, 180, 0.16);
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+.hex-map .highlight.selected {
+  fill: rgba(101, 223, 180, 0.26);
+  stroke: #ffffff;
+  stroke-width: 4;
+}
+.hex-map .highlight.target {
+  fill: rgba(240, 179, 89, 0.2);
+  stroke: #f0b359;
+  stroke-width: 3.4;
+}
+.hex-map .highlight.dimmed {
+  fill: rgba(6, 11, 17, 0.55);
+  stroke: none;
+}
+.hex-map .attack-route {
+  fill: none;
+  stroke: #f0b359;
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  stroke-dasharray: 10 8;
+  filter: drop-shadow(0 0 6px rgba(240, 179, 89, 0.45));
+}
+.hex-map .army-marker {
+  --owner: #5b6a7d;
+  fill: color-mix(in srgb, var(--owner), #050a10 30%);
+  stroke: color-mix(in srgb, var(--owner), white 45%);
+  stroke-width: 2;
+}
+.hex-map .army-count {
+  fill: #ffffff;
+  font:
+    800 17px "Manrope",
+    sans-serif;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 3px;
+}
+.hex-map .country-label {
+  fill: #eef4fb;
+  font:
+    700 10.5px "DM Sans",
+    sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  paint-order: stroke;
+  stroke: rgba(2, 6, 10, 0.8);
+  stroke-width: 3.4px;
+}
+.hex-map .country-hit {
+  fill: transparent;
+  stroke: transparent;
+  cursor: default;
+  outline: none;
+}
+.hex-map .country-hit.selectable {
+  cursor: pointer;
+}
+.hex-map .country-hit:focus-visible {
+  stroke: #ffffff;
+  stroke-width: 4;
+  stroke-dasharray: 7 5;
+}
+.map-controls {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(8, 13, 20, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.35rem;
+  backdrop-filter: blur(6px);
+}
+.map-controls button {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+  border-radius: 9px;
+}
+.pan-pad {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 0.2rem;
+}
+.pan-pad button:first-child {
+  grid-column: 2;
+}
+
+.details-card {
+  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem 1.1rem;
+}
+.details-card h3 {
+  font-family: "Manrope", sans-serif;
+  font-size: 1.15rem;
+  margin: 0.35rem 0 0.3rem;
+}
+.details-card p {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  color: #d3dce6;
+}
+.details-card small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+/* --- current-turn rail ---------------------------------------------------- */
+
+.turn-rail {
+  position: sticky;
+  top: 1rem;
+  display: grid;
+  align-content: start;
+  gap: 0.85rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  scrollbar-color: #344454 transparent;
+  padding-right: 0.15rem;
+}
+.rail-head {
+  --player: var(--accent);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--player);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--player), transparent 92%),
+    rgba(14, 21, 30, 0.9)
+  );
+}
+.rail-head h2 {
+  font-size: 1.4rem;
+  letter-spacing: -0.03em;
+  margin: 0.4rem 0 0.3rem;
+}
+.rail-active {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+  font-size: 0.82rem;
+  color: #d3dce6;
+}
+.rail-active .player-color {
+  width: 7px;
+  height: 18px;
+}
+
+.phase-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.3rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.phase-stepper li {
+  text-align: center;
+  padding: 0.55rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.phase-stepper li.done {
+  color: #9fb0c2;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.phase-stepper li.current {
+  color: #08201a;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.reinforcement-card,
+.controls-card,
+.combat-card,
+.ledger,
+.agent-seat {
+  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+}
+.reinforcement-card {
+  display: grid;
+  gap: 0.35rem;
+}
+.reinforcement-card b {
+  font-size: 0.86rem;
+}
+.reinforcement-card small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.continent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.continent-chip {
+  border: 1px solid rgba(101, 223, 180, 0.28);
+  background: rgba(101, 223, 180, 0.08);
+  color: #bdebd9;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.controls-card {
+  display: grid;
+  gap: 0.7rem;
+}
+.controls-card.required {
+  border-color: rgba(240, 179, 89, 0.4);
+  background: linear-gradient(145deg, rgba(48, 38, 22, 0.85), rgba(20, 18, 14, 0.92));
+}
+.controls-card p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #d3dce6;
+  line-height: 1.5;
+}
+.controls-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.controls-actions button {
+  flex: 1;
+  font-size: 0.78rem;
+}
+.intent-toggle,
+.seat-toggle {
+  display: flex;
+  gap: 0.35rem;
+}
+.intent-toggle button,
+.seat-toggle button {
+  flex: 1;
+  font-size: 0.75rem;
+  padding: 0.5rem 0.6rem;
+}
+.intent-toggle button.selected,
+.seat-toggle button.selected {
+  border-color: var(--accent);
+  background: rgba(101, 223, 180, 0.14);
+  color: #bdebd9;
+}
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.stepper button {
+  min-width: 42px;
+  min-height: 42px;
+  font-size: 1rem;
+  font-weight: 800;
+}
+.stepper b {
+  font:
+    800 1.35rem/1 "Manrope",
+    sans-serif;
+  min-width: 2ch;
+  text-align: center;
+}
+.stepper small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.controls-card .end-turn {
+  background: #243243;
+  font-size: 0.78rem;
+}
+
+/* --- combat + dice -------------------------------------------------------- */
+
+.combat-card {
+  display: grid;
+  gap: 0.75rem;
+  border-color: rgba(240, 179, 89, 0.28);
+}
+.combat-head h3 {
+  font-family: "Manrope", sans-serif;
+  font-size: 1.05rem;
+  margin: 0.3rem 0 0;
+}
+.dice-rows {
+  display: grid;
+  gap: 0.5rem;
+}
+.dice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+.dice-side {
+  --player: var(--accent);
+  display: grid;
+  gap: 0.1rem;
+  border-left: 4px solid var(--player);
+  padding-left: 0.55rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.dice-side small {
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 500;
+}
+.dice-set {
+  display: flex;
+  gap: 0.3rem;
+}
+.die {
+  --die: #94a3b8;
+  width: 38px;
+  height: 38px;
+  display: inline-block;
+}
+.die svg {
+  width: 100%;
+  height: 100%;
+}
+.die .die-body {
+  fill: color-mix(in srgb, var(--die), #060c13 22%);
+  stroke: color-mix(in srgb, var(--die), white 42%);
+  stroke-width: 4;
+}
+.die .die-pip {
+  fill: #ffffff;
+}
+.die.facedown .die-body {
+  fill: rgba(16, 24, 34, 0.9);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-dasharray: 12 8;
+}
+.die .die-hidden-mark {
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+.die.lost {
+  opacity: 0.42;
+}
+.die.lost .die-body {
+  stroke: #ed6a5a;
+}
+.die.won .die-body {
+  stroke: #ffffff;
+  stroke-width: 5;
+}
+.die.shake {
+  animation: die-shake var(--reveal-ms, 620ms) cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+.die.fade {
+  animation: die-fade var(--reveal-ms, 180ms) ease-out;
+}
+@keyframes die-shake {
+  0% {
+    transform: translateY(-6px) rotate(-14deg) scale(0.86);
+  }
+  35% {
+    transform: translateY(3px) rotate(11deg) scale(1.06);
+  }
+  65% {
+    transform: translateY(-2px) rotate(-6deg) scale(0.98);
+  }
+  100% {
+    transform: none;
+  }
+}
+@keyframes die-fade {
+  from {
+    opacity: 0.2;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .die.shake,
+  .die.fade {
+    animation: die-fade 180ms ease-out;
+  }
+  .loader-ring {
+    animation-duration: 2.4s;
+  }
+}
+
+.defense-prompt {
+  display: grid;
+  gap: 0.55rem;
+}
+.defense-prompt p {
+  margin: 0;
+}
+.countdown {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.countdown-track {
+  flex: 1;
+  height: 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.countdown-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #ed6a5a, #f0b359);
+  transition: width 0.25s linear;
+}
+.countdown b {
+  font:
+    800 0.85rem/1 "Manrope",
+    sans-serif;
+  min-width: 3.4ch;
+  text-align: right;
+}
+.roll-defense {
+  width: 100%;
+  font-size: 0.85rem;
+}
+.combat-outcome p {
+  margin: 0 0 0.2rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.combat-outcome small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+/* --- ledger + history ----------------------------------------------------- */
+
+.ledger-list {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ledger-list li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 0.55rem;
+  align-items: start;
+}
+.ledger-list li div {
+  display: grid;
+  gap: 0.15rem;
+}
+.ledger-list b {
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.ledger-list small {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.ledger-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(101, 223, 180, 0.09);
+  color: var(--accent);
+  font-size: 0.62rem;
+}
+
+.host-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+.agent-seat {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+}
+.agent-seat code {
+  display: block;
+  overflow-x: auto;
+  white-space: pre;
+  padding: 0.6rem 0.7rem;
+  border-radius: 9px;
+  background: #0b131c;
+  border: 1px solid var(--line);
+  font-size: 0.66rem;
+  color: #bdebd9;
+}
+
+/* --- responsive ----------------------------------------------------------- */
+
+@media (max-width: 1180px) {
+  .game-layout-v2 {
+    grid-template-columns: 1fr;
+  }
+  .turn-rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .turn-rail > .rail-head,
+  .turn-rail > .phase-stepper,
+  .turn-rail > .combat-card,
+  .turn-rail > .controls-card {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 720px) {
+  .turn-rail {
+    position: sticky;
+    top: auto;
+    bottom: 0;
+    grid-template-columns: 1fr;
+    z-index: 5;
+    padding: 0.6rem 0.15rem 0.6rem;
+    background: linear-gradient(180deg, rgba(8, 13, 20, 0), #080d14 14%);
+  }
+  .hex-map {
+    height: 52vh;
+  }
+  .dice-row {
+    grid-template-columns: 1fr;
+  }
+  .map-controls {
+    right: 0.5rem;
+    bottom: 0.5rem;
+  }
+}

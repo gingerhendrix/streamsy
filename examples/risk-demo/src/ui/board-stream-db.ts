@@ -549,3 +549,124 @@ export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResu
 
   return { session, rows, status, streamOffset, error };
 }
+
+export interface RiskBoardV2StreamResult {
+  session: RiskBoardV2Session | null;
+  rows: BoardRowsV2 | null;
+  status: SyncStatus;
+  streamOffset: string | null;
+  error: string | null;
+}
+
+/**
+ * Own one StreamDB session per active v2 projection generation.
+ *
+ * Structurally identical to {@link useRiskBoardStream} — a separate hook rather
+ * than a parameterised one because the two rulesets have different collections,
+ * and a game's renderer is chosen from its canonical `ruleset` (design spec §11).
+ */
+export function useRiskBoardV2Stream(streamId: string | null): RiskBoardV2StreamResult {
+  const [active, setActive] = useState<{
+    streamId: string;
+    session: RiskBoardV2Session;
+  } | null>(null);
+  const [status, setStatus] = useState<SyncStatus>("idle");
+  const [streamOffset, setStreamOffset] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const session = active?.streamId === streamId ? active.session : null;
+
+  useEffect(() => {
+    setError(null);
+    setStreamOffset(null);
+    if (!streamId) {
+      setActive(null);
+      setStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    const created = createRiskBoardV2Session({
+      streamId,
+      onBeforeBatch: () => {
+        if (!cancelled) setStatus("catching-up");
+      },
+      onBatch: (batch) => {
+        if (cancelled) return;
+        setStreamOffset(batch.offset);
+        setStatus(batch.upToDate ? "live" : "catching-up");
+      },
+    });
+    setActive({ streamId, session: created });
+    setStatus("connecting");
+
+    void created.preload().then(
+      () => {
+        if (cancelled) return;
+        setStreamOffset(created.offset);
+        setStatus("live");
+      },
+      (reason) => {
+        if (cancelled) return;
+        setError(reason instanceof Error ? reason.message : String(reason));
+        setStatus("error");
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      void created.close();
+    };
+  }, [streamId]);
+
+  const games = useLiveQuery(
+    (query) => (session ? query.from({ games: session.collections.games }) : undefined),
+    [session],
+  );
+  const players = useLiveQuery(
+    (query) => (session ? query.from({ players: session.collections.players }) : undefined),
+    [session],
+  );
+  const hexes = useLiveQuery(
+    (query) => (session ? query.from({ hexes: session.collections.hexes }) : undefined),
+    [session],
+  );
+  const territories = useLiveQuery(
+    (query) => (session ? query.from({ territories: session.collections.territories }) : undefined),
+    [session],
+  );
+  const continents = useLiveQuery(
+    (query) => (session ? query.from({ continents: session.collections.continents }) : undefined),
+    [session],
+  );
+  const turn = useLiveQuery(
+    (query) => (session ? query.from({ turn: session.collections.turn }) : undefined),
+    [session],
+  );
+  const combat = useLiveQuery(
+    (query) => (session ? query.from({ combat: session.collections.combat }) : undefined),
+    [session],
+  );
+  const moves = useLiveQuery(
+    (query) => (session ? query.from({ moves: session.collections.moves }) : undefined),
+    [session],
+  );
+  const projectionMeta = useLiveQuery(
+    (query) =>
+      session ? query.from({ projectionMeta: session.collections.projectionMeta }) : undefined,
+    [session],
+  );
+
+  const rows = boardRowsV2FromQueries({
+    games: games.data ?? [],
+    players: players.data ?? [],
+    hexes: hexes.data ?? [],
+    territories: territories.data ?? [],
+    continents: continents.data ?? [],
+    turn: turn.data ?? [],
+    combat: combat.data ?? [],
+    moves: moves.data ?? [],
+    projectionMeta: projectionMeta.data ?? [],
+  });
+
+  return { session, rows, status, streamOffset, error };
+}
