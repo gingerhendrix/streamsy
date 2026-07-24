@@ -2,9 +2,15 @@
  * One-command, watchable Risk demo.
  *
  * Bootstraps missing workspace builds, launches the real SQLite-backed server,
- * creates a two-player game, and lets the existing HTTP-only agents play it.
- * The spectator board remains available until Ctrl-C, including after a winner
- * is decided.
+ * creates a two-player `risk-demo-v2` game, and lets the existing HTTP-only
+ * agents play it on a procedurally generated hex map. The spectator board remains
+ * available until Ctrl-C, including after a winner is decided.
+ *
+ * V2 adds one shape the loop has to respect: an attack *stops* the attacker's
+ * turn until the defender rolls. The orchestrator therefore follows canonical
+ * state rather than assuming a turn is one actor's uninterrupted run — and if a
+ * defending agent ever failed to answer, the server's own 15-second timeout would
+ * close the combat without it.
  */
 
 import { existsSync, rmSync } from "node:fs";
@@ -138,8 +144,30 @@ interface DemoPlayer {
   name: string;
 }
 
+/**
+ * Both demo seats are machine players on the v2 ruleset: the one-command demo has
+ * nobody at a keyboard, so an agent must also be able to answer the defence
+ * interrupt, not merely take its own turn.
+ */
+export const DEMO_HOST_REQUEST = {
+  ruleset: "risk-demo-v2",
+  name: "Ada",
+  color: "#e05a47",
+  controller: "agent",
+} as const;
+export const DEMO_GUEST_REQUEST = {
+  name: "Bob",
+  color: "#3b82f6",
+  controller: "agent",
+} as const;
+
 export const DEMO_LEAD_IN_MS = 10_000;
-export const DEMO_COMMAND_PACE_MS = 1_500;
+/**
+ * A v2 game is roughly 250–400 commands — a bigger map and one throw per attack —
+ * so the pace is a second rather than the v1 second and a half, which keeps a
+ * complete watchable game to a handful of minutes.
+ */
+export const DEMO_COMMAND_PACE_MS = 1_000;
 
 function actionLabel(action: Record<string, unknown>): string {
   return typeof action.type === "string" ? action.type.replaceAll("-", " ") : "command";
@@ -170,14 +198,29 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
   console.log(`Agents start in ${DEMO_LEAD_IN_MS / 1_000} seconds — open the board now.\n`);
   await Bun.sleep(DEMO_LEAD_IN_MS);
 
-  for (let turn = 1; turn <= 500; turn += 1) {
+  const started = Date.now();
+  let announced = "";
+  for (let step = 1; step <= 4_000; step += 1) {
     const meta = await api(baseUrl, "GET", `/v1/games/${gameId}`);
     requireStatus(meta, 200, "read game");
     if (meta.body.status === "finished") {
       const winner = players.find((player) => player.id === meta.body.winnerId)?.name ?? "unknown";
-      console.log(`\n🏆 ${winner} won after ${meta.body.round} rounds.`);
+      const minutes = ((Date.now() - started) / 60_000).toFixed(1);
+      console.log(`\n🏆 ${winner} won after ${meta.body.round} rounds (${minutes} minutes).`);
       console.log("The final board remains live. Press Ctrl-C when you are done observing.");
       return;
+    }
+
+    // A pending defence is the only out-of-turn decision, and it belongs to the
+    // defender, not the player whose turn it is.
+    const pending = meta.body.pendingInteraction;
+    if (pending?.type === "defense") {
+      const defender = agents.get(pending.defenderId);
+      const name = players.find((player) => player.id === pending.defenderId)?.name ?? "defender";
+      if (!defender) throw new Error(`no demo agent for defender ${pending.defenderId}`);
+      await defender.awaitTurn(0);
+      if (await defender.defend()) console.log(`  ⚄ ${name} rolled the defence`);
+      continue;
     }
 
     const activeId: string = meta.body.activePlayerId;
@@ -186,10 +229,14 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
     if (!active || !agent) throw new Error(`no demo agent for active player ${activeId}`);
 
     await agent.awaitTurn(0);
-    console.log(`→ Round ${meta.body.round}: ${active.name} is playing`);
+    const heading = `${meta.body.round}:${activeId}`;
+    if (heading !== announced) {
+      announced = heading;
+      console.log(`→ Round ${meta.body.round}: ${active.name} is playing`);
+    }
     await agent.playTurn();
   }
-  throw new Error("demo agents exceeded the 500-turn safety limit");
+  throw new Error("demo agents exceeded the 4000-step safety limit");
 }
 
 async function run(): Promise<void> {
@@ -229,7 +276,7 @@ async function run(): Promise<void> {
   try {
     await waitForServer(baseUrl, server.exited);
     const created = await api(baseUrl, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Ada", color: "#e05a47" },
+      body: DEMO_HOST_REQUEST,
     });
     requireStatus(created, 201, "create game");
     const gameId: string = created.body.game.id;
@@ -240,7 +287,7 @@ async function run(): Promise<void> {
     };
 
     const joined = await api(baseUrl, "POST", `/v1/games/${gameId}/players`, {
-      body: { name: "Bob", color: "#3b82f6" },
+      body: DEMO_GUEST_REQUEST,
     });
     requireStatus(joined, 201, "join game");
     const guest: DemoPlayer = {
@@ -259,7 +306,11 @@ async function run(): Promise<void> {
     console.log("│  STREAMSY RISK — LIVE SPECTATOR BOARD                       │");
     console.log(`│  ${url.padEnd(58)}│`);
     console.log("╰──────────────────────────────────────────────────────────────╯\n");
-    console.log("Ada and Bob are HTTP-only agents. The server stays up until Ctrl-C.\n");
+    console.log(
+      "Ada and Bob are HTTP-only agents playing risk-demo-v2 on a seeded hex map:\n" +
+        "declared attacks, recorded dice, and an out-of-turn defence roll each throw.\n" +
+        "The server stays up until Ctrl-C.\n",
+    );
 
     const playing = playGame(baseUrl, gameId, [host, guest]);
     const playFailure = playing.then(

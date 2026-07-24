@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEMO_COMMAND_PACE_MS,
+  DEMO_GUEST_REQUEST,
+  DEMO_HOST_REQUEST,
   DEMO_LEAD_IN_MS,
   REQUIRED_WORKSPACE_DISTS,
   missingWorkspaceDists,
   spectatorUrl,
 } from "../../scripts/demo.ts";
 import { projectEvents } from "../../src/board/projection.ts";
+import { RULESET_V2 } from "../../src/domain/map-v2.ts";
 import { startGame } from "../testkit.ts";
 import { acknowledgementNotice, didGameStatusChange, playerRoleLabel } from "../../src/ui/App.tsx";
 
@@ -25,6 +28,15 @@ describe("one-command demo helpers", () => {
     expect(spectatorUrl("http://127.0.0.1:4321", "game_a&b")).toBe(
       "http://127.0.0.1:4321/?game=game_a%26b",
     );
+  });
+
+  it("showcases the v2 ruleset with two machine seats", () => {
+    // Nobody is at the keyboard, so both seats must be able to answer a defence
+    // interrupt as well as play their own turn.
+    expect(DEMO_HOST_REQUEST.ruleset).toBe(RULESET_V2);
+    expect(DEMO_HOST_REQUEST.controller).toBe("agent");
+    expect(DEMO_GUEST_REQUEST.controller).toBe("agent");
+    expect(DEMO_GUEST_REQUEST.color).not.toBe(DEMO_HOST_REQUEST.color);
   });
 
   it("reserves a human lead-in and paces individual commands", () => {

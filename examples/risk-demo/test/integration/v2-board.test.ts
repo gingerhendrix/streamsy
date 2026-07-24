@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import { rebuildBoardGeneration } from "../../server/game/rebuild.ts";
 import { RULESET_V2 } from "../../src/domain/map-v2.ts";
+import { rendererForGame } from "../../src/ui/shared.tsx";
 import {
   boardFor,
   call,
@@ -195,5 +196,36 @@ describe("risk-demo-v2 board projection surface", () => {
     expect(board.body.ruleset).toBe("risk-demo-v1");
     expect(board.body.generation).toBe("v1");
     expect(board.body).not.toHaveProperty("hexes");
+  });
+
+  it("routes each game to its own renderer from the canonical ruleset alone", async () => {
+    // Slice 7 acceptance: a v1 game stays viewable and playable on the v1 board
+    // after v2 became the default. The choice comes from `ruleset`, never from
+    // which rows a projection happens to be missing (design spec §11).
+    const h = v2Harness();
+    const v1 = await call(h.app, "POST", "/v1/games", {
+      body: { ruleset: "risk-demo-v1", name: "Alice" },
+    });
+    const v2 = await call(h.app, "POST", "/v1/games", { body: { name: "Alice" } });
+
+    expect(rendererForGame(v1.body.game)).toBe("risk-demo-v1");
+    expect(rendererForGame(v2.body.game)).toBe("risk-demo-v2");
+    // Nothing is chosen before the game resource arrives, so neither board stream
+    // is opened speculatively.
+    expect(rendererForGame(null)).toBeNull();
+
+    // And the v1 game still accepts v1 play through the v1 kernel.
+    const joined = await call(h.app, "POST", `/v1/games/${v1.body.game.id}/players`, {
+      body: { name: "Bob", color: "blue" },
+    });
+    expect(joined.status).toBe(201);
+    const started = await call(h.app, "POST", `/v1/games/${v1.body.game.id}/start`, {
+      token: v1.body.capability,
+      body: {},
+    });
+    expect(started.status).toBe(200);
+    const playing = await call(h.app, "GET", `/v1/games/${v1.body.game.id}`);
+    expect(playing.body.status).toBe("playing");
+    expect(playing.body.ruleset).toBe("risk-demo-v1");
   });
 });

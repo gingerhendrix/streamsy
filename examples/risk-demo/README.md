@@ -1,7 +1,7 @@
 # Streamsy Risk
 
-Streamsy Risk is a live, event-sourced strategy game played by two HTTP-only agents while you
-watch the board update in a browser. It demonstrates a ready-made Streamsy application: durable
+Streamsy Risk is a live, event-sourced strategy game — a procedural hex map, declared attacks, and
+recorded dice — played by HTTP-only agents, by humans in a browser, or by both at once. It demonstrates a ready-made Streamsy application: durable
 commands, deterministic decisions, replay-safe projections, and official Stream DB + TanStack DB
 browser sync over Streamsy's protocol.
 
@@ -14,11 +14,47 @@ bun run demo:risk
 ```
 
 Or from this directory, run `bun run demo`. The command builds missing workspace outputs, chooses a
-free port, starts a SQLite-backed server, creates and starts a game, and runs Ada and Bob as
-in-process HTTP agents. Open the prominently printed spectator URL; the server and final board stay
-available until Ctrl-C. Temporary SQLite data is removed on shutdown.
+free port, starts a SQLite-backed server, creates and starts a `risk-demo-v2` game on a freshly
+generated hex map, and runs Ada and Bob as in-process HTTP agents. Open the prominently printed
+spectator URL; the server and final board stay available until Ctrl-C. Temporary SQLite data is
+removed on shutdown.
+
+A complete agent-versus-agent game takes roughly four to six minutes at the demo's one-command-per-
+second pace. Every attack pauses for a defence roll, so the board shows declaration, both sides'
+recorded dice, the losses, and — on a capture — the occupation the attacker had to choose.
 
 ![The live Streamsy Risk spectator board](docs/risk-demo.png)
+
+## Play it yourself
+
+Start a server and open it in a browser:
+
+```bash
+DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
+# then open http://localhost:1339
+```
+
+- **Create a game.** New games are `risk-demo-v2`: a seeded procedural hex map with variable-sized
+  countries, four connected continents, and visual-only terrain.
+- **Fill the seats.** Share the invite link for another human, or press **Open an agent seat** — one
+  per machine player, up to four seats in total. Each seat prints the exact harness command,
+  including `BASE_URL` for the origin the page was served from, so it works on any `PORT`:
+
+  ```bash
+  BASE_URL=http://localhost:1339 GAME_ID=game_xxx PLAYER_ID=p_xxx PLAYER_TOKEN=rsk_xxx \
+  bun run --cwd examples/risk-demo agent
+  ```
+
+- **Take your turn.** Reinforce from the rail's stepper, then pick a source country, a highlighted
+  enemy neighbour, and how many dice to throw with. A capture asks for the occupying garrison before
+  anything else is legal.
+- **Defend.** When someone attacks you, the rail raises a **Roll defence** prompt with a fifteen-
+  second countdown taken from the canonical deadline. Let it lapse and the server resolves the throw
+  itself — history says so plainly rather than pretending you rolled.
+- **Spectate.** Anyone can open the game link without a seat: same board, same countdown, same dice,
+  no controls, labelled `Spectating live`.
+
+The map supports drag to pan and wheel or pinch to zoom, with buttons for the same actions.
 
 ## Architecture
 
@@ -52,13 +88,13 @@ cutovers; it does not drive board state.
 - `server/demo/signature-demo.ts` runs the complete deterministic guarantee proof.
 - `src/ui/board-stream-db.ts` is the official Stream DB + TanStack DB integration.
 
-### `risk-demo-v2` (in progress)
+### `risk-demo-v2`
 
-The v2 ruleset replaces the fixed six-territory board with a seeded procedural hex map and
-splits combat into a declaration plus a timed defence interrupt. It is opt-in per game —
-`POST /v1/games` with `{"ruleset": "risk-demo-v2"}` — and creation defaults to
-`risk-demo-v1` until the SVG hex renderer lands. Everything below the browser is complete:
-kernel, two-stage combat, durable defence timeouts, board projection, and the decision API.
+The v2 ruleset replaces the fixed six-territory board with a seeded procedural hex map and splits
+combat into a declaration plus a timed defence interrupt. It is now the default: `POST /v1/games`
+creates a v2 game unless it explicitly asks for `{"ruleset": "risk-demo-v1"}`. V1 games are not
+migrated and not reinterpreted — they keep their own kernel, projection generation, and renderer for
+as long as they exist.
 
 - `src/domain/hex-generator.ts` is `hex-generator-v1`: a pure, seeded generator producing a
   connected hex map with variable-sized countries, connected continents, and visual-only terrain.
@@ -77,6 +113,15 @@ kernel, two-stage combat, durable defence timeouts, board projection, and the de
   `roll-defense` there. It names the map rather than shipping it — static geometry is board surface,
   fetched once — and reports the projection watermark the decision was folded through, so a decision
   is never ahead of the board snapshot beside it.
+- `src/ui/hex-map.tsx` draws the layered SVG map from canonical `(q, r)` tiles, with
+  `src/ui/label-layout.ts` nudging country labels clear of each other and of the army badges and
+  `src/ui/pan-zoom.ts` doing the drag/wheel/pinch arithmetic in viewBox units.
+- `src/ui/turn-rail.tsx` and `src/ui/presentation-v2.ts` are the current-turn rail: the
+  reinforcement equation, the ledger, the canonical countdown, and dice copy that never claims a
+  human rolled when the timeout did.
+- `server/demo/strategy-v2.ts` is the agent policy. It is deliberately shallow, but it reinforces
+  toward the weakest reachable enemy and fortifies stacks off borders they cannot attack out of, so
+  an opponent who only turtles cannot freeze the game.
 
 ## Guarantees
 
@@ -100,7 +145,7 @@ kernel, two-stage combat, durable defence timeouts, board projection, and the de
 
 | Check                       | Command                                                     | Evidence                                                                                          |
 | --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Watchable product demo      | `bun run demo:risk`                                         | Fresh workspace outputs are bootstrapped; spectator URL is printed; agents play; Ctrl-C cleans up |
+| Watchable product demo      | `bun run demo:risk`                                         | Bootstraps workspace outputs, prints the spectator URL, and plays a v2 game to a winner           |
 | Risk unit/integration suite | `bun run --cwd examples/risk-demo test`                     | Kernel, API, materializer, turn streams, agents, rebuild, Stream DB shaping, and proof tests      |
 | SQLite durability           | `bun run --cwd examples/risk-demo test:sqlite`              | Persistence, cursor resume, duplicate command retry, and generation cutover survive restart       |
 | Real HTTP smoke             | `bun run --cwd examples/risk-demo smoke:http`               | Server, SPA, auth, command/board flow, and SQLite restart                                         |
@@ -150,11 +195,33 @@ bun run --cwd examples/risk-demo agent
 ```
 
 The agent persists only its turn-stream cursor. On each wake it fetches a fresh `/decision`, chooses
-from structured `legalActions`, and derives stable command IDs from the observed turn and board.
+from structured `legalActions`, and derives stable command IDs from the observed turn and board. In a
+v2 game the same process also answers `DefenseAvailable` wakes out of turn, under the stable id
+`agent-defense:<attackId>`, so a duplicate wake, a retry, and a race with the canonical timeout all
+collapse to one recorded roll.
+
+`BASE_URL` must name the server's actual origin — the harness defaults to `http://localhost:1339`,
+and the server takes its port from `$PORT`. The lobby's agent-seat panel prints the whole command
+with the right origin already filled in.
 
 ## Ruleset
 
-`risk-demo-v1` deliberately fits a complete game into a short demo:
+`risk-demo-v2` is what new games use:
+
+- 2–4 players on a seeded procedural hex map: 16–20 variable-sized countries in four connected
+  continents, with visual-only terrain (`procedural-hex-v1` / `hex-generator-v1`).
+- `GameStarted` records the whole generated map, the shuffled turn order, and the complete starting
+  allocation, so replay never re-runs the generator.
+- Reinforcement is `max(3, floor(countries / 3))` plus a bonus for each fully held continent.
+- An attack is one declared throw. The attacker chooses 1–3 dice; the defender rolls the maximum
+  legal 1–2 and has fifteen seconds to do it, after which the server resolves the throw itself.
+- Capturing a country requires an explicit occupation within recorded minimum and maximum bounds.
+- Fortify moves armies once per turn between any two owned countries joined by a path of owned ones.
+- Losing the last country eliminates a player; the last player standing wins.
+- No cards, missions, alliances, or mechanical terrain effects.
+
+`risk-demo-v1` remains playable and viewable for games that already exist, and fits a complete game
+into a shorter demo:
 
 - 2–4 players on the fixed six-territory `demo-map-v1`.
 - Setup deals territories round-robin and records the shuffled turn order.

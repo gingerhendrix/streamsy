@@ -114,7 +114,9 @@ describe("risk-demo-v2 agent harness", () => {
     for (const player of meta.players) {
       expect(player.eliminated).toBe(player.id !== meta.winnerId);
     }
-  });
+    // A whole game is a few hundred HTTP round trips; the default 5s budget is
+    // tight enough to fail on a loaded machine rather than on a real regression.
+  }, 60_000);
 
   it("auto-rolls from a DefenseAvailable wake under a stable command id", async () => {
     const h = v2Harness();

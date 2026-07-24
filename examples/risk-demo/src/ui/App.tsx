@@ -13,7 +13,6 @@ import type { GameStatus } from "../domain/aggregate.ts";
 import type { LegalAction } from "../application/legal-actions.ts";
 import type { PlayerController } from "../domain/events-v2.ts";
 import { TERRITORIES } from "../domain/map.ts";
-import { RULESET_V2 } from "../domain/map-v2.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { GameV2Screen } from "./game-v2.tsx";
@@ -30,11 +29,12 @@ import {
   isError,
   loadIdentity,
   playerRoleLabel,
+  rendererForGame,
   shortOffset,
   type Identity,
 } from "./shared.tsx";
 
-export { acknowledgementNotice, playerRoleLabel, shortOffset } from "./shared.tsx";
+export { acknowledgementNotice, playerRoleLabel, rendererForGame, shortOffset } from "./shared.tsx";
 
 const POSITIONS: Record<string, { x: number; y: number }> = {
   alpha: { x: 15, y: 25 },
@@ -93,8 +93,10 @@ export function App() {
   const previousStatus = useRef<GameStatus | null>(null);
   // The renderer is chosen from the game's canonical ruleset, never inferred from
   // missing rows (design spec §11) — so only a v1 game opens the v1 board stream.
-  const isV2 = game?.ruleset === RULESET_V2;
-  const live = useRiskBoardStream(isV2 ? null : (game?.boardStreamId ?? null));
+  const renderer = rendererForGame(game);
+  const live = useRiskBoardStream(
+    renderer === "risk-demo-v1" ? (game?.boardStreamId ?? null) : null,
+  );
   const board = live.rows;
 
   useEffect(() => {
@@ -347,7 +349,7 @@ export function App() {
     );
   }
 
-  if (isV2 && game) {
+  if (renderer === "risk-demo-v2" && game) {
     return (
       <GameV2Screen
         gameId={gameId}

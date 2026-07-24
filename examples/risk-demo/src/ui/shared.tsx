@@ -29,6 +29,22 @@ export interface ApiResult<T> {
 export const STORAGE_KEY = "risk-demo-identity";
 export const COLORS = ["#e05a47", "#3b82f6", "#d49b35", "#8b5cf6"];
 
+export type BoardRenderer = "risk-demo-v1" | "risk-demo-v2";
+
+/**
+ * Which board surface a game gets, decided by its canonical ruleset and nothing
+ * else (design spec §11).
+ *
+ * `null` while the game resource is still loading: with no ruleset there is no
+ * answer yet, and guessing would open the wrong projection stream. An older game
+ * that predates the field is v1 — the version is never inferred from which rows
+ * happen to be missing from a projection.
+ */
+export function rendererForGame(game: { ruleset?: string } | null): BoardRenderer | null {
+  if (!game) return null;
+  return game.ruleset === "risk-demo-v2" ? "risk-demo-v2" : "risk-demo-v1";
+}
+
 export function loadIdentity(): Identity | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
