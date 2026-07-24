@@ -281,6 +281,26 @@ export interface TurnRailProps {
   footer?: ReactNode;
 }
 
+/**
+ * What the rail shows once the map has an owner.
+ *
+ * A finished game has no legal action for anybody, so the ordinary "waiting for
+ * another player" copy would be a lie. This says who won and makes it explicit
+ * that the board below is the final one, not a stale view.
+ */
+export function VictoryCard(props: { winnerName?: string; round: number }) {
+  return (
+    <section className="controls-card victory">
+      <span className="section-label">Game over</span>
+      <h3>{props.winnerName ? `${props.winnerName} conquered the map` : "The campaign is over"}</h3>
+      <p>
+        {props.round} rounds played. The final board stays live — every country, every recorded die,
+        and the whole history remain readable.
+      </p>
+    </section>
+  );
+}
+
 export function TurnRail(props: TurnRailProps) {
   const { turn, names } = props;
   const activeColor = props.activePlayer?.color ?? "#65dfb4";

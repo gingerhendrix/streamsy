@@ -57,7 +57,7 @@ import {
   playerRoleLabel,
   type Identity,
 } from "./shared.tsx";
-import { CombatCard, TurnRail } from "./turn-rail.tsx";
+import { CombatCard, TurnRail, VictoryCard } from "./turn-rail.tsx";
 
 type Selection =
   | null
@@ -694,7 +694,9 @@ export function GameV2Screen(props: GameV2ScreenProps) {
             )
           }
           controls={
-            spectating ? null : (
+            board.game.status === "finished" ? (
+              <VictoryCard winnerName={winner?.name} round={board.game.round} />
+            ) : spectating ? null : (
               <PhaseControls
                 names={names}
                 busy={busy}

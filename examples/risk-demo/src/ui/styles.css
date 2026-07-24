@@ -1105,6 +1105,14 @@ code {
   border-color: rgba(240, 179, 89, 0.4);
   background: linear-gradient(145deg, rgba(48, 38, 22, 0.85), rgba(20, 18, 14, 0.92));
 }
+.controls-card.victory {
+  border-color: rgba(101, 223, 180, 0.45);
+  background: linear-gradient(145deg, rgba(20, 46, 39, 0.9), rgba(13, 24, 22, 0.94));
+}
+.controls-card.victory h3 {
+  margin: 0;
+  font-size: 1rem;
+}
 .controls-card p {
   margin: 0;
   font-size: 0.8rem;
