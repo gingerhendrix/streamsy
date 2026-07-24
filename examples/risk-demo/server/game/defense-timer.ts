@@ -50,7 +50,13 @@ export function defenseTimeoutCommandId(attackId: string): string {
  * manual implementation and fire timers explicitly.
  */
 export interface TimerScheduler {
-  schedule(timerId: string, delayMs: number, run: () => void): void;
+  /**
+   * `run` may return a promise. Production fires and forgets — delivery is
+   * at-least-once and the canonical effect is exactly-once either way — but a
+   * test scheduler can keep the promise so it can await the resolution instead
+   * of guessing how many event-loop turns it takes.
+   */
+  schedule(timerId: string, delayMs: number, run: () => void | Promise<void>): void;
   cancel(timerId: string): void;
   cancelAll(): void;
 }
@@ -92,14 +98,29 @@ export interface ManualScheduler extends TimerScheduler {
   fire(timerId: string): boolean;
   /** Run every timer whose delay is at or below `elapsedMs`. */
   advance(elapsedMs: number): void;
+  /**
+   * Await everything the timers fired so far have started.
+   *
+   * Firing is deliberately synchronous — that is what production delivery looks
+   * like — so a test that asserts straight after `fire` is racing the resolution.
+   * Awaiting the recorded work makes the assertion about the protocol rather than
+   * about how many event-loop turns a canonical append happens to take.
+   */
+  settle(): Promise<void>;
 }
 
 export function createManualScheduler(): ManualScheduler {
-  const timers = new Map<string, { delayMs: number; run: () => void }>();
+  const timers = new Map<string, { delayMs: number; run: () => void | Promise<void> }>();
+  let inFlight: Promise<unknown>[] = [];
+
+  function run(timer: { run: () => void | Promise<void> }): void {
+    inFlight.push(Promise.resolve(timer.run()));
+  }
+
   return {
-    schedule(timerId, delayMs, run) {
+    schedule(timerId, delayMs, timerRun) {
       if (timers.has(timerId)) return;
-      timers.set(timerId, { delayMs, run });
+      timers.set(timerId, { delayMs, run: timerRun });
     },
     cancel: (timerId) => void timers.delete(timerId),
     cancelAll: () => timers.clear(),
@@ -108,7 +129,7 @@ export function createManualScheduler(): ManualScheduler {
       const timer = timers.get(timerId);
       if (!timer) return false;
       timers.delete(timerId);
-      timer.run();
+      run(timer);
       return true;
     },
     advance(elapsedMs) {
@@ -116,7 +137,15 @@ export function createManualScheduler(): ManualScheduler {
       const due = [...timers.entries()].filter(([, timer]) => timer.delayMs <= elapsedMs);
       for (const [timerId, timer] of due) {
         timers.delete(timerId);
-        timer.run();
+        run(timer);
+      }
+    },
+    async settle() {
+      // A settling timer may have scheduled and fired another one.
+      while (inFlight.length > 0) {
+        const batch = inFlight;
+        inFlight = [];
+        await Promise.all(batch);
       }
     },
   };
@@ -183,11 +212,14 @@ export function createDefenseTimers(deps: DefenseTimerDeps): DefenseTimers {
     pending: Extract<PendingInteraction, { type: "defense" }>,
   ): void {
     const timerId = defenseTimerId(gameId, pending.attackId);
-    scheduler.schedule(timerId, Math.max(0, pending.defenseDeadlineAt - now()), () => {
-      void fire(gameId, pending.attackId).catch((error) => {
-        deps.onError?.(error, { gameId, attackId: pending.attackId });
-      });
-    });
+    scheduler.schedule(timerId, Math.max(0, pending.defenseDeadlineAt - now()), () =>
+      fire(gameId, pending.attackId).then(
+        () => undefined,
+        (error: unknown) => {
+          deps.onError?.(error, { gameId, attackId: pending.attackId });
+        },
+      ),
+    );
   }
 
   async function ensure(gameId: string): Promise<void> {

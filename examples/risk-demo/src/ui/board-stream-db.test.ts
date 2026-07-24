@@ -2,10 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   boardRowsFromQueries,
+  boardRowsV2FromQueries,
   createRiskBoardSession,
   riskBoardState,
+  riskBoardStateV2,
   type RiskBoardDb,
 } from "./board-stream-db.ts";
+
+const REINFORCEMENT = { base: 5, continents: [], total: 5, remaining: 2 };
 
 describe("Risk StreamDB query shaping", () => {
   it("shapes typed collection queries and orders the newest moves first", () => {
@@ -38,6 +42,70 @@ describe("Risk StreamDB query shaping", () => {
         },
       }),
     ).toMatchObject({ type: "player", key: "p1", headers: { operation: "insert" } });
+  });
+});
+
+describe("risk-demo-v2 StreamDB query shaping", () => {
+  it("collapses the zero-or-one turn and combat collections to a single row or null", () => {
+    const base = {
+      games: [{ id: "g2", status: "playing" as const, round: 1 }],
+      players: [],
+      hexes: [],
+      territories: [],
+      continents: [],
+      moves: [],
+      projectionMeta: [],
+    };
+
+    const idle = boardRowsV2FromQueries({ ...base, turn: [], combat: [] });
+    expect(idle?.turn).toBeNull();
+    expect(idle?.combat).toBeNull();
+
+    const pending = boardRowsV2FromQueries({
+      ...base,
+      turn: [
+        {
+          id: "turn",
+          turnId: "round-1:p1",
+          round: 1,
+          playerId: "p1",
+          phase: "attack",
+          reinforcement: REINFORCEMENT,
+          reinforcementsPlaced: 3,
+          attacksDeclared: 1,
+          throwsResolved: 0,
+          captures: 0,
+          eliminations: 0,
+        },
+      ],
+      combat: [
+        {
+          id: "combat",
+          attackId: "atk-1",
+          turnId: "round-1:p1",
+          status: "awaiting-defense",
+          attackerId: "p1",
+          defenderId: "p2",
+          from: "t:01",
+          to: "t:02",
+          attackerDice: 3,
+          attackerRolls: [6, 5, 2],
+          defenderDice: 2,
+          declaredAt: 1_000,
+          defenseDeadlineAt: 16_000,
+        },
+      ],
+    });
+    expect(pending?.turn?.turnId).toBe("round-1:p1");
+    expect(pending?.combat?.status).toBe("awaiting-defense");
+  });
+
+  it("keys the v2 combat collection so a cleared interrupt is a delete", () => {
+    expect(riskBoardStateV2.combat.delete({ key: "combat" })).toMatchObject({
+      type: "combat",
+      key: "combat",
+      headers: { operation: "delete" },
+    });
   });
 });
 

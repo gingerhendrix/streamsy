@@ -80,6 +80,13 @@ interface TerritoryView {
   adjacentTerritoryIds?: string[];
 }
 
+/**
+ * Static geometry, read once from `GET /board`.
+ *
+ * `/decision` deliberately carries only what changes — ownership, armies, legal
+ * actions — so the agent fetches the map from the board surface a single time and
+ * caches it. It is immutable after `GameStarted`, so there is nothing to refresh.
+ */
 interface MapView {
   territories: Array<{ id: string; continentId: string; adjacentTerritoryIds: string[] }>;
   continents: Array<{ id: string; territoryIds: string[]; reinforcementBonus: number }>;
@@ -96,7 +103,7 @@ interface Decision {
   };
   pendingInteraction?: { type: string; attackId: string };
   board: {
-    map?: MapView;
+    map?: { mapVersion?: string; boardStreamId?: string };
     territories: TerritoryView[];
     players: Array<{ id: string; remainingArmies?: number; eliminated: boolean }>;
   };
@@ -104,7 +111,7 @@ interface Decision {
 }
 
 function isV2(decision: Decision): boolean {
-  return decision.ruleset === "risk-demo-v2" || decision.board.map !== undefined;
+  return decision.ruleset === "risk-demo-v2";
 }
 
 function boardFingerprint(playerId: string, decision: Decision): string {
@@ -159,9 +166,7 @@ interface V2Context {
   neighbours: (id: string) => string[];
 }
 
-function v2Context(playerId: string, decision: Decision): V2Context | null {
-  const map = decision.board.map;
-  if (!map) return null;
+function v2Context(playerId: string, decision: Decision, map: MapView): V2Context {
   const byId = new Map(decision.board.territories.map((t) => [t.id, t]));
   const adjacency = new Map(map.territories.map((t) => [t.id, t.adjacentTerritoryIds]));
   return {
@@ -280,13 +285,19 @@ function chooseFortifyV2(ctx: V2Context, action: any): Record<string, unknown> |
   return null;
 }
 
-function chooseActionV2(playerId: string, decision: Decision): Record<string, unknown> | null {
-  // Defence first: it is the only out-of-turn action, and the deadline is ticking.
+async function chooseActionV2(
+  playerId: string,
+  decision: Decision,
+  loadMap: () => Promise<MapView | null>,
+): Promise<Record<string, unknown> | null> {
+  // Defence first: it is the only out-of-turn action, the deadline is ticking,
+  // and it needs no map at all.
   const defense = decision.legalActions.find((a) => a.type === "roll-defense");
   if (defense) return { type: "roll-defense", attackId: defense.attackId };
 
-  const ctx = v2Context(playerId, decision);
-  if (!ctx) return null;
+  const map = await loadMap();
+  if (!map) return null;
+  const ctx = v2Context(playerId, decision, map);
 
   const occupy = decision.legalActions.find((a) => a.type === "occupy-territory");
   if (occupy) return chooseOccupyV2(ctx, occupy);
@@ -332,6 +343,30 @@ export function createAgent(options: CreateAgentOptions): Agent {
     return res.status === 200 ? (res.body as Decision) : null;
   }
 
+  /** Fetch the static map from the board surface once and keep it. */
+  let cachedMap: MapView | null = null;
+  async function loadMap(): Promise<MapView | null> {
+    if (cachedMap) return cachedMap;
+    const res = await call("GET", `/v1/games/${gameId}/board`);
+    if (res.status !== 200) return null;
+    const territories = (res.body.territories ?? []) as Array<{
+      id: string;
+      continentId: string;
+      adjacentTerritoryIds: string[];
+    }>;
+    // Before `GameStarted` there is no map yet; do not cache an empty one.
+    if (territories.length === 0) return null;
+    cachedMap = {
+      territories: territories.map((t) => ({
+        id: t.id,
+        continentId: t.continentId,
+        adjacentTerritoryIds: t.adjacentTerritoryIds,
+      })),
+      continents: (res.body.continents ?? []) as MapView["continents"],
+    };
+    return cachedMap;
+  }
+
   /**
    * A defence roll is idempotent by construction: the id names the attack, not
    * the board. A duplicate wake, a retry, and a lost race with the canonical
@@ -347,7 +382,7 @@ export function createAgent(options: CreateAgentOptions): Agent {
     if (!decision || decision.legalActions.length === 0) return null;
 
     const action = isV2(decision)
-      ? chooseActionV2(playerId, decision)
+      ? await chooseActionV2(playerId, decision, loadMap)
       : decision.turn.activePlayerId === playerId
         ? chooseActionV1(playerId, decision)
         : null;

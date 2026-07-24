@@ -16,7 +16,6 @@
  * endpoint.
  */
 
-import type { DefenseResolutionSource } from "./events-v2.ts";
 import type { PlayerController } from "./events-v2.ts";
 import type { GameStartPlan } from "./setup-v2.ts";
 
@@ -68,6 +67,11 @@ export interface DeclareAttackCommandV2 {
 /**
  * The defender authorizes a roll; they never choose the dice count. The legal
  * count was fixed at declaration time and is read from canonical state.
+ *
+ * There is deliberately no `resolutionSource` here. Whether a roll is recorded as
+ * `human` or `agent-auto` follows from the defending seat's canonical
+ * {@link PlayerController}, not from anything the client sends — a browser cannot
+ * label its roll as an agent's, and an agent cannot disguise itself as a human.
  */
 export interface RollDefenseCommandV2 {
   type: "roll-defense";
@@ -75,8 +79,6 @@ export interface RollDefenseCommandV2 {
   turnId: string;
   playerId: string;
   attackId: string;
-  /** `human` for a browser click, `agent-auto` for the machine harness. */
-  resolutionSource?: Extract<DefenseResolutionSource, "human" | "agent-auto">;
 }
 
 export interface OccupyTerritoryCommandV2 {

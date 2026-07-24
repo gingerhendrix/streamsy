@@ -165,6 +165,13 @@ export async function gameMeta(app: App, game: V2Game) {
   return (await call(app, "GET", `/v1/games/${game.gameId}`)).body;
 }
 
+/** The projected v2 board — including the static map rows `/decision` omits. */
+export async function boardFor(app: App, game: V2Game) {
+  const res = await call(app, "GET", `/v1/games/${game.gameId}/board`);
+  expect(res.status).toBe(200);
+  return res.body;
+}
+
 export async function post(
   app: App,
   game: V2Game,
@@ -197,11 +204,12 @@ export async function declareAttack(
 ): Promise<PendingAttack> {
   const attacker = (await gameMeta(h.app, game)).activePlayerId as string;
   let decision = await decisionFor(h.app, game, attacker);
+  const board = await boardFor(h.app, game);
 
   const ownerOf = (id: string): string | undefined =>
     decision.board.territories.find((x: any) => x.id === id)?.ownerId;
   const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
-  const border = decision.board.map.territories.find(
+  const border = board.territories.find(
     (t: any) =>
       ownerOf(t.id) === attacker &&
       t.adjacentTerritoryIds.some((adj: string) => ownerOf(adj) !== attacker),
@@ -240,4 +248,50 @@ export async function declareAttack(
     from: choice.from,
     to: choice.to,
   };
+}
+
+/**
+ * Resolve the pending throw and, if the target holds, declare another one against
+ * it — until the country falls. Returns the attack that captured it, which is the
+ * one now awaiting occupation.
+ */
+export async function throwUntilCapture(
+  h: V2Harness,
+  game: V2Game,
+  attack: PendingAttack,
+): Promise<PendingAttack> {
+  let current = attack;
+  for (let round = 0; round < 24; round += 1) {
+    h.rig([1, 1]);
+    const rolled = await post(h.app, game, current.defender, {
+      commandId: `def:${current.attackId}`,
+      turnId: current.turnId,
+      action: { type: "roll-defense", attackId: current.attackId },
+    });
+    expect(rolled.status).toBe(200);
+    const resolved = rolled.body.events.find((e: any) => e.type === "AttackResolved");
+    if (resolved.territoryCaptured) return current;
+
+    const decision = await decisionFor(h.app, game, current.attacker);
+    const choice = decision.legalActions
+      .find((a: any) => a.type === "declare-attack")
+      ?.choices.find((c: any) => c.from === current.from && c.to === current.to);
+    if (!choice) throw new Error(`${current.to} can no longer be attacked from ${current.from}`);
+
+    const attackId = `atk:${current.turnId}:${current.to}:${round}`;
+    h.rig([6, 6, 6].slice(0, choice.maxAttackerDice));
+    const declared = await post(h.app, game, current.attacker, {
+      commandId: attackId,
+      turnId: current.turnId,
+      action: {
+        type: "declare-attack",
+        from: choice.from,
+        to: choice.to,
+        attackerDice: choice.maxAttackerDice,
+      },
+    });
+    expect(declared.status).toBe(200);
+    current = { ...current, attackId };
+  }
+  throw new Error(`${attack.to} never fell`);
 }

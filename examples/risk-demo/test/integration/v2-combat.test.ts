@@ -15,6 +15,7 @@ import { defenseTimeoutCommandId, defenseTimerId } from "../../server/game/defen
 import { RULESET_V2 } from "../../src/domain/map-v2.ts";
 import {
   DEFENSE_MS,
+  boardFor,
   call,
   createV2Game,
   decisionFor,
@@ -44,9 +45,15 @@ describe("risk-demo-v2 creation seam", () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { mapSeed: "fixed-seed-1" });
     const decision = await decisionFor(h.app, game, game.players[0]!);
+    // `/decision` names the map; the snapshot itself lives on the board surface.
     expect(decision.board.map.seed).toBe("fixed-seed-1");
     expect(decision.board.map.generatorVersion).toBe("hex-generator-v1");
-    expect(decision.board.map.territories).toHaveLength(16);
+    expect(decision.board.map.territoryCount).toBe(16);
+    const board = await boardFor(h.app, game);
+    expect(board.game.mapSeed).toBe("fixed-seed-1");
+    expect(board.territories).toHaveLength(16);
+    expect(board.hexes).toHaveLength(72);
+    expect(board.continents).toHaveLength(4);
 
     // A start retry under the same commandId returns the original GameStarted.
     const retry = await call(h.app, "POST", `/v1/games/${game.gameId}/start`, {
@@ -57,12 +64,17 @@ describe("risk-demo-v2 creation seam", () => {
     expect(retry.body.error.code).toBe("GAME_ALREADY_STARTED");
   });
 
-  it("reports the v2 board projection as not yet available", async () => {
+  it("serves the v2 board on its own generation and reducer version", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app);
     const board = await call(h.app, "GET", `/v1/games/${game.gameId}/board`);
-    expect(board.status).toBe(409);
-    expect(board.body.error.code).toBe("PROJECTION_UNAVAILABLE");
+    expect(board.status).toBe(200);
+    expect(board.body.ruleset).toBe(RULESET_V2);
+    expect(board.body.generation).toBe("hex1");
+    expect(board.body.reducerVersion).toBe("risk-demo-v2:board-1");
+    expect(board.body.boardStreamId).toBe(`games/${game.gameId}/projections/board/hex1`);
+    expect(board.body.sourceThroughOffset).not.toBeNull();
+    expect(board.body.combat).toBeNull();
   });
 });
 
@@ -119,7 +131,7 @@ describe("risk-demo-v2 defence resolution", () => {
     // The timer still fires (delivery is at-least-once) and is a harmless no-op:
     // no timeout command is ever recorded, so no second die is consumed.
     expect(h.scheduler.fire(defenseTimerId(game.gameId, attack.attackId))).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.scheduler.settle();
     expect(h.stores.commands.get(game.gameId, defenseTimeoutCommandId(attack.attackId))).toBeNull();
     const after = await gameMeta(h.app, game);
     expect(after.pendingInteraction?.type).not.toBe("defense");
@@ -296,8 +308,7 @@ describe("risk-demo-v2 timer recovery", () => {
     // And firing it resolves the combat exactly once.
     restarted.clock.now += DEFENSE_MS + 1;
     expect(restarted.scheduler.fire(defenseTimerId(game.gameId, attack.attackId))).toBe(true);
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await restarted.scheduler.settle();
     const after = await gameMeta(restarted.app, game);
     expect(after.pendingInteraction?.type).not.toBe("defense");
   });

@@ -7,12 +7,26 @@ import type { DecisionContextV2 } from "./decision-v2.ts";
 import type { GameEvent } from "../domain/events.ts";
 import type { GameEventV2 } from "../domain/events-v2.ts";
 import type {
+  BoardView,
   ProjectedGame,
   ProjectedMove,
   ProjectedPlayer,
   ProjectedTerritory,
   ProjectionState,
 } from "../board/projection.ts";
+import type {
+  BoardViewV2,
+  ProjectedCombatV2,
+  ProjectedContinentV2,
+  ProjectedGameV2,
+  ProjectedHexV2,
+  ProjectedMoveV2,
+  ProjectedPlayerV2,
+  ProjectedTerritoryV2,
+  ProjectedTurnV2,
+  ProjectionStateV2,
+} from "../board/projection-v2.ts";
+import type { GameActionV2, PlayCommandV2 } from "../domain/commands-v2.ts";
 
 export type ApiErrorCode =
   | RiskErrorCode
@@ -180,15 +194,43 @@ export interface GameResponse {
 
 export interface BoardResponse {
   gameId: string;
+  ruleset: string;
   sourceStreamId: string;
   sourceThroughOffset: string | null;
   generation: string;
   game: ProjectedGame;
   players: ProjectedPlayer[];
   territories: ProjectedTerritory[];
+  view: BoardView;
+}
+
+/**
+ * `GET /board` for a `risk-demo-v2` game. Static map rows (hexes, territories,
+ * continents) are served here, once, rather than repeated on every `/decision`
+ * fetch; `turn` and `combat` are the zero-or-one current-turn rows.
+ */
+export interface BoardResponseV2 {
+  gameId: string;
+  ruleset: string;
+  sourceStreamId: string;
+  sourceThroughOffset: string | null;
+  generation: string;
+  /** Durable State stream a browser can follow live for this generation. */
+  boardStreamId: string;
+  reducerVersion: string;
+  game: ProjectedGameV2;
+  players: ProjectedPlayerV2[];
+  hexes: ProjectedHexV2[];
+  territories: ProjectedTerritoryV2[];
+  continents: ProjectedContinentV2[];
+  turn: ProjectedTurnV2 | null;
+  combat: ProjectedCombatV2 | null;
+  moves: ProjectedMoveV2[];
+  view: BoardViewV2;
 }
 
 export type DecisionResponse = DecisionContext;
+export type DecisionResponseV2 = DecisionContextV2;
 
 export type PlayAction =
   | { type: "reinforce"; territoryId: string; armies: number }
@@ -201,6 +243,14 @@ export interface PlayCommandRequest {
   turnId: string;
   action: PlayAction;
 }
+
+/**
+ * The v2 command envelope. Version-discriminated on purpose: v1 `attack` is a
+ * whole fight-and-occupy step, while v2 `declare-attack` is one throw that opens
+ * a defence interrupt. Neither is a rename of the other (design spec §11).
+ */
+export type PlayActionV2 = GameActionV2;
+export type PlayCommandRequestV2 = PlayCommandV2;
 
 export interface BoardProjectionMeta {
   sourceStreamId: string;
@@ -217,4 +267,26 @@ export interface BoardRows {
   territories: ProjectedTerritory[];
   moves: ProjectedMove[];
   meta: BoardProjectionMeta | null;
+}
+
+export interface BoardProjectionMetaV2 {
+  sourceStreamId: string;
+  sourceThroughOffset: string;
+  sourceSeq: number;
+  generation: string;
+  reducerVersion: string;
+  snapshot: ProjectionStateV2;
+}
+
+/** The client-side shape of one v2 board generation's collections. */
+export interface BoardRowsV2 {
+  game: ProjectedGameV2;
+  players: ProjectedPlayerV2[];
+  hexes: ProjectedHexV2[];
+  territories: ProjectedTerritoryV2[];
+  continents: ProjectedContinentV2[];
+  turn: ProjectedTurnV2 | null;
+  combat: ProjectedCombatV2 | null;
+  moves: ProjectedMoveV2[];
+  meta: BoardProjectionMetaV2 | null;
 }

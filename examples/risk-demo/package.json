@@ -13,8 +13,8 @@
     "proof": "bun run scripts/proof.ts",
     "rebuild": "bun run scripts/rebuild.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest --run src server/game/board-sync.test.ts test/integration",
-    "test:unit": "vitest --run src server/game/board-sync.test.ts",
+    "test": "vitest --run src server test/integration",
+    "test:unit": "vitest --run src server",
     "test:sqlite": "bun test test/persistence"
   },
   "dependencies": {

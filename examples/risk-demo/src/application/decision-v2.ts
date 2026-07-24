@@ -2,7 +2,7 @@
  * Player-relative `risk-demo-v2` decision context (design spec §6.1).
  *
  * Built purely from the authoritative aggregate fold, so an agent has everything
- * needed for one move — fresh turn, board, pending interrupt, and structured
+ * needed for one move — fresh turn, live board, pending interrupt, and structured
  * legal actions — without scraping a UI or trusting a possibly-lagging projection
  * for legality.
  *
@@ -10,10 +10,27 @@
  * a `roll-defense` action here, which is what makes an agent's defence loop a
  * normal decision fetch rather than a special channel.
  *
- * Scope note: the full decision/OpenAPI polish and the v2 board projection land
- * with the next slice. Until then the watermark reported below is the canonical
- * head rather than a projection watermark — named honestly in
- * {@link DecisionBoardV2.sourceThroughOffset}'s producer, not disguised.
+ * ## Watermark stance
+ *
+ * The service catches the board projection up *first*, then folds exactly the
+ * canonical prefix that projection has incorporated, and reports that
+ * projection's `sourceThroughOffset`. So the contract is precise: **this decision
+ * is derived from canonical history through `board.sourceThroughOffset`, and the
+ * board generation named beside it has materialized at least that far.** The
+ * decision is therefore never ahead of the board snapshot it names (spec §6.1),
+ * and a client can compare the two offsets against its own StreamDB position
+ * without ever comparing across streams. A command appended after the watermark
+ * is simply not reflected yet — harmless, because every command is revalidated
+ * against a fresh canonical fold at submission.
+ *
+ * ## Payload
+ *
+ * The full `GeneratedMap` is deliberately *not* shipped on every fetch. Static
+ * geometry — hexes, names, adjacency, continents, label anchors — is board
+ * surface: it is materialized once into the projection and fetched once from
+ * `GET /board` (or followed live on `boardStreamId`). What changes every move —
+ * ownership, armies, eliminations — stays here. {@link DecisionMapRef} carries
+ * enough for a client to know *which* map it should have and where to get it.
  */
 
 import type {
@@ -24,15 +41,26 @@ import type {
 } from "../domain/aggregate-v2.ts";
 import { buildTurnIdV2 } from "../domain/aggregate-v2.ts";
 import type { PlayerController } from "../domain/events-v2.ts";
-import type { GeneratedMap } from "../domain/map-v2.ts";
 import { decisionModeV2, legalActionsV2, type DecisionModeV2 } from "./legal-actions-v2.ts";
 import type { LegalActionV2 } from "./legal-actions-v2.ts";
+
+/** Which map this decision was folded against, and where the snapshot lives. */
+export interface DecisionMapRef {
+  mapVersion?: string;
+  generatorVersion?: string;
+  seed?: string;
+  /** Durable State stream carrying the projected map/board rows. */
+  boardStreamId: string;
+  territoryCount: number;
+  continentCount: number;
+}
 
 export interface DecisionBoardV2 {
   sourceStreamId: string;
   sourceThroughOffset: string | null;
-  /** The canonical map snapshot; clients never import the generator. */
-  map?: GeneratedMap;
+  /** Active board-projection generation the watermark belongs to. */
+  generation: string;
+  map: DecisionMapRef;
   territories: Array<{ id: string; ownerId?: string; armies: number }>;
   players: Array<{ id: string; controller: PlayerController; eliminated: boolean }>;
 }
@@ -57,7 +85,11 @@ export interface DecisionContextV2 {
 export interface BoardWatermarkV2 {
   sourceStreamId: string;
   sourceThroughOffset: string | null;
+  generation: string;
+  boardStreamId: string;
 }
+
+const byId = (a: { id: string }, b: { id: string }): number => a.id.localeCompare(b.id);
 
 export function buildDecisionContextV2(
   state: AggregateStateV2,
@@ -87,13 +119,21 @@ export function buildDecisionContextV2(
     board: {
       sourceStreamId: watermark.sourceStreamId,
       sourceThroughOffset: watermark.sourceThroughOffset,
-      map: state.map,
+      generation: watermark.generation,
+      map: {
+        mapVersion: state.mapVersion,
+        generatorVersion: state.generatorVersion,
+        seed: state.mapSeed,
+        boardStreamId: watermark.boardStreamId,
+        territoryCount: state.map?.territories.length ?? 0,
+        continentCount: state.map?.continents.length ?? 0,
+      },
       territories: Object.values(state.territories)
         .map((t) => ({ id: t.id, ownerId: t.ownerId, armies: t.armies }))
-        .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+        .toSorted(byId),
       players: state.players
         .map((p) => ({ id: p.id, controller: p.controller, eliminated: p.eliminated }))
-        .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+        .toSorted(byId),
     },
     legalActions: legalActionsV2(state, playerId),
   };

@@ -33,7 +33,13 @@ import type {
   StartGameCommandV2,
 } from "./commands-v2.ts";
 import type { AggregateStateV2 } from "./aggregate-v2.ts";
-import { currentTurnIdV2, friendlyReachable, nextTurnV2, ownedByV2 } from "./aggregate-v2.ts";
+import {
+  currentTurnIdV2,
+  friendlyReachable,
+  nextTurnV2,
+  ownedByV2,
+  playerV2,
+} from "./aggregate-v2.ts";
 import { compareRolls, legalDefenderDice, maxAttackerDice, rollSorted } from "./dice-v2.ts";
 import type { DefenseResolutionSource, GameEventV2 } from "./events-v2.ts";
 import { MapGenerationError } from "./hex-generator.ts";
@@ -374,11 +380,18 @@ function resolveDefense(
   });
 }
 
+/**
+ * A player-submitted roll. The recorded {@link DefenseResolutionSource} is
+ * derived from the defending seat's canonical controller — declared once in
+ * `GameCreated`/`PlayerJoined` — rather than from anything the client sends, so
+ * `agent-auto` can never be spoofed by a browser or vice versa.
+ */
 function decideRollDefense(
   state: AggregateStateV2,
   command: RollDefenseCommandV2,
   ctx: DecideContextV2,
 ): DecisionV2 {
+  const controller = playerV2(state, command.playerId)?.controller;
   return resolveDefense(
     state,
     {
@@ -386,7 +399,7 @@ function decideRollDefense(
       turnId: command.turnId,
       attackId: command.attackId,
       playerId: command.playerId,
-      source: command.resolutionSource ?? "human",
+      source: controller === "agent" ? "agent-auto" : "human",
     },
     ctx,
   );

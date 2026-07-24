@@ -17,6 +17,7 @@ import { createAgent, type Agent } from "../../server/demo/agent.ts";
 import { defenseTimeoutCommandId } from "../../server/game/defense-timer.ts";
 import {
   DEFENSE_MS,
+  boardFor,
   createV2Game,
   decisionFor,
   declareAttack,
@@ -225,14 +226,15 @@ async function declareAttackOrContinue(h: V2Harness, game: V2Game, guard: number
   const decision = await decisionFor(h.app, game, active);
   const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
   if (reinforce) {
+    const board = await boardFor(h.app, game);
     const ownerOf = (id: string) =>
       decision.board.territories.find((x: any) => x.id === id)?.ownerId;
     const border =
-      decision.board.map.territories.find(
+      board.territories.find(
         (t: any) =>
           ownerOf(t.id) === active &&
           t.adjacentTerritoryIds.some((adj: string) => ownerOf(adj) !== active),
-      ) ?? decision.board.map.territories[0];
+      ) ?? board.territories[0];
     await post(h.app, game, active, {
       commandId: `pre-${guard}`,
       turnId: decision.turn.id,

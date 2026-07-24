@@ -1,4 +1,6 @@
 import type {
+  BoardResponse,
+  BoardResponseV2,
   CommandAck,
   CreateGameRequest,
   CreateGameResponse,
@@ -17,19 +19,29 @@ import { MAP_VERSION, RULESET } from "../../src/domain/map.ts";
 import { MAP_VERSION_V2, RULESET_V2, generateMapSeed } from "../../src/domain/map-v2.ts";
 import type { PlayerController } from "../../src/domain/events-v2.ts";
 import { projectionBoardView } from "../../src/board/projection.ts";
+import { projectionBoardViewV2 } from "../../src/board/projection-v2.ts";
 import { BOARD_REDUCER_VERSION } from "../../src/board/board-projection.ts";
+import { BOARD_REDUCER_VERSION_V2 } from "../../src/board/board-projection-v2.ts";
 import { materializeBoard } from "../game/board.ts";
+import { materializeBoardV2 } from "../game/board-v2.ts";
 import {
+  assertRulesetMatches,
   isRulesetV2,
   readCanonical,
   readCanonicalV2,
+  readCanonicalV2Through,
   submitCommand,
   submitCommandV2,
   type SubmitResult,
   type SubmitResultV2,
 } from "../game/command-service.ts";
 import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } from "./router.ts";
-import { BOARD_GENERATION, boardStreamId, eventStreamId } from "../game/names.ts";
+import {
+  BOARD_GENERATION,
+  BOARD_GENERATION_V2,
+  boardStreamId,
+  eventStreamId,
+} from "../game/names.ts";
 import { openApiDocument } from "./openapi.ts";
 import { catchUpTurns, readTurns } from "../game/turn-notifier.ts";
 import type { AppContext } from "./app.ts";
@@ -59,22 +71,20 @@ function controllerOf(value: unknown): PlayerController {
 export function createRiskRoutes(ctx: AppContext): Route[] {
   const rulesetOf = (gameId: string): string => ctx.stores.games.get(gameId)?.ruleset ?? RULESET;
 
-  /**
-   * Catch the v1 board projection up to the canonical head.
-   *
-   * V2 games are skipped: their projection generation (hexes, continents, turn,
-   * combat) lands with the next slice, and the v1 reducer would fold a v2 stream
-   * into a silently wrong board rather than failing. Until then the v2 decision
-   * resource reports the canonical head as its watermark, which is honest — there
-   * is no projection lagging behind it — and `GET /board` says so explicitly.
-   */
+  /** Catch a game's board projection up to the canonical head, per ruleset. */
   const syncBoard = (gameId: string) =>
     materializeBoard(ctx.protocol, ctx.boardCache, gameId, ctx.activeGeneration(gameId));
+  const syncBoardV2 = (gameId: string) =>
+    materializeBoardV2(ctx.protocol, ctx.boardCacheV2, gameId, ctx.activeGeneration(gameId));
 
   /** After any accepted command: derive wakes, and reconcile v2 defence timers. */
   async function afterCommand(gameId: string, ruleset: string): Promise<void> {
     if (isRulesetV2(ruleset)) {
-      await Promise.all([catchUpTurns(ctx.protocol, gameId), ctx.defenseTimers.ensure(gameId)]);
+      await Promise.all([
+        catchUpTurns(ctx.protocol, gameId),
+        syncBoardV2(gameId),
+        ctx.defenseTimers.ensure(gameId),
+      ]);
       return;
     }
     await Promise.all([catchUpTurns(ctx.protocol, gameId), syncBoard(gameId)]);
@@ -114,24 +124,29 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         });
     if (result.status === "rejected") return rejection(result);
 
+    // Each ruleset gets its own generation lineage and reducer version, so a v2
+    // board is always a *new* projection stream rather than a reinterpretation
+    // of v1 projection history.
+    const generation = wantsV2 ? BOARD_GENERATION_V2 : BOARD_GENERATION;
     ctx.stores.games.put({
       gameId,
       sourceStreamId: eventStreamId(gameId),
-      projectionStreamId: boardStreamId(gameId),
-      generation: BOARD_GENERATION,
+      projectionStreamId: boardStreamId(gameId, generation),
+      generation,
       ruleset,
       createdAt: ctx.now(),
     });
     ctx.stores.generations.put({
       gameId,
-      generation: BOARD_GENERATION,
-      streamId: boardStreamId(gameId),
-      reducerVersion: BOARD_REDUCER_VERSION,
+      generation,
+      streamId: boardStreamId(gameId, generation),
+      reducerVersion: wantsV2 ? BOARD_REDUCER_VERSION_V2 : BOARD_REDUCER_VERSION,
       status: "active",
       sourceThroughOffset: null,
       createdAt: ctx.now(),
     });
-    if (!wantsV2) await syncBoard(gameId);
+    if (wantsV2) await syncBoardV2(gameId);
+    else await syncBoard(gameId);
     const capability = await ctx.issueAndStore(gameId, hostPlayerId, "host");
     const response: CreateGameResponse = {
       game: {
@@ -173,7 +188,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           color,
         });
     if (result.status === "rejected") return rejection(result);
-    if (!isRulesetV2(ruleset)) await syncBoard(gameId);
+    if (isRulesetV2(ruleset)) await syncBoardV2(gameId);
+    else await syncBoard(gameId);
     const response: JoinGameResponse = {
       player: { id: playerId, name, color, role: "player" },
       capability: await ctx.issueAndStore(gameId, playerId, "player"),
@@ -212,8 +228,10 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (!game) return error(404, "GAME_NOT_FOUND", "Unknown game.");
 
     if (isRulesetV2(game.ruleset)) {
+      await syncBoardV2(gameId);
       const { events } = await readCanonicalV2(ctx.protocol, eventStreamId(gameId));
       const state = foldAggregateV2(events);
+      assertRulesetMatches(gameId, game.ruleset, events);
       const response: GameResponse = {
         gameId,
         status: state.status,
@@ -239,6 +257,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     await syncBoard(gameId);
     const { events } = await readCanonical(ctx.protocol, eventStreamId(gameId));
     const state = foldAggregate(events);
+    assertRulesetMatches(gameId, game.ruleset, events);
     const response: GameResponse = {
       gameId,
       status: state.status,
@@ -265,15 +284,31 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const game = ctx.stores.games.get(gameId);
     if (!game) return error(404, "GAME_NOT_FOUND", "Unknown game.");
     if (isRulesetV2(game.ruleset)) {
-      return error(
-        409,
-        "PROJECTION_UNAVAILABLE",
-        "The risk-demo-v2 board projection is not built yet; read /decision instead.",
-      );
+      const board = await syncBoardV2(gameId);
+      const response: BoardResponseV2 = {
+        gameId,
+        ruleset: RULESET_V2,
+        sourceStreamId: board.sourceStreamId,
+        sourceThroughOffset: board.sourceThroughOffset,
+        generation: board.generation,
+        boardStreamId: boardStreamId(gameId, board.generation),
+        reducerVersion: BOARD_REDUCER_VERSION_V2,
+        game: board.state.game,
+        players: board.state.players,
+        hexes: board.state.hexes,
+        territories: board.state.territories,
+        continents: board.state.continents,
+        turn: board.state.turn,
+        combat: board.state.combat,
+        moves: board.state.moves,
+        view: projectionBoardViewV2(board.state),
+      };
+      return json(response);
     }
     const board = await syncBoard(gameId);
-    return json({
+    const response: BoardResponse = {
       gameId,
+      ruleset: RULESET,
       sourceStreamId: board.sourceStreamId,
       sourceThroughOffset: board.sourceThroughOffset,
       generation: board.generation,
@@ -281,7 +316,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       players: board.state.players,
       territories: board.state.territories,
       view: projectionBoardView(board.state),
-    });
+    };
+    return json(response);
   }
 
   async function getDecision(request: Request, params: Record<string, string>): Promise<Response> {
@@ -291,16 +327,26 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const ruleset = rulesetOf(gameId);
 
     if (isRulesetV2(ruleset)) {
-      const { events, head } = await readCanonicalV2(ctx.protocol, eventStreamId(gameId));
+      // Project first, then fold exactly the canonical prefix that projection has
+      // incorporated: the decision is never ahead of the board snapshot it names
+      // (design spec §6.1, and see `decision-v2.ts` for the full stance).
+      const board = await syncBoardV2(gameId);
+      const { events } = await readCanonicalV2Through(
+        ctx.protocol,
+        eventStreamId(gameId),
+        board.sourceThroughOffset,
+      );
+      assertRulesetMatches(gameId, ruleset, events);
       const state = foldAggregateV2(events);
       if (!state.players.some((player) => player.id === cap.playerId)) {
         return error(404, "NOT_FOUND", "Player is not part of this game.");
       }
       return json(
         buildDecisionContextV2(state, cap.playerId, {
-          sourceStreamId: eventStreamId(gameId),
-          // No v2 projection exists yet, so the canonical head is the watermark.
-          sourceThroughOffset: events.length > 0 ? head : null,
+          sourceStreamId: board.sourceStreamId,
+          sourceThroughOffset: board.sourceThroughOffset,
+          generation: board.generation,
+          boardStreamId: boardStreamId(gameId, board.generation),
         }),
       );
     }
@@ -515,19 +561,9 @@ function buildPlayCommandV2(
   }
 
   const body: PlayCommandV2 = { commandId, turnId, action: parsed };
-  // A browser roll is `human`; an agent harness labels itself through its own
-  // stable commandId, and the resolution source is recorded canonically either
-  // way — the UI never has to guess who closed a combat.
-  const command: CommandV2 =
-    parsed.type === "roll-defense"
-      ? {
-          type: "roll-defense",
-          commandId,
-          turnId,
-          playerId,
-          attackId: parsed.attackId,
-          resolutionSource: commandId.startsWith("agent-defense:") ? "agent-auto" : "human",
-        }
-      : { commandId, turnId, playerId, ...parsed };
+  // Nothing about *who* resolved a combat is taken from the transport: the kernel
+  // derives `human` vs `agent-auto` from the defending seat's canonical
+  // controller, so a client cannot mislabel its own roll.
+  const command: CommandV2 = { commandId, turnId, playerId, ...parsed };
   return { body, command };
 }
