@@ -916,11 +916,19 @@ code {
   stroke: rgba(2, 6, 10, 0.8);
   stroke-width: 3.4px;
 }
+.hex-map .label-leader {
+  stroke: rgba(238, 244, 251, 0.55);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+}
 .hex-map .country-hit {
   fill: transparent;
   stroke: transparent;
   cursor: default;
   outline: none;
+}
+.hex-map.dragging .country-hit.selectable {
+  cursor: grabbing;
 }
 .hex-map .country-hit.selectable {
   cursor: pointer;

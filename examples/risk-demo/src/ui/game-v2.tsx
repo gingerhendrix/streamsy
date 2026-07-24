@@ -577,6 +577,10 @@ export function GameV2Screen(props: GameV2ScreenProps) {
             route={route}
             zoom={zoom}
             pan={pan}
+            onView={(next) => {
+              setZoom(next.zoom);
+              setPan(next.pan);
+            }}
           >
             <div className="map-controls">
               <button
