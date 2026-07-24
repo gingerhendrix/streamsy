@@ -24,6 +24,14 @@
  */
 
 import type { PlayerActionNotification } from "../game/turn-notifier.ts";
+import {
+  chooseAttack,
+  chooseFortify,
+  chooseOccupy,
+  chooseReinforce,
+  strategyContext,
+  type StrategyMap,
+} from "./strategy-v2.ts";
 
 export type HttpCall = (
   method: string,
@@ -87,10 +95,7 @@ interface TerritoryView {
  * actions — so the agent fetches the map from the board surface a single time and
  * caches it. It is immutable after `GameStarted`, so there is nothing to refresh.
  */
-interface MapView {
-  territories: Array<{ id: string; continentId: string; adjacentTerritoryIds: string[] }>;
-  continents: Array<{ id: string; territoryIds: string[]; reinforcementBonus: number }>;
-}
+type MapView = StrategyMap;
 
 interface Decision {
   ruleset?: string;
@@ -154,136 +159,8 @@ function chooseActionV1(playerId: string, decision: Decision): Record<string, un
 }
 
 // ---------------------------------------------------------------------------
-// risk-demo-v2 strategy (design spec §9.2)
+// risk-demo-v2 strategy (design spec §9.2, implemented in `strategy-v2.ts`)
 // ---------------------------------------------------------------------------
-
-interface V2Context {
-  playerId: string;
-  decision: Decision;
-  map: MapView;
-  armiesOf: (id: string) => number;
-  ownerOf: (id: string) => string | undefined;
-  neighbours: (id: string) => string[];
-}
-
-function v2Context(playerId: string, decision: Decision, map: MapView): V2Context {
-  const byId = new Map(decision.board.territories.map((t) => [t.id, t]));
-  const adjacency = new Map(map.territories.map((t) => [t.id, t.adjacentTerritoryIds]));
-  return {
-    playerId,
-    decision,
-    map,
-    armiesOf: (id) => byId.get(id)?.armies ?? 0,
-    ownerOf: (id) => byId.get(id)?.ownerId,
-    neighbours: (id) => adjacency.get(id) ?? [],
-  };
-}
-
-/** Enemy countries bordering `id`. The agent's whole notion of "exposed". */
-function enemyNeighbours(ctx: V2Context, id: string): string[] {
-  return ctx.neighbours(id).filter((adj) => ctx.ownerOf(adj) !== ctx.playerId);
-}
-
-/**
- * How much the agent cares about a continent: full control is worth defending,
- * and being one country away is worth pushing for.
- */
-function continentPressure(ctx: V2Context, territoryId: string): number {
-  const territory = ctx.map.territories.find((t) => t.id === territoryId);
-  if (!territory) return 0;
-  const continent = ctx.map.continents.find((c) => c.id === territory.continentId);
-  if (!continent) return 0;
-  const missing = continent.territoryIds.filter((id) => ctx.ownerOf(id) !== ctx.playerId).length;
-  if (missing === 0) return continent.reinforcementBonus;
-  if (missing === 1) return Math.max(1, Math.floor(continent.reinforcementBonus / 2));
-  return 0;
-}
-
-/** Reinforce a border country, favouring continents held or nearly held. */
-function chooseReinforceV2(ctx: V2Context, action: any): Record<string, unknown> {
-  const scored = (action.territoryIds as string[])
-    .map((id) => ({
-      id,
-      exposure: enemyNeighbours(ctx, id).length,
-      pressure: continentPressure(ctx, id),
-      armies: ctx.armiesOf(id),
-    }))
-    .filter((t) => t.exposure > 0);
-  const pool =
-    scored.length > 0
-      ? scored
-      : [{ id: action.territoryIds[0], exposure: 0, pressure: 0, armies: 0 }];
-  const best = pool.toSorted(
-    (a, b) =>
-      b.pressure - a.pressure ||
-      b.exposure - a.exposure ||
-      a.armies - b.armies ||
-      (a.id < b.id ? -1 : 1),
-  )[0]!;
-  // One placement per turn keeps the command count low and the ledger readable.
-  return { type: "reinforce", territoryId: best.id, armies: action.maxArmies };
-}
-
-/** Attack where the army difference is favourable; break ties on continent value. */
-function chooseAttackV2(ctx: V2Context, action: any): Record<string, unknown> | null {
-  const scored = (action.choices as Array<{ from: string; to: string; maxAttackerDice: number }>)
-    .map((choice) => ({
-      choice,
-      advantage: ctx.armiesOf(choice.from) - 1 - ctx.armiesOf(choice.to),
-      pressure: continentPressure(ctx, choice.to),
-    }))
-    .filter((c) => c.advantage >= 1)
-    .toSorted(
-      (a, b) =>
-        b.pressure - a.pressure ||
-        b.advantage - a.advantage ||
-        (a.choice.to < b.choice.to ? -1 : 1),
-    );
-  const best = scored[0];
-  if (!best) return null;
-  return {
-    type: "declare-attack",
-    from: best.choice.from,
-    to: best.choice.to,
-    attackerDice: best.choice.maxAttackerDice,
-  };
-}
-
-/**
- * Occupy with the minimum, unless the captured country still borders enemies —
- * then push a bounded share of the available garrison forward instead of leaving
- * a token holding to be retaken next turn.
- */
-function chooseOccupyV2(ctx: V2Context, action: any): Record<string, unknown> {
-  const exposed = enemyNeighbours(ctx, action.to).length;
-  const armies =
-    exposed > 0
-      ? Math.min(
-          action.maxArmies,
-          Math.max(action.minArmies, Math.ceil((action.minArmies + action.maxArmies) / 2)),
-        )
-      : action.minArmies;
-  return { type: "occupy-territory", attackId: action.attackId, armies };
-}
-
-/** Fortify from an interior country toward its weakest reachable border. */
-function chooseFortifyV2(ctx: V2Context, action: any): Record<string, unknown> | null {
-  type Choice = { from: string; reachable: Array<{ to: string; maxArmies: number }> };
-  for (const choice of (action.choices as Choice[]).toSorted(
-    (a, b) => ctx.armiesOf(b.from) - ctx.armiesOf(a.from) || (a.from < b.from ? -1 : 1),
-  )) {
-    if (enemyNeighbours(ctx, choice.from).length > 0) continue; // already a border
-    const borders = choice.reachable
-      .filter((r) => enemyNeighbours(ctx, r.to).length > 0)
-      .toSorted((a, b) => ctx.armiesOf(a.to) - ctx.armiesOf(b.to) || (a.to < b.to ? -1 : 1));
-    const target = borders[0];
-    if (!target) continue;
-    const armies = Math.min(target.maxArmies, ctx.armiesOf(choice.from) - 1);
-    if (armies < 1) continue;
-    return { type: "fortify", from: choice.from, to: target.to, armies };
-  }
-  return null;
-}
 
 async function chooseActionV2(
   playerId: string,
@@ -297,23 +174,25 @@ async function chooseActionV2(
 
   const map = await loadMap();
   if (!map) return null;
-  const ctx = v2Context(playerId, decision, map);
+  const ctx = strategyContext(playerId, decision.board.territories, map);
 
   const occupy = decision.legalActions.find((a) => a.type === "occupy-territory");
-  if (occupy) return chooseOccupyV2(ctx, occupy);
+  if (occupy) return chooseOccupy(ctx, occupy);
 
   const reinforce = decision.legalActions.find((a) => a.type === "reinforce");
-  if (reinforce) return chooseReinforceV2(ctx, reinforce);
+  if (reinforce) return chooseReinforce(ctx, reinforce);
 
   const attack = decision.legalActions.find((a) => a.type === "declare-attack");
   if (attack) {
-    const chosen = chooseAttackV2(ctx, attack);
+    const chosen = chooseAttack(ctx, attack);
     if (chosen) return chosen;
   }
 
+  // No favourable attack anywhere: move idle armies toward one rather than
+  // passing the turn, which is what a turtling opponent relies on (D4).
   const fortify = decision.legalActions.find((a) => a.type === "fortify");
   if (fortify) {
-    const chosen = chooseFortifyV2(ctx, fortify);
+    const chosen = chooseFortify(ctx, fortify);
     if (chosen) return chosen;
   }
 

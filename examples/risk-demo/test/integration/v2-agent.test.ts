@@ -169,6 +169,107 @@ describe("risk-demo-v2 agent harness", () => {
     expect(decision.legalActions.length).toBeGreaterThan(0);
   });
 
+  it("keeps making territorial progress against an opponent who only turtles", async () => {
+    // The defect this pins down (D4): a human who never attacks and pours every
+    // reinforcement into one fortress used to freeze the game outright. The agent
+    // stacked the border facing the fortress, could not attack out of it, would
+    // not fortify away from it, and the position never changed again.
+    const h = v2Harness(31);
+    const game = await createV2Game(h.app, {
+      controllers: ["human", "agent"],
+      mapSeed: "turtle-seed",
+    });
+    const [turtleId, agentId] = game.players as [string, string];
+    const agent = agentsFor(h, game)[agentId]!;
+
+    const countriesOf = async (playerId: string): Promise<number> => {
+      const decision = await decisionFor(h.app, game, agentId);
+      return decision.board.territories.filter((t: any) => t.ownerId === playerId).length;
+    };
+    const openingAgentCountries = await countriesOf(agentId);
+    const openingTurtleCountries = await countriesOf(turtleId);
+
+    /** The fortress: one country, chosen once, fed every single reinforcement. */
+    let fortress: string | null = null;
+    const turtleStep = async (round: number): Promise<void> => {
+      const decision = await decisionFor(h.app, game, turtleId);
+      const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+      if (reinforce) {
+        // Stick to the same country while it is still held; if it ever falls,
+        // turtle onto the next one rather than spreading out.
+        if (!fortress || !reinforce.territoryIds.includes(fortress)) {
+          fortress = (reinforce.territoryIds as string[]).toSorted()[0]!;
+        }
+        const target = fortress;
+        await post(h.app, game, turtleId, {
+          commandId: `turtle:${decision.turn.id}:${round}`,
+          turnId: decision.turn.id,
+          action: { type: "reinforce", territoryId: target, armies: reinforce.maxArmies },
+        });
+        return;
+      }
+      // Never attacks, never fortifies — the whole point of a turtle.
+      await post(h.app, game, turtleId, {
+        commandId: `turtle-end:${decision.turn.id}`,
+        turnId: decision.turn.id,
+        action: { type: "end-turn" },
+      });
+    };
+
+    const sampled: Array<{ round: number; agentCountries: number }> = [];
+    const maxRound = 24;
+    let lastRound = 0;
+    for (let step = 0; step < 3_000; step += 1) {
+      const meta = await gameMeta(h.app, game);
+      if (meta.status === "finished") break;
+      if (meta.round > lastRound) {
+        lastRound = meta.round;
+        sampled.push({ round: meta.round, agentCountries: await countriesOf(agentId) });
+        if (meta.round > maxRound) break;
+      }
+
+      const pending = meta.pendingInteraction;
+      if (pending?.type === "defense") {
+        if (pending.defenderId === agentId) {
+          await agent.defend();
+        } else {
+          // The turtle never rolls; the canonical timeout closes every combat.
+          h.clock.now = pending.defenseDeadlineAt + 1;
+          await h.app.defenseTimers.fire(game.gameId, pending.attackId);
+        }
+        continue;
+      }
+
+      if (meta.activePlayerId === agentId) {
+        expect(await agent.step()).not.toBeNull();
+      } else {
+        await turtleStep(meta.round);
+      }
+    }
+
+    const endMeta = await gameMeta(h.app, game);
+    const finalAgentCountries = await countriesOf(agentId);
+
+    // The turtle can only be beaten by taking countries, so a finished game *is*
+    // the anti-stalemate property: no throw, no capture, no winner.
+    expect(endMeta.status).toBe("finished");
+    expect(endMeta.winnerId).toBe(agentId);
+    expect(endMeta.round).toBeLessThanOrEqual(maxRound);
+    expect(finalAgentCountries).toBeGreaterThan(openingAgentCountries);
+    expect(await countriesOf(turtleId)).toBeLessThan(openingTurtleCountries);
+
+    // And progress is continuous rather than an opening flurry: the agent never
+    // spends several rounds in a row placing armies it cannot use.
+    let frozen = 0;
+    let longestFreeze = 0;
+    for (const [index, entry] of sampled.entries()) {
+      const previous = sampled[index - 1];
+      frozen = previous && entry.agentCountries <= previous.agentCountries ? frozen + 1 : 0;
+      longestFreeze = Math.max(longestFreeze, frozen);
+    }
+    expect(longestFreeze).toBeLessThanOrEqual(3);
+  }, 60_000);
+
   it("occupies a captured country with a legal garrison chosen by the agent", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
