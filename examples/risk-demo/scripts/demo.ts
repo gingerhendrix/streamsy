@@ -146,7 +146,7 @@ function actionLabel(action: Record<string, unknown>): string {
 }
 
 async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]): Promise<void> {
-  const { createAgent } = await import("../server/agent.ts");
+  const { createAgent } = await import("../server/demo/agent.ts");
   const call = (method: string, path: string, options = {}) => api(baseUrl, method, path, options);
   const agents = new Map(
     players.map((player) => [

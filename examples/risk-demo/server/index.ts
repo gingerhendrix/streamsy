@@ -14,8 +14,8 @@ import { rmSync } from "node:fs";
 import { createStreamProtocol } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 
-import { buildApp } from "./app.ts";
-import { createSqliteStores } from "./sqlite-store.ts";
+import { buildApp } from "./http/app.ts";
+import { createSqliteStores } from "./persistence/sqlite-store.ts";
 import index from "../public/index.html";
 
 const port = Number.parseInt(process.env.PORT ?? "1339", 10);

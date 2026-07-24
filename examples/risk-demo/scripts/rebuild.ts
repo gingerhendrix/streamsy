@@ -13,8 +13,8 @@
 import { createStreamProtocol } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 
-import { createSqliteStores } from "../server/sqlite-store.ts";
-import { rebuildBoardGeneration } from "../server/rebuild.ts";
+import { createSqliteStores } from "../server/persistence/sqlite-store.ts";
+import { rebuildBoardGeneration } from "../server/game/rebuild.ts";
 
 const gameId = process.argv[2] ?? process.env.GAME_ID ?? "";
 const generation = process.argv[3] ?? process.env.TARGET_GENERATION ?? undefined;

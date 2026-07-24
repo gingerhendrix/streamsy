@@ -3,7 +3,7 @@
  *
  * Blocks on its per-player turn stream, resumes from a file-persisted cursor,
  * fetches fresh `/decision`, and plays with the deterministic strategy in
- * `server/agent.ts` until control passes / the game ends. Kill it and re-run with
+ * `server/demo/agent.ts` until control passes / the game ends. Kill it and re-run with
  * the same `CURSOR_FILE` to prove cursor-persisted resume across process restart.
  *
  *   BASE_URL=http://localhost:1339 GAME_ID=game_xxx PLAYER_ID=p_xxx \
@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { createAgent, type AgentState, type HttpCall } from "../server/agent.ts";
+import { createAgent, type AgentState, type HttpCall } from "../server/demo/agent.ts";
 
 const baseUrl = process.env.BASE_URL ?? "http://localhost:1339";
 const gameId = process.env.GAME_ID ?? "";

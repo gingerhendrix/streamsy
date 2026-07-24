@@ -16,8 +16,12 @@
 import { appendFileSync, rmSync } from "node:fs";
 import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
 
-import { createInMemoryStores } from "../server/stores.ts";
-import { runSignatureDemo, type DemoSummary, type TraceEvent } from "../server/signature-demo.ts";
+import { createInMemoryStores } from "../server/persistence/stores.ts";
+import {
+  runSignatureDemo,
+  type DemoSummary,
+  type TraceEvent,
+} from "../server/demo/signature-demo.ts";
 
 const seed = Number.parseInt(process.env.SEED ?? "1234", 10);
 const dbPath = process.env.DB_PATH;
@@ -33,7 +37,7 @@ async function makeStorage(): Promise<{
     // SQLite mode (durable). Imported lazily so the default memory run has no
     // bun:sqlite dependency.
     const { createSqliteStorageAdapter } = await import("@streamsy/storage-sqlite");
-    const { createSqliteStores } = await import("../server/sqlite-store.ts");
+    const { createSqliteStores } = await import("../server/persistence/sqlite-store.ts");
     const adapter = createSqliteStorageAdapter({ filename: dbPath });
     const protocol = createStreamProtocol({ storage: { adapter } });
     const stores = createSqliteStores(adapter.state.db);

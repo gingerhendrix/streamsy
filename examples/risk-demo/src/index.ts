@@ -12,11 +12,11 @@
  * arrive in later batches and build on these pure functions.
  */
 
-export * from "./map.ts";
-export * from "./rng.ts";
-export * from "./dice.ts";
-export * from "./events.ts";
-export * from "./commands.ts";
-export * from "./aggregate.ts";
-export * from "./decide.ts";
-export * from "./projection.ts";
+export * from "./domain/map.ts";
+export * from "./domain/rng.ts";
+export * from "./domain/dice.ts";
+export * from "./domain/events.ts";
+export * from "./domain/commands.ts";
+export * from "./domain/aggregate.ts";
+export * from "./domain/decide.ts";
+export * from "./board/projection.ts";

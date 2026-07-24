@@ -11,11 +11,11 @@ import {
   type JoinGameResponse,
   type PlayAction,
   type PlayCommandRequest,
-} from "../api.ts";
-import type { GameStatus } from "../aggregate.ts";
-import type { LegalAction } from "../legal-actions.ts";
-import { TERRITORIES } from "../map.ts";
-import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../projection.ts";
+} from "../application/api.ts";
+import type { GameStatus } from "../domain/aggregate.ts";
+import type { LegalAction } from "../application/legal-actions.ts";
+import { TERRITORIES } from "../domain/map.ts";
+import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 
 interface Identity {

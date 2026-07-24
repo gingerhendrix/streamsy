@@ -8,7 +8,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 
-import type { BoardRows } from "../api.ts";
+import type { BoardRows } from "../application/api.ts";
 
 const gameSchema = z.object({
   id: z.string(),

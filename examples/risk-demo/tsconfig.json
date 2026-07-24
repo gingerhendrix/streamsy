@@ -5,6 +5,6 @@
     "types": ["bun-types"],
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*", "server/**/*", "scripts/**/*"],
+  "include": ["src/**/*", "server/**/*", "scripts/**/*", "test/**/*"],
   "exclude": ["node_modules"]
 }

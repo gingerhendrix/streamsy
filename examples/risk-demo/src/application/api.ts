@@ -1,0 +1,182 @@
+import type { GamePhase, GameStatus } from "../domain/aggregate.ts";
+import type { RiskErrorCode } from "../domain/commands.ts";
+import type { DecisionContext } from "./decision.ts";
+import type { GameEvent } from "../domain/events.ts";
+import type { MapVersion, Ruleset } from "../domain/map.ts";
+import type {
+  ProjectedGame,
+  ProjectedMove,
+  ProjectedPlayer,
+  ProjectedTerritory,
+  ProjectionState,
+} from "../board/projection.ts";
+
+export type ApiErrorCode =
+  | RiskErrorCode
+  | "UNAUTHORIZED"
+  | "FORBIDDEN"
+  | "WRONG_GAME"
+  | "NOT_FOUND"
+  | "BAD_REQUEST"
+  | "PROJECTION_UNAVAILABLE"
+  | "INTERNAL";
+
+const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
+  GAME_NOT_FOUND: "That game could not be found. Check the invite link and try again.",
+  GAME_ALREADY_EXISTS: "This game already exists.",
+  GAME_ALREADY_STARTED: "This game has already started.",
+  GAME_NOT_STARTED: "The host has not started the game yet.",
+  GAME_FINISHED: "This game is already finished.",
+  NOT_ENOUGH_PLAYERS: "Invite at least one more player before starting.",
+  TOO_MANY_PLAYERS: "This game already has the maximum number of players.",
+  PLAYER_ID_TAKEN: "That player identity is already in use.",
+  UNKNOWN_PLAYER: "This player is not part of the game.",
+  NOT_YOUR_TURN: "It is another player’s turn.",
+  STALE_TURN: "The turn changed before that move arrived. The board is now up to date.",
+  INVALID_PHASE: "That move is not available in the current phase.",
+  ILLEGAL_ACTION: "That move is not legal on the current board.",
+  UNKNOWN_TERRITORY: "That territory does not exist.",
+  NOT_ADJACENT: "Those territories are not connected.",
+  INSUFFICIENT_ARMIES: "There are not enough armies for that move.",
+  COMMAND_ID_REUSED: "That move identifier was already used for a different move.",
+  UNAUTHORIZED: "Your player session is missing or has expired.",
+  FORBIDDEN: "Your player role cannot perform that action.",
+  WRONG_GAME: "This player session belongs to another game.",
+  NOT_FOUND: "The requested resource could not be found.",
+  BAD_REQUEST: "The request was incomplete or malformed.",
+  PROJECTION_UNAVAILABLE: "The live board is temporarily unavailable.",
+  INTERNAL: "Something unexpected happened. Please try again.",
+};
+
+export function friendlyError(code: ApiErrorCode, fallback?: string): string {
+  return FRIENDLY_ERRORS[code] ?? fallback ?? "The move was rejected.";
+}
+
+export function statusForErrorCode(code: ApiErrorCode): number {
+  switch (code) {
+    case "NOT_YOUR_TURN":
+    case "STALE_TURN":
+    case "INVALID_PHASE":
+    case "ILLEGAL_ACTION":
+    case "INSUFFICIENT_ARMIES":
+    case "NOT_ADJACENT":
+    case "UNKNOWN_TERRITORY":
+    case "GAME_FINISHED":
+    case "GAME_ALREADY_STARTED":
+    case "GAME_NOT_STARTED":
+    case "NOT_ENOUGH_PLAYERS":
+    case "TOO_MANY_PLAYERS":
+    case "PLAYER_ID_TAKEN":
+    case "COMMAND_ID_REUSED":
+      return 409;
+    case "UNAUTHORIZED":
+      return 401;
+    case "FORBIDDEN":
+    case "WRONG_GAME":
+      return 403;
+    case "GAME_NOT_FOUND":
+    case "NOT_FOUND":
+      return 404;
+    default:
+      return 400;
+  }
+}
+
+export interface ApiErrorResponse {
+  status: "rejected";
+  error: { code: ApiErrorCode; message: string; currentTurnId?: string };
+}
+
+export interface PlayerIdentity {
+  id: string;
+  name: string;
+  color: string;
+  role: "host" | "player";
+}
+
+export interface CommandAck {
+  status: "accepted" | "duplicate";
+  commandId: string;
+  sourceStreamId: string;
+  sourceOffset: string;
+  /** Final board-projection transition for this accepted command. */
+  txid: string;
+  events: GameEvent[];
+  turnId?: string;
+}
+
+export interface CreateGameRequest {
+  name?: string;
+  color?: string;
+  commandId?: string;
+}
+
+export interface CreateGameResponse {
+  game: { id: string; ruleset: Ruleset; mapVersion: MapVersion };
+  player: PlayerIdentity;
+  capability: string;
+  ack: CommandAck;
+}
+
+export type JoinGameRequest = CreateGameRequest;
+
+export interface JoinGameResponse {
+  player: PlayerIdentity;
+  capability: string;
+  ack: CommandAck;
+}
+
+export interface GameResponse {
+  gameId: string;
+  status: GameStatus;
+  ruleset: Ruleset;
+  mapVersion: MapVersion;
+  round: number;
+  activePlayerId?: string;
+  phase?: GamePhase;
+  winnerId?: string;
+  generation: string;
+  boardStreamId: string;
+  players: Array<Pick<ProjectedPlayer, "id" | "name" | "color" | "eliminated">>;
+}
+
+export interface BoardResponse {
+  gameId: string;
+  sourceStreamId: string;
+  sourceThroughOffset: string | null;
+  generation: string;
+  game: ProjectedGame;
+  players: ProjectedPlayer[];
+  territories: ProjectedTerritory[];
+}
+
+export type DecisionResponse = DecisionContext;
+
+export type PlayAction =
+  | { type: "reinforce"; territoryId: string; armies: number }
+  | { type: "attack"; from: string; to: string; attackerDice: number }
+  | { type: "fortify"; from: string; to: string; armies: number }
+  | { type: "end-turn" };
+
+export interface PlayCommandRequest {
+  commandId: string;
+  turnId: string;
+  action: PlayAction;
+}
+
+export interface BoardProjectionMeta {
+  sourceStreamId: string;
+  sourceThroughOffset: string;
+  sourceSeq: number;
+  generation: string;
+  reducerVersion: string;
+  snapshot: ProjectionState;
+}
+
+export interface BoardRows {
+  game: ProjectedGame;
+  players: ProjectedPlayer[];
+  territories: ProjectedTerritory[];
+  moves: ProjectedMove[];
+  meta: BoardProjectionMeta | null;
+}

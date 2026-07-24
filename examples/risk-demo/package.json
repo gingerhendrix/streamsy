@@ -13,9 +13,9 @@
     "proof": "bun run scripts/proof.ts",
     "rebuild": "bun run scripts/rebuild.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest --run src",
-    "test:unit": "vitest --run src",
-    "test:sqlite": "bun test server"
+    "test": "vitest --run src server/game/board-sync.test.ts test/integration",
+    "test:unit": "vitest --run src server/game/board-sync.test.ts",
+    "test:sqlite": "bun test test/persistence"
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.1",

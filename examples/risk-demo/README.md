@@ -24,13 +24,13 @@ available until Ctrl-C. Temporary SQLite data is removed on shutdown.
 
 The demo keeps the Risk-specific application small by composing Streamsy primitives:
 
-| Layer              | Risk module                                               | Streamsy role                                                                                                                        |
-| ------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Kernel             | `src/aggregate.ts`, `src/decide.ts`                       | Pure fold and decision function; injected RNG is recorded as events                                                                  |
-| Command log        | `server/command-service.ts`                               | `@streamsy/experimental/command` provides idempotent command submission over the canonical event stream                              |
-| Board projection   | `src/materializer/board-projection.ts`, `server/board.ts` | `ProjectionRuntime` materializes an independently rebuildable, causally watermarked board stream                                     |
-| Turn notifications | `server/turn-notifier.ts`                                 | Derived per-player wake streams tell HTTP agents when to fetch a fresh decision                                                      |
-| Browser sync       | `src/ui/board-stream-db.ts`                               | Official `@durable-streams/state` Stream DB consumes Streamsy's read-only protocol facade; TanStack DB live queries render the board |
+| Layer              | Risk module                                             | Streamsy role                                                                                                                        |
+| ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Kernel             | `src/domain/aggregate.ts`, `src/domain/decide.ts`       | Pure fold and decision function; injected RNG is recorded as events                                                                  |
+| Command log        | `server/game/command-service.ts`                        | `@streamsy/experimental/command` provides idempotent command submission over the canonical event stream                              |
+| Board projection   | `src/board/board-projection.ts`, `server/game/board.ts` | `ProjectionRuntime` materializes an independently rebuildable, causally watermarked board stream                                     |
+| Turn notifications | `server/game/turn-notifier.ts`                          | Derived per-player wake streams tell HTTP agents when to fetch a fresh decision                                                      |
+| Browser sync       | `src/ui/board-stream-db.ts`                             | Official `@durable-streams/state` Stream DB consumes Streamsy's read-only protocol facade; TanStack DB live queries render the board |
 
 ```text
 HTTP command → command log → canonical game events
@@ -45,11 +45,11 @@ cutovers; it does not drive board state.
 
 ## What to inspect
 
-- `server/command-service.ts` binds the Risk fold/decide functions to the reusable command log.
-- `src/materializer/board-projection.ts` declares the durable board schema and event-to-row mapping.
-- `server/agent.ts` follows turn streams, fetches structured legal actions, and submits stable
+- `server/game/command-service.ts` binds the Risk fold/decide functions to the reusable command log.
+- `src/board/board-projection.ts` declares the durable board schema and event-to-row mapping.
+- `server/demo/agent.ts` follows turn streams, fetches structured legal actions, and submits stable
   `commandId`s using only published HTTP resources.
-- `server/signature-demo.ts` runs the complete deterministic guarantee proof.
+- `server/demo/signature-demo.ts` runs the complete deterministic guarantee proof.
 - `src/ui/board-stream-db.ts` is the official Stream DB + TanStack DB integration.
 
 ## Guarantees
