@@ -52,12 +52,13 @@ cutovers; it does not drive board state.
 - `server/demo/signature-demo.ts` runs the complete deterministic guarantee proof.
 - `src/ui/board-stream-db.ts` is the official Stream DB + TanStack DB integration.
 
-### `risk-demo-v2` map kernel (in progress)
+### `risk-demo-v2` (in progress)
 
-The v2 ruleset replaces the fixed six-territory board with a seeded procedural hex map.
-The kernel is complete and tested but not yet wired into game creation — the v2 aggregate,
-projection, and renderer arrive in later slices, so every game the server creates today is
-still `risk-demo-v1`.
+The v2 ruleset replaces the fixed six-territory board with a seeded procedural hex map and
+splits combat into a declaration plus a timed defence interrupt. It is opt-in per game —
+`POST /v1/games` with `{"ruleset": "risk-demo-v2"}` — and creation defaults to
+`risk-demo-v1` until the SVG hex renderer lands. Everything below the browser is complete:
+kernel, two-stage combat, durable defence timeouts, board projection, and the decision API.
 
 - `src/domain/hex-generator.ts` is `hex-generator-v1`: a pure, seeded generator producing a
   connected hex map with variable-sized countries, connected continents, and visual-only terrain.
@@ -65,6 +66,17 @@ still `risk-demo-v1`.
 - `src/domain/setup-v2.ts` deals the board and allocates armies deterministically from the seed.
 - `src/domain/events-v2.ts` records the seed on `GameCreated` and the whole map snapshot on
   `GameStarted`, so replay never re-runs the generator.
+- `src/domain/aggregate-v2.ts` folds the two-stage combat as an _interrupt_: the turn phase stays
+  `reinforce | attack | fortify` and a pending defence or occupation sits on top of it.
+- `server/game/defense-timer.ts` rebuilds outstanding defence deadlines from canonical state alone,
+  so a restart can neither strand nor double-resolve a combat.
+- `src/board/projection-v2.ts` is the independent v2 read model. It projects the canonical map
+  snapshot verbatim plus a current-turn row and a zero-or-one `combat` row, on its own generation
+  lineage (`hex1`) and reducer version, so no v1 projection history is ever reinterpreted.
+- `src/application/decision-v2.ts` serves a player-relative decision: an out-of-turn defender gets
+  `roll-defense` there. It names the map rather than shipping it — static geometry is board surface,
+  fetched once — and reports the projection watermark the decision was folded through, so a decision
+  is never ahead of the board snapshot beside it.
 
 ## Guarantees
 
