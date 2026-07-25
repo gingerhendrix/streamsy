@@ -81,21 +81,23 @@ describe("risk-demo-v2 creation seam", () => {
 });
 
 describe("risk-demo-v2 defence resolution", () => {
-  it("attributes an external agent's submitted defence without treating it as a bot", async () => {
+  it("auto-resolves an external agent's defence without asking it to roll", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
     const attack = await declareAttack(h, game);
 
-    const rolled = await post(h.app, game, attack.defender, {
-      commandId: "external-agent-roll",
-      turnId: attack.turnId,
-      action: { type: "roll-defense", attackId: attack.attackId },
-    });
-
-    expect(rolled.status).toBe(200);
-    expect(rolled.body.events.find((event: any) => event.type === "AttackResolved")).toMatchObject({
+    const board = await boardFor(h.app, game);
+    expect(board.turn.latestDice).toMatchObject({
+      attackId: attack.attackId,
       resolutionSource: "agent",
     });
+    expect(h.scheduler.pending()).toEqual([]);
+
+    const defender = await decisionFor(h.app, game, attack.defender);
+    expect(defender.mode).toBe("waiting");
+    expect(defender.legalActions).not.toContainEqual(
+      expect.objectContaining({ type: "roll-defense" }),
+    );
   });
 
   it("wakes the defender with DefenseAvailable and no one else", async () => {

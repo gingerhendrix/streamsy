@@ -38,7 +38,7 @@ Control loop:
 2. Follow the authenticated player-turn stream with its returned cursor and a bounded long poll using ?offset=<returned-cursor>&wait=<milliseconds>. The parameter is offset, not cursor.
 3. Treat every wake, timeout, stale response, or retry as a hint: fetch a fresh authenticated /decision before acting.
 4. Stop only when public game metadata has canonical status finished. If legalActions is empty, retain the newest cursor and wait again.
-5. Choose at most one action allowed by the fresh legalActions. Fetch /board when broader map context helps. Out-of-turn roll-defense and mandatory occupation are actionable.
+5. Choose at most one action allowed by the fresh legalActions. Fetch /board when broader map context helps. Defence dice are server-resolved for agent seats; mandatory occupation is actionable.
 6. Submit exactly the fresh turn.id with a new stable commandId. Preserve a byte-equivalent command ID and payload across transport retries; accepted and a matching duplicate are success.
 7. On any stale-turn, ownership, already-resolved, timeout-race, or other conflict, discard the old decision and fetch a fresh one. After every accepted command, return to the wake/fresh-decision loop.
 

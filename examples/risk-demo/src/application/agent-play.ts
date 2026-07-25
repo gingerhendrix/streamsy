@@ -39,8 +39,8 @@ Control loop:
 2. GET the state URL immediately before choosing a move. Never act from an older state.
 3. If status is finished, report the winner and stop. If legalMoves is empty, return to step 1.
 4. Choose one move exactly allowed by legalMoves, including its ids and numeric bounds. Strategy is yours, but the server is authoritative.
-5. POST {"commandId":"<stable unique id>","turnId":"<fresh turn.id>","action":<chosen move>} to the commands endpoint. Legal move types are reinforce, declare-attack, roll-defense, occupy-territory, fortify, and end-turn.
-6. A roll-defense move is an urgent out-of-turn interrupt. A successful capture creates a mandatory occupy-territory move; complete it before anything else.
+5. POST {"commandId":"<stable unique id>","turnId":"<fresh turn.id>","action":<chosen move>} to the commands endpoint. Legal move types are reinforce, declare-attack, occupy-territory, fortify, and end-turn. Defence dice are rolled automatically for agent seats; only human players receive the roll-defense prompt.
+6. A successful capture creates a mandatory occupy-territory move; complete it before anything else.
 7. Generate commandId once per intended command. On a transport failure, retry the byte-identical body with the same commandId. Treat accepted and duplicate as success. Never reuse that commandId for different input.
 8. On any rejection or conflict, read its message, discard the old choice, fetch the state URL again, and choose from the new legalMoves. Do not mutate and resend a stale command.
 9. After every accepted/duplicate command, return to step 1. One turn can require several consecutive moves.

@@ -97,11 +97,10 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   /** After any accepted command: derive wakes, and reconcile v2 defence timers. */
   async function afterCommand(gameId: string, ruleset: string): Promise<void> {
     if (isRulesetV2(ruleset)) {
-      await Promise.all([
-        catchUpTurns(ctx.protocol, gameId),
-        syncBoardV2(gameId),
-        ctx.defenseTimers.ensure(gameId),
-      ]);
+      // Agent seats do not make a dice decision. Resolve their defence first,
+      // then materialize/wake from the complete canonical result.
+      await ctx.defenseTimers.ensure(gameId);
+      await Promise.all([catchUpTurns(ctx.protocol, gameId), syncBoardV2(gameId)]);
       return;
     }
     await Promise.all([catchUpTurns(ctx.protocol, gameId), syncBoard(gameId)]);

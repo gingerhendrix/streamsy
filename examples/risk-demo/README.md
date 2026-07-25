@@ -113,10 +113,11 @@ as long as they exist.
 - `src/board/projection-v2.ts` is the independent v2 read model. It projects the canonical map
   snapshot verbatim plus a current-turn row and a zero-or-one `combat` row, on its own generation
   lineage (`hex1`) and reducer version, so no v1 projection history is ever reinterpreted.
-- `src/application/decision-v2.ts` serves a player-relative decision: an out-of-turn defender gets
-  `roll-defense` there. It names the map rather than shipping it — static geometry is board surface,
-  fetched once — and reports the projection watermark the decision was folded through, so a decision
-  is never ahead of the board snapshot beside it.
+- `src/application/decision-v2.ts` serves a player-relative decision: an out-of-turn human defender
+  gets `roll-defense`, while external-agent defence dice are server-resolved. It names the map rather
+  than shipping it — static geometry is board surface, fetched once — and reports the projection
+  watermark the decision was folded through, so a decision is never ahead of the board snapshot
+  beside it.
 - `src/ui/hex-map.tsx` draws the layered SVG map from canonical `(q, r)` tiles, with
   `src/ui/label-layout.ts` nudging country labels clear of each other and of the army badges and
   `src/ui/pan-zoom.ts` doing the drag/wheel/pinch arithmetic in viewBox units.

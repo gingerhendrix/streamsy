@@ -20,7 +20,8 @@ describe("single-session agent play", () => {
     expect(instructions).toContain(`/agent/${joined.body.capability}/wait?wait=30000`);
     expect(instructions).toContain(`/agent/${joined.body.capability}/state`);
     expect(instructions).toContain(`/v1/games/${gameId}/commands`);
-    expect(instructions).toContain("roll-defense");
+    expect(instructions).toContain("Defence dice are rolled automatically");
+    expect(instructions).not.toContain("urgent out-of-turn interrupt");
     expect(instructions).toContain("mandatory occupy-territory");
     expect(instructions).toContain("accepted and duplicate as success");
   });

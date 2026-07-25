@@ -44,7 +44,10 @@ export function decisionModeV2(state: AggregateStateV2, playerId: string): Decis
   if (state.status === "finished") return "finished";
   const pending = state.pendingInteraction;
   if (pending?.type === "defense") {
-    return pending.defenderId === playerId ? "defense" : "waiting";
+    const defender = state.players.find((player) => player.id === playerId);
+    return pending.defenderId === playerId && defender?.controller !== "external-agent"
+      ? "defense"
+      : "waiting";
   }
   if (pending?.type === "occupation") {
     return pending.playerId === playerId ? "active-turn" : "waiting";
@@ -53,11 +56,13 @@ export function decisionModeV2(state: AggregateStateV2, playerId: string): Decis
 }
 
 function pendingActions(
+  state: AggregateStateV2,
   pending: PendingInteraction,
   playerId: string,
 ): LegalActionV2[] | undefined {
   if (pending.type === "defense") {
-    if (pending.defenderId !== playerId) return [];
+    const defender = state.players.find((player) => player.id === playerId);
+    if (pending.defenderId !== playerId || defender?.controller === "external-agent") return [];
     return [
       {
         type: "roll-defense",
@@ -89,7 +94,7 @@ export function legalActionsV2(state: AggregateStateV2, playerId: string): Legal
 
   // A pending interrupt suspends every ordinary affordance, for everyone.
   if (state.pendingInteraction) {
-    return pendingActions(state.pendingInteraction, playerId) ?? [];
+    return pendingActions(state, state.pendingInteraction, playerId) ?? [];
   }
   if (state.activePlayerId !== playerId) return [];
 

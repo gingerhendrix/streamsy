@@ -1,8 +1,9 @@
 /**
  * Durable defence-timeout runtime for `risk-demo-v2` (design spec §4.4, §10).
  *
- * A declared attack opens a defence interrupt with a canonical deadline. If no
- * human or agent closes it, this component does — by submitting the internal
+ * A declared attack opens a defence interrupt with a canonical deadline. External-agent
+ * seats are resolved immediately; if no human or demo bot closes it, this component does by
+ * submitting the internal
  * `resolve-defense-timeout` command, authorized by the game service rather than
  * by any player capability.
  *
@@ -29,7 +30,7 @@
 import type { StreamProtocolFactory } from "@streamsy/core";
 
 import { foldAggregateV2 } from "../../src/domain/aggregate-v2.ts";
-import type { PendingInteraction } from "../../src/domain/aggregate-v2.ts";
+import type { AggregateStateV2, PendingInteraction } from "../../src/domain/aggregate-v2.ts";
 import type { CommandServiceDeps, SubmitResultV2 } from "./command-service.ts";
 import { isRulesetV2, readCanonicalV2, submitCommandV2 } from "./command-service.ts";
 import { eventStreamId } from "./names.ts";
@@ -43,6 +44,11 @@ export function defenseTimerId(gameId: string, attackId: string): string {
 /** Stable command identity, so duplicate delivery dedupes in the command log. */
 export function defenseTimeoutCommandId(attackId: string): string {
   return `timeout-defense:${attackId}`;
+}
+
+/** Stable identity for a server-resolved external-agent defence. */
+export function automaticDefenseCommandId(attackId: string): string {
+  return `automatic-defense:${attackId}`;
 }
 
 /**
@@ -180,14 +186,20 @@ export interface DefenseTimers {
   stop(): void;
 }
 
-async function pendingDefenseFor(
+interface PendingDefenseState {
+  state: AggregateStateV2;
+  pending: Extract<PendingInteraction, { type: "defense" }>;
+}
+
+async function pendingDefenseStateFor(
   deps: DefenseTimerDeps,
   gameId: string,
-): Promise<Extract<PendingInteraction, { type: "defense" }> | null> {
+): Promise<PendingDefenseState | null> {
   const { events } = await readCanonicalV2(deps.protocol, eventStreamId(gameId));
   if (events.length === 0) return null;
-  const pending = foldAggregateV2(events).pendingInteraction;
-  return pending?.type === "defense" ? pending : null;
+  const state = foldAggregateV2(events);
+  const pending = state.pendingInteraction;
+  return pending?.type === "defense" ? { state, pending } : null;
 }
 
 export function createDefenseTimers(deps: DefenseTimerDeps): DefenseTimers {
@@ -197,12 +209,12 @@ export function createDefenseTimers(deps: DefenseTimerDeps): DefenseTimers {
   async function fire(gameId: string, attackId: string): Promise<SubmitResultV2 | null> {
     // Refold before consuming anything: the attack may already be closed, and a
     // stale timer must not touch whatever is pending now.
-    const pending = await pendingDefenseFor(deps, gameId);
-    if (!pending || pending.attackId !== attackId) return null;
+    const current = await pendingDefenseStateFor(deps, gameId);
+    if (!current || current.pending.attackId !== attackId) return null;
     return submitCommandV2(deps.commandService, eventStreamId(gameId), {
       type: "resolve-defense-timeout",
       commandId: defenseTimeoutCommandId(attackId),
-      turnId: pending.turnId,
+      turnId: current.pending.turnId,
       attackId,
     });
   }
@@ -222,26 +234,45 @@ export function createDefenseTimers(deps: DefenseTimerDeps): DefenseTimers {
     );
   }
 
+  async function resolveAutomatic(
+    gameId: string,
+    current: PendingDefenseState,
+  ): Promise<SubmitResultV2 | null> {
+    const defender = current.state.players.find(
+      (player) => player.id === current.pending.defenderId,
+    );
+    if (!defender || defender.controller !== "external-agent") return null;
+    return submitCommandV2(deps.commandService, eventStreamId(gameId), {
+      type: "roll-defense",
+      commandId: automaticDefenseCommandId(current.pending.attackId),
+      turnId: current.pending.turnId,
+      attackId: current.pending.attackId,
+      playerId: current.pending.defenderId,
+    });
+  }
+
   async function ensure(gameId: string): Promise<void> {
     const game = deps.games.get(gameId);
     if (!game || !isRulesetV2(game.ruleset)) return;
-    const pending = await pendingDefenseFor(deps, gameId);
-    if (!pending) return;
-    scheduleFor(gameId, pending);
+    const current = await pendingDefenseStateFor(deps, gameId);
+    if (!current) return;
+    if (await resolveAutomatic(gameId, current)) return;
+    scheduleFor(gameId, current.pending);
   }
 
   async function recover(): Promise<void> {
     for (const game of deps.games.list()) {
       if (!isRulesetV2(game.ruleset)) continue;
-      const pending = await pendingDefenseFor(deps, game.gameId);
-      if (!pending) continue;
-      if (pending.defenseDeadlineAt <= now()) {
+      const current = await pendingDefenseStateFor(deps, game.gameId);
+      if (!current) continue;
+      if (await resolveAutomatic(game.gameId, current)) continue;
+      if (current.pending.defenseDeadlineAt <= now()) {
         // The deadline passed while the process was down: resolve immediately
         // rather than granting a fresh window the canonical record never had.
-        await fire(game.gameId, pending.attackId);
+        await fire(game.gameId, current.pending.attackId);
         continue;
       }
-      scheduleFor(game.gameId, pending);
+      scheduleFor(game.gameId, current.pending);
     }
   }
 

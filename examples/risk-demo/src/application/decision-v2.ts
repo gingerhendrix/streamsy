@@ -6,9 +6,9 @@
  * legal actions — without scraping a UI or trusting a possibly-lagging projection
  * for legality.
  *
- * Unlike v1 this resource is not active-player-only: an out-of-turn defender gets
- * a `roll-defense` action here, which is what makes an agent's defence loop a
- * normal decision fetch rather than a special channel.
+ * Unlike v1 this resource is not active-player-only: an out-of-turn human defender gets
+ * a `roll-defense` action here. External-agent defences are server-resolved, so dice remain a
+ * human-facing interaction rather than work delegated to the coding agent.
  *
  * ## Watermark stance
  *
