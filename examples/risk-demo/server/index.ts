@@ -46,6 +46,7 @@ const server = Bun.serve({
     "/streams/*": (request: Request) => app.fetch(request),
     "/openapi.json": (request: Request) => app.fetch(request),
     "/agent-seat/*": (request: Request) => app.fetch(request),
+    "/agent/*": (request: Request) => app.fetch(request),
     "/healthz": () =>
       new Response(JSON.stringify({ ok: true }), {
         headers: { "content-type": "application/json" },

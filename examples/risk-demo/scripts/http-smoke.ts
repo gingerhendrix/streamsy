@@ -2,8 +2,8 @@
  * End-to-end HTTP smoke for the durable Risk API.
  *
  * Spawns the real Bun server against a temp SQLite file, drives create → join →
- * start → decision → command → board → duplicate retry over HTTP, then kills the server,
- * respawns it against the SAME database file, and proves events, board projection,
+ * start → decision → command → board → personalized agent routes → duplicate retry over HTTP,
+ * then kills the server, respawns it against the SAME database file, and proves events, board projection,
  * idempotent command retries and capability verifiers all survived the restart.
  *
  *   bun run scripts/http-smoke.ts
@@ -58,7 +58,7 @@ async function api(
   method: string,
   path: string,
   options: { token?: string; body?: unknown } = {},
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; contentType: string; body: any }> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   const res = await fetch(`${baseUrl}${path}`, {
@@ -66,7 +66,11 @@ async function api(
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  return { status: res.status, body: await res.json() };
+  return {
+    status: res.status,
+    contentType: res.headers.get("content-type") ?? "",
+    body: await res.json(),
+  };
 }
 
 async function main(): Promise<void> {
@@ -129,6 +133,38 @@ async function main(): Promise<void> {
       "no TurnAvailable wake for active player",
     );
 
+    // Personalized token-bearing URLs must be dispatched through the real Bun
+    // route table, rather than swallowed by the SPA fallback.
+    const agentGame = await api(server.baseUrl, "POST", "/v1/games", {
+      body: { name: "Human", color: "red", mapSeed: "http-smoke-agent-routes" },
+    });
+    assert(agentGame.status === 201, `create agent game: ${agentGame.status}`);
+    const agentGameId: string = agentGame.body.game.id;
+    const agentJoin = await api(server.baseUrl, "POST", `/v1/games/${agentGameId}/players`, {
+      body: { name: "Agent", color: "blue", controller: "agent" },
+    });
+    assert(agentJoin.status === 201, `join agent: ${agentJoin.status}`);
+    const agentToken: string = agentJoin.body.capability;
+    const statePath = `/agent/${agentToken}/state`;
+    const waitPath = `/agent/${agentToken}/wait?wait=0`;
+
+    const lobbyState = await api(server.baseUrl, "GET", statePath);
+    assert(lobbyState.status === 200, `agent lobby state: ${lobbyState.status}`);
+    assert(lobbyState.contentType.startsWith("application/json"), "agent state returned the SPA");
+    assert(lobbyState.body.gameId === agentGameId, "agent state was not token-scoped");
+    const lobbyWait = await api(server.baseUrl, "GET", waitPath);
+    assert(lobbyWait.status === 200, `agent lobby wait: ${lobbyWait.status}`);
+    assert(lobbyWait.contentType.startsWith("application/json"), "agent wait returned the SPA");
+
+    const agentStarted = await api(server.baseUrl, "POST", `/v1/games/${agentGameId}/start`, {
+      token: agentGame.body.capability,
+      body: {},
+    });
+    assert(agentStarted.status === 200, `start agent game: ${agentStarted.status}`);
+    const playingState = await api(server.baseUrl, "GET", statePath);
+    assert(playingState.status === 200, `agent playing state: ${playingState.status}`);
+    assert(playingState.body.status === "playing", "agent state did not update after game start");
+
     // The React board SPA is served and mounts on #root.
     const spa = await fetch(`${server.baseUrl}/`);
     const html = await spa.text();
@@ -172,7 +208,7 @@ async function main(): Promise<void> {
     assert(decisionAfter.status === 200, "capability verifier lost across restart");
 
     console.log(
-      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/authz + SQLite restart)",
+      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/agent routes/authz + SQLite restart)",
     );
   } finally {
     await server.stop();
