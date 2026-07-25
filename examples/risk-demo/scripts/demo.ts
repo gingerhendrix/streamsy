@@ -3,13 +3,13 @@
  *
  * Bootstraps missing workspace builds, launches the real SQLite-backed server,
  * creates a two-player `risk-demo-v2` game, and lets the existing HTTP-only
- * agents play it on a procedurally generated hex map. The spectator board remains
+ * scripted bots play it on a procedurally generated hex map. The spectator board remains
  * available until Ctrl-C, including after a winner is decided.
  *
  * V2 adds one shape the loop has to respect: an attack *stops* the attacker's
  * turn until the defender rolls. The orchestrator therefore follows canonical
  * state rather than assuming a turn is one actor's uninterrupted run — and if a
- * defending agent ever failed to answer, the server's own 15-second timeout would
+ * defending bot ever failed to answer, the server's own 15-second timeout would
  * close the combat without it.
  */
 
@@ -146,19 +146,19 @@ interface DemoPlayer {
 
 /**
  * Both demo seats are machine players on the v2 ruleset: the one-command demo has
- * nobody at a keyboard, so an agent must also be able to answer the defence
+ * nobody at a keyboard, so a bot must also be able to answer the defence
  * interrupt, not merely take its own turn.
  */
 export const DEMO_HOST_REQUEST = {
   ruleset: "risk-demo-v2",
   name: "Ada",
   color: "#e05a47",
-  controller: "agent",
+  controller: "bot",
 } as const;
 export const DEMO_GUEST_REQUEST = {
   name: "Bob",
   color: "#3b82f6",
-  controller: "agent",
+  controller: "bot",
 } as const;
 
 export const DEMO_LEAD_IN_MS = 10_000;
@@ -174,12 +174,12 @@ function actionLabel(action: Record<string, unknown>): string {
 }
 
 async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]): Promise<void> {
-  const { createAgent } = await import("../server/demo/agent.ts");
+  const { createBot } = await import("../server/demo/bot.ts");
   const call = (method: string, path: string, options = {}) => api(baseUrl, method, path, options);
-  const agents = new Map(
+  const bots = new Map(
     players.map((player) => [
       player.id,
-      createAgent({
+      createBot({
         call,
         gameId,
         playerId: player.id,
@@ -195,7 +195,7 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
     ]),
   );
 
-  console.log(`Agents start in ${DEMO_LEAD_IN_MS / 1_000} seconds — open the board now.\n`);
+  console.log(`Bots start in ${DEMO_LEAD_IN_MS / 1_000} seconds — open the board now.\n`);
   await Bun.sleep(DEMO_LEAD_IN_MS);
 
   const started = Date.now();
@@ -215,9 +215,9 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
     // defender, not the player whose turn it is.
     const pending = meta.body.pendingInteraction;
     if (pending?.type === "defense") {
-      const defender = agents.get(pending.defenderId);
+      const defender = bots.get(pending.defenderId);
       const name = players.find((player) => player.id === pending.defenderId)?.name ?? "defender";
-      if (!defender) throw new Error(`no demo agent for defender ${pending.defenderId}`);
+      if (!defender) throw new Error(`no demo bot for defender ${pending.defenderId}`);
       await defender.awaitTurn(0);
       if (await defender.defend()) console.log(`  ⚄ ${name} rolled the defence`);
       continue;
@@ -225,18 +225,18 @@ async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]):
 
     const activeId: string = meta.body.activePlayerId;
     const active = players.find((player) => player.id === activeId);
-    const agent = agents.get(activeId);
-    if (!active || !agent) throw new Error(`no demo agent for active player ${activeId}`);
+    const bot = bots.get(activeId);
+    if (!active || !bot) throw new Error(`no demo bot for active player ${activeId}`);
 
-    await agent.awaitTurn(0);
+    await bot.awaitTurn(0);
     const heading = `${meta.body.round}:${activeId}`;
     if (heading !== announced) {
       announced = heading;
       console.log(`→ Round ${meta.body.round}: ${active.name} is playing`);
     }
-    await agent.playTurn();
+    await bot.playTurn();
   }
-  throw new Error("demo agents exceeded the 4000-step safety limit");
+  throw new Error("demo bots exceeded the 4000-step safety limit");
 }
 
 async function run(): Promise<void> {
@@ -307,7 +307,7 @@ async function run(): Promise<void> {
     console.log(`│  ${url.padEnd(58)}│`);
     console.log("╰──────────────────────────────────────────────────────────────╯\n");
     console.log(
-      "Ada and Bob are HTTP-only agents playing risk-demo-v2 on a seeded hex map:\n" +
+      "Ada and Bob are scripted HTTP bots playing risk-demo-v2 on a seeded hex map:\n" +
         "declared attacks, recorded dice, and an out-of-turn defence roll each throw.\n" +
         "The server stays up until Ctrl-C.\n",
     );

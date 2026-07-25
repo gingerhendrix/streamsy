@@ -304,7 +304,7 @@ function decideDeclareAttack(
 }
 
 /**
- * Shared resolution for all three defence paths (human, agent auto-roll, and the
+ * Shared resolution for all defence paths (human, bot, external agent, and the
  * internal timeout job). Randomness is consumed only after this has confirmed,
  * against a fresh fold, that the named attack is still the pending one — so a
  * CAS-race loser refolds and is rejected without ever having committed a roll.
@@ -384,7 +384,7 @@ function resolveDefense(
  * A player-submitted roll. The recorded {@link DefenseResolutionSource} is
  * derived from the defending seat's canonical controller — declared once in
  * `GameCreated`/`PlayerJoined` — rather than from anything the client sends, so
- * `agent-auto` can never be spoofed by a browser or vice versa.
+ * bot/agent attribution can never be spoofed by a browser or vice versa.
  */
 function decideRollDefense(
   state: AggregateStateV2,
@@ -392,6 +392,8 @@ function decideRollDefense(
   ctx: DecideContextV2,
 ): DecisionV2 {
   const controller = playerV2(state, command.playerId)?.controller;
+  const source: DefenseResolutionSource =
+    controller === "bot" ? "bot" : controller === "external-agent" ? "agent" : "human";
   return resolveDefense(
     state,
     {
@@ -399,7 +401,7 @@ function decideRollDefense(
       turnId: command.turnId,
       attackId: command.attackId,
       playerId: command.playerId,
-      source: controller === "agent" ? "agent-auto" : "human",
+      source,
     },
     ctx,
   );

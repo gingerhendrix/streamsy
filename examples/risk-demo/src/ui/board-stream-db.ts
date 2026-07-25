@@ -110,7 +110,10 @@ const reinforcementSchema = z.object({
   remaining: z.number(),
 });
 
-const resolutionSourceSchema = z.enum(["human", "agent-auto", "timeout"]);
+const resolutionSourceSchema = z.union([
+  z.enum(["human", "bot", "agent", "timeout"]),
+  z.literal("agent-auto"),
+]);
 
 const gameV2Schema = z.object({
   id: z.string(),
@@ -130,7 +133,7 @@ const playerV2Schema = z.object({
   id: z.string(),
   name: z.string(),
   color: z.string(),
-  controller: z.enum(["human", "agent"]),
+  controller: z.union([z.enum(["human", "bot", "external-agent"]), z.literal("agent")]),
   eliminated: z.boolean(),
   territoryCount: z.number(),
   armyCount: z.number(),
@@ -431,6 +434,69 @@ interface QueryRowsV2 {
   projectionMeta: z.infer<typeof projectionMetaV2Schema>[];
 }
 
+function currentResolutionSource(
+  source: z.infer<typeof resolutionSourceSchema>,
+): "human" | "bot" | "agent" | "timeout" {
+  return source === "agent-auto" ? "bot" : source;
+}
+
+function currentPlayer(player: QueryRowsV2["players"][number]): BoardRowsV2["players"][number] {
+  return {
+    ...player,
+    controller: player.controller === "agent" ? "bot" : player.controller,
+  };
+}
+
+function currentTurn(turn: QueryRowsV2["turn"][number] | undefined): BoardRowsV2["turn"] {
+  if (!turn) return null;
+  return {
+    ...turn,
+    latestDice: turn.latestDice
+      ? {
+          ...turn.latestDice,
+          resolutionSource: currentResolutionSource(turn.latestDice.resolutionSource),
+        }
+      : undefined,
+  };
+}
+
+function currentCombat(combat: QueryRowsV2["combat"][number] | undefined): BoardRowsV2["combat"] {
+  if (!combat) return null;
+  return {
+    ...combat,
+    resolutionSource:
+      combat.resolutionSource === undefined
+        ? undefined
+        : currentResolutionSource(combat.resolutionSource),
+  };
+}
+
+function currentMove(move: QueryRowsV2["moves"][number]): BoardRowsV2["moves"][number] {
+  return {
+    ...move,
+    resolutionSource:
+      move.resolutionSource === undefined
+        ? undefined
+        : currentResolutionSource(move.resolutionSource),
+  };
+}
+
+function currentProjectionMeta(
+  meta: QueryRowsV2["projectionMeta"][number] | undefined,
+): BoardRowsV2["meta"] {
+  if (!meta) return null;
+  return {
+    ...meta,
+    snapshot: {
+      ...meta.snapshot,
+      players: meta.snapshot.players.map(currentPlayer),
+      turn: currentTurn(meta.snapshot.turn ?? undefined),
+      combat: currentCombat(meta.snapshot.combat ?? undefined),
+      moves: meta.snapshot.moves.map(currentMove),
+    },
+  };
+}
+
 /**
  * UI-specific shaping of a v2 generation's query results. `turn` and `combat`
  * are zero-or-one collections, so an absent row is `null` rather than an empty
@@ -442,16 +508,16 @@ export function boardRowsV2FromQueries(rows: QueryRowsV2): BoardRowsV2 | null {
   if (!game) return null;
   return {
     game,
-    players: rows.players,
+    players: rows.players.map(currentPlayer),
     hexes: rows.hexes,
     territories: rows.territories,
     continents: rows.continents,
-    turn: rows.turn[0] ?? null,
-    combat: rows.combat[0] ?? null,
-    moves: rows.moves.toSorted((left, right) =>
-      right.sourceOffset.localeCompare(left.sourceOffset),
-    ),
-    meta: rows.projectionMeta[0] ?? null,
+    turn: currentTurn(rows.turn[0]),
+    combat: currentCombat(rows.combat[0]),
+    moves: rows.moves
+      .map(currentMove)
+      .toSorted((left, right) => right.sourceOffset.localeCompare(left.sourceOffset)),
+    meta: currentProjectionMeta(rows.projectionMeta[0]),
   };
 }
 

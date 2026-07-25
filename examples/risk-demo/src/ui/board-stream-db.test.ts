@@ -107,6 +107,59 @@ describe("risk-demo-v2 StreamDB query shaping", () => {
       headers: { operation: "delete" },
     });
   });
+
+  it("normalizes historical bot terminology while decoding retained projection rows", () => {
+    const player = riskBoardStateV2.players.insert({
+      key: "p1",
+      value: {
+        id: "p1",
+        name: "Ada",
+        color: "red",
+        controller: "agent",
+        eliminated: false,
+        territoryCount: 1,
+        armyCount: 3,
+      },
+    }).value!;
+    const combat = riskBoardStateV2.combat.insert({
+      key: "combat",
+      value: {
+        id: "combat",
+        attackId: "attack",
+        turnId: "turn",
+        status: "awaiting-occupation",
+        attackerId: "p1",
+        defenderId: "p2",
+        from: "a",
+        to: "b",
+        attackerDice: 1,
+        attackerRolls: [6],
+        defenderDice: 1,
+        declaredAt: 1,
+        defenseDeadlineAt: 2,
+        defenderRolls: [1],
+        attackerLosses: 0,
+        defenderLosses: 1,
+        territoryCaptured: true,
+        resolutionSource: "agent-auto",
+      },
+    }).value!;
+
+    const rows = boardRowsV2FromQueries({
+      games: [{ id: "g", status: "playing", round: 1 }],
+      players: [player],
+      hexes: [],
+      territories: [],
+      continents: [],
+      turn: [],
+      combat: [combat],
+      moves: [],
+      projectionMeta: [],
+    });
+
+    expect(rows?.players[0]).toMatchObject({ controller: "bot" });
+    expect(rows?.combat).toMatchObject({ resolutionSource: "bot" });
+  });
 });
 
 afterEach(() => vi.unstubAllGlobals());

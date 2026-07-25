@@ -8,7 +8,7 @@
     "demo": "bash scripts/run-demo.sh",
     "dev": "bun --hot server/index.ts",
     "start": "NODE_ENV=production bun server/index.ts",
-    "agent": "bun run scripts/agent.ts",
+    "bot": "bun run scripts/bot.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
     "proof": "bun run scripts/proof.ts",
     "rebuild": "bun run scripts/rebuild.ts",

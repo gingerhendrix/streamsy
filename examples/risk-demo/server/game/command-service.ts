@@ -25,7 +25,7 @@ import type { CommandV2 } from "../../src/domain/commands-v2.ts";
 import { decide, type DecisionError } from "../../src/domain/decide.ts";
 import { decideV2, type DecisionErrorV2 } from "../../src/domain/decide-v2.ts";
 import type { GameEvent } from "../../src/domain/events.ts";
-import type { GameEventV2 } from "../../src/domain/events-v2.ts";
+import { normalizeGameEventV2, type GameEventV2 } from "../../src/domain/events-v2.ts";
 import { RULESET_V2 } from "../../src/domain/map-v2.ts";
 import type { Rng } from "../../src/domain/rng.ts";
 import { boardProjectionTxId } from "../../src/board/transaction.ts";
@@ -38,7 +38,7 @@ const eventSchema: JsonCodec<GameEvent> = {
 };
 const eventSchemaV2: JsonCodec<GameEventV2> = {
   encode: (event) => event,
-  decode: (value) => value as GameEventV2,
+  decode: normalizeGameEventV2,
 };
 
 export type SubmitResult =
@@ -116,7 +116,11 @@ function commandLogV2(deps: CommandServiceDeps, sourceStreamId: string, gameId: 
       get: (commandId) => {
         const row = deps.commands.get(gameId, commandId);
         return row
-          ? { ...row, events: row.events as GameEventV2[], error: row.error as DecisionErrorV2 }
+          ? {
+              ...row,
+              events: row.events?.map(normalizeGameEventV2),
+              error: row.error as DecisionErrorV2,
+            }
           : null;
       },
       put: (record) => deps.commands.put({ ...record, gameId, createdAt: deps.now() }),

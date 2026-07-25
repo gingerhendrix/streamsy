@@ -1,7 +1,6 @@
 import type { GamePhase, GameStatus } from "../domain/aggregate.ts";
 import type { RiskErrorCode } from "../domain/commands.ts";
 import type { RiskErrorCodeV2 } from "../domain/commands-v2.ts";
-import type { PlayerController } from "../domain/events-v2.ts";
 import type { DecisionContext } from "./decision.ts";
 import type { DecisionContextV2 } from "./decision-v2.ts";
 import type { GameEvent } from "../domain/events.ts";
@@ -151,7 +150,11 @@ export interface CreateGameRequest {
    * explicitly to create a legacy fixed-map game (design spec §11).
    */
   ruleset?: string;
-  controller?: PlayerController;
+  /**
+   * Public seat vocabulary. `"agent"` means an external coding agent; the
+   * deterministic showcase uses the explicit `"bot"` value.
+   */
+  controller?: "human" | "bot" | "agent";
   /** Explicit map seed, for demos and deterministic tests only. */
   mapSeed?: string;
 }
@@ -167,7 +170,7 @@ export interface JoinGameRequest {
   name?: string;
   color?: string;
   commandId?: string;
-  controller?: PlayerController;
+  controller?: "human" | "bot" | "agent";
 }
 
 export interface JoinGameResponse {

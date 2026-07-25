@@ -108,9 +108,10 @@ export function dicePairs(
   return pairs;
 }
 
-/** The two ways a roll happens without anyone clicking; the only copy for them. */
+/** Attribution for every non-human defence path. */
 const AUTO_ROLL_LABELS: Record<Exclude<DefenseResolutionSource, "human">, string> = {
-  "agent-auto": "Agent auto-rolled",
+  bot: "Bot rolled",
+  agent: "Agent rolled",
   timeout: "Auto-rolled after timeout",
 };
 
@@ -134,8 +135,10 @@ export function defenseAttribution(
   switch (source) {
     case "human":
       return `${defenderName} defended ${territoryName}`;
-    case "agent-auto":
-      return `${defenderName} auto-rolled the defence of ${territoryName}`;
+    case "bot":
+      return `${defenderName}’s bot defended ${territoryName}`;
+    case "agent":
+      return `${defenderName}’s agent defended ${territoryName}`;
     case "timeout":
       return `${territoryName} was auto-rolled — ${defenderName}’s window expired`;
   }
@@ -345,37 +348,6 @@ export function terrainMix(terrains: readonly Terrain[]): string {
     .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([terrain, count]) => `${count} ${TERRAIN_LABELS[terrain]}`)
     .join(" · ");
-}
-
-// ---------------------------------------------------------------------------
-// Lobby tooling
-// ---------------------------------------------------------------------------
-
-/**
- * The copy-pasteable command that brings an agent seat online.
- *
- * `BASE_URL` is not optional in practice: the harness defaults to port 1339, and
- * this demo's server takes its port from `$PORT`, so a printed command without an
- * origin fails for anyone who did not happen to run on the default (D1). The
- * server that served this page knows where it is, so the origin comes from there
- * rather than from the player.
- */
-export function agentHarnessCommand(options: {
-  origin: string;
-  gameId: string;
-  playerId: string;
-  token: string;
-  cursorFile?: string;
-}): string {
-  const origin = options.origin.replace(/\/+$/, "");
-  return [
-    `BASE_URL=${origin}`,
-    `GAME_ID=${options.gameId}`,
-    `PLAYER_ID=${options.playerId}`,
-    `PLAYER_TOKEN=${options.token}`,
-    ...(options.cursorFile ? [`CURSOR_FILE=${options.cursorFile}`] : []),
-    "bun run --cwd examples/risk-demo agent",
-  ].join(" ");
 }
 
 /** Private one-URL bootstrap for a repository-independent external harness. */

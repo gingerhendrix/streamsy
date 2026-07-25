@@ -13,7 +13,11 @@ import {
 import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 import type { DurableStateSchemaMap } from "@streamsy/state";
 
-import type { GameEventV2 } from "../domain/events-v2.ts";
+import {
+  normalizeGameEventV2,
+  type GameEventV2,
+  type PlayerController,
+} from "../domain/events-v2.ts";
 import { RULESET_V2 } from "../domain/map-v2.ts";
 import { boardProjectionTxId } from "./transaction.ts";
 import {
@@ -38,11 +42,32 @@ const codec = <T>(): JsonCodec<T> => ({
   encode: (value) => value,
   decode: (value) => value as T,
 });
-const eventSchemaV2 = codec<GameEventV2>();
+const eventSchemaV2: JsonCodec<GameEventV2> = {
+  encode: (event) => event,
+  decode: normalizeGameEventV2,
+};
+
+function normalizePlayer(value: unknown): ProjectedPlayerV2 {
+  const player = value as Omit<ProjectedPlayerV2, "controller"> & {
+    controller: PlayerController | "agent";
+  };
+  return player.controller === "agent"
+    ? ({ ...player, controller: "bot" } as ProjectedPlayerV2)
+    : (player as ProjectedPlayerV2);
+}
+
+function normalizeProjectionState(value: unknown): ProjectionStateV2 {
+  const state = value as ProjectionStateV2;
+  return { ...state, players: state.players.map(normalizePlayer) };
+}
 
 const boardSchemaV2 = {
   games: { type: "game", primaryKey: "id", schema: codec<ProjectedGameV2>() },
-  players: { type: "player", primaryKey: "id", schema: codec<ProjectedPlayerV2>() },
+  players: {
+    type: "player",
+    primaryKey: "id",
+    schema: { encode: (value) => value, decode: normalizePlayer },
+  },
   hexes: { type: "hex", primaryKey: "id", schema: codec<ProjectedHexV2>() },
   territories: { type: "territory", primaryKey: "id", schema: codec<ProjectedTerritoryV2>() },
   continents: { type: "continent", primaryKey: "id", schema: codec<ProjectedContinentV2>() },
@@ -51,7 +76,13 @@ const boardSchemaV2 = {
   moves: { type: "move", primaryKey: "id", schema: codec<ProjectedMoveV2>() },
   projectionMeta: {
     primaryKey: () => "board",
-    schema: codec<{ snapshot: ProjectionStateV2 }>(),
+    schema: {
+      encode: (value: { snapshot: ProjectionStateV2 }) => value,
+      decode: (value) => {
+        const meta = value as { snapshot: ProjectionStateV2 };
+        return { snapshot: normalizeProjectionState(meta.snapshot) };
+      },
+    },
   },
 } satisfies DurableStateSchemaMap;
 

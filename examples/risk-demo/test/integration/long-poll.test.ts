@@ -9,7 +9,7 @@ import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core
 
 import { buildApp, type App } from "../../server/http/app.ts";
 import { createInMemoryStores } from "../../server/persistence/stores.ts";
-import { createAgent } from "../../server/demo/agent.ts";
+import { createBot } from "../../server/demo/bot.ts";
 import { createSeededRng } from "../../src/domain/rng.ts";
 
 const BASE = "http://risk.test";
@@ -82,15 +82,15 @@ describe("turn-stream long-poll wake", () => {
 
     // The active player finishes its turn → control passes → the inactive
     // player's durable wake is produced, resolving the long-poll.
-    const agent = createAgent({
+    const bot = createBot({
       call,
       gameId,
       playerId: active,
       token: tokenByPlayer[active]!,
       state: {},
     });
-    await agent.awaitTurn();
-    await agent.playTurn();
+    await bot.awaitTurn();
+    await bot.playTurn();
 
     const polled = await pollPromise;
     expect(performance.now() - pollStartedAt).toBeGreaterThanOrEqual(60);

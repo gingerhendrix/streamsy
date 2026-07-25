@@ -1,11 +1,11 @@
 /**
- * `risk-demo-v2` agent harness: a full game driven end-to-end through the HTTP
+ * `risk-demo-v2` scripted bot: a full game driven end-to-end through the HTTP
  * API by machine players that see nothing but `/decision`, `/commands`, and
  * their action stream.
  *
  * The interesting property is the defence interrupt. In v1 a turn is a single
  * actor's uninterrupted sequence; in v2 the attacker's turn *stops* until the
- * defender — a different agent, out of turn — rolls. These tests prove that the
+ * defender — a different bot, out of turn — rolls. These tests prove that the
  * loop still closes: the defender wakes on `DefenseAvailable`, auto-rolls with a
  * stable id, and if it never does, the canonical timeout finishes the combat
  * without it.
@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createAgent, type Agent } from "../../server/demo/agent.ts";
+import { createBot, type Bot } from "../../server/demo/bot.ts";
 import { defenseTimeoutCommandId } from "../../server/game/defense-timer.ts";
 import {
   DEFENSE_MS,
@@ -29,11 +29,11 @@ import {
   type V2Harness,
 } from "../v2-harness.ts";
 
-function agentsFor(h: V2Harness, game: V2Game): Record<string, Agent> {
+function botsFor(h: V2Harness, game: V2Game): Record<string, Bot> {
   const http = httpFor(h.app);
-  const agents: Record<string, Agent> = {};
+  const bots: Record<string, Bot> = {};
   for (const playerId of game.players) {
-    agents[playerId] = createAgent({
+    bots[playerId] = createBot({
       call: http,
       gameId: game.gameId,
       playerId,
@@ -41,7 +41,7 @@ function agentsFor(h: V2Harness, game: V2Game): Record<string, Agent> {
       state: {},
     });
   }
-  return agents;
+  return bots;
 }
 
 /**
@@ -53,7 +53,7 @@ function agentsFor(h: V2Harness, game: V2Game): Record<string, Agent> {
 async function driveToCompletion(
   h: V2Harness,
   game: V2Game,
-  agents: Record<string, Agent>,
+  bots: Record<string, Bot>,
   options: { maxSteps?: number; onStep?: (meta: any) => Promise<void> | void } = {},
 ): Promise<{ finished: boolean; steps: number; defences: number }> {
   let defences = 0;
@@ -66,12 +66,12 @@ async function driveToCompletion(
 
     const pending = meta.pendingInteraction;
     if (pending?.type === "defense") {
-      const defender = agents[pending.defenderId]!;
+      const defender = bots[pending.defenderId]!;
       // Consume the wake first, the way a real harness would.
       await defender.awaitTurn();
       const rolled = await defender.defend();
       if (!rolled) {
-        // The agent declined; the canonical timeout owns it from here.
+        // The bot declined; the canonical timeout owns it from here.
         h.clock.now = pending.defenseDeadlineAt + 1;
         await h.app.defenseTimers.fire(game.gameId, pending.attackId);
       }
@@ -79,7 +79,7 @@ async function driveToCompletion(
       continue;
     }
 
-    const active = agents[meta.activePlayerId as string]!;
+    const active = bots[meta.activePlayerId as string]!;
     if (!(await active.step())) {
       // No legal action and no interrupt: nothing can make progress.
       return { finished: false, steps: step, defences };
@@ -88,16 +88,16 @@ async function driveToCompletion(
   return { finished: false, steps: maxSteps, defences };
 }
 
-describe("risk-demo-v2 agent harness", () => {
+describe("risk-demo-v2 scripted bot", () => {
   it("plays a complete game through HTTP, resolving every defence out of turn", async () => {
     const h = v2Harness(4242);
     const game = await createV2Game(h.app, {
-      controllers: ["agent", "agent"],
-      mapSeed: "agent-game-1",
+      controllers: ["bot", "bot"],
+      mapSeed: "bot-game-1",
     });
-    const agents = agentsFor(h, game);
+    const bots = botsFor(h, game);
 
-    const result = await driveToCompletion(h, game, agents);
+    const result = await driveToCompletion(h, game, bots);
     expect(result.finished).toBe(true);
     expect(result.defences).toBeGreaterThan(0);
 
@@ -120,10 +120,10 @@ describe("risk-demo-v2 agent harness", () => {
 
   it("auto-rolls from a DefenseAvailable wake under a stable command id", async () => {
     const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const game = await createV2Game(h.app, { controllers: ["bot", "bot"] });
     const attack = await declareAttack(h, game);
-    const agents = agentsFor(h, game);
-    const defender = agents[attack.defender]!;
+    const bots = botsFor(h, game);
+    const defender = bots[attack.defender]!;
 
     const wake = await defender.awaitTurn();
     expect(wake?.type).toBe("DefenseAvailable");
@@ -132,13 +132,13 @@ describe("risk-demo-v2 agent harness", () => {
     expect(wake.deadlineAt).toBe(h.clock.now + DEFENSE_MS);
 
     expect(await defender.defend()).toBe(true);
-    const record = h.stores.commands.get(game.gameId, `agent-defense:${attack.attackId}`)!;
+    const record = h.stores.commands.get(game.gameId, `bot-defense:${attack.attackId}`)!;
     expect(record.status).toBe("accepted");
     const resolved = (record.events as any[]).find((e) => e.type === "AttackResolved");
-    expect(resolved.resolutionSource).toBe("agent-auto");
+    expect(resolved.resolutionSource).toBe("bot");
 
     // A duplicate wake produces no second roll and no second event.
-    const replay = createAgent({
+    const replay = createBot({
       call: httpFor(h.app),
       gameId: game.gameId,
       playerId: attack.defender,
@@ -148,16 +148,16 @@ describe("risk-demo-v2 agent harness", () => {
     const replayed = await replay.awaitTurn();
     expect(replayed?.notificationId).toBe(wake.notificationId);
     await replay.defend();
-    const after = h.stores.commands.get(game.gameId, `agent-defense:${attack.attackId}`)!;
+    const after = h.stores.commands.get(game.gameId, `bot-defense:${attack.attackId}`)!;
     expect(after.sourceOffset).toBe(record.sourceOffset);
   });
 
-  it("still resolves when the defending agent is offline", async () => {
+  it("still resolves when the defending bot is offline", async () => {
     const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const game = await createV2Game(h.app, { controllers: ["bot", "bot"] });
     const attack = await declareAttack(h, game);
 
-    // The defending agent never wakes. The canonical timeout closes the combat.
+    // The defending bot never wakes. The canonical timeout closes the combat.
     h.clock.now += DEFENSE_MS + 1;
     const fired = await h.app.defenseTimers.fire(game.gameId, attack.attackId);
     expect(fired?.status).toBe("accepted");
@@ -173,22 +173,22 @@ describe("risk-demo-v2 agent harness", () => {
 
   it("keeps making territorial progress against an opponent who only turtles", async () => {
     // The defect this pins down (D4): a human who never attacks and pours every
-    // reinforcement into one fortress used to freeze the game outright. The agent
+    // reinforcement into one fortress used to freeze the game outright. The bot
     // stacked the border facing the fortress, could not attack out of it, would
     // not fortify away from it, and the position never changed again.
     const h = v2Harness(31);
     const game = await createV2Game(h.app, {
-      controllers: ["human", "agent"],
+      controllers: ["human", "bot"],
       mapSeed: "turtle-seed",
     });
-    const [turtleId, agentId] = game.players as [string, string];
-    const agent = agentsFor(h, game)[agentId]!;
+    const [turtleId, botId] = game.players as [string, string];
+    const bot = botsFor(h, game)[botId]!;
 
     const countriesOf = async (playerId: string): Promise<number> => {
-      const decision = await decisionFor(h.app, game, agentId);
+      const decision = await decisionFor(h.app, game, botId);
       return decision.board.territories.filter((t: any) => t.ownerId === playerId).length;
     };
-    const openingAgentCountries = await countriesOf(agentId);
+    const openingBotCountries = await countriesOf(botId);
     const openingTurtleCountries = await countriesOf(turtleId);
 
     /** The fortress: one country, chosen once, fed every single reinforcement. */
@@ -218,7 +218,7 @@ describe("risk-demo-v2 agent harness", () => {
       });
     };
 
-    const sampled: Array<{ round: number; agentCountries: number }> = [];
+    const sampled: Array<{ round: number; botCountries: number }> = [];
     const maxRound = 24;
     let lastRound = 0;
     for (let step = 0; step < 3_000; step += 1) {
@@ -226,14 +226,14 @@ describe("risk-demo-v2 agent harness", () => {
       if (meta.status === "finished") break;
       if (meta.round > lastRound) {
         lastRound = meta.round;
-        sampled.push({ round: meta.round, agentCountries: await countriesOf(agentId) });
+        sampled.push({ round: meta.round, botCountries: await countriesOf(botId) });
         if (meta.round > maxRound) break;
       }
 
       const pending = meta.pendingInteraction;
       if (pending?.type === "defense") {
-        if (pending.defenderId === agentId) {
-          await agent.defend();
+        if (pending.defenderId === botId) {
+          await bot.defend();
         } else {
           // The turtle never rolls; the canonical timeout closes every combat.
           h.clock.now = pending.defenseDeadlineAt + 1;
@@ -242,40 +242,40 @@ describe("risk-demo-v2 agent harness", () => {
         continue;
       }
 
-      if (meta.activePlayerId === agentId) {
-        expect(await agent.step()).not.toBeNull();
+      if (meta.activePlayerId === botId) {
+        expect(await bot.step()).not.toBeNull();
       } else {
         await turtleStep(meta.round);
       }
     }
 
     const endMeta = await gameMeta(h.app, game);
-    const finalAgentCountries = await countriesOf(agentId);
+    const finalBotCountries = await countriesOf(botId);
 
     // The turtle can only be beaten by taking countries, so a finished game *is*
     // the anti-stalemate property: no throw, no capture, no winner.
     expect(endMeta.status).toBe("finished");
-    expect(endMeta.winnerId).toBe(agentId);
+    expect(endMeta.winnerId).toBe(botId);
     expect(endMeta.round).toBeLessThanOrEqual(maxRound);
-    expect(finalAgentCountries).toBeGreaterThan(openingAgentCountries);
+    expect(finalBotCountries).toBeGreaterThan(openingBotCountries);
     expect(await countriesOf(turtleId)).toBeLessThan(openingTurtleCountries);
 
-    // And progress is continuous rather than an opening flurry: the agent never
+    // And progress is continuous rather than an opening flurry: the bot never
     // spends several rounds in a row placing armies it cannot use.
     let frozen = 0;
     let longestFreeze = 0;
     for (const [index, entry] of sampled.entries()) {
       const previous = sampled[index - 1];
-      frozen = previous && entry.agentCountries <= previous.agentCountries ? frozen + 1 : 0;
+      frozen = previous && entry.botCountries <= previous.botCountries ? frozen + 1 : 0;
       longestFreeze = Math.max(longestFreeze, frozen);
     }
     expect(longestFreeze).toBeLessThanOrEqual(3);
   }, 60_000);
 
-  it("occupies a captured country with a legal garrison chosen by the agent", async () => {
+  it("occupies a captured country with a legal garrison chosen by the bot", async () => {
     const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
-    const agents = agentsFor(h, game);
+    const game = await createV2Game(h.app, { controllers: ["bot", "bot"] });
+    const bots = botsFor(h, game);
 
     // Throw until something falls, keeping the attacker sweeping every pair.
     let occupation: any;
@@ -300,7 +300,7 @@ describe("risk-demo-v2 agent harness", () => {
     }
     expect(occupation).toBeDefined();
 
-    const attacker = agents[occupation.playerId]!;
+    const attacker = bots[occupation.playerId]!;
     const before = await decisionFor(h.app, game, occupation.playerId);
     const sourceArmies = before.board.territories.find(
       (t: any) => t.id === occupation.from,

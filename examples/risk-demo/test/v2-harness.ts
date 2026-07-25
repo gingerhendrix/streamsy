@@ -21,10 +21,9 @@ import { buildApp, type App } from "../server/http/app.ts";
 import { createInMemoryStores, type Stores } from "../server/persistence/stores.ts";
 import { createManualScheduler, type ManualScheduler } from "../server/game/defense-timer.ts";
 import { RULESET_V2 } from "../src/domain/map-v2.ts";
-import type { PlayerController } from "../src/domain/events-v2.ts";
 import type { Rng } from "../src/domain/rng.ts";
 import { createSeededRng } from "../src/domain/rng.ts";
-import type { HttpCall } from "../server/demo/agent.ts";
+import type { HttpCall } from "../server/demo/bot.ts";
 
 export const BASE = "http://risk.test";
 export const DEFENSE_MS = 15_000;
@@ -100,7 +99,7 @@ export async function call(
   return { status: res.status, body: await res.json() };
 }
 
-/** The `HttpCall` shape the agent harness consumes. */
+/** The `HttpCall` shape the scripted bot consumes. */
 export function httpFor(app: App): HttpCall {
   return (method, path, opts = {}) => call(app, method, path, opts);
 }
@@ -113,7 +112,11 @@ export interface V2Game {
 
 export async function createV2Game(
   app: App,
-  options: { players?: number; controllers?: PlayerController[]; mapSeed?: string } = {},
+  options: {
+    players?: number;
+    controllers?: Array<"human" | "bot" | "agent">;
+    mapSeed?: string;
+  } = {},
 ): Promise<V2Game> {
   const count = options.players ?? 2;
   const created = await call(app, "POST", "/v1/games", {

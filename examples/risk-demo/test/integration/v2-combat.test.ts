@@ -3,7 +3,7 @@
  * log, notification streams, and durable defence timers.
  *
  * The pure kernel tests already cover the rules. What is under test here is the
- * *protocol*: exactly one of {human roll, agent auto-roll, timeout} may resolve
+ * *protocol*: exactly one of {human, bot, external-agent, timeout} may resolve
  * an attack, a retry returns the original dice rather than new ones, duplicate
  * and stale timer deliveries are harmless, and a restart rebuilds or resolves
  * outstanding timers from canonical state alone.
@@ -81,6 +81,23 @@ describe("risk-demo-v2 creation seam", () => {
 });
 
 describe("risk-demo-v2 defence resolution", () => {
+  it("attributes an external agent's submitted defence without treating it as a bot", async () => {
+    const h = v2Harness();
+    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const attack = await declareAttack(h, game);
+
+    const rolled = await post(h.app, game, attack.defender, {
+      commandId: "external-agent-roll",
+      turnId: attack.turnId,
+      action: { type: "roll-defense", attackId: attack.attackId },
+    });
+
+    expect(rolled.status).toBe(200);
+    expect(rolled.body.events.find((event: any) => event.type === "AttackResolved")).toMatchObject({
+      resolutionSource: "agent",
+    });
+  });
+
   it("wakes the defender with DefenseAvailable and no one else", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { players: 3 });

@@ -1,5 +1,5 @@
 /**
- * The `risk-demo-v2` agent policy (design spec §9.2), kept pure and away from HTTP.
+ * The `risk-demo-v2` scripted-bot policy (design spec §9.2), kept pure and away from HTTP.
  *
  * It is deliberately shallow — no search, no evaluation of an opponent's reply —
  * but it does have to satisfy one structural property the naive version did not:
@@ -7,10 +7,10 @@
  *   **a turtling opponent must not be able to freeze the game.**
  *
  * A human who never attacks and stacks one fortress used to stall the demo
- * forever: the agent reinforced whichever border was most *exposed*, which is
+ * forever: the bot reinforced whichever border was most *exposed*, which is
  * exactly the border facing the fortress, then found no favourable attack from
  * it, then declined to fortify because that border was not an interior country.
- * Armies accumulated where they could never be spent while the agent's countries
+ * Armies accumulated where they could never be spent while the bot's countries
  * facing genuinely weak enemies stayed at one army each.
  *
  * Three rules replace that, and each is about turning armies into attacks rather
@@ -89,13 +89,13 @@ export function strategyContext(
   };
 }
 
-/** Enemy countries bordering `id`. The agent's whole notion of "exposed". */
+/** Enemy countries bordering `id`. The bot's whole notion of "exposed". */
 export function enemyNeighbours(ctx: StrategyContext, id: string): string[] {
   return ctx.neighbours(id).filter((adj) => ctx.ownerOf(adj) !== ctx.playerId);
 }
 
 /**
- * How much the agent cares about a continent: full control is worth defending,
+ * How much the bot cares about a continent: full control is worth defending,
  * and being one country away is worth pushing for.
  */
 export function continentPressure(ctx: StrategyContext, territoryId: string): number {
@@ -238,7 +238,7 @@ const BORDER_GARRISON = 3;
  * "Idle" is the load-bearing word. An interior country is idle because it faces
  * nobody; a border country whose every enemy neighbour is unbeatable is idle for
  * the same practical reason, and refusing to move it is what let a single enemy
- * fortress absorb the agent's whole army forever. Both are sources here, largest
+ * fortress absorb the bot's whole army forever. Both are sources here, largest
  * first, and destinations are ranked by the attack the arriving armies unlock.
  */
 export function chooseFortify(

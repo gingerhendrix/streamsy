@@ -1,10 +1,10 @@
 /**
- * Coding-agent harness: plays Risk using ONLY the published HTTP resources and
+ * Scripted-bot harness: plays Risk using only the published HTTP resources and
  * its per-player action stream — never the kernel directly.
  *
  * Loop: follow the action stream from a persisted cursor → on wake fetch fresh
  * `/decision` → choose from structured `legalActions` with a deterministic
- * strategy → POST a command with a stable `commandId` → repeat while the agent
+ * strategy → POST a command with a stable `commandId` → repeat while the bot
  * still has something to do. Wakes are hints; correctness comes from fresh
  * decision fetches and canonical command validation.
  *
@@ -16,10 +16,10 @@
  *
  * The harness speaks both rulesets. `risk-demo-v2` adds one shape it must handle
  * that v1 does not have: an out-of-turn `roll-defense`. That command uses the
- * stable id `agent-defense:<attackId>` rather than a board fingerprint, because
+ * stable id `bot-defense:<attackId>` rather than a board fingerprint, because
  * the board has not changed and the point is that a duplicate wake, a retry, and
  * a race with the canonical timeout must all collapse to one roll. Duplicate and
- * stale outcomes are treated as success — if the agent is offline entirely, the
+ * stale outcomes are treated as success — if the bot is offline entirely, the
  * canonical timeout resolves the combat without it.
  */
 
@@ -39,31 +39,31 @@ export type HttpCall = (
   opts?: { token?: string; body?: unknown },
 ) => Promise<{ status: number; body: any }>;
 
-/** Persisted agent state — just the last consumed action-stream cursor. */
-export interface AgentState {
+/** Persisted bot state — just the last consumed action-stream cursor. */
+export interface BotState {
   cursor?: string;
 }
 
-export interface CreateAgentOptions {
+export interface CreateBotOptions {
   call: HttpCall;
   gameId: string;
   playerId: string;
   token: string;
   /** Mutated in place; snapshot `{ cursor }` to simulate a restart. */
-  state?: AgentState;
+  state?: BotState;
   /** Optional observer hook after each successful command; used to pace the live demo. */
   onCommandCommitted?: (action: Record<string, unknown>) => void | Promise<void>;
 }
 
-export interface Agent {
-  readonly state: AgentState;
+export interface Bot {
+  readonly state: BotState;
   /** Poll the action stream once; advance the cursor; return the latest wake seen. */
   awaitTurn(waitMs?: number): Promise<PlayerActionNotification | null>;
-  /** Take one action if this agent has a legal one right now. */
+  /** Take one action if this bot has a legal one right now. */
   step(): Promise<Record<string, unknown> | null>;
-  /** Play until this agent has nothing legal left (turn passed, or waiting). */
+  /** Play until this bot has nothing legal left (turn passed, or waiting). */
   playTurn(maxSteps?: number): Promise<void>;
-  /** Resolve a pending defence if one is waiting on this agent (§9.1). */
+  /** Resolve a pending defence if one is waiting on this bot (§9.1). */
   defend(): Promise<boolean>;
 }
 
@@ -92,7 +92,7 @@ interface TerritoryView {
  * Static geometry, read once from `GET /board`.
  *
  * `/decision` deliberately carries only what changes — ownership, armies, legal
- * actions — so the agent fetches the map from the board surface a single time and
+ * actions — so the bot fetches the map from the board surface a single time and
  * caches it. It is immutable after `GameStarted`, so there is nothing to refresh.
  */
 type MapView = StrategyMap;
@@ -200,9 +200,9 @@ async function chooseActionV2(
   return null;
 }
 
-export function createAgent(options: CreateAgentOptions): Agent {
+export function createBot(options: CreateBotOptions): Bot {
   const { call, gameId, playerId, token } = options;
-  const state: AgentState = options.state ?? {};
+  const state: BotState = options.state ?? {};
 
   async function awaitTurn(waitMs = 0): Promise<PlayerActionNotification | null> {
     const query = new URLSearchParams();
@@ -252,7 +252,7 @@ export function createAgent(options: CreateAgentOptions): Agent {
    * timeout therefore all end in the same place — one recorded roll.
    */
   function commandIdFor(action: Record<string, unknown>, decision: Decision): string {
-    if (action.type === "roll-defense") return `agent-defense:${String(action.attackId)}`;
+    if (action.type === "roll-defense") return `bot-defense:${String(action.attackId)}`;
     return `${playerId}:${decision.turn.id}:${boardFingerprint(playerId, decision)}`;
   }
 
@@ -293,7 +293,7 @@ export function createAgent(options: CreateAgentOptions): Agent {
       const action = await step();
       if (!action || action.type === "end-turn") return;
     }
-    throw new Error(`agent ${playerId} exceeded ${maxSteps} steps in one turn`);
+    throw new Error(`bot ${playerId} exceeded ${maxSteps} steps in one turn`);
   }
 
   return { state, awaitTurn, step, playTurn, defend };

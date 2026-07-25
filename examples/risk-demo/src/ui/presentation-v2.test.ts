@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { ProjectedMoveV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
 import {
-  agentHarnessCommand,
   agentSeatUrl,
   countdownFraction,
   countdownLabel,
@@ -101,15 +100,15 @@ describe("dice", () => {
 
   it("labels a timeout roll without implying a human clicked", () => {
     expect(resolutionLabel("timeout", "Mina")).toBe("Auto-rolled after timeout");
-    expect(resolutionLabel("agent-auto", "Mina")).toBe("Agent auto-rolled");
+    expect(resolutionLabel("bot", "Mina")).toBe("Bot rolled");
+    expect(resolutionLabel("agent", "Mina")).toBe("Agent rolled");
     expect(resolutionLabel("human", "Mina")).toBe("Rolled by Mina");
   });
 
   it("attributes a defence in a sentence the same way the combat card does", () => {
     expect(defenseAttribution("human", "Mina", "Ashfell")).toBe("Mina defended Ashfell");
-    expect(defenseAttribution("agent-auto", "Mina", "Ashfell")).toBe(
-      "Mina auto-rolled the defence of Ashfell",
-    );
+    expect(defenseAttribution("bot", "Mina", "Ashfell")).toBe("Mina’s bot defended Ashfell");
+    expect(defenseAttribution("agent", "Mina", "Ashfell")).toBe("Mina’s agent defended Ashfell");
     expect(defenseAttribution("timeout", "Mina", "Ashfell")).toBe(
       "Ashfell was auto-rolled — Mina’s window expired",
     );
@@ -254,8 +253,8 @@ describe("game history", () => {
     expect(moveTextV2(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
       "Northgate was auto-rolled — Mina’s window expired",
     );
-    expect(moveTextV2(move({ ...resolved, resolutionSource: "agent-auto" }), NAMES)).toBe(
-      "Mina auto-rolled the defence of Northgate",
+    expect(moveTextV2(move({ ...resolved, resolutionSource: "bot" }), NAMES)).toBe(
+      "Mina’s bot defended Northgate",
     );
     expect(moveDetailV2(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
       "6 · 2 vs 3 — 1 defender lost · Auto-rolled after timeout",
@@ -314,7 +313,7 @@ describe("map and seat language", () => {
   });
 });
 
-describe("agent harness command", () => {
+describe("agent seat URL", () => {
   it("builds a private fragment-bearing seat URL without a query capability", () => {
     const url = agentSeatUrl({
       origin: "http://localhost:22392/",
@@ -324,31 +323,5 @@ describe("agent harness command", () => {
     });
     expect(url).toBe("http://localhost:22392/agent-seat/game%2Fa/p%201#token=rsk_secret");
     expect(new URL(url).search).toBe("");
-  });
-
-  it("carries the origin the page was served from, so a non-default PORT works", () => {
-    expect(
-      agentHarnessCommand({
-        origin: "http://localhost:22392",
-        gameId: "game_1",
-        playerId: "p_1",
-        token: "rsk_abc",
-      }),
-    ).toBe(
-      "BASE_URL=http://localhost:22392 GAME_ID=game_1 PLAYER_ID=p_1 PLAYER_TOKEN=rsk_abc " +
-        "bun run --cwd examples/risk-demo agent",
-    );
-  });
-
-  it("trims a trailing slash and can name a cursor file", () => {
-    const command = agentHarnessCommand({
-      origin: "http://127.0.0.1:1339/",
-      gameId: "game_1",
-      playerId: "p_1",
-      token: "rsk_abc",
-      cursorFile: "./agent.cursor",
-    });
-    expect(command).toContain("BASE_URL=http://127.0.0.1:1339 GAME_ID=game_1");
-    expect(command).toContain("CURSOR_FILE=./agent.cursor bun run --cwd examples/risk-demo agent");
   });
 });

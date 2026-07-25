@@ -69,9 +69,9 @@ export interface DeclareAttackCommandV2 {
  * count was fixed at declaration time and is read from canonical state.
  *
  * There is deliberately no `resolutionSource` here. Whether a roll is recorded as
- * `human` or `agent-auto` follows from the defending seat's canonical
- * {@link PlayerController}, not from anything the client sends — a browser cannot
- * label its roll as an agent's, and an agent cannot disguise itself as a human.
+ * `human`, `bot`, or `agent` follows from the defending seat's canonical
+ * {@link PlayerController}, not from anything the client sends. A client cannot
+ * spoof that attribution.
  */
 export interface RollDefenseCommandV2 {
   type: "roll-defense";

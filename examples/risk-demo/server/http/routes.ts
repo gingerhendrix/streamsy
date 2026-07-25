@@ -74,7 +74,9 @@ function rejection(result: AnyRejected): Response {
 }
 
 function controllerOf(value: unknown): PlayerController {
-  return value === "agent" ? "agent" : "human";
+  if (value === "agent") return "external-agent";
+  if (value === "bot") return "bot";
+  return "human";
 }
 
 export function createRiskRoutes(ctx: AppContext): Route[] {
@@ -601,7 +603,7 @@ function buildPlayCommandV2(
 
   const body: PlayCommandV2 = { commandId, turnId, action: parsed };
   // Nothing about *who* resolved a combat is taken from the transport: the kernel
-  // derives `human` vs `agent-auto` from the defending seat's canonical
+  // derives human/bot/agent attribution from the defending seat's canonical
   // controller, so a client cannot mislabel its own roll.
   const command: CommandV2 = { commandId, turnId, playerId, ...parsed };
   return { body, command };

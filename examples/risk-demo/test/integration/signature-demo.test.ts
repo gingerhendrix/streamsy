@@ -29,12 +29,12 @@ describe("signature demo scenario", () => {
   it("demonstrates the full signature sequence deterministically", async () => {
     const { summary, trace } = await run(1234);
 
-    // 1 + 9: an agent-only game finished with a winner and a final watermark.
+    // 1 + 9: a bot-only game finished with a winner and a final watermark.
     expect(summary.winnerId).not.toBeNull();
     expect(summary.finalWatermark).not.toBeNull();
     expect(summary.turnsPlayed).toBeGreaterThan(0);
 
-    // 2: an agent's notification cursor was persisted, reloaded, and resumed.
+    // 2: a bot's notification cursor was persisted, reloaded, and resumed.
     expect(summary.cursorRestart?.resumed).toBe(true);
 
     // 3: an accepted attack was retained with recorded dice + canonical offset.

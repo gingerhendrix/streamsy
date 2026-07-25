@@ -15,11 +15,11 @@ bun run demo:risk
 
 Or from this directory, run `bun run demo`. The command builds missing workspace outputs, chooses a
 free port, starts a SQLite-backed server, creates and starts a `risk-demo-v2` game on a freshly
-generated hex map, and runs Ada and Bob as in-process HTTP agents. Open the prominently printed
+generated hex map, and runs Ada and Bob as deterministic in-process HTTP bots. Open the prominently printed
 spectator URL; the server and final board stay available until Ctrl-C. Temporary SQLite data is
 removed on shutdown.
 
-A complete agent-versus-agent game runs 250–550 commands, so at the demo's one-command-per-second
+A complete bot-versus-bot game runs 250–550 commands, so at the demo's one-command-per-second
 pace it takes roughly five to ten minutes — a measured run finished in 23 rounds and 8.8 minutes. Every attack pauses for a defence roll, so the board shows declaration, both sides'
 recorded dice, the losses, and — on a capture — the occupation the attacker had to choose.
 
@@ -37,7 +37,7 @@ DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
 - **Create a game.** New games are `risk-demo-v2`: a seeded procedural hex map with variable-sized
   countries, four connected continents, and visual-only terrain.
 - **Fill the seats.** Share the invite link for another human, or press **Open an agent seat** — one
-  per machine player, up to four seats in total. Each seat prints one private bootstrap URL:
+  per external coding agent, up to four seats in total. Each seat prints one private bootstrap URL:
 
   ```text
   http://localhost:1339/agent-seat/game_xxx/player_xxx#token=rsk_xxx
@@ -46,7 +46,8 @@ DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
   Treat the complete URL as secret. The fragment is parsed locally and is never sent to the
   bootstrap page or server logs; the capability is sent only as an `Authorization` bearer token.
   The bootstrap document supplies OpenAPI/resource locations and a harness-neutral control prompt.
-  The previous environment-variable command remains in a disclosure for repository-local debugging.
+  Give that URL to Claude Code, Codex, or another general coding-agent harness. It needs no
+  repository checkout and chooses strategy from fresh HTTP decisions and `legalActions`.
 
 - **Take your turn.** Reinforce from the rail's stepper, then pick a source country, a highlighted
   enemy neighbour, and how many dice to throw with. A capture asks for the occupying garrison before
@@ -86,8 +87,8 @@ cutovers; it does not drive board state.
 
 - `server/game/command-service.ts` binds the Risk fold/decide functions to the reusable command log.
 - `src/board/board-projection.ts` declares the durable board schema and event-to-row mapping.
-- `server/demo/agent.ts` follows turn streams, fetches structured legal actions, and submits stable
-  `commandId`s using only published HTTP resources.
+- `server/demo/bot.ts` is deterministic bot infrastructure. It follows turn streams, fetches
+  structured legal actions, and submits stable `commandId`s for demos and proofs.
 - `server/demo/signature-demo.ts` runs the complete deterministic guarantee proof.
 - `src/ui/board-stream-db.ts` is the official Stream DB + TanStack DB integration.
 
@@ -122,7 +123,7 @@ as long as they exist.
 - `src/ui/turn-rail.tsx` and `src/ui/presentation-v2.ts` are the current-turn rail: the
   reinforcement equation, the ledger, the canonical countdown, and dice copy that never claims a
   human rolled when the timeout did.
-- `server/demo/strategy-v2.ts` is the agent policy. It is deliberately shallow, but it reinforces
+- `server/demo/strategy-v2.ts` is the scripted-bot policy. It is deliberately shallow, but it reinforces
   toward the weakest reachable enemy and fortifies stacks off borders they cannot attack out of, so
   an opponent who only turtles cannot freeze the game.
 
@@ -146,16 +147,16 @@ as long as they exist.
 
 ## Acceptance matrix
 
-| Check                       | Command                                                     | Evidence                                                                                          |
-| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Watchable product demo      | `bun run demo:risk`                                         | Bootstraps workspace outputs, prints the spectator URL, and plays a v2 game to a winner           |
-| Risk unit/integration suite | `bun run --cwd examples/risk-demo test`                     | Kernel, API, materializer, turn streams, agents, rebuild, Stream DB shaping, and proof tests      |
-| SQLite durability           | `bun run --cwd examples/risk-demo test:sqlite`              | Persistence, cursor resume, duplicate command retry, and generation cutover survive restart       |
-| Real HTTP smoke             | `bun run --cwd examples/risk-demo smoke:http`               | Server, SPA, auth, command/board flow, and SQLite restart                                         |
-| Signature proof             | `bun run --cwd examples/risk-demo proof`                    | Recorded dice, duplicate retry, stale rejection, causal sync, crash recovery, rebuild, and winner |
-| Static checks               | `bun run typecheck && bun run lint && bun run format:check` | Workspace build/types plus repository lint and format                                             |
+| Check                       | Command                                                     | Evidence                                                                                                    |
+| --------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Watchable product demo      | `bun run demo:risk`                                         | Bootstraps workspace outputs, prints the spectator URL, and plays a bot-vs-bot v2 game to a winner          |
+| Risk unit/integration suite | `bun run --cwd examples/risk-demo test`                     | Kernel, API, materializer, turn streams, bots, agent bootstrap, rebuild, Stream DB shaping, and proof tests |
+| SQLite durability           | `bun run --cwd examples/risk-demo test:sqlite`              | Persistence, cursor resume, duplicate command retry, and generation cutover survive restart                 |
+| Real HTTP smoke             | `bun run --cwd examples/risk-demo smoke:http`               | Server, SPA, auth, command/board flow, and SQLite restart                                                   |
+| Signature proof             | `bun run --cwd examples/risk-demo proof`                    | Recorded dice, duplicate retry, stale rejection, causal sync, crash recovery, rebuild, and winner           |
+| Static checks               | `bun run typecheck && bun run lint && bun run format:check` | Workspace build/types plus repository lint and format                                                       |
 
-## Proof, smoke, rebuild, and agent flows
+## Proof, smoke, rebuild, bot, and external-agent flows
 
 Run the deterministic signature scenario in memory, or against a SQLite file:
 
@@ -165,7 +166,7 @@ DB_PATH=./proof.sqlite bun run --cwd examples/risk-demo proof
 TRACE_FILE=./trace.jsonl bun run --cwd examples/risk-demo proof
 ```
 
-The proof prints JSONL trace events and a machine-readable summary. It finishes an agent-only game
+The proof prints JSONL trace events and a machine-readable summary. It finishes a bot-only game
 and verifies recorded attack dice, same-offset idempotent retry, `STALE_TURN`, causal board sync,
 crash-after-output recovery without double application, and an equivalent v1 → v2 rebuild.
 
@@ -186,7 +187,7 @@ The rebuild creates a separate projection stream, catches it up to the canonical
 logical board and watermark, and only then cuts over the durable active-generation pointer. A failed
 verification leaves the old generation active.
 
-Run a standalone restart-safe HTTP agent against a live game:
+Run the deterministic restart-safe HTTP bot against a live game:
 
 ```bash
 BASE_URL=http://localhost:1339 \
@@ -194,19 +195,27 @@ GAME_ID=game_xxx \
 PLAYER_ID=p_xxx \
 PLAYER_TOKEN=rsk_xxx \
 CURSOR_FILE=./player.cursor \
-bun run --cwd examples/risk-demo agent
+bun run --cwd examples/risk-demo bot
 ```
 
-The agent persists only its turn-stream cursor. On each wake it fetches a fresh `/decision`, chooses
+The bot persists only its turn-stream cursor. On each wake it fetches a fresh `/decision`, chooses
 from structured `legalActions`, and derives stable command IDs from the observed turn and board. In a
 v2 game the same process also answers `DefenseAvailable` wakes out of turn, under the stable id
-`agent-defense:<attackId>`, so a duplicate wake, a retry, and a race with the canonical timeout all
+`bot-defense:<attackId>`, so a duplicate wake, a retry, and a race with the canonical timeout all
 collapse to one recorded roll.
 
-`BASE_URL` must name the server's actual origin — the harness defaults to `http://localhost:1339`,
-and the server takes its port from `$PORT`. The lobby's agent-seat panel prints the whole command
-with the right origin already filled in under its temporary debug disclosure. New external
-harnesses should use the private fragment-bearing seat URL printed above instead.
+`BASE_URL` must name the server's actual origin — the bot defaults to `http://localhost:1339`, and
+the server takes its port from `$PORT`. This repository-local command is bot infrastructure; it is
+not printed for agent seats. External harnesses must use the private fragment-bearing seat URL.
+
+### Controller compatibility
+
+The v2 canonical vocabulary is `human | bot | external-agent`. The public create/join API uses
+`human | bot | agent`, mapping `agent` to `external-agent` before appending an event. Builds before
+this distinction persisted `controller: "agent"` for the deterministic bot and
+`resolutionSource: "agent-auto"` for its defence. Canonical codecs normalize those historical values
+to `bot` at the read boundary. Stored bytes, stream offsets, and old projection generations are not
+rewritten, so existing SQLite games remain replayable while new events are unambiguous.
 
 ## Ruleset
 

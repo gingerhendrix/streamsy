@@ -1,18 +1,18 @@
 /**
- * Runnable coding-agent harness (real HTTP).
+ * Runnable scripted-bot harness (real HTTP).
  *
  * Blocks on its per-player turn stream, resumes from a file-persisted cursor,
  * fetches fresh `/decision`, and plays with the deterministic strategy in
- * `server/demo/agent.ts` until control passes / the game ends. Kill it and re-run with
+ * `server/demo/bot.ts` until control passes / the game ends. Kill it and re-run with
  * the same `CURSOR_FILE` to prove cursor-persisted resume across process restart.
  *
  *   BASE_URL=http://localhost:1339 GAME_ID=game_xxx PLAYER_ID=p_xxx \
- *   PLAYER_TOKEN=rsk_... CURSOR_FILE=./p1.cursor bun run scripts/agent.ts
+ *   PLAYER_TOKEN=rsk_... CURSOR_FILE=./p1.cursor bun run scripts/bot.ts
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { createAgent, type AgentState, type HttpCall } from "../server/demo/agent.ts";
+import { createBot, type BotState, type HttpCall } from "../server/demo/bot.ts";
 
 const baseUrl = process.env.BASE_URL ?? "http://localhost:1339";
 const gameId = process.env.GAME_ID ?? "";
@@ -35,10 +35,10 @@ const httpCall: HttpCall = async (method, path, opts = {}) => {
   return { status: res.status, body: await res.json().catch(() => ({})) };
 };
 
-function loadState(): AgentState {
+function loadState(): BotState {
   if (cursorFile && existsSync(cursorFile)) {
     try {
-      return JSON.parse(readFileSync(cursorFile, "utf8")) as AgentState;
+      return JSON.parse(readFileSync(cursorFile, "utf8")) as BotState;
     } catch {
       // ignore malformed cursor file
     }
@@ -46,13 +46,13 @@ function loadState(): AgentState {
   return {};
 }
 
-function saveState(state: AgentState): void {
+function saveState(state: BotState): void {
   if (cursorFile) writeFileSync(cursorFile, JSON.stringify(state));
 }
 
 async function main(): Promise<void> {
   const state = loadState();
-  const agent = createAgent({ call: httpCall, gameId, playerId, token, state });
+  const bot = createBot({ call: httpCall, gameId, playerId, token, state });
 
   for (;;) {
     const meta = await httpCall("GET", `/v1/games/${gameId}`);
@@ -67,21 +67,21 @@ async function main(): Promise<void> {
     }
 
     if (meta.body.activePlayerId === playerId) {
-      await agent.awaitTurn(0); // consume my wake
+      await bot.awaitTurn(0); // consume my wake
       saveState(state);
       console.log(`playing turn (round ${meta.body.round})`);
-      await agent.playTurn();
+      await bot.playTurn();
       saveState(state);
     } else {
       // Block on the turn stream until control passes to me.
-      const wake = await agent.awaitTurn(longPollMs);
+      const wake = await bot.awaitTurn(longPollMs);
       saveState(state);
       // `risk-demo-v2` asks this seat to act out of turn too. Defence is attempted
       // whenever canonical state says one is open, not only on a `DefenseAvailable`
       // wake: the wake is a hint, and a missed one must not leave a human attacker
       // watching the full 15-second timeout.
       if (wake?.type === "DefenseAvailable" || meta.body.pendingInteraction?.type === "defense") {
-        if (await agent.defend()) console.log("rolled defence");
+        if (await bot.defend()) console.log("rolled defence");
       }
     }
   }

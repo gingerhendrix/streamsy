@@ -10,7 +10,7 @@
  * Combat is two-staged. `AttackDeclared` records the attacker's roll and opens a
  * defence interrupt with a canonical deadline; a later `AttackResolved` records
  * the defender's roll and the outcome, whoever produced it (the human defender,
- * their agent, or the timeout resolver). The same discipline applies as to the
+ * their browser/HTTP controller, or the timeout resolver). The same discipline applies as to the
  * map: every die is generated once by the command service and recorded here, and
  * `declaredAt`/`defenseDeadlineAt` are injected clock readings recorded as facts.
  * Replay never rolls and never asks the current clock what should have happened.
@@ -19,8 +19,18 @@
 import type { GeneratedMap, GeneratorVersionV2, MapVersionV2, RulesetV2 } from "./map-v2.ts";
 import type { InitialTerritoryV2 } from "./setup-v2.ts";
 
-/** A seat may be played by a browser human or through the machine API. */
-export type PlayerController = "human" | "agent";
+/**
+ * Canonical controller vocabulary for newly written events.
+ *
+ * Historical builds wrote `"agent"` for the deterministic in-process bot. That
+ * legacy value is normalized to `"bot"` when canonical history is decoded.
+ * External coding agents are written explicitly as `"external-agent"`, avoiding
+ * any ambiguity when old games are replayed.
+ */
+export type PlayerController = "human" | "bot" | "external-agent";
+
+/** Controller spellings that may exist in persisted pre-migration events. */
+export type PersistedPlayerController = PlayerController | "agent";
 
 export interface GameCreatedV2 {
   type: "GameCreated";
@@ -95,7 +105,8 @@ export interface AttackDeclaredV2 {
 }
 
 /** Who produced the defender's roll. Never inferred by the UI — recorded here. */
-export type DefenseResolutionSource = "human" | "agent-auto" | "timeout";
+export type DefenseResolutionSource = "human" | "bot" | "agent" | "timeout";
+export type PersistedDefenseResolutionSource = DefenseResolutionSource | "agent-auto";
 
 /**
  * Stage two: the defender's dice and the outcome of the comparison.
@@ -184,3 +195,30 @@ export type GameEventV2 =
   | GameWonV2;
 
 export type GameEventV2Type = GameEventV2["type"];
+
+/**
+ * Boundary migration for canonical v2 history written before controller names
+ * distinguished deterministic bots from external coding agents.
+ *
+ * The migration is deliberately read-time and non-destructive: stored bytes and
+ * offsets remain untouched, while every fold/projection sees the current
+ * unambiguous vocabulary.
+ */
+export function normalizeGameEventV2(value: unknown): GameEventV2 {
+  const event = value as Record<string, unknown> & {
+    type?: string;
+    hostController?: PersistedPlayerController;
+    controller?: PersistedPlayerController;
+    resolutionSource?: PersistedDefenseResolutionSource;
+  };
+  if (event.type === "GameCreated" && event.hostController === "agent") {
+    return { ...event, hostController: "bot" } as unknown as GameEventV2;
+  }
+  if (event.type === "PlayerJoined" && event.controller === "agent") {
+    return { ...event, controller: "bot" } as unknown as GameEventV2;
+  }
+  if (event.type === "AttackResolved" && event.resolutionSource === "agent-auto") {
+    return { ...event, resolutionSource: "bot" } as unknown as GameEventV2;
+  }
+  return event as unknown as GameEventV2;
+}

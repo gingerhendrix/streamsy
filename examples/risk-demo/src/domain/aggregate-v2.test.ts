@@ -81,9 +81,9 @@ describe("v2 aggregate setup", () => {
   });
 
   it("records each player's controller", () => {
-    const game = startGameV2({ players: 2, controllers: ["human", "agent"] });
+    const game = startGameV2({ players: 3, controllers: ["human", "bot", "external-agent"] });
     const state = game.state();
-    expect(state.players.map((p) => p.controller)).toEqual(["human", "agent"]);
+    expect(state.players.map((p) => p.controller)).toEqual(["human", "bot", "external-agent"]);
   });
 });
 

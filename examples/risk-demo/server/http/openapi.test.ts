@@ -77,9 +77,24 @@ describe("published OpenAPI contract", () => {
     ]);
     expect(jsonSchemas.BoardV2.properties.combat.properties.resolutionSource.enum).toEqual([
       "human",
-      "agent-auto",
+      "bot",
+      "agent",
       "timeout",
     ]);
+  });
+
+  it("reserves the public agent controller for external harnesses and names bots explicitly", () => {
+    expect(jsonSchemas.SeatControllerInput.enum).toEqual(["human", "bot", "agent"]);
+    expect(jsonSchemas.SeatControllerInput.description).toContain("external coding-agent");
+    expect(
+      (openApiDocument.paths["/v1/games"].post.requestBody as any).content["application/json"]
+        .schema.$ref,
+    ).toBe("#/components/schemas/CreateGameRequest");
+    expect(
+      (openApiDocument.paths["/v1/games/{gameId}/players"].post.requestBody as any).content[
+        "application/json"
+      ].schema.$ref,
+    ).toBe("#/components/schemas/JoinGameRequest");
   });
 
   it("documents `roll-defense` as an out-of-turn legal action with a deadline", () => {

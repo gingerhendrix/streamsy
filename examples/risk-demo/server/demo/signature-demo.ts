@@ -5,8 +5,8 @@
  * that emits structured trace events for the accompanying article and returns a
  * machine-readable summary. It demonstrates, in order:
  *
- *   1. a durable game with two HTTP-only agent players + per-player turn streams;
- *   2. persisting/reloading an agent's notification cursor and continuing;
+ *   1. a durable game with two scripted HTTP bots + per-player turn streams;
+ *   2. persisting/reloading a bot's notification cursor and continuing;
  *   3. an accepted attack retained with its recorded dice + canonical ack;
  *   4. causal `syncedThrough(ack)` — the board catching up to an acked offset;
  *   5. an idempotent command retry (same commandId → duplicate);
@@ -14,9 +14,9 @@
  *   7. a crash injected immediately after a projection output commit, then
  *      recovery proving the transition was not double-applied;
  *   8. a fresh-generation rebuild verified + cut over, old generation retained;
- *   9. the agent-only game finishing with a winner + final watermark.
+ *   9. the bot-only game finishing with a winner + final watermark.
  *
- * Agent play uses ONLY the published HTTP resources; the crash + rebuild steps
+ * Bot play uses only the published HTTP resources; the crash + rebuild steps
  * drive the same real canonical stream through the replay-safe projection runtime.
  */
 
@@ -36,7 +36,7 @@ import {
 import { createBoardProjectionAdapter } from "../../src/board/board-projection.ts";
 import { createSeededRng } from "../../src/domain/rng.ts";
 import { buildApp } from "../http/app.ts";
-import { createAgent, type Agent, type HttpCall } from "./agent.ts";
+import { createBot, type Bot, type HttpCall } from "./bot.ts";
 import { readCanonical } from "../game/command-service.ts";
 import { rebuildBoardGeneration } from "../game/rebuild.ts";
 import { syncedThrough } from "../game/board-sync.ts";
@@ -255,7 +255,7 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
     return { status: res.status, body };
   };
 
-  // --- 1. durable game with two HTTP-only agents ---------------------------
+  // --- 1. durable game with two scripted HTTP bots -------------------------
   const created = await call("POST", "/v1/games", {
     body: { ruleset: "risk-demo-v1", name: "Ada", color: "red" },
   });
@@ -287,9 +287,9 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
     });
   }
 
-  const agents: Record<string, Agent> = {};
+  const bots: Record<string, Bot> = {};
   for (const id of players) {
-    agents[id] = createAgent({ call, gameId, playerId: id, token: tokenByPlayer[id]!, state: {} });
+    bots[id] = createBot({ call, gameId, playerId: id, token: tokenByPlayer[id]!, state: {} });
   }
 
   // Interleaved-demo state.
@@ -336,10 +336,10 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
       });
     }
 
-    // 2: persist + reload one agent's notification cursor, then continue.
+    // 2: persist + reload one bot's notification cursor, then continue.
     if (!cursorRestart && active === players[0] && guard >= 2) {
-      const savedCursor = agents[active]!.state.cursor;
-      agents[active] = createAgent({
+      const savedCursor = bots[active]!.state.cursor;
+      bots[active] = createBot({
         call,
         gameId,
         playerId: active,
@@ -347,15 +347,15 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
         state: { cursor: savedCursor }, // rebuilt from ONLY the persisted cursor
       });
       cursorRestart = { playerId: active, cursor: savedCursor, resumed: true };
-      emit("agent-cursor-restart", { playerId: active, cursor: savedCursor ?? null });
+      emit("bot-cursor-restart", { playerId: active, cursor: savedCursor ?? null });
     }
 
-    const agent = agents[active]!;
-    const wake = await agent.awaitTurn();
+    const bot = bots[active]!;
+    const wake = await bot.awaitTurn();
     emit("turn-wake", { playerId: active, round: meta.body.round, turnId: wake?.turnId ?? null });
 
     const acksBefore = captures.length;
-    await agent.playTurn();
+    await bot.playTurn();
     turnsPlayed += 1;
     const fresh = captures.slice(acksBefore);
 

@@ -5,7 +5,7 @@ import type { JsonCodec } from "@streamsy/json";
 
 import { buildTurnId } from "../../src/domain/aggregate.ts";
 import type { GameEvent } from "../../src/domain/events.ts";
-import type { GameEventV2 } from "../../src/domain/events-v2.ts";
+import { normalizeGameEventV2, type GameEventV2 } from "../../src/domain/events-v2.ts";
 import { eventStreamId, turnStreamId } from "./names.ts";
 
 export interface TurnNotification {
@@ -21,12 +21,12 @@ export interface TurnNotification {
 }
 
 /**
- * The `risk-demo-v2` out-of-turn wake: a defender — human *or* agent — has a
+ * The `risk-demo-v2` out-of-turn wake: any defender has a
  * combat waiting on their roll until `deadlineAt`.
  *
  * Like `TurnAvailable` this is a derived, rebuildable hint, not a correctness
- * channel. A browser learns about pending combat from projected state; an agent
- * harness uses this to auto-roll promptly. A wake that is never delivered costs
+ * channel. A browser learns about pending combat from projected state; a bot or
+ * external agent uses this to roll promptly. A wake that is never delivered costs
  * nothing beyond latency — the canonical timeout still resolves the attack.
  */
 export interface DefenseNotification {
@@ -58,7 +58,7 @@ interface OffsetEvent {
 
 const eventSchema: JsonCodec<AnyGameEvent> = {
   encode: (event) => event,
-  decode: (value) => value as AnyGameEvent,
+  decode: (value) => normalizeGameEventV2(value) as AnyGameEvent,
 };
 const notificationSchema: JsonCodec<PlayerActionNotification> = {
   encode: (notification) => notification,

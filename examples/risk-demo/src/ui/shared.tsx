@@ -11,7 +11,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import { friendlyError, type ApiErrorCode, type ApiErrorResponse } from "../application/api.ts";
-import type { PlayerController } from "../domain/events-v2.ts";
 import type { SyncStatus } from "./board-stream-db.ts";
 
 export interface Identity {
@@ -152,10 +151,8 @@ export function TopBar(props: { gameId: string; children: ReactNode }) {
 export function PlayerFields(props: {
   name: string;
   color: string;
-  controller?: PlayerController;
   onName(value: string): void;
   onColor(value: string): void;
-  onController?(value: PlayerController): void;
 }) {
   return (
     <div className="player-fields">
@@ -183,24 +180,6 @@ export function PlayerFields(props: {
           ))}
         </div>
       </fieldset>
-      {props.onController && (
-        <fieldset>
-          <legend>Seat</legend>
-          <div className="seat-toggle">
-            {(["human", "agent"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                className={props.controller === option ? "seat selected" : "seat"}
-                onClick={() => props.onController?.(option)}
-                aria-pressed={props.controller === option}
-              >
-                {option === "human" ? "Human" : "Agent"}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-      )}
     </div>
   );
 }

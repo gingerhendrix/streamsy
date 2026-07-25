@@ -25,6 +25,20 @@ import {
 } from "../v2-harness.ts";
 
 describe("risk-demo-v2 board projection surface", () => {
+  it("maps public agent seats to external control and keeps bots explicit", async () => {
+    const h = v2Harness();
+    const game = await createV2Game(h.app, {
+      controllers: ["agent", "bot"],
+      mapSeed: "controller-boundary",
+    });
+    const board = await boardFor(h.app, game);
+
+    expect(board.players.map((player: any) => player.controller)).toEqual([
+      "external-agent",
+      "bot",
+    ]);
+  });
+
   it("projects the map, roster totals, and current turn once the game starts", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { players: 3, mapSeed: "board-surface" });

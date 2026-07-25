@@ -1,9 +1,9 @@
 /**
- * The v2 agent policy, exercised on hand-built boards.
+ * The v2 scripted-bot policy, exercised on hand-built boards.
  *
  * The board that matters most here is the **turtle**: an opponent who never
  * attacks and stacks one unassailable fortress. That position froze a real
- * browser game for ~17 rounds — the agent poured every reinforcement into the
+ * browser game for ~17 rounds — the bot poured every reinforcement into the
  * border facing the fortress, could not attack out of it, and would not fortify
  * away from it — so each rule that breaks the freeze has a test that fails
  * against the old behaviour.
@@ -23,15 +23,15 @@ import {
   type StrategyTerritory,
 } from "./strategy-v2.ts";
 
-const AGENT = "agent";
+const BOT = "bot";
 const HUMAN = "human";
 
 /**
  * The turtled position, in miniature:
  *
- *   a1 (agent, 55) ── h1 (human, 99 fortress) ── h2 (human, 60)
+ *   a1 (bot, 55) ── h1 (human, 99 fortress) ── h2 (human, 60)
  *    │
- *   a2 (agent, 1) ── h3 (human, 1)
+ *   a2 (bot, 1) ── h3 (human, 1)
  *
  * `a1` is the most *exposed* country and the least useful one: two enemies, both
  * unbeatable. `a2` faces the only country on the map worth attacking.
@@ -51,8 +51,8 @@ const TURTLE_MAP: StrategyMap = {
 };
 
 const TURTLE_TERRITORIES: StrategyTerritory[] = [
-  { id: "a1", ownerId: AGENT, armies: 55 },
-  { id: "a2", ownerId: AGENT, armies: 1 },
+  { id: "a1", ownerId: BOT, armies: 55 },
+  { id: "a2", ownerId: BOT, armies: 1 },
   { id: "h1", ownerId: HUMAN, armies: 99 },
   { id: "h2", ownerId: HUMAN, armies: 60 },
   { id: "h3", ownerId: HUMAN, armies: 1 },
@@ -60,7 +60,7 @@ const TURTLE_TERRITORIES: StrategyTerritory[] = [
 
 const turtle = (overrides: Partial<Record<string, number>> = {}) =>
   strategyContext(
-    AGENT,
+    BOT,
     TURTLE_TERRITORIES.map((territory) => ({
       ...territory,
       armies: overrides[territory.id] ?? territory.armies,
@@ -97,10 +97,10 @@ describe("reinforcement against a turtle", () => {
 
   it("places somewhere legal even with no border at all", () => {
     const ctx = strategyContext(
-      AGENT,
+      BOT,
       [
-        { id: "a1", ownerId: AGENT, armies: 2 },
-        { id: "a2", ownerId: AGENT, armies: 2 },
+        { id: "a1", ownerId: BOT, armies: 2 },
+        { id: "a2", ownerId: BOT, armies: 2 },
       ],
       {
         territories: [
@@ -161,8 +161,8 @@ describe("fortify as the stalemate breaker", () => {
 
   it("prefers an interior garrison over a border stack when both are idle", () => {
     const ctx = strategyContext(
-      AGENT,
-      [{ id: "a0", ownerId: AGENT, armies: 6 }, ...TURTLE_TERRITORIES],
+      BOT,
+      [{ id: "a0", ownerId: BOT, armies: 6 }, ...TURTLE_TERRITORIES],
       {
         ...TURTLE_MAP,
         territories: [
@@ -183,10 +183,10 @@ describe("fortify as the stalemate breaker", () => {
 
   it("does not trade one stuck border for another", () => {
     const ctx = strategyContext(
-      AGENT,
+      BOT,
       [
-        { id: "a1", ownerId: AGENT, armies: 9 },
-        { id: "a2", ownerId: AGENT, armies: 2 },
+        { id: "a1", ownerId: BOT, armies: 9 },
+        { id: "a2", ownerId: BOT, armies: 2 },
         { id: "h1", ownerId: HUMAN, armies: 20 },
         { id: "h2", ownerId: HUMAN, armies: 30 },
       ],
@@ -219,10 +219,10 @@ describe("fortify as the stalemate breaker", () => {
 describe("occupation", () => {
   it("moves the minimum into a country with no enemy border left", () => {
     const ctx = strategyContext(
-      AGENT,
+      BOT,
       [
-        { id: "a1", ownerId: AGENT, armies: 9 },
-        { id: "a2", ownerId: AGENT, armies: 1 },
+        { id: "a1", ownerId: BOT, armies: 9 },
+        { id: "a2", ownerId: BOT, armies: 1 },
       ],
       {
         territories: [

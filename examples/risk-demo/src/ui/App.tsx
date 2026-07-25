@@ -11,7 +11,6 @@ import {
 } from "../application/api.ts";
 import type { GameStatus } from "../domain/aggregate.ts";
 import type { LegalAction } from "../application/legal-actions.ts";
-import type { PlayerController } from "../domain/events-v2.ts";
 import { TERRITORIES } from "../domain/map.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
@@ -87,7 +86,6 @@ export function App() {
   const [decision, setDecision] = useState<DecisionResponse | null>(null);
   const [name, setName] = useState("Player");
   const [color, setColor] = useState(COLORS[0]!);
-  const [controller, setController] = useState<PlayerController>("human");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const previousStatus = useRef<GameStatus | null>(null);
@@ -182,7 +180,7 @@ export function App() {
   const createGame = async () => {
     setBusy(true);
     const result = await api<CreateGameResponse>("POST", "/v1/games", {
-      body: { name, color, controller },
+      body: { name, color },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
@@ -300,14 +298,7 @@ export function App() {
             A procedurally generated hex map. Recorded dice. A board that rebuilds and synchronises
             live from a durable projection.
           </p>
-          <PlayerFields
-            name={name}
-            color={color}
-            controller={controller}
-            onName={setName}
-            onColor={setColor}
-            onController={setController}
-          />
+          <PlayerFields name={name} color={color} onName={setName} onColor={setColor} />
           <button className="primary big" onClick={createGame} disabled={busy}>
             {busy ? "Creating…" : "Create a game"}
           </button>
@@ -359,10 +350,8 @@ export function App() {
         refreshGame={refreshGame}
         name={name}
         color={color}
-        controller={controller}
         onName={setName}
         onColor={setColor}
-        onController={setController}
         onCopyInvite={copyInvite}
       />
     );

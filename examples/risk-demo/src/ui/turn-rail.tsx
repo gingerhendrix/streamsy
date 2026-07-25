@@ -15,6 +15,7 @@
  */
 
 import type { CSSProperties, ReactNode } from "react";
+import type { PlayerController } from "../domain/events-v2.ts";
 
 import type { ProjectedPlayerV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
 import type { GamePhaseV2 } from "../domain/aggregate-v2.ts";
@@ -132,7 +133,7 @@ export interface CombatCardProps {
   combat: CombatView;
   names: NameLookup;
   colorOf(playerId: string | undefined): string;
-  controllerOf(playerId: string | undefined): "human" | "agent" | undefined;
+  controllerOf(playerId: string | undefined): PlayerController | undefined;
   selfId?: string;
   mode: SeatMode | null;
   now: number;
@@ -150,7 +151,7 @@ export function CombatCard(props: CombatCardProps) {
   const pending = combat.status === "awaiting-defense";
   const pairs = combat.defenderRolls ? dicePairs(combat.attackerRolls, combat.defenderRolls) : null;
   const isDefender = props.mode === "defense" && combat.defenderId === props.selfId;
-  const defenderIsAgent = props.controllerOf(combat.defenderId) === "agent";
+  const defenderController = props.controllerOf(combat.defenderId);
 
   return (
     <section className="combat-card" aria-live="polite">
@@ -241,7 +242,11 @@ export function CombatCard(props: CombatCardProps) {
             </button>
           ) : (
             <p className="muted">
-              {defenderIsAgent ? "Agent is rolling…" : `Waiting for ${defenderName} to roll…`}
+              {defenderController === "external-agent"
+                ? "Agent is deciding…"
+                : defenderController === "bot"
+                  ? "Bot is rolling…"
+                  : `Waiting for ${defenderName} to roll…`}
             </p>
           )}
         </div>

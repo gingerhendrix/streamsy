@@ -30,12 +30,12 @@ describe("one-command demo helpers", () => {
     );
   });
 
-  it("showcases the v2 ruleset with two machine seats", () => {
+  it("honestly showcases the v2 ruleset with two scripted bots", () => {
     // Nobody is at the keyboard, so both seats must be able to answer a defence
     // interrupt as well as play their own turn.
     expect(DEMO_HOST_REQUEST.ruleset).toBe(RULESET_V2);
-    expect(DEMO_HOST_REQUEST.controller).toBe("agent");
-    expect(DEMO_GUEST_REQUEST.controller).toBe("agent");
+    expect(DEMO_HOST_REQUEST.controller).toBe("bot");
+    expect(DEMO_GUEST_REQUEST.controller).toBe("bot");
     expect(DEMO_GUEST_REQUEST.color).not.toBe(DEMO_HOST_REQUEST.color);
   });
 

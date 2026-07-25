@@ -31,13 +31,11 @@ import type {
 } from "../application/api.ts";
 import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
 import type { ProjectedHexV2, ProjectedMoveV2, ProjectedPlayerV2 } from "../board/projection-v2.ts";
-import type { PlayerController } from "../domain/events-v2.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
 import { useRiskBoardV2Stream } from "./board-stream-db.ts";
 import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
 import {
-  agentHarnessCommand,
   agentSeatUrl,
   moveDetailV2,
   moveTextV2,
@@ -86,10 +84,8 @@ export interface GameV2ScreenProps {
   refreshGame(): Promise<void>;
   name: string;
   color: string;
-  controller: PlayerController;
   onName(value: string): void;
   onColor(value: string): void;
-  onController(value: PlayerController): void;
   onCopyInvite(): Promise<void>;
 }
 
@@ -303,7 +299,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const joinGame = async () => {
     setBusy(true);
     const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
-      body: { name: props.name, color: props.color, controller: props.controller },
+      body: { name: props.name, color: props.color },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
@@ -319,7 +315,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     await props.refreshGame();
   };
 
-  /** Open an agent seat and hand back the command that drives it. */
+  /** Open an external-agent seat and hand back its private bootstrap URL. */
   const addAgentSeat = async () => {
     setBusy(true);
     const taken = new Set((board?.players ?? []).map((player) => player.color.toLowerCase()));
@@ -342,7 +338,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       token: result.body.capability,
     };
     setAgentSeats((seats) => [...seats, opened]);
-    setNotice("Agent seat opened — run the harness command to bring it online.");
+    setNotice("Agent seat opened — give its private URL to a coding-agent harness.");
   };
 
   // ---- map interaction ------------------------------------------------------
@@ -517,14 +513,12 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           identity={identity}
           name={props.name}
           color={props.color}
-          controller={props.controller}
           busy={busy}
           agentSeats={agentSeats}
           origin={window.location.origin}
           gameId={gameId}
           onName={props.onName}
           onColor={props.onColor}
-          onController={props.onController}
           onJoin={joinGame}
           onStart={startGame}
           onAddAgent={addAgentSeat}
@@ -1065,7 +1059,6 @@ function LobbyV2(props: {
   identity: Identity | null;
   name: string;
   color: string;
-  controller: PlayerController;
   busy: boolean;
   gameId: string;
   agentSeats: AgentSeat[];
@@ -1073,7 +1066,6 @@ function LobbyV2(props: {
   origin: string;
   onName(value: string): void;
   onColor(value: string): void;
-  onController(value: PlayerController): void;
   onJoin(): void;
   onStart(): void;
   onAddAgent(): void;
@@ -1108,7 +1100,11 @@ function LobbyV2(props: {
               <b>{player.name}</b>
               <small>
                 {playerRoleLabel(props.hostPlayerId, player.id)}
-                {player.controller === "agent" ? " · agent" : ""}
+                {player.controller === "external-agent"
+                  ? " · agent"
+                  : player.controller === "bot"
+                    ? " · bot"
+                    : ""}
                 {player.id === props.identity?.playerId ? " · you" : ""}
               </small>
             </div>
@@ -1127,10 +1123,8 @@ function LobbyV2(props: {
           <PlayerFields
             name={props.name}
             color={props.color}
-            controller={props.controller}
             onName={props.onName}
             onColor={props.onColor}
-            onController={props.onController}
           />
           <button
             className="primary"
@@ -1172,17 +1166,6 @@ function LobbyV2(props: {
               token: seat.token,
             })}
           </code>
-          <details>
-            <summary>Temporary repository-local debug command</summary>
-            <code>
-              {agentHarnessCommand({
-                origin: props.origin,
-                gameId: props.gameId,
-                playerId: seat.playerId,
-                token: seat.token,
-              })}
-            </code>
-          </details>
         </div>
       ))}
     </section>

@@ -358,6 +358,32 @@ const errorCodes = [
 ] as const;
 
 const schemas = {
+  SeatControllerInput: {
+    type: "string",
+    enum: ["human", "bot", "agent"],
+    description:
+      "`agent` reserves the seat for an external coding-agent harness using its private seat URL. `bot` is the repository's deterministic scripted policy. Persisted pre-migration `agent` events are read as `bot`.",
+  },
+  CreateGameRequest: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      color: { type: "string" },
+      commandId: { type: "string" },
+      ruleset: { enum: ["risk-demo-v1", "risk-demo-v2"] },
+      controller: { $ref: "#/components/schemas/SeatControllerInput" },
+      mapSeed: { type: "string" },
+    },
+  },
+  JoinGameRequest: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      color: { type: "string" },
+      commandId: { type: "string" },
+      controller: { $ref: "#/components/schemas/SeatControllerInput" },
+    },
+  },
   GameCommand: {
     type: "object",
     description: "risk-demo-v1 play command.",
@@ -380,7 +406,7 @@ const schemas = {
       commandId: {
         type: "string",
         description:
-          "Stable idempotency key. For a declaration it also becomes the attackId; agents use `agent-defense:<attackId>` for a roll.",
+          "Stable idempotency key. For a declaration it also becomes the attackId; a defence retry must preserve its original commandId and payload.",
       },
       turnId: { type: "string", description: "Observed turn precondition, e.g. round-2:p1." },
       action: commandActionV2,
@@ -469,7 +495,7 @@ const schemas = {
           id: { type: "string" },
           name: { type: "string" },
           color: { type: "string" },
-          controller: { enum: ["human", "agent"] },
+          controller: { enum: ["human", "bot", "external-agent"] },
         },
       },
       mode: { enum: ["active-turn", "defense", "waiting", "finished"] },
@@ -525,7 +551,7 @@ const schemas = {
               required: ["id", "controller", "eliminated"],
               properties: {
                 id: { type: "string" },
-                controller: { enum: ["human", "agent"] },
+                controller: { enum: ["human", "bot", "external-agent"] },
                 eliminated: { type: "boolean" },
               },
             },
@@ -590,7 +616,7 @@ const schemas = {
             id: { type: "string" },
             name: { type: "string" },
             color: { type: "string" },
-            controller: { enum: ["human", "agent"] },
+            controller: { enum: ["human", "bot", "external-agent"] },
             eliminated: { type: "boolean" },
             territoryCount: { type: "integer" },
             armyCount: { type: "integer" },
@@ -681,7 +707,7 @@ const schemas = {
           attackerLosses: { type: "integer" },
           defenderLosses: { type: "integer" },
           territoryCaptured: { type: "boolean" },
-          resolutionSource: { enum: ["human", "agent-auto", "timeout"] },
+          resolutionSource: { enum: ["human", "bot", "agent", "timeout"] },
           declaredAt: { type: "integer" },
           defenseDeadlineAt: { type: "integer" },
           minArmies: { type: "integer" },
@@ -736,6 +762,14 @@ function jsonResponse(schemaRef: string) {
   };
 }
 
+function jsonRequest(schemaRef: string) {
+  return {
+    content: {
+      "application/json": { schema: { $ref: `#/components/schemas/${schemaRef}` } },
+    },
+  };
+}
+
 function eitherRuleset(v1: string, v2: string) {
   return {
     content: {
@@ -761,12 +795,14 @@ export const openApiDocument = {
       post: {
         summary:
           'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a legacy fixed-map game.',
+        requestBody: jsonRequest("CreateGameRequest"),
         responses: { "201": jsonResponse("CommandAck") },
       },
     },
     "/v1/games/{gameId}/players": {
       post: {
         summary: "Join a game; returns the player and a one-time player capability.",
+        requestBody: jsonRequest("JoinGameRequest"),
         responses: { "201": jsonResponse("CommandAck") },
       },
     },

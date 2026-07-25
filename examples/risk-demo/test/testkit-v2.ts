@@ -86,7 +86,7 @@ export interface StartGameV2Options {
   rngSeed?: number;
   defenseTimeoutMs?: number;
   /** Player controllers, defaulting to all `human`. */
-  controllers?: ReadonlyArray<"human" | "agent">;
+  controllers?: ReadonlyArray<"human" | "bot" | "external-agent">;
   /**
    * Rewrite the canonical `GameStarted` allocation so a test can start from a
    * specific board — a near-final position, a disconnected holding, a continent

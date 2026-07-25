@@ -15,7 +15,7 @@
 
 import { compareOffsets } from "@streamsy/core";
 
-import type { HttpCall } from "../demo/agent.ts";
+import type { HttpCall } from "../demo/bot.ts";
 
 /** The board projection's causal watermark (from `GET /board`). */
 export interface BoardWatermark {

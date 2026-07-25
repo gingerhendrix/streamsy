@@ -3,7 +3,7 @@ import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core
 
 import { buildApp, type App } from "../../server/http/app.ts";
 import { createInMemoryStores } from "../../server/persistence/stores.ts";
-import { createAgent, type Agent, type HttpCall } from "../../server/demo/agent.ts";
+import { createBot, type Bot, type HttpCall } from "../../server/demo/bot.ts";
 import { createSeededRng } from "../../src/domain/rng.ts";
 
 const BASE = "http://risk.test";
@@ -55,12 +55,12 @@ async function setup(seed: number): Promise<Setup> {
   return { app, http, gameId, players: [hostId, joined.body.player.id], tokenByPlayer };
 }
 
-describe("coding-agent harness", () => {
+describe("scripted bot harness", () => {
   it("plays a complete game using only HTTP resources and turn streams", async () => {
     const s = await setup(1234);
-    const agents: Record<string, Agent> = {};
+    const bots: Record<string, Bot> = {};
     for (const playerId of s.players) {
-      agents[playerId] = createAgent({
+      bots[playerId] = createBot({
         call: s.http,
         gameId: s.gameId,
         playerId,
@@ -77,12 +77,12 @@ describe("coding-agent harness", () => {
         break;
       }
       const active: string = meta.body.activePlayerId;
-      const agent = agents[active]!;
-      // Turn-stream driven: the active agent observes a wake before acting.
-      const wake = await agent.awaitTurn();
+      const bot = bots[active]!;
+      // Turn-stream driven: the active bot observes a wake before acting.
+      const wake = await bot.awaitTurn();
       expect(wake).not.toBeNull();
       expect(wake!.playerId).toBe(active);
-      await agent.playTurn();
+      await bot.playTurn();
     }
 
     expect(finished).toBe(true);
@@ -100,8 +100,8 @@ describe("coding-agent harness", () => {
       [s.players[0]!]: {},
       [s.players[1]!]: {},
     };
-    const makeAgent = (playerId: string): Agent =>
-      createAgent({
+    const makeBot = (playerId: string): Bot =>
+      createBot({
         call: s.http,
         gameId: s.gameId,
         playerId,
@@ -119,13 +119,13 @@ describe("coding-agent harness", () => {
       }
       const active: string = meta.body.activePlayerId;
 
-      // Halfway through, drop all in-memory agents and rebuild them from ONLY the
+      // Halfway through, drop all in-memory bots and rebuild them from ONLY the
       // persisted cursor, proving resume does not miss the actionable turn.
       if (guard === 4) restarted = true;
-      const agent = makeAgent(active);
-      const wake = await agent.awaitTurn();
+      const bot = makeBot(active);
+      const wake = await bot.awaitTurn();
       expect(wake).not.toBeNull();
-      await agent.playTurn();
+      await bot.playTurn();
     }
 
     expect(restarted).toBe(true);
@@ -135,7 +135,7 @@ describe("coding-agent harness", () => {
   it("tolerates a duplicate wake poll without double-committing", async () => {
     const s = await setup(1234);
     const active = (await s.http("GET", `/v1/games/${s.gameId}`)).body.activePlayerId;
-    const agent = createAgent({
+    const bot = createBot({
       call: s.http,
       gameId: s.gameId,
       playerId: active,
@@ -143,21 +143,21 @@ describe("coding-agent harness", () => {
       state: {},
     });
 
-    const wake1 = await agent.awaitTurn();
+    const wake1 = await bot.awaitTurn();
     expect(wake1).not.toBeNull();
     // A second poll from a stale cursor re-observes wakes but must not corrupt play.
-    const staleAgent = createAgent({
+    const staleBot = createBot({
       call: s.http,
       gameId: s.gameId,
       playerId: active,
       token: s.tokenByPlayer[active]!,
       state: {}, // cursor at start → re-reads the same wake
     });
-    const wake2 = await staleAgent.awaitTurn();
+    const wake2 = await staleBot.awaitTurn();
     expect(wake2!.notificationId).toBe(wake1!.notificationId);
 
-    // The agent still plays its turn correctly and control eventually passes.
-    await agent.playTurn();
+    // The bot still plays its turn correctly and control eventually passes.
+    await bot.playTurn();
     const after = await s.http("GET", `/v1/games/${s.gameId}`);
     expect(after.body.activePlayerId).not.toBe(active);
   });
@@ -166,7 +166,7 @@ describe("coding-agent harness", () => {
     const s = await setup(1234);
     const active = (await s.http("GET", `/v1/games/${s.gameId}`)).body.activePlayerId;
     const committed: string[] = [];
-    const agent = createAgent({
+    const bot = createBot({
       call: s.http,
       gameId: s.gameId,
       playerId: active,
@@ -176,7 +176,7 @@ describe("coding-agent harness", () => {
       },
     });
 
-    await agent.playTurn();
+    await bot.playTurn();
 
     expect(committed[0]).toBe("reinforce");
     expect(committed.at(-1)).toBe("end-turn");
