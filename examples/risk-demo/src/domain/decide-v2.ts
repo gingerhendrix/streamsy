@@ -89,6 +89,17 @@ function accept(...events: GameEventV2[]): DecisionV2 {
   return { status: "accepted", events };
 }
 
+function territoryLabel(state: AggregateStateV2, territoryId: string): string {
+  const name = state.index?.territoryById.get(territoryId)?.name;
+  return name ? `${name} (${territoryId})` : territoryId;
+}
+
+function playerLabel(state: AggregateStateV2, playerId: string | undefined): string {
+  if (!playerId) return "the current player";
+  const player = playerV2(state, playerId);
+  return player ? `${player.name} (${player.id})` : playerId;
+}
+
 interface TurnScopedCommand {
   turnId: string;
   playerId: string;
@@ -114,25 +125,28 @@ function ensureTurn(
   if (pending?.type === "defense") {
     return {
       code: "PENDING_DEFENSE",
-      message: "An attack is waiting for the defender to roll.",
+      message: `Attack ${pending.attackId} is waiting for ${playerLabel(state, pending.defenderId)} to roll defense.`,
       attackId: pending.attackId,
     };
   }
   if (pending?.type === "occupation") {
     return {
       code: "PENDING_OCCUPATION",
-      message: "The captured country must be occupied first.",
+      message: `${territoryLabel(state, pending.to)} was captured and must be occupied before any other move.`,
       attackId: pending.attackId,
     };
   }
   if (command.playerId !== state.activePlayerId) {
-    return { code: "NOT_YOUR_TURN", message: "It is not this player's turn." };
+    return {
+      code: "NOT_YOUR_TURN",
+      message: `It is ${playerLabel(state, state.activePlayerId)}'s turn, not ${playerLabel(state, command.playerId)}'s.`,
+    };
   }
   const turnId = currentTurnIdV2(state);
   if (command.turnId !== turnId) {
     return {
       code: "STALE_TURN",
-      message: "The observed turn is no longer active.",
+      message: `Turn ${command.turnId} is stale; the current turn is ${turnId}.`,
       currentTurnId: turnId,
     };
   }
@@ -220,11 +234,17 @@ function decideReinforce(state: AggregateStateV2, command: ReinforceCommandV2): 
     return reject("UNKNOWN_TERRITORY", `Unknown territory: ${command.territoryId}.`);
   }
   if (state.territories[command.territoryId]?.ownerId !== command.playerId) {
-    return reject("ILLEGAL_ACTION", "Can only reinforce an owned territory.");
+    return reject(
+      "ILLEGAL_ACTION",
+      `${territoryLabel(state, command.territoryId)} is owned by ${playerLabel(state, state.territories[command.territoryId]?.ownerId)}, so ${playerLabel(state, command.playerId)} cannot reinforce it.`,
+    );
   }
   const remaining = state.reinforcement.remaining;
   if (!Number.isInteger(command.armies) || command.armies < 1 || command.armies > remaining) {
-    return reject("INSUFFICIENT_ARMIES", `Must place between 1 and ${remaining} armies.`);
+    return reject(
+      "INSUFFICIENT_ARMIES",
+      `You have ${remaining} reinforcements left; cannot place ${command.armies} on ${territoryLabel(state, command.territoryId)}.`,
+    );
   }
   return accept({
     type: "ArmiesReinforced",
@@ -261,13 +281,22 @@ function decideDeclareAttack(
   const from = state.territories[command.from]!;
   const to = state.territories[command.to]!;
   if (from.ownerId !== command.playerId) {
-    return reject("ILLEGAL_ACTION", "Can only attack from an owned territory.");
+    return reject(
+      "ILLEGAL_ACTION",
+      `${territoryLabel(state, command.from)} is owned by ${playerLabel(state, from.ownerId)} and cannot be used to attack by ${playerLabel(state, command.playerId)}.`,
+    );
   }
   if (to.ownerId === command.playerId) {
-    return reject("ILLEGAL_ACTION", "Cannot attack your own territory.");
+    return reject(
+      "ILLEGAL_ACTION",
+      `${territoryLabel(state, command.to)} is already yours and cannot be attacked from ${territoryLabel(state, command.from)}.`,
+    );
   }
   if (!areAdjacentV2(state.index, command.from, command.to)) {
-    return reject("NOT_ADJACENT", "Territories are not adjacent.");
+    return reject(
+      "NOT_ADJACENT",
+      `${territoryLabel(state, command.to)} cannot be attacked from ${territoryLabel(state, command.from)} because they are not neighbours.`,
+    );
   }
   if (
     !Number.isInteger(command.attackerDice) ||
@@ -279,7 +308,7 @@ function decideDeclareAttack(
   if (command.attackerDice > maxAttackerDice(from.armies)) {
     return reject(
       "INSUFFICIENT_ARMIES",
-      "Need at least one more army than dice, leaving one behind.",
+      `${territoryLabel(state, command.from)} has ${from.armies} armies, so it cannot attack with ${command.attackerDice} dice while leaving one army behind.`,
     );
   }
 
@@ -467,7 +496,7 @@ function decideOccupy(state: AggregateStateV2, command: OccupyTerritoryCommandV2
   ) {
     return reject(
       "INVALID_OCCUPATION",
-      `Must move between ${pending.minArmies} and ${pending.maxArmies} armies, leaving one behind.`,
+      `Move ${pending.minArmies}..${pending.maxArmies} armies from ${territoryLabel(state, pending.from)} into ${territoryLabel(state, pending.to)}; ${command.armies} is not allowed.`,
     );
   }
 
@@ -497,7 +526,11 @@ function decideOccupy(state: AggregateStateV2, command: OccupyTerritoryCommandV2
   }
   const attackerTerritoriesAfter = ownedByV2(state, command.playerId).length + 1;
   if (attackerTerritoriesAfter >= Object.keys(state.territories).length) {
-    events.push({ type: "GameWon", playerId: command.playerId, commandId: command.commandId });
+    events.push({
+      type: "GameWon",
+      playerId: command.playerId,
+      commandId: command.commandId,
+    });
   }
 
   return { status: "accepted", events };
@@ -519,16 +552,25 @@ function decideFortify(state: AggregateStateV2, command: FortifyCommandV2): Deci
   const from = state.territories[command.from]!;
   const to = state.territories[command.to]!;
   if (from.ownerId !== command.playerId || to.ownerId !== command.playerId) {
-    return reject("ILLEGAL_ACTION", "Can only fortify between two owned territories.");
+    return reject(
+      "ILLEGAL_ACTION",
+      `Fortification requires two owned territories; ${territoryLabel(state, command.from)} is owned by ${playerLabel(state, from.ownerId)} and ${territoryLabel(state, command.to)} by ${playerLabel(state, to.ownerId)}.`,
+    );
   }
   if (command.from === command.to) {
     return reject("ILLEGAL_ACTION", "Source and destination must differ.");
   }
   if (!friendlyReachable(state, command.playerId, command.from).includes(command.to)) {
-    return reject("NO_FRIENDLY_PATH", "No path of owned countries connects those territories.");
+    return reject(
+      "NO_FRIENDLY_PATH",
+      `${territoryLabel(state, command.to)} cannot be fortified from ${territoryLabel(state, command.from)} because no path of your territories connects them.`,
+    );
   }
   if (!Number.isInteger(command.armies) || command.armies < 1 || command.armies > from.armies - 1) {
-    return reject("INSUFFICIENT_ARMIES", "Must move 1..(armies-1), leaving one behind.");
+    return reject(
+      "INSUFFICIENT_ARMIES",
+      `${territoryLabel(state, command.from)} has ${from.armies} armies; cannot move ${command.armies} while leaving one behind.`,
+    );
   }
   return accept({
     type: "ArmiesFortified",

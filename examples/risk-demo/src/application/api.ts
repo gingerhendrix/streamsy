@@ -176,6 +176,8 @@ export interface JoinGameRequest {
 export interface JoinGameResponse {
   player: PlayerIdentity;
   capability: string;
+  /** Present when an external-agent seat is created; ready to paste into any fetch-capable agent. */
+  agentInstructions?: string;
   ack: CommandAck;
 }
 

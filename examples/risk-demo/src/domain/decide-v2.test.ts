@@ -204,18 +204,23 @@ describe("v2 declare-attack", () => {
         !state.index!.territoryById.get(setup.from)!.adjacentTerritoryIds.includes(t.id),
     );
     if (nonAdjacent) {
-      expectRejected(
-        game.submit({
-          type: "declare-attack",
-          commandId: nextCommandIdV2(),
-          turnId: game.turnId(),
-          playerId: setup.attackerId,
-          from: setup.from,
-          to: nonAdjacent.id,
-          attackerDice: 1,
-        }),
-        "NOT_ADJACENT",
-      );
+      const rejected = game.submit({
+        type: "declare-attack",
+        commandId: nextCommandIdV2(),
+        turnId: game.turnId(),
+        playerId: setup.attackerId,
+        from: setup.from,
+        to: nonAdjacent.id,
+        attackerDice: 1,
+      });
+      expectRejected(rejected, "NOT_ADJACENT");
+      if (rejected.status === "rejected") {
+        expect(rejected.error.message).toContain(
+          state.index!.territoryById.get(nonAdjacent.id)!.name,
+        );
+        expect(rejected.error.message).toContain(state.index!.territoryById.get(setup.from)!.name);
+        expect(rejected.error.message).toContain("not neighbours");
+      }
     }
     const ownNeighbour = state
       .index!.territoryById.get(setup.from)!

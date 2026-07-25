@@ -1384,15 +1384,18 @@ code {
   gap: 0.45rem;
   font-size: 0.78rem;
 }
-.agent-seat code {
-  display: block;
-  overflow-x: auto;
-  white-space: pre;
-  padding: 0.6rem 0.7rem;
+.agent-seat textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 0.7rem;
   border-radius: 9px;
   background: #0b131c;
   border: 1px solid var(--line);
-  font-size: 0.66rem;
+  font:
+    0.72rem/1.45 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   color: #bdebd9;
 }
 

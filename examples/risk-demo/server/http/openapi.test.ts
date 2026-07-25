@@ -24,6 +24,8 @@ describe("published OpenAPI contract", () => {
   it("is a 3.1 document with every route documented", () => {
     expect(openApiDocument.openapi).toMatch(/^3\.1/);
     expect(Object.keys(openApiDocument.paths).toSorted()).toEqual([
+      "/agent/{token}/state",
+      "/agent/{token}/wait",
       "/v1/games",
       "/v1/games/{gameId}",
       "/v1/games/{gameId}/board",
@@ -137,6 +139,13 @@ describe("published OpenAPI contract", () => {
       "TurnAvailable",
       "DefenseAvailable",
     ]);
+  });
+
+  it("documents cursor-free personalized state and wait resources", () => {
+    expect(openApiDocument.paths["/agent/{token}/state"].get.summary).toContain("named map");
+    const wait = openApiDocument.paths["/agent/{token}/wait"].get;
+    expect(wait.summary).toContain("Cursor-free");
+    expect(wait.parameters.map((parameter) => parameter.name)).toEqual(["token", "wait"]);
   });
 
   it("documents the turns cursor and bounded wait query parameters", () => {

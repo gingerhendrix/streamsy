@@ -10,6 +10,7 @@ import type {
   PlayCommandRequest,
 } from "../../src/application/api.ts";
 import { agentSeatBootstrapDocument } from "../../src/application/agent-seat-bootstrap.ts";
+import { agentPlayInstructions } from "../../src/application/agent-play.ts";
 import type { Command } from "../../src/domain/commands.ts";
 import type { CommandV2, GameActionV2, PlayCommandV2 } from "../../src/domain/commands-v2.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
@@ -54,6 +55,7 @@ import {
 import { openApiDocument } from "./openapi.ts";
 import { catchUpTurns, readTurns } from "../game/turn-notifier.ts";
 import type { AppContext } from "./app.ts";
+import type { CapabilityRow } from "../persistence/stores.ts";
 
 function randomId(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -67,10 +69,14 @@ function ackBody(result: AnyAccepted, turnId?: string): CommandAck {
   return { ...result, ...(turnId ? { turnId } : {}) };
 }
 
-function rejection(result: AnyRejected): Response {
+const STATE_GUIDANCE =
+  "Fetch your personalized state URL again and choose from its current legalMoves.";
+
+function rejection(result: AnyRejected, guideToState = false): Response {
   const code = result.error.code as ErrorCode;
   const extra = result.error.currentTurnId ? { currentTurnId: result.error.currentTurnId } : {};
-  return error(statusForCode(code), code, result.error.message, extra);
+  const message = guideToState ? `${result.error.message} ${STATE_GUIDANCE}` : result.error.message;
+  return error(statusForCode(code), code, message, extra);
 }
 
 function controllerOf(value: unknown): PlayerController {
@@ -202,9 +208,20 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (result.status === "rejected") return rejection(result);
     if (isRulesetV2(ruleset)) await syncBoardV2(gameId);
     else await syncBoard(gameId);
+    const capability = await ctx.issueAndStore(gameId, playerId, "player");
     const response: JoinGameResponse = {
       player: { id: playerId, name, color, role: "player" },
-      capability: await ctx.issueAndStore(gameId, playerId, "player"),
+      capability,
+      ...(controllerOf(body.controller) === "external-agent"
+        ? {
+            agentInstructions: agentPlayInstructions({
+              origin: new URL(request.url).origin,
+              gameId,
+              playerId,
+              token: capability,
+            }),
+          }
+        : {}),
       ack: ackBody(result),
     };
     return json(response, 201);
@@ -386,13 +403,18 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
 
     if (isRulesetV2(ruleset)) {
       const parsed = buildPlayCommandV2(raw, cap.playerId);
-      if (!parsed) return error(400, "BAD_REQUEST", "Body must be { commandId, turnId, action }.");
+      if (!parsed)
+        return error(
+          400,
+          "BAD_REQUEST",
+          `Body must be { commandId, turnId, action }. ${STATE_GUIDANCE}`,
+        );
       const result = await submitCommandV2(
         ctx.commandService,
         eventStreamId(gameId),
         parsed.command,
       );
-      if (result.status === "rejected") return rejection(result);
+      if (result.status === "rejected") return rejection(result, true);
       await afterCommand(gameId, ruleset);
       return json(ackBody(result, parsed.body.turnId));
     }
@@ -400,7 +422,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const parsed = buildPlayCommand(raw, cap.playerId);
     if (!parsed) return error(400, "BAD_REQUEST", "Body must be { commandId, turnId, action }.");
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), parsed.command);
-    if (result.status === "rejected") return rejection(result);
+    if (result.status === "rejected") return rejection(result, true);
     await afterCommand(gameId, ruleset);
     return json(ackBody(result, parsed.body.turnId));
   }
@@ -418,6 +440,122 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         signal: request.signal,
       }),
     );
+  }
+
+  async function personalizedCapability(
+    request: Request,
+    token: string,
+  ): Promise<CapabilityRow | Response> {
+    const headers = new Headers(request.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    const cap = await ctx.authenticateCapability(new Request(request, { headers }));
+    return cap ?? error(401, "UNAUTHORIZED", "This personalized seat URL has an invalid token.");
+  }
+
+  async function loadAgentState(cap: CapabilityRow) {
+    const game = ctx.stores.games.get(cap.gameId);
+    if (!game) return null;
+    if (!isRulesetV2(game.ruleset)) return null;
+    const board = await syncBoardV2(cap.gameId);
+    const { events } = await readCanonicalV2Through(
+      ctx.protocol,
+      eventStreamId(cap.gameId),
+      board.sourceThroughOffset,
+    );
+    const state = foldAggregateV2(events);
+    const decision = buildDecisionContextV2(state, cap.playerId, {
+      sourceStreamId: board.sourceStreamId,
+      sourceThroughOffset: board.sourceThroughOffset,
+      generation: board.generation,
+      boardStreamId: boardStreamId(cap.gameId, board.generation),
+    });
+    const playerName = (id: string | undefined) =>
+      id ? state.players.find((player) => player.id === id)?.name : undefined;
+    const territoryName = (id: string) => state.index?.territoryById.get(id)?.name ?? id;
+    return {
+      gameId: cap.gameId,
+      status: state.status,
+      player: decision.player,
+      winner: state.winnerId
+        ? {
+            id: state.winnerId,
+            name: playerName(state.winnerId) ?? state.winnerId,
+          }
+        : null,
+      turn: {
+        ...decision.turn,
+        activePlayerName: playerName(decision.turn.activePlayerId),
+      },
+      mode: decision.mode,
+      pendingInteraction: decision.pendingInteraction ?? null,
+      players: state.players.map(({ id, name, color, controller, eliminated }) => ({
+        id,
+        name,
+        color,
+        controller,
+        eliminated,
+      })),
+      territories: (state.map?.territories ?? []).map((territory) => {
+        const occupied = state.territories[territory.id];
+        return {
+          id: territory.id,
+          name: territory.name,
+          continentId: territory.continentId,
+          neighbours: territory.adjacentTerritoryIds.map((id) => ({
+            id,
+            name: territoryName(id),
+          })),
+          owner: occupied?.ownerId
+            ? {
+                id: occupied.ownerId,
+                name: playerName(occupied.ownerId) ?? occupied.ownerId,
+              }
+            : null,
+          armies: occupied?.armies ?? 0,
+        };
+      }),
+      legalMoves: decision.legalActions,
+    };
+  }
+
+  async function getAgentState(
+    request: Request,
+    params: Record<string, string>,
+  ): Promise<Response> {
+    const cap = await personalizedCapability(request, params.token!);
+    if (cap instanceof Response) return cap;
+    const state = await loadAgentState(cap);
+    if (!state)
+      return error(400, "BAD_REQUEST", "Personalized state is available for v2 games only.");
+    return json(state, 200, { "cache-control": "no-store" });
+  }
+
+  async function waitForAgent(request: Request, params: Record<string, string>): Promise<Response> {
+    const cap = await personalizedCapability(request, params.token!);
+    if (cap instanceof Response) return cap;
+    const current = await loadAgentState(cap);
+    if (!current)
+      return error(400, "BAD_REQUEST", "Personalized wait is available for v2 games only.");
+    const stateUrl = `/agent/${encodeURIComponent(params.token!)}/state`;
+    if (current.status === "finished" || current.legalMoves.length > 0) {
+      return json({ changed: true, reason: "actionable", stateUrl });
+    }
+
+    await catchUpTurns(ctx.protocol, cap.gameId);
+    const baseline = await readTurns(ctx.protocol, cap.gameId, cap.playerId);
+    const url = new URL(request.url);
+    const requested = Number.parseInt(url.searchParams.get("wait") ?? "30000", 10);
+    const waitMs = Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30_000)) : 30_000;
+    const result = await readTurns(ctx.protocol, cap.gameId, cap.playerId, {
+      cursor: baseline.cursor,
+      waitMs,
+      signal: request.signal,
+    });
+    return json({
+      changed: result.notifications.length > 0,
+      reason: result.notifications.length > 0 ? "notification" : "timeout",
+      stateUrl,
+    });
   }
 
   function getAgentSeatBootstrap(request: Request, params: Record<string, string>): Response {
@@ -445,21 +583,43 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   }
 
   return [
-    { method: "GET", pattern: "/", handler: () => json({ name: "risk-demo", ok: true }) },
-    { method: "GET", pattern: "/openapi.json", handler: () => json(openApiDocument) },
+    {
+      method: "GET",
+      pattern: "/",
+      handler: () => json({ name: "risk-demo", ok: true }),
+    },
+    {
+      method: "GET",
+      pattern: "/openapi.json",
+      handler: () => json(openApiDocument),
+    },
     {
       method: "GET",
       pattern: "/agent-seat/:gameId/:playerId",
       handler: getAgentSeatBootstrap,
     },
+    { method: "GET", pattern: "/agent/:token/state", handler: getAgentState },
+    { method: "GET", pattern: "/agent/:token/wait", handler: waitForAgent },
     { method: "POST", pattern: "/v1/games", handler: createGame },
     { method: "POST", pattern: "/v1/games/:gameId/players", handler: joinGame },
     { method: "POST", pattern: "/v1/games/:gameId/start", handler: startGame },
     { method: "GET", pattern: "/v1/games/:gameId", handler: getGame },
     { method: "GET", pattern: "/v1/games/:gameId/board", handler: getBoard },
-    { method: "GET", pattern: "/v1/games/:gameId/decision", handler: getDecision },
-    { method: "POST", pattern: "/v1/games/:gameId/commands", handler: postCommand },
-    { method: "GET", pattern: "/v1/games/:gameId/players/me/turns", handler: getTurns },
+    {
+      method: "GET",
+      pattern: "/v1/games/:gameId/decision",
+      handler: getDecision,
+    },
+    {
+      method: "POST",
+      pattern: "/v1/games/:gameId/commands",
+      handler: postCommand,
+    },
+    {
+      method: "GET",
+      pattern: "/v1/games/:gameId/players/me/turns",
+      handler: getTurns,
+    },
   ];
 }
 
@@ -497,7 +657,11 @@ function buildPlayCommand(
       body = {
         commandId,
         turnId,
-        action: { type: "reinforce", territoryId: action.territoryId, armies: action.armies },
+        action: {
+          type: "reinforce",
+          territoryId: action.territoryId,
+          armies: action.armies,
+        },
       };
       break;
     case "attack":
@@ -530,7 +694,12 @@ function buildPlayCommand(
       body = {
         commandId,
         turnId,
-        action: { type: "fortify", from: action.from, to: action.to, armies: action.armies },
+        action: {
+          type: "fortify",
+          from: action.from,
+          to: action.to,
+          armies: action.armies,
+        },
       };
       break;
     case "end-turn":
@@ -559,7 +728,11 @@ function buildPlayCommandV2(
   switch (action.type) {
     case "reinforce":
       if (typeof action.territoryId !== "string" || typeof action.armies !== "number") return null;
-      parsed = { type: "reinforce", territoryId: action.territoryId, armies: action.armies };
+      parsed = {
+        type: "reinforce",
+        territoryId: action.territoryId,
+        armies: action.armies,
+      };
       break;
     case "declare-attack":
       if (
@@ -582,7 +755,11 @@ function buildPlayCommandV2(
       break;
     case "occupy-territory":
       if (typeof action.attackId !== "string" || typeof action.armies !== "number") return null;
-      parsed = { type: "occupy-territory", attackId: action.attackId, armies: action.armies };
+      parsed = {
+        type: "occupy-territory",
+        attackId: action.attackId,
+        armies: action.armies,
+      };
       break;
     case "fortify":
       if (
@@ -592,7 +769,12 @@ function buildPlayCommandV2(
       ) {
         return null;
       }
-      parsed = { type: "fortify", from: action.from, to: action.to, armies: action.armies };
+      parsed = {
+        type: "fortify",
+        from: action.from,
+        to: action.to,
+        armies: action.armies,
+      };
       break;
     case "end-turn":
       parsed = { type: "end-turn" };

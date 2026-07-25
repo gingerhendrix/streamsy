@@ -74,7 +74,11 @@ const legalAction = {
         },
       },
     },
-    { type: "object", required: ["type"], properties: { type: { const: "end-turn" } } },
+    {
+      type: "object",
+      required: ["type"],
+      properties: { type: { const: "end-turn" } },
+    },
   ],
 } as const;
 
@@ -110,7 +114,11 @@ const commandAction = {
         armies: { type: "integer", minimum: 1 },
       },
     },
-    { type: "object", required: ["type"], properties: { type: { const: "end-turn" } } },
+    {
+      type: "object",
+      required: ["type"],
+      properties: { type: { const: "end-turn" } },
+    },
   ],
 } as const;
 
@@ -146,7 +154,10 @@ const commandActionV2 = {
       required: ["type", "attackId"],
       description:
         "The defender authorizes the roll; the dice count was fixed at declaration and is not chosen here. Legal out of turn.",
-      properties: { type: { const: "roll-defense" }, attackId: { type: "string" } },
+      properties: {
+        type: { const: "roll-defense" },
+        attackId: { type: "string" },
+      },
     },
     {
       type: "object",
@@ -169,7 +180,11 @@ const commandActionV2 = {
         armies: { type: "integer", minimum: 1 },
       },
     },
-    { type: "object", required: ["type"], properties: { type: { const: "end-turn" } } },
+    {
+      type: "object",
+      required: ["type"],
+      properties: { type: { const: "end-turn" } },
+    },
   ],
 } as const;
 
@@ -211,7 +226,10 @@ const legalActionV2 = {
         type: { const: "roll-defense" },
         attackId: { type: "string" },
         dice: { type: "integer" },
-        deadlineAt: { type: "integer", description: "Canonical epoch-ms defence deadline." },
+        deadlineAt: {
+          type: "integer",
+          description: "Canonical epoch-ms defence deadline.",
+        },
       },
     },
     {
@@ -243,7 +261,10 @@ const legalActionV2 = {
                 items: {
                   type: "object",
                   required: ["to", "maxArmies"],
-                  properties: { to: { type: "string" }, maxArmies: { type: "integer" } },
+                  properties: {
+                    to: { type: "string" },
+                    maxArmies: { type: "integer" },
+                  },
                 },
               },
             },
@@ -251,7 +272,11 @@ const legalActionV2 = {
         },
       },
     },
-    { type: "object", required: ["type"], properties: { type: { const: "end-turn" } } },
+    {
+      type: "object",
+      required: ["type"],
+      properties: { type: { const: "end-turn" } },
+    },
   ],
 } as const;
 
@@ -314,7 +339,10 @@ const reinforcement = {
       items: {
         type: "object",
         required: ["continentId", "bonus"],
-        properties: { continentId: { type: "string" }, bonus: { type: "integer" } },
+        properties: {
+          continentId: { type: "string" },
+          bonus: { type: "integer" },
+        },
       },
     },
     total: { type: "integer" },
@@ -393,7 +421,10 @@ const schemas = {
         type: "string",
         description: "Stable idempotency key; reuse on transport retry.",
       },
-      turnId: { type: "string", description: "Observed turn precondition, e.g. round-2:p1." },
+      turnId: {
+        type: "string",
+        description: "Observed turn precondition, e.g. round-2:p1.",
+      },
       action: commandAction,
     },
   },
@@ -408,7 +439,10 @@ const schemas = {
         description:
           "Stable idempotency key. For a declaration it also becomes the attackId; a defence retry must preserve its original commandId and payload.",
       },
-      turnId: { type: "string", description: "Observed turn precondition, e.g. round-2:p1." },
+      turnId: {
+        type: "string",
+        description: "Observed turn precondition, e.g. round-2:p1.",
+      },
       action: commandActionV2,
     },
   },
@@ -418,7 +452,10 @@ const schemas = {
     properties: {
       status: { enum: ["accepted", "duplicate"] },
       commandId: { type: "string" },
-      sourceStreamId: { type: "string", description: "Canonical event stream id." },
+      sourceStreamId: {
+        type: "string",
+        description: "Canonical event stream id.",
+      },
       sourceOffset: {
         type: "string",
         description: "Committed final canonical offset of the batch.",
@@ -455,7 +492,11 @@ const schemas = {
       player: {
         type: "object",
         required: ["id", "name", "color"],
-        properties: { id: { type: "string" }, name: { type: "string" }, color: { type: "string" } },
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          color: { type: "string" },
+        },
       },
       turn: {
         type: "object",
@@ -633,7 +674,9 @@ const schemas = {
             q: { type: "integer" },
             r: { type: "integer" },
             territoryId: { type: "string" },
-            terrain: { enum: ["plains", "forest", "hills", "desert", "mountains"] },
+            terrain: {
+              enum: ["plains", "forest", "hills", "desert", "mountains"],
+            },
           },
         },
       },
@@ -758,14 +801,20 @@ const schemas = {
 
 function jsonResponse(schemaRef: string) {
   return {
-    content: { "application/json": { schema: { $ref: `#/components/schemas/${schemaRef}` } } },
+    content: {
+      "application/json": {
+        schema: { $ref: `#/components/schemas/${schemaRef}` },
+      },
+    },
   };
 }
 
 function jsonRequest(schemaRef: string) {
   return {
     content: {
-      "application/json": { schema: { $ref: `#/components/schemas/${schemaRef}` } },
+      "application/json": {
+        schema: { $ref: `#/components/schemas/${schemaRef}` },
+      },
     },
   };
 }
@@ -791,6 +840,64 @@ export const openApiDocument = {
       "Event-sourced Risk. Commands validate against canonical history and CAS-append; the board is a separate causally-watermarked projection. Two rulesets are published side by side: `risk-demo-v1` (fixed six-country map, single-step attack) and `risk-demo-v2` (procedural hex map, two-stage combat with a timed defence interrupt). `GET /v1/games/{gameId}` reports which one a game speaks; the v1 `attack` action is never reinterpreted as the v2 `declare-attack` action.",
   },
   paths: {
+    "/agent/{token}/state": {
+      get: {
+        summary: "Compact personalized v2 state: named map, turn, and current legal moves.",
+        parameters: [
+          {
+            name: "token",
+            in: "path",
+            required: true,
+            description: "Player seat capability embedded in the personalized URL.",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["status", "player", "turn", "territories", "legalMoves"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/agent/{token}/wait": {
+      get: {
+        summary: "Cursor-free bounded wait; always refetch the personalized state after return.",
+        parameters: [
+          {
+            name: "token",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
+            name: "wait",
+            in: "query",
+            required: false,
+            description: "Bounded wait in milliseconds, capped at 30000.",
+            schema: { type: "integer", minimum: 0, maximum: 30000 },
+          },
+        ],
+        responses: {
+          "200": {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["changed", "reason", "stateUrl"],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     "/v1/games": {
       post: {
         summary:
@@ -827,7 +934,9 @@ export const openApiDocument = {
     "/v1/games/{gameId}/decision": {
       get: {
         summary: "Fresh agent decision context and legal actions (player capability).",
-        responses: { "200": eitherRuleset("DecisionContext", "DecisionContextV2") },
+        responses: {
+          "200": eitherRuleset("DecisionContext", "DecisionContextV2"),
+        },
       },
     },
     "/v1/games/{gameId}/commands": {

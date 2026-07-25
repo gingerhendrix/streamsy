@@ -52,6 +52,7 @@ export interface AppContext {
   commandService: CommandServiceDeps;
   defenseTimers: DefenseTimers;
   activeGeneration(gameId: string): string;
+  authenticateCapability(request: Request): Promise<CapabilityRow | null>;
   requireCapability(
     request: Request,
     gameId: string,
@@ -132,11 +133,15 @@ export function buildApp(deps: AppDeps): App {
     commandService,
     defenseTimers,
     activeGeneration: (gameId) => deps.stores.games.get(gameId)?.generation ?? BOARD_GENERATION,
+    authenticateCapability: authenticate,
     requireCapability,
     issueAndStore,
   };
   const api = createRouter(createRiskRoutes(context));
-  const streams = createReadOnlyHttpHandler({ protocol: deps.protocol, pathPrefix: "/streams" });
+  const streams = createReadOnlyHttpHandler({
+    protocol: deps.protocol,
+    pathPrefix: "/streams",
+  });
 
   return {
     defenseTimers,

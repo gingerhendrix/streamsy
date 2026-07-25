@@ -36,7 +36,6 @@ import { useRiskBoardV2Stream } from "./board-stream-db.ts";
 import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
 import {
-  agentSeatUrl,
   moveDetailV2,
   moveTextV2,
   revealPlan,
@@ -67,11 +66,11 @@ type Selection =
 /** Which manoeuvre a click means during the attack phase; both share sources. */
 type Intent = "attack" | "fortify";
 
-/** A seat opened for the machine harness, with the capability that drives it. */
+/** A seat opened for a user-supplied coding agent, with its pasteable instructions. */
 interface AgentSeat {
   playerId: string;
   name: string;
-  token: string;
+  instructions: string;
 }
 
 const AGENT_COLORS = ["#8b5cf6", "#22c1a5", "#d49b35", "#3b82f6"];
@@ -173,7 +172,13 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   // ---- combat + reveal ------------------------------------------------------
   const combat = useMemo(
     () =>
-      board ? combatView({ combat: board.combat, turn: board.turn, moves: board.moves }) : null,
+      board
+        ? combatView({
+            combat: board.combat,
+            turn: board.turn,
+            moves: board.moves,
+          })
+        : null,
     [board],
   );
 
@@ -182,7 +187,10 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   if (board && firstOffset.current === undefined) firstOffset.current = offset;
 
   const revealKey = combat ? `${combat.attackId}:${combat.status}` : null;
-  const [reveal, setReveal] = useState<RevealPlan>({ mode: "none", durationMs: 0 });
+  const [reveal, setReveal] = useState<RevealPlan>({
+    mode: "none",
+    durationMs: 0,
+  });
   useEffect(() => {
     if (!revealKey) return;
     // Keyed to the source offset: a throw already present in the first snapshot
@@ -335,10 +343,10 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     const opened: AgentSeat = {
       playerId: result.body.player.id,
       name: result.body.player.name,
-      token: result.body.capability,
+      instructions: result.body.agentInstructions ?? "Agent instructions were not returned.",
     };
     setAgentSeats((seats) => [...seats, opened]);
-    setNotice("Agent seat opened — give its private URL to a coding-agent harness.");
+    setNotice("Agent seat opened — copy its instructions into your coding-agent UI.");
   };
 
   // ---- map interaction ------------------------------------------------------
@@ -423,7 +431,11 @@ export function GameV2Screen(props: GameV2ScreenProps) {
         if (id === selection.from) return setSelection(null);
         const choice = attackChoicesFrom(selection.from).find((option) => option.to === id);
         if (choice) {
-          return setSelection({ ...selection, to: id, dice: choice.maxAttackerDice });
+          return setSelection({
+            ...selection,
+            to: id,
+            dice: choice.maxAttackerDice,
+          });
         }
       }
       if (selection?.kind === "fortify") {
@@ -432,7 +444,11 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           (option) => option.to === id,
         );
         if (reachable) {
-          return setSelection({ ...selection, to: id, armies: Math.min(1, reachable.maxArmies) });
+          return setSelection({
+            ...selection,
+            to: id,
+            armies: Math.min(1, reachable.maxArmies),
+          });
         }
       }
 
@@ -515,8 +531,6 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           color={props.color}
           busy={busy}
           agentSeats={agentSeats}
-          origin={window.location.origin}
-          gameId={gameId}
           onName={props.onName}
           onColor={props.onColor}
           onJoin={joinGame}
@@ -814,7 +828,11 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
           className="primary"
           disabled={props.busy}
           onClick={() =>
-            void props.submit({ type: "occupy-territory", attackId: action.attackId, armies })
+            void props.submit({
+              type: "occupy-territory",
+              attackId: action.attackId,
+              armies,
+            })
           }
         >
           Occupy with {armies}
@@ -1060,10 +1078,7 @@ function LobbyV2(props: {
   name: string;
   color: string;
   busy: boolean;
-  gameId: string;
   agentSeats: AgentSeat[];
-  /** Where this page was served from; the harness needs it as `BASE_URL` (D1). */
-  origin: string;
   onName(value: string): void;
   onColor(value: string): void;
   onJoin(): void;
@@ -1154,18 +1169,20 @@ function LobbyV2(props: {
       {props.agentSeats.map((seat) => (
         <div className="agent-seat" key={seat.playerId}>
           <b>{seat.name} is seated.</b>
-          <span>
-            Private agent-seat URL — secret; do not log, persist, share publicly, or include in
-            screenshots:
-          </span>
-          <code>
-            {agentSeatUrl({
-              origin: props.origin,
-              gameId: props.gameId,
-              playerId: seat.playerId,
-              token: seat.token,
-            })}
-          </code>
+          <span>Paste this complete block into your coding-agent UI:</span>
+          <textarea
+            readOnly
+            rows={14}
+            value={seat.instructions}
+            aria-label={`${seat.name} instructions`}
+          />
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(seat.instructions);
+            }}
+          >
+            Copy agent instructions
+          </button>
         </div>
       ))}
     </section>
