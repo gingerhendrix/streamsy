@@ -7,7 +7,11 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { actionIsLegal } from "../../external-agent/risk-seat.mjs";
+import {
+  actionIsLegal,
+  buildModelContract,
+  resolveModelSelection,
+} from "../../external-agent/risk-seat.mjs";
 
 const execFileAsync = promisify(execFile);
 const LAUNCHER = path.resolve("external-agent/risk-seat.mjs");
@@ -136,23 +140,23 @@ async function fakeHarness(root: string): Promise<string> {
     `#!/usr/bin/env node
 import { readFile, writeFile } from "node:fs/promises";
 const args = process.argv.slice(2);
-const prompt = args.find((arg) => arg.includes("Fresh decision:"));
+const prompt = args.find((arg) => arg.includes("Model contract:"));
 if (!prompt) process.exit(2);
 try {
-  await readFile("../session.json", "utf8");
+  await readFile("../../session.json", "utf8");
   process.exit(3);
 } catch {}
 if (process.env.FAKE_CONTROL_URL) await fetch(process.env.FAKE_CONTROL_URL);
-const raw = prompt.split("Fresh decision:\\n")[1].split("\\n\\nCurrent board:")[0];
-const decision = JSON.parse(raw);
-const legal = decision.legalActions[0];
-let action = null;
-if (legal?.type === "occupy-territory") {
-  action = { type: legal.type, attackId: legal.attackId, armies: legal.minArmies };
-} else if (legal?.type === "roll-defense") {
-  action = { type: legal.type, attackId: legal.attackId };
+const contract = JSON.parse(prompt.split("Model contract:\\n")[1]);
+const legal = contract.legalChoices[0];
+const corrective = prompt.includes("Your previous selection was rejected");
+let selection = { choiceIndex: legal?.choiceIndex ?? 0 };
+if (legal?.armies) selection.armies = legal.armies.min;
+if (legal?.attackerDice) selection.attackerDice = legal.attackerDice.min;
+if (process.env.FAKE_ALWAYS_INVALID || (process.env.FAKE_INVALID_FIRST && !corrective)) {
+  selection = { choiceIndex: legal?.choiceIndex ?? 0, armies: 999 };
 }
-const output = JSON.stringify({ action });
+const output = JSON.stringify({ selectionJson: JSON.stringify(selection) });
 const outputIndex = args.indexOf("-o");
 if (outputIndex >= 0) await writeFile(args[outputIndex + 1], output);
 else process.stdout.write(output + "\\n");
@@ -248,6 +252,49 @@ describe("repository-independent external-seat launcher", () => {
     );
   });
 
+  it("uses indexed model choices and resolves opaque identifiers inside the launcher", () => {
+    const legalActions = [
+      {
+        type: "occupy-territory",
+        attackId: "opaque-attack",
+        from: "opaque-a",
+        to: "opaque-b",
+        minArmies: 2,
+        maxArmies: 4,
+      },
+    ];
+    const contract = buildModelContract(baseDecision(legalActions), {
+      territories: [
+        { id: "opaque-a", ownerId: "player-a", armies: 5, continentId: "opaque-continent" },
+        { id: "opaque-b", ownerId: "player-b", armies: 0, continentId: "opaque-continent" },
+      ],
+      players: [
+        { id: "player-a", controller: "external", eliminated: false },
+        { id: "player-b", controller: "human", eliminated: false },
+      ],
+      reinforcement: {
+        base: 3,
+        continents: [{ continentId: "opaque-continent", bonus: 2 }],
+        total: 5,
+        remaining: 5,
+      },
+    });
+    expect(JSON.stringify(contract.observation)).not.toContain("opaque");
+    expect(contract.observation.legalChoices).toEqual([
+      {
+        choiceIndex: 0,
+        type: "occupy-territory",
+        fromTerritoryIndex: 0,
+        toTerritoryIndex: 1,
+        armies: { min: 2, max: 4 },
+      },
+    ]);
+    expect(resolveModelSelection({ choiceIndex: 0, armies: 3 }, contract.resolution)).toEqual({
+      ok: true,
+      action: { type: "occupy-territory", attackId: "opaque-attack", armies: 3 },
+    });
+  });
+
   for (const harness of ["claude", "codex"] as const) {
     it(`${harness} profile transports a model-selected mandatory occupation`, async () => {
       const root = await fixtureRoot();
@@ -284,6 +331,102 @@ describe("repository-independent external-seat launcher", () => {
       }
     });
   }
+
+  it("corrects one invalid mandatory occupation without an illegal POST", async () => {
+    const root = await fixtureRoot();
+    const state = {
+      decision: baseDecision([
+        {
+          type: "occupy-territory",
+          attackId: "attack",
+          from: "a",
+          to: "b",
+          minArmies: 2,
+          maxArmies: 4,
+        },
+      ]),
+      controlled: false,
+      dropFirstResponse: false,
+      commandBodies: [],
+      hangingResponses: [],
+    };
+    const fixture = await startFixture(state);
+    try {
+      const session = await initialize(root, fixture.origin);
+      const binary = await fakeHarness(root);
+      await run(session, "claude", binary, [], { FAKE_INVALID_FIRST: "1" });
+      expect(state.commandBodies).toHaveLength(1);
+      expect(JSON.parse(state.commandBodies[0]!).action).toEqual({
+        type: "occupy-territory",
+        attackId: "attack",
+        armies: 2,
+      });
+      const evidence = await readFile(path.join(session, "evidence.jsonl"), "utf8");
+      expect(evidence).toContain(
+        '"kind":"model-choice-rejected","attemptId":1,"corrective":false,"failureCode":"SCALAR_OUT_OF_BOUNDS","commandSubmitted":false',
+      );
+      expect(evidence).toContain(
+        '"kind":"model-attempt-started","attemptId":2,"corrective":true,"correctionForFailureCode":"SCALAR_OUT_OF_BOUNDS"',
+      );
+      const first = await readFile(
+        path.join(session, "model-attempts", "000001", "last-message.json"),
+        "utf8",
+      );
+      const second = await readFile(
+        path.join(session, "model-attempts", "000002", "last-message.json"),
+        "utf8",
+      );
+      expect(first).toContain('\\"armies\\":999');
+      expect(second).toContain('\\"armies\\":2');
+      expect(
+        JSON.parse(await readFile(path.join(session, "attempt-sequence.json"), "utf8")),
+      ).toEqual({ lastAttemptId: 2 });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("stops after one failed correction and never POSTs an illegal occupation", async () => {
+    const root = await fixtureRoot();
+    const state = {
+      decision: baseDecision([
+        {
+          type: "occupy-territory",
+          attackId: "attack",
+          from: "a",
+          to: "b",
+          minArmies: 2,
+          maxArmies: 4,
+        },
+      ]),
+      controlled: false,
+      dropFirstResponse: false,
+      commandBodies: [],
+      hangingResponses: [],
+    };
+    const fixture = await startFixture(state);
+    try {
+      const session = await initialize(root, fixture.origin);
+      const binary = await fakeHarness(root);
+      await expect(
+        run(session, "codex", binary, [], { FAKE_ALWAYS_INVALID: "1" }),
+      ).rejects.toMatchObject({
+        stderr: expect.stringContaining(
+          "codex model choice failed bounded correction: SCALAR_OUT_OF_BOUNDS",
+        ),
+      });
+      expect(state.commandBodies).toHaveLength(0);
+      const evidence = await readFile(path.join(session, "evidence.jsonl"), "utf8");
+      expect(evidence).toContain(
+        '"kind":"model-choice-rejected","attemptId":2,"corrective":true,"failureCode":"SCALAR_OUT_OF_BOUNDS","terminal":true,"commandSubmitted":false',
+      );
+      expect(
+        JSON.parse(await readFile(path.join(session, "attempt-sequence.json"), "utf8")),
+      ).toEqual({ lastAttemptId: 2 });
+    } finally {
+      await fixture.close();
+    }
+  });
 
   it("retries byte-equivalent command input and accepts the duplicate at one source offset", async () => {
     const root = await fixtureRoot();

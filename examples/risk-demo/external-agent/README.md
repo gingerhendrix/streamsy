@@ -32,6 +32,16 @@ no tools, no session persistence, safe mode, `dontAsk`, and a spend bound. Codex
 runs ephemerally, read-only, with approvals disabled and no repository
 requirement. Neither model working directory contains the capability.
 
+The model receives a compact board whose players, territories, and continents
+are numbered for that decision, plus a flattened `legalChoices` list. It returns
+one `choiceIndex` and only the named bounded scalar (`armies` or
+`attackerDice`) when that choice needs one. The launcher alone retains the
+resolution table and reconstructs the exact command identifiers. An invalid
+selection is never POSTed: after confirming that the decision is unchanged,
+the launcher makes at most one corrective model call with a stable redacted
+reason code, provided the configured decision bound has room for it. A second
+invalid selection terminates that launcher invocation.
+
 Pass `--cancel-file <path>` to make creation of that file abort an active wait or
 strategy subprocess. `SIGINT` and `SIGTERM` use the same cleanup path. Every HTTP
 wait, model call, command retry, decision count, command count, and total run has
@@ -41,3 +51,8 @@ The state directory contains the bearer capability and must remain private. The
 launcher creates it as `0700` and its state/evidence files as `0600`. Evidence
 contains hashes, action types, statuses, and counts—not capabilities,
 authorization headers, private URLs, or game/player/territory/attack IDs.
+Model calls use a state-local monotonic attempt sequence and separate protected
+`model-attempts/<attempt-id>/` directories, so a rejected attempt cannot be
+overwritten by a later corrective or restarted run. Curated evidence contains
+only the numeric attempt ID and stable redacted failure code; raw model output
+remains in the protected attempt directory.

@@ -214,8 +214,9 @@ The dependency-free Node launcher initializes from the private seat URL and runs
 fresh-decision/control-loop contract with either `--harness claude` or `--harness codex`; see
 [`external-agent/README.md`](external-agent/README.md) for the bounded invocation. It imports no
 game or bot code. The selected model chooses one strategy action from each fresh `legalActions`,
-while the launcher owns cursor waits, a second freshness check, stable byte-equivalent retries,
-redacted evidence, process bounds, and cancellation.
+through a compact indexed-choice contract, while the launcher owns identifier resolution, one
+bounded corrective prompt, cursor waits, a second freshness check, stable byte-equivalent retries,
+monotonic redacted evidence, process bounds, and cancellation.
 
 ### Controller compatibility
 

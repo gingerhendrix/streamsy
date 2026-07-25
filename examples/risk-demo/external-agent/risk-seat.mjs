@@ -18,6 +18,8 @@ import path from "node:path";
 const SESSION_FILE = "session.json";
 const EVIDENCE_FILE = "evidence.jsonl";
 const INFLIGHT_FILE = "inflight.json";
+const ATTEMPT_SEQUENCE_FILE = "attempt-sequence.json";
+const ATTEMPTS_DIRECTORY = "model-attempts";
 
 function fail(message, code = 1) {
   const error = new Error(message);
@@ -108,6 +110,246 @@ function decisionFingerprint(decision) {
 
 function samePrimitive(actual, expected) {
   return typeof actual === typeof expected && actual === expected;
+}
+
+function indexValues(values) {
+  return new Map(
+    [...new Set(values.filter((value) => typeof value === "string"))].map((id, i) => [id, i]),
+  );
+}
+
+function flattenLegalChoices(legalActions) {
+  const choices = [];
+  for (const legal of legalActions) {
+    switch (legal.type) {
+      case "reinforce":
+        for (const territoryId of legal.territoryIds) {
+          choices.push({
+            type: legal.type,
+            territoryId,
+            scalar: { name: "armies", min: legal.minArmies, max: legal.maxArmies },
+          });
+        }
+        break;
+      case "attack":
+      case "declare-attack":
+        for (const choice of legal.choices) {
+          choices.push({
+            type: legal.type,
+            from: choice.from,
+            to: choice.to,
+            scalar: { name: "attackerDice", min: 1, max: choice.maxAttackerDice },
+          });
+        }
+        break;
+      case "roll-defense":
+        choices.push({ type: legal.type, attackId: legal.attackId });
+        break;
+      case "occupy-territory":
+        choices.push({
+          type: legal.type,
+          attackId: legal.attackId,
+          from: legal.from,
+          to: legal.to,
+          scalar: { name: "armies", min: legal.minArmies, max: legal.maxArmies },
+        });
+        break;
+      case "fortify":
+        for (const choice of legal.choices) {
+          if (Array.isArray(choice.reachable)) {
+            for (const reachable of choice.reachable) {
+              choices.push({
+                type: legal.type,
+                from: choice.from,
+                to: reachable.to,
+                scalar: { name: "armies", min: 1, max: reachable.maxArmies },
+              });
+            }
+          } else {
+            choices.push({
+              type: legal.type,
+              from: choice.from,
+              to: choice.to,
+              scalar: { name: "armies", min: 1, max: choice.maxArmies },
+            });
+          }
+        }
+        break;
+      case "end-turn":
+        choices.push({ type: legal.type });
+        break;
+    }
+  }
+  return choices;
+}
+
+/**
+ * Build a compact model-facing view. Canonical identifiers remain in the
+ * launcher-only resolution table; the model sees stable indexes for this
+ * decision and only the scalar bounds it must choose within.
+ */
+export function buildModelContract(decision, board) {
+  const resolution = flattenLegalChoices(decision.legalActions);
+  const territoryIds = [
+    ...(board.territories ?? []).map((territory) => territory.id),
+    ...resolution.flatMap((choice) => [choice.territoryId, choice.from, choice.to]),
+  ];
+  const playerIds = [
+    ...(board.players ?? []).map((player) => player.id),
+    decision.player?.id,
+    decision.turn?.activePlayerId,
+  ];
+  const continentIds = [
+    ...(board.continents ?? []).map((continent) => continent.id),
+    ...(board.territories ?? []).map((territory) => territory.continentId),
+  ];
+  const territories = indexValues(territoryIds);
+  const players = indexValues(playerIds);
+  const continents = indexValues(continentIds);
+  const modelReinforcement = (reinforcement) =>
+    reinforcement && typeof reinforcement === "object"
+      ? {
+          base: reinforcement.base,
+          continents: (reinforcement.continents ?? []).map((bonus) => ({
+            continentIndex: continents.get(bonus.continentId),
+            bonus: bonus.bonus,
+          })),
+          total: reinforcement.total,
+          remaining: reinforcement.remaining,
+        }
+      : undefined;
+  const selectionChoices = resolution.map((choice, choiceIndex) => ({
+    choiceIndex,
+    type: choice.type,
+    ...(choice.territoryId === undefined
+      ? {}
+      : { territoryIndex: territories.get(choice.territoryId) }),
+    ...(choice.from === undefined ? {} : { fromTerritoryIndex: territories.get(choice.from) }),
+    ...(choice.to === undefined ? {} : { toTerritoryIndex: territories.get(choice.to) }),
+    ...(choice.scalar === undefined
+      ? {}
+      : { [choice.scalar.name]: { min: choice.scalar.min, max: choice.scalar.max } }),
+  }));
+  return {
+    observation: {
+      mode: decision.mode,
+      turn: {
+        round: decision.turn?.round,
+        phase: decision.turn?.phase,
+        reinforcement: modelReinforcement(decision.turn?.reinforcement),
+        activePlayerIndex: players.get(decision.turn?.activePlayerId),
+      },
+      selfPlayerIndex: players.get(decision.player?.id),
+      board: {
+        status: board.status,
+        phase: board.phase,
+        round: board.round,
+        activePlayerIndex: players.get(board.activePlayerId),
+        players: (board.players ?? []).map((player) => ({
+          playerIndex: players.get(player.id),
+          controller: player.controller,
+          eliminated: player.eliminated,
+          ...(player.remainingArmies === undefined
+            ? {}
+            : { remainingArmies: player.remainingArmies }),
+        })),
+        territories: (board.territories ?? []).map((territory) => ({
+          territoryIndex: territories.get(territory.id),
+          ownerPlayerIndex: players.get(territory.ownerId),
+          armies: territory.armies,
+          continentIndex: continents.get(territory.continentId),
+          ...(Array.isArray(territory.adjacentTerritoryIds)
+            ? {
+                adjacentTerritoryIndexes: territory.adjacentTerritoryIds.map((id) =>
+                  territories.get(id),
+                ),
+              }
+            : {}),
+        })),
+        continents: (board.continents ?? []).map((continent) => ({
+          continentIndex: continents.get(continent.id),
+          territoryIndexes: continent.territoryIds.map((id) => territories.get(id)),
+          reinforcementBonus: continent.reinforcementBonus,
+          controllerPlayerIndex: players.get(continent.controllerId),
+        })),
+        reinforcement: modelReinforcement(board.reinforcement),
+      },
+      legalChoices: selectionChoices,
+    },
+    resolution,
+  };
+}
+
+function exactKeys(value, expected) {
+  return (
+    Object.keys(value).length === expected.length &&
+    expected.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+/** Resolve a model selection without accepting or reproducing canonical IDs. */
+export function resolveModelSelection(selection, resolution) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+    return { ok: false, reason: "CHOICE_NOT_OBJECT" };
+  }
+  if (!Number.isInteger(selection.choiceIndex)) {
+    return { ok: false, reason: "CHOICE_INDEX_INVALID" };
+  }
+  const choice = resolution[selection.choiceIndex];
+  if (!choice) return { ok: false, reason: "CHOICE_INDEX_UNKNOWN" };
+  const scalarName = choice.scalar?.name;
+  const expectedKeys = scalarName ? ["choiceIndex", scalarName] : ["choiceIndex"];
+  if (!exactKeys(selection, expectedKeys)) {
+    return { ok: false, reason: "CHOICE_FIELDS_INVALID" };
+  }
+  if (scalarName && !Number.isInteger(selection[scalarName])) {
+    return { ok: false, reason: "SCALAR_INVALID" };
+  }
+  if (
+    scalarName &&
+    (selection[scalarName] < choice.scalar.min || selection[scalarName] > choice.scalar.max)
+  ) {
+    return { ok: false, reason: "SCALAR_OUT_OF_BOUNDS" };
+  }
+  switch (choice.type) {
+    case "reinforce":
+      return {
+        ok: true,
+        action: { type: choice.type, territoryId: choice.territoryId, armies: selection.armies },
+      };
+    case "attack":
+    case "declare-attack":
+      return {
+        ok: true,
+        action: {
+          type: choice.type,
+          from: choice.from,
+          to: choice.to,
+          attackerDice: selection.attackerDice,
+        },
+      };
+    case "roll-defense":
+      return { ok: true, action: { type: choice.type, attackId: choice.attackId } };
+    case "occupy-territory":
+      return {
+        ok: true,
+        action: { type: choice.type, attackId: choice.attackId, armies: selection.armies },
+      };
+    case "fortify":
+      return {
+        ok: true,
+        action: {
+          type: choice.type,
+          from: choice.from,
+          to: choice.to,
+          armies: selection.armies,
+        },
+      };
+    case "end-turn":
+      return { ok: true, action: { type: choice.type } };
+    default:
+      return { ok: false, reason: "CHOICE_TYPE_UNSUPPORTED" };
+  }
 }
 
 /** Validate transport shape against the server-published legal action space. */
@@ -276,18 +518,15 @@ async function initialize(options) {
   process.stdout.write(`${JSON.stringify({ status: "initialized", origin: privateUrl.origin })}\n`);
 }
 
-function strategyPrompt(decision, board) {
+function strategyPrompt(contract, correctionReason) {
   return `You are choosing exactly one strategic action for a Streamsy Risk seat.
-Return only JSON matching {"actionJson":"<one JSON action object encoded as a string>"}.
-For example: {"actionJson":"{\\"type\\":\\"end-turn\\"}"}. Do not use tools, inspect files, or discuss the choice.
-Choose only an action expressible by legalActions, including every listed bound and identifier.
-Mandatory occupation and out-of-turn defence are actionable. If legalActions is empty, use "null" as actionJson.
-
-Fresh decision:
-${JSON.stringify(decision)}
-
-Current board:
-${JSON.stringify(board)}`;
+Return only JSON matching {"selectionJson":"<one JSON selection object encoded as a string>"}.
+For example: {"selectionJson":"{\\"choiceIndex\\":0,\\"armies\\":2}"}. Do not use tools, inspect files, or discuss the choice.
+Choose one listed legalChoices choiceIndex. Include only choiceIndex and the bounded scalar named by that choice, if any.
+Mandatory occupation and out-of-turn defence are actionable.
+${correctionReason ? `Your previous selection was rejected with ${correctionReason}. Correct it once using this unchanged fresh contract.\n` : ""}
+Model contract:
+${JSON.stringify(contract)}`;
 }
 
 function firstJsonObject(text) {
@@ -347,17 +586,38 @@ async function runChild(command, args, { cwd, timeoutMs, outputFile, signal }) {
   return { ...result, stdout, stderr, timedOut: result.signal === "SIGTERM" && !signal.aborted };
 }
 
-async function chooseAction(harness, prompt, directory, timeoutMs, budget, signal) {
-  const modelDirectory = path.join(directory, "model");
+async function nextAttemptId(directory) {
+  const file = path.join(directory, ATTEMPT_SEQUENCE_FILE);
+  let previous = 0;
+  try {
+    const stored = JSON.parse(await readFile(file, "utf8"));
+    if (!Number.isSafeInteger(stored.lastAttemptId) || stored.lastAttemptId < 0) {
+      fail("invalid model attempt sequence");
+    }
+    previous = stored.lastAttemptId;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const attemptId = previous + 1;
+  await atomicJson(file, { lastAttemptId: attemptId });
+  return attemptId;
+}
+
+async function chooseSelection(harness, prompt, directory, timeoutMs, budget, signal, attemptId) {
+  const modelDirectory = path.join(
+    directory,
+    ATTEMPTS_DIRECTORY,
+    String(attemptId).padStart(6, "0"),
+  );
   const sessionFile = path.join(directory, SESSION_FILE);
   await ensureStateDir(modelDirectory);
   const outputFile = path.join(modelDirectory, "last-message.json");
   const schema = {
     type: "object",
     properties: {
-      actionJson: { type: "string" },
+      selectionJson: { type: "string" },
     },
-    required: ["actionJson"],
+    required: ["selectionJson"],
     additionalProperties: false,
   };
   const schemaFile = path.join(modelDirectory, "choice-schema.json");
@@ -424,12 +684,16 @@ async function chooseAction(harness, prompt, directory, timeoutMs, budget, signa
   if (result.timedOut) fail(`${harness} strategy subprocess timed out`);
   if (result.code !== 0) fail(`${harness} strategy subprocess exited ${result.code}`);
   const json = firstJsonObject(result.stdout);
-  if (!json) fail(`${harness} did not return a JSON action`);
-  let choice = JSON.parse(json);
-  for (let depth = 0; depth < 3 && typeof choice?.actionJson === "string"; depth += 1) {
-    choice = JSON.parse(choice.actionJson);
+  if (!json) return { failureCode: "MODEL_OUTPUT_NOT_JSON" };
+  try {
+    let choice = JSON.parse(json);
+    for (let depth = 0; depth < 3 && typeof choice?.selectionJson === "string"; depth += 1) {
+      choice = JSON.parse(choice.selectionJson);
+    }
+    return { selection: choice?.selection ?? choice };
+  } catch {
+    return { failureCode: "MODEL_SELECTION_JSON_INVALID" };
   }
-  return choice?.action ?? choice;
 }
 
 function optionsExecutable(environmentName, fallback) {
@@ -619,20 +883,86 @@ async function runLoop(options) {
       const board = await fetchJson(urls.board, {}, requestTimeoutMs, controller.signal);
       if (board.status !== 200) fail(`board returned HTTP ${board.status}`);
       const fingerprint = decisionFingerprint(observed.body);
-      const action = await chooseAction(
+      let modelContract = buildModelContract(observed.body, board.body);
+      let attemptId = await nextAttemptId(directory);
+      await appendEvidence(directory, "model-attempt-started", { attemptId, corrective: false });
+      let modelResult = await chooseSelection(
         harness,
-        strategyPrompt(observed.body, board.body),
+        strategyPrompt(modelContract.observation),
         directory,
         modelTimeoutMs,
         budget,
         controller.signal,
+        attemptId,
       );
-      if (!actionIsLegal(action, observed.body.legalActions)) {
-        await appendEvidence(directory, "illegal-model-choice", {
-          actionType: action?.type ?? null,
+      let resolved = modelResult.failureCode
+        ? { ok: false, reason: modelResult.failureCode }
+        : resolveModelSelection(modelResult.selection, modelContract.resolution);
+      if (!resolved.ok) {
+        await appendEvidence(directory, "model-choice-rejected", {
+          attemptId,
+          corrective: false,
+          failureCode: resolved.reason,
+          commandSubmitted: false,
         });
-        fail(`${harness} chose an action outside legalActions`);
+        const correctionDecision = await fetchJson(
+          urls.decision,
+          { headers: authorizedHeaders(session) },
+          requestTimeoutMs,
+          controller.signal,
+        );
+        if (correctionDecision.status !== 200) {
+          fail(`correction decision returned HTTP ${correctionDecision.status}`);
+        }
+        if (decisionFingerprint(correctionDecision.body) !== fingerprint) {
+          await appendEvidence(directory, "stale-choice-discarded", {
+            attemptId,
+            failureCode: "DECISION_CHANGED_BEFORE_CORRECTION",
+            commandSubmitted: false,
+          });
+          continue;
+        }
+        if (decisions >= maxDecisions) {
+          await appendEvidence(directory, "model-correction-skipped", {
+            attemptId,
+            failureCode: "CORRECTION_DECISION_BOUND",
+            terminal: true,
+            commandSubmitted: false,
+          });
+          fail(`${harness} model correction would exceed the decision bound`);
+        }
+        decisions += 1;
+        modelContract = buildModelContract(correctionDecision.body, board.body);
+        attemptId = await nextAttemptId(directory);
+        await appendEvidence(directory, "model-attempt-started", {
+          attemptId,
+          corrective: true,
+          correctionForFailureCode: resolved.reason,
+        });
+        modelResult = await chooseSelection(
+          harness,
+          strategyPrompt(modelContract.observation, resolved.reason),
+          directory,
+          modelTimeoutMs,
+          budget,
+          controller.signal,
+          attemptId,
+        );
+        resolved = modelResult.failureCode
+          ? { ok: false, reason: modelResult.failureCode }
+          : resolveModelSelection(modelResult.selection, modelContract.resolution);
+        if (!resolved.ok) {
+          await appendEvidence(directory, "model-choice-rejected", {
+            attemptId,
+            corrective: true,
+            failureCode: resolved.reason,
+            terminal: true,
+            commandSubmitted: false,
+          });
+          fail(`${harness} model choice failed bounded correction: ${resolved.reason}`);
+        }
       }
+      const action = resolved.action;
 
       const fresh = await fetchJson(
         urls.decision,
@@ -643,6 +973,7 @@ async function runLoop(options) {
       if (fresh.status !== 200) fail(`freshness decision returned HTTP ${fresh.status}`);
       if (decisionFingerprint(fresh.body) !== fingerprint) {
         await appendEvidence(directory, "stale-choice-discarded", {
+          attemptId,
           actionType: action.type,
           commandSubmitted: false,
         });
