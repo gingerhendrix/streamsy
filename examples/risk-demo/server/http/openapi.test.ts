@@ -123,4 +123,15 @@ describe("published OpenAPI contract", () => {
       "DefenseAvailable",
     ]);
   });
+
+  it("documents the turns cursor and bounded wait query parameters", () => {
+    const parameters = openApiDocument.paths["/v1/games/{gameId}/players/me/turns"].get.parameters;
+    expect(parameters.map((parameter) => parameter.name)).toEqual(["offset", "wait"]);
+    expect(parameters[0]).toMatchObject({ in: "query", required: false });
+    expect(parameters[1]).toMatchObject({
+      in: "query",
+      required: false,
+      schema: { type: "integer", minimum: 0 },
+    });
+  });
 });

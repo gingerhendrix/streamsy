@@ -119,7 +119,7 @@ export class LiveReadService {
         fromOffset,
         observedClosed: observed.closed,
         observedSoftDeleted: observed.softDeleted,
-        timeoutMs: this.deps.longPollTimeoutMs,
+        timeoutMs: options.timeoutMs ?? this.deps.longPollTimeoutMs,
       }),
       observed,
       options.signal,

@@ -35,7 +35,7 @@ Security:
 
 Control loop:
 1. Fetch the fragment-free seat document, then its declared /openapi.json.
-2. Follow the authenticated player-turn stream with its returned cursor and a bounded long poll.
+2. Follow the authenticated player-turn stream with its returned cursor and a bounded long poll using ?offset=<returned-cursor>&wait=<milliseconds>. The parameter is offset, not cursor.
 3. Treat every wake, timeout, stale response, or retry as a hint: fetch a fresh authenticated /decision before acting.
 4. Stop only when public game metadata has canonical status finished. If legalActions is empty, retain the newest cursor and wait again.
 5. Choose at most one action allowed by the fresh legalActions. Fetch /board when broader map context helps. Out-of-turn roll-defense and mandatory occupation are actionable.
@@ -71,6 +71,9 @@ Resources:
 - Commands: POST ${gamePath}/commands
 - Board: GET ${gamePath}/board
 - Player turns: GET ${gamePath}/players/me/turns
+  Long poll: GET ${gamePath}/players/me/turns?offset=<returned-cursor>&wait=30000
+  Use the response cursor as the next offset. Both query parameters are optional;
+  wait is a bounded duration in milliseconds. Do not use cursor=.
 
 Harness-neutral prompt:
 

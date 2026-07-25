@@ -78,6 +78,11 @@ export interface ReadLiveOptions {
   mode: "long-poll" | "sse";
   cursor?: string;
   signal?: AbortSignal;
+  /**
+   * Maximum time to wait for a change. Defaults to the protocol-level
+   * `longPollTimeoutMs`; callers may override it for one bounded read.
+   */
+  timeoutMs?: number;
 }
 
 // === Protocol Outputs ===

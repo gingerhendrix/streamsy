@@ -807,6 +807,24 @@ export const openApiDocument = {
     "/v1/games/{gameId}/players/me/turns": {
       get: {
         summary: "Follow this player's durable action stream (player capability).",
+        parameters: [
+          {
+            name: "offset",
+            in: "query",
+            required: false,
+            description:
+              "Opaque cursor returned by the previous turns response. Omit for the initial read.",
+            schema: { type: "string" },
+          },
+          {
+            name: "wait",
+            in: "query",
+            required: false,
+            description:
+              "Maximum long-poll duration in milliseconds. Omit or use 0 for an immediate read.",
+            schema: { type: "integer", minimum: 0 },
+          },
+        ],
         responses: { "200": jsonResponse("PlayerActionNotification") },
       },
     },

@@ -76,7 +76,12 @@ export async function readDerived<T>(
     };
   }
   if (options.waitMs && options.waitMs > 0) {
-    const live = await stream.readLive({ offset, mode: "long-poll", signal: options.signal });
+    const live = await stream.readLive({
+      offset,
+      mode: "long-poll",
+      signal: options.signal,
+      timeoutMs: options.waitMs,
+    });
     if (live.status === "invalid-json") throw new Error(`cannot decode derived stream ${streamId}`);
     if (live.status !== "not-supported" && live.messages.length > 0) {
       return {

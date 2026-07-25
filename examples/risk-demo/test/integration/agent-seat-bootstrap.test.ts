@@ -31,6 +31,8 @@ describe("external-agent seat bootstrap", () => {
     expect(document).toContain("complete seat URL you were given is SECRET");
     expect(document).toContain(`OpenAPI: ${BASE}/openapi.json`);
     expect(document).toContain("Authorization: Bearer <capability>");
+    expect(document).toContain("?offset=<returned-cursor>&wait=30000");
+    expect(document).toContain("Do not use cursor=.");
     expect(document).toContain(agentSeatPrompt());
     expect(document).not.toContain(capability);
   });

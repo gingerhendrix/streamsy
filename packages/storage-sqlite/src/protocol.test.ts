@@ -93,20 +93,32 @@ describe("sqlite protocol", () => {
     expect(stale.status).toBe("stale-epoch");
   });
 
-  test("long-poll live read times out then observes a later append", async () => {
+  test("long-poll honors a per-read timeout and wakes for an append", async () => {
     const protocol = new StreamProtocol({
       storage: { adapter: createSqliteStorageAdapter() },
-      longPollTimeoutMs: 150,
+      longPollTimeoutMs: 25,
     });
     await protocol.create("s", { contentType: "text/plain" });
     const lookup = await protocol.get("s");
     if (lookup.status !== "ok") throw new Error("lookup failed");
 
-    const timed = await lookup.stream.readLive({ offset: "0", mode: "long-poll" });
+    const timeoutStartedAt = performance.now();
+    const timed = await lookup.stream.readLive({
+      offset: "0",
+      mode: "long-poll",
+      timeoutMs: 80,
+    });
+    const timeoutElapsedMs = performance.now() - timeoutStartedAt;
     if (timed.status === "not-supported") throw new Error("live read unsupported");
     expect(timed.status).toBe("timeout");
+    expect(timeoutElapsedMs).toBeGreaterThanOrEqual(60);
 
-    const live = lookup.stream.readLive({ offset: "0", mode: "long-poll" });
+    const live = lookup.stream.readLive({
+      offset: "0",
+      mode: "long-poll",
+      timeoutMs: 500,
+    });
+    await delay(50);
     await lookup.stream.append({ contentType: "text/plain", data: encode("hello") });
     const result = await live;
     if (result.status === "not-supported") throw new Error("live read unsupported");

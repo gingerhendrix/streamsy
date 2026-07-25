@@ -15,7 +15,11 @@ import { createSeededRng } from "../../src/domain/rng.ts";
 const BASE = "http://risk.test";
 
 function harness(seed: number): App {
-  const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
+  const protocol = createStreamProtocol({
+    storage: { adapter: createMemoryStorageAdapter() },
+    // Prove that the endpoint's requested `wait` overrides this shorter default.
+    longPollTimeoutMs: 20,
+  });
   let clock = 0;
   return buildApp({
     protocol,
@@ -39,7 +43,7 @@ function httpFor(app: App) {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("turn-stream long-poll wake", () => {
-  it("wakes a blocked player when control passes to them", async () => {
+  it("honors the requested wait and wakes when control passes", async () => {
     const app = harness(1234);
     const call = httpFor(app);
     const created = await call("POST", "/v1/games", {
@@ -65,14 +69,16 @@ describe("turn-stream long-poll wake", () => {
     expect(initial.body.notifications).toHaveLength(0);
     const cursor: string = initial.body.cursor;
 
+    const pollStartedAt = performance.now();
     const pollPromise = call(
       "GET",
       `/v1/games/${gameId}/players/me/turns?offset=${cursor}&wait=3000`,
       { token: tokenByPlayer[inactive]! },
     );
 
-    // Let the long-poll register before control passes.
-    await sleep(50);
+    // This exceeds the protocol's 20ms default, discriminating whether the
+    // HTTP `wait` value reaches the reusable live-read layer.
+    await sleep(75);
 
     // The active player finishes its turn → control passes → the inactive
     // player's durable wake is produced, resolving the long-poll.
@@ -87,6 +93,7 @@ describe("turn-stream long-poll wake", () => {
     await agent.playTurn();
 
     const polled = await pollPromise;
+    expect(performance.now() - pollStartedAt).toBeGreaterThanOrEqual(60);
     expect(polled.body.notifications.length).toBeGreaterThan(0);
     expect(polled.body.notifications[0].playerId).toBe(inactive);
     expect(polled.body.notifications[0].type).toBe("TurnAvailable");
