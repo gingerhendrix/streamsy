@@ -21,6 +21,7 @@ import type { ProjectedDiceV2, ProjectedMoveV2, ProjectedTurnV2 } from "../board
 import type { ReinforcementState } from "../domain/aggregate-v2.ts";
 import type { DefenseResolutionSource } from "../domain/events-v2.ts";
 import type { Terrain } from "../domain/map-v2.ts";
+import { privateAgentSeatUrl } from "../application/agent-seat-bootstrap.ts";
 
 /** Names the presentation layer needs but the projection rows only reference by id. */
 export interface NameLookup {
@@ -375,6 +376,21 @@ export function agentHarnessCommand(options: {
     ...(options.cursorFile ? [`CURSOR_FILE=${options.cursorFile}`] : []),
     "bun run --cwd examples/risk-demo agent",
   ].join(" ");
+}
+
+/** Private one-URL bootstrap for a repository-independent external harness. */
+export function agentSeatUrl(options: {
+  origin: string;
+  gameId: string;
+  playerId: string;
+  token: string;
+}): string {
+  return privateAgentSeatUrl({
+    origin: options.origin,
+    gameId: options.gameId,
+    playerId: options.playerId,
+    capability: options.token,
+  });
 }
 
 // ---------------------------------------------------------------------------

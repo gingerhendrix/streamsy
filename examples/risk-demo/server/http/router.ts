@@ -12,6 +12,13 @@ export function json(data: unknown, status = 200, headers: Record<string, string
   });
 }
 
+export function text(data: string, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(data, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8", ...headers },
+  });
+}
+
 /** Domain/transport error body with a stable machine-readable code. */
 export type ErrorCode = ApiErrorCode;
 

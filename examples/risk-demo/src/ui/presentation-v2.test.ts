@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectedMoveV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
 import {
   agentHarnessCommand,
+  agentSeatUrl,
   countdownFraction,
   countdownLabel,
   countdownSeconds,
@@ -314,6 +315,17 @@ describe("map and seat language", () => {
 });
 
 describe("agent harness command", () => {
+  it("builds a private fragment-bearing seat URL without a query capability", () => {
+    const url = agentSeatUrl({
+      origin: "http://localhost:22392/",
+      gameId: "game/a",
+      playerId: "p 1",
+      token: "rsk_secret",
+    });
+    expect(url).toBe("http://localhost:22392/agent-seat/game%2Fa/p%201#token=rsk_secret");
+    expect(new URL(url).search).toBe("");
+  });
+
   it("carries the origin the page was served from, so a non-default PORT works", () => {
     expect(
       agentHarnessCommand({

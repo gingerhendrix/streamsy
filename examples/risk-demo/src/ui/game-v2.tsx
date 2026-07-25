@@ -38,6 +38,7 @@ import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
 import {
   agentHarnessCommand,
+  agentSeatUrl,
   moveDetailV2,
   moveTextV2,
   revealPlan,
@@ -1158,15 +1159,30 @@ function LobbyV2(props: {
 
       {props.agentSeats.map((seat) => (
         <div className="agent-seat" key={seat.playerId}>
-          <b>{seat.name} is seated.</b> Run the harness in a terminal:
+          <b>{seat.name} is seated.</b>
+          <span>
+            Private agent-seat URL — secret; do not log, persist, share publicly, or include in
+            screenshots:
+          </span>
           <code>
-            {agentHarnessCommand({
+            {agentSeatUrl({
               origin: props.origin,
               gameId: props.gameId,
               playerId: seat.playerId,
               token: seat.token,
             })}
           </code>
+          <details>
+            <summary>Temporary repository-local debug command</summary>
+            <code>
+              {agentHarnessCommand({
+                origin: props.origin,
+                gameId: props.gameId,
+                playerId: seat.playerId,
+                token: seat.token,
+              })}
+            </code>
+          </details>
         </div>
       ))}
     </section>

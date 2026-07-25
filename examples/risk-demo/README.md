@@ -37,13 +37,16 @@ DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
 - **Create a game.** New games are `risk-demo-v2`: a seeded procedural hex map with variable-sized
   countries, four connected continents, and visual-only terrain.
 - **Fill the seats.** Share the invite link for another human, or press **Open an agent seat** — one
-  per machine player, up to four seats in total. Each seat prints the exact harness command,
-  including `BASE_URL` for the origin the page was served from, so it works on any `PORT`:
+  per machine player, up to four seats in total. Each seat prints one private bootstrap URL:
 
-  ```bash
-  BASE_URL=http://localhost:1339 GAME_ID=game_xxx PLAYER_ID=p_xxx PLAYER_TOKEN=rsk_xxx \
-  bun run --cwd examples/risk-demo agent
+  ```text
+  http://localhost:1339/agent-seat/game_xxx/player_xxx#token=rsk_xxx
   ```
+
+  Treat the complete URL as secret. The fragment is parsed locally and is never sent to the
+  bootstrap page or server logs; the capability is sent only as an `Authorization` bearer token.
+  The bootstrap document supplies OpenAPI/resource locations and a harness-neutral control prompt.
+  The previous environment-variable command remains in a disclosure for repository-local debugging.
 
 - **Take your turn.** Reinforce from the rail's stepper, then pick a source country, a highlighted
   enemy neighbour, and how many dice to throw with. A capture asks for the occupying garrison before
@@ -202,7 +205,8 @@ collapse to one recorded roll.
 
 `BASE_URL` must name the server's actual origin — the harness defaults to `http://localhost:1339`,
 and the server takes its port from `$PORT`. The lobby's agent-seat panel prints the whole command
-with the right origin already filled in.
+with the right origin already filled in under its temporary debug disclosure. New external
+harnesses should use the private fragment-bearing seat URL printed above instead.
 
 ## Ruleset
 

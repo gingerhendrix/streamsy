@@ -9,6 +9,7 @@ import type {
   JoinGameResponse,
   PlayCommandRequest,
 } from "../../src/application/api.ts";
+import { agentSeatBootstrapDocument } from "../../src/application/agent-seat-bootstrap.ts";
 import type { Command } from "../../src/domain/commands.ts";
 import type { CommandV2, GameActionV2, PlayCommandV2 } from "../../src/domain/commands-v2.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
@@ -35,7 +36,15 @@ import {
   type SubmitResult,
   type SubmitResultV2,
 } from "../game/command-service.ts";
-import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } from "./router.ts";
+import {
+  error,
+  json,
+  readJsonBody,
+  statusForCode,
+  text,
+  type ErrorCode,
+  type Route,
+} from "./router.ts";
 import {
   BOARD_GENERATION,
   BOARD_GENERATION_V2,
@@ -409,9 +418,38 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     );
   }
 
+  function getAgentSeatBootstrap(request: Request, params: Record<string, string>): Response {
+    const url = new URL(request.url);
+    if (url.search !== "") {
+      return text(
+        "Query parameters are not accepted. Keep the capability in the URL fragment, strip the fragment locally, and send it only as an Authorization bearer token.\n",
+        400,
+        { "cache-control": "no-store", "referrer-policy": "no-referrer" },
+      );
+    }
+    return text(
+      agentSeatBootstrapDocument({
+        origin: url.origin,
+        gameId: params.gameId!,
+        playerId: params.playerId!,
+      }),
+      200,
+      {
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+      },
+    );
+  }
+
   return [
     { method: "GET", pattern: "/", handler: () => json({ name: "risk-demo", ok: true }) },
     { method: "GET", pattern: "/openapi.json", handler: () => json(openApiDocument) },
+    {
+      method: "GET",
+      pattern: "/agent-seat/:gameId/:playerId",
+      handler: getAgentSeatBootstrap,
+    },
     { method: "POST", pattern: "/v1/games", handler: createGame },
     { method: "POST", pattern: "/v1/games/:gameId/players", handler: joinGame },
     { method: "POST", pattern: "/v1/games/:gameId/start", handler: startGame },
