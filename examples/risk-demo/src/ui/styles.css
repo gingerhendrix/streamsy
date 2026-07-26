@@ -788,28 +788,137 @@ code {
 /* ---------------------------------------------------------------------------
  * risk-demo-v2 playing surface
  *
- * Board plus a sticky current-turn rail on desktop; the rail becomes a bottom
- * sheet on narrow screens. The map itself never reflows — its viewBox is derived
- * from axial coordinates, so zoom/pan transforms a group inside a stable box.
+ * A thin match bar over three columns: current turn, map, status. Each column owns
+ * one question, so nothing needs to compete for the top of the page. The map itself
+ * never reflows — its viewBox is derived from axial coordinates, so zoom/pan
+ * transforms a group inside a stable box.
  * ------------------------------------------------------------------------- */
 
-.game-layout-v2 {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 372px;
-  gap: 1.5rem;
-  margin-top: 1.5rem;
-  align-items: start;
+.game-shell.v2 {
+  max-width: 1720px;
+  padding-top: 1rem;
 }
-.board-column {
-  display: grid;
-  align-content: start;
-  gap: 1rem;
-  min-width: 0;
-}
-.topbar-right {
+
+/* --- match bar ----------------------------------------------------------- */
+
+.match-bar {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 1rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(12, 18, 26, 0.95));
+}
+.match-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-family: "Manrope", sans-serif;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.match-brand .brand-mark {
+  width: 22px;
+  height: 22px;
+  font-size: 0.72rem;
+  margin-right: 0.45rem;
+}
+.match-game code {
+  color: var(--muted);
+  font-size: 0.68rem;
+  margin-left: 0.3rem;
+}
+.match-state {
+  --player: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+}
+.match-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.match-fact small {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.match-fact b {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: "Manrope", sans-serif;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.match-fact .player-color {
+  width: 7px;
+  height: 15px;
+}
+.match-phase {
+  border: 1px solid color-mix(in srgb, var(--accent), transparent 60%);
+  background: rgba(101, 223, 180, 0.12);
+  color: #bdebd9;
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.78rem;
+}
+.match-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+}
+.match-right {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+/* --- three-column layout -------------------------------------------------- */
+
+.game-layout-v3 {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-areas: "turn map status";
+  gap: 1.1rem;
+  margin-top: 1rem;
+  align-items: start;
+}
+.turn-column {
+  grid-area: turn;
+}
+.map-column {
+  grid-area: map;
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+  min-width: 0;
+}
+.status-column {
+  grid-area: status;
+}
+.turn-column,
+.status-column {
+  position: sticky;
+  top: 0.75rem;
+  display: grid;
+  align-content: start;
+  gap: 0.7rem;
+  max-height: calc(100vh - 1.5rem);
+  overflow: auto;
+  scrollbar-color: #344454 transparent;
+  padding-right: 0.15rem;
+  min-width: 0;
 }
 .spectating-badge {
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -836,7 +945,9 @@ code {
 .hex-map {
   display: block;
   width: 100%;
-  height: clamp(420px, 58vh, 720px);
+  /* The map is the middle column of a full-height layout, so it takes the height the
+     bar and its own frame leave rather than a fixed slice of the viewport. */
+  height: clamp(420px, calc(100vh - 11rem), 900px);
   /* The map handles its own drag and pinch, so the browser must not also scroll
      or zoom the page underneath the gesture. */
   touch-action: none;
@@ -991,76 +1102,175 @@ code {
   line-height: 1.5;
 }
 
-/* --- current-turn rail ---------------------------------------------------- */
+/* --- current-turn column -------------------------------------------------- */
 
-.turn-rail {
-  position: sticky;
-  top: 1rem;
-  display: grid;
-  align-content: start;
-  gap: 0.85rem;
-  max-height: calc(100vh - 2rem);
-  overflow: auto;
-  scrollbar-color: #344454 transparent;
-  padding-right: 0.15rem;
-}
-.rail-head {
+.column-head {
   --player: var(--accent);
   border: 1px solid var(--line);
   border-left: 5px solid var(--player);
   border-radius: 14px;
-  padding: 0.9rem 1rem;
+  padding: 0.75rem 0.9rem;
   background: linear-gradient(
     145deg,
     color-mix(in srgb, var(--player), transparent 92%),
     rgba(14, 21, 30, 0.9)
   );
 }
-.rail-head h2 {
-  font-size: 1.4rem;
+.column-head h2 {
+  font-size: 1.25rem;
   letter-spacing: -0.03em;
-  margin: 0.4rem 0 0.3rem;
+  margin: 0.3rem 0 0.25rem;
 }
-.rail-active {
+.column-active {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: #d3dce6;
 }
-.rail-active .player-color {
+.column-active .player-color {
   width: 7px;
   height: 18px;
 }
 
-.phase-stepper {
+/* --- phase sections ------------------------------------------------------- */
+
+.phase-list {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.3rem;
+  gap: 0.45rem;
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.phase-stepper li {
-  text-align: center;
-  padding: 0.55rem 0.3rem;
+.phase-section {
   border: 1px solid var(--line);
-  border-radius: 9px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
+  overflow: hidden;
+}
+.phase-section.active {
+  border-color: color-mix(in srgb, var(--accent), transparent 55%);
+  background: linear-gradient(145deg, rgba(22, 46, 40, 0.55), rgba(14, 21, 30, 0.95));
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.22);
+}
+.phase-section.upcoming {
+  opacity: 0.5;
+}
+.phase-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+}
+.phase-index {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
   color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 800;
 }
-.phase-stepper li.done {
-  color: #9fb0c2;
-  border-color: rgba(255, 255, 255, 0.14);
-}
-.phase-stepper li.current {
-  color: #08201a;
-  background: var(--accent);
+.phase-section.active .phase-index {
   border-color: transparent;
+  background: var(--accent);
+  color: #08201a;
+}
+.phase-section.completed .phase-index {
+  border-color: rgba(101, 223, 180, 0.35);
+  color: #bdebd9;
+}
+.phase-title {
+  display: grid;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+.phase-title b {
+  font-family: "Manrope", sans-serif;
+  font-size: 0.86rem;
+}
+.phase-title small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+.phase-state {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.phase-section.active .phase-state {
+  color: var(--accent);
+}
+.phase-section > details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.phase-section > details > summary::-webkit-details-marker {
+  display: none;
+}
+.phase-section > details > summary:focus-visible {
+  outline: 3px solid rgba(101, 223, 180, 0.45);
+  outline-offset: -3px;
+}
+.phase-section > details[open] > summary .phase-title small {
+  color: #c4ced9;
+}
+.phase-body {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0 0.8rem 0.8rem;
+}
+.phase-instruction {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #d3dce6;
+}
+.phase-evidence {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.phase-evidence small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+/* Controls are the section's content, so they drop their own card chrome. */
+.phase-body > .controls-card {
+  border: 0;
+  padding: 0;
+  background: none;
+  border-radius: 0;
+}
+.phase-body > .controls-card.required {
+  border: 1px solid rgba(240, 179, 89, 0.4);
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  background: linear-gradient(145deg, rgba(48, 38, 22, 0.85), rgba(20, 18, 14, 0.92));
+}
+.phase-body > .reinforcement-card {
+  border-color: rgba(255, 255, 255, 0.07);
+  padding: 0.7rem 0.8rem;
+}
+
+/* The turn-level action: not owned by any one phase, so it sits under them all. */
+.turn-column > .end-turn {
+  width: 100%;
+  background: #243243;
+  font-size: 0.8rem;
+  padding: 0.7rem 0.9rem;
 }
 
 .reinforcement-card,
@@ -1167,10 +1377,6 @@ code {
 .stepper small {
   color: var(--muted);
   font-size: 0.68rem;
-}
-.controls-card .end-turn {
-  background: #243243;
-  font-size: 0.78rem;
 }
 
 /* --- combat + dice -------------------------------------------------------- */
@@ -1374,6 +1580,136 @@ code {
   font-size: 0.62rem;
 }
 
+/* --- status column: standings + continents -------------------------------- */
+
+.status-column .panel {
+  padding: 0.85rem 0.9rem;
+}
+.status-column .panel-heading {
+  margin-bottom: 0.6rem;
+}
+.standings-list,
+.continent-list {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.standing {
+  --player: var(--accent);
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.standing.active {
+  border-color: color-mix(in srgb, var(--player), transparent 55%);
+  background: color-mix(in srgb, var(--player), transparent 92%);
+}
+.standing.eliminated {
+  opacity: 0.45;
+}
+.standing-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.standing-top .player-color {
+  height: 16px;
+}
+.standing-top b {
+  font-size: 0.78rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.controller-tag {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.controller-tag.out {
+  border-color: rgba(237, 106, 90, 0.4);
+  color: #ed6a5a;
+}
+.standing-strength {
+  font-size: 0.68rem;
+  color: #c4ced9;
+}
+.strength-track {
+  display: block;
+  height: 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.strength-fill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--player);
+}
+.continent-row {
+  --player: var(--accent);
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.continent-row.held {
+  border-color: color-mix(in srgb, var(--player), transparent 60%);
+  background: color-mix(in srgb, var(--player), transparent 93%);
+}
+.continent-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.continent-top b {
+  font-size: 0.78rem;
+}
+.continent-bonus {
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.continent-holders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.held-by {
+  font-size: 0.68rem;
+  color: #c4ced9;
+}
+.holder-chip {
+  --player: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--player), transparent 60%);
+  background: color-mix(in srgb, var(--player), transparent 88%);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.63rem;
+  font-weight: 700;
+  color: #dce4ee;
+}
+.status-column .feed-panel {
+  min-height: 0;
+}
+.status-column .event-feed {
+  max-height: 320px;
+}
+
 .host-actions {
   display: grid;
   gap: 0.5rem;
@@ -1401,32 +1737,50 @@ code {
 
 /* --- responsive ----------------------------------------------------------- */
 
-@media (max-width: 1180px) {
-  .game-layout-v2 {
-    grid-template-columns: 1fr;
+/* Three columns need width. Below it, the status column folds under the map and the
+   current turn keeps its own column, because it is the only one carrying controls. */
+@media (max-width: 1280px) {
+  .game-layout-v3 {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
+    grid-template-areas:
+      "map turn"
+      "map status";
   }
-  .turn-rail {
+  .status-column {
     position: static;
     max-height: none;
     overflow: visible;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .turn-rail > .rail-head,
-  .turn-rail > .phase-stepper,
-  .turn-rail > .combat-card,
-  .turn-rail > .controls-card {
-    grid-column: 1 / -1;
+}
+@media (max-width: 940px) {
+  .game-layout-v3 {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "turn"
+      "map"
+      "status";
+  }
+  .turn-column {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .match-state {
+    justify-content: flex-start;
+    gap: 0.7rem;
   }
 }
 @media (max-width: 720px) {
-  .turn-rail {
-    position: sticky;
-    top: auto;
-    bottom: 0;
-    grid-template-columns: 1fr;
-    z-index: 5;
-    padding: 0.6rem 0.15rem 0.6rem;
-    background: linear-gradient(180deg, rgba(8, 13, 20, 0), #080d14 14%);
+  .match-bar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .match-state {
+    order: 3;
+    width: 100%;
+  }
+  .match-right {
+    margin-left: auto;
   }
   .hex-map {
     height: 52vh;

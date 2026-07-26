@@ -1,44 +1,31 @@
 /**
- * The persistent current-turn rail and the combat/dice experience (design spec
- * §8.4–8.5).
- *
- * The rail is the authoritative visual answer to "what is happening now?": round,
- * seat, phase, the reinforcement pool explained as an equation, the live combat
- * card, and this turn's ledger — all read from the projection's `turn` and `combat`
- * rows rather than reconstructed by paging the bounded move feed.
+ * The combat/dice experience: the live attack card and its defence prompt (design
+ * spec §8.5).
  *
  * Every die face on this surface comes from a recorded event value. There is no
  * code path that produces a placeholder face: an unresolved defence renders a
  * face-*down* silhouette, and motion only ever shakes a cup around values that were
  * already rolled. The countdown likewise displays the canonical
  * `defenseDeadlineAt` — it never decides when the window closes.
+ *
+ * Combat is an interrupt rather than a phase, so this card is placed at the top of
+ * the current-turn column: it can arrive during somebody else's turn, and when it
+ * does it is the only thing being asked of the reader.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties } from "react";
 import type { PlayerController } from "../domain/events-v2.ts";
 
-import type { ProjectedPlayerV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
-import type { GamePhaseV2 } from "../domain/aggregate-v2.ts";
 import type { CombatView } from "./combat-view.ts";
 import {
   countdownFraction,
   countdownLabel,
   dicePairs,
-  reinforcementEquation,
-  reinforcementProgress,
   resolutionLabel,
-  turnLedger,
   type NameLookup,
   type RevealPlan,
   type SeatMode,
 } from "./presentation-v2.ts";
-
-const PHASES: GamePhaseV2[] = ["reinforce", "attack", "fortify"];
-const PHASE_LABELS: Record<GamePhaseV2, string> = {
-  reinforce: "Reinforce",
-  attack: "Attack",
-  fortify: "Fortify",
-};
 
 /** Pip positions on a 100×100 die face, by value. */
 const PIPS: Record<number, Array<[number, number]>> = {
@@ -267,126 +254,5 @@ export function CombatCard(props: CombatCardProps) {
         </div>
       )}
     </section>
-  );
-}
-
-export interface TurnRailProps {
-  round: number;
-  status: "lobby" | "playing" | "finished";
-  turn: ProjectedTurnV2 | null;
-  phase?: GamePhaseV2;
-  activePlayer?: ProjectedPlayerV2;
-  names: NameLookup;
-  statusLine: string;
-  selfId?: string;
-  /** The phase controls for this seat, or nothing for a spectator. */
-  controls?: ReactNode;
-  combatCard?: ReactNode;
-  history?: ReactNode;
-  footer?: ReactNode;
-}
-
-/**
- * What the rail shows once the map has an owner.
- *
- * A finished game has no legal action for anybody, so the ordinary "waiting for
- * another player" copy would be a lie. This says who won and makes it explicit
- * that the board below is the final one, not a stale view.
- */
-export function VictoryCard(props: { winnerName?: string; round: number }) {
-  return (
-    <section className="controls-card victory">
-      <span className="section-label">Game over</span>
-      <h3>{props.winnerName ? `${props.winnerName} conquered the map` : "The campaign is over"}</h3>
-      <p>
-        {props.round} rounds played. The final board stays live — every country, every recorded die,
-        and the whole history remain readable.
-      </p>
-    </section>
-  );
-}
-
-export function TurnRail(props: TurnRailProps) {
-  const { turn, names } = props;
-  const activeColor = props.activePlayer?.color ?? "#65dfb4";
-
-  return (
-    <aside className="turn-rail" aria-label="Current turn">
-      <div className="rail-head" style={{ "--player": activeColor } as CSSProperties}>
-        <span className="eyebrow">Round {props.round || "—"}</span>
-        <h2>{props.statusLine}</h2>
-        {props.activePlayer && (
-          <p className="rail-active">
-            <span className="player-color" style={{ background: activeColor }} />
-            {props.activePlayer.name}
-            {props.activePlayer.id === props.selfId ? " (you)" : ""}
-          </p>
-        )}
-      </div>
-
-      {props.status === "playing" && (
-        <ol className="phase-stepper" aria-label="Turn phases">
-          {PHASES.map((phase) => (
-            <li
-              key={phase}
-              className={
-                phase === props.phase
-                  ? "current"
-                  : PHASES.indexOf(phase) < PHASES.indexOf(props.phase ?? "reinforce")
-                    ? "done"
-                    : ""
-              }
-              aria-current={phase === props.phase ? "step" : undefined}
-            >
-              {PHASE_LABELS[phase]}
-            </li>
-          ))}
-        </ol>
-      )}
-
-      {turn && turn.reinforcement.total > 0 && (
-        <div className="reinforcement-card">
-          <b>{reinforcementEquation(turn.reinforcement, names.continent)}</b>
-          <small>
-            {reinforcementProgress(turn.reinforcementsPlaced, turn.reinforcement.remaining)}
-          </small>
-          <div className="continent-chips">
-            {turn.reinforcement.continents.map((bonus) => (
-              <span className="continent-chip" key={bonus.continentId}>
-                {names.continent(bonus.continentId)} +{bonus.bonus}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {props.combatCard}
-      {props.controls}
-
-      {turn && (
-        <section className="ledger" aria-label="This turn">
-          <div className="panel-heading">
-            <h2>This turn</h2>
-            <span>{props.activePlayer?.name ?? ""}</span>
-          </div>
-          <ol className="ledger-list">
-            {turnLedger(turn, names).map((entry) => (
-              <li key={entry.id}>
-                <span className="ledger-icon" aria-hidden="true">
-                  {entry.icon}
-                </span>
-                <div>
-                  <b>{entry.text}</b>
-                  {entry.detail && <small>{entry.detail}</small>}
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-
-      {props.history}
-      {props.footer}
-    </aside>
   );
 }

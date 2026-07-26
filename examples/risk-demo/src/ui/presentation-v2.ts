@@ -17,8 +17,15 @@
  *    row is the derived summary that cannot (design spec §7.1).
  */
 
-import type { ProjectedDiceV2, ProjectedMoveV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
-import type { ReinforcementState } from "../domain/aggregate-v2.ts";
+import type {
+  ProjectedContinentV2,
+  ProjectedDiceV2,
+  ProjectedMoveV2,
+  ProjectedPlayerV2,
+  ProjectedTerritoryV2,
+  ProjectedTurnV2,
+} from "../board/projection-v2.ts";
+import type { GamePhaseV2, ReinforcementState } from "../domain/aggregate-v2.ts";
 import type { DefenseResolutionSource } from "../domain/events-v2.ts";
 import type { Terrain } from "../domain/map-v2.ts";
 import { privateAgentSeatUrl } from "../application/agent-seat-bootstrap.ts";
@@ -268,6 +275,184 @@ export function turnLedger(turn: ProjectedTurnV2, names: NameLookup): LedgerEntr
 }
 
 // ---------------------------------------------------------------------------
+// Turn phases (design spec §8.4; information architecture: one section per phase)
+// ---------------------------------------------------------------------------
+
+/** Canonical phase order — the order a turn happens in, and the order it reads in. */
+export const PHASE_ORDER_V2: readonly GamePhaseV2[] = ["reinforce", "attack", "fortify"];
+
+export const PHASE_LABELS_V2: Record<GamePhaseV2, string> = {
+  reinforce: "Reinforce",
+  attack: "Attack",
+  fortify: "Fortify",
+};
+
+/**
+ * How a phase section presents itself: the phase in progress is the only one that
+ * carries controls, earlier phases collapse to what they achieved, and later ones
+ * are visible but inert so the shape of a whole turn stays legible.
+ */
+export type PhaseState = "completed" | "active" | "upcoming";
+
+export function phaseState(phase: GamePhaseV2, current: GamePhaseV2 | undefined): PhaseState {
+  if (current === undefined) return "upcoming";
+  const index = PHASE_ORDER_V2.indexOf(phase);
+  const currentIndex = PHASE_ORDER_V2.indexOf(current);
+  if (index === currentIndex) return "active";
+  return index < currentIndex ? "completed" : "upcoming";
+}
+
+export const PHASE_STATE_LABELS: Record<PhaseState, string> = {
+  completed: "Completed",
+  active: "Now",
+  upcoming: "Later",
+};
+
+/**
+ * What this phase is asking of the reader right now.
+ *
+ * Seat-aware on purpose: the same section is read by the player who must act, by a
+ * player waiting their turn, and by a spectator, and telling all three to "choose a
+ * country" would be false for two of them.
+ */
+export function phaseInstruction(
+  phase: GamePhaseV2,
+  options: { state: PhaseState; yourTurn: boolean; activePlayerName: string },
+): string {
+  if (options.state === "upcoming") {
+    switch (phase) {
+      case "reinforce":
+        return "Opens with the next turn.";
+      case "attack":
+        return "Opens once every reinforcement is placed.";
+      case "fortify":
+        return "Opens after the single fortify move — then only ending the turn remains.";
+    }
+  }
+  if (!options.yourTurn) {
+    const who = options.activePlayerName;
+    switch (phase) {
+      case "reinforce":
+        return `${who} is placing reinforcements.`;
+      case "attack":
+        return `${who} is choosing attacks.`;
+      case "fortify":
+        return `${who} is finishing their turn.`;
+    }
+  }
+  switch (phase) {
+    case "reinforce":
+      return "Place every army before you can attack: pick a highlighted country of yours, choose how many, and confirm.";
+    case "attack":
+      return "Attack a highlighted enemy neighbour from a country holding two or more armies. Your one fortify move is also made here.";
+    case "fortify":
+      return "The manoeuvre is spent. End the turn when you are ready.";
+  }
+}
+
+/** What a finished phase achieved, read from the turn row rather than the move feed. */
+export function phaseSummary(phase: GamePhaseV2, turn: ProjectedTurnV2 | null): string {
+  if (!turn) return "Nothing recorded.";
+  switch (phase) {
+    case "reinforce":
+      return turn.reinforcement.total === 0
+        ? "No reinforcements were due."
+        : `${turn.reinforcementsPlaced} of ${turn.reinforcement.total} armies placed.`;
+    case "attack": {
+      if (turn.attacksDeclared === 0) return "No attacks declared.";
+      const parts = [
+        plural(turn.attacksDeclared, "attack"),
+        `${plural(turn.throwsResolved, "throw")} resolved`,
+      ];
+      if (turn.captures > 0)
+        parts.push(`${plural(turn.captures, "country", "countries")} captured`);
+      return `${parts.join(" · ")}.`;
+    }
+    case "fortify":
+      return "Turn closed.";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Standings: who holds what
+// ---------------------------------------------------------------------------
+
+export interface ContinentHolding {
+  playerId?: string;
+  count: number;
+}
+
+export interface ContinentStanding {
+  continentId: string;
+  name: string;
+  bonus: number;
+  total: number;
+  /** Set only while one player holds every member country. */
+  controllerId?: string;
+  /** Countries held, strongest first; ties break by player id so this is stable. */
+  holdings: ContinentHolding[];
+}
+
+/**
+ * Per-continent ownership, counted from the territory rows.
+ *
+ * The projection already names the outright controller, which is what pays a bonus;
+ * this adds the contested picture — who holds how much of a continent nobody owns
+ * yet — which is the question the status column exists to answer.
+ */
+export function continentStandings(
+  continents: readonly ProjectedContinentV2[],
+  territories: readonly ProjectedTerritoryV2[],
+): ContinentStanding[] {
+  const byContinent = new Map<string, Map<string | undefined, number>>();
+  for (const territory of territories) {
+    const counts = byContinent.get(territory.continentId) ?? new Map<string | undefined, number>();
+    counts.set(territory.ownerId, (counts.get(territory.ownerId) ?? 0) + 1);
+    byContinent.set(territory.continentId, counts);
+  }
+  return continents.map((continent) => {
+    const counts = byContinent.get(continent.id) ?? new Map<string | undefined, number>();
+    const holdings = [...counts.entries()]
+      .map(([playerId, count]) => ({ playerId, count }))
+      .toSorted((a, b) => b.count - a.count || (a.playerId ?? "").localeCompare(b.playerId ?? ""));
+    return {
+      continentId: continent.id,
+      name: continent.name,
+      bonus: continent.reinforcementBonus,
+      total: continent.territoryIds.length,
+      controllerId: continent.controllerId,
+      holdings,
+    };
+  });
+}
+
+/** `"7 countries · 19 armies"` — the roster line under a player's name. */
+export function playerStrengthLabel(player: ProjectedPlayerV2): string {
+  return `${plural(player.territoryCount, "country", "countries")} · ${plural(player.armyCount, "army", "armies")}`;
+}
+
+/** Share of all armies on the board, 0..1, for a proportional bar. */
+export function armyShare(
+  player: ProjectedPlayerV2,
+  players: readonly ProjectedPlayerV2[],
+): number {
+  const total = players.reduce((sum, other) => sum + other.armyCount, 0);
+  return total <= 0 ? 0 : player.armyCount / total;
+}
+
+/** How a seat is driven, when that is not simply "a person at the keyboard". */
+export function controllerLabel(player: ProjectedPlayerV2): string | null {
+  switch (player.controller) {
+    case "external-agent":
+      return "Agent";
+    case "bot":
+      return "Bot";
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Game history
 // ---------------------------------------------------------------------------
 
@@ -378,6 +563,8 @@ export function seatStatusLabel(options: {
   activePlayerName: string;
   finished: boolean;
   winnerName?: string;
+  /** Whether the active seat is the reader's, regardless of open decisions. */
+  yourTurn?: boolean;
 }): string {
   if (options.finished) {
     return options.winnerName ? `${options.winnerName} wins the map` : "Game over";
@@ -389,6 +576,8 @@ export function seatStatusLabel(options: {
     case "active-turn":
       return "Your turn";
     default:
-      return `Waiting for ${options.activePlayerName}`;
+      // A pending interrupt empties the legal actions even on your own turn, and
+      // telling a player they are waiting for themselves is never the truth.
+      return options.yourTurn ? "Your turn" : `Waiting for ${options.activePlayerName}`;
   }
 }

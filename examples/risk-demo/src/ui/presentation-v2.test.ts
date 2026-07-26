@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import type { ProjectedMoveV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
+import type {
+  ProjectedContinentV2,
+  ProjectedMoveV2,
+  ProjectedPlayerV2,
+  ProjectedTerritoryV2,
+  ProjectedTurnV2,
+} from "../board/projection-v2.ts";
 import {
   agentSeatUrl,
+  armyShare,
+  continentStandings,
+  controllerLabel,
   countdownFraction,
   countdownLabel,
   countdownSeconds,
@@ -11,6 +20,10 @@ import {
   diceOutcomeText,
   moveDetailV2,
   moveTextV2,
+  phaseInstruction,
+  phaseState,
+  phaseSummary,
+  playerStrengthLabel,
   reinforcementEquation,
   reinforcementProgress,
   resolutionLabel,
@@ -311,6 +324,18 @@ describe("map and seat language", () => {
       "Waiting for Ada",
     );
   });
+
+  it("never tells a player they are waiting for themselves", () => {
+    expect(
+      seatStatusLabel({
+        spectating: false,
+        mode: "waiting",
+        activePlayerName: "Ada",
+        finished: false,
+        yourTurn: true,
+      }),
+    ).toBe("Your turn");
+  });
 });
 
 describe("agent seat URL", () => {
@@ -323,5 +348,131 @@ describe("agent seat URL", () => {
     });
     expect(url).toBe("http://localhost:22392/agent-seat/game%2Fa/p%201#token=rsk_secret");
     expect(new URL(url).search).toBe("");
+  });
+});
+
+describe("turn phases", () => {
+  it("orders a turn as completed, active, then upcoming", () => {
+    expect(phaseState("reinforce", "attack")).toBe("completed");
+    expect(phaseState("attack", "attack")).toBe("active");
+    expect(phaseState("fortify", "attack")).toBe("upcoming");
+  });
+
+  it("treats a turn with no phase as nothing having started", () => {
+    expect(phaseState("reinforce", undefined)).toBe("upcoming");
+  });
+
+  it("addresses the seat that must act, and reports on the one that need not", () => {
+    const yours = phaseInstruction("reinforce", {
+      state: "active",
+      yourTurn: true,
+      activePlayerName: "Ada",
+    });
+    const theirs = phaseInstruction("reinforce", {
+      state: "active",
+      yourTurn: false,
+      activePlayerName: "Ada",
+    });
+    expect(yours).toContain("Place every army");
+    expect(theirs).toBe("Ada is placing reinforcements.");
+  });
+
+  it("explains an upcoming phase without pretending it is anyone's job yet", () => {
+    expect(
+      phaseInstruction("attack", { state: "upcoming", yourTurn: true, activePlayerName: "Ada" }),
+    ).toBe("Opens once every reinforcement is placed.");
+  });
+
+  it("summarizes a finished phase from the turn row", () => {
+    expect(phaseSummary("reinforce", turn({ reinforcementsPlaced: 6 }))).toBe(
+      "6 of 6 armies placed.",
+    );
+    expect(
+      phaseSummary("attack", turn({ attacksDeclared: 3, throwsResolved: 3, captures: 1 })),
+    ).toBe("3 attacks · 3 throws resolved · 1 country captured.");
+  });
+
+  it("says plainly when a phase achieved nothing", () => {
+    expect(phaseSummary("attack", turn())).toBe("No attacks declared.");
+    expect(
+      phaseSummary(
+        "reinforce",
+        turn({ reinforcement: { base: 0, continents: [], total: 0, remaining: 0 } }),
+      ),
+    ).toBe("No reinforcements were due.");
+  });
+});
+
+const player = (overrides: Partial<ProjectedPlayerV2> = {}): ProjectedPlayerV2 => ({
+  id: "p1",
+  name: "Ada",
+  color: "#e05a47",
+  controller: "human",
+  eliminated: false,
+  territoryCount: 3,
+  armyCount: 12,
+  ...overrides,
+});
+
+const continent = (overrides: Partial<ProjectedContinentV2> = {}): ProjectedContinentV2 => ({
+  id: "c1",
+  name: "Northreach",
+  territoryIds: ["t1", "t2"],
+  reinforcementBonus: 2,
+  palette: { base: "#101010", accent: "#202020" } as never,
+  ...overrides,
+});
+
+const territory = (id: string, ownerId?: string): ProjectedTerritoryV2 => ({
+  id,
+  name: id,
+  continentId: "c1",
+  ...(ownerId ? { ownerId } : {}),
+  armies: 3,
+  hexIds: [],
+  adjacentTerritoryIds: [],
+  labelAnchor: { q: 0, r: 0 },
+});
+
+describe("standings", () => {
+  it("counts a contested continent strongest holder first", () => {
+    const [standing] = continentStandings(
+      [continent({ territoryIds: ["t1", "t2", "t3"] })],
+      [territory("t1", "p2"), territory("t2", "p1"), territory("t3", "p2")],
+    );
+    expect(standing!.total).toBe(3);
+    expect(standing!.controllerId).toBeUndefined();
+    expect(standing!.holdings).toEqual([
+      { playerId: "p2", count: 2 },
+      { playerId: "p1", count: 1 },
+    ]);
+  });
+
+  it("keeps the projection's outright controller, which is what pays the bonus", () => {
+    const [standing] = continentStandings(
+      [continent({ controllerId: "p1" })],
+      [territory("t1", "p1"), territory("t2", "p1")],
+    );
+    expect(standing!.controllerId).toBe("p1");
+    expect(standing!.bonus).toBe(2);
+  });
+
+  it("describes a seat's strength in countries and armies", () => {
+    expect(playerStrengthLabel(player())).toBe("3 countries · 12 armies");
+    expect(playerStrengthLabel(player({ territoryCount: 1, armyCount: 1 }))).toBe(
+      "1 country · 1 army",
+    );
+  });
+
+  it("shares armies across the board and survives an empty board", () => {
+    const players = [player(), player({ id: "p2", armyCount: 4 })];
+    expect(armyShare(players[0]!, players)).toBeCloseTo(0.75);
+    expect(armyShare(player({ armyCount: 0 }), [player({ armyCount: 0 })])).toBe(0);
+  });
+
+  it("names only the seats a person is not driving", () => {
+    expect(controllerLabel(player())).toBeNull();
+    expect(controllerLabel(player({ controller: "external-agent" }))).toBe("Agent");
+    expect(controllerLabel(player({ controller: "bot" }))).toBe("Bot");
   });
 });

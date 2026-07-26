@@ -1,6 +1,15 @@
 /**
  * The `risk-demo-v2` playing surface: hex map, phase interactions, current-turn
- * rail, and the defence/dice experience (design spec §8).
+ * column, and the defence/dice experience (design spec §8).
+ *
+ * The screen is three regions under one thin match bar, and each answers exactly one
+ * question:
+ *
+ *   match bar   round, seat, phase — the frame for everything else
+ *   left        *what am I being asked to do?* — one section per phase, only the
+ *               active one carrying instructions and controls
+ *   middle      *where?* — the map, its focused-country detail, and command notices
+ *   right       *how does it stand?* — army/continent standings and history
  *
  * Interaction follows one model everywhere — **source → target → amount →
  * confirm** — rather than generating a button per legal move. Legality comes from
@@ -30,14 +39,14 @@ import type {
   PlayCommandRequestV2,
 } from "../application/api.ts";
 import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
-import type { ProjectedHexV2, ProjectedMoveV2, ProjectedPlayerV2 } from "../board/projection-v2.ts";
+import type { ProjectedHexV2, ProjectedPlayerV2 } from "../board/projection-v2.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
 import { useRiskBoardV2Stream } from "./board-stream-db.ts";
+import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
+import { MatchBar } from "./match-bar.tsx";
 import {
-  moveDetailV2,
-  moveTextV2,
   revealPlan,
   seatStatusLabel,
   terrainMix,
@@ -55,7 +64,8 @@ import {
   playerRoleLabel,
   type Identity,
 } from "./shared.tsx";
-import { CombatCard, TurnRail, VictoryCard } from "./turn-rail.tsx";
+import { StatusColumn } from "./status-column.tsx";
+import { TurnColumn, VictoryCard } from "./turn-column.tsx";
 
 type Selection =
   | null
@@ -555,31 +565,114 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     );
   }
 
+  // Whose turn it is, not whether a decision happens to be open: a pending defence
+  // empties the legal actions without handing the turn to anybody else.
+  const yourTurn =
+    !spectating && activePlayer !== undefined && activePlayer.id === identity?.playerId;
   const statusLine = seatStatusLabel({
     spectating,
     mode: decision?.mode ?? null,
     activePlayerName: activePlayer?.name ?? "the next player",
     finished: board.game.status === "finished",
     winnerName: winner?.name,
+    yourTurn,
   });
 
   const focused = focusedId ? territoryById.get(focusedId) : undefined;
 
   return (
     <main className="game-shell v2">
-      <TopBar gameId={gameId}>
-        <div className="topbar-right">
-          {spectating && <span className="spectating-badge">Spectating live</span>}
-          <SyncPill
-            status={live.status}
-            offset={board.meta?.sourceThroughOffset ?? live.streamOffset}
-            error={live.error}
-          />
-        </div>
-      </TopBar>
+      <MatchBar
+        gameId={gameId}
+        round={board.game.round}
+        activePlayer={activePlayer}
+        phase={board.game.phase}
+        finished={board.game.status === "finished"}
+        winnerName={winner?.name}
+        selfId={identity?.playerId}
+      >
+        {spectating && <span className="spectating-badge">Spectating live</span>}
+        <SyncPill
+          status={live.status}
+          offset={board.meta?.sourceThroughOffset ?? live.streamOffset}
+          error={live.error}
+        />
+      </MatchBar>
 
-      <div className="game-layout-v2">
-        <section className="board-column">
+      <div className="game-layout-v3">
+        <TurnColumn
+          status={board.game.status}
+          turn={board.turn}
+          phase={board.game.phase}
+          activePlayer={activePlayer}
+          names={names}
+          statusLine={statusLine}
+          yourTurn={yourTurn}
+          selfId={identity?.playerId}
+          combatLive={combat !== null && combat.status !== "resolved"}
+          combatCard={
+            combat && (
+              <CombatCard
+                combat={combat}
+                names={names}
+                colorOf={colorOf}
+                controllerOf={controllerOf}
+                selfId={identity?.playerId}
+                mode={decision?.mode ?? null}
+                now={now}
+                defenseWindowMs={
+                  combat.declaredAt !== undefined && combat.defenseDeadlineAt !== undefined
+                    ? combat.defenseDeadlineAt - combat.declaredAt
+                    : RULES_V2.defenseTimeoutMs
+                }
+                reveal={reveal}
+                busy={busy}
+                onRollDefense={() => {
+                  if (!defenseAction || !identity) return;
+                  void submit(
+                    { type: "roll-defense", attackId: defenseAction.attackId },
+                    `${identity.playerId}:defense:${defenseAction.attackId}`,
+                  );
+                }}
+              />
+            )
+          }
+          controls={
+            board.game.status === "finished" ? (
+              <VictoryCard winnerName={winner?.name} round={board.game.round} />
+            ) : spectating ? null : (
+              <PhaseControls
+                names={names}
+                busy={busy}
+                selection={selection}
+                setSelection={setSelection}
+                intent={intent}
+                setIntent={setIntent}
+                reinforceAction={reinforceAction}
+                attackAction={attackAction}
+                fortifyAction={fortifyAction}
+                occupyAction={occupyAction}
+                occupyArmies={occupyArmies}
+                setOccupyArmies={setOccupyArmies}
+                submit={submit}
+                fortifyChoiceFrom={fortifyChoiceFrom}
+              />
+            )
+          }
+          endTurn={
+            canEndTurn && !spectating ? (
+              <button
+                className="end-turn"
+                disabled={busy}
+                onClick={() => void submit({ type: "end-turn" })}
+              >
+                End turn →
+              </button>
+            ) : null
+          }
+        />
+
+        <section className="map-column">
           <HexMap
             hexes={board.hexes}
             territories={mapTerritories}
@@ -674,67 +767,15 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           )}
         </section>
 
-        <TurnRail
-          round={board.game.round}
-          status={board.game.status}
-          turn={board.turn}
-          phase={board.game.phase}
-          activePlayer={activePlayer}
+        <StatusColumn
+          players={board.players}
+          continents={board.continents}
+          territories={board.territories}
+          moves={board.moves}
           names={names}
-          statusLine={statusLine}
+          colorOf={colorOf}
+          activePlayerId={board.game.activePlayerId}
           selfId={identity?.playerId}
-          combatCard={
-            combat && (
-              <CombatCard
-                combat={combat}
-                names={names}
-                colorOf={colorOf}
-                controllerOf={controllerOf}
-                selfId={identity?.playerId}
-                mode={decision?.mode ?? null}
-                now={now}
-                defenseWindowMs={
-                  combat.declaredAt !== undefined && combat.defenseDeadlineAt !== undefined
-                    ? combat.defenseDeadlineAt - combat.declaredAt
-                    : RULES_V2.defenseTimeoutMs
-                }
-                reveal={reveal}
-                busy={busy}
-                onRollDefense={() => {
-                  if (!defenseAction || !identity) return;
-                  void submit(
-                    { type: "roll-defense", attackId: defenseAction.attackId },
-                    `${identity.playerId}:defense:${defenseAction.attackId}`,
-                  );
-                }}
-              />
-            )
-          }
-          controls={
-            board.game.status === "finished" ? (
-              <VictoryCard winnerName={winner?.name} round={board.game.round} />
-            ) : spectating ? null : (
-              <PhaseControls
-                names={names}
-                busy={busy}
-                selection={selection}
-                setSelection={setSelection}
-                intent={intent}
-                setIntent={setIntent}
-                reinforceAction={reinforceAction}
-                attackAction={attackAction}
-                fortifyAction={fortifyAction}
-                occupyAction={occupyAction}
-                occupyArmies={occupyArmies}
-                setOccupyArmies={setOccupyArmies}
-                canEndTurn={canEndTurn}
-                waiting={Boolean(decision && decision.legalActions.length === 0)}
-                submit={submit}
-                fortifyChoiceFrom={fortifyChoiceFrom}
-              />
-            )
-          }
-          history={<GameHistory moves={board.moves} names={names} />}
           footer={
             <div className="session-card">
               <button className="ghost" onClick={() => void props.onCopyInvite()}>
@@ -803,14 +844,20 @@ interface PhaseControlsProps {
   occupyAction?: Extract<LegalActionV2, { type: "occupy-territory" }>;
   occupyArmies: number | null;
   setOccupyArmies(value: number): void;
-  canEndTurn: boolean;
-  waiting: boolean;
   submit(action: PlayActionV2): Promise<boolean>;
   fortifyChoiceFrom(
     from: string,
   ): { reachable: Array<{ to: string; maxArmies: number }> } | undefined;
 }
 
+/**
+ * The controls for the phase in progress, and nothing else.
+ *
+ * The phase section around these controls already says what the phase is for and
+ * whose it is, so nothing here repeats that: this renders the state of the move
+ * being composed — source, target, amount, confirm — plus the compulsory occupation
+ * card. Ending the turn is a turn-level action and lives under the sections instead.
+ */
 function PhaseControls(props: PhaseControlsProps): ReactNode {
   const { names, selection } = props;
 
@@ -854,17 +901,18 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
     if (selection?.kind !== "reinforce") {
       return (
         <section className="controls-card">
-          <span className="section-label">Reinforce</span>
           <p>
-            Choose one of your glowing countries. {action.maxArmies}{" "}
-            {action.maxArmies === 1 ? "army" : "armies"} left to place.
+            <b>
+              {action.maxArmies} {action.maxArmies === 1 ? "army" : "armies"}
+            </b>{" "}
+            still to place.
           </p>
         </section>
       );
     }
     return (
       <section className="controls-card">
-        <span className="section-label">Reinforce {names.territory(selection.from)}</span>
+        <span className="section-label">{names.territory(selection.from)}</span>
         <Stepper
           label="Armies to place"
           value={Math.min(selection.armies, action.maxArmies)}
@@ -894,7 +942,7 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
     );
   }
 
-  if (props.attackAction || props.fortifyAction || props.canEndTurn) {
+  if (props.attackAction || props.fortifyAction) {
     return (
       <section className="controls-card">
         <div className="intent-toggle" role="group" aria-label="Manoeuvre">
@@ -1015,69 +1063,22 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
             </p>
           )
         ) : (
-          <p>
+          <p className="muted">
             {props.intent === "attack"
-              ? "Choose a country with two or more armies bordering an enemy."
-              : "Choose a country with two or more armies to move from."}
+              ? "Pick a highlighted country to attack from."
+              : "Pick a highlighted country to move armies from."}
           </p>
         )}
-
-        {props.canEndTurn && (
-          <button
-            className="end-turn"
-            disabled={props.busy}
-            onClick={() => void props.submit({ type: "end-turn" })}
-          >
-            End turn →
-          </button>
-        )}
       </section>
     );
   }
 
-  if (props.waiting) {
-    return (
-      <section className="controls-card">
-        <p className="muted">Nothing to do right now — the board is waiting on another player.</p>
-      </section>
-    );
-  }
   return null;
 }
 
 // ---------------------------------------------------------------------------
 // Supporting panels
 // ---------------------------------------------------------------------------
-
-function GameHistory(props: { moves: ProjectedMoveV2[]; names: NameLookup }) {
-  return (
-    <section className="panel feed-panel">
-      <div className="panel-heading">
-        <h2>Game history</h2>
-        <span>earlier turns</span>
-      </div>
-      <div className="event-feed">
-        {props.moves.length === 0 ? (
-          <p className="muted">Moves will appear here as they commit.</p>
-        ) : (
-          props.moves.slice(0, 14).map((move) => {
-            const battle = move.kind === "AttackResolved" || move.kind === "AttackDeclared";
-            const detail = moveDetailV2(move, props.names);
-            return (
-              <article className="event-item" key={move.id}>
-                <span className={`event-icon ${battle ? "battle" : ""}`}>{battle ? "⚔" : "◆"}</span>
-                <div>
-                  <b>{moveTextV2(move, props.names)}</b>
-                  {detail && <small>{detail}</small>}
-                </div>
-              </article>
-            );
-          })
-        )}
-      </div>
-    </section>
-  );
-}
 
 function LobbyV2(props: {
   players: ProjectedPlayerV2[];

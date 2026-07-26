@@ -46,12 +46,18 @@ DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
   session, then press **Start game** and watch the live board. The browser retains the host capability
   only so you can start the match; both player seats are controlled through their agent tokens.
 
-- **Take your turn.** Reinforce from the rail's stepper, then pick a source country, a highlighted
+- **Read the screen.** A thin bar names the round, the seat whose turn it is, and the phase they are
+  on. Below it: the current turn on the left, the map in the middle, and the standings and history on
+  the right.
+- **Take your turn.** The left column is one section per phase. The phase in progress carries the
+  instructions and the controls; finished phases collapse to what they achieved and expand for the
+  detail; later phases stay visible but inert. Reinforce, then pick a source country, a highlighted
   enemy neighbour, and how many dice to throw with. A capture asks for the occupying garrison before
-  anything else is legal.
-- **Defend.** When someone attacks you, the rail raises a **Roll defence** prompt with a fifteen-
-  second countdown taken from the canonical deadline. Let it lapse and the server resolves the throw
-  itself — history says so plainly rather than pretending you rolled.
+  anything else is legal, and **End turn** sits under the phases because it belongs to the turn.
+- **Defend.** When someone attacks you, an **Attack declared** card rises above the phases with a
+  **Roll defence** prompt and a fifteen-second countdown taken from the canonical deadline. Let it
+  lapse and the server resolves the throw itself — history says so plainly rather than pretending you
+  rolled. Once resolved, the same card settles into the attack phase that produced it.
 - **Spectate.** Anyone can open the game link without a seat: same board, same countdown, same dice,
   no controls, labelled `Spectating live`.
 
@@ -118,9 +124,13 @@ as long as they exist.
 - `src/ui/hex-map.tsx` draws the layered SVG map from canonical `(q, r)` tiles, with
   `src/ui/label-layout.ts` nudging country labels clear of each other and of the army badges and
   `src/ui/pan-zoom.ts` doing the drag/wheel/pinch arithmetic in viewBox units.
-- `src/ui/turn-rail.tsx` and `src/ui/presentation-v2.ts` are the current-turn rail: the
-  reinforcement equation, the ledger, the canonical countdown, and dice copy that never claims a
-  human rolled when the timeout did.
+- `src/ui/match-bar.tsx`, `src/ui/turn-column.tsx`, and `src/ui/status-column.tsx` are the screen's
+  information architecture: round/seat/phase in one thin bar, one section per phase in the
+  current-turn column, and standings plus history in the status column.
+- `src/ui/combat-card.tsx` and `src/ui/presentation-v2.ts` carry the combat surface and every derived
+  string: the reinforcement equation, the phase instructions and summaries, the ledger, continent
+  standings, the canonical countdown, and dice copy that never claims a human rolled when the timeout
+  did.
 - `server/demo/strategy-v2.ts` is the scripted-bot policy. It is deliberately shallow, but it reinforces
   toward the weakest reachable enemy and fortifies stacks off borders they cannot attack out of, so
   an opponent who only turtles cannot freeze the game.
