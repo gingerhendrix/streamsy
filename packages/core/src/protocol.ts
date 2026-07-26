@@ -42,13 +42,14 @@ import { runAfterCommit } from "./protocol/helpers/after-commit-effects.ts";
 
 export { ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
 
-const LONG_POLL_TIMEOUT_MS = 1_500;
+const LONG_POLL_TIMEOUT_MS = 30_000;
 const MAX_COMMIT_ATTEMPTS = 8;
 const MAX_NO_PROGRESS_ATTEMPTS = 8;
 type DeleteStatus = "purged" | "retained-soft-deleted" | "not-found" | "gone";
 
 export interface StreamProtocolOptions {
   clock?: Clock;
+  /** Long-poll timeout in milliseconds. Defaults to 30 seconds. */
   longPollTimeoutMs?: number;
   /** Opaque offset scheme; defaults to Streamsy's fixed-width counter format. */
   offsetGenerator?: OffsetGenerator;

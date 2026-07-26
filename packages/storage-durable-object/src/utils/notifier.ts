@@ -16,7 +16,7 @@ export class DurableObjectNotifier {
    * total wait budget against the same value the per-park timeout uses — one
    * source of truth shared between the notifier and `storage.ts`.
    */
-  constructor(readonly longPollTimeoutMs = 1500) {}
+  constructor(readonly longPollTimeoutMs = 30_000) {}
 
   waitForWake(timeoutMs: number): Promise<void> {
     return new Promise((resolve) => {
