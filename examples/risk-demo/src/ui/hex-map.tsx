@@ -56,7 +56,7 @@ const HEX_RADIUS = 26;
 /** Army badge; also the obstacle no country label may be drawn underneath. */
 const BADGE_RADIUS = HEX_RADIUS * 0.62;
 /** Matches `.country-label` in the stylesheet, so the layout measures what renders. */
-const LABEL_FONT_SIZE = 10.5;
+const LABEL_FONT_SIZE = 12;
 
 /** How a country should be drawn and what it affords right now. */
 export type TerritoryTone =

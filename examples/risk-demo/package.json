@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.1",
+    "@fontsource/barlow-condensed": "^5.3.0",
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
     "@streamsy/json": "workspace:*",

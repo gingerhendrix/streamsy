@@ -127,6 +127,13 @@ as long as they exist.
 - `src/ui/match-bar.tsx`, `src/ui/turn-column.tsx`, and `src/ui/status-column.tsx` are the screen's
   information architecture: round/seat/phase in one thin bar, one section per phase in the
   current-turn column, and standings plus history in the status column.
+- `src/ui/styles.css` is the whole product's visual system — a field manual: warm khaki stock,
+  charcoal rules, olive commands, and one signal red for urgency, with player colour reserved for
+  game state and every colour-carried state also carried by a label, rule weight or dash pattern.
+  Its tokens live in `:root`, so the landing page, lobby, playing surface and legacy v1 board are
+  one document rather than a base plus a theme. The display face is Barlow Condensed, bundled from
+  the `@fontsource/barlow-condensed` dependency (SIL Open Font License 1.1) so nothing is fetched
+  from a font CDN at runtime.
 - `src/ui/combat-card.tsx` and `src/ui/presentation-v2.ts` carry the combat surface and every derived
   string: the reinforcement equation, the phase instructions and summaries, the ledger, continent
   standings, the canonical countdown, and dice copy that never claims a human rolled when the timeout

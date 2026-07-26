@@ -1,3 +1,10 @@
+/* Barlow Condensed, bundled from node_modules rather than fetched at runtime:
+   the display voice is part of the build, so the surface never renders in a
+   substitute face. SIL Open Font License 1.1, (c) The Barlow Project Authors.
+   Latin only, in the two weights the system actually sets. */
+@import "@fontsource/barlow-condensed/latin-700.css";
+@import "@fontsource/barlow-condensed/latin-800.css";
+
 /* ---------------------------------------------------------------------------
  * Streamsy Risk — field manual
  *
@@ -36,7 +43,7 @@
   --map-leader: #35372b;
   --label-halo: #d8d0ad;
   /* Faces: one condensed display voice, one legible body, one for figures. */
-  --display-face: "Arial Narrow", "Roboto Condensed", Arial, Helvetica, sans-serif;
+  --display-face: "Barlow Condensed", "Arial Narrow", Arial, Helvetica, sans-serif;
   --body-face: Arial, Helvetica, sans-serif;
   --mono-face: ui-monospace, "Cascadia Mono", monospace;
   color-scheme: light;
@@ -72,7 +79,6 @@ h3,
 .countdown b,
 .territory-button b {
   font-family: var(--display-face);
-  font-stretch: condensed;
 }
 code {
   font-family: var(--mono-face);
@@ -1159,15 +1165,17 @@ summary:focus-visible,
 }
 .hex-map .army-count {
   fill: var(--cream);
-  font: 800 17px var(--display-face);
+  font: 800 18px var(--display-face);
   paint-order: stroke;
   stroke: var(--map-ink);
   stroke-width: 3px;
 }
 .hex-map .country-label {
   fill: var(--map-ink);
-  font: 800 10.5px var(--display-face);
-  letter-spacing: 0.045em;
+  font: 800 12px var(--display-face);
+  /* The condensed face needs no tracking, and at map scale any fractional
+     letter-spacing rounds unevenly between glyphs. */
+  letter-spacing: normal;
   text-transform: uppercase;
   paint-order: stroke;
   stroke: var(--label-halo);
