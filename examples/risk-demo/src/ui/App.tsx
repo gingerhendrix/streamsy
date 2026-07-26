@@ -680,7 +680,7 @@ function RiskMap(props: {
       </div>
       <div className="map-caption">
         <span>Connected territories share a route</span>
-        <span>Click a glowing territory to reinforce</span>
+        <span>Click a marked territory to reinforce</span>
       </div>
     </section>
   );
@@ -791,7 +791,7 @@ function ActionPanel({
           if (action.type === "reinforce")
             return [
               <span className="action-hint" key="reinforce">
-                Select one of your glowing territories · {action.maxArmies} remaining
+                Select one of your marked territories · {action.maxArmies} remaining
               </span>,
             ];
           if (action.type === "attack")

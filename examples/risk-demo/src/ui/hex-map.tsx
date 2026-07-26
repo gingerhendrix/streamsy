@@ -187,6 +187,7 @@ function TerrainDefs() {
         markerHeight="5"
         orient="auto-start-reverse"
       >
+        {/* The field manual's signal red — keep in step with `--signal` in styles.css. */}
         <path d="M0 0 L10 5 L0 10 z" fill="#8e2f25" />
       </marker>
     </defs>

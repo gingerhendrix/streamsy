@@ -1,811 +1,20 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap");
-
-:root {
-  font-family: "DM Sans", system-ui, sans-serif;
-  color: #eef2f6;
-  background: #080d14;
-  font-synthesis: none;
-  --ink: #f8fafc;
-  --muted: #8d9aad;
-  --line: rgba(255, 255, 255, 0.09);
-  --panel: rgba(18, 26, 37, 0.88);
-  --accent: #65dfb4;
-}
-
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at 18% 5%, #14273a 0, transparent 31%),
-    radial-gradient(circle at 92% 70%, #17271f 0, transparent 27%), #080d14;
-}
-button,
-input {
-  font: inherit;
-}
-button {
-  color: inherit;
-}
-button:focus-visible,
-input:focus-visible {
-  outline: 3px solid rgba(101, 223, 180, 0.45);
-  outline-offset: 2px;
-}
-
-.landing-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-  align-items: center;
-  gap: clamp(3rem, 8vw, 9rem);
-  max-width: 1180px;
-  padding: 5vw;
-  margin: auto;
-}
-.hero-card {
-  max-width: 620px;
-}
-.eyebrow,
-.section-label {
-  color: var(--accent);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-.live-dot {
-  width: 8px;
-  height: 8px;
-  display: inline-block;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 14px var(--accent);
-  margin-right: 8px;
-}
-h1,
-h2,
-p {
-  margin-top: 0;
-}
-h1,
-h2,
-.brand {
-  font-family: "Manrope", sans-serif;
-}
-.hero-card h1 {
-  font-size: clamp(3rem, 7vw, 6.2rem);
-  letter-spacing: -0.065em;
-  line-height: 0.92;
-  margin: 1.4rem 0 1.7rem;
-  max-width: 730px;
-}
-.hero-copy {
-  color: #a9b6c6;
-  font-size: clamp(1.05rem, 2vw, 1.3rem);
-  line-height: 1.65;
-  max-width: 580px;
-}
-.player-fields {
-  display: flex;
-  gap: 1.25rem;
-  align-items: end;
-  margin: 2rem 0 1rem;
-}
-.player-fields label {
-  display: grid;
-  gap: 0.5rem;
-  flex: 1;
-}
-.player-fields label span,
-fieldset legend {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  font-weight: 700;
-}
-input {
-  width: 100%;
-  color: var(--ink);
-  background: #111a25;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.83rem 1rem;
-}
-fieldset {
-  border: 0;
-  padding: 0;
-  margin: 0;
-}
-.swatches {
-  display: flex;
-  gap: 0.55rem;
-  padding: 0.45rem 0;
-}
-.swatch {
-  width: 25px;
-  height: 25px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
-}
-.swatch.selected {
-  border-color: #fff;
-  transform: scale(1.12);
-}
-button {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #172230;
-  padding: 0.72rem 1rem;
-  cursor: pointer;
-  transition: 0.18s ease;
-}
-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(101, 223, 180, 0.45);
-  background: #1c2b3b;
-}
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-.primary {
-  background: var(--accent);
-  color: #082018;
-  border-color: transparent;
-  font-weight: 800;
-}
-.primary:hover:not(:disabled) {
-  background: #7ae9c2;
-}
-.big {
-  padding: 1rem 1.4rem;
-  min-width: 220px;
-}
-.join-row {
-  display: flex;
-  gap: 0.6rem;
-  max-width: 430px;
-  margin-top: 2.3rem;
-}
-.stream-story {
-  position: relative;
-  display: grid;
-  gap: 2.1rem;
-}
-.stream-line {
-  position: absolute;
-  width: 1px;
-  background: linear-gradient(transparent, var(--accent), transparent);
-  left: 18px;
-  top: 15px;
-  bottom: 15px;
-}
-.story-step {
-  display: grid;
-  grid-template-columns: 38px 1fr;
-  gap: 1.4rem;
-  position: relative;
-}
-.story-step > span {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: #101b27;
-  border: 1px solid rgba(101, 223, 180, 0.35);
-  color: var(--accent);
-  font-size: 0.68rem;
-  z-index: 1;
-}
-.story-step h2 {
-  font-size: 1rem;
-  margin: 0.45rem 0 0.35rem;
-}
-.story-step p {
-  color: var(--muted);
-  line-height: 1.55;
-  font-size: 0.9rem;
-}
-
-.game-shell {
-  max-width: 1500px;
-  margin: auto;
-  padding: 1.5rem clamp(1rem, 3vw, 3rem) 3rem;
-}
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 1.4rem;
-  border-bottom: 1px solid var(--line);
-}
-.brand {
-  font-size: 1.05rem;
-}
-.brand-mark {
-  display: inline-grid;
-  place-items: center;
-  background: var(--accent);
-  color: #07150f;
-  width: 27px;
-  height: 27px;
-  border-radius: 8px;
-  font-weight: 800;
-  margin-right: 0.55rem;
-}
-.game-code {
-  color: var(--muted);
-  font-size: 0.74rem;
-  margin: 0.4rem 0 0 2.3rem;
-}
-code {
-  font-family: ui-monospace, monospace;
-}
-.sync-pill {
-  min-width: 185px;
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  background: rgba(101, 223, 180, 0.06);
-  border: 1px solid rgba(101, 223, 180, 0.18);
-  border-radius: 999px;
-  padding: 0.58rem 0.9rem;
-}
-.sync-pill > span:last-child {
-  display: grid;
-  gap: 0.08rem;
-}
-.sync-pill b {
-  font-size: 0.74rem;
-  text-transform: capitalize;
-}
-.sync-pill small {
-  color: var(--muted);
-  font-family: ui-monospace, monospace;
-  font-size: 0.62rem;
-}
-.sync-light {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #e6a63c;
-  box-shadow: 0 0 9px #e6a63c;
-}
-.sync-pill.live .sync-light {
-  background: var(--accent);
-  box-shadow: 0 0 10px var(--accent);
-}
-.sync-pill.error .sync-light {
-  background: #ed6a5a;
-}
-
-.game-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 1.5rem;
-  margin-top: 1.5rem;
-}
-.main-column,
-.side-column {
-  display: grid;
-  align-content: start;
-  gap: 1rem;
-}
-.turn-banner {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  min-height: 90px;
-}
-.turn-banner h1 {
-  margin: 0.45rem 0 0;
-  font-size: clamp(1.7rem, 3vw, 2.7rem);
-  letter-spacing: -0.045em;
-  text-transform: capitalize;
-}
-.active-chip {
-  --player: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--player), transparent 45%);
-  border-left: 5px solid var(--player);
-  padding: 0.6rem 0.8rem;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--player), transparent 91%);
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-.map-card,
-.panel,
-.lobby-card,
-.action-panel,
-.session-card {
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.2);
-}
-.map-card {
-  padding: 1rem;
-}
-.map-grid {
-  position: relative;
-  min-height: clamp(370px, 48vw, 590px);
-  overflow: hidden;
-  border-radius: 12px;
-  background:
-    radial-gradient(ellipse at 50% 45%, rgba(62, 86, 96, 0.33), transparent 63%),
-    linear-gradient(135deg, #0d1822, #0a1119);
-}
-.map-grid::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  opacity: 0.2;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
-  background-size: 36px 36px;
-  mask-image: radial-gradient(circle, black, transparent 75%);
-}
-.map-lines {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.map-lines line {
-  stroke: #6d8291;
-  stroke-width: 0.65;
-  stroke-dasharray: 1.2 1.4;
-  vector-effect: non-scaling-stroke;
-  opacity: 0.65;
-}
-.territory-button {
-  --owner: #64748b;
-  position: absolute;
-  transform: translate(-50%, -50%);
-  width: clamp(96px, 13vw, 148px);
-  aspect-ratio: 1.55;
-  padding: 0.5rem;
-  border-radius: 42% 58% 48% 52% / 55% 41% 59% 45%;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--owner), white 8%),
-    color-mix(in srgb, var(--owner), #071018 38%)
-  );
-  border: 2px solid color-mix(in srgb, var(--owner), white 30%);
-  box-shadow:
-    inset 0 1px 14px rgba(255, 255, 255, 0.12),
-    0 14px 25px rgba(0, 0, 0, 0.25);
-  display: grid;
-  place-items: center;
-  z-index: 2;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-}
-.territory-button:nth-of-type(even) {
-  border-radius: 56% 44% 62% 38% / 44% 59% 41% 56%;
-}
-.territory-button b {
-  font: 800 clamp(1.45rem, 3vw, 2.2rem)/1 "Manrope";
-}
-.territory-button small {
-  font-size: 0.62rem;
-  opacity: 0.78;
-  max-width: 86px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.territory-name {
-  font-size: 0.67rem;
-  text-transform: uppercase;
-  letter-spacing: 0.13em;
-  font-weight: 800;
-}
-.territory-button.actionable {
-  animation: actionable 1.8s ease-in-out infinite;
-}
-.territory-button:disabled {
-  opacity: 1;
-  cursor: default;
-}
-.territory-button.actionable:disabled {
-  opacity: 0.48;
-}
-@keyframes actionable {
-  50% {
-    box-shadow:
-      0 0 0 7px rgba(101, 223, 180, 0.14),
-      0 16px 30px rgba(0, 0, 0, 0.25);
-  }
-}
-.map-caption {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.7rem;
-  padding: 0.8rem 0.25rem 0;
-}
-
-.panel {
-  padding: 1rem;
-}
-.panel-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.8rem;
-}
-.panel-heading h2 {
-  font-size: 0.9rem;
-  margin: 0;
-}
-.panel-heading span {
-  color: var(--muted);
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-.roster {
-  display: grid;
-  gap: 0.35rem;
-}
-.roster-player {
-  display: grid;
-  grid-template-columns: 9px 1fr auto;
-  gap: 0.7rem;
-  align-items: center;
-  padding: 0.65rem 0.55rem;
-  border-radius: 8px;
-}
-.roster-player:has(.turn-marker) {
-  background: rgba(255, 255, 255, 0.04);
-}
-.roster-player.eliminated {
-  opacity: 0.45;
-}
-.player-color {
-  width: 7px;
-  height: 32px;
-  border-radius: 99px;
-}
-.roster-player div {
-  display: grid;
-  gap: 0.18rem;
-}
-.roster-player b {
-  font-size: 0.78rem;
-}
-.roster-player small {
-  color: var(--muted);
-  font-size: 0.65rem;
-}
-.turn-marker {
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 0.57rem;
-  font-weight: 800;
-}
-.feed-panel {
-  min-height: 300px;
-}
-.event-feed {
-  max-height: 390px;
-  overflow: auto;
-  display: grid;
-  gap: 0.15rem;
-  scrollbar-color: #344454 transparent;
-}
-.event-item {
-  display: grid;
-  grid-template-columns: 23px 1fr;
-  gap: 0.6rem;
-  padding: 0.65rem 0.2rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.055);
-}
-.event-item:first-child {
-  border-top: 0;
-}
-.event-icon {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  color: var(--accent);
-  background: rgba(101, 223, 180, 0.08);
-  border-radius: 50%;
-  font-size: 0.55rem;
-}
-.event-icon.battle {
-  color: #f0b359;
-  background: rgba(240, 179, 89, 0.1);
-  font-size: 0.75rem;
-}
-.event-item div {
-  display: grid;
-  gap: 0.25rem;
-}
-.event-item b {
-  font-size: 0.7rem;
-  font-weight: 600;
-  line-height: 1.35;
-}
-.event-item small {
-  font-size: 0.62rem;
-  color: #c4ced9;
-}
-.event-item code {
-  font-size: 0.55rem;
-  color: #647386;
-}
-.muted {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-.session-card {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem;
-}
-.ghost,
-.text-button {
-  background: transparent;
-  font-size: 0.7rem;
-  padding: 0.5rem;
-}
-.text-button {
-  border: 0;
-  color: var(--muted);
-}
-
-.action-panel {
-  padding: 1rem 1.2rem;
-  display: grid;
-  grid-template-columns: minmax(180px, 0.33fr) 1fr;
-  gap: 1rem;
-  align-items: center;
-}
-.action-panel h2 {
-  font-size: 1rem;
-  margin: 0.35rem 0 0;
-}
-.action-list {
-  display: flex;
-  gap: 0.5rem;
-  overflow-x: auto;
-  padding: 0.2rem;
-}
-.action-list button {
-  white-space: nowrap;
-  font-size: 0.7rem;
-  display: grid;
-  gap: 0.15rem;
-  text-align: left;
-}
-.action-list button small {
-  color: var(--muted);
-  font-size: 0.58rem;
-}
-.action-list .end-turn {
-  margin-left: auto;
-  background: #243243;
-}
-.action-hint {
-  color: #c9d3de;
-  font-size: 0.75rem;
-}
-.notice {
-  border: 1px solid rgba(101, 223, 180, 0.2);
-  color: #bdebd9;
-  background: rgba(101, 223, 180, 0.07);
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  font-size: 0.78rem;
-}
-.notice.error {
-  border-color: rgba(237, 106, 90, 0.3);
-  color: #f4afa6;
-}
-
-.lobby-card {
-  padding: clamp(1.2rem, 3vw, 2.2rem);
-}
-.lobby-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.lobby-top h2 {
-  font-size: 1.7rem;
-  margin: 0.5rem 0;
-}
-.lobby-top p {
-  color: var(--muted);
-}
-.invite-button {
-  align-self: start;
-}
-.lobby-players {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.7rem;
-  margin: 1.6rem 0;
-}
-.lobby-player,
-.empty-seat {
-  min-height: 68px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  padding: 0.7rem;
-}
-.lobby-player {
-  display: grid;
-  grid-template-columns: 40px 1fr auto;
-  align-items: center;
-  gap: 0.7rem;
-  background: rgba(255, 255, 255, 0.025);
-}
-.avatar {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  font-weight: 800;
-}
-.lobby-player div {
-  display: grid;
-}
-.lobby-player b {
-  font-size: 0.8rem;
-}
-.lobby-player small,
-.ready {
-  color: var(--muted);
-  font-size: 0.65rem;
-}
-.ready {
-  color: var(--accent);
-}
-.empty-seat {
-  display: grid;
-  place-items: center;
-  color: #566577;
-  border-style: dashed;
-  font-size: 0.73rem;
-}
-.join-panel {
-  border-top: 1px solid var(--line);
-  padding-top: 0.5rem;
-}
-.join-panel .primary,
-.start-button {
-  width: 100%;
-}
-.start-button {
-  margin-top: 0.5rem;
-}
-.honest-empty {
-  min-height: 70vh;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  text-align: center;
-}
-.honest-empty h1 {
-  margin: 1.5rem 0 0.5rem;
-}
-.honest-empty p {
-  color: var(--muted);
-  max-width: 470px;
-  line-height: 1.6;
-}
-.loader-ring {
-  width: 45px;
-  height: 45px;
-  border-radius: 50%;
-  border: 3px solid rgba(101, 223, 180, 0.15);
-  border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 980px) {
-  .landing-shell {
-    grid-template-columns: 1fr;
-    padding-top: 5rem;
-  }
-  .stream-story {
-    padding-bottom: 4rem;
-  }
-  .game-layout {
-    grid-template-columns: 1fr;
-  }
-  .side-column {
-    grid-template-columns: 1fr 1fr;
-  }
-  .session-card {
-    grid-column: 1 / -1;
-  }
-}
-@media (max-width: 650px) {
-  .hero-card h1 {
-    font-size: 3.4rem;
-  }
-  .player-fields,
-  .lobby-top,
-  .turn-banner {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .topbar {
-    align-items: flex-start;
-  }
-  .sync-pill {
-    min-width: 0;
-  }
-  .sync-pill small {
-    display: none;
-  }
-  .game-layout {
-    margin-top: 0.7rem;
-  }
-  .map-grid {
-    min-height: 390px;
-  }
-  .territory-button {
-    width: 88px;
-  }
-  .map-caption {
-    display: none;
-  }
-  .side-column,
-  .lobby-players {
-    grid-template-columns: 1fr;
-  }
-  .action-panel {
-    grid-template-columns: 1fr;
-  }
-  .join-row {
-    flex-direction: column;
-  }
-}
-
 /* ---------------------------------------------------------------------------
- * risk-demo-v2 playing surface — the field manual
+ * Streamsy Risk — field manual
  *
- * A thin match bar over three columns: current turn, map, status. Each column owns
- * one question, so nothing needs to compete for the top of the page. The map itself
- * never reflows — its viewBox is derived from axial coordinates, so zoom/pan
- * transforms a group inside a stable box.
+ * One printed system for the whole product: warm khaki stock, charcoal ink,
+ * olive drab for commands, and a single signal red held back for urgency. Rules
+ * and spacing do the work cards and shadows would otherwise do, so the landing
+ * page, the lobby, the playing surface and the legacy v1 board all read as
+ * pages of the same document.
  *
- * The surface is treated as a single working document: warm stock, charcoal rules,
- * olive commands, and signal red only where urgency warrants it. There are no
- * cards — panels lose their perimeter and columns are divided by rules — so the
- * declarations below describe the page once rather than decorating a box twice.
+ * Player colour belongs to game state — the map, army counters, standings — and
+ * never to interface decoration. Wherever colour carries a state, a label, a
+ * rule weight or a dash pattern carries it too.
  * ------------------------------------------------------------------------- */
 
-body:has(.game-shell.v2) {
-  background: #c8c2a7;
-}
-
-.game-shell.v2 {
+:root {
   /* Stock and ink. */
-  --paper: #d7d0b2;
+  --paper: #c8c2a7;
   --paper-raised: #e2dcc2;
   --paper-deep: #c5bea0;
   --paper-active: #c2c19d;
@@ -830,30 +39,83 @@ body:has(.game-shell.v2) {
   --display-face: "Arial Narrow", "Roboto Condensed", Arial, Helvetica, sans-serif;
   --body-face: Arial, Helvetica, sans-serif;
   --mono-face: ui-monospace, "Cascadia Mono", monospace;
-  /* The dark base still owns `--accent`; inside this surface it reads as olive.
-     It disappears once the field manual becomes the product-wide system. */
-  --accent: var(--olive);
-  max-width: 1800px;
-  padding: 0 clamp(0.75rem, 2vw, 2rem) 2rem;
+  color-scheme: light;
   color: var(--ink);
+  background: var(--paper);
   font-family: var(--body-face);
+  font-synthesis: none;
 }
 
-.game-shell.v2 h1,
-.game-shell.v2 h2,
-.game-shell.v2 h3,
-.game-shell.v2 .match-brand,
-.game-shell.v2 .match-fact b,
-.game-shell.v2 .phase-title b,
-.game-shell.v2 .stepper b,
-.game-shell.v2 .countdown b {
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--paper);
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+h1,
+h2,
+h3,
+.brand,
+.match-brand,
+.match-fact b,
+.phase-title b,
+.stepper b,
+.countdown b,
+.territory-button b {
   font-family: var(--display-face);
   font-stretch: condensed;
 }
-
-.game-shell.v2 .section-label,
-.game-shell.v2 .eyebrow {
+code {
+  font-family: var(--mono-face);
+}
+/* Micro-labels are set in the figure face so they read as annotations. */
+.eyebrow,
+.section-label {
   color: var(--olive-dark);
+  font-family: var(--mono-face);
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.muted {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* --- fields and commands -------------------------------------------------- */
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+input,
+textarea {
+  width: 100%;
+  padding: 0.72rem 0.8rem;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.player-fields label span,
+fieldset legend {
+  color: var(--muted);
   font-family: var(--mono-face);
   font-size: 0.63rem;
   font-weight: 800;
@@ -862,62 +124,829 @@ body:has(.game-shell.v2) {
 }
 
 /* Commands, not pills: a rectangle of ink that inverts when pressed. */
-.game-shell.v2 button {
+button {
+  padding: 0.72rem 1rem;
   border: 1px solid var(--ink);
   border-radius: 0;
   background: transparent;
   color: var(--ink);
   font-weight: 700;
+  cursor: pointer;
   transition:
     background-color 120ms ease,
     color 120ms ease;
 }
-
-.game-shell.v2 button:hover:not(:disabled) {
-  transform: none;
-  border-color: var(--ink);
+button:hover:not(:disabled) {
   background: var(--ink);
   color: var(--paper-raised);
 }
-
-.game-shell.v2 button:disabled {
+button:disabled {
+  cursor: not-allowed;
   opacity: 0.48;
 }
-
-.game-shell.v2 button:focus-visible,
-.game-shell.v2 input:focus-visible,
-.game-shell.v2 summary:focus-visible,
-.game-shell.v2 .country-hit:focus-visible {
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+.country-hit:focus-visible {
   outline: 3px solid var(--signal);
   outline-offset: 3px;
 }
-
-.game-shell.v2 .primary,
-.game-shell.v2 .roll-defense {
+/* `.roll-defense` is the combat surface's primary action and shares its weight. */
+.primary,
+.roll-defense {
   border-color: var(--olive-dark);
   background: var(--olive-dark);
   color: var(--cream);
 }
-
-.game-shell.v2 .primary:hover:not(:disabled),
-.game-shell.v2 .roll-defense:hover:not(:disabled) {
+.primary:hover:not(:disabled),
+.roll-defense:hover:not(:disabled) {
   border-color: var(--ink);
   background: var(--ink);
   color: var(--cream);
 }
-
-.game-shell.v2 .ghost,
-.game-shell.v2 .text-button {
+.big {
+  padding: 1rem 1.4rem;
+  min-width: 220px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ghost,
+.text-button {
   padding: 0.42rem 0.5rem;
   border: 1px solid var(--line);
   color: var(--ink);
+  font-size: 0.7rem;
 }
 
 /* Player colour is game state, never decoration: a ruled swatch, not a dot. */
-.game-shell.v2 .player-color {
+.player-color {
   width: 9px;
+  height: 32px;
   border: 1px solid var(--ink);
+}
+.brand-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  margin-right: 0.35rem;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+/* Commands acknowledge in the surface's own voice, not as a tinted toast. */
+.notice {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--olive-dark);
+  background: var(--paper-notice);
+  color: var(--ink);
+  font-family: var(--mono-face);
+  font-size: 0.72rem;
+}
+.notice::before {
+  content: "ORDER RECEIVED / ";
+  font-weight: 800;
+}
+.notice.error {
+  border: 2px solid var(--signal);
+  background: transparent;
+  color: var(--signal);
+}
+.notice.error::before {
+  content: "ACTION REQUIRED / ";
+}
+
+/* --- landing -------------------------------------------------------------- */
+
+.landing-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  align-items: center;
+  gap: clamp(3rem, 8vw, 9rem);
+  max-width: 1180px;
+  padding: 5vw;
+  margin: auto;
+}
+.hero-card {
+  max-width: 620px;
+}
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border: 1px solid var(--ink);
+  background: var(--olive);
+}
+.hero-card h1 {
+  margin: 1.3rem 0 1.6rem;
+  max-width: 730px;
+  font-size: clamp(3rem, 7vw, 6rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 0.94;
+  text-transform: uppercase;
+}
+.hero-copy {
+  max-width: 580px;
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.6;
+}
+.player-fields {
+  display: flex;
+  gap: 1.25rem;
+  align-items: end;
+  margin: 2rem 0 1rem;
+}
+.player-fields label {
+  display: grid;
+  gap: 0.5rem;
+  flex: 1;
+}
+.swatches {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.45rem 0;
+}
+/* The chosen colour is confirmed by a ring, so the state is not the hue alone. */
+.swatch {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--ink);
+  cursor: pointer;
+}
+.swatch.selected {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+/* Square commands sit flush, so they carry their own separation. */
+.hero-card > button {
+  margin: 0 0.6rem 0.6rem 0;
+}
+.join-row {
+  display: flex;
+  gap: 0.6rem;
+  max-width: 430px;
+  margin-top: 1.7rem;
+}
+.join-row button {
+  white-space: nowrap;
+}
+.stream-story {
+  position: relative;
+  display: grid;
+  gap: 2.1rem;
+}
+.stream-line {
+  position: absolute;
+  width: 1px;
+  left: 18px;
+  top: 15px;
+  bottom: 15px;
+  background: var(--line);
+}
+.story-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 1.4rem;
+}
+.story-step > span {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  font-family: var(--mono-face);
+  font-size: 0.68rem;
+  font-weight: 800;
+  z-index: 1;
+}
+.story-step h2 {
+  margin: 0.4rem 0 0.35rem;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.story-step p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+/* --- the shared shell ----------------------------------------------------- */
+
+.game-shell {
+  max-width: 1500px;
+  margin: auto;
+  padding: 0 clamp(0.75rem, 2vw, 2rem) 3rem;
+}
+/* The same folio the playing surface's match bar uses. */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 58px;
+  padding: 0.55rem 0;
+  border-top: 3px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.brand {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.game-code {
+  margin: 0.35rem 0 0 2rem;
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.68rem;
+}
+.sync-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+.sync-pill > span:last-child {
+  display: grid;
+  gap: 0.08rem;
+}
+.sync-pill b {
+  font-size: 0.68rem;
+  text-transform: capitalize;
+}
+.sync-pill small {
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.62rem;
+}
+.sync-light {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  background: var(--olive);
+}
+.sync-pill.error .sync-light {
+  background: var(--signal);
+}
+
+/* --- panels, standings, and the dispatch log ------------------------------ */
+
+.panel {
+  padding: 0 0 0.9rem;
+  border-bottom: 1px solid var(--ink);
+}
+.panel + .panel {
+  padding-top: 0.9rem;
+}
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.55rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 2px solid var(--ink);
+}
+.panel-heading h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.panel-heading span {
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.roster {
+  display: grid;
+  gap: 0;
+}
+.roster-player {
+  display: grid;
+  grid-template-columns: 9px 1fr auto;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line-light);
+}
+.roster-player:has(.turn-marker) {
+  padding-right: 0.35rem;
+  padding-left: 0.35rem;
+  background: var(--paper-shade);
+}
+.roster-player.eliminated {
+  opacity: 0.45;
+}
+.roster-player div {
+  display: grid;
+  gap: 0.18rem;
+}
+.roster-player b {
+  font-size: 0.78rem;
+}
+.roster-player small {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+.turn-marker {
+  color: var(--ink);
+  font-family: var(--mono-face);
+  font-size: 0.57rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.feed-panel {
+  min-height: 0;
+}
+.event-feed {
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  gap: 0.15rem;
+  scrollbar-color: var(--line) transparent;
+}
+.event-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line-light);
+}
+.event-item:first-child {
+  border-top: 0;
+}
+.event-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  font-size: 0.55rem;
+}
+.event-icon.battle {
+  border-color: var(--signal);
+  color: var(--signal);
+  font-size: 0.75rem;
+}
+.event-item div {
+  display: grid;
+  gap: 0.25rem;
+}
+.event-item b {
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.event-item small {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+.event-item code {
+  color: var(--muted);
+  font-size: 0.55rem;
+}
+.session-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.8rem 0;
+}
+
+/* --- lobby ---------------------------------------------------------------- */
+
+.lobby-card {
+  padding-top: 1.2rem;
+}
+.lobby-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 2px solid var(--ink);
+}
+.lobby-top h2 {
+  margin: 0.2rem 0 0.3rem;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+}
+.lobby-top p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.invite-button {
+  align-self: start;
+}
+.lobby-players {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 1.4rem;
+  margin: 0 0 1.3rem;
+}
+.lobby-player,
+.empty-seat {
+  min-height: 62px;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--line-light);
+}
+.lobby-player {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 0.7rem;
+}
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ink);
+  color: var(--cream);
+  font-weight: 800;
+}
+.lobby-player div {
+  display: grid;
+}
+.lobby-player b {
+  font-size: 0.8rem;
+}
+.lobby-player small {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+.ready {
+  color: var(--olive-dark);
+  font-family: var(--mono-face);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.empty-seat {
+  display: grid;
+  place-items: center;
+  border-bottom-style: dashed;
+  border-bottom-color: var(--line);
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.join-panel {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--ink);
+}
+.join-panel .primary,
+.start-button {
+  width: 100%;
+}
+.start-button {
+  margin-top: 0.5rem;
+}
+.host-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+/* An agent's briefing is a document to be copied whole, so it is set as one. */
+.agent-seat {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.9rem;
+  padding: 0.8rem 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  font-size: 0.78rem;
+}
+.agent-seat textarea {
+  resize: vertical;
+  padding: 0.7rem;
+  font: 0.72rem/1.45 var(--mono-face);
+}
+
+/* --- connecting ----------------------------------------------------------- */
+
+.honest-empty {
+  min-height: 70vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.35rem;
+  text-align: center;
+}
+.honest-empty h1 {
+  margin: 1.2rem 0 0.3rem;
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+.honest-empty p {
+  max-width: 470px;
+  line-height: 1.6;
+}
+.loader-ring {
+  width: 42px;
+  height: 42px;
+  border: 3px solid var(--line-light);
+  border-top-color: var(--olive-dark);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loader-ring {
+    animation-duration: 2.4s;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * risk-demo-v1 board
+ *
+ * The original fixed-map surface, kept for games created before the hex ruleset
+ * and set in the same language: flat owner fields, ink boundaries, ruled
+ * columns instead of floating cards.
+ * ------------------------------------------------------------------------- */
+
+.game-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 0;
+  margin-top: 1rem;
+}
+.main-column {
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+  min-width: 0;
+  padding-right: 1rem;
+}
+.side-column {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-width: 0;
+  padding-left: 1rem;
+  border-left: 1px solid var(--ink);
+}
+.turn-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  padding-bottom: 0.8rem;
+  border-bottom: 2px solid var(--ink);
+}
+.turn-banner h1 {
+  margin: 0.2rem 0 0;
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+}
+/* Whose turn it is: a ruled colour block beside the name, not a tinted edge. */
+.active-chip {
+  --player: var(--olive);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  align-self: center;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.active-chip::before {
+  content: "";
+  width: 12px;
+  height: 6px;
+  border: 1px solid var(--ink);
+  background: var(--player);
+}
+.map-grid {
+  position: relative;
+  min-height: clamp(370px, 48vw, 590px);
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  background: var(--map-field);
+}
+.map-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.map-lines line {
+  stroke: var(--map-edge);
+  stroke-width: 0.8;
+  stroke-dasharray: 1.5 1.5;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.55;
+}
+.territory-button {
+  --owner: #6f6e5a;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: clamp(96px, 13vw, 148px);
+  aspect-ratio: 1.55;
+  padding: 0.5rem;
+  border: 2px solid var(--map-ink);
   border-radius: 0;
+  background: var(--owner);
+  color: var(--cream);
+  display: grid;
+  place-items: center;
+  z-index: 2;
+}
+/* Actionable is a dashed signal border, so the cue survives without colour. */
+.territory-button.actionable {
+  outline: 3px dashed var(--signal);
+  outline-offset: 2px;
+}
+.territory-button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.territory-button.actionable:disabled {
+  outline: 0;
+  opacity: 0.48;
+}
+.territory-button b {
+  font-size: clamp(1.45rem, 3vw, 2.2rem);
+  font-weight: 800;
+  line-height: 1;
+}
+.territory-button small {
+  font-size: 0.62rem;
+  max-width: 86px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.territory-name {
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.map-caption {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.6rem 0 0;
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.action-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.33fr) 1fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.8rem 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.action-panel h2 {
+  margin: 0.3rem 0 0;
+  font-size: 1rem;
+  text-transform: uppercase;
+}
+.action-list {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.2rem;
+}
+.action-list button {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.7rem;
+  text-align: left;
+  white-space: nowrap;
+}
+.action-list button small {
+  color: var(--muted);
+  font-size: 0.58rem;
+}
+.action-list .end-turn {
+  margin-left: auto;
+  border-color: var(--olive-dark);
+  background: var(--olive-dark);
+  color: var(--cream);
+}
+.action-hint {
+  font-size: 0.75rem;
+}
+
+/* --- responsive ----------------------------------------------------------- */
+
+@media (max-width: 980px) {
+  .landing-shell {
+    grid-template-columns: 1fr;
+    padding-top: 5rem;
+  }
+  .stream-story {
+    padding-bottom: 4rem;
+  }
+  .game-layout {
+    grid-template-columns: 1fr;
+  }
+  /* Stacked, the vertical rule becomes a horizontal one. */
+  .main-column,
+  .side-column {
+    padding: 0;
+    border: 0;
+  }
+  .side-column {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 2px solid var(--ink);
+  }
+}
+@media (max-width: 650px) {
+  .hero-card h1 {
+    font-size: 3.2rem;
+  }
+  .player-fields,
+  .lobby-top,
+  .turn-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .active-chip {
+    align-self: start;
+    margin-top: 0.6rem;
+  }
+  .topbar {
+    align-items: flex-start;
+  }
+  .sync-pill small {
+    display: none;
+  }
+  .game-layout {
+    margin-top: 0.7rem;
+  }
+  .map-grid {
+    min-height: 390px;
+  }
+  .territory-button {
+    width: 88px;
+  }
+  .map-caption {
+    display: none;
+  }
+  .lobby-players {
+    grid-template-columns: 1fr;
+  }
+  .action-panel {
+    grid-template-columns: 1fr;
+  }
+  .join-row {
+    flex-direction: column;
+  }
+}
+/* ---------------------------------------------------------------------------
+ * risk-demo-v2 playing surface — the field manual
+ *
+ * A thin match bar over three columns: current turn, map, status. Each column owns
+ * one question, so nothing needs to compete for the top of the page. The map itself
+ * never reflows — its viewBox is derived from axial coordinates, so zoom/pan
+ * transforms a group inside a stable box.
+ *
+ * The surface is treated as a single working document: warm stock, charcoal rules,
+ * olive commands, and signal red only where urgency warrants it. There are no
+ * cards — panels lose their perimeter and columns are divided by rules — so the
+ * declarations below describe the page once rather than decorating a box twice.
+ * ------------------------------------------------------------------------- */
+
+.game-shell.v2 {
+  max-width: 1800px;
+  padding-bottom: 2rem;
 }
 
 /* --- match bar: a document folio, not an application card ----------------- */
@@ -940,16 +969,6 @@ body:has(.game-shell.v2) {
   letter-spacing: 0.035em;
   text-transform: uppercase;
   white-space: nowrap;
-}
-.game-shell.v2 .match-brand .brand-mark {
-  width: 25px;
-  height: 25px;
-  margin-right: 0.35rem;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: var(--ink);
-  color: var(--paper-raised);
-  font-size: 0.72rem;
 }
 .match-game code {
   margin-left: 0.3rem;
@@ -1019,33 +1038,6 @@ body:has(.game-shell.v2) {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.game-shell.v2 .sync-pill {
-  min-width: 0;
-  gap: 0.5rem;
-  padding: 0.28rem 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-}
-.game-shell.v2 .sync-pill b {
-  font-size: 0.68rem;
-}
-.game-shell.v2 .sync-pill small {
-  font-family: var(--mono-face);
-}
-.game-shell.v2 .sync-light,
-.game-shell.v2 .sync-pill.live .sync-light {
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--ink);
-  background: var(--olive);
-  box-shadow: none;
-}
-.game-shell.v2 .sync-pill.error .sync-light {
-  background: var(--signal);
-}
-
 /* --- one page, three ruled working columns -------------------------------- */
 
 .game-layout-v3 {
@@ -1385,9 +1377,8 @@ body:has(.game-shell.v2) {
   font-weight: 500;
 }
 
-/* The turn-level action: not owned by any one phase, so it sits under them all.
-   Scoped past the generic command styling above, which it deliberately outranks. */
-.game-shell.v2 .turn-column > .end-turn {
+/* The turn-level action: not owned by any one phase, so it sits under them all. */
+.turn-column > .end-turn {
   width: 100%;
   margin-top: 0.8rem;
   padding: 0.7rem 0.9rem;
@@ -1435,7 +1426,7 @@ body:has(.game-shell.v2) {
 }
 /* Prose inside a control block is an order, so it keeps full ink even when the
    markup marks it as secondary. */
-.game-shell.v2 .controls-card p {
+.controls-card p {
   margin: 0;
   color: var(--ink);
   font-size: 0.8rem;
@@ -1631,9 +1622,6 @@ body:has(.game-shell.v2) {
   .die.fade {
     animation: die-fade 180ms ease-out;
   }
-  .loader-ring {
-    animation-duration: 2.4s;
-  }
 }
 
 .defense-prompt {
@@ -1725,36 +1713,6 @@ body:has(.game-shell.v2) {
 
 /* --- status column: standings, continents, history ------------------------ */
 
-.game-shell.v2 .panel,
-.game-shell.v2 .session-card {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.game-shell.v2 .status-column .panel {
-  padding: 0 0 0.9rem;
-  border-bottom: 1px solid var(--ink);
-}
-.game-shell.v2 .status-column .panel + .panel {
-  padding-top: 0.9rem;
-}
-.game-shell.v2 .panel-heading {
-  margin-bottom: 0.55rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 2px solid var(--ink);
-}
-.game-shell.v2 .panel-heading h2 {
-  font-size: 0.95rem;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
-}
-.game-shell.v2 .panel-heading span {
-  color: var(--muted);
-  font-family: var(--mono-face);
-  font-size: 0.55rem;
-  letter-spacing: 0.06em;
-}
 .standings-list,
 .continent-list {
   display: grid;
@@ -1867,92 +1825,6 @@ body:has(.game-shell.v2) {
   border: 1px solid var(--ink);
   background: var(--player);
 }
-.game-shell.v2 .status-column .feed-panel {
-  min-height: 0;
-}
-.game-shell.v2 .status-column .event-feed {
-  max-height: 320px;
-  scrollbar-color: var(--line) transparent;
-}
-.game-shell.v2 .event-item {
-  grid-template-columns: 22px 1fr;
-  padding: 0.55rem 0;
-  border-top: 1px solid var(--line-light);
-}
-.game-shell.v2 .event-icon {
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-}
-.game-shell.v2 .event-icon.battle {
-  border-color: var(--signal);
-  color: var(--signal);
-}
-.game-shell.v2 .event-item small {
-  color: var(--muted);
-}
-
-/* Commands acknowledge in the surface's own voice, not as a tinted toast. */
-.game-shell.v2 .notice {
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--olive-dark);
-  border-radius: 0;
-  background: var(--paper-notice);
-  color: var(--ink);
-  font-family: var(--mono-face);
-  font-size: 0.72rem;
-}
-.game-shell.v2 .notice::before {
-  content: "ORDER RECEIVED / ";
-  font-weight: 800;
-}
-.game-shell.v2 .notice.error {
-  border: 2px solid var(--signal);
-  background: transparent;
-  color: var(--signal);
-}
-.game-shell.v2 .notice.error::before {
-  content: "ACTION REQUIRED / ";
-}
-.game-shell.v2 .session-card {
-  gap: 0.4rem;
-  padding: 0.8rem 0;
-}
-
-/* --- lobby-side helpers shared with the v2 lobby screen ------------------- */
-
-.host-actions {
-  display: grid;
-  gap: 0.5rem;
-}
-.agent-seat {
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 0.9rem 1rem;
-  margin-top: 0.9rem;
-  display: grid;
-  gap: 0.45rem;
-  font-size: 0.78rem;
-}
-.agent-seat textarea {
-  width: 100%;
-  resize: vertical;
-  padding: 0.7rem;
-  border-radius: 9px;
-  background: #0b131c;
-  border: 1px solid var(--line);
-  font:
-    0.72rem/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
-  color: #bdebd9;
-}
-
 /* --- responsive ----------------------------------------------------------- */
 
 /* Three columns need width. Below it, the status column folds under the map and the
@@ -1977,7 +1849,7 @@ body:has(.game-shell.v2) {
   }
 }
 @media (max-width: 940px) {
-  .game-shell.v2 {
+  .game-shell {
     padding-right: clamp(0.65rem, 3vw, 1.25rem);
     padding-left: clamp(0.65rem, 3vw, 1.25rem);
   }
