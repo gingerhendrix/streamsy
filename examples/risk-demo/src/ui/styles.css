@@ -2686,6 +2686,11 @@ body:has(.game-shell.v2) {
   }
 
   .game-shell.v2 .game-layout-v3 {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "turn"
+      "map"
+      "status";
     gap: 1rem;
   }
 
@@ -2708,6 +2713,8 @@ body:has(.game-shell.v2) {
   }
 
   .game-shell.v2 .match-state {
+    flex: 0 0 100%;
+    min-width: 0;
     padding-top: 0.45rem;
     border-top: 1px solid var(--line);
   }
@@ -2731,5 +2738,11 @@ body:has(.game-shell.v2) {
 
   .game-shell.v2 .details-card {
     padding: 0.65rem 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .game-shell.v2 .match-game code {
+    display: none;
   }
 }
