@@ -110,7 +110,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const body = (await readJsonBody<CreateGameRequest>(request)) ?? {};
     const name = body.name ?? "Host";
     const color = body.color ?? "#e05a47";
-    const gameId = randomId("game");
+    const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
     // New games are `risk-demo-v2` (design spec §11). V1 is not migrated and not
@@ -533,6 +533,9 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   ): Promise<Response> {
     const cap = await personalizedCapability(request, params.token!);
     if (cap instanceof Response) return cap;
+    if (params.gameId && cap.gameId !== params.gameId) {
+      return error(403, "WRONG_GAME", "Capability is scoped to another game.");
+    }
     const state = await loadAgentState(cap);
     if (!state)
       return error(400, "BAD_REQUEST", "Personalized state is available for v2 games only.");
@@ -542,10 +545,13 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   async function waitForAgent(request: Request, params: Record<string, string>): Promise<Response> {
     const cap = await personalizedCapability(request, params.token!);
     if (cap instanceof Response) return cap;
+    if (params.gameId && cap.gameId !== params.gameId) {
+      return error(403, "WRONG_GAME", "Capability is scoped to another game.");
+    }
     const current = await loadAgentState(cap);
     if (!current)
       return error(400, "BAD_REQUEST", "Personalized wait is available for v2 games only.");
-    const stateUrl = `/agent/${encodeURIComponent(params.token!)}/state`;
+    const stateUrl = `/v1/games/${encodeURIComponent(cap.gameId)}/agent/${encodeURIComponent(params.token!)}/state`;
     if (current.status === "finished" || current.legalMoves.length > 0) {
       return json({ changed: true, reason: "actionable", stateUrl });
     }
@@ -607,6 +613,18 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       pattern: "/agent-seat/:gameId/:playerId",
       handler: getAgentSeatBootstrap,
     },
+    {
+      method: "GET",
+      pattern: "/v1/games/:gameId/agent/:token/state",
+      handler: getAgentState,
+    },
+    {
+      method: "GET",
+      pattern: "/v1/games/:gameId/agent/:token/wait",
+      handler: waitForAgent,
+    },
+    // Local Bun compatibility. Cloudflare intentionally routes only the
+    // game-scoped variants because a token alone cannot select a game DO.
     { method: "GET", pattern: "/agent/:token/state", handler: getAgentState },
     { method: "GET", pattern: "/agent/:token/wait", handler: waitForAgent },
     { method: "POST", pattern: "/v1/games", handler: createGame },

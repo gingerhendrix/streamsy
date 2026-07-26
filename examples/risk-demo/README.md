@@ -19,6 +19,10 @@ generated hex map, and runs Ada and Bob as deterministic in-process HTTP bots. O
 spectator URL; the server and final board stay available until Ctrl-C. Temporary SQLite data is
 removed on shutdown.
 
+For the one-Durable-Object-per-game Cloudflare target, see
+[`docs/cloudflare.md`](docs/cloudflare.md). It includes the isolation model, local Workers smoke,
+Alchemy deployment, and teardown commands.
+
 A complete bot-versus-bot game runs 250–550 commands, so at the demo's one-command-per-second
 pace it takes roughly five to ten minutes — a measured run finished in 23 rounds and 8.8 minutes. Every attack pauses for a defence roll, so the board shows declaration, both sides'
 recorded dice, the losses, and — on a capture — the occupation the attacker had to choose.

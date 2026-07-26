@@ -145,8 +145,8 @@ async function main(): Promise<void> {
     });
     assert(agentJoin.status === 201, `join agent: ${agentJoin.status}`);
     const agentToken: string = agentJoin.body.capability;
-    const statePath = `/agent/${agentToken}/state`;
-    const waitPath = `/agent/${agentToken}/wait?wait=0`;
+    const statePath = `/v1/games/${agentGameId}/agent/${agentToken}/state`;
+    const waitPath = `/v1/games/${agentGameId}/agent/${agentToken}/wait?wait=0`;
 
     const lobbyState = await api(server.baseUrl, "GET", statePath);
     assert(lobbyState.status === 200, `agent lobby state: ${lobbyState.status}`);

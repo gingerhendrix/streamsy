@@ -27,6 +27,8 @@ import type { CapabilityRow, Stores } from "../persistence/stores.ts";
 export interface AppDeps {
   protocol: StreamProtocolFactory;
   stores: Stores;
+  /** Runtime-specific game id minting (the Cloudflare edge routes this id to its DO). */
+  createGameId?: () => string;
   rng?: Rng;
   now?: () => number;
   boardCache?: BoardRuntimeCache;
@@ -50,6 +52,7 @@ export interface AppContext {
   boardCache: BoardRuntimeCache;
   boardCacheV2: BoardRuntimeCacheV2;
   commandService: CommandServiceDeps;
+  createGameId(): string;
   defenseTimers: DefenseTimers;
   activeGeneration(gameId: string): string;
   authenticateCapability(request: Request): Promise<CapabilityRow | null>;
@@ -131,6 +134,7 @@ export function buildApp(deps: AppDeps): App {
     boardCache,
     boardCacheV2,
     commandService,
+    createGameId: deps.createGameId ?? (() => randomId("game")),
     defenseTimers,
     activeGeneration: (gameId) => deps.stores.games.get(gameId)?.generation ?? BOARD_GENERATION,
     authenticateCapability: authenticate,
@@ -163,4 +167,9 @@ export function buildApp(deps: AppDeps): App {
       return streams.fetch(request);
     },
   };
+}
+
+function randomId(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return `${prefix}_${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }

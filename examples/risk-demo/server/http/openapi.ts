@@ -855,10 +855,16 @@ export const openApiDocument = {
       "Event-sourced Risk. Commands validate against canonical history and CAS-append; the board is a separate causally-watermarked projection. Two rulesets are published side by side: `risk-demo-v1` (fixed six-country map, single-step attack) and `risk-demo-v2` (procedural hex map, two-stage combat with a timed defence interrupt). `GET /v1/games/{gameId}` reports which one a game speaks; the v1 `attack` action is never reinterpreted as the v2 `declare-attack` action.",
   },
   paths: {
-    "/agent/{token}/state": {
+    "/v1/games/{gameId}/agent/{token}/state": {
       get: {
         summary: "Compact personalized v2 state: named map, turn, and current legal moves.",
         parameters: [
+          {
+            name: "gameId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
           {
             name: "token",
             in: "path",
@@ -881,10 +887,16 @@ export const openApiDocument = {
         },
       },
     },
-    "/agent/{token}/wait": {
+    "/v1/games/{gameId}/agent/{token}/wait": {
       get: {
         summary: "Cursor-free bounded wait; always refetch the personalized state after return.",
         parameters: [
+          {
+            name: "gameId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
           {
             name: "token",
             in: "path",

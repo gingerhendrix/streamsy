@@ -8,8 +8,15 @@
     "demo": "bash scripts/run-demo.sh",
     "dev": "bun --hot server/index.ts",
     "start": "NODE_ENV=production bun server/index.ts",
+    "build:cloudflare": "bun build public/index.html --outdir dist --minify",
+    "deploy:cloudflare": "node --experimental-strip-types alchemy.run.ts",
+    "dev:cloudflare": "node --experimental-strip-types alchemy.run.ts --dev",
+    "dev:cloudflare:local": "bun run build:cloudflare && wrangler dev",
+    "destroy:cloudflare": "node --experimental-strip-types alchemy.run.ts --destroy",
     "bot": "bun run scripts/bot.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
+    "smoke:cloudflare": "bun run scripts/cloudflare-smoke.ts",
+    "smoke:cloudflare:alarm:prepare": "bun run scripts/cloudflare-alarm-prepare.ts",
     "proof": "bun run scripts/proof.ts",
     "rebuild": "bun run scripts/rebuild.ts",
     "typecheck": "tsc --noEmit",
@@ -32,8 +39,10 @@
     "zod": "^4.4.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "alchemy": "catalog:",
     "bun-types": "^1.3.14",
     "typescript": "catalog:",
     "vitest": "^4.0.16"

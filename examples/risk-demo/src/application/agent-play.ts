@@ -7,20 +7,20 @@ export interface AgentPlayUrls {
   token: string;
 }
 
-export function agentStatePath(token: string): string {
-  return `/agent/${encodeURIComponent(token)}/state`;
+export function agentStatePath(gameId: string, token: string): string {
+  return `/v1/games/${encodeURIComponent(gameId)}/agent/${encodeURIComponent(token)}/state`;
 }
 
-export function agentWaitPath(token: string): string {
-  return `/agent/${encodeURIComponent(token)}/wait?wait=30000`;
+export function agentWaitPath(gameId: string, token: string): string {
+  return `/v1/games/${encodeURIComponent(gameId)}/agent/${encodeURIComponent(token)}/wait?wait=30000`;
 }
 
 /** Complete copy-paste instructions. The capability is intentionally in agent context. */
 export function agentPlayInstructions(input: AgentPlayUrls): string {
   const origin = new URL(input.origin).origin;
   const game = `/v1/games/${encodeURIComponent(input.gameId)}`;
-  const stateUrl = `${origin}${agentStatePath(input.token)}`;
-  const waitUrl = `${origin}${agentWaitPath(input.token)}`;
+  const stateUrl = `${origin}${agentStatePath(input.gameId, input.token)}`;
+  const waitUrl = `${origin}${agentWaitPath(input.gameId, input.token)}`;
   const commandsUrl = `${origin}${game}/commands`;
 
   return `You are playing one seat in Streamsy Hex Domination. Play the whole game in this session using plain fetch or curl. Do not inspect the game repository and do not ask the human to choose moves for you.

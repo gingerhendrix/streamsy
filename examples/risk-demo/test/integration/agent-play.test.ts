@@ -19,7 +19,9 @@ describe("single-session agent play", () => {
     const instructions = created.body.agentInstructions as string;
     expect(instructions).toContain(`Player ID: ${created.body.player.id}`);
     expect(instructions).toContain(`Token: ${created.body.capability}`);
-    expect(instructions).toContain(`/agent/${created.body.capability}/state`);
+    expect(instructions).toContain(
+      `/v1/games/${created.body.game.id}/agent/${created.body.capability}/state`,
+    );
     expect(instructions).toContain(`/v1/games/${created.body.game.id}/commands`);
   });
 
@@ -36,8 +38,10 @@ describe("single-session agent play", () => {
     expect(joined.status).toBe(201);
     const instructions = joined.body.agentInstructions as string;
     expect(instructions).toContain(`Token: ${joined.body.capability}`);
-    expect(instructions).toContain(`/agent/${joined.body.capability}/wait?wait=30000`);
-    expect(instructions).toContain(`/agent/${joined.body.capability}/state`);
+    expect(instructions).toContain(
+      `/v1/games/${gameId}/agent/${joined.body.capability}/wait?wait=30000`,
+    );
+    expect(instructions).toContain(`/v1/games/${gameId}/agent/${joined.body.capability}/state`);
     expect(instructions).toContain(`/v1/games/${gameId}/commands`);
     expect(instructions).toContain("Defence dice are rolled automatically");
     expect(instructions).not.toContain("urgent out-of-turn interrupt");
@@ -50,7 +54,7 @@ describe("single-session agent play", () => {
     const game = await createV2Game(h.app, { controllers: ["human", "agent"] });
     const playerId = game.players[1]!;
     const token = game.tokenByPlayer[playerId]!;
-    const state = await call(h.app, "GET", `/agent/${token}/state`);
+    const state = await call(h.app, "GET", `/v1/games/${game.gameId}/agent/${token}/state`);
 
     expect(state.status).toBe(200);
     expect(state.body.player.id).toBe(playerId);
@@ -84,20 +88,28 @@ describe("single-session agent play", () => {
       (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body.activePlayerId,
     );
     const activeToken = game.tokenByPlayer[activeDecision.player.id]!;
-    const immediate = await call(h.app, "GET", `/agent/${activeToken}/wait?wait=0`);
+    const immediate = await call(
+      h.app,
+      "GET",
+      `/v1/games/${game.gameId}/agent/${activeToken}/wait?wait=0`,
+    );
     expect(immediate.body).toEqual({
       changed: true,
       reason: "actionable",
-      stateUrl: `/agent/${activeToken}/state`,
+      stateUrl: `/v1/games/${game.gameId}/agent/${activeToken}/state`,
     });
 
     const waitingPlayer = game.players.find((id) => id !== activeDecision.player.id)!;
     const waitingToken = game.tokenByPlayer[waitingPlayer]!;
-    const timeout = await call(h.app, "GET", `/agent/${waitingToken}/wait?wait=0`);
+    const timeout = await call(
+      h.app,
+      "GET",
+      `/v1/games/${game.gameId}/agent/${waitingToken}/wait?wait=0`,
+    );
     expect(timeout.body).toEqual({
       changed: false,
       reason: "timeout",
-      stateUrl: `/agent/${waitingToken}/state`,
+      stateUrl: `/v1/games/${game.gameId}/agent/${waitingToken}/state`,
     });
     expect(timeout.body).not.toHaveProperty("cursor");
   });
