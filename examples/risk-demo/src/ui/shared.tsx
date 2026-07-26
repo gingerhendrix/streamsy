@@ -137,7 +137,7 @@ export function TopBar(props: { gameId: string; children: ReactNode }) {
     <header className="topbar">
       <div>
         <div className="brand">
-          <span className="brand-mark">S</span> Streamsy <b>Risk</b>
+          <span className="brand-mark">S</span> Streamsy <b>Hex Domination</b>
         </div>
         <div className="game-code">
           Game <code>{props.gameId}</code>

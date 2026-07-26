@@ -346,7 +346,7 @@ export function App() {
           <div className="eyebrow">
             <span className="live-dot" /> Streamsy live state demo
           </div>
-          <h1>Risk, resolved as a stream.</h1>
+          <h1>Hex Domination, resolved as a stream.</h1>
           <p className="hero-copy">
             A procedurally generated hex map. Recorded dice. A board that rebuilds and synchronises
             live from a durable projection.
@@ -634,7 +634,7 @@ function RiskMap(props: {
       .map((other) => [territory.id, other] as const),
   );
   return (
-    <section className="map-card" aria-label="Risk territory map">
+    <section className="map-card" aria-label="Hex Domination territory map">
       <div className="map-grid">
         <svg
           className="map-lines"

@@ -23,7 +23,7 @@ export function agentPlayInstructions(input: AgentPlayUrls): string {
   const waitUrl = `${origin}${agentWaitPath(input.token)}`;
   const commandsUrl = `${origin}${game}/commands`;
 
-  return `You are playing one seat in Streamsy Risk. Play the whole game in this session using plain fetch or curl. Do not inspect the game repository and do not ask the human to choose moves for you.
+  return `You are playing one seat in Streamsy Hex Domination. Play the whole game in this session using plain fetch or curl. Do not inspect the game repository and do not ask the human to choose moves for you.
 
 Your seat:
 - Player ID: ${input.playerId}

@@ -38,7 +38,7 @@ export function MatchBar(props: MatchBarProps) {
       <div className="match-brand">
         <span className="brand-mark">S</span>
         <span className="match-game">
-          Risk <code>{props.gameId}</code>
+          Hex Domination <code>{props.gameId}</code>
         </span>
       </div>
 
