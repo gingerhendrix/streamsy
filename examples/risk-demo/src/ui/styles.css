@@ -1793,3 +1793,943 @@ code {
     bottom: 0.5rem;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Field manual theme
+ *
+ * The v2 playing surface is treated as a single working document: warm stock,
+ * charcoal rules, olive commands, and signal red only where urgency warrants it.
+ * The selectors stay under `.game-shell.v2` so landing, lobby, and the v1 board
+ * retain their established presentation.
+ * ------------------------------------------------------------------------- */
+
+body:has(.game-shell.v2) {
+  background: #c8c2a7;
+}
+
+.game-shell.v2 {
+  --paper: #d7d0b2;
+  --paper-raised: #e2dcc2;
+  --paper-deep: #c5bea0;
+  --ink: #27291f;
+  --muted: #656653;
+  --line: #777660;
+  --line-light: #aaa58b;
+  --olive: #4f5b36;
+  --olive-dark: #394228;
+  --signal: #8e2f25;
+  --accent: var(--olive);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+  max-width: 1800px;
+  padding: 0 clamp(0.75rem, 2vw, 2rem) 2rem;
+}
+
+.game-shell.v2 h1,
+.game-shell.v2 h2,
+.game-shell.v2 h3,
+.game-shell.v2 .brand,
+.game-shell.v2 .match-brand,
+.game-shell.v2 .match-fact b,
+.game-shell.v2 .phase-title b,
+.game-shell.v2 .stepper b,
+.game-shell.v2 .countdown b {
+  font-family: "Arial Narrow", "Roboto Condensed", Arial, Helvetica, sans-serif;
+  font-stretch: condensed;
+}
+
+.game-shell.v2 button {
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+  font-weight: 700;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.game-shell.v2 button:hover:not(:disabled) {
+  transform: none;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.game-shell.v2 button:focus-visible,
+.game-shell.v2 input:focus-visible,
+.game-shell.v2 summary:focus-visible,
+.game-shell.v2 .country-hit:focus-visible {
+  outline: 3px solid var(--signal);
+  outline-offset: 3px;
+}
+
+.game-shell.v2 button:disabled {
+  opacity: 0.48;
+}
+
+.game-shell.v2 .primary,
+.game-shell.v2 .roll-defense {
+  border-color: var(--olive-dark);
+  background: var(--olive-dark);
+  color: #f2eedb;
+}
+
+.game-shell.v2 .primary:hover:not(:disabled),
+.game-shell.v2 .roll-defense:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #f2eedb;
+}
+
+.game-shell.v2 .section-label,
+.game-shell.v2 .eyebrow {
+  color: var(--olive-dark);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+}
+
+/* Match header: a document folio, not an application card. */
+.game-shell.v2 .match-bar {
+  min-height: 58px;
+  gap: clamp(0.65rem, 1.5vw, 1.4rem);
+  padding: 0.55rem 0;
+  border: 0;
+  border-top: 3px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-shell.v2 .match-brand {
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.game-shell.v2 .match-brand .brand-mark {
+  width: 25px;
+  height: 25px;
+  margin-right: 0.35rem;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.game-shell.v2 .match-game code,
+.game-shell.v2 .match-fact small,
+.game-shell.v2 .sync-pill small {
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+}
+
+.game-shell.v2 .match-fact small {
+  font-size: 0.56rem;
+  letter-spacing: 0.12em;
+}
+
+.game-shell.v2 .match-fact b {
+  color: var(--ink);
+  font-size: 0.94rem;
+  letter-spacing: 0.01em;
+}
+
+.game-shell.v2 .match-phase {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--signal);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 5px;
+}
+
+.game-shell.v2 .match-divider {
+  height: 26px;
+  background: var(--line);
+}
+
+.game-shell.v2 .spectating-badge,
+.game-shell.v2 .sync-pill {
+  min-width: 0;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.game-shell.v2 .sync-pill {
+  gap: 0.5rem;
+}
+
+.game-shell.v2 .sync-pill b {
+  color: var(--ink);
+  font-size: 0.68rem;
+}
+
+.game-shell.v2 .sync-light,
+.game-shell.v2 .sync-pill.live .sync-light {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--ink);
+  border-radius: 50%;
+  background: var(--olive);
+  box-shadow: none;
+}
+
+.game-shell.v2 .sync-pill.error .sync-light {
+  background: var(--signal);
+}
+
+/* One page, three ruled working columns. */
+.game-shell.v2 .game-layout-v3 {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(270px, 320px);
+  gap: 0;
+  margin-top: 1rem;
+}
+
+.game-shell.v2 .turn-column,
+.game-shell.v2 .status-column {
+  gap: 0;
+  padding-right: 1rem;
+  scrollbar-color: var(--line) transparent;
+}
+
+.game-shell.v2 .turn-column {
+  border-right: 1px solid var(--ink);
+}
+
+.game-shell.v2 .status-column {
+  border-left: 1px solid var(--ink);
+  padding-right: 0;
+  padding-left: 1rem;
+}
+
+.game-shell.v2 .map-column {
+  gap: 0.75rem;
+  padding: 0 1rem;
+}
+
+/* Current turn and numbered orders. */
+.game-shell.v2 .column-head {
+  padding: 0 0 0.9rem;
+  border: 0;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-shell.v2 .column-head h2 {
+  margin: 0.2rem 0 0.25rem;
+  color: var(--ink);
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
+}
+
+.game-shell.v2 .column-active,
+.game-shell.v2 .phase-instruction,
+.game-shell.v2 .controls-card p,
+.game-shell.v2 .details-card p {
+  color: var(--ink);
+}
+
+.game-shell.v2 .player-color {
+  width: 9px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+}
+
+.game-shell.v2 .phase-list {
+  gap: 0;
+  counter-reset: orders;
+}
+
+.game-shell.v2 .phase-section {
+  counter-increment: orders;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.game-shell.v2 .phase-section.active {
+  border-color: var(--ink);
+  background: #c2c19d;
+  box-shadow: none;
+}
+
+.game-shell.v2 .phase-section.upcoming {
+  opacity: 0.58;
+}
+
+.game-shell.v2 .phase-head {
+  gap: 0.65rem;
+  padding: 0.72rem 0.2rem;
+}
+
+.game-shell.v2 .phase-index {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+  background: transparent;
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+}
+
+.game-shell.v2 .phase-section.active .phase-index {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.game-shell.v2 .phase-section.completed .phase-index {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.game-shell.v2 .phase-title b {
+  color: var(--ink);
+  font-size: 0.91rem;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.game-shell.v2 .phase-title small,
+.game-shell.v2 .phase-evidence small,
+.game-shell.v2 .reinforcement-card small,
+.game-shell.v2 .stepper small,
+.game-shell.v2 .combat-outcome small {
+  color: var(--muted);
+}
+
+.game-shell.v2 .phase-state {
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  letter-spacing: 0.08em;
+}
+
+.game-shell.v2 .phase-section.active .phase-state {
+  color: var(--ink);
+}
+
+.game-shell.v2 .phase-section > details > summary:focus-visible {
+  outline: 3px solid var(--signal);
+  outline-offset: -3px;
+}
+
+.game-shell.v2 .phase-section > details[open] > summary .phase-title small {
+  color: var(--ink);
+}
+
+.game-shell.v2 .phase-body {
+  gap: 0.7rem;
+  padding: 0 0.2rem 0.85rem 2.55rem;
+}
+
+.game-shell.v2 .phase-instruction {
+  padding-top: 0.1rem;
+  font-size: 0.79rem;
+}
+
+.game-shell.v2 .phase-body > .controls-card.required {
+  padding: 0.7rem;
+  border: 2px solid var(--signal);
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-shell.v2 .turn-column > .end-turn {
+  margin-top: 0.8rem;
+  border-color: var(--olive-dark);
+  background: var(--olive-dark);
+  color: #f2eedb;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Supporting facts use rules and spacing in place of nested cards. */
+.game-shell.v2 .reinforcement-card,
+.game-shell.v2 .controls-card,
+.game-shell.v2 .combat-card,
+.game-shell.v2 .ledger,
+.game-shell.v2 .details-card,
+.game-shell.v2 .panel,
+.game-shell.v2 .session-card {
+  padding: 0.8rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.game-shell.v2 .reinforcement-card {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.game-shell.v2 .continent-chips {
+  gap: 0;
+}
+
+.game-shell.v2 .continent-chip {
+  padding: 0.2rem 0.45rem;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  font-size: 0.61rem;
+}
+
+.game-shell.v2 .controls-card {
+  gap: 0.65rem;
+}
+
+.game-shell.v2 .controls-card.required,
+.game-shell.v2 .controls-card.victory {
+  padding: 0.75rem;
+  border: 2px solid var(--signal);
+  background: transparent;
+}
+
+.game-shell.v2 .controls-card.victory {
+  border-color: var(--olive-dark);
+}
+
+.game-shell.v2 .intent-toggle,
+.game-shell.v2 .seat-toggle {
+  gap: 0;
+  border: 1px solid var(--ink);
+}
+
+.game-shell.v2 .intent-toggle button,
+.game-shell.v2 .seat-toggle button {
+  margin: -1px 0 -1px -1px;
+}
+
+.game-shell.v2 .intent-toggle button.selected,
+.game-shell.v2 .seat-toggle button.selected {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.game-shell.v2 .stepper {
+  gap: 0;
+}
+
+.game-shell.v2 .stepper button {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0.35rem;
+}
+
+.game-shell.v2 .stepper b {
+  min-width: 42px;
+  font-size: 1.25rem;
+}
+
+.game-shell.v2 .stepper small {
+  margin-left: 0.5rem;
+}
+
+/* Combat reads as a terse after-action report. */
+.game-shell.v2 .combat-card {
+  gap: 0.8rem;
+  margin-bottom: 0.65rem;
+  padding: 0.8rem 0;
+  border-top: 3px solid var(--signal);
+  border-bottom: 1px solid var(--ink);
+}
+
+.game-shell.v2 .combat-head h3 {
+  color: var(--ink);
+  font-size: 1.12rem;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.game-shell.v2 .dice-row {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line-light);
+}
+
+.game-shell.v2 .dice-side {
+  padding-left: 0;
+  border-left: 0;
+  color: var(--ink);
+}
+
+.game-shell.v2 .dice-side::before {
+  content: "";
+  width: 12px;
+  height: 6px;
+  margin-bottom: 0.25rem;
+  border: 1px solid var(--ink);
+  background: var(--player);
+}
+
+.game-shell.v2 .dice-side small {
+  color: var(--muted);
+}
+
+.game-shell.v2 .die {
+  width: 35px;
+  height: 35px;
+}
+
+.game-shell.v2 .die .die-body {
+  fill: color-mix(in srgb, var(--die), var(--ink) 24%);
+  stroke: var(--ink);
+  stroke-width: 4;
+}
+
+.game-shell.v2 .die .die-pip {
+  fill: #f4f0db;
+}
+
+.game-shell.v2 .die.facedown .die-body {
+  fill: var(--paper-deep);
+  stroke: var(--ink);
+}
+
+.game-shell.v2 .die .die-hidden-mark {
+  stroke: var(--ink);
+}
+
+.game-shell.v2 .die.lost {
+  opacity: 0.45;
+}
+
+.game-shell.v2 .die.lost .die-body {
+  stroke: var(--signal);
+}
+
+.game-shell.v2 .die.won .die-body {
+  stroke: var(--ink);
+  stroke-width: 7;
+}
+
+.game-shell.v2 .countdown-track {
+  height: 8px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-shell.v2 .countdown-fill {
+  border-radius: 0;
+  background: var(--signal);
+}
+
+/* Map: low-saturation survey sheet with crisp ink boundaries. */
+.game-shell.v2 .hex-map-frame {
+  padding: 0;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: #9b9a77;
+  box-shadow: none;
+}
+
+.game-shell.v2 .hex-map .country-edge {
+  stroke: #22241d;
+  stroke-width: 2.2;
+}
+
+.game-shell.v2 .hex-map .continent-edge-outer {
+  stroke: #1e2019;
+  stroke-width: 6;
+}
+
+.game-shell.v2 .hex-map .continent-edge-inner {
+  stroke: #d8d0ad;
+  stroke-width: 1.8;
+  stroke-dasharray: 12 7;
+}
+
+.game-shell.v2 .hex-map .highlight.source {
+  fill: rgba(79, 91, 54, 0.12);
+  stroke: var(--olive-dark);
+  stroke-width: 4;
+  stroke-dasharray: 7 4;
+}
+
+.game-shell.v2 .hex-map .highlight.selected {
+  fill: rgba(39, 41, 31, 0.16);
+  stroke: #f2eedb;
+  stroke-width: 5;
+}
+
+.game-shell.v2 .hex-map .highlight.target {
+  fill: rgba(142, 47, 37, 0.16);
+  stroke: var(--signal);
+  stroke-width: 4;
+  stroke-dasharray: 3 3;
+}
+
+.game-shell.v2 .hex-map .highlight.dimmed {
+  fill: rgba(39, 41, 31, 0.46);
+}
+
+.game-shell.v2 .hex-map .attack-route {
+  stroke: var(--signal);
+  stroke-width: 3.8;
+  stroke-dasharray: 10 7;
+  filter: none;
+}
+
+.game-shell.v2 .hex-map .army-marker {
+  fill: var(--owner);
+  stroke: #20221a;
+  stroke-width: 3;
+}
+
+.game-shell.v2 .hex-map .army-count {
+  fill: #fffbe8;
+  font:
+    800 17px "Arial Narrow",
+    Arial,
+    sans-serif;
+  stroke: #20221a;
+  stroke-width: 3px;
+}
+
+.game-shell.v2 .hex-map .country-label {
+  fill: #20221a;
+  font:
+    800 10.5px "Arial Narrow",
+    Arial,
+    sans-serif;
+  letter-spacing: 0.045em;
+  stroke: #d9d1ac;
+  stroke-width: 3.8px;
+}
+
+.game-shell.v2 .hex-map .label-leader {
+  stroke: #35372b;
+  stroke-width: 1.2;
+}
+
+.game-shell.v2 .hex-map .country-hit:focus-visible {
+  stroke: var(--signal);
+  stroke-width: 5;
+  stroke-dasharray: 8 5;
+}
+
+.game-shell.v2 .map-controls {
+  right: 0.6rem;
+  bottom: 0.6rem;
+  gap: 0.2rem;
+  padding: 0.3rem;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  backdrop-filter: none;
+}
+
+.game-shell.v2 .map-controls button {
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 0;
+}
+
+.game-shell.v2 .details-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 0.75rem 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+
+.game-shell.v2 .details-card h3 {
+  margin: 0.2rem 0;
+  color: var(--ink);
+  font-size: 1.15rem;
+  text-transform: uppercase;
+}
+
+.game-shell.v2 .details-card small {
+  color: var(--muted);
+}
+
+/* Status tables and dispatch log. */
+.game-shell.v2 .status-column .panel {
+  padding: 0 0 0.9rem;
+  border-bottom: 1px solid var(--ink);
+}
+
+.game-shell.v2 .status-column .panel + .panel {
+  padding-top: 0.9rem;
+}
+
+.game-shell.v2 .panel-heading {
+  margin-bottom: 0.55rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 2px solid var(--ink);
+}
+
+.game-shell.v2 .panel-heading h2 {
+  color: var(--ink);
+  font-size: 0.95rem;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.game-shell.v2 .panel-heading span {
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+}
+
+.game-shell.v2 .standings-list,
+.game-shell.v2 .continent-list {
+  gap: 0;
+}
+
+.game-shell.v2 .standing,
+.game-shell.v2 .continent-row {
+  gap: 0.25rem;
+  padding: 0.48rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-light);
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-shell.v2 .standing.active,
+.game-shell.v2 .continent-row.held {
+  border-color: var(--line);
+  background: #cac6a8;
+}
+
+.game-shell.v2 .standing.active {
+  padding-right: 0.35rem;
+  padding-left: 0.35rem;
+}
+
+.game-shell.v2 .standing-top b,
+.game-shell.v2 .continent-top b {
+  color: var(--ink);
+}
+
+.game-shell.v2 .controller-tag {
+  padding: 0.08rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  letter-spacing: 0.06em;
+}
+
+.game-shell.v2 .controller-tag.out {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+.game-shell.v2 .standing-strength,
+.game-shell.v2 .held-by {
+  color: var(--muted);
+}
+
+.game-shell.v2 .strength-track {
+  height: 5px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-shell.v2 .strength-fill {
+  border-radius: 0;
+  background: var(--player);
+}
+
+.game-shell.v2 .continent-bonus {
+  color: var(--ink);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+}
+
+.game-shell.v2 .holder-chip {
+  padding: 0.08rem 0.35rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.game-shell.v2 .holder-chip::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.3rem;
+  border: 1px solid var(--ink);
+  background: var(--player);
+}
+
+.game-shell.v2 .status-column .event-feed {
+  scrollbar-color: var(--line) transparent;
+}
+
+.game-shell.v2 .event-item {
+  grid-template-columns: 22px 1fr;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line-light);
+}
+
+.game-shell.v2 .event-icon,
+.game-shell.v2 .event-icon.battle,
+.game-shell.v2 .ledger-icon {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.game-shell.v2 .event-icon.battle {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+
+.game-shell.v2 .event-item b,
+.game-shell.v2 .ledger-list b {
+  color: var(--ink);
+}
+
+.game-shell.v2 .event-item small,
+.game-shell.v2 .ledger-list small,
+.game-shell.v2 .muted {
+  color: var(--muted);
+}
+
+.game-shell.v2 .ledger {
+  margin-top: 0.8rem;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+
+.game-shell.v2 .notice {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--olive-dark);
+  border-radius: 0;
+  background: #c6c8a5;
+  color: var(--ink);
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.game-shell.v2 .notice::before {
+  content: "ORDER RECEIVED / ";
+  font-weight: 800;
+}
+
+.game-shell.v2 .notice.error {
+  border: 2px solid var(--signal);
+  background: transparent;
+  color: var(--signal);
+}
+
+.game-shell.v2 .notice.error::before {
+  content: "ACTION REQUIRED / ";
+}
+
+.game-shell.v2 .session-card {
+  gap: 0.4rem;
+  padding-top: 0.8rem;
+}
+
+.game-shell.v2 .ghost,
+.game-shell.v2 .text-button {
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+@media (max-width: 1280px) {
+  .game-shell.v2 .game-layout-v3 {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
+  }
+
+  .game-shell.v2 .turn-column {
+    padding-right: 0;
+    padding-left: 1rem;
+    border-right: 0;
+    border-left: 1px solid var(--ink);
+  }
+
+  .game-shell.v2 .status-column {
+    padding-left: 1rem;
+  }
+}
+
+@media (max-width: 940px) {
+  .game-shell.v2 {
+    padding-right: clamp(0.65rem, 3vw, 1.25rem);
+    padding-left: clamp(0.65rem, 3vw, 1.25rem);
+  }
+
+  .game-shell.v2 .game-layout-v3 {
+    gap: 1rem;
+  }
+
+  .game-shell.v2 .turn-column,
+  .game-shell.v2 .status-column,
+  .game-shell.v2 .map-column {
+    padding: 0;
+    border: 0;
+  }
+
+  .game-shell.v2 .turn-column,
+  .game-shell.v2 .status-column {
+    border-top: 2px solid var(--ink);
+  }
+}
+
+@media (max-width: 720px) {
+  .game-shell.v2 .match-bar {
+    padding: 0.5rem 0;
+  }
+
+  .game-shell.v2 .match-state {
+    padding-top: 0.45rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .game-shell.v2 .match-fact {
+    gap: 0.3rem;
+  }
+
+  .game-shell.v2 .match-divider {
+    height: 20px;
+  }
+
+  .game-shell.v2 .phase-body {
+    padding-left: 0.2rem;
+  }
+
+  .game-shell.v2 .hex-map {
+    height: 58vh;
+    min-height: 360px;
+  }
+
+  .game-shell.v2 .details-card {
+    padding: 0.65rem 0;
+  }
+}

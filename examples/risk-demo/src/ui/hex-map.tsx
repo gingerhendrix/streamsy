@@ -102,19 +102,19 @@ export interface HexMapProps {
 }
 
 const TERRAIN_FILL: Record<Terrain, string> = {
-  plains: "#3d5c47",
-  forest: "#254a35",
-  hills: "#5a5334",
-  desert: "#6d5a3a",
-  mountains: "#4a4e5c",
+  plains: "#a3a17a",
+  forest: "#6f7955",
+  hills: "#9a8963",
+  desert: "#b5a276",
+  mountains: "#77776b",
 };
 
 const TERRAIN_INK: Record<Terrain, string> = {
-  plains: "#6f9b7c",
-  forest: "#8fc9a2",
-  hills: "#a49255",
-  desert: "#b79b64",
-  mountains: "#9aa2b8",
+  plains: "#68694f",
+  forest: "#39452d",
+  hills: "#5c5139",
+  desert: "#756540",
+  mountains: "#45463f",
 };
 
 /**
@@ -187,7 +187,7 @@ function TerrainDefs() {
         markerHeight="5"
         orient="auto-start-reverse"
       >
-        <path d="M0 0 L10 5 L0 10 z" fill="#f0b359" />
+        <path d="M0 0 L10 5 L0 10 z" fill="#8e2f25" />
       </marker>
     </defs>
   );
