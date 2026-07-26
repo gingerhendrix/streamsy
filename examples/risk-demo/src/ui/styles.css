@@ -786,51 +786,179 @@ code {
 }
 
 /* ---------------------------------------------------------------------------
- * risk-demo-v2 playing surface
+ * risk-demo-v2 playing surface — the field manual
  *
  * A thin match bar over three columns: current turn, map, status. Each column owns
  * one question, so nothing needs to compete for the top of the page. The map itself
  * never reflows — its viewBox is derived from axial coordinates, so zoom/pan
  * transforms a group inside a stable box.
+ *
+ * The surface is treated as a single working document: warm stock, charcoal rules,
+ * olive commands, and signal red only where urgency warrants it. There are no
+ * cards — panels lose their perimeter and columns are divided by rules — so the
+ * declarations below describe the page once rather than decorating a box twice.
  * ------------------------------------------------------------------------- */
 
-.game-shell.v2 {
-  max-width: 1720px;
-  padding-top: 1rem;
+body:has(.game-shell.v2) {
+  background: #c8c2a7;
 }
 
-/* --- match bar ----------------------------------------------------------- */
+.game-shell.v2 {
+  /* Stock and ink. */
+  --paper: #d7d0b2;
+  --paper-raised: #e2dcc2;
+  --paper-deep: #c5bea0;
+  --paper-active: #c2c19d;
+  --paper-shade: #cac6a8;
+  --paper-notice: #c6c8a5;
+  --cream: #f2eedb;
+  --ink: #27291f;
+  --muted: #656653;
+  --line: #777660;
+  --line-light: #aaa58b;
+  --olive: #4f5b36;
+  --olive-dark: #394228;
+  --signal: #8e2f25;
+  /* Survey sheet: the map's own field, boundaries, and label halo. */
+  --map-field: #9b9a77;
+  --map-ink: #20221a;
+  --map-edge: #22241d;
+  --map-edge-deep: #1e2019;
+  --map-leader: #35372b;
+  --label-halo: #d8d0ad;
+  /* Faces: one condensed display voice, one legible body, one for figures. */
+  --display-face: "Arial Narrow", "Roboto Condensed", Arial, Helvetica, sans-serif;
+  --body-face: Arial, Helvetica, sans-serif;
+  --mono-face: ui-monospace, "Cascadia Mono", monospace;
+  /* The dark base still owns `--accent`; inside this surface it reads as olive.
+     It disappears once the field manual becomes the product-wide system. */
+  --accent: var(--olive);
+  max-width: 1800px;
+  padding: 0 clamp(0.75rem, 2vw, 2rem) 2rem;
+  color: var(--ink);
+  font-family: var(--body-face);
+}
+
+.game-shell.v2 h1,
+.game-shell.v2 h2,
+.game-shell.v2 h3,
+.game-shell.v2 .match-brand,
+.game-shell.v2 .match-fact b,
+.game-shell.v2 .phase-title b,
+.game-shell.v2 .stepper b,
+.game-shell.v2 .countdown b {
+  font-family: var(--display-face);
+  font-stretch: condensed;
+}
+
+.game-shell.v2 .section-label,
+.game-shell.v2 .eyebrow {
+  color: var(--olive-dark);
+  font-family: var(--mono-face);
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+/* Commands, not pills: a rectangle of ink that inverts when pressed. */
+.game-shell.v2 button {
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.game-shell.v2 button:hover:not(:disabled) {
+  transform: none;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
+}
+
+.game-shell.v2 button:disabled {
+  opacity: 0.48;
+}
+
+.game-shell.v2 button:focus-visible,
+.game-shell.v2 input:focus-visible,
+.game-shell.v2 summary:focus-visible,
+.game-shell.v2 .country-hit:focus-visible {
+  outline: 3px solid var(--signal);
+  outline-offset: 3px;
+}
+
+.game-shell.v2 .primary,
+.game-shell.v2 .roll-defense {
+  border-color: var(--olive-dark);
+  background: var(--olive-dark);
+  color: var(--cream);
+}
+
+.game-shell.v2 .primary:hover:not(:disabled),
+.game-shell.v2 .roll-defense:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--cream);
+}
+
+.game-shell.v2 .ghost,
+.game-shell.v2 .text-button {
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+/* Player colour is game state, never decoration: a ruled swatch, not a dot. */
+.game-shell.v2 .player-color {
+  width: 9px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+}
+
+/* --- match bar: a document folio, not an application card ----------------- */
 
 .match-bar {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.5rem 0.85rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(12, 18, 26, 0.95));
+  min-height: 58px;
+  gap: clamp(0.65rem, 1.5vw, 1.4rem);
+  padding: 0.55rem 0;
+  border-top: 3px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
 }
 .match-brand {
   display: flex;
   align-items: center;
-  gap: 0.15rem;
-  font-family: "Manrope", sans-serif;
+  gap: 0.25rem;
   font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
-.match-brand .brand-mark {
-  width: 22px;
-  height: 22px;
+.game-shell.v2 .match-brand .brand-mark {
+  width: 25px;
+  height: 25px;
+  margin-right: 0.35rem;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--paper-raised);
   font-size: 0.72rem;
-  margin-right: 0.45rem;
 }
 .match-game code {
-  color: var(--muted);
-  font-size: 0.68rem;
   margin-left: 0.3rem;
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.68rem;
 }
 .match-state {
-  --player: var(--accent);
+  --player: var(--olive);
   display: flex;
   align-items: center;
   gap: 0.9rem;
@@ -846,36 +974,36 @@ code {
 }
 .match-fact small {
   color: var(--muted);
-  font-size: 0.6rem;
+  font-family: var(--mono-face);
+  font-size: 0.56rem;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 .match-fact b {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-family: "Manrope", sans-serif;
-  font-size: 0.92rem;
+  font-size: 0.94rem;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .match-fact .player-color {
-  width: 7px;
   height: 15px;
 }
+/* The live phase is underlined in signal red rather than boxed in a tinted pill. */
 .match-phase {
-  border: 1px solid color-mix(in srgb, var(--accent), transparent 60%);
-  background: rgba(101, 223, 180, 0.12);
-  color: #bdebd9;
-  border-radius: 999px;
-  padding: 0.1rem 0.6rem;
   font-size: 0.78rem;
+  text-decoration: underline;
+  text-decoration-color: var(--signal);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 5px;
 }
 .match-divider {
   width: 1px;
-  height: 20px;
+  height: 26px;
   background: var(--line);
 }
 .match-right {
@@ -883,29 +1011,50 @@ code {
   align-items: center;
   gap: 0.7rem;
 }
+.spectating-badge {
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--line);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.game-shell.v2 .sync-pill {
+  min-width: 0;
+  gap: 0.5rem;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.game-shell.v2 .sync-pill b {
+  font-size: 0.68rem;
+}
+.game-shell.v2 .sync-pill small {
+  font-family: var(--mono-face);
+}
+.game-shell.v2 .sync-light,
+.game-shell.v2 .sync-pill.live .sync-light {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--ink);
+  background: var(--olive);
+  box-shadow: none;
+}
+.game-shell.v2 .sync-pill.error .sync-light {
+  background: var(--signal);
+}
 
-/* --- three-column layout -------------------------------------------------- */
+/* --- one page, three ruled working columns -------------------------------- */
 
 .game-layout-v3 {
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(270px, 320px);
   grid-template-areas: "turn map status";
-  gap: 1.1rem;
+  gap: 0;
   margin-top: 1rem;
   align-items: start;
-}
-.turn-column {
-  grid-area: turn;
-}
-.map-column {
-  grid-area: map;
-  display: grid;
-  align-content: start;
-  gap: 0.9rem;
-  min-width: 0;
-}
-.status-column {
-  grid-area: status;
 }
 .turn-column,
 .status-column {
@@ -913,33 +1062,38 @@ code {
   top: 0.75rem;
   display: grid;
   align-content: start;
-  gap: 0.7rem;
+  gap: 0;
   max-height: calc(100vh - 1.5rem);
-  overflow: auto;
-  scrollbar-color: #344454 transparent;
-  padding-right: 0.15rem;
   min-width: 0;
+  overflow: auto;
+  padding-right: 1rem;
+  scrollbar-color: var(--line) transparent;
 }
-.spectating-badge {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
-  padding: 0.42rem 0.8rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #c4ced9;
+.turn-column {
+  grid-area: turn;
+  border-right: 1px solid var(--ink);
+}
+.status-column {
+  grid-area: status;
+  padding-right: 0;
+  padding-left: 1rem;
+  border-left: 1px solid var(--ink);
+}
+.map-column {
+  grid-area: map;
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0 1rem;
 }
 
-/* --- map ----------------------------------------------------------------- */
+/* --- map: a low-saturation survey sheet with crisp ink boundaries --------- */
 
 .hex-map-frame {
   position: relative;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 0.6rem;
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(11, 17, 24, 0.95));
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--ink);
+  background: var(--map-field);
   overflow: hidden;
 }
 .hex-map {
@@ -954,83 +1108,81 @@ code {
 }
 .hex-map .country-edge {
   fill: none;
-  stroke: rgba(6, 12, 18, 0.85);
-  stroke-width: 2.4;
+  stroke: var(--map-edge);
+  stroke-width: 2.2;
   stroke-linejoin: round;
 }
 .hex-map .continent-edge-outer {
   fill: none;
-  stroke: rgba(3, 8, 12, 0.92);
-  stroke-width: 7;
+  stroke: var(--map-edge-deep);
+  stroke-width: 6;
   stroke-linejoin: round;
 }
 .hex-map .continent-edge-inner {
   fill: none;
-  stroke: rgba(226, 238, 250, 0.72);
-  stroke-width: 2.2;
+  stroke: var(--label-halo);
+  stroke-width: 1.8;
   stroke-linejoin: round;
-  stroke-dasharray: 14 7;
+  stroke-dasharray: 12 7;
 }
+/* Selection state is carried by stroke weight and dash pattern as well as hue. */
 .hex-map .highlight {
-  --owner: var(--accent);
   pointer-events: none;
   stroke-linejoin: round;
 }
 .hex-map .highlight.source {
-  fill: rgba(101, 223, 180, 0.16);
-  stroke: var(--accent);
-  stroke-width: 3;
+  fill: color-mix(in srgb, var(--olive) 12%, transparent);
+  stroke: var(--olive-dark);
+  stroke-width: 4;
+  stroke-dasharray: 7 4;
 }
 .hex-map .highlight.selected {
-  fill: rgba(101, 223, 180, 0.26);
-  stroke: #ffffff;
-  stroke-width: 4;
+  fill: color-mix(in srgb, var(--ink) 16%, transparent);
+  stroke: var(--cream);
+  stroke-width: 5;
 }
 .hex-map .highlight.target {
-  fill: rgba(240, 179, 89, 0.2);
-  stroke: #f0b359;
-  stroke-width: 3.4;
+  fill: color-mix(in srgb, var(--signal) 16%, transparent);
+  stroke: var(--signal);
+  stroke-width: 4;
+  stroke-dasharray: 3 3;
 }
 .hex-map .highlight.dimmed {
-  fill: rgba(6, 11, 17, 0.55);
+  fill: color-mix(in srgb, var(--ink) 46%, transparent);
   stroke: none;
 }
 .hex-map .attack-route {
   fill: none;
-  stroke: #f0b359;
-  stroke-width: 3.4;
+  stroke: var(--signal);
+  stroke-width: 3.8;
   stroke-linecap: round;
-  stroke-dasharray: 10 8;
-  filter: drop-shadow(0 0 6px rgba(240, 179, 89, 0.45));
+  stroke-dasharray: 10 7;
 }
+/* Utilitarian circular counters: owner fill, map ink outline. */
 .hex-map .army-marker {
   --owner: #5b6a7d;
-  fill: color-mix(in srgb, var(--owner), #050a10 30%);
-  stroke: color-mix(in srgb, var(--owner), white 45%);
-  stroke-width: 2;
+  fill: var(--owner);
+  stroke: var(--map-ink);
+  stroke-width: 3;
 }
 .hex-map .army-count {
-  fill: #ffffff;
-  font:
-    800 17px "Manrope",
-    sans-serif;
+  fill: var(--cream);
+  font: 800 17px var(--display-face);
   paint-order: stroke;
-  stroke: rgba(0, 0, 0, 0.55);
+  stroke: var(--map-ink);
   stroke-width: 3px;
 }
 .hex-map .country-label {
-  fill: #eef4fb;
-  font:
-    700 10.5px "DM Sans",
-    sans-serif;
-  letter-spacing: 0.06em;
+  fill: var(--map-ink);
+  font: 800 10.5px var(--display-face);
+  letter-spacing: 0.045em;
   text-transform: uppercase;
   paint-order: stroke;
-  stroke: rgba(2, 6, 10, 0.8);
-  stroke-width: 3.4px;
+  stroke: var(--label-halo);
+  stroke-width: 3.8px;
 }
 .hex-map .label-leader {
-  stroke: rgba(238, 244, 251, 0.55);
+  stroke: var(--map-leader);
   stroke-width: 1.2;
   stroke-dasharray: 3 3;
 }
@@ -1047,29 +1199,26 @@ code {
   cursor: pointer;
 }
 .hex-map .country-hit:focus-visible {
-  stroke: #ffffff;
-  stroke-width: 4;
-  stroke-dasharray: 7 5;
+  stroke: var(--signal);
+  stroke-width: 5;
+  stroke-dasharray: 8 5;
 }
 .map-controls {
   position: absolute;
-  right: 1rem;
-  bottom: 1rem;
+  right: 0.6rem;
+  bottom: 0.6rem;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  background: rgba(8, 13, 20, 0.78);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 0.35rem;
-  backdrop-filter: blur(6px);
+  gap: 0.2rem;
+  padding: 0.3rem;
+  border: 1px solid var(--ink);
+  background: var(--paper-raised);
 }
 .map-controls button {
-  min-width: 38px;
-  min-height: 38px;
+  min-width: 34px;
+  min-height: 34px;
   padding: 0.35rem 0.55rem;
   font-size: 0.75rem;
-  border-radius: 9px;
 }
 .pan-pad {
   display: grid;
@@ -1081,20 +1230,20 @@ code {
 }
 
 .details-card {
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 0.9rem 1.1rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 0.75rem 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--line);
 }
 .details-card h3 {
-  font-family: "Manrope", sans-serif;
+  margin: 0.2rem 0;
   font-size: 1.15rem;
-  margin: 0.35rem 0 0.3rem;
+  text-transform: uppercase;
 }
 .details-card p {
   margin: 0 0 0.35rem;
   font-size: 0.82rem;
-  color: #d3dce6;
 }
 .details-card small {
   color: var(--muted);
@@ -1102,24 +1251,19 @@ code {
   line-height: 1.5;
 }
 
-/* --- current-turn column -------------------------------------------------- */
+/* --- current-turn column: whose turn, then numbered orders ---------------- */
 
 .column-head {
-  --player: var(--accent);
-  border: 1px solid var(--line);
-  border-left: 5px solid var(--player);
-  border-radius: 14px;
-  padding: 0.75rem 0.9rem;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--player), transparent 92%),
-    rgba(14, 21, 30, 0.9)
-  );
+  --player: var(--olive);
+  padding: 0 0 0.9rem;
+  border-bottom: 2px solid var(--ink);
 }
 .column-head h2 {
-  font-size: 1.25rem;
-  letter-spacing: -0.03em;
-  margin: 0.3rem 0 0.25rem;
+  margin: 0.2rem 0 0.25rem;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-transform: uppercase;
 }
 .column-active {
   display: flex;
@@ -1127,62 +1271,52 @@ code {
   gap: 0.55rem;
   margin: 0;
   font-size: 0.8rem;
-  color: #d3dce6;
 }
 .column-active .player-color {
-  width: 7px;
   height: 18px;
 }
 
-/* --- phase sections ------------------------------------------------------- */
-
 .phase-list {
   display: grid;
-  gap: 0.45rem;
+  gap: 0;
   list-style: none;
   margin: 0;
   padding: 0;
 }
 .phase-section {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
-  overflow: hidden;
+  border-bottom: 1px solid var(--line);
 }
 .phase-section.active {
-  border-color: color-mix(in srgb, var(--accent), transparent 55%);
-  background: linear-gradient(145deg, rgba(22, 46, 40, 0.55), rgba(14, 21, 30, 0.95));
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.22);
+  border-color: var(--ink);
+  background: var(--paper-active);
 }
 .phase-section.upcoming {
-  opacity: 0.5;
+  opacity: 0.58;
 }
 .phase-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.6rem 0.8rem;
+  gap: 0.65rem;
+  padding: 0.72rem 0.2rem;
 }
 .phase-index {
   display: grid;
   place-items: center;
   flex: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  color: var(--muted);
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ink);
+  font-family: var(--mono-face);
   font-size: 0.62rem;
   font-weight: 800;
 }
 .phase-section.active .phase-index {
-  border-color: transparent;
-  background: var(--accent);
-  color: #08201a;
+  background: var(--ink);
+  color: var(--paper-raised);
 }
 .phase-section.completed .phase-index {
-  border-color: rgba(101, 223, 180, 0.35);
-  color: #bdebd9;
+  border-color: var(--line);
+  color: var(--muted);
 }
 .phase-title {
   display: grid;
@@ -1191,24 +1325,27 @@ code {
   min-width: 0;
 }
 .phase-title b {
-  font-family: "Manrope", sans-serif;
-  font-size: 0.86rem;
+  font-size: 0.91rem;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
 }
 .phase-title small {
   color: var(--muted);
   font-size: 0.68rem;
   line-height: 1.4;
 }
+/* NOW / COMPLETED / LATER: the state is readable without the colour. */
 .phase-state {
   flex: none;
   color: var(--muted);
+  font-family: var(--mono-face);
   font-size: 0.58rem;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 .phase-section.active .phase-state {
-  color: var(--accent);
+  color: var(--ink);
 }
 .phase-section > details > summary {
   list-style: none;
@@ -1217,23 +1354,23 @@ code {
 .phase-section > details > summary::-webkit-details-marker {
   display: none;
 }
+/* The disclosure fills its row, so its focus ring sits inside the rule. */
 .phase-section > details > summary:focus-visible {
-  outline: 3px solid rgba(101, 223, 180, 0.45);
   outline-offset: -3px;
 }
 .phase-section > details[open] > summary .phase-title small {
-  color: #c4ced9;
+  color: var(--ink);
 }
 .phase-body {
   display: grid;
-  gap: 0.65rem;
-  padding: 0 0.8rem 0.8rem;
+  gap: 0.7rem;
+  padding: 0 0.2rem 0.85rem 2.55rem;
 }
 .phase-instruction {
   margin: 0;
-  font-size: 0.78rem;
+  padding-top: 0.1rem;
+  font-size: 0.79rem;
   line-height: 1.5;
-  color: #d3dce6;
 }
 .phase-evidence {
   display: grid;
@@ -1247,45 +1384,29 @@ code {
   font-size: 0.68rem;
   font-weight: 500;
 }
-/* Controls are the section's content, so they drop their own card chrome. */
-.phase-body > .controls-card {
-  border: 0;
-  padding: 0;
-  background: none;
-  border-radius: 0;
-}
-.phase-body > .controls-card.required {
-  border: 1px solid rgba(240, 179, 89, 0.4);
-  border-radius: 12px;
-  padding: 0.75rem 0.85rem;
-  background: linear-gradient(145deg, rgba(48, 38, 22, 0.85), rgba(20, 18, 14, 0.92));
-}
-.phase-body > .reinforcement-card {
-  border-color: rgba(255, 255, 255, 0.07);
-  padding: 0.7rem 0.8rem;
-}
 
-/* The turn-level action: not owned by any one phase, so it sits under them all. */
-.turn-column > .end-turn {
+/* The turn-level action: not owned by any one phase, so it sits under them all.
+   Scoped past the generic command styling above, which it deliberately outranks. */
+.game-shell.v2 .turn-column > .end-turn {
   width: 100%;
-  background: #243243;
-  font-size: 0.8rem;
+  margin-top: 0.8rem;
   padding: 0.7rem 0.9rem;
+  border-color: var(--olive-dark);
+  background: var(--olive-dark);
+  color: var(--cream);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.reinforcement-card,
-.controls-card,
-.combat-card,
-.ledger,
-.agent-seat {
-  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 0.9rem 1rem;
-}
+/* --- supporting facts use rules and spacing in place of nested cards ------ */
+
 .reinforcement-card {
   display: grid;
   gap: 0.35rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .reinforcement-card b {
   font-size: 0.86rem;
@@ -1297,39 +1418,41 @@ code {
 .continent-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: 0;
 }
 .continent-chip {
-  border: 1px solid rgba(101, 223, 180, 0.28);
-  background: rgba(101, 223, 180, 0.08);
-  color: #bdebd9;
-  border-radius: 999px;
-  padding: 0.2rem 0.6rem;
-  font-size: 0.66rem;
+  padding: 0.2rem 0.45rem;
+  border-right: 1px solid var(--line);
+  font-family: var(--mono-face);
+  font-size: 0.61rem;
   font-weight: 700;
 }
 
 .controls-card {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.65rem;
+  padding: 0.8rem 0;
 }
-.controls-card.required {
-  border-color: rgba(240, 179, 89, 0.4);
-  background: linear-gradient(145deg, rgba(48, 38, 22, 0.85), rgba(20, 18, 14, 0.92));
+/* Prose inside a control block is an order, so it keeps full ink even when the
+   markup marks it as secondary. */
+.game-shell.v2 .controls-card p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+/* When something is owed, a ruled box is the one place urgency is boxed. */
+.controls-card.required,
+.controls-card.victory {
+  padding: 0.75rem;
+  border: 2px solid var(--signal);
 }
 .controls-card.victory {
-  border-color: rgba(101, 223, 180, 0.45);
-  background: linear-gradient(145deg, rgba(20, 46, 39, 0.9), rgba(13, 24, 22, 0.94));
+  border-color: var(--olive-dark);
 }
 .controls-card.victory h3 {
   margin: 0;
   font-size: 1rem;
-}
-.controls-card p {
-  margin: 0;
-  font-size: 0.8rem;
-  color: #d3dce6;
-  line-height: 1.5;
 }
 .controls-actions {
   display: flex;
@@ -1342,54 +1465,63 @@ code {
 .intent-toggle,
 .seat-toggle {
   display: flex;
-  gap: 0.35rem;
+  gap: 0;
+  border: 1px solid var(--ink);
 }
 .intent-toggle button,
 .seat-toggle button {
   flex: 1;
-  font-size: 0.75rem;
+  /* Collapsed borders, so the group reads as one segmented control. */
+  margin: -1px 0 -1px -1px;
   padding: 0.5rem 0.6rem;
+  font-size: 0.75rem;
 }
 .intent-toggle button.selected,
 .seat-toggle button.selected {
-  border-color: var(--accent);
-  background: rgba(101, 223, 180, 0.14);
-  color: #bdebd9;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper-raised);
 }
 .stepper {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0;
 }
 .stepper button {
-  min-width: 42px;
-  min-height: 42px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0.35rem;
   font-size: 1rem;
   font-weight: 800;
 }
 .stepper b {
-  font:
-    800 1.35rem/1 "Manrope",
-    sans-serif;
-  min-width: 2ch;
+  min-width: 42px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1;
   text-align: center;
 }
 .stepper small {
+  margin-left: 0.5rem;
   color: var(--muted);
   font-size: 0.68rem;
 }
 
-/* --- combat + dice -------------------------------------------------------- */
+/* --- combat reads as a terse after-action report -------------------------- */
 
 .combat-card {
   display: grid;
-  gap: 0.75rem;
-  border-color: rgba(240, 179, 89, 0.28);
+  gap: 0.8rem;
+  margin-bottom: 0.65rem;
+  padding: 0.8rem 0;
+  border-top: 3px solid var(--signal);
+  border-bottom: 1px solid var(--ink);
 }
 .combat-head h3 {
-  font-family: "Manrope", sans-serif;
-  font-size: 1.05rem;
   margin: 0.3rem 0 0;
+  font-size: 1.12rem;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
 }
 .dice-rows {
   display: grid;
@@ -1400,15 +1532,24 @@ code {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.6rem;
   align-items: center;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line-light);
 }
 .dice-side {
-  --player: var(--accent);
+  --player: var(--olive);
   display: grid;
   gap: 0.1rem;
-  border-left: 4px solid var(--player);
-  padding-left: 0.55rem;
   font-size: 0.8rem;
   font-weight: 700;
+}
+/* A ruled colour block identifies the side; the name beside it says who. */
+.dice-side::before {
+  content: "";
+  width: 12px;
+  height: 6px;
+  margin-bottom: 0.25rem;
+  border: 1px solid var(--ink);
+  background: var(--player);
 }
 .dice-side small {
   color: var(--muted);
@@ -1421,8 +1562,8 @@ code {
 }
 .die {
   --die: #94a3b8;
-  width: 38px;
-  height: 38px;
+  width: 35px;
+  height: 35px;
   display: inline-block;
 }
 .die svg {
@@ -1430,32 +1571,32 @@ code {
   height: 100%;
 }
 .die .die-body {
-  fill: color-mix(in srgb, var(--die), #060c13 22%);
-  stroke: color-mix(in srgb, var(--die), white 42%);
+  fill: color-mix(in srgb, var(--die), var(--ink) 24%);
+  stroke: var(--ink);
   stroke-width: 4;
 }
 .die .die-pip {
-  fill: #ffffff;
+  fill: var(--cream);
 }
 .die.facedown .die-body {
-  fill: rgba(16, 24, 34, 0.9);
-  stroke: rgba(255, 255, 255, 0.22);
+  fill: var(--paper-deep);
+  stroke: var(--ink);
   stroke-dasharray: 12 8;
 }
 .die .die-hidden-mark {
-  stroke: rgba(255, 255, 255, 0.24);
+  stroke: var(--ink);
   stroke-width: 7;
   stroke-linecap: round;
 }
 .die.lost {
-  opacity: 0.42;
+  opacity: 0.45;
 }
 .die.lost .die-body {
-  stroke: #ed6a5a;
+  stroke: var(--signal);
 }
 .die.won .die-body {
-  stroke: #ffffff;
-  stroke-width: 5;
+  stroke: var(--ink);
+  stroke-width: 7;
 }
 .die.shake {
   animation: die-shake var(--reveal-ms, 620ms) cubic-bezier(0.36, 0.07, 0.19, 0.97);
@@ -1509,22 +1650,20 @@ code {
 }
 .countdown-track {
   flex: 1;
-  height: 7px;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.09);
+  height: 8px;
+  border: 1px solid var(--ink);
   overflow: hidden;
 }
 .countdown-fill {
   height: 100%;
-  border-radius: 99px;
-  background: linear-gradient(90deg, #ed6a5a, #f0b359);
+  background: var(--signal);
   transition: width 0.25s linear;
 }
 .countdown b {
-  font:
-    800 0.85rem/1 "Manrope",
-    sans-serif;
   min-width: 3.4ch;
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
   text-align: right;
 }
 .roll-defense {
@@ -1541,8 +1680,14 @@ code {
   font-size: 0.68rem;
 }
 
-/* --- ledger + history ----------------------------------------------------- */
+/* --- ledger + dispatch log ------------------------------------------------ */
 
+.ledger {
+  margin-top: 0.8rem;
+  padding: 0.8rem 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
 .ledger-list {
   display: grid;
   gap: 0.45rem;
@@ -1572,41 +1717,68 @@ code {
 .ledger-icon {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(101, 223, 180, 0.09);
-  color: var(--accent);
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
   font-size: 0.62rem;
 }
 
-/* --- status column: standings + continents -------------------------------- */
+/* --- status column: standings, continents, history ------------------------ */
 
-.status-column .panel {
-  padding: 0.85rem 0.9rem;
+.game-shell.v2 .panel,
+.game-shell.v2 .session-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.status-column .panel-heading {
-  margin-bottom: 0.6rem;
+.game-shell.v2 .status-column .panel {
+  padding: 0 0 0.9rem;
+  border-bottom: 1px solid var(--ink);
+}
+.game-shell.v2 .status-column .panel + .panel {
+  padding-top: 0.9rem;
+}
+.game-shell.v2 .panel-heading {
+  margin-bottom: 0.55rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 2px solid var(--ink);
+}
+.game-shell.v2 .panel-heading h2 {
+  font-size: 0.95rem;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.game-shell.v2 .panel-heading span {
+  color: var(--muted);
+  font-family: var(--mono-face);
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
 }
 .standings-list,
 .continent-list {
   display: grid;
-  gap: 0.4rem;
+  gap: 0;
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.standing {
-  --player: var(--accent);
+.standing,
+.continent-row {
+  --player: var(--olive);
   display: grid;
-  gap: 0.3rem;
-  padding: 0.5rem 0.55rem;
-  border-radius: 10px;
-  border: 1px solid transparent;
+  gap: 0.25rem;
+  padding: 0.48rem 0;
+  border-bottom: 1px solid var(--line-light);
+}
+.standing.active,
+.continent-row.held {
+  border-color: var(--line);
+  background: var(--paper-shade);
 }
 .standing.active {
-  border-color: color-mix(in srgb, var(--player), transparent 55%);
-  background: color-mix(in srgb, var(--player), transparent 92%);
+  padding-right: 0.35rem;
+  padding-left: 0.35rem;
 }
 .standing.eliminated {
   opacity: 0.45;
@@ -1620,55 +1792,41 @@ code {
   height: 16px;
 }
 .standing-top b {
-  font-size: 0.78rem;
   flex: 1;
   min-width: 0;
+  font-size: 0.78rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .controller-tag {
+  padding: 0.08rem 0.3rem;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.08rem 0.45rem;
   color: var(--muted);
+  font-family: var(--mono-face);
   font-size: 0.56rem;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .controller-tag.out {
-  border-color: rgba(237, 106, 90, 0.4);
-  color: #ed6a5a;
+  border-color: var(--signal);
+  color: var(--signal);
 }
 .standing-strength {
+  color: var(--muted);
   font-size: 0.68rem;
-  color: #c4ced9;
 }
 .strength-track {
   display: block;
   height: 5px;
-  border-radius: 99px;
-  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--ink);
   overflow: hidden;
 }
 .strength-fill {
   display: block;
   height: 100%;
-  border-radius: 99px;
   background: var(--player);
-}
-.continent-row {
-  --player: var(--accent);
-  display: grid;
-  gap: 0.3rem;
-  padding: 0.5rem 0.55rem;
-  border-radius: 10px;
-  border: 1px solid transparent;
-}
-.continent-row.held {
-  border-color: color-mix(in srgb, var(--player), transparent 60%);
-  background: color-mix(in srgb, var(--player), transparent 93%);
 }
 .continent-top {
   display: flex;
@@ -1680,7 +1838,8 @@ code {
   font-size: 0.78rem;
 }
 .continent-bonus {
-  color: var(--accent);
+  color: var(--ink);
+  font-family: var(--mono-face);
   font-size: 0.7rem;
   font-weight: 800;
 }
@@ -1690,31 +1849,90 @@ code {
   gap: 0.3rem;
 }
 .held-by {
+  color: var(--muted);
   font-size: 0.68rem;
-  color: #c4ced9;
 }
 .holder-chip {
   --player: var(--muted);
-  border: 1px solid color-mix(in srgb, var(--player), transparent 60%);
-  background: color-mix(in srgb, var(--player), transparent 88%);
-  border-radius: 999px;
-  padding: 0.1rem 0.5rem;
+  padding: 0.08rem 0.35rem;
   font-size: 0.63rem;
   font-weight: 700;
-  color: #dce4ee;
 }
-.status-column .feed-panel {
+.holder-chip::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.3rem;
+  border: 1px solid var(--ink);
+  background: var(--player);
+}
+.game-shell.v2 .status-column .feed-panel {
   min-height: 0;
 }
-.status-column .event-feed {
+.game-shell.v2 .status-column .event-feed {
   max-height: 320px;
+  scrollbar-color: var(--line) transparent;
 }
+.game-shell.v2 .event-item {
+  grid-template-columns: 22px 1fr;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line-light);
+}
+.game-shell.v2 .event-icon {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.game-shell.v2 .event-icon.battle {
+  border-color: var(--signal);
+  color: var(--signal);
+}
+.game-shell.v2 .event-item small {
+  color: var(--muted);
+}
+
+/* Commands acknowledge in the surface's own voice, not as a tinted toast. */
+.game-shell.v2 .notice {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--olive-dark);
+  border-radius: 0;
+  background: var(--paper-notice);
+  color: var(--ink);
+  font-family: var(--mono-face);
+  font-size: 0.72rem;
+}
+.game-shell.v2 .notice::before {
+  content: "ORDER RECEIVED / ";
+  font-weight: 800;
+}
+.game-shell.v2 .notice.error {
+  border: 2px solid var(--signal);
+  background: transparent;
+  color: var(--signal);
+}
+.game-shell.v2 .notice.error::before {
+  content: "ACTION REQUIRED / ";
+}
+.game-shell.v2 .session-card {
+  gap: 0.4rem;
+  padding: 0.8rem 0;
+}
+
+/* --- lobby-side helpers shared with the v2 lobby screen ------------------- */
 
 .host-actions {
   display: grid;
   gap: 0.5rem;
 }
 .agent-seat {
+  background: linear-gradient(145deg, rgba(24, 34, 47, 0.93), rgba(14, 21, 30, 0.93));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
   margin-top: 0.9rem;
   display: grid;
   gap: 0.45rem;
@@ -1746,6 +1964,12 @@ code {
       "map turn"
       "map status";
   }
+  .turn-column {
+    padding-right: 0;
+    padding-left: 1rem;
+    border-right: 0;
+    border-left: 1px solid var(--ink);
+  }
   .status-column {
     position: static;
     max-height: none;
@@ -1753,17 +1977,31 @@ code {
   }
 }
 @media (max-width: 940px) {
+  .game-shell.v2 {
+    padding-right: clamp(0.65rem, 3vw, 1.25rem);
+    padding-left: clamp(0.65rem, 3vw, 1.25rem);
+  }
   .game-layout-v3 {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "turn"
       "map"
       "status";
+    gap: 1rem;
   }
-  .turn-column {
+  /* Stacked, the vertical rules become horizontal ones. */
+  .turn-column,
+  .status-column,
+  .map-column {
+    padding: 0;
+    border: 0;
+  }
+  .turn-column,
+  .status-column {
     position: static;
     max-height: none;
     overflow: visible;
+    border-top: 2px solid var(--ink);
   }
   .match-state {
     justify-content: flex-start;
@@ -1773,976 +2011,40 @@ code {
 @media (max-width: 720px) {
   .match-bar {
     flex-wrap: wrap;
-    gap: 0.5rem;
+    padding: 0.5rem 0;
   }
   .match-state {
     order: 3;
-    width: 100%;
-  }
-  .match-right {
-    margin-left: auto;
-  }
-  .hex-map {
-    height: 52vh;
-  }
-  .dice-row {
-    grid-template-columns: 1fr;
-  }
-  .map-controls {
-    right: 0.5rem;
-    bottom: 0.5rem;
-  }
-}
-
-/* ---------------------------------------------------------------------------
- * Field manual theme
- *
- * The v2 playing surface is treated as a single working document: warm stock,
- * charcoal rules, olive commands, and signal red only where urgency warrants it.
- * The selectors stay under `.game-shell.v2` so landing, lobby, and the v1 board
- * retain their established presentation.
- * ------------------------------------------------------------------------- */
-
-body:has(.game-shell.v2) {
-  background: #c8c2a7;
-}
-
-.game-shell.v2 {
-  --paper: #d7d0b2;
-  --paper-raised: #e2dcc2;
-  --paper-deep: #c5bea0;
-  --ink: #27291f;
-  --muted: #656653;
-  --line: #777660;
-  --line-light: #aaa58b;
-  --olive: #4f5b36;
-  --olive-dark: #394228;
-  --signal: #8e2f25;
-  --accent: var(--olive);
-  color: var(--ink);
-  font-family: Arial, Helvetica, sans-serif;
-  max-width: 1800px;
-  padding: 0 clamp(0.75rem, 2vw, 2rem) 2rem;
-}
-
-.game-shell.v2 h1,
-.game-shell.v2 h2,
-.game-shell.v2 h3,
-.game-shell.v2 .brand,
-.game-shell.v2 .match-brand,
-.game-shell.v2 .match-fact b,
-.game-shell.v2 .phase-title b,
-.game-shell.v2 .stepper b,
-.game-shell.v2 .countdown b {
-  font-family: "Arial Narrow", "Roboto Condensed", Arial, Helvetica, sans-serif;
-  font-stretch: condensed;
-}
-
-.game-shell.v2 button {
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  box-shadow: none;
-  font-weight: 700;
-  transition:
-    background-color 120ms ease,
-    color 120ms ease;
-}
-
-.game-shell.v2 button:hover:not(:disabled) {
-  transform: none;
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--paper-raised);
-}
-
-.game-shell.v2 button:focus-visible,
-.game-shell.v2 input:focus-visible,
-.game-shell.v2 summary:focus-visible,
-.game-shell.v2 .country-hit:focus-visible {
-  outline: 3px solid var(--signal);
-  outline-offset: 3px;
-}
-
-.game-shell.v2 button:disabled {
-  opacity: 0.48;
-}
-
-.game-shell.v2 .primary,
-.game-shell.v2 .roll-defense {
-  border-color: var(--olive-dark);
-  background: var(--olive-dark);
-  color: #f2eedb;
-}
-
-.game-shell.v2 .primary:hover:not(:disabled),
-.game-shell.v2 .roll-defense:hover:not(:disabled) {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: #f2eedb;
-}
-
-.game-shell.v2 .section-label,
-.game-shell.v2 .eyebrow {
-  color: var(--olive-dark);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  font-size: 0.63rem;
-  font-weight: 800;
-  letter-spacing: 0.11em;
-}
-
-/* Match header: a document folio, not an application card. */
-.game-shell.v2 .match-bar {
-  min-height: 58px;
-  gap: clamp(0.65rem, 1.5vw, 1.4rem);
-  padding: 0.55rem 0;
-  border: 0;
-  border-top: 3px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
-  border-radius: 0;
-  background: transparent;
-}
-
-.game-shell.v2 .match-brand {
-  gap: 0.25rem;
-  font-size: 0.82rem;
-  font-weight: 800;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
-}
-
-.game-shell.v2 .match-brand .brand-mark {
-  width: 25px;
-  height: 25px;
-  margin-right: 0.35rem;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: var(--ink);
-  color: var(--paper-raised);
-}
-
-.game-shell.v2 .match-game code,
-.game-shell.v2 .match-fact small,
-.game-shell.v2 .sync-pill small {
-  color: var(--muted);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-}
-
-.game-shell.v2 .match-fact small {
-  font-size: 0.56rem;
-  letter-spacing: 0.12em;
-}
-
-.game-shell.v2 .match-fact b {
-  color: var(--ink);
-  font-size: 0.94rem;
-  letter-spacing: 0.01em;
-}
-
-.game-shell.v2 .match-phase {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  text-decoration: underline;
-  text-decoration-color: var(--signal);
-  text-decoration-thickness: 3px;
-  text-underline-offset: 5px;
-}
-
-.game-shell.v2 .match-divider {
-  height: 26px;
-  background: var(--line);
-}
-
-.game-shell.v2 .spectating-badge,
-.game-shell.v2 .sync-pill {
-  min-width: 0;
-  padding: 0.28rem 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-}
-
-.game-shell.v2 .sync-pill {
-  gap: 0.5rem;
-}
-
-.game-shell.v2 .sync-pill b {
-  color: var(--ink);
-  font-size: 0.68rem;
-}
-
-.game-shell.v2 .sync-light,
-.game-shell.v2 .sync-pill.live .sync-light {
-  width: 8px;
-  height: 8px;
-  border: 1px solid var(--ink);
-  border-radius: 50%;
-  background: var(--olive);
-  box-shadow: none;
-}
-
-.game-shell.v2 .sync-pill.error .sync-light {
-  background: var(--signal);
-}
-
-/* One page, three ruled working columns. */
-.game-shell.v2 .game-layout-v3 {
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(270px, 320px);
-  gap: 0;
-  margin-top: 1rem;
-}
-
-.game-shell.v2 .turn-column,
-.game-shell.v2 .status-column {
-  gap: 0;
-  padding-right: 1rem;
-  scrollbar-color: var(--line) transparent;
-}
-
-.game-shell.v2 .turn-column {
-  border-right: 1px solid var(--ink);
-}
-
-.game-shell.v2 .status-column {
-  border-left: 1px solid var(--ink);
-  padding-right: 0;
-  padding-left: 1rem;
-}
-
-.game-shell.v2 .map-column {
-  gap: 0.75rem;
-  padding: 0 1rem;
-}
-
-/* Current turn and numbered orders. */
-.game-shell.v2 .column-head {
-  padding: 0 0 0.9rem;
-  border: 0;
-  border-bottom: 2px solid var(--ink);
-  border-radius: 0;
-  background: transparent;
-}
-
-.game-shell.v2 .column-head h2 {
-  margin: 0.2rem 0 0.25rem;
-  color: var(--ink);
-  font-size: 1.55rem;
-  font-weight: 800;
-  letter-spacing: -0.025em;
-  text-transform: uppercase;
-}
-
-.game-shell.v2 .column-active,
-.game-shell.v2 .phase-instruction,
-.game-shell.v2 .controls-card p,
-.game-shell.v2 .details-card p {
-  color: var(--ink);
-}
-
-.game-shell.v2 .player-color {
-  width: 9px;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-}
-
-.game-shell.v2 .phase-list {
-  gap: 0;
-  counter-reset: orders;
-}
-
-.game-shell.v2 .phase-section {
-  counter-increment: orders;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  overflow: visible;
-}
-
-.game-shell.v2 .phase-section.active {
-  border-color: var(--ink);
-  background: #c2c19d;
-  box-shadow: none;
-}
-
-.game-shell.v2 .phase-section.upcoming {
-  opacity: 0.58;
-}
-
-.game-shell.v2 .phase-head {
-  gap: 0.65rem;
-  padding: 0.72rem 0.2rem;
-}
-
-.game-shell.v2 .phase-index {
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  color: var(--ink);
-  background: transparent;
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-}
-
-.game-shell.v2 .phase-section.active .phase-index {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--paper-raised);
-}
-
-.game-shell.v2 .phase-section.completed .phase-index {
-  border-color: var(--line);
-  color: var(--muted);
-}
-
-.game-shell.v2 .phase-title b {
-  color: var(--ink);
-  font-size: 0.91rem;
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
-}
-
-.game-shell.v2 .phase-title small,
-.game-shell.v2 .phase-evidence small,
-.game-shell.v2 .reinforcement-card small,
-.game-shell.v2 .stepper small,
-.game-shell.v2 .combat-outcome small {
-  color: var(--muted);
-}
-
-.game-shell.v2 .phase-state {
-  color: var(--muted);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  letter-spacing: 0.08em;
-}
-
-.game-shell.v2 .phase-section.active .phase-state {
-  color: var(--ink);
-}
-
-.game-shell.v2 .phase-section > details > summary:focus-visible {
-  outline: 3px solid var(--signal);
-  outline-offset: -3px;
-}
-
-.game-shell.v2 .phase-section > details[open] > summary .phase-title small {
-  color: var(--ink);
-}
-
-.game-shell.v2 .phase-body {
-  gap: 0.7rem;
-  padding: 0 0.2rem 0.85rem 2.55rem;
-}
-
-.game-shell.v2 .phase-instruction {
-  padding-top: 0.1rem;
-  font-size: 0.79rem;
-}
-
-.game-shell.v2 .phase-body > .controls-card.required {
-  padding: 0.7rem;
-  border: 2px solid var(--signal);
-  border-radius: 0;
-  background: transparent;
-}
-
-.game-shell.v2 .turn-column > .end-turn {
-  margin-top: 0.8rem;
-  border-color: var(--olive-dark);
-  background: var(--olive-dark);
-  color: #f2eedb;
-  font-size: 0.76rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-/* Supporting facts use rules and spacing in place of nested cards. */
-.game-shell.v2 .reinforcement-card,
-.game-shell.v2 .controls-card,
-.game-shell.v2 .combat-card,
-.game-shell.v2 .ledger,
-.game-shell.v2 .details-card,
-.game-shell.v2 .panel,
-.game-shell.v2 .session-card {
-  padding: 0.8rem 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.game-shell.v2 .reinforcement-card {
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-
-.game-shell.v2 .continent-chips {
-  gap: 0;
-}
-
-.game-shell.v2 .continent-chip {
-  padding: 0.2rem 0.45rem;
-  border: 0;
-  border-right: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  font-size: 0.61rem;
-}
-
-.game-shell.v2 .controls-card {
-  gap: 0.65rem;
-}
-
-.game-shell.v2 .controls-card.required,
-.game-shell.v2 .controls-card.victory {
-  padding: 0.75rem;
-  border: 2px solid var(--signal);
-  background: transparent;
-}
-
-.game-shell.v2 .controls-card.victory {
-  border-color: var(--olive-dark);
-}
-
-.game-shell.v2 .intent-toggle,
-.game-shell.v2 .seat-toggle {
-  gap: 0;
-  border: 1px solid var(--ink);
-}
-
-.game-shell.v2 .intent-toggle button,
-.game-shell.v2 .seat-toggle button {
-  margin: -1px 0 -1px -1px;
-}
-
-.game-shell.v2 .intent-toggle button.selected,
-.game-shell.v2 .seat-toggle button.selected {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--paper-raised);
-}
-
-.game-shell.v2 .stepper {
-  gap: 0;
-}
-
-.game-shell.v2 .stepper button {
-  min-width: 36px;
-  min-height: 36px;
-  padding: 0.35rem;
-}
-
-.game-shell.v2 .stepper b {
-  min-width: 42px;
-  font-size: 1.25rem;
-}
-
-.game-shell.v2 .stepper small {
-  margin-left: 0.5rem;
-}
-
-/* Combat reads as a terse after-action report. */
-.game-shell.v2 .combat-card {
-  gap: 0.8rem;
-  margin-bottom: 0.65rem;
-  padding: 0.8rem 0;
-  border-top: 3px solid var(--signal);
-  border-bottom: 1px solid var(--ink);
-}
-
-.game-shell.v2 .combat-head h3 {
-  color: var(--ink);
-  font-size: 1.12rem;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-}
-
-.game-shell.v2 .dice-row {
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--line-light);
-}
-
-.game-shell.v2 .dice-side {
-  padding-left: 0;
-  border-left: 0;
-  color: var(--ink);
-}
-
-.game-shell.v2 .dice-side::before {
-  content: "";
-  width: 12px;
-  height: 6px;
-  margin-bottom: 0.25rem;
-  border: 1px solid var(--ink);
-  background: var(--player);
-}
-
-.game-shell.v2 .dice-side small {
-  color: var(--muted);
-}
-
-.game-shell.v2 .die {
-  width: 35px;
-  height: 35px;
-}
-
-.game-shell.v2 .die .die-body {
-  fill: color-mix(in srgb, var(--die), var(--ink) 24%);
-  stroke: var(--ink);
-  stroke-width: 4;
-}
-
-.game-shell.v2 .die .die-pip {
-  fill: #f4f0db;
-}
-
-.game-shell.v2 .die.facedown .die-body {
-  fill: var(--paper-deep);
-  stroke: var(--ink);
-}
-
-.game-shell.v2 .die .die-hidden-mark {
-  stroke: var(--ink);
-}
-
-.game-shell.v2 .die.lost {
-  opacity: 0.45;
-}
-
-.game-shell.v2 .die.lost .die-body {
-  stroke: var(--signal);
-}
-
-.game-shell.v2 .die.won .die-body {
-  stroke: var(--ink);
-  stroke-width: 7;
-}
-
-.game-shell.v2 .countdown-track {
-  height: 8px;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: transparent;
-}
-
-.game-shell.v2 .countdown-fill {
-  border-radius: 0;
-  background: var(--signal);
-}
-
-/* Map: low-saturation survey sheet with crisp ink boundaries. */
-.game-shell.v2 .hex-map-frame {
-  padding: 0;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: #9b9a77;
-  box-shadow: none;
-}
-
-.game-shell.v2 .hex-map .country-edge {
-  stroke: #22241d;
-  stroke-width: 2.2;
-}
-
-.game-shell.v2 .hex-map .continent-edge-outer {
-  stroke: #1e2019;
-  stroke-width: 6;
-}
-
-.game-shell.v2 .hex-map .continent-edge-inner {
-  stroke: #d8d0ad;
-  stroke-width: 1.8;
-  stroke-dasharray: 12 7;
-}
-
-.game-shell.v2 .hex-map .highlight.source {
-  fill: rgba(79, 91, 54, 0.12);
-  stroke: var(--olive-dark);
-  stroke-width: 4;
-  stroke-dasharray: 7 4;
-}
-
-.game-shell.v2 .hex-map .highlight.selected {
-  fill: rgba(39, 41, 31, 0.16);
-  stroke: #f2eedb;
-  stroke-width: 5;
-}
-
-.game-shell.v2 .hex-map .highlight.target {
-  fill: rgba(142, 47, 37, 0.16);
-  stroke: var(--signal);
-  stroke-width: 4;
-  stroke-dasharray: 3 3;
-}
-
-.game-shell.v2 .hex-map .highlight.dimmed {
-  fill: rgba(39, 41, 31, 0.46);
-}
-
-.game-shell.v2 .hex-map .attack-route {
-  stroke: var(--signal);
-  stroke-width: 3.8;
-  stroke-dasharray: 10 7;
-  filter: none;
-}
-
-.game-shell.v2 .hex-map .army-marker {
-  fill: var(--owner);
-  stroke: #20221a;
-  stroke-width: 3;
-}
-
-.game-shell.v2 .hex-map .army-count {
-  fill: #fffbe8;
-  font:
-    800 17px "Arial Narrow",
-    Arial,
-    sans-serif;
-  stroke: #20221a;
-  stroke-width: 3px;
-}
-
-.game-shell.v2 .hex-map .country-label {
-  fill: #20221a;
-  font:
-    800 10.5px "Arial Narrow",
-    Arial,
-    sans-serif;
-  letter-spacing: 0.045em;
-  stroke: #d9d1ac;
-  stroke-width: 3.8px;
-}
-
-.game-shell.v2 .hex-map .label-leader {
-  stroke: #35372b;
-  stroke-width: 1.2;
-}
-
-.game-shell.v2 .hex-map .country-hit:focus-visible {
-  stroke: var(--signal);
-  stroke-width: 5;
-  stroke-dasharray: 8 5;
-}
-
-.game-shell.v2 .map-controls {
-  right: 0.6rem;
-  bottom: 0.6rem;
-  gap: 0.2rem;
-  padding: 0.3rem;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: var(--paper-raised);
-  backdrop-filter: none;
-}
-
-.game-shell.v2 .map-controls button {
-  min-width: 34px;
-  min-height: 34px;
-  border-radius: 0;
-}
-
-.game-shell.v2 .details-card {
-  display: grid;
-  grid-template-columns: 1fr;
-  padding: 0.75rem 0;
-  border-top: 2px solid var(--ink);
-  border-bottom: 1px solid var(--line);
-}
-
-.game-shell.v2 .details-card h3 {
-  margin: 0.2rem 0;
-  color: var(--ink);
-  font-size: 1.15rem;
-  text-transform: uppercase;
-}
-
-.game-shell.v2 .details-card small {
-  color: var(--muted);
-}
-
-/* Status tables and dispatch log. */
-.game-shell.v2 .status-column .panel {
-  padding: 0 0 0.9rem;
-  border-bottom: 1px solid var(--ink);
-}
-
-.game-shell.v2 .status-column .panel + .panel {
-  padding-top: 0.9rem;
-}
-
-.game-shell.v2 .panel-heading {
-  margin-bottom: 0.55rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 2px solid var(--ink);
-}
-
-.game-shell.v2 .panel-heading h2 {
-  color: var(--ink);
-  font-size: 0.95rem;
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
-}
-
-.game-shell.v2 .panel-heading span {
-  color: var(--muted);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  font-size: 0.55rem;
-  letter-spacing: 0.06em;
-}
-
-.game-shell.v2 .standings-list,
-.game-shell.v2 .continent-list {
-  gap: 0;
-}
-
-.game-shell.v2 .standing,
-.game-shell.v2 .continent-row {
-  gap: 0.25rem;
-  padding: 0.48rem 0;
-  border: 0;
-  border-bottom: 1px solid var(--line-light);
-  border-radius: 0;
-  background: transparent;
-}
-
-.game-shell.v2 .standing.active,
-.game-shell.v2 .continent-row.held {
-  border-color: var(--line);
-  background: #cac6a8;
-}
-
-.game-shell.v2 .standing.active {
-  padding-right: 0.35rem;
-  padding-left: 0.35rem;
-}
-
-.game-shell.v2 .standing-top b,
-.game-shell.v2 .continent-top b {
-  color: var(--ink);
-}
-
-.game-shell.v2 .controller-tag {
-  padding: 0.08rem 0.3rem;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  color: var(--muted);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  letter-spacing: 0.06em;
-}
-
-.game-shell.v2 .controller-tag.out {
-  border-color: var(--signal);
-  color: var(--signal);
-}
-
-.game-shell.v2 .standing-strength,
-.game-shell.v2 .held-by {
-  color: var(--muted);
-}
-
-.game-shell.v2 .strength-track {
-  height: 5px;
-  border: 1px solid var(--ink);
-  border-radius: 0;
-  background: transparent;
-}
-
-.game-shell.v2 .strength-fill {
-  border-radius: 0;
-  background: var(--player);
-}
-
-.game-shell.v2 .continent-bonus {
-  color: var(--ink);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-}
-
-.game-shell.v2 .holder-chip {
-  padding: 0.08rem 0.35rem;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-}
-
-.game-shell.v2 .holder-chip::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 0.3rem;
-  border: 1px solid var(--ink);
-  background: var(--player);
-}
-
-.game-shell.v2 .status-column .event-feed {
-  scrollbar-color: var(--line) transparent;
-}
-
-.game-shell.v2 .event-item {
-  grid-template-columns: 22px 1fr;
-  padding: 0.55rem 0;
-  border-top: 1px solid var(--line-light);
-}
-
-.game-shell.v2 .event-icon,
-.game-shell.v2 .event-icon.battle,
-.game-shell.v2 .ledger-icon {
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--ink);
-}
-
-.game-shell.v2 .event-icon.battle {
-  border-color: var(--signal);
-  color: var(--signal);
-}
-
-.game-shell.v2 .event-item b,
-.game-shell.v2 .ledger-list b {
-  color: var(--ink);
-}
-
-.game-shell.v2 .event-item small,
-.game-shell.v2 .ledger-list small,
-.game-shell.v2 .muted {
-  color: var(--muted);
-}
-
-.game-shell.v2 .ledger {
-  margin-top: 0.8rem;
-  border-top: 2px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
-}
-
-.game-shell.v2 .notice {
-  padding: 0.7rem 0.85rem;
-  border: 1px solid var(--olive-dark);
-  border-radius: 0;
-  background: #c6c8a5;
-  color: var(--ink);
-  font-family: ui-monospace, "Cascadia Mono", monospace;
-  font-size: 0.72rem;
-}
-
-.game-shell.v2 .notice::before {
-  content: "ORDER RECEIVED / ";
-  font-weight: 800;
-}
-
-.game-shell.v2 .notice.error {
-  border: 2px solid var(--signal);
-  background: transparent;
-  color: var(--signal);
-}
-
-.game-shell.v2 .notice.error::before {
-  content: "ACTION REQUIRED / ";
-}
-
-.game-shell.v2 .session-card {
-  gap: 0.4rem;
-  padding-top: 0.8rem;
-}
-
-.game-shell.v2 .ghost,
-.game-shell.v2 .text-button {
-  padding: 0.42rem 0.5rem;
-  border: 1px solid var(--line);
-  color: var(--ink);
-}
-
-@media (max-width: 1280px) {
-  .game-shell.v2 .game-layout-v3 {
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
-  }
-
-  .game-shell.v2 .turn-column {
-    padding-right: 0;
-    padding-left: 1rem;
-    border-right: 0;
-    border-left: 1px solid var(--ink);
-  }
-
-  .game-shell.v2 .status-column {
-    padding-left: 1rem;
-  }
-}
-
-@media (max-width: 940px) {
-  .game-shell.v2 {
-    padding-right: clamp(0.65rem, 3vw, 1.25rem);
-    padding-left: clamp(0.65rem, 3vw, 1.25rem);
-  }
-
-  .game-shell.v2 .game-layout-v3 {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "turn"
-      "map"
-      "status";
-    gap: 1rem;
-  }
-
-  .game-shell.v2 .turn-column,
-  .game-shell.v2 .status-column,
-  .game-shell.v2 .map-column {
-    padding: 0;
-    border: 0;
-  }
-
-  .game-shell.v2 .turn-column,
-  .game-shell.v2 .status-column {
-    border-top: 2px solid var(--ink);
-  }
-}
-
-@media (max-width: 720px) {
-  .game-shell.v2 .match-bar {
-    padding: 0.5rem 0;
-  }
-
-  .game-shell.v2 .match-state {
     flex: 0 0 100%;
     min-width: 0;
     padding-top: 0.45rem;
     border-top: 1px solid var(--line);
   }
-
-  .game-shell.v2 .match-fact {
+  .match-fact {
     gap: 0.3rem;
   }
-
-  .game-shell.v2 .match-divider {
+  .match-divider {
     height: 20px;
   }
-
-  .game-shell.v2 .phase-body {
+  .match-right {
+    margin-left: auto;
+  }
+  .phase-body {
     padding-left: 0.2rem;
   }
-
-  .game-shell.v2 .hex-map {
+  .hex-map {
     height: 58vh;
     min-height: 360px;
   }
-
-  .game-shell.v2 .details-card {
+  .details-card {
     padding: 0.65rem 0;
   }
+  .dice-row {
+    grid-template-columns: 1fr;
+  }
 }
-
 @media (max-width: 480px) {
-  .game-shell.v2 .match-game code {
+  .match-game code {
     display: none;
   }
 }
