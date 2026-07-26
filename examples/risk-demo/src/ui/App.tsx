@@ -14,7 +14,7 @@ import type { LegalAction } from "../application/legal-actions.ts";
 import { TERRITORIES } from "../domain/map.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
-import { GameV2Screen } from "./game-v2.tsx";
+import { GameV2Screen, type AgentSeat } from "./game-v2.tsx";
 import {
   COLORS,
   PlayerFields,
@@ -88,6 +88,7 @@ export function App() {
   const [color, setColor] = useState(COLORS[0]!);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [initialAgentSeats, setInitialAgentSeats] = useState<AgentSeat[]>([]);
   const previousStatus = useRef<GameStatus | null>(null);
   // The renderer is chosen from the game's canonical ruleset, never inferred from
   // missing rows (design spec §11) — so only a v1 game opens the v1 board stream.
@@ -197,6 +198,58 @@ export function App() {
     setNotice("Lobby created. Share the invite link with another player.");
   };
 
+  const createAgentGame = async () => {
+    setBusy(true);
+    const created = await api<CreateGameResponse>("POST", "/v1/games", {
+      body: { name: "Agent 1", color: "#8b5cf6", controller: "agent" },
+    });
+    if (created.status !== 201 || isError(created.body)) {
+      setBusy(false);
+      setNotice(errorMessage(created.body, "Could not create the agent game."));
+      return;
+    }
+
+    const firstSeat: AgentSeat = {
+      playerId: created.body.player.id,
+      name: created.body.player.name,
+      instructions: created.body.agentInstructions ?? "Agent instructions were not returned.",
+    };
+    persist({
+      gameId: created.body.game.id,
+      playerId: created.body.player.id,
+      token: created.body.capability,
+      role: "host",
+    });
+    setInitialAgentSeats([firstSeat]);
+    openGame(created.body.game.id);
+
+    const joined = await api<JoinGameResponse>(
+      "POST",
+      `/v1/games/${created.body.game.id}/players`,
+      {
+        body: { name: "Agent 2", color: "#22c1a5", controller: "agent" },
+      },
+    );
+    setBusy(false);
+    if (joined.status !== 201 || isError(joined.body)) {
+      setNotice(
+        `${errorMessage(joined.body, "Could not open the second agent seat.")} You can add it from the lobby.`,
+      );
+      return;
+    }
+    setInitialAgentSeats([
+      firstSeat,
+      {
+        playerId: joined.body.player.id,
+        name: joined.body.player.name,
+        instructions: joined.body.agentInstructions ?? "Agent instructions were not returned.",
+      },
+    ]);
+    setNotice(
+      "Agent-versus-agent lobby created. Copy each instruction block, then start the game.",
+    );
+  };
+
   const joinGame = async () => {
     const target = joinId.trim();
     if (!target) return;
@@ -302,6 +355,9 @@ export function App() {
           <button className="primary big" onClick={createGame} disabled={busy}>
             {busy ? "Creating…" : "Create a game"}
           </button>
+          <button onClick={createAgentGame} disabled={busy}>
+            {busy ? "Creating…" : "Create agent vs agent game"}
+          </button>
           <div className="join-row">
             <input
               value={joinId}
@@ -353,6 +409,7 @@ export function App() {
         onName={setName}
         onColor={setColor}
         onCopyInvite={copyInvite}
+        initialAgentSeats={initialAgentSeats}
       />
     );
   }

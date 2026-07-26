@@ -67,7 +67,7 @@ type Selection =
 type Intent = "attack" | "fortify";
 
 /** A seat opened for a user-supplied coding agent, with its pasteable instructions. */
-interface AgentSeat {
+export interface AgentSeat {
   playerId: string;
   name: string;
   instructions: string;
@@ -86,6 +86,7 @@ export interface GameV2ScreenProps {
   onName(value: string): void;
   onColor(value: string): void;
   onCopyInvite(): Promise<void>;
+  initialAgentSeats?: AgentSeat[];
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -128,7 +129,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   // A lobby may open more than one agent seat — an agent-versus-agent game is how
   // the demo runs itself to a winner without a human at the keyboard.
-  const [agentSeats, setAgentSeats] = useState<AgentSeat[]>([]);
+  const [agentSeats, setAgentSeats] = useState<AgentSeat[]>(() => props.initialAgentSeats ?? []);
+  useEffect(() => {
+    if (!props.initialAgentSeats?.length) return;
+    setAgentSeats((current) => {
+      const incoming = new Map(props.initialAgentSeats!.map((seat) => [seat.playerId, seat]));
+      return [...current.filter((seat) => !incoming.has(seat.playerId)), ...incoming.values()];
+    });
+  }, [props.initialAgentSeats]);
   const reducedMotion = usePrefersReducedMotion();
 
   const offset = board?.meta?.sourceThroughOffset ?? null;

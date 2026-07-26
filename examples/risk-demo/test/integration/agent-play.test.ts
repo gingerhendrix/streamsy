@@ -4,6 +4,25 @@ import { agentPlayInstructions } from "../../src/application/agent-play.ts";
 import { BASE, call, createV2Game, decisionFor, post, v2Harness } from "../v2-harness.ts";
 
 describe("single-session agent play", () => {
+  it("returns complete pasteable instructions when an agent hosts", async () => {
+    const h = v2Harness();
+    const created = await call(h.app, "POST", "/v1/games", {
+      body: {
+        name: "Agent 1",
+        color: "purple",
+        controller: "agent",
+        mapSeed: "agent-host-seed",
+      },
+    });
+
+    expect(created.status).toBe(201);
+    const instructions = created.body.agentInstructions as string;
+    expect(instructions).toContain(`Player ID: ${created.body.player.id}`);
+    expect(instructions).toContain(`Token: ${created.body.capability}`);
+    expect(instructions).toContain(`/agent/${created.body.capability}/state`);
+    expect(instructions).toContain(`/v1/games/${created.body.game.id}/commands`);
+  });
+
   it("returns complete pasteable instructions when an agent joins", async () => {
     const h = v2Harness();
     const created = await call(h.app, "POST", "/v1/games", {

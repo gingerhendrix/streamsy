@@ -163,6 +163,8 @@ export interface CreateGameResponse {
   game: { id: string; ruleset: string; mapVersion: string };
   player: PlayerIdentity;
   capability: string;
+  /** Present when the host seat belongs to an external agent. */
+  agentInstructions?: string;
   ack: CommandAck;
 }
 

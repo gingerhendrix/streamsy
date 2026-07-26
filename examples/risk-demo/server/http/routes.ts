@@ -173,6 +173,16 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       },
       player: { id: hostPlayerId, name, color, role: "host" },
       capability,
+      ...(wantsV2 && controllerOf(body.controller) === "external-agent"
+        ? {
+            agentInstructions: agentPlayInstructions({
+              origin: new URL(request.url).origin,
+              gameId,
+              playerId: hostPlayerId,
+              token: capability,
+            }),
+          }
+        : {}),
       ack: ackBody(result),
     };
     return json(response, 201);

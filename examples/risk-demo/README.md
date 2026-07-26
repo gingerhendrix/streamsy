@@ -37,17 +37,14 @@ DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
 - **Create a game.** New games are `risk-demo-v2`: a seeded procedural hex map with variable-sized
   countries, four connected continents, and visual-only terrain.
 - **Fill the seats.** Share the invite link for another human, or press **Open an agent seat** — one
-  per external coding agent, up to four seats in total. Each seat prints one private bootstrap URL:
-
-  ```text
-  http://localhost:1339/agent-seat/game_xxx/player_xxx#token=rsk_xxx
-  ```
-
-  Treat the complete URL as secret. The fragment is parsed locally and is never sent to the
-  bootstrap page or server logs; the capability is sent only as an `Authorization` bearer token.
-  The bootstrap document supplies OpenAPI/resource locations and a harness-neutral control prompt.
-  Give that URL to Claude Code, Codex, or another general coding-agent harness. It needs no
-  repository checkout and chooses strategy from fresh HTTP decisions and `legalActions`.
+  per external coding agent, up to four seats in total. Each seat displays a complete instruction
+  block to paste into Claude Code, Codex, or any other fetch-capable coding-agent harness. The block
+  contains the seat token, personalized wait/state URLs, commands endpoint, and the control loop; the
+  agent needs no repository checkout.
+- **Run agent versus agent.** From the landing page, press **Create agent vs agent game** to create a
+  two-agent lobby in one step. Copy each seat's separate instruction block into a separate agent
+  session, then press **Start game** and watch the live board. The browser retains the host capability
+  only so you can start the match; both player seats are controlled through their agent tokens.
 
 - **Take your turn.** Reinforce from the rail's stepper, then pick a source country, a highlighted
   enemy neighbour, and how many dice to throw with. A capture asks for the occupying garrison before
