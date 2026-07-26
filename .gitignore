@@ -2,8 +2,9 @@
 node_modules/
 bun.lockb
 
-# Alchemy
+# Alchemy / Cloudflare local state
 .alchemy/
+.wrangler/
 
 # Environment
 .env
