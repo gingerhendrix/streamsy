@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/experimental",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Experimental primitives for Streamsy durable streams.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -33,7 +33,7 @@
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "0.2.0"
+    "@streamsy/core": "0.2.1"
   },
   "devDependencies": {
     "typescript": "catalog:",
