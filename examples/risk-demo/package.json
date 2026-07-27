@@ -8,7 +8,7 @@
     "demo": "bash scripts/run-demo.sh",
     "dev": "bun --hot server/index.ts",
     "start": "NODE_ENV=production bun server/index.ts",
-    "build:cloudflare": "bun build public/index.html --outdir dist --minify",
+    "build:cloudflare": "bun build public/index.html --outdir dist --production",
     "deploy:cloudflare": "node --experimental-strip-types alchemy.run.ts",
     "dev:cloudflare": "node --experimental-strip-types alchemy.run.ts --dev",
     "dev:cloudflare:local": "bun run build:cloudflare && wrangler dev",
