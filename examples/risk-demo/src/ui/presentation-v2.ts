@@ -382,6 +382,11 @@ export interface ContinentHolding {
   count: number;
 }
 
+export interface ContinentOccupation {
+  territoryId: string;
+  ownerId?: string;
+}
+
 export interface ContinentStanding {
   continentId: string;
   name: string;
@@ -391,6 +396,8 @@ export interface ContinentStanding {
   controllerId?: string;
   /** Countries held, strongest first; ties break by player id so this is stable. */
   holdings: ContinentHolding[];
+  /** One entry per canonical continent member, preserving its projected territory order. */
+  occupations: ContinentOccupation[];
 }
 
 /**
@@ -404,14 +411,16 @@ export function continentStandings(
   continents: readonly ProjectedContinentV2[],
   territories: readonly ProjectedTerritoryV2[],
 ): ContinentStanding[] {
-  const byContinent = new Map<string, Map<string | undefined, number>>();
-  for (const territory of territories) {
-    const counts = byContinent.get(territory.continentId) ?? new Map<string | undefined, number>();
-    counts.set(territory.ownerId, (counts.get(territory.ownerId) ?? 0) + 1);
-    byContinent.set(territory.continentId, counts);
-  }
+  const territoryById = new Map(territories.map((territory) => [territory.id, territory]));
   return continents.map((continent) => {
-    const counts = byContinent.get(continent.id) ?? new Map<string | undefined, number>();
+    const occupations = continent.territoryIds.map((territoryId) => ({
+      territoryId,
+      ownerId: territoryById.get(territoryId)?.ownerId,
+    }));
+    const counts = new Map<string | undefined, number>();
+    for (const occupation of occupations) {
+      counts.set(occupation.ownerId, (counts.get(occupation.ownerId) ?? 0) + 1);
+    }
     const holdings = [...counts.entries()]
       .map(([playerId, count]) => ({ playerId, count }))
       .toSorted((a, b) => b.count - a.count || (a.playerId ?? "").localeCompare(b.playerId ?? ""));
@@ -422,8 +431,22 @@ export function continentStandings(
       total: continent.territoryIds.length,
       controllerId: continent.controllerId,
       holdings,
+      occupations,
     };
   });
+}
+
+/** Non-colour equivalent for a continent's occupation-square sequence. */
+export function continentOccupationLabel(standing: ContinentStanding, names: NameLookup): string {
+  if (standing.controllerId) {
+    return `Held by ${names.player(standing.controllerId)} · ${plural(standing.total, "territory", "territories")}`;
+  }
+  return standing.holdings
+    .map((holding) => {
+      const holder = holding.playerId ? names.player(holding.playerId) : "Unclaimed";
+      return `${holder} ${plural(holding.count, "territory", "territories")}`;
+    })
+    .join(" · ");
 }
 
 /** `"7 countries · 19 armies"` — the roster line under a player's name. */

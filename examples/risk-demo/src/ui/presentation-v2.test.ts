@@ -10,6 +10,7 @@ import type {
 import {
   agentSeatUrl,
   armyShare,
+  continentOccupationLabel,
   continentStandings,
   controllerLabel,
   countdownFraction,
@@ -446,6 +447,30 @@ describe("standings", () => {
       { playerId: "p2", count: 2 },
       { playerId: "p1", count: 1 },
     ]);
+    expect(standing!.occupations).toEqual([
+      { territoryId: "t1", ownerId: "p2" },
+      { territoryId: "t2", ownerId: "p1" },
+      { territoryId: "t3", ownerId: "p2" },
+    ]);
+  });
+
+  it("keeps one ordered neutral occupation when a projected territory is unclaimed or absent", () => {
+    const [standing] = continentStandings(
+      [continent({ territoryIds: ["t2", "missing", "t1"] })],
+      [territory("t1", "p1"), territory("t2")],
+    );
+    expect(standing!.occupations).toEqual([
+      { territoryId: "t2", ownerId: undefined },
+      { territoryId: "missing", ownerId: undefined },
+      { territoryId: "t1", ownerId: "p1" },
+    ]);
+    expect(standing!.holdings).toEqual([
+      { playerId: undefined, count: 2 },
+      { playerId: "p1", count: 1 },
+    ]);
+    expect(continentOccupationLabel(standing!, NAMES)).toBe(
+      "Unclaimed 2 territories · Ada 1 territory",
+    );
   });
 
   it("keeps the projection's outright controller, which is what pays the bonus", () => {
@@ -455,6 +480,7 @@ describe("standings", () => {
     );
     expect(standing!.controllerId).toBe("p1");
     expect(standing!.bonus).toBe(2);
+    expect(continentOccupationLabel(standing!, NAMES)).toBe("Held by Ada · 2 territories");
   });
 
   it("describes a seat's strength in countries and armies", () => {

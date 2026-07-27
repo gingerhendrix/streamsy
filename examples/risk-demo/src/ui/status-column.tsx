@@ -22,6 +22,7 @@ import type {
 } from "../board/projection-v2.ts";
 import {
   armyShare,
+  continentOccupationLabel,
   continentStandings,
   controllerLabel,
   moveDetailV2,
@@ -108,21 +109,22 @@ function ContinentStandings(props: {
               <b>{standing.name}</b>
               <span className="continent-bonus">+{standing.bonus}</span>
             </span>
-            <span className="continent-holders">
-              {standing.controllerId ? (
-                <span className="held-by">Held by {props.names.player(standing.controllerId)}</span>
-              ) : (
-                standing.holdings.map((holding) => (
-                  <span
-                    className="holder-chip"
-                    key={holding.playerId ?? "unowned"}
-                    style={{ "--player": props.colorOf(holding.playerId) } as CSSProperties}
-                  >
-                    {holding.playerId ? props.names.player(holding.playerId) : "Unclaimed"}{" "}
-                    {holding.count}/{standing.total}
-                  </span>
-                ))
-              )}
+            <span
+              className="continent-occupation"
+              role="img"
+              aria-label={continentOccupationLabel(standing, props.names)}
+            >
+              {standing.occupations.map((occupation) => (
+                <span
+                  aria-hidden="true"
+                  className={
+                    occupation.ownerId ? "occupation-square" : "occupation-square unclaimed"
+                  }
+                  data-territory-id={occupation.territoryId}
+                  key={occupation.territoryId}
+                  style={{ "--occupant": props.colorOf(occupation.ownerId) } as CSSProperties}
+                />
+              ))}
             </span>
           </li>
         ))}
