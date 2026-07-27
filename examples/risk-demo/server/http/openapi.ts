@@ -366,6 +366,7 @@ const errorCodes = [
   "NOT_ENOUGH_PLAYERS",
   "TOO_MANY_PLAYERS",
   "PLAYER_ID_TAKEN",
+  "COLOR_TAKEN",
   "MAP_GENERATION_FAILED",
   // risk-demo-v2 two-stage combat
   "PENDING_DEFENSE",

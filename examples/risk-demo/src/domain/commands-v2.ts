@@ -159,6 +159,7 @@ export type RiskErrorCodeV2 =
   | "NOT_ENOUGH_PLAYERS"
   | "TOO_MANY_PLAYERS"
   | "PLAYER_ID_TAKEN"
+  | "COLOR_TAKEN"
   | "UNKNOWN_PLAYER"
   | "NOT_YOUR_TURN"
   | "STALE_TURN"

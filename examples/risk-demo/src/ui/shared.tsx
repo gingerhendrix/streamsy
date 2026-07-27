@@ -28,6 +28,10 @@ export interface ApiResult<T> {
 export const STORAGE_KEY = "risk-demo-identity";
 export const COLORS = ["#e05a47", "#3b82f6", "#d49b35", "#8b5cf6"];
 
+export function normalizedColor(color: string): string {
+  return color.trim().toLowerCase();
+}
+
 export type BoardRenderer = "risk-demo-v1" | "risk-demo-v2";
 
 /**
@@ -153,7 +157,12 @@ export function PlayerFields(props: {
   color: string;
   onName(value: string): void;
   onColor(value: string): void;
+  unavailableColors?: readonly string[];
+  /** The player's canonical colour remains selectable even when it appears in the roster. */
+  ownedColor?: string;
 }) {
+  const unavailable = new Set((props.unavailableColors ?? []).map(normalizedColor));
+  const ownedColor = props.ownedColor ? normalizedColor(props.ownedColor) : null;
   return (
     <div className="player-fields">
       <label>
@@ -167,17 +176,30 @@ export function PlayerFields(props: {
       <fieldset>
         <legend>Colour</legend>
         <div className="swatches">
-          {COLORS.map((color) => (
-            <button
-              key={color}
-              type="button"
-              className={color === props.color ? "swatch selected" : "swatch"}
-              style={{ backgroundColor: color }}
-              onClick={() => props.onColor(color)}
-              aria-label={`Choose ${color}`}
-              aria-pressed={color === props.color}
-            />
-          ))}
+          {COLORS.map((color) => {
+            const selected = normalizedColor(color) === normalizedColor(props.color);
+            const unavailableToPlayer =
+              unavailable.has(normalizedColor(color)) && normalizedColor(color) !== ownedColor;
+            return (
+              <button
+                key={color}
+                type="button"
+                className={`swatch${selected ? " selected" : ""}${unavailableToPlayer ? " unavailable" : ""}`}
+                style={{ backgroundColor: color }}
+                onClick={() => props.onColor(color)}
+                aria-label={
+                  unavailableToPlayer
+                    ? `${color} unavailable — already selected`
+                    : `Choose ${color}`
+                }
+                aria-pressed={selected}
+                disabled={unavailableToPlayer}
+                title={unavailableToPlayer ? "Already selected by another player" : undefined}
+              >
+                {unavailableToPlayer && <span aria-hidden="true">×</span>}
+              </button>
+            );
+          })}
         </div>
       </fieldset>
     </div>

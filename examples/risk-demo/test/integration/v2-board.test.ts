@@ -25,6 +25,44 @@ import {
 } from "../v2-harness.ts";
 
 describe("risk-demo-v2 board projection surface", () => {
+  it("authoritatively rejects a duplicate lobby colour without adding a player", async () => {
+    const h = v2Harness();
+    const created = await call(h.app, "POST", "/v1/games", {
+      body: { name: "Alice", color: "#E05A47", mapSeed: "unique-colours" },
+    });
+    expect(created.status).toBe(201);
+    const gameId = created.body.game.id as string;
+
+    const contenders = await Promise.all([
+      call(h.app, "POST", `/v1/games/${gameId}/players`, {
+        body: { name: "Bob", color: "#3B82F6", controller: "agent" },
+      }),
+      call(h.app, "POST", `/v1/games/${gameId}/players`, {
+        body: { name: "Cara", color: " #3b82f6 ", controller: "agent" },
+      }),
+    ]);
+    const accepted = contenders.find((result) => result.status === 201);
+    const conflict = contenders.find((result) => result.status === 409);
+    expect(accepted).toBeDefined();
+    expect(conflict?.body).toMatchObject({
+      status: "rejected",
+      error: { code: "COLOR_TAKEN" },
+    });
+    expect(conflict?.body.error.message).toContain("choose an available colour");
+
+    const lobby = await call(h.app, "GET", `/v1/games/${gameId}`);
+    expect(lobby.body.players).toHaveLength(2);
+    expect(
+      new Set(lobby.body.players.map((player: any) => player.color.trim().toLowerCase())).size,
+    ).toBe(lobby.body.players.length);
+
+    const recovered = await call(h.app, "POST", `/v1/games/${gameId}/players`, {
+      body: { name: "Recovered contender", color: "#d49b35", controller: "agent" },
+    });
+    expect(recovered.status).toBe(201);
+    expect(recovered.body.agentInstructions).toContain(`Player ID: ${recovered.body.player.id}`);
+  });
+
   it("maps public agent seats to external control and keeps bots explicit", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, {

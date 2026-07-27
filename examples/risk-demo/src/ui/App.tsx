@@ -27,6 +27,7 @@ import {
   gameFromUrl,
   isError,
   loadIdentity,
+  normalizedColor,
   playerRoleLabel,
   rendererForGame,
   shortOffset,
@@ -107,9 +108,9 @@ export function App() {
 
   useEffect(() => {
     if (identity || !board) return;
-    const used = new Set(board.players.map((player) => player.color.toLowerCase()));
-    if (used.has(color.toLowerCase())) {
-      setColor(COLORS.find((candidate) => !used.has(candidate.toLowerCase())) ?? COLORS[0]!);
+    const used = new Set(board.players.map((player) => normalizedColor(player.color)));
+    if (used.has(normalizedColor(color))) {
+      setColor(COLORS.find((candidate) => !used.has(normalizedColor(candidate))) ?? COLORS[0]!);
     }
   }, [board, color, identity]);
 
@@ -128,17 +129,19 @@ export function App() {
     window.history.replaceState({}, "", url);
   }, []);
 
-  const refreshGame = useCallback(async () => {
+  const refreshGame = useCallback(async (): Promise<GameResponse | null> => {
     if (!gameId) {
       setGame(null);
-      return;
+      return null;
     }
     const result = await api<GameResponse>("GET", `/v1/games/${gameId}`);
-    if (result.status === 200 && !isError(result.body)) setGame(result.body);
-    else {
-      setGame(null);
-      setNotice(errorMessage(result.body, "Game not found."));
+    if (result.status === 200 && !isError(result.body)) {
+      setGame(result.body);
+      return result.body;
     }
+    setGame(null);
+    setNotice(errorMessage(result.body, "Game not found."));
+    return null;
   }, [gameId]);
 
   useEffect(() => {

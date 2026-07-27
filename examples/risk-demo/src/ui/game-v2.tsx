@@ -60,6 +60,7 @@ import {
   type RevealPlan,
 } from "./presentation-v2.ts";
 import {
+  COLORS,
   PlayerFields,
   SyncPill,
   TopBar,
@@ -67,6 +68,7 @@ import {
   api,
   errorMessage,
   isError,
+  normalizedColor,
   playerRoleLabel,
   type Identity,
 } from "./shared.tsx";
@@ -95,7 +97,7 @@ export interface GameV2ScreenProps {
   game: GameResponse;
   identity: Identity | null;
   onIdentity(next: Identity | null): void;
-  refreshGame(): Promise<void>;
+  refreshGame(): Promise<GameResponse | null>;
   name: string;
   color: string;
   onName(value: string): void;
@@ -159,6 +161,27 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const reducedMotion = usePrefersReducedMotion();
 
   const offset = board?.meta?.sourceThroughOffset ?? null;
+  const lobbyPlayers = useMemo(() => {
+    const players = new Map(props.game.players.map((player) => [player.id, player]));
+    for (const player of board?.players ?? []) players.set(player.id, player);
+    return [...players.values()];
+  }, [props.game.players, board?.players]);
+  const unavailableColors = useMemo(
+    () =>
+      lobbyPlayers
+        .filter((player) => player.id !== identity?.playerId)
+        .map((player) => player.color),
+    [lobbyPlayers, identity?.playerId],
+  );
+
+  useEffect(() => {
+    if (identity || (board && board.game.status !== "lobby")) return;
+    const taken = new Set(unavailableColors.map(normalizedColor));
+    if (!taken.has(normalizedColor(props.color))) return;
+    const available = COLORS.find((candidate) => !taken.has(normalizedColor(candidate)));
+    if (available) props.onColor(available);
+    setNotice("That colour is already selected. Choose one of the available colours.");
+  }, [board, identity, props.color, props.onColor, unavailableColors]);
 
   // ---- decision (player-relative: a defender acts out of turn) --------------
   useEffect(() => {
@@ -393,6 +416,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not join the game."));
+      if (isError(result.body) && result.body.error.code === "COLOR_TAKEN") {
+        const refreshed = await props.refreshGame();
+        const taken = new Set(
+          (refreshed?.players ?? []).map((player) => normalizedColor(player.color)),
+        );
+        const available = COLORS.find((candidate) => !taken.has(normalizedColor(candidate)));
+        if (available) props.onColor(available);
+      }
       return;
     }
     props.onIdentity({
@@ -407,18 +438,21 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   /** Open an external-agent seat and hand back its private bootstrap URL. */
   const addAgentSeat = async () => {
     setBusy(true);
-    const taken = new Set((board?.players ?? []).map((player) => player.color.toLowerCase()));
+    const taken = new Set(lobbyPlayers.map((player) => normalizedColor(player.color)));
     const seat = agentSeats.length + 1;
     const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
       body: {
         name: `Agent ${seat}`,
-        color: AGENT_COLORS.find((color) => !taken.has(color.toLowerCase())) ?? AGENT_COLORS[0],
+        color: AGENT_COLORS.find((color) => !taken.has(normalizedColor(color))) ?? AGENT_COLORS[0],
         controller: "agent",
       },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not open an agent seat."));
+      if (isError(result.body) && result.body.error.code === "COLOR_TAKEN") {
+        await props.refreshGame();
+      }
       return;
     }
     const opened: AgentSeat = {
@@ -613,6 +647,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           color={props.color}
           busy={busy}
           agentSeats={agentSeats}
+          unavailableColors={unavailableColors}
           onName={props.onName}
           onColor={props.onColor}
           onJoin={joinGame}
@@ -1127,6 +1162,7 @@ function LobbyV2(props: {
   color: string;
   busy: boolean;
   agentSeats: AgentSeat[];
+  unavailableColors: readonly string[];
   onName(value: string): void;
   onColor(value: string): void;
   onJoin(): void;
@@ -1188,6 +1224,7 @@ function LobbyV2(props: {
             color={props.color}
             onName={props.onName}
             onColor={props.onColor}
+            unavailableColors={props.unavailableColors}
           />
           <button
             className="primary"

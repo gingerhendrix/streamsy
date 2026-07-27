@@ -130,6 +130,7 @@ describe("published OpenAPI contract", () => {
       "INVALID_OCCUPATION",
       "NO_FRIENDLY_PATH",
       "MAP_GENERATION_FAILED",
+      "COLOR_TAKEN",
     ];
     for (const code of [...v1Codes, ...v2Codes]) expect(published.has(code)).toBe(true);
   });

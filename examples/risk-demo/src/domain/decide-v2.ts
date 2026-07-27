@@ -164,6 +164,13 @@ function decideJoin(state: AggregateStateV2, command: JoinGameCommandV2): Decisi
   if (state.players.some((p) => p.id === command.playerId)) {
     return reject("PLAYER_ID_TAKEN", "That player id is already in the game.");
   }
+  const requestedColor = command.color.trim().toLowerCase();
+  if (state.players.some((player) => player.color.trim().toLowerCase() === requestedColor)) {
+    return reject(
+      "COLOR_TAKEN",
+      "That colour was claimed by another player. Refresh the lobby and choose an available colour.",
+    );
+  }
   return accept({
     type: "PlayerJoined",
     playerId: command.playerId,
