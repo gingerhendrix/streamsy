@@ -50,7 +50,13 @@ import {
 import { useRiskBoardV2Stream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
-import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
+import {
+  HexMap,
+  countryLabel,
+  territoryInteractionState,
+  type MapTerritory,
+  type TerritoryInteractionState,
+} from "./hex-map.tsx";
 import { MapControls } from "./map-controls.tsx";
 import { MatchBar } from "./match-bar.tsx";
 import {
@@ -127,6 +133,13 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
+export function detailTerritoryId(
+  hoveredId: string | null,
+  focusedId: string | null,
+): string | null {
+  return hoveredId ?? focusedId;
+}
+
 function findAction<T extends LegalActionV2["type"]>(
   actions: LegalActionV2[] | undefined,
   type: T,
@@ -152,6 +165,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const [dismissedCombatId, setDismissedCombatId] = useState<string | null>(null);
   const [occupyArmies, setOccupyArmies] = useState<number | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -478,7 +492,10 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const actionable = useMemo(() => {
     const ids = new Set<string>();
     if (occupyAction) return ids;
-    if (reinforceAction) for (const id of reinforceAction.territoryIds) ids.add(id);
+    if (reinforceAction) {
+      for (const id of reinforceAction.territoryIds) ids.add(id);
+      return ids;
+    }
     if (selection?.kind === "attack") {
       return attackTerritoryIds(attackAction, selection.from);
     } else if (selection?.kind === "fortify") {
@@ -503,33 +520,44 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     fortifyChoiceFrom,
   ]);
 
-  const toneOf = useCallback(
-    (id: string): TerritoryTone => {
-      if (occupyAction) {
-        if (id === occupyAction.to) return "target";
-        if (id === occupyAction.from) return "selected";
-        return "dimmed";
-      }
-      if (combat && combat.status === "awaiting-defense") {
-        if (id === combat.to) return "target";
-        if (id === combat.from) return "selected";
-        return "dimmed";
-      }
-      if (reinforceAction) {
-        return (pendingReinforcements.get(id) ?? 0) > 0
-          ? "selected"
-          : actionable.has(id)
-            ? "source"
-            : "idle";
-      }
-      if (selection?.kind === "attack" || selection?.kind === "fortify") {
-        if (id === selection.from) return "selected";
-        if (id === selection.to) return "target";
-        return actionable.has(id) ? "target" : "dimmed";
-      }
-      return actionable.has(id) ? "source" : "idle";
-    },
-    [occupyAction, combat, reinforceAction, pendingReinforcements, selection, actionable],
+  const activeTerritories = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [id, count] of pendingReinforcements) if (count > 0) ids.add(id);
+    if (selection) {
+      ids.add(selection.from);
+      if (selection.to) ids.add(selection.to);
+    }
+    if (occupyAction) {
+      ids.add(occupyAction.from);
+      ids.add(occupyAction.to);
+    }
+    if (combat && combat.status !== "resolved") {
+      ids.add(combat.from);
+      ids.add(combat.to);
+    }
+    return ids;
+  }, [pendingReinforcements, selection, occupyAction, combat]);
+
+  // A decision is visually narrowed only while this local seat is choosing a
+  // territory. Waiting/spectating seats and amount-only occupation/defence steps
+  // retain the normal map, with any canonical combat participants still active.
+  const choosingTerritory =
+    decision?.mode === "active-turn" &&
+    Boolean(
+      reinforceAction ||
+      selection ||
+      (intent === "attack" ? attackAction?.choices.length : fortifyAction?.choices.length),
+    );
+
+  const stateOf = useCallback(
+    (id: string): TerritoryInteractionState =>
+      territoryInteractionState({
+        active: activeTerritories.has(id),
+        hovered: hoveredId === id,
+        choosing: choosingTerritory,
+        actionable: actionable.has(id),
+      }),
+    [activeTerritories, hoveredId, choosingTerritory, actionable],
   );
 
   const onSelect = useCallback(
@@ -681,7 +709,8 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     yourTurn,
   });
 
-  const focused = focusedId ? territoryById.get(focusedId) : undefined;
+  const detailId = detailTerritoryId(hoveredId, focusedId);
+  const focused = detailId ? territoryById.get(detailId) : undefined;
 
   return (
     <main className="game-shell v2">
@@ -795,13 +824,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
             continents={board.continents}
             colorOf={colorOf}
             ownerNameOf={(id) => (id ? names.player(id) : "nobody")}
-            toneOf={toneOf}
+            stateOf={stateOf}
             actionable={actionable}
             focusedId={focusedId}
             onSelect={onSelect}
             onDecrement={reinforceAction ? (id) => adjustReinforcement(id, -1) : undefined}
             pendingReinforcements={pendingReinforcements}
             onFocus={setFocusedId}
+            onHover={setHoveredId}
             route={route}
             zoom={zoom}
             pan={pan}
@@ -825,7 +855,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           </HexMap>
 
           {focused && (
-            <section className="details-card" aria-live="polite">
+            <section className="details-card">
               <div>
                 <span className="section-label">
                   {names.continent(focused.continentId)}

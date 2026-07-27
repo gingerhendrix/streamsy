@@ -13,7 +13,8 @@
  *
  * The interaction layer sits on top as transparent per-country paths carrying
  * `role="button"`, an `aria-label`, and a tab stop. Selection is a click or an
- * Enter/Space on a focused country; nothing depends on hover.
+ * Enter/Space on a focused country. Hover supplements the territory summary, but
+ * selection and legality never depend on it.
  */
 
 import {
@@ -58,17 +59,25 @@ const BADGE_RADIUS = HEX_RADIUS * 0.62;
 /** Matches `.country-label` in the stylesheet, so the layout measures what renders. */
 const LABEL_FONT_SIZE = 12;
 
-/** How a country should be drawn and what it affords right now. */
-export type TerritoryTone =
-  | "idle"
-  /** A legal starting point for the current intent. */
-  | "source"
-  /** The chosen source of an in-progress move. */
-  | "selected"
-  /** A legal destination for the chosen source. */
-  | "target"
-  /** Not part of the current decision; pushed back so the choice reads. */
-  | "dimmed";
+/** The four public visual states, ordered by `territoryInteractionState`. */
+export type TerritoryInteractionState = "normal" | "dimmed" | "hover" | "active";
+
+export interface TerritoryInteractionInput {
+  active: boolean;
+  hovered: boolean;
+  choosing: boolean;
+  actionable: boolean;
+}
+
+/** Deterministic precedence: active > hover > unavailable while choosing > normal. */
+export function territoryInteractionState(
+  input: TerritoryInteractionInput,
+): TerritoryInteractionState {
+  if (input.active) return "active";
+  if (input.hovered) return "hover";
+  if (input.choosing && !input.actionable) return "dimmed";
+  return "normal";
+}
 
 export interface MapTerritory {
   id: string;
@@ -86,7 +95,7 @@ export interface HexMapProps {
   continents: ProjectedContinentV2[];
   colorOf(playerId: string | undefined): string;
   ownerNameOf(playerId: string | undefined): string;
-  toneOf(territoryId: string): TerritoryTone;
+  stateOf(territoryId: string): TerritoryInteractionState;
   /** Countries a player may act on now; everything else is focusable but inert. */
   actionable: ReadonlySet<string>;
   focusedId: string | null;
@@ -95,6 +104,8 @@ export interface HexMapProps {
   onDecrement?(territoryId: string): void;
   pendingReinforcements?: ReadonlyMap<string, number>;
   onFocus(territoryId: string): void;
+  /** Pointer hover only supplements detail/visual state; it never changes legality. */
+  onHover(territoryId: string | null): void;
   /** Source → target of the attack being composed, or the throw being revealed. */
   route: { from: string; to: string } | null;
   zoom: number;
@@ -378,6 +389,7 @@ export function HexMap(props: HexMapProps) {
             {hexes.map((hex) => (
               <polygon
                 key={hex.id}
+                className={`territory-state-${props.stateOf(hex.territoryId)}`}
                 points={hexPolygonPoints(hex, HEX_RADIUS)}
                 fill={`url(#terrain-${hex.terrain})`}
               />
@@ -388,7 +400,7 @@ export function HexMap(props: HexMapProps) {
             {territories.map((territory) => (
               <path
                 key={territory.id}
-                className="ownership"
+                className={`ownership territory-state-${props.stateOf(territory.id)}`}
                 d={geometry.outlines.get(territory.id) ?? ""}
                 fill={props.colorOf(territory.ownerId)}
                 fillRule="evenodd"
@@ -410,7 +422,7 @@ export function HexMap(props: HexMapProps) {
             {territories.map((territory) => (
               <path
                 key={territory.id}
-                className="country-edge"
+                className={`country-edge territory-state-${props.stateOf(territory.id)}`}
                 d={geometry.outlines.get(territory.id) ?? ""}
               />
             ))}
@@ -418,12 +430,12 @@ export function HexMap(props: HexMapProps) {
 
           <g className="layer-highlight" aria-hidden="true">
             {territories.map((territory) => {
-              const tone = props.toneOf(territory.id);
-              if (tone === "idle") return null;
+              const state = props.stateOf(territory.id);
+              if (state === "normal" || state === "dimmed") return null;
               return (
                 <path
                   key={territory.id}
-                  className={`highlight ${tone}`}
+                  className={`highlight ${state}`}
                   d={geometry.outlines.get(territory.id) ?? ""}
                   fillRule="evenodd"
                   style={{ "--owner": props.colorOf(territory.ownerId) } as CSSProperties}
@@ -444,7 +456,10 @@ export function HexMap(props: HexMapProps) {
               const label = geometry.labels[index];
               if (!anchor || !label) return null;
               return (
-                <g key={territory.id}>
+                <g
+                  key={territory.id}
+                  className={`territory-labels territory-state-${props.stateOf(territory.id)}`}
+                >
                   <circle
                     className="army-marker"
                     cx={anchor.x}
@@ -495,18 +510,18 @@ export function HexMap(props: HexMapProps) {
 
           <g className="layer-interaction">
             {territories.map((territory) => {
-              const tone = props.toneOf(territory.id);
+              const state = props.stateOf(territory.id);
               const selectable = props.actionable.has(territory.id);
               return (
                 <path
                   key={territory.id}
-                  className={`country-hit ${tone}${selectable ? " selectable" : ""}`}
+                  className={`country-hit ${state}${selectable ? " selectable" : ""}`}
                   d={geometry.outlines.get(territory.id) ?? ""}
                   fillRule="evenodd"
                   role="button"
                   tabIndex={0}
                   aria-disabled={!selectable}
-                  aria-pressed={tone === "selected"}
+                  aria-pressed={state === "active"}
                   aria-label={countryLabel(
                     territory,
                     props.ownerNameOf(territory.ownerId),
@@ -519,12 +534,15 @@ export function HexMap(props: HexMapProps) {
                     props.onDecrement(territory.id);
                   }}
                   onFocus={() => props.onFocus(territory.id)}
+                  onPointerEnter={() => props.onHover(territory.id)}
+                  onPointerLeave={() => props.onHover(null)}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
                     props.onSelect(territory.id);
                   }}
                   data-focused={props.focusedId === territory.id ? "true" : undefined}
+                  data-state={state}
                 />
               );
             })}

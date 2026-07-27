@@ -1148,31 +1148,28 @@ summary:focus-visible,
   stroke-linejoin: round;
   stroke-dasharray: 12 7;
 }
-/* Selection state is carried by stroke weight and dash pattern as well as hue. */
+/* Every territory resolves to one public state. Active wins over hover, hover over
+   dimmed, and normal is the fallback. Weight/dashes keep both transient states
+   readable without relying on colour. */
 .hex-map .highlight {
   pointer-events: none;
   stroke-linejoin: round;
 }
-.hex-map .highlight.source {
-  fill: color-mix(in srgb, var(--olive) 12%, transparent);
-  stroke: var(--olive-dark);
+.hex-map .highlight.active {
+  fill: color-mix(in srgb, var(--ink) 16%, transparent);
+  stroke: var(--cream);
+  stroke-width: 6;
+}
+.hex-map .highlight.hover {
+  fill: color-mix(in srgb, var(--cream) 13%, transparent);
+  stroke: var(--map-ink);
   stroke-width: 4;
   stroke-dasharray: 7 4;
 }
-.hex-map .highlight.selected {
-  fill: color-mix(in srgb, var(--ink) 16%, transparent);
-  stroke: var(--cream);
-  stroke-width: 5;
-}
-.hex-map .highlight.target {
-  fill: color-mix(in srgb, var(--signal) 16%, transparent);
-  stroke: var(--signal);
-  stroke-width: 4;
-  stroke-dasharray: 3 3;
-}
-.hex-map .highlight.dimmed {
-  fill: color-mix(in srgb, var(--ink) 46%, transparent);
-  stroke: none;
+/* Dimming is applied to terrain, ownership, borders, labels, and counters rather
+   than only laying a translucent shape beneath fully prominent labels. */
+.hex-map .territory-state-dimmed {
+  opacity: 0.3;
 }
 .hex-map .attack-route {
   fill: none;

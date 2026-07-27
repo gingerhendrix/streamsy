@@ -10,7 +10,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ProjectedHexV2 } from "../board/projection-v2.ts";
-import { HexMap, type MapTerritory } from "./hex-map.tsx";
+import {
+  HexMap,
+  territoryInteractionState,
+  type MapTerritory,
+  type TerritoryInteractionState,
+} from "./hex-map.tsx";
 
 /** Two three-hex countries side by side, with long names that would collide. */
 const HEXES: ProjectedHexV2[] = [
@@ -43,7 +48,7 @@ const TERRITORIES: MapTerritory[] = [
   },
 ];
 
-function render(): string {
+function render(stateOf: (id: string) => TerritoryInteractionState = () => "normal"): string {
   return renderToStaticMarkup(
     <HexMap
       hexes={HEXES}
@@ -59,13 +64,14 @@ function render(): string {
       ]}
       colorOf={(id) => (id === "p1" ? "#e05a47" : "#3b82f6")}
       ownerNameOf={(id) => (id === "p1" ? "Ada" : "Mina")}
-      toneOf={() => "idle"}
+      stateOf={stateOf}
       actionable={new Set(["t1"])}
       focusedId={null}
       onSelect={() => {}}
       pendingReinforcements={new Map([["t1", 2]])}
       onDecrement={() => {}}
       onFocus={() => {}}
+      onHover={() => {}}
       route={null}
       zoom={1}
       pan={{ x: 0, y: 0 }}
@@ -103,5 +109,46 @@ describe("hex map", () => {
     expect(html.match(/role="button"/g)).toHaveLength(2);
     // Legality is the decision resource's word: only `t1` is actionable here.
     expect(html).toContain('aria-disabled="true"');
+  });
+});
+
+describe("territory interaction states", () => {
+  it("uses active, hover, dimmed, normal precedence without changing actionability", () => {
+    expect(
+      territoryInteractionState({ active: true, hovered: true, choosing: true, actionable: false }),
+    ).toBe("active");
+    expect(
+      territoryInteractionState({
+        active: false,
+        hovered: true,
+        choosing: true,
+        actionable: false,
+      }),
+    ).toBe("hover");
+    expect(
+      territoryInteractionState({
+        active: false,
+        hovered: false,
+        choosing: true,
+        actionable: false,
+      }),
+    ).toBe("dimmed");
+    expect(
+      territoryInteractionState({
+        active: false,
+        hovered: false,
+        choosing: true,
+        actionable: true,
+      }),
+    ).toBe("normal");
+  });
+
+  it("renders public state markers and only presses active territories", () => {
+    const html = render((id) => (id === "t1" ? "active" : "dimmed"));
+    expect(html).toContain('data-state="active"');
+    expect(html).toContain('data-state="dimmed"');
+    expect(html).toContain('class="highlight active"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('class="territory-labels territory-state-dimmed"');
   });
 });
