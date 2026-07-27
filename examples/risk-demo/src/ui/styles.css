@@ -1241,26 +1241,83 @@ summary:focus-visible,
   position: absolute;
   right: 0.6rem;
   bottom: 0.6rem;
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
-  padding: 0.3rem;
+  display: grid;
+  grid-template-columns: auto 4.55rem;
+  align-items: end;
+  gap: 0.35rem;
+  width: max-content;
+  padding: 0.35rem;
   border: 1px solid var(--ink);
-  background: var(--paper-raised);
+  background: color-mix(in srgb, var(--paper-raised) 94%, transparent);
+  box-shadow: 2px 2px 0 color-mix(in srgb, var(--ink) 28%, transparent);
 }
 .map-controls button {
+  display: grid;
+  place-items: center;
   min-width: 34px;
   min-height: 34px;
-  padding: 0.35rem 0.55rem;
-  font-size: 0.75rem;
+  padding: 0.25rem;
+  font-family: var(--mono-face);
+  font-size: 1rem;
+  line-height: 1;
 }
 .pan-pad {
   display: grid;
-  grid-template-columns: repeat(3, auto);
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows: repeat(3, 34px);
+  gap: 0.15rem;
+}
+.pan-pad .pan-up {
+  grid-column: 2;
+  grid-row: 1;
+}
+.pan-pad .pan-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+.pan-pad .pan-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+.pan-pad .pan-down {
+  grid-column: 2;
+  grid-row: 3;
+}
+.map-view-tools {
+  display: grid;
+  gap: 0.25rem;
+}
+.zoom-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 22px;
+  font-family: var(--mono-face);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.zoom-label svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: square;
+  stroke-width: 2;
+}
+.zoom-controls {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.2rem;
 }
-.pan-pad button:first-child {
-  grid-column: 2;
+.map-controls .map-reset {
+  width: 100%;
+  min-height: 30px;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .details-card {

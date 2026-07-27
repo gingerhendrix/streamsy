@@ -45,6 +45,7 @@ import { useRiskBoardV2Stream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
+import { MapControls } from "./map-controls.tsx";
 import { MatchBar } from "./match-bar.tsx";
 import {
   ReinforcementPlacement,
@@ -796,52 +797,18 @@ export function GameV2Screen(props: GameV2ScreenProps) {
               setPan(next.pan);
             }}
           >
-            <div className="map-controls">
-              <button
-                onClick={() => setZoom((value) => Math.min(2.4, Number((value + 0.2).toFixed(2))))}
-                aria-label="Zoom in"
-              >
-                +
-              </button>
-              <button
-                onClick={() => setZoom((value) => Math.max(0.6, Number((value - 0.2).toFixed(2))))}
-                aria-label="Zoom out"
-              >
-                −
-              </button>
-              <button
-                onClick={() => {
-                  setZoom(1);
-                  setPan({ x: 0, y: 0 });
-                }}
-                aria-label="Reset the map view"
-              >
-                Reset
-              </button>
-              <div className="pan-pad" aria-label="Pan the map" role="group">
-                <button onClick={() => setPan((p) => ({ ...p, y: p.y + 40 }))} aria-label="Pan up">
-                  ↑
-                </button>
-                <button
-                  onClick={() => setPan((p) => ({ ...p, x: p.x + 40 }))}
-                  aria-label="Pan left"
-                >
-                  ←
-                </button>
-                <button
-                  onClick={() => setPan((p) => ({ ...p, x: p.x - 40 }))}
-                  aria-label="Pan right"
-                >
-                  →
-                </button>
-                <button
-                  onClick={() => setPan((p) => ({ ...p, y: p.y - 40 }))}
-                  aria-label="Pan down"
-                >
-                  ↓
-                </button>
-              </div>
-            </div>
+            <MapControls
+              onZoomIn={() => setZoom((value) => Math.min(2.4, Number((value + 0.2).toFixed(2))))}
+              onZoomOut={() => setZoom((value) => Math.max(0.6, Number((value - 0.2).toFixed(2))))}
+              onReset={() => {
+                setZoom(1);
+                setPan({ x: 0, y: 0 });
+              }}
+              onPanUp={() => setPan((value) => ({ ...value, y: value.y + 40 }))}
+              onPanLeft={() => setPan((value) => ({ ...value, x: value.x + 40 }))}
+              onPanRight={() => setPan((value) => ({ ...value, x: value.x - 40 }))}
+              onPanDown={() => setPan((value) => ({ ...value, y: value.y - 40 }))}
+            />
           </HexMap>
 
           {focused && (
