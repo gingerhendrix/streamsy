@@ -57,6 +57,16 @@ describe("published OpenAPI contract", () => {
     expect(v2).not.toContain("resolve-defense-timeout");
   });
 
+  it("publishes v2 reinforcement as one complete allocation command", () => {
+    const reinforce = jsonSchemas.GameCommandV2.properties.action.oneOf.find(
+      (variant: any) => variant.properties.type.const === "reinforce",
+    ) as any;
+    expect(reinforce.required).toEqual(["type", "placements"]);
+    expect(reinforce.properties.placements.minItems).toBe(1);
+    expect(reinforce.properties.placements.items.required).toEqual(["territoryId", "armies"]);
+    expect(reinforce.description).toContain("complete reinforcement-turn allocation");
+  });
+
   it("publishes both board and decision shapes under a ruleset discriminator", () => {
     expect(jsonSchemas.Board.properties.ruleset.const).toBe("risk-demo-v1");
     expect(jsonSchemas.BoardV2.properties.ruleset.const).toBe("risk-demo-v2");

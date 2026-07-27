@@ -735,14 +735,25 @@ function buildPlayCommandV2(
 
   let parsed: GameActionV2;
   switch (action.type) {
-    case "reinforce":
-      if (typeof action.territoryId !== "string" || typeof action.armies !== "number") return null;
+    case "reinforce": {
+      if (!Array.isArray(action.placements)) return null;
+      const placements = action.placements.map((placement) => {
+        if (
+          !isRecord(placement) ||
+          typeof placement.territoryId !== "string" ||
+          typeof placement.armies !== "number"
+        ) {
+          return null;
+        }
+        return { territoryId: placement.territoryId, armies: placement.armies };
+      });
+      if (placements.some((placement) => placement === null)) return null;
       parsed = {
         type: "reinforce",
-        territoryId: action.territoryId,
-        armies: action.armies,
+        placements: placements as Array<{ territoryId: string; armies: number }>,
       };
       break;
+    }
     case "declare-attack":
       if (
         typeof action.from !== "string" ||

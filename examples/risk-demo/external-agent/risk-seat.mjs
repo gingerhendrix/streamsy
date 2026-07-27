@@ -127,7 +127,7 @@ function flattenLegalChoices(legalActions) {
           choices.push({
             type: legal.type,
             territoryId,
-            scalar: { name: "armies", min: legal.minArmies, max: legal.maxArmies },
+            scalar: { name: "armies", min: legal.maxArmies, max: legal.maxArmies },
           });
         }
         break;
@@ -315,7 +315,10 @@ export function resolveModelSelection(selection, resolution) {
     case "reinforce":
       return {
         ok: true,
-        action: { type: choice.type, territoryId: choice.territoryId, armies: selection.armies },
+        action: {
+          type: choice.type,
+          placements: [{ territoryId: choice.territoryId, armies: selection.armies }],
+        },
       };
     case "attack":
     case "declare-attack":
@@ -358,13 +361,27 @@ export function actionIsLegal(action, legalActions) {
   const legal = legalActions.find((candidate) => candidate.type === action.type);
   if (!legal) return false;
   switch (action.type) {
-    case "reinforce":
-      return (
-        legal.territoryIds.includes(action.territoryId) &&
-        Number.isInteger(action.armies) &&
-        action.armies >= legal.minArmies &&
-        action.armies <= legal.maxArmies
-      );
+    case "reinforce": {
+      if (!Array.isArray(action.placements) || action.placements.length === 0) return false;
+      const seen = new Set();
+      let total = 0;
+      for (const placement of action.placements) {
+        if (
+          !placement ||
+          typeof placement !== "object" ||
+          Array.isArray(placement) ||
+          !legal.territoryIds.includes(placement.territoryId) ||
+          seen.has(placement.territoryId) ||
+          !Number.isInteger(placement.armies) ||
+          placement.armies < 1
+        ) {
+          return false;
+        }
+        seen.add(placement.territoryId);
+        total += placement.armies;
+      }
+      return total === legal.maxArmies;
+    }
     case "attack":
     case "declare-attack": {
       const choice = legal.choices.find(

@@ -50,8 +50,7 @@ describe("v2 turn discipline", () => {
         commandId: nextCommandIdV2(),
         turnId: game.turnId(),
         playerId: other,
-        territoryId: ownedByV2(state, other)[0]!,
-        armies: 1,
+        placements: [{ territoryId: ownedByV2(state, other)[0]!, armies: 1 }],
       }),
       "NOT_YOUR_TURN",
     );
@@ -61,8 +60,7 @@ describe("v2 turn discipline", () => {
       commandId: nextCommandIdV2(),
       turnId: "round-99:nobody",
       playerId: active,
-      territoryId: ownedByV2(state, active)[0]!,
-      armies: 1,
+      placements: [{ territoryId: ownedByV2(state, active)[0]!, armies: 1 }],
     });
     expectRejected(stale, "STALE_TURN");
     if (stale.status === "rejected") expect(stale.error.currentTurnId).toBe(game.turnId());
@@ -89,7 +87,7 @@ describe("v2 turn discipline", () => {
     expect(retry.events).toEqual(first.status === "rejected" ? [] : first.events);
   });
 
-  it("refuses to reinforce more than the remaining pool, or an enemy country", () => {
+  it("requires one exact, unique allocation across owned territories", () => {
     const game = startGameV2();
     const state = game.state();
     const active = state.activePlayerId!;
@@ -99,10 +97,40 @@ describe("v2 turn discipline", () => {
         commandId: nextCommandIdV2(),
         turnId: game.turnId(),
         playerId: active,
-        territoryId: ownedByV2(state, active)[0]!,
-        armies: state.reinforcement.remaining + 1,
+        placements: [
+          {
+            territoryId: ownedByV2(state, active)[0]!,
+            armies: state.reinforcement.remaining + 1,
+          },
+        ],
       }),
       "INSUFFICIENT_ARMIES",
+    );
+    expectRejected(
+      game.submit({
+        type: "reinforce",
+        commandId: nextCommandIdV2(),
+        turnId: game.turnId(),
+        playerId: active,
+        placements: [{ territoryId: ownedByV2(state, active)[0]!, armies: 1 }],
+      }),
+      "INSUFFICIENT_ARMIES",
+    );
+    expectRejected(
+      game.submit({
+        type: "reinforce",
+        commandId: nextCommandIdV2(),
+        turnId: game.turnId(),
+        playerId: active,
+        placements: [
+          { territoryId: ownedByV2(state, active)[0]!, armies: 1 },
+          {
+            territoryId: ownedByV2(state, active)[0]!,
+            armies: state.reinforcement.remaining - 1,
+          },
+        ],
+      }),
+      "ILLEGAL_ACTION",
     );
     const enemy = Object.values(state.territories).find((t) => t.ownerId !== active)!;
     expectRejected(
@@ -111,8 +139,7 @@ describe("v2 turn discipline", () => {
         commandId: nextCommandIdV2(),
         turnId: game.turnId(),
         playerId: active,
-        territoryId: enemy.id,
-        armies: 1,
+        placements: [{ territoryId: enemy.id, armies: 1 }],
       }),
       "ILLEGAL_ACTION",
     );
@@ -122,8 +149,7 @@ describe("v2 turn discipline", () => {
         commandId: nextCommandIdV2(),
         turnId: game.turnId(),
         playerId: active,
-        territoryId: "no-such-country",
-        armies: 1,
+        placements: [{ territoryId: "no-such-country", armies: 1 }],
       }),
       "UNKNOWN_TERRITORY",
     );
@@ -259,8 +285,7 @@ describe("v2 pending defence", () => {
         commandId: nextCommandIdV2(),
         turnId,
         playerId: setup.attackerId,
-        territoryId: owned[0]!,
-        armies: 1,
+        placements: [{ territoryId: owned[0]!, armies: 1 }],
       },
       {
         type: "declare-attack" as const,
@@ -475,8 +500,7 @@ describe("v2 pending occupation", () => {
         commandId: nextCommandIdV2(),
         turnId,
         playerId: setup.attackerId,
-        territoryId: owned[0]!,
-        armies: 1,
+        placements: [{ territoryId: owned[0]!, armies: 1 }],
       },
       {
         type: "declare-attack" as const,

@@ -44,7 +44,7 @@ interface ReinforcementPlacementProps {
   onFinish(): void;
 }
 
-/** A reviewable local allocation that is committed through canonical commands. */
+/** A reviewable local allocation that is committed as one canonical command. */
 export function ReinforcementPlacement(props: ReinforcementPlacementProps): ReactNode {
   const total = props.action.maxArmies;
   const placed = pendingReinforcementTotal(props.pending);

@@ -206,7 +206,10 @@ describe("risk-demo-v2 scripted bot", () => {
         await post(h.app, game, turtleId, {
           commandId: `turtle:${decision.turn.id}:${round}`,
           turnId: decision.turn.id,
-          action: { type: "reinforce", territoryId: target, armies: reinforce.maxArmies },
+          action: {
+            type: "reinforce",
+            placements: [{ territoryId: target, armies: reinforce.maxArmies }],
+          },
         });
         return;
       }
@@ -341,7 +344,10 @@ async function declareAttackOrContinue(h: V2Harness, game: V2Game, guard: number
     await post(h.app, game, active, {
       commandId: `pre-${guard}`,
       turnId: decision.turn.id,
-      action: { type: "reinforce", territoryId: border.id, armies: reinforce.maxArmies },
+      action: {
+        type: "reinforce",
+        placements: [{ territoryId: border.id, armies: reinforce.maxArmies }],
+      },
     });
     return;
   }

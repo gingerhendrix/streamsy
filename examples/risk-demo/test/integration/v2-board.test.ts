@@ -111,6 +111,47 @@ describe("risk-demo-v2 board projection surface", () => {
     expect(board.combat).toBeNull();
   });
 
+  it("commits a distributed reinforcement turn as one atomic command", async () => {
+    const h = v2Harness();
+    const game = await createV2Game(h.app, { mapSeed: "atomic-reinforcement" });
+    const before = await boardFor(h.app, game);
+    const active = before.game.activePlayerId as string;
+    const decision = await decisionFor(h.app, game, active);
+    const reinforce = decision.legalActions.find((action: any) => action.type === "reinforce");
+    const [first, second] = reinforce.territoryIds as [string, string];
+    const firstBefore = before.territories.find((territory: any) => territory.id === first).armies;
+    const secondBefore = before.territories.find(
+      (territory: any) => territory.id === second,
+    ).armies;
+
+    const ack = await post(h.app, game, active, {
+      commandId: "reinforce-all-at-once",
+      turnId: decision.turn.id,
+      action: {
+        type: "reinforce",
+        placements: [
+          { territoryId: first, armies: reinforce.maxArmies - 1 },
+          { territoryId: second, armies: 1 },
+        ],
+      },
+    });
+
+    expect(ack.status).toBe(200);
+    expect(ack.body.events).toHaveLength(2);
+    expect(new Set(ack.body.events.map((event: any) => event.commandId))).toEqual(
+      new Set(["reinforce-all-at-once"]),
+    );
+    const after = await boardFor(h.app, game);
+    expect(after.turn.phase).toBe("attack");
+    expect(after.turn.reinforcement.remaining).toBe(0);
+    expect(after.territories.find((territory: any) => territory.id === first).armies).toBe(
+      firstBefore + reinforce.maxArmies - 1,
+    );
+    expect(after.territories.find((territory: any) => territory.id === second).armies).toBe(
+      secondBefore + 1,
+    );
+  });
+
   it("walks the combat row from awaiting-defense to awaiting-occupation to cleared", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { mapSeed: "combat-lifecycle" });
@@ -201,8 +242,7 @@ describe("risk-demo-v2 board projection surface", () => {
       turnId: activeDecision.turn.id,
       action: {
         type: "reinforce",
-        territoryId: reinforce.territoryIds[0],
-        armies: reinforce.maxArmies,
+        placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.maxArmies }],
       },
     });
     expect(ack.status).toBe(200);

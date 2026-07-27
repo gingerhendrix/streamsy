@@ -45,13 +45,18 @@ export interface StartGameCommandV2 {
   commandId: string;
 }
 
+export interface ReinforcementPlacementV2 {
+  territoryId: string;
+  armies: number;
+}
+
 export interface ReinforceCommandV2 {
   type: "reinforce";
   commandId: string;
   turnId: string;
   playerId: string;
-  territoryId: string;
-  armies: number;
+  /** The complete turn allocation, committed atomically. */
+  placements: ReinforcementPlacementV2[];
 }
 
 export interface DeclareAttackCommandV2 {
@@ -136,7 +141,7 @@ export type CommandV2 =
 
 /** The player-facing action payload carried by `POST /commands`. */
 export type GameActionV2 =
-  | { type: "reinforce"; territoryId: string; armies: number }
+  | { type: "reinforce"; placements: ReinforcementPlacementV2[] }
   | { type: "declare-attack"; from: string; to: string; attackerDice: number }
   | { type: "roll-defense"; attackId: string }
   | { type: "occupy-territory"; attackId: string; armies: number }

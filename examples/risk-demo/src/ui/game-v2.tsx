@@ -138,7 +138,6 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const [decision, setDecision] = useState<DecisionResponseV2 | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [finishingReinforcements, setFinishingReinforcements] = useState(false);
   const [pendingReinforcements, setPendingReinforcements] = useState<PendingReinforcements>(
     () => new Map(),
   );
@@ -339,7 +338,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     [gameId, identity, turnId, live.session],
   );
 
-  const interactionBusy = busy || finishingReinforcements;
+  const interactionBusy = busy;
 
   const adjustReinforcement = useCallback(
     (territoryId: string, delta: 1 | -1) => {
@@ -371,20 +370,8 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       return armies > 0 ? [{ territoryId, armies }] : [];
     });
 
-    setFinishingReinforcements(true);
-    try {
-      for (const placement of placements) {
-        const accepted = await submit({ type: "reinforce", ...placement });
-        if (!accepted) break;
-        setPendingReinforcements((current) => {
-          const next = new Map(current);
-          next.delete(placement.territoryId);
-          return next;
-        });
-      }
-    } finally {
-      setFinishingReinforcements(false);
-    }
+    const accepted = await submit({ type: "reinforce", placements });
+    if (accepted) setPendingReinforcements(new Map());
   }, [reinforceAction, interactionBusy, pendingReinforcements, submit]);
 
   const startGame = async () => {

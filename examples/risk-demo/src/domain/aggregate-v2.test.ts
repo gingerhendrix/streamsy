@@ -104,31 +104,28 @@ describe("v2 reinforcement", () => {
     expect(state.reinforcement.remaining).toBe(state.reinforcement.total);
   });
 
-  it("derives the transition to attack once the pool is fully placed", () => {
+  it("applies a complete allocation atomically and enters attack", () => {
     const game = startGameV2();
     const total = game.state().reinforcement.total;
     const active = game.state().activePlayerId!;
     const owned = ownedByV2(game.state(), active);
+    const before = owned.slice(0, 2).map((id) => game.state().territories[id]!.armies);
 
-    game.must({
+    const outcome = game.must({
       type: "reinforce",
       commandId: nextCommandIdV2(),
       turnId: game.turnId(),
       playerId: active,
-      territoryId: owned[0]!,
-      armies: total - 1,
+      placements: [
+        { territoryId: owned[0]!, armies: total - 1 },
+        { territoryId: owned[1]!, armies: 1 },
+      ],
     });
-    expect(game.state().phase).toBe("reinforce");
-    expect(game.state().reinforcement.remaining).toBe(1);
 
-    game.must({
-      type: "reinforce",
-      commandId: nextCommandIdV2(),
-      turnId: game.turnId(),
-      playerId: active,
-      territoryId: owned[0]!,
-      armies: 1,
-    });
+    expect(outcome.status).toBe("accepted");
+    if (outcome.status === "accepted") expect(outcome.events).toHaveLength(2);
+    expect(game.state().territories[owned[0]!]!.armies).toBe(before[0]! + total - 1);
+    expect(game.state().territories[owned[1]!]!.armies).toBe(before[1]! + 1);
     expect(game.state().phase).toBe("attack");
     expect(game.state().reinforcement.remaining).toBe(0);
   });

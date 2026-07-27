@@ -226,8 +226,7 @@ export function placeAllReinforcementsV2(game: ScriptedGameV2, territoryId?: str
     commandId: nextCommandIdV2(),
     turnId: game.turnId(),
     playerId: active,
-    territoryId: target,
-    armies: state.reinforcement.remaining,
+    placements: [{ territoryId: target, armies: state.reinforcement.remaining }],
   });
   return target;
 }

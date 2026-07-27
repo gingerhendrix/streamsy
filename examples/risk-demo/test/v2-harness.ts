@@ -220,7 +220,10 @@ export async function declareAttack(
   const placed = await post(h.app, game, attacker, {
     commandId: `reinf:${decision.turn.id}`,
     turnId: decision.turn.id,
-    action: { type: "reinforce", territoryId: border.id, armies: reinforce.maxArmies },
+    action: {
+      type: "reinforce",
+      placements: [{ territoryId: border.id, armies: reinforce.maxArmies }],
+    },
   });
   expect(placed.status).toBe(200);
 

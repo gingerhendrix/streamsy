@@ -176,8 +176,7 @@ export function chooseReinforce(
   // With no border at all (every country interior), any placement is equivalent.
   return {
     type: "reinforce",
-    territoryId: best?.id ?? action.territoryIds[0],
-    armies: pool,
+    placements: [{ territoryId: best?.id ?? action.territoryIds[0], armies: pool }],
   };
 }
 

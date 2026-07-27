@@ -250,6 +250,37 @@ describe("repository-independent external-seat launcher", () => {
     expect(actionIsLegal({ type: "occupy-territory", attackId: "attack", armies: 5 }, legal)).toBe(
       false,
     );
+    const reinforce = [{ type: "reinforce", territoryIds: ["a", "b"], minArmies: 1, maxArmies: 4 }];
+    expect(
+      actionIsLegal(
+        {
+          type: "reinforce",
+          placements: [
+            { territoryId: "a", armies: 1 },
+            { territoryId: "b", armies: 3 },
+          ],
+        },
+        reinforce,
+      ),
+    ).toBe(true);
+    expect(
+      actionIsLegal(
+        { type: "reinforce", placements: [{ territoryId: "a", armies: 3 }] },
+        reinforce,
+      ),
+    ).toBe(false);
+    expect(
+      actionIsLegal(
+        {
+          type: "reinforce",
+          placements: [
+            { territoryId: "a", armies: 2 },
+            { territoryId: "a", armies: 2 },
+          ],
+        },
+        reinforce,
+      ),
+    ).toBe(false);
   });
 
   it("uses indexed model choices and resolves opaque identifiers inside the launcher", () => {

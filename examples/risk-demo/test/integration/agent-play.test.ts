@@ -110,25 +110,20 @@ describe("single-session agent play", () => {
     const decision = await decisionFor(h.app, game, active);
     const reinforce = decision.legalActions.find((move: any) => move.type === "reinforce");
     const territoryId = reinforce.territoryIds[0] as string;
-    const territory = (
-      await call(h.app, "GET", `/agent/${game.tokenByPlayer[active]}/state`)
-    ).body.territories.find((entry: any) => entry.id === territoryId);
-
     const rejected = await post(h.app, game, active, {
       commandId: "too-many-reinforcements",
       turnId: decision.turn.id,
       action: {
         type: "reinforce",
-        territoryId,
-        armies: reinforce.maxArmies + 1,
+        placements: [{ territoryId, armies: reinforce.maxArmies + 1 }],
       },
     });
     expect(rejected.status).toBe(409);
     expect(rejected.body.error.code).toBe("INSUFFICIENT_ARMIES");
     expect(rejected.body.error.message).toContain(
-      `You have ${reinforce.maxArmies} reinforcements left; cannot place ${reinforce.maxArmies + 1}`,
+      `Place all ${reinforce.maxArmies} reinforcements in one command`,
     );
-    expect(rejected.body.error.message).toContain(territory.name);
+    expect(rejected.body.error.message).toContain(`${reinforce.maxArmies + 1}`);
     expect(rejected.body.error.message).toContain("personalized state URL");
     expect(rejected.body.error.message).toContain("legalMoves");
   });

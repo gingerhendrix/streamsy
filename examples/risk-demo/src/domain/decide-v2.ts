@@ -237,30 +237,58 @@ function decideReinforce(state: AggregateStateV2, command: ReinforceCommandV2): 
   if (state.phase !== "reinforce") {
     return reject("INVALID_PHASE", "Reinforcements can only be placed in the reinforce phase.");
   }
-  if (!state.index || !isTerritoryV2(state.index, command.territoryId)) {
-    return reject("UNKNOWN_TERRITORY", `Unknown territory: ${command.territoryId}.`);
-  }
-  if (state.territories[command.territoryId]?.ownerId !== command.playerId) {
-    return reject(
-      "ILLEGAL_ACTION",
-      `${territoryLabel(state, command.territoryId)} is owned by ${playerLabel(state, state.territories[command.territoryId]?.ownerId)}, so ${playerLabel(state, command.playerId)} cannot reinforce it.`,
-    );
-  }
+
   const remaining = state.reinforcement.remaining;
-  if (!Number.isInteger(command.armies) || command.armies < 1 || command.armies > remaining) {
+  if (command.placements.length === 0) {
+    return reject("INSUFFICIENT_ARMIES", `Place all ${remaining} reinforcements in one command.`);
+  }
+
+  const seen = new Set<string>();
+  let total = 0;
+  for (const placement of command.placements) {
+    if (!state.index || !isTerritoryV2(state.index, placement.territoryId)) {
+      return reject("UNKNOWN_TERRITORY", `Unknown territory: ${placement.territoryId}.`);
+    }
+    if (seen.has(placement.territoryId)) {
+      return reject(
+        "ILLEGAL_ACTION",
+        `${territoryLabel(state, placement.territoryId)} appears more than once in the reinforcement allocation.`,
+      );
+    }
+    seen.add(placement.territoryId);
+    if (state.territories[placement.territoryId]?.ownerId !== command.playerId) {
+      return reject(
+        "ILLEGAL_ACTION",
+        `${territoryLabel(state, placement.territoryId)} is owned by ${playerLabel(state, state.territories[placement.territoryId]?.ownerId)}, so ${playerLabel(state, command.playerId)} cannot reinforce it.`,
+      );
+    }
+    if (!Number.isInteger(placement.armies) || placement.armies < 1) {
+      return reject(
+        "INSUFFICIENT_ARMIES",
+        `Every reinforcement placement must contain a positive whole number of armies.`,
+      );
+    }
+    total += placement.armies;
+  }
+
+  if (total !== remaining) {
     return reject(
       "INSUFFICIENT_ARMIES",
-      `You have ${remaining} reinforcements left; cannot place ${command.armies} on ${territoryLabel(state, command.territoryId)}.`,
+      `Place all ${remaining} reinforcements in one command; the submitted allocation contains ${total}.`,
     );
   }
-  return accept({
-    type: "ArmiesReinforced",
-    turnId: command.turnId,
-    playerId: command.playerId,
-    territoryId: command.territoryId,
-    armies: command.armies,
-    commandId: command.commandId,
-  });
+
+  return {
+    status: "accepted",
+    events: command.placements.map((placement) => ({
+      type: "ArmiesReinforced",
+      turnId: command.turnId,
+      playerId: command.playerId,
+      territoryId: placement.territoryId,
+      armies: placement.armies,
+      commandId: command.commandId,
+    })),
+  };
 }
 
 /**

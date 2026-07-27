@@ -130,11 +130,23 @@ const commandActionV2 = {
   oneOf: [
     {
       type: "object",
-      required: ["type", "territoryId", "armies"],
+      required: ["type", "placements"],
+      description:
+        "The complete reinforcement-turn allocation. Placements must name distinct owned territories and their armies must sum to the current legal action's maxArmies.",
       properties: {
         type: { const: "reinforce" },
-        territoryId: { type: "string" },
-        armies: { type: "integer", minimum: 1 },
+        placements: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            required: ["territoryId", "armies"],
+            properties: {
+              territoryId: { type: "string" },
+              armies: { type: "integer", minimum: 1 },
+            },
+          },
+        },
       },
     },
     {
@@ -193,6 +205,8 @@ const legalActionV2 = {
     {
       type: "object",
       required: ["type", "territoryIds", "minArmies", "maxArmies"],
+      description:
+        "Submit one reinforce command whose placements use distinct territoryIds and sum exactly to maxArmies.",
       properties: {
         type: { const: "reinforce" },
         territoryIds: { type: "array", items: { type: "string" } },
