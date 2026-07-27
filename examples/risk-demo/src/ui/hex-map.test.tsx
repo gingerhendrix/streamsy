@@ -63,6 +63,8 @@ function render(): string {
       actionable={new Set(["t1"])}
       focusedId={null}
       onSelect={() => {}}
+      pendingReinforcements={new Map([["t1", 2]])}
+      onDecrement={() => {}}
       onFocus={() => {}}
       route={null}
       zoom={1}
@@ -80,6 +82,8 @@ describe("hex map", () => {
     expect(html).toContain("Windbarrow");
     // Armies are drawn once per country, never once per tile.
     expect(html.match(/class="army-count"/g)).toHaveLength(2);
+    expect(html.match(/class="pending-army-count"/g)).toHaveLength(1);
+    expect(html).toContain(">+2</text>");
   });
 
   it("draws names at their laid-out positions, not on top of each other", () => {
@@ -92,7 +96,9 @@ describe("hex map", () => {
 
   it("exposes every country as a labelled, focusable control", () => {
     const html = render();
-    expect(html).toContain('aria-label="Cinderhold, 7 armies, held by Ada"');
+    expect(html).toContain(
+      'aria-label="Cinderhold, 7 armies, plus 2 pending reinforcements, held by Ada"',
+    );
     expect(html).toContain('aria-label="Windbarrow, 3 armies, held by Mina"');
     expect(html.match(/role="button"/g)).toHaveLength(2);
     // Legality is the decision resource's word: only `t1` is actionable here.

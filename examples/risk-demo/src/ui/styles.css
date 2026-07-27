@@ -1170,6 +1170,15 @@ summary:focus-visible,
   stroke: var(--map-ink);
   stroke-width: 3px;
 }
+/* Pending placement is deliberately outside the stationed-army badge: +n is a
+   proposal until Finish reinforcements emits the canonical commands. */
+.hex-map .pending-army-count {
+  fill: var(--map-ink);
+  font: 800 15px var(--display-face);
+  paint-order: stroke;
+  stroke: var(--label-halo);
+  stroke-width: 4px;
+}
 .hex-map .country-label {
   fill: var(--map-ink);
   font: 800 12px var(--display-face);
@@ -1452,6 +1461,81 @@ summary:focus-visible,
 .controls-card.victory h3 {
   margin: 0;
   font-size: 1rem;
+}
+.reinforcement-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.reinforcement-totals span {
+  display: grid;
+  gap: 0.05rem;
+  padding: 0.5rem 0.35rem;
+  border-right: 1px solid var(--line);
+  text-align: center;
+}
+.reinforcement-totals span:last-child {
+  border-right: 0;
+}
+.reinforcement-totals b {
+  font: 800 1.1rem var(--display-face);
+}
+.reinforcement-totals small,
+.reinforcement-help {
+  color: var(--muted);
+  font-size: 0.63rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.reinforcement-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.reinforcement-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.42rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.reinforcement-list li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reinforcement-stepper {
+  display: grid;
+  grid-template-columns: 32px 34px 32px;
+  flex: none;
+  align-items: stretch;
+}
+.reinforcement-stepper button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0.2rem;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+.reinforcement-stepper output {
+  display: grid;
+  place-items: center;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  font-family: var(--mono-face);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.finish-reinforcements {
+  width: 100%;
 }
 .controls-actions {
   display: flex;

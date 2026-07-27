@@ -91,6 +91,9 @@ export interface HexMapProps {
   actionable: ReadonlySet<string>;
   focusedId: string | null;
   onSelect(territoryId: string): void;
+  /** Secondary selection is used to remove one pending reinforcement. */
+  onDecrement?(territoryId: string): void;
+  pendingReinforcements?: ReadonlyMap<string, number>;
   onFocus(territoryId: string): void;
   /** Source → target of the attack being composed, or the throw being revealed. */
   route: { from: string; to: string } | null;
@@ -457,6 +460,16 @@ export function HexMap(props: HexMapProps) {
                   >
                     {territory.armies}
                   </text>
+                  {(props.pendingReinforcements?.get(territory.id) ?? 0) > 0 && (
+                    <text
+                      className="pending-army-count"
+                      x={anchor.x + BADGE_RADIUS + 5}
+                      y={anchor.y - BADGE_RADIUS * 0.55}
+                      textAnchor="start"
+                    >
+                      +{props.pendingReinforcements?.get(territory.id)}
+                    </text>
+                  )}
                   {label.leader && (
                     <line
                       className="label-leader"
@@ -494,8 +507,17 @@ export function HexMap(props: HexMapProps) {
                   tabIndex={0}
                   aria-disabled={!selectable}
                   aria-pressed={tone === "selected"}
-                  aria-label={countryLabel(territory, props.ownerNameOf(territory.ownerId))}
+                  aria-label={countryLabel(
+                    territory,
+                    props.ownerNameOf(territory.ownerId),
+                    props.pendingReinforcements?.get(territory.id) ?? 0,
+                  )}
                   onClick={() => props.onSelect(territory.id)}
+                  onContextMenu={(event) => {
+                    if (!selectable || !props.onDecrement) return;
+                    event.preventDefault();
+                    props.onDecrement(territory.id);
+                  }}
                   onFocus={() => props.onFocus(territory.id)}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
@@ -514,7 +536,15 @@ export function HexMap(props: HexMapProps) {
   );
 }
 
-export function countryLabel(territory: MapTerritory, ownerName: string): string {
+export function countryLabel(
+  territory: MapTerritory,
+  ownerName: string,
+  pendingReinforcements = 0,
+): string {
   const armies = territory.armies === 1 ? "1 army" : `${territory.armies} armies`;
-  return `${territory.name}, ${armies}, held by ${ownerName}`;
+  const pending =
+    pendingReinforcements > 0
+      ? `, plus ${pendingReinforcements} pending ${pendingReinforcements === 1 ? "reinforcement" : "reinforcements"}`
+      : "";
+  return `${territory.name}, ${armies}${pending}, held by ${ownerName}`;
 }

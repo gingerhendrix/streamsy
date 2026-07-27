@@ -342,7 +342,7 @@ export function phaseInstruction(
   }
   switch (phase) {
     case "reinforce":
-      return "Place every army before you can attack: pick a highlighted country of yours, choose how many, and confirm.";
+      return "Place every army before you can attack: left-click your territories to add, right-click to remove, then finish.";
     case "attack":
       return "Attack a highlighted enemy neighbour from a country holding two or more armies. Your one fortify move is also made here.";
     case "fortify":

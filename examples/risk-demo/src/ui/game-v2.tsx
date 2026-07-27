@@ -47,6 +47,12 @@ import { combatView } from "./combat-view.ts";
 import { HexMap, countryLabel, type MapTerritory, type TerritoryTone } from "./hex-map.tsx";
 import { MatchBar } from "./match-bar.tsx";
 import {
+  ReinforcementPlacement,
+  adjustPendingReinforcements,
+  pendingReinforcementTotal,
+  type PendingReinforcements,
+} from "./reinforcement-placement.tsx";
+import {
   revealPlan,
   seatStatusLabel,
   terrainMix,
@@ -69,7 +75,6 @@ import { TurnColumn, VictoryCard } from "./turn-column.tsx";
 
 type Selection =
   | null
-  | { kind: "reinforce"; from: string; armies: number }
   | { kind: "attack"; from: string; to?: string; dice: number }
   | { kind: "fortify"; from: string; to?: string; armies: number };
 
@@ -130,6 +135,10 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const [decision, setDecision] = useState<DecisionResponseV2 | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [finishingReinforcements, setFinishingReinforcements] = useState(false);
+  const [pendingReinforcements, setPendingReinforcements] = useState<PendingReinforcements>(
+    () => new Map(),
+  );
   const [selection, setSelection] = useState<Selection>(null);
   const [intent, setIntent] = useState<Intent>("attack");
   const [occupyArmies, setOccupyArmies] = useState<number | null>(null);
@@ -180,8 +189,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   // A new turn is a fresh decision surface; nothing selected carries across.
   useEffect(() => {
     setSelection(null);
+    setPendingReinforcements(new Map());
     setIntent("attack");
   }, [turnId]);
+
+  const reinforcementAvailable = reinforceAction !== undefined;
+  useEffect(() => {
+    if (!reinforcementAvailable) setPendingReinforcements(new Map());
+  }, [reinforcementAvailable]);
 
   useEffect(() => {
     setOccupyArmies(occupyAction ? occupyAction.minArmies : null);
@@ -299,6 +314,54 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     },
     [gameId, identity, turnId, live.session],
   );
+
+  const interactionBusy = busy || finishingReinforcements;
+
+  const adjustReinforcement = useCallback(
+    (territoryId: string, delta: 1 | -1) => {
+      if (!reinforceAction || interactionBusy) return;
+      setPendingReinforcements((current) =>
+        adjustPendingReinforcements(
+          current,
+          territoryId,
+          delta,
+          reinforceAction.territoryIds,
+          reinforceAction.maxArmies,
+        ),
+      );
+    },
+    [reinforceAction, interactionBusy],
+  );
+
+  const finishReinforcements = useCallback(async () => {
+    if (
+      !reinforceAction ||
+      interactionBusy ||
+      pendingReinforcementTotal(pendingReinforcements) !== reinforceAction.maxArmies
+    ) {
+      return;
+    }
+
+    const placements = reinforceAction.territoryIds.flatMap((territoryId) => {
+      const armies = pendingReinforcements.get(territoryId) ?? 0;
+      return armies > 0 ? [{ territoryId, armies }] : [];
+    });
+
+    setFinishingReinforcements(true);
+    try {
+      for (const placement of placements) {
+        const accepted = await submit({ type: "reinforce", ...placement });
+        if (!accepted) break;
+        setPendingReinforcements((current) => {
+          const next = new Map(current);
+          next.delete(placement.territoryId);
+          return next;
+        });
+      }
+    } finally {
+      setFinishingReinforcements(false);
+    }
+  }, [reinforceAction, interactionBusy, pendingReinforcements, submit]);
 
   const startGame = async () => {
     if (!identity) return;
@@ -418,8 +481,12 @@ export function GameV2Screen(props: GameV2ScreenProps) {
         if (id === combat.from) return "selected";
         return "dimmed";
       }
-      if (selection?.kind === "reinforce") {
-        return id === selection.from ? "selected" : actionable.has(id) ? "source" : "idle";
+      if (reinforceAction) {
+        return (pendingReinforcements.get(id) ?? 0) > 0
+          ? "selected"
+          : actionable.has(id)
+            ? "source"
+            : "idle";
       }
       if (selection?.kind === "attack" || selection?.kind === "fortify") {
         if (id === selection.from) return "selected";
@@ -428,7 +495,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       }
       return actionable.has(id) ? "source" : "idle";
     },
-    [occupyAction, combat, selection, actionable],
+    [occupyAction, combat, reinforceAction, pendingReinforcements, selection, actionable],
   );
 
   const onSelect = useCallback(
@@ -437,11 +504,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       if (occupyAction || combat?.status === "awaiting-defense") return;
 
       if (reinforceAction?.territoryIds.includes(id)) {
-        setSelection((current) =>
-          current?.kind === "reinforce" && current.from === id
-            ? null
-            : { kind: "reinforce", from: id, armies: 1 },
-        );
+        adjustReinforcement(id, 1);
         return;
       }
 
@@ -482,6 +545,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       occupyAction,
       combat,
       reinforceAction,
+      adjustReinforcement,
       selection,
       intent,
       attackAction,
@@ -626,7 +690,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                     : RULES_V2.defenseTimeoutMs
                 }
                 reveal={reveal}
-                busy={busy}
+                busy={interactionBusy}
                 onRollDefense={() => {
                   if (!defenseAction || !identity) return;
                   void submit(
@@ -643,12 +707,15 @@ export function GameV2Screen(props: GameV2ScreenProps) {
             ) : spectating ? null : (
               <PhaseControls
                 names={names}
-                busy={busy}
+                busy={interactionBusy}
                 selection={selection}
                 setSelection={setSelection}
                 intent={intent}
                 setIntent={setIntent}
                 reinforceAction={reinforceAction}
+                pendingReinforcements={pendingReinforcements}
+                adjustReinforcement={adjustReinforcement}
+                finishReinforcements={() => void finishReinforcements()}
                 attackAction={attackAction}
                 fortifyAction={fortifyAction}
                 occupyAction={occupyAction}
@@ -683,6 +750,8 @@ export function GameV2Screen(props: GameV2ScreenProps) {
             actionable={actionable}
             focusedId={focusedId}
             onSelect={onSelect}
+            onDecrement={reinforceAction ? (id) => adjustReinforcement(id, -1) : undefined}
+            pendingReinforcements={pendingReinforcements}
             onFocus={setFocusedId}
             route={route}
             zoom={zoom}
@@ -839,6 +908,9 @@ interface PhaseControlsProps {
   intent: Intent;
   setIntent(next: Intent): void;
   reinforceAction?: Extract<LegalActionV2, { type: "reinforce" }>;
+  pendingReinforcements: PendingReinforcements;
+  adjustReinforcement(territoryId: string, delta: 1 | -1): void;
+  finishReinforcements(): void;
   attackAction?: Extract<LegalActionV2, { type: "declare-attack" }>;
   fortifyAction?: Extract<LegalActionV2, { type: "fortify" }>;
   occupyAction?: Extract<LegalActionV2, { type: "occupy-territory" }>;
@@ -897,48 +969,15 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
   }
 
   if (props.reinforceAction) {
-    const action = props.reinforceAction;
-    if (selection?.kind !== "reinforce") {
-      return (
-        <section className="controls-card">
-          <p>
-            <b>
-              {action.maxArmies} {action.maxArmies === 1 ? "army" : "armies"}
-            </b>{" "}
-            still to place.
-          </p>
-        </section>
-      );
-    }
     return (
-      <section className="controls-card">
-        <span className="section-label">{names.territory(selection.from)}</span>
-        <Stepper
-          label="Armies to place"
-          value={Math.min(selection.armies, action.maxArmies)}
-          min={1}
-          max={action.maxArmies}
-          onChange={(armies) => props.setSelection({ ...selection, armies })}
-        />
-        <div className="controls-actions">
-          <button
-            className="primary"
-            disabled={props.busy}
-            onClick={() =>
-              void props
-                .submit({
-                  type: "reinforce",
-                  territoryId: selection.from,
-                  armies: Math.min(selection.armies, action.maxArmies),
-                })
-                .then((accepted) => accepted && props.setSelection(null))
-            }
-          >
-            Place {selection.armies}
-          </button>
-          <button onClick={() => props.setSelection(null)}>Cancel</button>
-        </div>
-      </section>
+      <ReinforcementPlacement
+        action={props.reinforceAction}
+        names={names}
+        pending={props.pendingReinforcements}
+        busy={props.busy}
+        onAdjust={props.adjustReinforcement}
+        onFinish={props.finishReinforcements}
+      />
     );
   }
 
