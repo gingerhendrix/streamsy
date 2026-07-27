@@ -85,4 +85,22 @@ describe("combat card", () => {
     expect(html).toContain("Northgate holds");
     expect(html).toContain("Auto-rolled after timeout");
   });
+
+  it("offers one clear repeat action only when the resolved pairing remains legal", () => {
+    const resolved = {
+      ...PENDING,
+      status: "resolved" as const,
+      defenderRolls: [5, 3],
+      attackerLosses: 1,
+      defenderLosses: 1,
+      territoryCaptured: false,
+      resolutionSource: "human" as const,
+      defenseDeadlineAt: undefined,
+    };
+    expect(card({ combat: resolved, onAttackAgain: () => {} })).toContain("Attack again");
+    expect(card({ combat: resolved })).not.toContain("Attack again");
+    expect(
+      card({ combat: { ...resolved, territoryCaptured: true }, onAttackAgain: undefined }),
+    ).not.toContain("Attack again");
+  });
 });

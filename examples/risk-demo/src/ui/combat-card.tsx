@@ -128,6 +128,7 @@ export interface CombatCardProps {
   reveal: RevealPlan;
   busy: boolean;
   onRollDefense(): void;
+  onAttackAgain?: () => void;
 }
 
 export function CombatCard(props: CombatCardProps) {
@@ -250,6 +251,15 @@ export function CombatCard(props: CombatCardProps) {
           </p>
           {combat.resolutionSource && (
             <small>{resolutionLabel(combat.resolutionSource, defenderName)}</small>
+          )}
+          {props.onAttackAgain && (
+            <button
+              className="primary attack-again"
+              disabled={props.busy}
+              onClick={props.onAttackAgain}
+            >
+              Attack again
+            </button>
           )}
         </div>
       )}

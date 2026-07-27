@@ -1647,6 +1647,24 @@ summary:focus-visible,
   background: var(--ink);
   color: var(--paper-raised);
 }
+.intent-toggle .end-attack {
+  width: 100%;
+  margin: -1px;
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+.intent-state {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.attack-again {
+  width: 100%;
+  margin-top: 0.65rem;
+}
 .stepper {
   display: flex;
   align-items: center;

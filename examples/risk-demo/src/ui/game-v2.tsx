@@ -41,6 +41,12 @@ import type {
 import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
 import type { ProjectedHexV2, ProjectedPlayerV2 } from "../board/projection-v2.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
+import {
+  attackAgainAction,
+  attackTerritoryIds,
+  fortifyAction as canonicalFortifyAction,
+  shouldDismissAttackSummary,
+} from "./attack-phase.ts";
 import { useRiskBoardV2Stream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
@@ -143,6 +149,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   );
   const [selection, setSelection] = useState<Selection>(null);
   const [intent, setIntent] = useState<Intent>("attack");
+  const [dismissedCombatId, setDismissedCombatId] = useState<string | null>(null);
   const [occupyArmies, setOccupyArmies] = useState<number | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -214,6 +221,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     setSelection(null);
     setPendingReinforcements(new Map());
     setIntent("attack");
+    setDismissedCombatId(null);
   }, [turnId]);
 
   const reinforcementAvailable = reinforceAction !== undefined;
@@ -237,6 +245,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
         : null,
     [board],
   );
+  const visibleCombat = combat?.attackId === dismissedCombatId ? null : combat;
 
   const seenReveals = useRef(new Set<string>());
   const firstOffset = useRef<string | null | undefined>(undefined);
@@ -461,21 +470,24 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     (from: string) => fortifyAction?.choices.find((choice) => choice.from === from),
     [fortifyAction],
   );
+  const repeatAttack = useMemo(
+    () => attackAgainAction(attackAction, combat),
+    [attackAction, combat],
+  );
 
   const actionable = useMemo(() => {
     const ids = new Set<string>();
     if (occupyAction) return ids;
     if (reinforceAction) for (const id of reinforceAction.territoryIds) ids.add(id);
     if (selection?.kind === "attack") {
-      ids.add(selection.from);
-      for (const choice of attackChoicesFrom(selection.from)) ids.add(choice.to);
+      return attackTerritoryIds(attackAction, selection.from);
     } else if (selection?.kind === "fortify") {
       ids.add(selection.from);
       for (const reachable of fortifyChoiceFrom(selection.from)?.reachable ?? []) {
         ids.add(reachable.to);
       }
     } else if (intent === "attack") {
-      for (const choice of attackAction?.choices ?? []) ids.add(choice.from);
+      return attackTerritoryIds(attackAction);
     } else {
       for (const choice of fortifyAction?.choices ?? []) ids.add(choice.from);
     }
@@ -556,10 +568,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       }
 
       if (intent === "attack" && attackAction?.choices.some((choice) => choice.from === id)) {
+        if (combat && shouldDismissAttackSummary(combat, attackAction, id)) {
+          setDismissedCombatId(combat.attackId);
+        }
         setSelection({ kind: "attack", from: id, dice: 1 });
         return;
       }
       if (intent === "fortify" && fortifyChoiceFrom(id)) {
+        if (combat?.status === "resolved") setDismissedCombatId(combat.attackId);
         setSelection({ kind: "fortify", from: id, armies: 1 });
       }
     },
@@ -583,8 +599,8 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const route: { from: string; to: string } | null =
     selection?.kind === "attack" && selection.to
       ? { from: selection.from, to: selection.to }
-      : combat && combat.status !== "resolved"
-        ? { from: combat.from, to: combat.to }
+      : visibleCombat && visibleCombat.status !== "resolved"
+        ? { from: visibleCombat.from, to: visibleCombat.to }
         : null;
 
   const mapTerritories: MapTerritory[] = useMemo(
@@ -696,11 +712,11 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           statusLine={statusLine}
           yourTurn={yourTurn}
           selfId={identity?.playerId}
-          combatLive={combat !== null && combat.status !== "resolved"}
+          combatLive={visibleCombat !== null && visibleCombat.status !== "resolved"}
           combatCard={
-            combat && (
+            visibleCombat && (
               <CombatCard
-                combat={combat}
+                combat={visibleCombat}
                 names={names}
                 colorOf={colorOf}
                 controllerOf={controllerOf}
@@ -708,8 +724,9 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                 mode={decision?.mode ?? null}
                 now={now}
                 defenseWindowMs={
-                  combat.declaredAt !== undefined && combat.defenseDeadlineAt !== undefined
-                    ? combat.defenseDeadlineAt - combat.declaredAt
+                  visibleCombat.declaredAt !== undefined &&
+                  visibleCombat.defenseDeadlineAt !== undefined
+                    ? visibleCombat.defenseDeadlineAt - visibleCombat.declaredAt
                     : RULES_V2.defenseTimeoutMs
                 }
                 reveal={reveal}
@@ -721,6 +738,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                     `${identity.playerId}:defense:${defenseAction.attackId}`,
                   );
                 }}
+                onAttackAgain={
+                  repeatAttack
+                    ? () => {
+                        setSelection(null);
+                        void submit(repeatAttack);
+                      }
+                    : undefined
+                }
               />
             )
           }
@@ -732,6 +757,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                 names={names}
                 busy={interactionBusy}
                 selection={selection}
+                attackPhase={board.game.phase === "attack" && canEndTurn}
                 setSelection={setSelection}
                 intent={intent}
                 setIntent={setIntent}
@@ -893,6 +919,7 @@ interface PhaseControlsProps {
   names: NameLookup;
   busy: boolean;
   selection: Selection;
+  attackPhase: boolean;
   setSelection(next: Selection): void;
   intent: Intent;
   setIntent(next: Intent): void;
@@ -919,7 +946,7 @@ interface PhaseControlsProps {
  * being composed — source, target, amount, confirm — plus the compulsory occupation
  * card. Ending the turn is a turn-level action and lives under the sections instead.
  */
-function PhaseControls(props: PhaseControlsProps): ReactNode {
+export function PhaseControls(props: PhaseControlsProps): ReactNode {
   const { names, selection } = props;
 
   // Occupation is compulsory: no other affordance is offered until it commits.
@@ -970,32 +997,24 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
     );
   }
 
-  if (props.attackAction || props.fortifyAction) {
+  if (props.attackPhase || props.attackAction || props.fortifyAction) {
     return (
       <section className="controls-card">
         <div className="intent-toggle" role="group" aria-label="Manoeuvre">
-          <button
-            className={props.intent === "attack" ? "selected" : ""}
-            aria-pressed={props.intent === "attack"}
-            disabled={!props.attackAction}
-            onClick={() => {
-              props.setIntent("attack");
-              props.setSelection(null);
-            }}
-          >
-            Attack
-          </button>
-          <button
-            className={props.intent === "fortify" ? "selected" : ""}
-            aria-pressed={props.intent === "fortify"}
-            disabled={!props.fortifyAction}
-            onClick={() => {
-              props.setIntent("fortify");
-              props.setSelection(null);
-            }}
-          >
-            Fortify
-          </button>
+          {props.intent === "attack" ? (
+            <button
+              className="end-attack"
+              disabled={props.busy}
+              onClick={() => {
+                props.setIntent("fortify");
+                props.setSelection(null);
+              }}
+            >
+              End attack →
+            </button>
+          ) : (
+            <span className="intent-state">Attack ended · choose your fortification</span>
+          )}
         </div>
 
         {selection?.kind === "attack" && props.attackAction ? (
@@ -1069,15 +1088,12 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
                   onClick={() =>
                     void props
                       .submit({
-                        type: "fortify",
-                        from: selection.from,
-                        to: selection.to!,
-                        armies: selection.armies,
+                        ...canonicalFortifyAction(selection.from, selection.to!, selection.armies),
                       })
                       .then((accepted) => accepted && props.setSelection(null))
                   }
                 >
-                  Move {selection.armies}
+                  End attack · move {selection.armies}
                 </button>
                 <button onClick={() => props.setSelection({ ...selection, to: undefined })}>
                   Change destination
@@ -1094,7 +1110,9 @@ function PhaseControls(props: PhaseControlsProps): ReactNode {
           <p className="muted">
             {props.intent === "attack"
               ? "Pick a highlighted country to attack from."
-              : "Pick a highlighted country to move armies from."}
+              : props.fortifyAction
+                ? "Pick a highlighted country to make your one fortification."
+                : "No fortification is available. End the turn when ready."}
           </p>
         )}
       </section>
