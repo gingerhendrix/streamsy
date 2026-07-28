@@ -1480,33 +1480,13 @@ summary:focus-visible,
   font-weight: 500;
 }
 
-/* --- supporting facts use rules and spacing in place of nested cards ------ */
+/* --- supporting facts stay compact instead of becoming nested cards ------- */
 
 .reinforcement-card {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.8rem 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  padding: 0.1rem 0;
 }
 .reinforcement-card b {
   font-size: 0.86rem;
-}
-.reinforcement-card small {
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-.continent-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0;
-}
-.continent-chip {
-  padding: 0.2rem 0.45rem;
-  border-right: 1px solid var(--line);
-  font-family: var(--mono-face);
-  font-size: 0.61rem;
-  font-weight: 700;
 }
 
 .controls-card {

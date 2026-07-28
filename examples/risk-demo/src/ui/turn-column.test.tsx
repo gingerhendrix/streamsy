@@ -59,6 +59,31 @@ describe("current-turn column", () => {
     expect(html).toContain("Declare attack");
   });
 
+  it("keeps the reinforcement summary to the equation above the placement controls", () => {
+    const html = renderToStaticMarkup(
+      <TurnColumn
+        status="playing"
+        turn={{
+          ...TURN,
+          phase: "reinforce",
+          reinforcement: { base: 3, continents: [], total: 3, remaining: 3 },
+          reinforcementsPlaced: 0,
+        }}
+        phase="reinforce"
+        activePlayer={ADA}
+        names={NAMES}
+        statusLine="Your turn"
+        yourTurn
+        selfId="p1"
+        controls={<p>Placement controls</p>}
+      />,
+    );
+    expect(html).toContain("3 total = 3 territory");
+    expect(html).not.toContain("0 placed · 3 remaining");
+    expect(html).not.toContain("continent-chip");
+    expect(html.indexOf("3 total = 3 territory")).toBeLessThan(html.indexOf("Placement controls"));
+  });
+
   it("collapses a finished phase to what it achieved and disables a later one", () => {
     const html = renderToStaticMarkup(
       <TurnColumn

@@ -26,7 +26,6 @@ import {
   phaseState,
   phaseSummary,
   reinforcementEquation,
-  reinforcementProgress,
   turnLedger,
   type NameLookup,
   type PhaseState,
@@ -139,22 +138,11 @@ function PhaseSection(props: PhaseSectionProps) {
   );
 }
 
-/** The reinforcement pool, explained as an equation rather than a bare number. */
+/** The reinforcement pool, explained once above the placement controls. */
 function ReinforcementDetail(props: { turn: ProjectedTurn; names: NameLookup }) {
-  const { turn, names } = props;
   return (
     <div className="reinforcement-card">
-      <b>{reinforcementEquation(turn.reinforcement, names.continent)}</b>
-      <small>
-        {reinforcementProgress(turn.reinforcementsPlaced, turn.reinforcement.remaining)}
-      </small>
-      <div className="continent-chips">
-        {turn.reinforcement.continents.map((bonus) => (
-          <span className="continent-chip" key={bonus.continentId}>
-            {names.continent(bonus.continentId)} +{bonus.bonus}
-          </span>
-        ))}
-      </div>
+      <b>{reinforcementEquation(props.turn.reinforcement, props.names.continent)}</b>
     </div>
   );
 }
