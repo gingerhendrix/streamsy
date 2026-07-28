@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import { rebuildBoardGeneration } from "../../server/game/rebuild.ts";
+import { createBoardProjectionAdapter } from "../../src/board/board-projection.ts";
 import {
   boardFor,
   call,
@@ -283,5 +284,38 @@ describe("Hex Domination board projection surface", () => {
       "board1",
       "board2",
     ]);
+  });
+
+  it("keeps the active generation and board unchanged when rebuild verification fails", async () => {
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "failed-rebuild" });
+    await declareAttack(h, game);
+    const before = await boardFor(h.app, game);
+    const activeBefore = h.stores.games.get(game.gameId)!;
+
+    const result = await rebuildBoardGeneration(
+      { protocol: h.protocol, stores: h.stores },
+      game.gameId,
+      {
+        now: () => h.clock.now + 1_000,
+        makeAdapter: (options) => ({
+          ...createBoardProjectionAdapter(options),
+          reduce: (state) => state,
+        }),
+      },
+    );
+
+    expect(result.status).toBe("verification-failed");
+    expect(result.equivalence).toEqual({ boardEqual: false, watermarkEqual: true });
+    expect(result.activeGeneration).toBe("board1");
+
+    const activeAfter = h.stores.games.get(game.gameId)!;
+    expect(activeAfter.generation).toBe(activeBefore.generation);
+    expect(activeAfter.projectionStreamId).toBe(activeBefore.projectionStreamId);
+    expect(h.stores.generations.get(game.gameId, "board1")?.status).toBe("active");
+    expect(h.stores.generations.get(game.gameId, "board2")?.status).toBe("failed");
+
+    const after = await boardFor(h.app, game);
+    expect(after).toEqual(before);
   });
 });
