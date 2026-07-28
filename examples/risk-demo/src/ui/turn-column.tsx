@@ -73,6 +73,8 @@ interface PhaseSectionProps {
   state: PhaseState;
   instruction: string;
   summary: string;
+  /** A compact phase-level action that belongs before the instruction. */
+  action?: ReactNode;
   /** Phase-specific evidence: the reinforcement pool, the last throw, and so on. */
   detail?: ReactNode;
   /** The controls for this phase, rendered only while it is active. */
@@ -87,6 +89,7 @@ function PhaseSection(props: PhaseSectionProps) {
       <li className={className} aria-current="step">
         <PhaseHead index={props.index} phase={props.phase} state={props.state} />
         <div className="phase-body">
+          {props.action}
           <p className="phase-instruction">{props.instruction}</p>
           {props.detail}
           {props.children}
@@ -168,6 +171,8 @@ export interface TurnColumnProps {
   selfId?: string;
   /** The open declaration or resolved dice, placed inside the Attack phase. */
   combatCard?: ReactNode;
+  /** Compact action placed above the active Fortify instruction. */
+  fortifyAction?: ReactNode;
   /** Controls for the phase in progress, or the closing card once the game ends. */
   controls?: ReactNode;
   footer?: ReactNode;
@@ -215,6 +220,7 @@ export function TurnColumn(props: TurnColumnProps) {
                     phase === "fortify" && props.phase === "fortify" && turn?.phase === "attack",
                 })}
                 summary={phaseSummary(phase, turn)}
+                action={phase === "fortify" ? props.fortifyAction : undefined}
                 detail={
                   phase === "reinforce"
                     ? reinforcementDetail

@@ -99,32 +99,19 @@ describe("attack controls", () => {
     expect(html).toMatch(/class="fortify-next">Fortify →/);
   });
 
-  it("offers top-right Back before the fortification controls and submits the canonical move", () => {
+  it("submits the canonical fortification move", () => {
     let submitted: unknown;
-    let intent = "fortify";
-    let selectionCleared = false;
     const rendered = controls({
       intent: "fortify",
       fortifyAction: FORTIFY,
       selection: { kind: "fortify", from: "a", to: "b", armies: 2 },
-      setIntent: (next) => {
-        intent = next;
-      },
-      setSelection: (next) => {
-        selectionCleared = next === null;
-      },
       submit: async (action) => {
         submitted = action;
         return true;
       },
     });
     const html = renderToStaticMarkup(rendered);
-    expect(html).toContain('class="phase-back"');
-    expect(html.indexOf("← Back")).toBeLessThan(html.indexOf("Move armies"));
     expect(html).toContain("Fortify with 2");
-    buttonNamed(rendered, "← Back").props.onClick();
-    expect(intent).toBe("attack");
-    expect(selectionCleared).toBe(true);
     buttonNamed(rendered, "Fortify with 2").props.onClick();
     expect(submitted).toEqual({ type: "fortify", from: "a", to: "b", armies: 2 });
   });

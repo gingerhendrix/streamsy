@@ -94,12 +94,19 @@ describe("current-turn column", () => {
         statusLine="Your turn"
         yourTurn
         selfId="p1"
-        controls={<button>← Back</button>}
+        fortifyAction={<button className="phase-back">← Back</button>}
+        controls={<p>Fortification controls</p>}
       />,
     );
     expect(html).toContain("Move armies once between any two countries");
     expect(html).toMatch(/phase-section completed[\s\S]*Attack/);
     expect(html).toMatch(/phase-section active[\s\S]*Fortify[\s\S]*← Back/);
+    expect(html.indexOf("← Back")).toBeLessThan(
+      html.indexOf("Move armies once between any two countries"),
+    );
+    expect(html.indexOf("Move armies once between any two countries")).toBeLessThan(
+      html.indexOf("Fortification controls"),
+    );
   });
 
   it("describes a persisted post-fortification state as automatically ending", () => {

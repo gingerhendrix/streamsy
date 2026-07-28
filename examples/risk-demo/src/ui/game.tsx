@@ -702,6 +702,20 @@ export function GameScreen(props: GameScreenProps) {
           statusLine={statusLine}
           yourTurn={yourTurn}
           selfId={identity?.playerId}
+          fortifyAction={
+            !spectating && intent === "fortify" ? (
+              <button
+                className="phase-back"
+                disabled={interactionBusy}
+                onClick={() => {
+                  setIntent("attack");
+                  setSelection(null);
+                }}
+              >
+                ← Back
+              </button>
+            ) : undefined
+          }
           combatCard={
             visibleCombat && (
               <CombatCard
@@ -1000,19 +1014,6 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
   ) {
     return (
       <section className="controls-card">
-        {props.intent === "fortify" && (
-          <button
-            className="phase-back"
-            disabled={props.busy}
-            onClick={() => {
-              props.setIntent("attack");
-              props.setSelection(null);
-            }}
-          >
-            ← Back
-          </button>
-        )}
-
         {selection?.kind === "attack" && props.attackAction ? (
           selection.to ? (
             <>
