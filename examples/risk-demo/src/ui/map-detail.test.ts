@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detailTerritoryId } from "./game-v2.tsx";
+import { detailTerritoryId } from "./game.tsx";
 
 describe("map territory summary", () => {
   it("prefers transient pointer hover and falls back to keyboard focus", () => {

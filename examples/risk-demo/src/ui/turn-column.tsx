@@ -17,11 +17,11 @@
 
 import type { CSSProperties, ReactNode } from "react";
 
-import type { ProjectedPlayerV2, ProjectedTurnV2 } from "../board/projection-v2.ts";
-import type { GamePhaseV2 } from "../domain/aggregate-v2.ts";
+import type { ProjectedPlayer, ProjectedTurn } from "../board/projection.ts";
+import type { GamePhase } from "../domain/aggregate.ts";
 import {
-  PHASE_LABELS_V2,
-  PHASE_ORDER_V2,
+  PHASE_LABELS,
+  PHASE_ORDER,
   PHASE_STATE_LABELS,
   phaseInstruction,
   phaseState,
@@ -31,7 +31,7 @@ import {
   turnLedger,
   type NameLookup,
   type PhaseState,
-} from "./presentation-v2.ts";
+} from "./presentation.ts";
 
 /**
  * What the column shows once the map has an owner.
@@ -53,14 +53,14 @@ export function VictoryCard(props: { winnerName?: string; round: number }) {
   );
 }
 
-function PhaseHead(props: { index: number; phase: GamePhaseV2; state: PhaseState; note?: string }) {
+function PhaseHead(props: { index: number; phase: GamePhase; state: PhaseState; note?: string }) {
   return (
     <span className="phase-head">
       <span className="phase-index" aria-hidden="true">
         {props.index}
       </span>
       <span className="phase-title">
-        <b>{PHASE_LABELS_V2[props.phase]}</b>
+        <b>{PHASE_LABELS[props.phase]}</b>
         {props.note && <small>{props.note}</small>}
       </span>
       <span className="phase-state">{PHASE_STATE_LABELS[props.state]}</span>
@@ -69,7 +69,7 @@ function PhaseHead(props: { index: number; phase: GamePhaseV2; state: PhaseState
 }
 
 interface PhaseSectionProps {
-  phase: GamePhaseV2;
+  phase: GamePhase;
   index: number;
   state: PhaseState;
   instruction: string;
@@ -138,7 +138,7 @@ function PhaseSection(props: PhaseSectionProps) {
 }
 
 /** The reinforcement pool, explained as an equation rather than a bare number. */
-function ReinforcementDetail(props: { turn: ProjectedTurnV2; names: NameLookup }) {
+function ReinforcementDetail(props: { turn: ProjectedTurn; names: NameLookup }) {
   const { turn, names } = props;
   return (
     <div className="reinforcement-card">
@@ -159,9 +159,9 @@ function ReinforcementDetail(props: { turn: ProjectedTurnV2; names: NameLookup }
 
 export interface TurnColumnProps {
   status: "lobby" | "playing" | "finished";
-  turn: ProjectedTurnV2 | null;
-  phase?: GamePhaseV2;
-  activePlayer?: ProjectedPlayerV2;
+  turn: ProjectedTurn | null;
+  phase?: GamePhase;
+  activePlayer?: ProjectedPlayer;
   names: NameLookup;
   statusLine: string;
   /** Whether the reader is the seat being asked to act this turn. */
@@ -209,7 +209,7 @@ export function TurnColumn(props: TurnColumnProps) {
 
       {playing ? (
         <ol className="phase-list" aria-label="Turn phases">
-          {PHASE_ORDER_V2.map((phase, index) => {
+          {PHASE_ORDER.map((phase, index) => {
             const state = phaseState(phase, props.phase);
             return (
               <PhaseSection

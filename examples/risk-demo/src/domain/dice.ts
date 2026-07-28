@@ -1,53 +1,56 @@
 /**
- * Standard Risk combat resolution for a single attack throw.
+ *  dice comparison.
  *
- * One `attack` command resolves exactly one throw (not fight-to-death). The
- * attacker rolls `attackerDice` dice, the defender rolls `min(2, defending
- * armies)`. Dice are sorted descending and compared pairwise; the attacker must
- * strictly beat the defender to inflict a loss (ties favour the defender).
+ * Nothing here consumes randomness. The two halves of a
+ * current throw are rolled at different times by different actors — the attacker's at
+ * declaration, the defender's at resolution — so the comparison is a pure
+ * function of two recorded roll arrays. That is what lets the aggregate and the
+ * board projection both re-derive losses from `AttackResolved` without ever
+ * touching an `Rng`.
  *
- * Capture note: in a single throw a captured territory always leaves the
- * attacker with zero combat losses (every compared pair the defender loses is a
- * pair the attacker wins). Because an N-dice attack requires N+1 armies in the
- * source, moving `attackerDice` armies into the captured territory always leaves
- * at least one army behind — so `occupyingArmies = attackerDice` is always legal.
+ * Rolls are sorted descending and compared pairwise; the higher die wins and ties
+ * favour the defender. Only `min(attacker, defender)` pairs are compared, so
+ * extra attacker dice beyond the defender's count are simply unused.
  */
 
 import { RULES } from "./map.ts";
 import type { Rng } from "./rng.ts";
 import { rollDice } from "./rng.ts";
 
-export interface AttackResolution {
-  attackerRolls: number[];
-  defenderRolls: number[];
+export const descending = (a: number, b: number): number => b - a;
+
+export interface CombatComparison {
   attackerLosses: number;
   defenderLosses: number;
-  territoryCaptured: boolean;
-  occupyingArmies?: number;
 }
 
-const descending = (a: number, b: number): number => b - a;
-
-export function resolveAttack(toArmies: number, attackerDice: number, rng: Rng): AttackResolution {
-  const defenderDice = Math.min(RULES.maxDefenderDice, toArmies);
-  const attackerRolls = rollDice(rng, attackerDice).toSorted(descending);
-  const defenderRolls = rollDice(rng, defenderDice).toSorted(descending);
-
+export function compareRolls(
+  attackerRolls: readonly number[],
+  defenderRolls: readonly number[],
+): CombatComparison {
+  const attacker = attackerRolls.toSorted(descending);
+  const defender = defenderRolls.toSorted(descending);
   let attackerLosses = 0;
   let defenderLosses = 0;
-  const pairs = Math.min(attackerRolls.length, defenderRolls.length);
+  const pairs = Math.min(attacker.length, defender.length);
   for (let i = 0; i < pairs; i += 1) {
-    if (attackerRolls[i]! > defenderRolls[i]!) defenderLosses += 1;
+    if (attacker[i]! > defender[i]!) defenderLosses += 1;
     else attackerLosses += 1;
   }
+  return { attackerLosses, defenderLosses };
+}
 
-  const territoryCaptured = toArmies - defenderLosses <= 0;
-  return {
-    attackerRolls,
-    defenderRolls,
-    attackerLosses,
-    defenderLosses,
-    territoryCaptured,
-    occupyingArmies: territoryCaptured ? attackerDice : undefined,
-  };
+/** Attacker dice are bounded by the source garrison: one army must stay behind. */
+export function maxAttackerDice(sourceArmies: number): number {
+  return Math.min(RULES.maxAttackerDice, sourceArmies - 1);
+}
+
+/** The defender's dice count is not a choice — it is the maximum legal count. */
+export function legalDefenderDice(defendingArmies: number): number {
+  return Math.min(RULES.maxDefenderDice, defendingArmies);
+}
+
+/** Roll `count` dice through the injected Rng, sorted descending for recording. */
+export function rollSorted(rng: Rng, count: number): number[] {
+  return rollDice(rng, count).toSorted(descending);
 }

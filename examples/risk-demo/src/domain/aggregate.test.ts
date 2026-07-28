@@ -1,529 +1,376 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  AggregateIntegrityError,
+  computeReinforcement,
+  controlledContinents,
+  foldAggregate,
+  friendlyReachable,
+  nextTurn,
+  ownedBy,
+} from "./aggregate.ts";
 import type { AggregateState } from "./aggregate.ts";
-import { buildTurnId, foldAggregate } from "./aggregate.ts";
-import type { AttackCommand, Command } from "./commands.ts";
+import { compareRolls, legalDefenderDice, maxAttackerDice } from "./dice.ts";
 import type { GameEvent } from "./events.ts";
-import { resolveAttack } from "./dice.ts";
-import { RULES, TERRITORIES, TERRITORY_IDS, areAdjacent, reinforcementPool } from "./map.ts";
+import { RULES, baseReinforcement, continentBonus } from "./map.ts";
 import {
-  aggregateBoardView,
-  boardsEqual,
-  projectEvents,
-  projectionBoardView,
-} from "../board/projection.ts";
-import { createSeededRng } from "./rng.ts";
-import {
-  applyCommand,
+  armForAttack,
+  declareAttack,
   nextCommandId,
-  RiskGame,
+  occupyPending,
+  placeAllReinforcements,
   startGame,
+  throwUntilCapture,
   type ScriptedGame,
 } from "../../test/testkit.ts";
 
 // ---------------------------------------------------------------------------
-// Map + rng + dice primitives
+// Dice comparison
 // ---------------------------------------------------------------------------
 
-describe("map", () => {
-  it("has a symmetric, connected adjacency graph", () => {
-    for (const t of TERRITORIES) {
-      for (const other of t.adjacent) {
-        expect(areAdjacent(t.id, other)).toBe(true);
-        expect(areAdjacent(other, t.id)).toBe(true);
-      }
+describe("current dice comparison", () => {
+  it("sorts descending and compares pairwise, with ties favouring the defender", () => {
+    expect(compareRolls([6, 5, 2], [6, 4])).toEqual({ attackerLosses: 1, defenderLosses: 1 });
+    expect(compareRolls([2, 3, 1], [6, 5])).toEqual({ attackerLosses: 2, defenderLosses: 0 });
+    expect(compareRolls([6, 6], [1, 1])).toEqual({ attackerLosses: 0, defenderLosses: 2 });
+  });
+
+  it("is order-insensitive: unsorted input compares identically", () => {
+    expect(compareRolls([2, 6, 5], [4, 6])).toEqual(compareRolls([6, 5, 2], [6, 4]));
+  });
+
+  it("compares only min(attacker, defender) pairs", () => {
+    expect(compareRolls([6, 6, 6], [1])).toEqual({ attackerLosses: 0, defenderLosses: 1 });
+    expect(compareRolls([6], [1, 1])).toEqual({ attackerLosses: 0, defenderLosses: 1 });
+  });
+
+  it("bounds attacker dice by the garrison and defender dice by the defence", () => {
+    expect(maxAttackerDice(2)).toBe(1);
+    expect(maxAttackerDice(4)).toBe(3);
+    expect(maxAttackerDice(9)).toBe(RULES.maxAttackerDice);
+    expect(legalDefenderDice(1)).toBe(1);
+    expect(legalDefenderDice(5)).toBe(RULES.maxDefenderDice);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Setup fold
+// ---------------------------------------------------------------------------
+
+describe("current aggregate setup", () => {
+  it("folds the recorded map snapshot rather than regenerating it", () => {
+    const game = startGame();
+    const state = game.state();
+    expect(state.status).toBe("playing");
+    expect(state.map).toBeDefined();
+    expect(state.index!.territoryIds).toHaveLength(state.map!.territories.length);
+    // The fold reads the snapshot: every dealt territory exists in the map.
+    for (const id of Object.keys(state.territories)) {
+      expect(state.index!.territoryById.has(id)).toBe(true);
     }
   });
 
-  it("computes the classic reinforcement pool with a floor of the minimum", () => {
-    expect(reinforcementPool(0)).toBe(RULES.minReinforcements);
-    expect(reinforcementPool(6)).toBe(RULES.minReinforcements);
-    expect(reinforcementPool(12)).toBe(4);
+  it("opens round 1 for the first player in reinforce with no pending interrupt", () => {
+    const game = startGame();
+    const state = game.state();
+    expect(state.round).toBe(1);
+    expect(state.phase).toBe("reinforce");
+    expect(state.activePlayerId).toBe(state.turnOrder[0]);
+    expect(state.pendingInteraction).toBeUndefined();
+    expect(game.turnId()).toBe(`round-1:${state.turnOrder[0]}`);
   });
-});
 
-describe("rng", () => {
-  it("is deterministic for a given seed", () => {
-    const a = createSeededRng(7);
-    const b = createSeededRng(7);
-    const seqA = Array.from({ length: 10 }, () => a.nextInt(6));
-    const seqB = Array.from({ length: 10 }, () => b.nextInt(6));
-    expect(seqA).toEqual(seqB);
-    expect(seqA.every((n) => n >= 0 && n < 6)).toBe(true);
-  });
-});
-
-describe("dice", () => {
-  it("never inflicts more losses than dice compared, and captures leave no attacker loss", () => {
-    for (let seed = 0; seed < 200; seed += 1) {
-      const rng = createSeededRng(seed);
-      const toArmies = (seed % 2) + 1; // 1 or 2 defenders
-      const attackerDice = (seed % 3) + 1;
-      const r = resolveAttack(toArmies, attackerDice, rng);
-      const pairs = Math.min(attackerDice, Math.min(RULES.maxDefenderDice, toArmies));
-      expect(r.attackerLosses + r.defenderLosses).toBe(pairs);
-      if (r.territoryCaptured) {
-        expect(r.attackerLosses).toBe(0);
-        expect(r.occupyingArmies).toBe(attackerDice);
-      }
-    }
+  it("records each player's controller", () => {
+    const game = startGame({ players: 3, controllers: ["human", "bot", "external-agent"] });
+    const state = game.state();
+    expect(state.players.map((p) => p.controller)).toEqual(["human", "bot", "external-agent"]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Setup + rules
+// Reinforcement
 // ---------------------------------------------------------------------------
 
-describe("game setup", () => {
-  it("deals every territory once with one army and starts player one in reinforce", () => {
-    const scripted = startGame(2);
-    const s = scripted.state();
-    expect(s.status).toBe("playing");
-    expect(s.round).toBe(1);
-    expect(s.phase).toBe("reinforce");
-    expect(Object.keys(s.territories).toSorted()).toEqual([...TERRITORY_IDS].toSorted());
-    for (const t of Object.values(s.territories)) {
-      expect(t.armies).toBe(RULES.initialArmiesPerTerritory);
-      expect(t.ownerId).toBeDefined();
-    }
-    expect(s.reinforcementsRemaining).toBe(reinforcementPool(3));
-    expect(scripted.turnId()).toBe(buildTurnId(1, s.activePlayerId!));
+describe("current reinforcement", () => {
+  it("grants base + fully-owned continent bonuses as an explainable breakdown", () => {
+    const game = startGame();
+    const state = game.state();
+    const active = state.activePlayerId!;
+    const expectedBase = baseReinforcement(ownedBy(state, active).length);
+    expect(state.reinforcement.base).toBe(expectedBase);
+    expect(state.reinforcement.total).toBe(
+      state.reinforcement.continents.reduce((sum, c) => sum + c.bonus, expectedBase),
+    );
+    expect(state.reinforcement.remaining).toBe(state.reinforcement.total);
   });
 
-  it("rejects starting with too few players", () => {
-    const game = new RiskGame(createSeededRng(1));
-    game.submit({
-      type: "create-game",
-      commandId: "c1",
-      gameId: "g",
-      hostPlayerId: "p1",
-      hostName: "P1",
-      hostColor: "red",
-    });
-    const outcome = game.submit({ type: "start-game", commandId: "c2" });
-    expect(outcome.status).toBe("rejected");
-    if (outcome.status === "rejected") expect(outcome.error.code).toBe("NOT_ENOUGH_PLAYERS");
-  });
-});
+  it("applies a complete allocation atomically and enters attack", () => {
+    const game = startGame();
+    const total = game.state().reinforcement.total;
+    const active = game.state().activePlayerId!;
+    const owned = ownedBy(game.state(), active);
+    const before = owned.slice(0, 2).map((id) => game.state().territories[id]!.armies);
 
-describe("reinforce phase", () => {
-  it("transitions to attack only once the whole pool is placed", () => {
-    const scripted = startGame(2);
-    const s0 = scripted.state();
-    const active = s0.activePlayerId!;
-    const owned = Object.values(s0.territories)
-      .filter((t) => t.ownerId === active)
-      .map((t) => t.id);
-
-    // Place one army; still reinforcing.
-    scripted.submit({
+    const outcome = game.must({
       type: "reinforce",
       commandId: nextCommandId(),
-      turnId: scripted.turnId(),
+      turnId: game.turnId(),
       playerId: active,
-      territoryId: owned[0]!,
-      armies: 1,
+      placements: [
+        { territoryId: owned[0]!, armies: total - 1 },
+        { territoryId: owned[1]!, armies: 1 },
+      ],
     });
-    expect(scripted.state().phase).toBe("reinforce");
 
-    // Place the rest; now attacking.
-    scripted.submit({
-      type: "reinforce",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: active,
-      territoryId: owned[0]!,
-      armies: scripted.state().reinforcementsRemaining,
-    });
-    expect(scripted.state().phase).toBe("attack");
+    expect(outcome.status).toBe("accepted");
+    if (outcome.status === "accepted") expect(outcome.events).toHaveLength(2);
+    expect(game.state().territories[owned[0]!]!.armies).toBe(before[0]! + total - 1);
+    expect(game.state().territories[owned[1]!]!.armies).toBe(before[1]! + 1);
+    expect(game.state().phase).toBe("attack");
+    expect(game.state().reinforcement.remaining).toBe(0);
   });
 
-  it("rejects placing more armies than remain", () => {
-    const scripted = startGame(2);
-    const s = scripted.state();
-    const active = s.activePlayerId!;
-    const owned = Object.values(s.territories).find((t) => t.ownerId === active)!.id;
-    const outcome = scripted.submit({
-      type: "reinforce",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: active,
-      territoryId: owned,
-      armies: s.reinforcementsRemaining + 1,
-    });
-    expect(outcome.status).toBe("rejected");
-    if (outcome.status === "rejected") expect(outcome.error.code).toBe("INSUFFICIENT_ARMIES");
-  });
-});
+  it("scores a continent bonus only when every member country is owned", () => {
+    const game = startGame();
+    const state = game.state();
+    const continent = state.map!.continents[0]!;
+    expect(continent.reinforcementBonus).toBe(continentBonus(continent.territoryIds.length));
 
-// ---------------------------------------------------------------------------
-// Turn preconditions
-// ---------------------------------------------------------------------------
-
-describe("turn preconditions", () => {
-  it("rejects another player's command with NOT_YOUR_TURN", () => {
-    const scripted = startGame(2);
-    const s = scripted.state();
-    const other = scripted.playerIds.find((id) => id !== s.activePlayerId)!;
-    const owned = Object.values(s.territories).find((t) => t.ownerId === other)!.id;
-    const outcome = scripted.submit({
-      type: "reinforce",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: other,
-      territoryId: owned,
-      armies: 1,
-    });
-    expect(outcome.status).toBe("rejected");
-    if (outcome.status === "rejected") expect(outcome.error.code).toBe("NOT_YOUR_TURN");
-  });
-
-  it("rejects a stale observed turn id and reports the current one", () => {
-    const scripted = startGame(2);
-    const s = scripted.state();
-    const active = s.activePlayerId!;
-    const owned = Object.values(s.territories).find((t) => t.ownerId === active)!.id;
-    const outcome = scripted.submit({
-      type: "reinforce",
-      commandId: nextCommandId(),
-      turnId: buildTurnId(99, active),
-      playerId: active,
-      territoryId: owned,
-      armies: 1,
-    });
-    expect(outcome.status).toBe("rejected");
-    if (outcome.status === "rejected") {
-      expect(outcome.error.code).toBe("STALE_TURN");
-      expect(outcome.error.currentTurnId).toBe(scripted.turnId());
-    }
-  });
-
-  it("rejects attacking during the reinforce phase with INVALID_PHASE", () => {
-    const scripted = startGame(2);
-    const attack = findAttack(scripted.state());
-    const outcome = scripted.submit({
-      type: "attack",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: scripted.state().activePlayerId!,
-      from: attack.from,
-      to: attack.to,
-      attackerDice: 1,
-    });
-    expect(outcome.status).toBe("rejected");
-    if (outcome.status === "rejected") expect(outcome.error.code).toBe("INVALID_PHASE");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Attack + idempotency
-// ---------------------------------------------------------------------------
-
-describe("attack idempotency", () => {
-  it("returns the original recorded outcome for a retried commandId without re-rolling", () => {
-    const scripted = startGame(2);
-    reinforceThenReachAttack(scripted);
-    const attack = findAttack(scripted.state());
-    const attackCommand: AttackCommand = {
-      type: "attack",
-      commandId: "attack-once",
-      turnId: scripted.turnId(),
-      playerId: scripted.state().activePlayerId!,
-      from: attack.from,
-      to: attack.to,
-      attackerDice: Math.min(
-        RULES.maxAttackerDice,
-        scripted.state().territories[attack.from]!.armies - 1,
+    // Hand the whole continent to one player and re-fold: the bonus appears.
+    const owner = state.turnOrder[0]!;
+    const patched: AggregateState = {
+      ...state,
+      territories: Object.fromEntries(
+        Object.entries(state.territories).map(([id, t]) => [
+          id,
+          continent.territoryIds.includes(id) ? { ...t, ownerId: owner } : t,
+        ]),
       ),
     };
+    expect(controlledContinents(patched, owner).map((c) => c.id)).toContain(continent.id);
+    expect(computeReinforcement(patched, owner).continents).toContainEqual({
+      continentId: continent.id,
+      bonus: continent.reinforcementBonus,
+    });
 
-    const first = scripted.submit(attackCommand);
-    expect(first.status).toBe("accepted");
-    const logLength = scripted.game.log.length;
-
-    // Exact retry.
-    const retry = scripted.submit(attackCommand);
-    expect(retry.status).toBe("duplicate");
-    if (first.status !== "rejected" && retry.status !== "rejected") {
-      expect(retry.events).toEqual(first.events);
-      expect(retry.sourceOffset).toBe(first.sourceOffset);
-    }
-    // No new events appended by the retry.
-    expect(scripted.game.log.length).toBe(logLength);
+    // Remove one member and the bonus is gone.
+    const oneShort: AggregateState = {
+      ...patched,
+      territories: {
+        ...patched.territories,
+        [continent.territoryIds[0]!]: {
+          ...patched.territories[continent.territoryIds[0]!]!,
+          ownerId: "someone-else",
+        },
+      },
+    };
+    expect(controlledContinents(oneShort, owner).map((c) => c.id)).not.toContain(continent.id);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Determinism, replay, and projection equivalence
+// Two-stage combat
 // ---------------------------------------------------------------------------
 
-describe("determinism and projection equivalence", () => {
-  it("replays a full game deterministically and keeps aggregate/projection in lockstep", () => {
-    const commands = recordFullGame(1234);
-    expect(commands.length).toBeGreaterThan(5);
+/** Drive the active player into `attack` with a border stack and one declaration. */
+function declaredAttack(game: ScriptedGame, faces?: number[]) {
+  const setup = armForAttack(game);
+  if (faces) game.rig(faces);
+  const attackId = declareAttack(game, setup, 3);
+  return { setup, attackId };
+}
 
-    const logA = replay(commands, 1234);
-    const logB = replay(commands, 1234);
-    expect(logB).toEqual(logA);
+describe("current two-stage combat", () => {
+  it("records the attacker's roll at declaration and opens a deadline", () => {
+    const game = startGame({ defenseTimeoutMs: 15_000 });
+    const declaredAtBefore = game.clock.now;
+    const { setup, attackId } = declaredAttack(game, [6, 5, 4]);
 
-    const finalA = foldAggregate(logA);
-    expect(finalA.status).toBe("finished");
-    expect(finalA.winnerId).toBeDefined();
-
-    // Folding the identical events twice yields identical aggregate state.
-    expect(foldAggregate(logA)).toEqual(foldAggregate(logB));
-
-    // Projection equals the command-side fold at every prefix offset.
-    for (let i = 0; i <= logA.length; i += 1) {
-      const prefix = logA.slice(0, i);
-      const aggView = aggregateBoardView(foldAggregate(prefix));
-      const projView = projectionBoardView(projectEvents(prefix));
-      expect(boardsEqual(aggView, projView)).toBe(true);
-    }
-  });
-
-  it("winner owns every territory and every other player is eliminated", () => {
-    const commands = recordFullGame(1234);
-    const state = foldAggregate(replay(commands, 1234));
-    const winner = state.winnerId!;
-    for (const t of Object.values(state.territories)) expect(t.ownerId).toBe(winner);
-    for (const p of state.players) {
-      if (p.id !== winner) expect(p.eliminated).toBe(true);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Fortify (one move per turn) + emitted terminal events
-// ---------------------------------------------------------------------------
-
-describe("fortify", () => {
-  it("moves armies once, then only ends the turn", () => {
-    const { scripted, from, to, active } = gameWithFortifyPair();
-    // Put the whole pool on `from`, advancing into the attack phase.
-    scripted.submit({
-      type: "reinforce",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: active,
-      territoryId: from,
-      armies: scripted.state().reinforcementsRemaining,
-    });
-    expect(scripted.state().phase).toBe("attack");
-
-    const before = scripted.state().territories;
-    const fromArmies = before[from]!.armies;
-    const toArmies = before[to]!.armies;
-
-    const fortify = scripted.submit({
-      type: "fortify",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: active,
-      from,
-      to,
-      armies: 1,
-    });
-    expect(fortify.status).toBe("accepted");
-    const after = scripted.state();
-    expect(after.phase).toBe("fortify");
-    expect(after.territories[from]!.armies).toBe(fromArmies - 1);
-    expect(after.territories[to]!.armies).toBe(toArmies + 1);
-
-    // A second maneuver is refused; only end-turn remains.
-    const secondFortify = scripted.submit({
-      type: "attack",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: active,
-      from,
-      to,
-      attackerDice: 1,
-    });
-    expect(secondFortify.status).toBe("rejected");
-    if (secondFortify.status === "rejected") {
-      expect(secondFortify.error.code).toBe("INVALID_PHASE");
-    }
-
-    const endTurn = scripted.submit({
-      type: "end-turn",
-      commandId: nextCommandId(),
-      turnId: scripted.turnId(),
-      playerId: active,
-    });
-    expect(endTurn.status).toBe("accepted");
-    expect(scripted.state().activePlayerId).not.toBe(active);
-  });
-});
-
-describe("terminal events", () => {
-  it("records exactly one elimination per loser and a single GameWon", () => {
-    const log = replay(recordFullGame(1234), 1234);
-    const won = log.filter((e) => e.type === "GameWon");
-    const eliminated = log.filter((e) => e.type === "PlayerEliminated");
-    expect(won).toHaveLength(1);
-    expect(eliminated).toHaveLength(1); // 2-player game: one loser
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Helpers: a greedy deterministic auto-player used to exercise full games.
-// ---------------------------------------------------------------------------
-
-/** Find a seed whose opening position gives the active player an adjacent owned pair. */
-function gameWithFortifyPair(): {
-  scripted: ScriptedGame;
-  from: string;
-  to: string;
-  active: string;
-} {
-  for (let seed = 1; seed < 200; seed += 1) {
-    const scripted = startGame(2, seed);
-    const s = scripted.state();
-    const active = s.activePlayerId!;
-    const owned = new Set(
-      Object.values(s.territories)
-        .filter((t) => t.ownerId === active)
-        .map((t) => t.id),
+    const pending = game.state().pendingInteraction!;
+    expect(pending.type).toBe("defense");
+    if (pending.type !== "defense") throw new Error("unreachable");
+    expect(pending.attackId).toBe(attackId);
+    expect(pending.attackerRolls).toEqual([6, 5, 4]);
+    expect(pending.attackerId).toBe(setup.attackerId);
+    expect(pending.defenderId).toBe(setup.defenderId);
+    expect(pending.declaredAt).toBe(declaredAtBefore);
+    expect(pending.defenseDeadlineAt).toBe(declaredAtBefore + 15_000);
+    expect(pending.defenderDice).toBe(
+      legalDefenderDice(game.state().territories[setup.to]!.armies),
     );
-    for (const id of owned) {
-      const neighbour = TERRITORIES.find((t) => t.id === id)!.adjacent.find((adj) =>
-        owned.has(adj),
-      );
-      if (neighbour) return { scripted, from: id, to: neighbour, active };
-    }
-  }
-  throw new Error("no seed produced an adjacent owned pair");
-}
-
-interface AttackChoice {
-  from: string;
-  to: string;
-}
-
-function enemyNeighbours(state: AggregateState, territoryId: string, ownerId: string): string[] {
-  return TERRITORIES.find((t) => t.id === territoryId)!.adjacent.filter(
-    (adj) => state.territories[adj]!.ownerId !== ownerId,
-  );
-}
-
-/** A frontier attack for the active player, or throws if none exists yet. */
-function findAttack(state: AggregateState): AttackChoice {
-  const active = state.activePlayerId!;
-  for (const t of Object.values(state.territories)) {
-    if (t.ownerId !== active) continue;
-    const enemy = enemyNeighbours(state, t.id, active)[0];
-    if (enemy) return { from: t.id, to: enemy };
-  }
-  throw new Error("no frontier attack available");
-}
-
-/** Reinforce onto a frontier territory so the active player can attack. */
-function reinforceThenReachAttack(scripted: ScriptedGame): void {
-  const s = scripted.state();
-  const active = s.activePlayerId!;
-  const frontier =
-    Object.values(s.territories).find(
-      (t) => t.ownerId === active && enemyNeighbours(s, t.id, active).length > 0,
-    ) ?? Object.values(s.territories).find((t) => t.ownerId === active)!;
-  scripted.submit({
-    type: "reinforce",
-    commandId: nextCommandId(),
-    turnId: scripted.turnId(),
-    playerId: active,
-    territoryId: frontier.id,
-    armies: s.reinforcementsRemaining,
+    // The turn itself does not move while the interrupt is open.
+    expect(game.state().activePlayerId).toBe(setup.attackerId);
+    expect(game.state().phase).toBe("attack");
   });
-}
 
-/**
- * Record the complete command sequence (setup + greedy play) that drives a
- * two-player game to a win on the given seed. The setup commands are captured so
- * {@link replay} can reproduce the entire game from an empty log.
- */
-function recordFullGame(seed: number): Command[] {
-  const rng = createSeededRng(seed);
-  let events: GameEvent[] = [];
-  const commands: Command[] = [];
-  const submit = (command: Command): void => {
-    commands.push(command);
-    const result = applyCommand(events, command, rng);
-    if (result.outcome.status === "rejected") {
-      throw new Error(`unexpected rejection: ${result.outcome.error.code}`);
-    }
-    events = result.events;
-  };
+  it("applies losses on resolution and returns to idle attack when no capture", () => {
+    const game = startGame();
+    const { setup, attackId } = declaredAttack(game, [1, 1, 1]);
+    const before = game.state();
+    const fromArmies = before.territories[setup.from]!.armies;
+    const toArmies = before.territories[setup.to]!.armies;
 
-  submit({
-    type: "create-game",
-    commandId: nextCommandId(),
-    gameId: "game-1",
-    hostPlayerId: "p1",
-    hostName: "Player 1",
-    hostColor: "red",
+    game.rig([6, 6]);
+    game.must({
+      type: "roll-defense",
+      commandId: nextCommandId(),
+      turnId: game.turnId(),
+      playerId: setup.defenderId,
+      attackId,
+    });
+
+    const after = game.state();
+    const defenderDice = legalDefenderDice(toArmies);
+    expect(after.territories[setup.from]!.armies).toBe(fromArmies - defenderDice);
+    expect(after.territories[setup.to]!.armies).toBe(toArmies);
+    expect(after.pendingInteraction).toBeUndefined();
+    expect(after.phase).toBe("attack");
+    expect(after.attacks[attackId]!.status).toBe("resolved");
+    expect(after.attacks[attackId]!.resolutionSource).toBe("human");
   });
-  submit({
-    type: "join-game",
-    commandId: nextCommandId(),
-    playerId: "p2",
-    name: "Player 2",
-    color: "blue",
+
+  it("enters a required occupation substate on capture and transfers only on occupy", () => {
+    const game = startGame();
+    const setup = armForAttack(game);
+    const pending = throwUntilCapture(game, setup);
+
+    // Ownership has NOT moved yet — only the occupation command transfers it.
+    expect(game.state().territories[setup.to]!.ownerId).toBe(setup.defenderId);
+    expect(game.state().territories[setup.to]!.armies).toBe(0);
+    // A capture wins every compared pair, so the attacker took no losses and can
+    // always afford to move the dice it threw.
+    expect(pending.maxArmies).toBe(game.state().territories[setup.from]!.armies - 1);
+    expect(pending.minArmies).toBeLessThanOrEqual(pending.maxArmies);
+
+    occupyPending(game);
+    const after = game.state();
+    expect(after.territories[setup.to]!.ownerId).toBe(setup.attackerId);
+    expect(after.territories[setup.to]!.armies).toBe(pending.minArmies);
+    expect(after.pendingInteraction).toBeUndefined();
+    expect(after.attacks[pending.attackId]!.status).toBe("occupied");
   });
-  submit({ type: "start-game", commandId: nextCommandId() });
 
-  for (let guard = 0; guard < 1000; guard += 1) {
-    const s = foldAggregate(events);
-    if (s.status === "finished") return commands;
-    const active = s.activePlayerId!;
-    const turnId = buildTurnId(s.round, active);
+  it("does not grow the pool mid-turn when a capture adds territory", () => {
+    const game = startGame();
+    const poolAtStart = game.state().reinforcement.total;
+    const setup = armForAttack(game);
+    throwUntilCapture(game, setup);
+    occupyPending(game);
 
-    if (s.phase === "reinforce") {
-      const frontier =
-        Object.values(s.territories).find(
-          (t) => t.ownerId === active && enemyNeighbours(s, t.id, active).length > 0,
-        ) ?? Object.values(s.territories).find((t) => t.ownerId === active)!;
-      submit({
-        type: "reinforce",
-        commandId: nextCommandId(),
-        turnId,
-        playerId: active,
-        territoryId: frontier.id,
-        armies: s.reinforcementsRemaining,
-      });
-      continue;
+    const after = game.state();
+    expect(ownedBy(after, setup.attackerId)).toContain(setup.to);
+    // The pool is a snapshot taken at the start of the phase: it has not grown,
+    // even though the player would now score more base reinforcement.
+    expect(after.reinforcement.total).toBe(poolAtStart);
+    expect(after.reinforcement.remaining).toBe(0);
+    expect(computeReinforcement(after, setup.attackerId).total).toBeGreaterThanOrEqual(poolAtStart);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connected fortify and turn order
+// ---------------------------------------------------------------------------
+
+describe("current fortify reachability", () => {
+  it("reaches through a path of owned countries, not merely neighbours", () => {
+    const game = startGame();
+    const state = game.state();
+    const active = state.activePlayerId!;
+    const owned = ownedBy(state, active);
+    for (const from of owned) {
+      const reachable = friendlyReachable(state, active, from);
+      expect(reachable).not.toContain(from);
+      for (const to of reachable) expect(state.territories[to]!.ownerId).toBe(active);
+      // Reachability is symmetric within a connected owned component.
+      for (const to of reachable) expect(friendlyReachable(state, active, to)).toContain(from);
     }
+  });
 
-    if (s.phase === "attack") {
-      const from = Object.values(s.territories).find(
-        (t) => t.ownerId === active && t.armies >= 2 && enemyNeighbours(s, t.id, active).length > 0,
-      );
-      if (from) {
-        submit({
-          type: "attack",
-          commandId: nextCommandId(),
-          turnId,
-          playerId: active,
-          from: from.id,
-          to: enemyNeighbours(s, from.id, active)[0]!,
-          attackerDice: Math.min(RULES.maxAttackerDice, from.armies - 1),
-        });
-        continue;
-      }
-    }
+  it("returns nothing for a country the player does not own", () => {
+    const state = startGame().state();
+    const active = state.activePlayerId!;
+    const enemy = Object.values(state.territories).find((t) => t.ownerId !== active)!;
+    expect(friendlyReachable(state, active, enemy.id)).toEqual([]);
+  });
+});
 
-    // Nothing productive to do (attack or fortify phase): end the turn.
-    submit({ type: "end-turn", commandId: nextCommandId(), turnId, playerId: active });
-  }
+describe("current turn order", () => {
+  it("wraps the round and skips eliminated players", () => {
+    const game = startGame({ players: 3 });
+    const state = game.state();
+    const [a, b, c] = state.turnOrder as [string, string, string];
+    expect(nextTurn(state, a)).toEqual({ nextPlayerId: b, round: 1 });
+    expect(nextTurn(state, c)).toEqual({ nextPlayerId: a, round: 2 });
 
-  throw new Error("game did not converge");
-}
+    const withoutB: AggregateState = {
+      ...state,
+      players: state.players.map((p) => (p.id === b ? { ...p, eliminated: true } : p)),
+    };
+    expect(nextTurn(withoutB, a)).toEqual({ nextPlayerId: c, round: 1 });
+  });
+});
 
-/** Re-apply a recorded command list from an empty log under the same rng seed. */
-function replay(commands: readonly Command[], seed: number): GameEvent[] {
-  const rng = createSeededRng(seed);
-  let events: GameEvent[] = [];
-  for (const command of commands) {
-    events = applyCommand(events, command, rng).events;
-  }
-  return events;
-}
+// ---------------------------------------------------------------------------
+// Canonical integrity
+// ---------------------------------------------------------------------------
+
+describe("current fold integrity", () => {
+  it("rejects an AttackResolved whose repeated attacker rolls contradict the declaration", () => {
+    const game = startGame();
+    const { setup, attackId } = declaredAttack(game, [6, 5, 4]);
+    game.must({
+      type: "roll-defense",
+      commandId: nextCommandId(),
+      turnId: game.turnId(),
+      playerId: setup.defenderId,
+      attackId,
+    });
+
+    const log = game.log.slice();
+    const resolvedIndex = log.findIndex((e) => e.type === "AttackResolved");
+    const tampered = log.slice();
+    tampered[resolvedIndex] = {
+      ...(log[resolvedIndex] as Extract<GameEvent, { type: "AttackResolved" }>),
+      attackerRolls: [1, 1, 1],
+    };
+    expect(() => foldAggregate(tampered)).toThrow(AggregateIntegrityError);
+  });
+
+  it("rejects an AttackResolved with no pending declaration at all", () => {
+    const game = startGame();
+    const { setup, attackId } = declaredAttack(game, [6, 5, 4]);
+    const declaredIndex = game.log.findIndex((e) => e.type === "AttackDeclared");
+    const withoutDeclaration = game.log.filter((_, i) => i !== declaredIndex);
+    expect(() =>
+      foldAggregate([
+        ...withoutDeclaration,
+        {
+          type: "AttackResolved",
+          attackId,
+          turnId: game.turnId(),
+          attackerId: setup.attackerId,
+          defenderId: setup.defenderId,
+          from: setup.from,
+          to: setup.to,
+          attackerRolls: [6, 5, 4],
+          defenderRolls: [1],
+          attackerLosses: 0,
+          defenderLosses: 1,
+          territoryCaptured: false,
+          resolutionSource: "human",
+          commandId: "bogus",
+        },
+      ]),
+    ).toThrow(AggregateIntegrityError);
+  });
+
+  it("is a pure function of the event log", () => {
+    const game = startGame();
+    placeAllReinforcements(game);
+    const a = foldAggregate(game.log);
+    const b = foldAggregate(game.log);
+    expect(JSON.stringify(a.territories)).toBe(JSON.stringify(b.territories));
+    expect(a.reinforcement).toEqual(b.reinforcement);
+    expect(a.eventCount).toBe(game.log.length);
+  });
+});

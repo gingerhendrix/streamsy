@@ -17,7 +17,6 @@
     "smoke:http": "bun run scripts/http-smoke.ts",
     "smoke:cloudflare": "bun run scripts/cloudflare-smoke.ts",
     "smoke:cloudflare:alarm:prepare": "bun run scripts/cloudflare-alarm-prepare.ts",
-    "proof": "bun run scripts/proof.ts",
     "rebuild": "bun run scripts/rebuild.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest --run src server test/integration",

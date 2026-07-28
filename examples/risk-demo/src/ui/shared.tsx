@@ -1,17 +1,8 @@
-/**
- * Pieces both ruleset surfaces share: the player session, the typed fetch helper,
- * the identity fields, and the compact sync pill.
- *
- * The renderer is chosen from the game's canonical `ruleset`, so
- * a v1 game keeps its fixed-map board for as long as it exists while every new game
- * gets the hex map. These helpers are what the two screens have in common — not a
- * shared abstraction over two different games.
- */
+/** Player session, typed fetch, identity fields, and sync presentation helpers. */
 
 import type { CSSProperties, ReactNode } from "react";
 
 import { friendlyError, type ApiErrorCode, type ApiErrorResponse } from "../application/api.ts";
-import { PLAYER_COLORS_V2 } from "../domain/colors-v2.ts";
 import type { SyncStatus } from "./board-stream-db.ts";
 
 export interface Identity {
@@ -27,28 +18,6 @@ export interface ApiResult<T> {
 }
 
 export const STORAGE_KEY = "risk-demo-identity";
-/** The canonical v2 palette; the v1 surface offers the same four swatches. */
-export const COLORS: readonly string[] = PLAYER_COLORS_V2;
-
-export function normalizedColor(color: string): string {
-  return color.trim().toLowerCase();
-}
-
-export type BoardRenderer = "risk-demo-v1" | "risk-demo-v2";
-
-/**
- * Which board surface a game gets, decided by its canonical ruleset and nothing
- * else.
- *
- * `null` while the game resource is still loading: with no ruleset there is no
- * answer yet, and guessing would open the wrong projection stream. An older game
- * that predates the field is v1 — the version is never inferred from which rows
- * happen to be missing from a projection.
- */
-export function rendererForGame(game: { ruleset?: string } | null): BoardRenderer | null {
-  if (!game) return null;
-  return game.ruleset === "risk-demo-v2" ? "risk-demo-v2" : "risk-demo-v1";
-}
 
 export function loadIdentity(): Identity | null {
   try {

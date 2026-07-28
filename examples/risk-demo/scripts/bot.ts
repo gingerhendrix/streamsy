@@ -86,7 +86,7 @@ async function main(): Promise<void> {
       // Block on the turn stream until control passes to me.
       const wake = await bot.awaitTurn(longPollMs);
       saveState(state);
-      // `risk-demo-v2` asks this seat to act out of turn too. Defence is attempted
+      // `Hex Domination` asks this seat to act out of turn too. Defence is attempted
       // whenever canonical state says one is open, not only on a `DefenseAvailable`
       // wake: the wake is a hint, and a missed one must not leave a human attacker
       // watching the full 15-second timeout.

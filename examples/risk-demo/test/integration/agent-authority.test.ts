@@ -1,22 +1,20 @@
 /**
  * Who may mint an agent seat, what a seat-scoped response may leak, and which
- * games have an actions stream at all.
+ * which resources remain private.
  *
  * These are the boundaries the four-endpoint contract rests on: an agent
  * capability that only plays, a host that can hand over its own seat and no
- * one else's, a private stream that stays behind the bearer, and a v1
- * ruleset that says so instead of answering with silence.
+ * one else's, and a private stream that stays behind the bearer.
  */
 
 import { describe, expect, it } from "vitest";
 
-import { BASE, call, createV2Game, v2Harness } from "../v2-harness.ts";
-import { RULESET_V2 } from "../../src/domain/map-v2.ts";
+import { BASE, call, createGame, riskHarness } from "../harness.ts";
 import { actionStreamId } from "../../server/game/names.ts";
 
-async function createHostedGame(h: ReturnType<typeof v2Harness>) {
+async function createHostedGame(h: ReturnType<typeof riskHarness>) {
   const created = await call(h.app, "POST", "/v1/games", {
-    body: { ruleset: RULESET_V2, name: "Host", mapSeed: "authority-seed" },
+    body: { name: "Host", mapSeed: "authority-seed" },
   });
   expect(created.status).toBe(201);
   return {
@@ -28,7 +26,7 @@ async function createHostedGame(h: ReturnType<typeof v2Harness>) {
 
 describe("agent seat authority", () => {
   it("lets the host delegate only its own seat", async () => {
-    const h = v2Harness();
+    const h = riskHarness();
     const { gameId, hostId, hostToken } = await createHostedGame(h);
 
     // A second, ordinary human seat: exactly the seat a host must not be able
@@ -70,13 +68,13 @@ describe("agent seat authority", () => {
   });
 
   it("refuses an agent seat on unauthenticated create and join, in either spelling", async () => {
-    const h = v2Harness();
+    const h = riskHarness();
     // `agent` is the public vocabulary; `external-agent` is the canonical event
     // vocabulary. Neither may open a seat without host authority — and the
     // internal spelling must not quietly fall through to a human seat.
     for (const controller of ["agent", "external-agent"]) {
       const created = await call(h.app, "POST", "/v1/games", {
-        body: { ruleset: RULESET_V2, name: "Sneaky", controller },
+        body: { name: "Sneaky", controller },
       });
       expect(created.status).toBe(403);
       expect(created.body.error.code).toBe("AGENT_SEAT_REQUIRES_HOST");
@@ -97,9 +95,9 @@ describe("agent seat authority", () => {
 });
 
 describe("seat-scoped exposure", () => {
-  it("marks /decision no-store for both rulesets", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+  it("marks /decision no-store", async () => {
+    const h = riskHarness();
+    const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const token = game.tokenByPlayer[game.players[0]!]!;
     const response = await h.app.fetch(
       new Request(`${BASE}/v1/games/${game.gameId}/decision`, {
@@ -109,22 +107,11 @@ describe("seat-scoped exposure", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-
-    const v1 = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Legacy" },
-    });
-    const v1Response = await h.app.fetch(
-      new Request(`${BASE}/v1/games/${v1.body.game.id}/decision`, {
-        headers: { authorization: `Bearer ${v1.body.capability}` },
-      }),
-    );
-    expect(v1Response.status).toBe(200);
-    expect(v1Response.headers.get("cache-control")).toBe("no-store");
   });
 
   it("keeps a player's actions stream out of the public /streams facade", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const h = riskHarness();
+    const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
     const playerId = meta.activePlayerId as string;
 
@@ -151,40 +138,5 @@ describe("seat-scoped exposure", () => {
     // The canonical event stream stays private for the same reason.
     const canonical = await h.app.fetch(new Request(`${BASE}/streams/games/${game.gameId}/events`));
     expect(canonical.status).toBe(404);
-  });
-});
-
-describe("risk-demo-v1 has no actions stream", () => {
-  it("answers the actions route with a clear unsupported response", async () => {
-    const h = v2Harness();
-    const created = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Legacy" },
-    });
-    const gameId = created.body.game.id as string;
-    await call(h.app, "POST", `/v1/games/${gameId}/players`, { body: { name: "Guest" } });
-    await call(h.app, "POST", `/v1/games/${gameId}/start`, {
-      token: created.body.capability,
-      body: {},
-    });
-
-    const actions = await call(h.app, "GET", `/v1/games/${gameId}/players/me/actions`, {
-      token: created.body.capability,
-    });
-    expect(actions.status).toBe(400);
-    expect(actions.body.error.code).toBe("BAD_REQUEST");
-    // It names the resource that *does* serve a v1 seat, rather than leaving a
-    // client to guess that silence means "wait".
-    expect(actions.body.error.message).toContain("/decision");
-
-    // The same refusal shape the immutable map uses for a v1 game.
-    const map = await call(h.app, "GET", `/v1/games/${gameId}/map`);
-    expect(map.status).toBe(400);
-
-    // Agent seats are a v2 concept too.
-    const seat = await call(h.app, "POST", `/v1/games/${gameId}/agent-seats`, {
-      token: created.body.capability,
-      body: {},
-    });
-    expect(seat.status).toBe(400);
   });
 });

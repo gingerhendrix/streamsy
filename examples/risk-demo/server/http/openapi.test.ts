@@ -1,18 +1,9 @@
-/**
- * The published contract must stay version-discriminated.
- *
- * The failure this guards against is subtle and expensive: a client that reads
- * one merged command schema and assumes v1 `attack` and v2 `declare-attack` are
- * the same action would be wrong about who moves next, because a v2 declaration
- * hands control to the *defender*. So the two rulesets get separate schemas, and
- * every stable rejection code either ruleset can emit is published.
- */
+/** Contract tests for the sole Hex Domination command vocabulary. */
 
 import { describe, expect, it } from "vitest";
 
 import { jsonSchemas, openApiDocument } from "./openapi.ts";
 import type { RiskErrorCode } from "../../src/domain/commands.ts";
-import type { RiskErrorCodeV2 } from "../../src/domain/commands-v2.ts";
 
 function actionTypes(schema: {
   oneOf: ReadonlyArray<{ properties: { type: { const: string } } }>;
@@ -37,12 +28,9 @@ describe("published OpenAPI contract", () => {
     ]);
   });
 
-  it("keeps v1 `attack` and v2 `declare-attack` as distinct actions", () => {
-    const v1 = actionTypes(jsonSchemas.GameCommand.properties.action);
-    const v2 = actionTypes(jsonSchemas.GameCommandV2.properties.action);
-
-    expect(v1).toEqual(["reinforce", "attack", "fortify", "end-turn"]);
-    expect(v2).toEqual([
+  it("publishes the complete command vocabulary", () => {
+    const current = actionTypes(jsonSchemas.GameCommand.properties.action);
+    expect(current).toEqual([
       "reinforce",
       "declare-attack",
       "roll-defense",
@@ -50,16 +38,14 @@ describe("published OpenAPI contract", () => {
       "fortify",
       "skip-fortifications",
     ]);
-    // Neither vocabulary leaks into the other.
-    expect(v1).not.toContain("declare-attack");
-    expect(v2).not.toContain("attack");
-    expect(v2).not.toContain("end-turn");
+    expect(current).not.toContain("attack");
+    expect(current).not.toContain("end-turn");
     // The internal timeout resolver is never a player action.
-    expect(v2).not.toContain("resolve-defense-timeout");
+    expect(current).not.toContain("resolve-defense-timeout");
   });
 
-  it("publishes v2 reinforcement as one complete allocation command", () => {
-    const reinforce = jsonSchemas.GameCommandV2.properties.action.oneOf.find(
+  it("publishes current reinforcement as one complete allocation command", () => {
+    const reinforce = jsonSchemas.GameCommand.properties.action.oneOf.find(
       (variant: any) => variant.properties.type.const === "reinforce",
     ) as any;
     expect(reinforce.required).toEqual(["type", "placements"]);
@@ -68,27 +54,23 @@ describe("published OpenAPI contract", () => {
     expect(reinforce.description).toContain("complete reinforcement-turn allocation");
   });
 
-  it("publishes both board and decision shapes under a ruleset discriminator", () => {
-    expect(jsonSchemas.Board.properties.ruleset.const).toBe("risk-demo-v1");
-    expect(jsonSchemas.BoardV2.properties.ruleset.const).toBe("risk-demo-v2");
-    expect(jsonSchemas.DecisionContextV2.properties.ruleset.const).toBe("risk-demo-v2");
-
+  it("publishes one board and decision shape", () => {
     for (const path of ["/v1/games/{gameId}/board", "/v1/games/{gameId}/decision"] as const) {
       const schema = (openApiDocument.paths[path].get.responses["200"] as any).content[
         "application/json"
       ].schema;
-      expect(schema.oneOf).toHaveLength(2);
+      expect(schema.$ref).toMatch(/^#\/components\/schemas\//);
     }
   });
 
-  it("describes the v2 board's zero-or-one turn and combat rows", () => {
-    expect(jsonSchemas.BoardV2.properties.turn.type).toEqual(["object", "null"]);
-    expect(jsonSchemas.BoardV2.properties.combat.type).toEqual(["object", "null"]);
-    expect(jsonSchemas.BoardV2.properties.combat.properties.status.enum).toEqual([
+  it("describes the current board's zero-or-one turn and combat rows", () => {
+    expect(jsonSchemas.Board.properties.turn.type).toEqual(["object", "null"]);
+    expect(jsonSchemas.Board.properties.combat.type).toEqual(["object", "null"]);
+    expect(jsonSchemas.Board.properties.combat.properties.status.enum).toEqual([
       "awaiting-defense",
       "awaiting-occupation",
     ]);
-    expect(jsonSchemas.BoardV2.properties.combat.properties.resolutionSource.enum).toEqual([
+    expect(jsonSchemas.Board.properties.combat.properties.resolutionSource.enum).toEqual([
       "human",
       "bot",
       "agent",
@@ -111,17 +93,17 @@ describe("published OpenAPI contract", () => {
   });
 
   it("documents `roll-defense` as an out-of-turn legal action with a deadline", () => {
-    const rollDefense = jsonSchemas.DecisionContextV2.properties.legalMoves.items.oneOf.find(
+    const rollDefense = jsonSchemas.DecisionContext.properties.legalMoves.items.oneOf.find(
       (variant: any) => variant.properties.type.const === "roll-defense",
     ) as any;
     expect(rollDefense.required).toEqual(["type", "attackId", "dice", "deadlineAt", "submit"]);
   });
 
-  it("publishes every stable rejection code both rulesets can emit", () => {
+  it("publishes every stable rejection code", () => {
     const published = new Set<string>(
       jsonSchemas.ErrorResponse.properties.error.properties.code.enum,
     );
-    const v1Codes: RiskErrorCode[] = [
+    const coreCodes: RiskErrorCode[] = [
       "NOT_YOUR_TURN",
       "STALE_TURN",
       "INVALID_PHASE",
@@ -131,7 +113,7 @@ describe("published OpenAPI contract", () => {
       "UNKNOWN_TERRITORY",
       "COMMAND_ID_REUSED",
     ];
-    const v2Codes: RiskErrorCodeV2[] = [
+    const combatCodes: RiskErrorCode[] = [
       "PENDING_DEFENSE",
       "PENDING_OCCUPATION",
       "NOT_DEFENDING_PLAYER",
@@ -142,7 +124,7 @@ describe("published OpenAPI contract", () => {
       "NO_FRIENDLY_PATH",
       "MAP_GENERATION_FAILED",
     ];
-    for (const code of [...v1Codes, ...v2Codes]) expect(published.has(code)).toBe(true);
+    for (const code of [...coreCodes, ...combatCodes]) expect(published.has(code)).toBe(true);
   });
 
   it("publishes exactly four agent-tagged endpoints and no token paths", () => {

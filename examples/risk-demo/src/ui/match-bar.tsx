@@ -13,15 +13,15 @@
 
 import type { CSSProperties, ReactNode } from "react";
 
-import type { ProjectedPlayerV2 } from "../board/projection-v2.ts";
-import type { GamePhaseV2 } from "../domain/aggregate-v2.ts";
-import { PHASE_LABELS_V2 } from "./presentation-v2.ts";
+import type { ProjectedPlayer } from "../board/projection.ts";
+import type { GamePhase } from "../domain/aggregate.ts";
+import { PHASE_LABELS } from "./presentation.ts";
 
 export interface MatchBarProps {
   gameId: string;
   round: number;
-  activePlayer?: ProjectedPlayerV2;
-  phase?: GamePhaseV2;
+  activePlayer?: ProjectedPlayer;
+  phase?: GamePhase;
   /** Shown in place of the seat and phase once the game has a winner. */
   finished?: boolean;
   winnerName?: string;
@@ -66,7 +66,7 @@ export function MatchBar(props: MatchBarProps) {
             <span className="match-divider" aria-hidden="true" />
             <span className="match-fact">
               <small>Phase</small>
-              <b className="match-phase">{props.phase ? PHASE_LABELS_V2[props.phase] : "—"}</b>
+              <b className="match-phase">{props.phase ? PHASE_LABELS[props.phase] : "—"}</b>
             </span>
           </>
         )}

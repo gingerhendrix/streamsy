@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { createJsonProtocol } from "@streamsy/json";
 import {
   call,
-  createV2Game,
+  createGame,
   decisionFor,
   httpFor,
-  restartV2,
-  v2Harness,
-  type V2Game,
-  type V2Harness,
-} from "../v2-harness.ts";
+  restart,
+  riskHarness,
+  type Game,
+  type Harness,
+} from "../harness.ts";
 import { createBot, type BotState, type HttpCall } from "../../server/demo/bot.ts";
 import { deriveActions, type AgentMessage } from "../../server/game/action-notifier.ts";
 import { actionStreamId, eventStreamId } from "../../server/game/names.ts";
@@ -17,11 +17,7 @@ import { actionStreamId, eventStreamId } from "../../server/game/names.ts";
 const passthrough = { encode: (value: any) => value, decode: (value: any) => value };
 
 /** Read a player's whole action stream directly, without disturbing any cursor. */
-async function allMessages(
-  h: V2Harness,
-  gameId: string,
-  playerId: string,
-): Promise<AgentMessage[]> {
+async function allMessages(h: Harness, gameId: string, playerId: string): Promise<AgentMessage[]> {
   const stream = await createJsonProtocol(h.protocol, passthrough).getOrCreate(
     actionStreamId(gameId, playerId),
   );
@@ -34,8 +30,8 @@ async function allMessages(
  * steady-state play makes no `/decision` round trips at all.
  */
 async function playByMessagesOnly(
-  h: V2Harness,
-  game: V2Game,
+  h: Harness,
+  game: Game,
 ): Promise<{ decisionCalls: number; commandCalls: number }> {
   let decisionCalls = 0;
   let commandCalls = 0;
@@ -71,8 +67,8 @@ async function playByMessagesOnly(
 
 describe("player actions stream", () => {
   it("is self-sufficient, cursor-resumable, and emits after an accepted action", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const h = riskHarness();
+    const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
     const active = meta.activePlayerId;
     const token = game.tokenByPlayer[active]!;
@@ -138,8 +134,8 @@ describe("player actions stream", () => {
   });
 
   it("separates a partly-spent reinforcement pool from the placement that empties it", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const h = riskHarness();
+    const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
     const active = meta.activePlayerId as string;
     const token = game.tokenByPlayer[active]!;
@@ -190,8 +186,8 @@ describe("player actions stream", () => {
   });
 
   it("rejects unknown query parameters", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const response = await call(
       h.app,
       "GET",
@@ -202,8 +198,8 @@ describe("player actions stream", () => {
   });
 
   it("returns an empty, up-to-date page when a bounded wait expires", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const h = riskHarness();
+    const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
     const idle = game.players.find((player) => player !== meta.activePlayerId)!;
     const token = game.tokenByPlayer[idle]!;
@@ -225,15 +221,15 @@ describe("player actions stream", () => {
   });
 
   it("drives a complete two-seat game from messages alone, with no steady-state /decision reads", async () => {
-    const h = v2Harness(4242);
-    const game = await createV2Game(h.app, {
+    const h = riskHarness(4242);
+    const game = await createGame(h.app, {
       controllers: ["agent", "agent"],
       mapSeed: "actions-cadence",
     });
 
     const counts = await playByMessagesOnly(h, game);
-    // Exactly one bootstrap read per seat, and nothing after that.
-    expect(counts.decisionCalls).toBe(game.players.length);
+    // The self-sufficient action stream needs no decision bootstrap.
+    expect(counts.decisionCalls).toBe(0);
     expect(counts.commandCalls).toBeGreaterThan(20);
 
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
@@ -306,8 +302,8 @@ describe("player actions stream", () => {
   }, 60_000);
 
   it("never strands a consumer that crashes between reading an ask and answering it", async () => {
-    const h = v2Harness(4242);
-    const game = await createV2Game(h.app, {
+    const h = riskHarness(4242);
+    const game = await createGame(h.app, {
       controllers: ["agent", "agent"],
       mapSeed: "consumer-crash",
     });
@@ -384,8 +380,8 @@ describe("player actions stream", () => {
   }, 60_000);
 
   it("resumes exactly across a process restart and re-derives identical messages", async () => {
-    const h = v2Harness(4242);
-    const game = await createV2Game(h.app, {
+    const h = riskHarness(4242);
+    const game = await createGame(h.app, {
       controllers: ["agent", "agent"],
       mapSeed: "actions-crash",
     });
@@ -400,7 +396,7 @@ describe("player actions stream", () => {
     const cursor: string = before.body.nextOffset;
     const seenSeq = before.body.messages.at(-1).seq as number;
 
-    const restarted = restartV2(h, 4242);
+    const restarted = restart(h, 4242);
     const decision = await decisionFor(restarted.app, game, active);
     const reinforce = decision.legalMoves.find((move: any) => move.type === "reinforce");
     const submitted = await call(restarted.app, "POST", `/v1/games/${game.gameId}/commands`, {

@@ -1,8 +1,8 @@
 /**
- * The `risk-demo-v2` lobby, set as a pre-deployment briefing page.
+ * The `Hex Domination` lobby, set as a pre-deployment briefing page.
  *
  * Two panes under one brief: the muster roll answers *who is going to war*, the
- * terrain survey answers *where*. The muster roll always sets every ruleset seat —
+ * terrain survey answers *where*. The muster roll always shows every seat —
  * filled rows carry the player's canonical colour swatch and role annotations,
  * open rows say plainly whether they are needed or optional — so the state of the
  * lobby is legible at a glance instead of implied by blank space.
@@ -12,8 +12,8 @@
  * game legality — starting is validated canonically like every other command.
  */
 
-import type { ProjectedPlayerV2 } from "../board/projection-v2.ts";
-import { RULES_V2 } from "../domain/map-v2.ts";
+import type { ProjectedPlayer } from "../board/projection.ts";
+import { RULES } from "../domain/map.ts";
 import { LobbyTerrainPreview } from "./lobby-preview.tsx";
 import { playerRoleLabel, type Identity } from "./shared.tsx";
 
@@ -25,7 +25,7 @@ export interface AgentSeat {
 }
 
 function seatAnnotations(props: {
-  player: ProjectedPlayerV2;
+  player: ProjectedPlayer;
   hostPlayerId?: string;
   selfPlayerId?: string;
 }): string {
@@ -39,8 +39,8 @@ function seatAnnotations(props: {
     .join(" · ");
 }
 
-export function LobbyV2(props: {
-  players: ProjectedPlayerV2[];
+export function Lobby(props: {
+  players: ProjectedPlayer[];
   hostPlayerId?: string;
   identity: Identity | null;
   name: string;
@@ -54,16 +54,16 @@ export function LobbyV2(props: {
   onCopy(): Promise<void>;
 }) {
   const isHost = props.identity?.role === "host";
-  const seatCount = RULES_V2.maxPlayers;
+  const seatCount = RULES.maxPlayers;
   const seated = props.players.length;
 
   return (
-    <section className="lobby-v2">
+    <section className="lobby-current">
       <header className="lobby-brief">
         <span className="section-label">
           Lobby · {seated}/{seatCount} seats
         </span>
-        <h2>{seated < RULES_V2.minPlayers ? "Waiting for a challenger" : "Ready to deploy"}</h2>
+        <h2>{seated < RULES.minPlayers ? "Waiting for a challenger" : "Ready to deploy"}</h2>
         <p>
           {isHost
             ? "Share the link or open an agent seat, then start when everyone has arrived."
@@ -92,7 +92,7 @@ export function LobbyV2(props: {
                     <div>
                       <b>Open seat</b>
                       <small>
-                        {index < RULES_V2.minPlayers ? "Needed to start" : "Optional reinforcement"}
+                        {index < RULES.minPlayers ? "Needed to start" : "Optional reinforcement"}
                       </small>
                     </div>
                     <span className="muster-status open">Awaiting</span>
@@ -149,9 +149,9 @@ export function LobbyV2(props: {
               <button
                 className="primary"
                 onClick={props.onStart}
-                disabled={props.busy || seated < RULES_V2.minPlayers}
+                disabled={props.busy || seated < RULES.minPlayers}
               >
-                {seated < RULES_V2.minPlayers ? "Waiting for 2 players" : "Start game"}
+                {seated < RULES.minPlayers ? "Waiting for 2 players" : "Start game"}
               </button>
             )}
             {isHost && (

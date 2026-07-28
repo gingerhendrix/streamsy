@@ -1,7 +1,7 @@
 /**
- * Fast deterministic setup and allocation for `risk-demo-v2`.
+ * Fast deterministic setup and allocation for `Hex Domination`.
  *
- * V2 deliberately has no manual claim phase. `GameStarted` atomically establishes
+ *  deliberately has no manual claim phase. `GameStarted` atomically establishes
  * a fair, replayable initial board: turn order, a round-robin territory deal, and
  * a full army allocation. Every value here is a canonical fact recorded in the
  * event — setup randomness is consumed exactly once, by the start-game command
@@ -10,10 +10,10 @@
 
 import { generateHexMap } from "./hex-generator.ts";
 import { createSubstream } from "./generator-rng.ts";
-import type { GeneratedMap } from "./map-v2.ts";
-import { RULES_V2, mapProfileFor } from "./map-v2.ts";
+import type { GeneratedMap } from "./map.ts";
+import { RULES, mapProfileFor } from "./map.ts";
 
-export interface InitialTerritoryV2 {
+export interface InitialTerritory {
   readonly territoryId: string;
   readonly ownerId: string;
   readonly armies: number;
@@ -21,7 +21,7 @@ export interface InitialTerritoryV2 {
 
 export interface SetupAllocation {
   readonly turnOrder: readonly string[];
-  readonly initialTerritories: readonly InitialTerritoryV2[];
+  readonly initialTerritories: readonly InitialTerritory[];
 }
 
 export interface PlanSetupRequest {
@@ -64,7 +64,7 @@ export function planGameSetup(request: PlanSetupRequest): SetupAllocation {
   dealt.forEach((territoryId, index) => {
     const ownerId = turnOrder[index % turnOrder.length]!;
     ownerOf.set(territoryId, ownerId);
-    armies.set(territoryId, RULES_V2.initialArmiesPerTerritory);
+    armies.set(territoryId, RULES.initialArmiesPerTerritory);
     owned.get(ownerId)!.push(territoryId);
   });
 
@@ -75,7 +75,7 @@ export function planGameSetup(request: PlanSetupRequest): SetupAllocation {
     }
     // Seeded tie-break order: earlier entries win ties for "lowest armies".
     const tieOrder = setup.shuffle(held);
-    const remaining = profile.startingArmies - held.length * RULES_V2.initialArmiesPerTerritory;
+    const remaining = profile.startingArmies - held.length * RULES.initialArmiesPerTerritory;
     if (remaining < 0) {
       throw new Error(
         `${playerId} holds ${held.length} territories but the budget is only ${profile.startingArmies}`,
@@ -90,7 +90,7 @@ export function planGameSetup(request: PlanSetupRequest): SetupAllocation {
     }
   }
 
-  const initialTerritories: InitialTerritoryV2[] = map.territories
+  const initialTerritories: InitialTerritory[] = map.territories
     .map((territory) => ({
       territoryId: territory.id,
       ownerId: ownerOf.get(territory.id)!,
@@ -103,7 +103,7 @@ export function planGameSetup(request: PlanSetupRequest): SetupAllocation {
   return { turnOrder, initialTerritories };
 }
 
-/** The complete canonical payload of a v2 `GameStarted`. */
+/** The complete canonical payload of a current `GameStarted`. */
 export interface GameStartPlan extends SetupAllocation {
   readonly map: GeneratedMap;
 }

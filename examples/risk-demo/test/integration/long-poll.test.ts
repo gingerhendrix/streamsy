@@ -3,7 +3,7 @@ import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core
 import { buildApp } from "../../server/http/app.ts";
 import { createInMemoryStores } from "../../server/persistence/stores.ts";
 import { createBot } from "../../server/demo/bot.ts";
-import { call, createV2Game } from "../v2-harness.ts";
+import { call, createGame } from "../harness.ts";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -14,7 +14,7 @@ describe("actions stream long poll", () => {
       longPollTimeoutMs: 20,
     });
     const app = buildApp({ protocol, stores: createInMemoryStores() });
-    const game = await createV2Game(app, { controllers: ["agent", "agent"] });
+    const game = await createGame(app, { controllers: ["agent", "agent"] });
     const meta = (await call(app, "GET", `/v1/games/${game.gameId}`)).body;
     const active = meta.activePlayerId;
     const inactive = game.players.find((player) => player !== active)!;

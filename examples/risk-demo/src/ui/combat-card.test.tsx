@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { CombatCard, type CombatCardProps } from "./combat-card.tsx";
 import type { CombatView } from "./combat-view.ts";
-import type { NameLookup } from "./presentation-v2.ts";
+import type { NameLookup } from "./presentation.ts";
 
 const NAMES: NameLookup = {
   territory: (id) => ({ t1: "Ashfell", t2: "Northgate" })[id] ?? id,

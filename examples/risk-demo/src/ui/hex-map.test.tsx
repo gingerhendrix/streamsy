@@ -9,7 +9,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { ProjectedHexV2 } from "../board/projection-v2.ts";
+import type { ProjectedHex } from "../board/projection.ts";
 import {
   HexMap,
   territoryInteractionState,
@@ -18,7 +18,7 @@ import {
 } from "./hex-map.tsx";
 
 /** Two three-hex countries side by side, with long names that would collide. */
-const HEXES: ProjectedHexV2[] = [
+const HEXES: ProjectedHex[] = [
   { id: "h:0:0", q: 0, r: 0, territoryId: "t1", terrain: "plains" },
   { id: "h:1:0", q: 1, r: 0, territoryId: "t1", terrain: "forest" },
   { id: "h:0:1", q: 0, r: 1, territoryId: "t1", terrain: "hills" },

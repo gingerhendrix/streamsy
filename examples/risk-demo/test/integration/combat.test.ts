@@ -1,5 +1,5 @@
 /**
- * `risk-demo-v2` runtime: the two-stage combat protocol over the real command
+ * `Hex Domination` runtime: the two-stage combat protocol over the real command
  * log, notification streams, and durable defence timers.
  *
  * The pure kernel tests already cover the rules. What is under test here is the
@@ -12,40 +12,32 @@
 import { describe, expect, it } from "vitest";
 
 import { defenseTimeoutCommandId, defenseTimerId } from "../../server/game/defense-timer.ts";
-import { RULESET_V2 } from "../../src/domain/map-v2.ts";
 import {
   DEFENSE_MS,
   boardFor,
   call,
-  createV2Game,
+  createGame,
   decisionFor,
   declareAttack,
   gameMeta,
   post,
-  restartV2,
-  v2Harness,
-} from "../v2-harness.ts";
+  restart,
+  riskHarness,
+} from "../harness.ts";
 
-describe("risk-demo-v2 creation seam", () => {
-  it("creates v2 by default and v1 only when asked for by name", async () => {
-    const h = v2Harness();
-    const v1 = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Alice" },
-    });
-    expect(v1.body.game.ruleset).toBe("risk-demo-v1");
-    expect(h.stores.games.get(v1.body.game.id)!.ruleset).toBe("risk-demo-v1");
-
-    const v2 = await call(h.app, "POST", "/v1/games", {
+describe("Hex Domination creation seam", () => {
+  it("creates a procedural Hex Domination game", async () => {
+    const h = riskHarness();
+    const current = await call(h.app, "POST", "/v1/games", {
       body: { name: "Alice", mapSeed: "abc" },
     });
-    expect(v2.body.game.ruleset).toBe(RULESET_V2);
-    expect(v2.body.game.mapVersion).toBe("procedural-hex-v1");
-    expect(h.stores.games.get(v2.body.game.id)!.ruleset).toBe(RULESET_V2);
+    expect(current.body.game.mapVersion).toBe("procedural-hex-v1");
+    expect(h.stores.games.get(current.body.game.id)).not.toBeNull();
   });
 
   it("records the map snapshot in GameStarted and does not regenerate on retry", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { mapSeed: "fixed-seed-1" });
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "fixed-seed-1" });
     const decision = await decisionFor(h.app, game, game.players[0]!);
     // `/decision` names the map; the snapshot itself lives on the board surface.
     expect(decision.board.map.seed).toBe("fixed-seed-1");
@@ -66,22 +58,21 @@ describe("risk-demo-v2 creation seam", () => {
     expect(retry.body.error.code).toBe("GAME_ALREADY_STARTED");
   });
 
-  it("serves the v2 board on its own generation and reducer version", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+  it("serves the current board on its own generation and reducer version", async () => {
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const board = await call(h.app, "GET", `/v1/games/${game.gameId}/board`);
     expect(board.status).toBe(200);
-    expect(board.body.ruleset).toBe(RULESET_V2);
-    expect(board.body.generation).toBe("hex1");
-    expect(board.body.reducerVersion).toBe("risk-demo-v2:board-1");
-    expect(board.body.boardStreamId).toBe(`games/${game.gameId}/projections/board/hex1`);
+    expect(board.body.generation).toBe("board1");
+    expect(board.body.reducerVersion).toBe("hex-domination:board-1");
+    expect(board.body.boardStreamId).toBe(`games/${game.gameId}/projections/board/board1`);
     expect(board.body.sourceThroughOffset).not.toBeNull();
     expect(board.body.combat).toBeNull();
   });
 
   it("ends the turn canonically when fortify succeeds through the public API", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const active = (await gameMeta(h.app, game)).activePlayerId as string;
     let decision = await decisionFor(h.app, game, active);
     const reinforce = decision.legalMoves.find((move: any) => move.type === "reinforce");
@@ -120,10 +111,10 @@ describe("risk-demo-v2 creation seam", () => {
   });
 });
 
-describe("risk-demo-v2 defence resolution", () => {
+describe("Hex Domination defence resolution", () => {
   it("auto-resolves an external agent's defence without asking it to roll", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const h = riskHarness();
+    const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const attack = await declareAttack(h, game);
 
     const board = await boardFor(h.app, game);
@@ -141,8 +132,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("sends a defense-required action message to the defender and no one else", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { players: 3 });
+    const h = riskHarness();
+    const game = await createGame(h.app, { players: 3 });
     const attack = await declareAttack(h, game);
 
     const defenderWakes = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {
@@ -166,8 +157,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("lets a human roll before the deadline, and the timeout then finds nothing", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
     expect(h.scheduler.pending()).toEqual([defenseTimerId(game.gameId, attack.attackId)]);
 
@@ -198,8 +189,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("resolves by timeout when the deadline passes, and a later human roll is rejected", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
 
     h.clock.now += DEFENSE_MS + 1;
@@ -222,8 +213,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("rejects a human roll submitted after the deadline but before the timer fires", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
 
     h.clock.now += DEFENSE_MS + 1;
@@ -243,8 +234,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("returns the original dice on a retry of the winning resolver", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
 
     const body = {
@@ -281,8 +272,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("returns the original dice on a duplicate timeout delivery", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
     h.clock.now += DEFENSE_MS + 1;
 
@@ -294,8 +285,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("picks exactly one winner when a human and the timeout resolve together", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
 
     const [human, timeout] = await Promise.all([
@@ -322,8 +313,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("cannot be resolved by a bystander, or under the wrong attackId", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { players: 3 });
+    const h = riskHarness();
+    const game = await createGame(h.app, { players: 3 });
     const attack = await declareAttack(h, game);
     const bystander = game.players.find((p) => p !== attack.defender && p !== attack.attacker)!;
 
@@ -354,8 +345,8 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 
   it("never exposes the internal timeout command through the player endpoint", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
+    const h = riskHarness();
+    const game = await createGame(h.app);
     const attack = await declareAttack(h, game);
 
     const forged = await post(h.app, game, attack.defender, {
@@ -368,15 +359,15 @@ describe("risk-demo-v2 defence resolution", () => {
   });
 });
 
-describe("risk-demo-v2 timer recovery", () => {
+describe("Hex Domination timer recovery", () => {
   it("rebuilds an outstanding timer from canonical state after a restart", async () => {
-    const original = v2Harness();
-    const game = await createV2Game(original.app, { mapSeed: "restart-seed" });
+    const original = riskHarness();
+    const game = await createGame(original.app, { mapSeed: "restart-seed" });
     const attack = await declareAttack(original, game);
     expect(original.scheduler.pending()).toEqual([defenseTimerId(game.gameId, attack.attackId)]);
 
     // Restart: a fresh app over the same storage, with an empty scheduler.
-    const restarted = restartV2(original);
+    const restarted = restart(original);
     expect(restarted.scheduler.pending()).toEqual([]);
     await restarted.app.defenseTimers.recover();
     // The deadline has not passed, so the timer is rebuilt rather than fired.
@@ -393,13 +384,13 @@ describe("risk-demo-v2 timer recovery", () => {
   });
 
   it("resolves immediately on restart when the deadline already passed", async () => {
-    const original = v2Harness();
-    const game = await createV2Game(original.app, { mapSeed: "expired-seed" });
+    const original = riskHarness();
+    const game = await createGame(original.app, { mapSeed: "expired-seed" });
     const attack = await declareAttack(original, game);
 
     // The process is down while the window closes.
     original.clock.now += DEFENSE_MS + 5_000;
-    const restarted = restartV2(original);
+    const restarted = restart(original);
     await restarted.app.defenseTimers.recover();
 
     // No timer is left outstanding; the attack is already closed.
@@ -411,15 +402,5 @@ describe("risk-demo-v2 timer recovery", () => {
     expect(record.status).toBe("accepted");
     const meta = await gameMeta(restarted.app, game);
     expect(meta.pendingInteraction?.type).not.toBe("defense");
-  });
-
-  it("does not schedule or resolve anything for v1 games", async () => {
-    const h = v2Harness();
-    const created = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Alice" },
-    });
-    await h.app.defenseTimers.ensure(created.body.game.id);
-    await h.app.defenseTimers.recover();
-    expect(h.scheduler.pending()).toEqual([]);
   });
 });

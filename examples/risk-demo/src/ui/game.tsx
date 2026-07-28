@@ -1,5 +1,5 @@
 /**
- * The `risk-demo-v2` playing surface: hex map, phase interactions, current-turn
+ * The `Hex Domination` playing surface: hex map, phase interactions, current-turn
  * column, and the defence/dice experience.
  *
  * The screen is three regions under one thin match bar, and each answers exactly one
@@ -17,7 +17,7 @@
  * it decides what is *clickable*, and the canonical command validation has the
  * final word either way.
  *
- * Two v2-specific shapes drive most of the state here:
+ * Two current-specific shapes drive most of the state here:
  *
  *  - **Defence is out-of-turn.** The decision resource is player-relative, so this
  *    screen refetches it on every board change rather than only when the seat is
@@ -33,23 +33,23 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type {
   AgentSeatResponse,
   CommandAck,
-  DecisionResponseV2,
+  DecisionResponse,
   GameResponse,
   JoinGameResponse,
-  PlayActionV2,
-  PlayCommandRequestV2,
+  PlayAction,
+  PlayCommandRequest,
 } from "../application/api.ts";
-import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
-import type { ProjectedHexV2 } from "../board/projection-v2.ts";
+import type { LegalAction } from "../application/legal-actions.ts";
+import type { ProjectedHex } from "../board/projection.ts";
 import { ackTxId } from "../board/transaction.ts";
-import { RULES_V2 } from "../domain/map-v2.ts";
+import { RULES } from "../domain/map.ts";
 import {
   attackAgainAction,
   attackTerritoryIds,
   fortifyAction as canonicalFortifyAction,
   shouldDismissAttackSummary,
 } from "./attack-phase.ts";
-import { useRiskBoardV2Stream } from "./board-stream-db.ts";
+import { useRiskBoardStream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
 import {
@@ -73,8 +73,8 @@ import {
   terrainMix,
   type NameLookup,
   type RevealPlan,
-} from "./presentation-v2.ts";
-import { LobbyV2, type AgentSeat } from "./lobby.tsx";
+} from "./presentation.ts";
+import { Lobby, type AgentSeat } from "./lobby.tsx";
 import {
   SyncPill,
   TopBar,
@@ -97,7 +97,7 @@ type Intent = "attack" | "fortify";
 
 export type { AgentSeat } from "./lobby.tsx";
 
-export interface GameV2ScreenProps {
+export interface GameScreenProps {
   gameId: string;
   game: GameResponse;
   identity: Identity | null;
@@ -130,21 +130,21 @@ export function detailTerritoryId(
   return hoveredId ?? focusedId;
 }
 
-function findAction<T extends LegalActionV2["type"]>(
-  actions: LegalActionV2[] | undefined,
+function findAction<T extends LegalAction["type"]>(
+  actions: LegalAction[] | undefined,
   type: T,
-): Extract<LegalActionV2, { type: T }> | undefined {
+): Extract<LegalAction, { type: T }> | undefined {
   return actions?.find(
-    (action): action is Extract<LegalActionV2, { type: T }> => action.type === type,
+    (action): action is Extract<LegalAction, { type: T }> => action.type === type,
   );
 }
 
-export function GameV2Screen(props: GameV2ScreenProps) {
+export function GameScreen(props: GameScreenProps) {
   const { gameId, identity } = props;
-  const live = useRiskBoardV2Stream(props.game.boardStreamId ?? null);
+  const live = useRiskBoardStream(props.game.boardStreamId ?? null);
   const board = live.rows;
 
-  const [decision, setDecision] = useState<DecisionResponseV2 | null>(null);
+  const [decision, setDecision] = useState<DecisionResponse | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingReinforcements, setPendingReinforcements] = useState<PendingReinforcements>(
@@ -180,7 +180,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       return;
     }
     const controller = new AbortController();
-    void api<DecisionResponseV2>("GET", `/v1/games/${gameId}/decision`, {
+    void api<DecisionResponse>("GET", `/v1/games/${gameId}/decision`, {
       token: identity.token,
     }).then((result) => {
       if (controller.signal.aborted) return;
@@ -272,7 +272,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     [board?.continents],
   );
   const hexesByTerritory = useMemo(() => {
-    const grouped = new Map<string, ProjectedHexV2[]>();
+    const grouped = new Map<string, ProjectedHex[]>();
     for (const hex of board?.hexes ?? []) {
       const bucket = grouped.get(hex.territoryId);
       if (bucket) bucket.push(hex);
@@ -300,10 +300,10 @@ export function GameV2Screen(props: GameV2ScreenProps) {
 
   // ---- commands -------------------------------------------------------------
   const submit = useCallback(
-    async (action: PlayActionV2, commandId?: string) => {
+    async (action: PlayAction, commandId?: string) => {
       if (!identity || !turnId) return false;
       setBusy(true);
-      const body: PlayCommandRequestV2 = {
+      const body: PlayCommandRequest = {
         commandId: commandId ?? `${identity.playerId}:${turnId}:${crypto.randomUUID().slice(0, 8)}`,
         turnId,
         action,
@@ -634,7 +634,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
             error={live.error}
           />
         </TopBar>
-        <LobbyV2
+        <Lobby
           players={board.players}
           hostPlayerId={board.game.hostPlayerId}
           mapSeed={board.game.mapSeed}
@@ -674,7 +674,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const focused = detailId ? territoryById.get(detailId) : undefined;
 
   return (
-    <main className="game-shell v2">
+    <main className="game-shell current">
       <MatchBar
         gameId={gameId}
         round={board.game.round}
@@ -717,7 +717,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                   visibleCombat.declaredAt !== undefined &&
                   visibleCombat.defenseDeadlineAt !== undefined
                     ? visibleCombat.defenseDeadlineAt - visibleCombat.declaredAt
-                    : RULES_V2.defenseTimeoutMs
+                    : RULES.defenseTimeoutMs
                 }
                 reveal={reveal}
                 busy={interactionBusy}
@@ -904,17 +904,17 @@ interface PhaseControlsProps {
   setSelection(next: Selection): void;
   intent: Intent;
   setIntent(next: Intent): void;
-  reinforceAction?: Extract<LegalActionV2, { type: "reinforce" }>;
+  reinforceAction?: Extract<LegalAction, { type: "reinforce" }>;
   pendingReinforcements: PendingReinforcements;
   adjustReinforcement(territoryId: string, delta: 1 | -1): void;
   finishReinforcements(): void;
-  attackAction?: Extract<LegalActionV2, { type: "declare-attack" }>;
-  fortifyAction?: Extract<LegalActionV2, { type: "fortify" }>;
-  skipFortificationsAction?: Extract<LegalActionV2, { type: "skip-fortifications" }>;
-  occupyAction?: Extract<LegalActionV2, { type: "occupy-territory" }>;
+  attackAction?: Extract<LegalAction, { type: "declare-attack" }>;
+  fortifyAction?: Extract<LegalAction, { type: "fortify" }>;
+  skipFortificationsAction?: Extract<LegalAction, { type: "skip-fortifications" }>;
+  occupyAction?: Extract<LegalAction, { type: "occupy-territory" }>;
   occupyArmies: number | null;
   setOccupyArmies(value: number): void;
-  submit(action: PlayActionV2): Promise<boolean>;
+  submit(action: PlayAction): Promise<boolean>;
   fortifyChoiceFrom(
     from: string,
   ): { reachable: Array<{ to: string; maxArmies: number }> } | undefined;

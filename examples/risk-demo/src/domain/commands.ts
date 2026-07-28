@@ -1,16 +1,23 @@
 /**
- * Command envelopes accepted by the kernel.
+ * `Hex Domination` command envelopes and rejection codes.
  *
- * Every command carries a stable `commandId` used as an idempotency key: a
- * retry with the same id returns the original outcome without re-resolving any
- * randomness. Play commands additionally carry an observed `turnId`, an
- * optimistic precondition that a delayed caller cannot accidentally act during a
- * later turn.
+ * A stable `commandId` is the
+ * idempotency key, and every play command carries an observed `turnId` as an
+ * optimistic whole-turn precondition.  adds two things on top.
  *
- * In this headless kernel the acting `playerId` is passed explicitly. The
- * capability/authorization layer derives it from a bearer
- * token; the kernel only checks that the named player is allowed to act.
+ * First, `roll-defense` is the one intentional *out-of-turn* player command. It
+ * still names the current `turnId` (the turn does not change while defence is
+ * pending) and additionally names an `attackId`, so a delayed defender can never
+ * attach their roll to a later attack.
+ *
+ * Second, `resolve-defense-timeout` is internal: it is authorized by the game
+ * service, not by a player capability, and is deliberately absent from
+ * {@link GameAction} so it can never arrive through the player command
+ * endpoint.
  */
+
+import type { PlayerController } from "./events.ts";
+import type { GameStartPlan } from "./setup.ts";
 
 export interface CreateGameCommand {
   type: "create-game";
@@ -18,7 +25,11 @@ export interface CreateGameCommand {
   gameId: string;
   hostPlayerId: string;
   hostName: string;
-  hostColor: string;
+  /** Requested colour; the decider assigns a free palette colour when absent or taken. */
+  hostColor?: string;
+  hostController: PlayerController;
+  /** Server-generated unless a demo/test explicitly supplies one. */
+  mapSeed: string;
 }
 
 export interface JoinGameCommand {
@@ -26,7 +37,9 @@ export interface JoinGameCommand {
   commandId: string;
   playerId: string;
   name: string;
-  color: string;
+  /** Requested colour; the decider assigns a free palette colour when absent or taken. */
+  color?: string;
+  controller: PlayerController;
 }
 
 export interface StartGameCommand {
@@ -34,23 +47,60 @@ export interface StartGameCommand {
   commandId: string;
 }
 
+export interface DelegateAgentSeatCommand {
+  type: "delegate-agent-seat";
+  commandId: string;
+  playerId: string;
+}
+
+export interface ReinforcementPlacement {
+  territoryId: string;
+  armies: number;
+}
+
 export interface ReinforceCommand {
   type: "reinforce";
   commandId: string;
   turnId: string;
   playerId: string;
-  territoryId: string;
-  armies: number;
+  /** The complete turn allocation, committed atomically. */
+  placements: ReinforcementPlacement[];
 }
 
-export interface AttackCommand {
-  type: "attack";
+export interface DeclareAttackCommand {
+  type: "declare-attack";
   commandId: string;
   turnId: string;
   playerId: string;
   from: string;
   to: string;
   attackerDice: number;
+}
+
+/**
+ * The defender authorizes a roll; they never choose the dice count. The legal
+ * count was fixed at declaration time and is read from canonical state.
+ *
+ * There is deliberately no `resolutionSource` here. Whether a roll is recorded as
+ * `human`, `bot`, or `agent` follows from the defending seat's canonical
+ * {@link PlayerController}, not from anything the client sends. A client cannot
+ * spoof that attribution.
+ */
+export interface RollDefenseCommand {
+  type: "roll-defense";
+  commandId: string;
+  turnId: string;
+  playerId: string;
+  attackId: string;
+}
+
+export interface OccupyTerritoryCommand {
+  type: "occupy-territory";
+  commandId: string;
+  turnId: string;
+  playerId: string;
+  attackId: string;
+  armies: number;
 }
 
 export interface FortifyCommand {
@@ -63,18 +113,57 @@ export interface FortifyCommand {
   armies: number;
 }
 
-export interface EndTurnCommand {
-  type: "end-turn";
+export interface SkipFortificationsCommand {
+  type: "skip-fortifications";
   commandId: string;
   turnId: string;
   playerId: string;
 }
 
-export type PlayCommand = ReinforceCommand | AttackCommand | FortifyCommand | EndTurnCommand;
+/**
+ * Internal deadline resolver. Submitted by the durable timeout job, never by a
+ * player. It matches on both `turnId` and `attackId`, so a stale timer delivered
+ * after the attack it was scheduled for has closed cannot resolve a later one.
+ */
+export interface ResolveDefenseTimeoutCommand {
+  type: "resolve-defense-timeout";
+  commandId: string;
+  turnId: string;
+  attackId: string;
+}
 
-export type Command = CreateGameCommand | JoinGameCommand | StartGameCommand | PlayCommand;
+export type PlayCommandEnvelope =
+  | ReinforceCommand
+  | DeclareAttackCommand
+  | RollDefenseCommand
+  | OccupyTerritoryCommand
+  | FortifyCommand
+  | SkipFortificationsCommand;
 
-/** Stable, machine-readable rejection codes (mirrors `agent-play-api.md`). */
+export type Command =
+  | CreateGameCommand
+  | JoinGameCommand
+  | DelegateAgentSeatCommand
+  | StartGameCommand
+  | PlayCommandEnvelope
+  | ResolveDefenseTimeoutCommand;
+
+/** The player-facing action payload carried by `POST /commands`. */
+export type GameAction =
+  | { type: "reinforce"; placements: ReinforcementPlacement[] }
+  | { type: "declare-attack"; from: string; to: string; attackerDice: number }
+  | { type: "roll-defense"; attackId: string }
+  | { type: "occupy-territory"; attackId: string; armies: number }
+  | { type: "fortify"; from: string; to: string; armies: number }
+  | { type: "skip-fortifications" };
+
+export interface PlayCommand {
+  commandId: string;
+  turnId: string;
+  action: GameAction;
+}
+
+/** Stable command rejection codes. */
 export type RiskErrorCode =
   | "GAME_NOT_FOUND"
   | "GAME_ALREADY_EXISTS"
@@ -92,4 +181,16 @@ export type RiskErrorCode =
   | "UNKNOWN_TERRITORY"
   | "NOT_ADJACENT"
   | "INSUFFICIENT_ARMIES"
-  | "COMMAND_ID_REUSED";
+  | "COMMAND_ID_REUSED"
+  | "MAP_GENERATION_FAILED"
+  | "PENDING_DEFENSE"
+  | "PENDING_OCCUPATION"
+  | "NOT_DEFENDING_PLAYER"
+  | "ATTACK_ID_MISMATCH"
+  | "ATTACK_ALREADY_RESOLVED"
+  | "DEFENSE_DEADLINE_EXPIRED"
+  | "INVALID_OCCUPATION"
+  | "NO_FRIENDLY_PATH";
+
+/** Re-exported so the command service can name the plan it injects. */
+export type { GameStartPlan };

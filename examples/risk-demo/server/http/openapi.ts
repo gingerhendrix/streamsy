@@ -5,128 +5,11 @@
  * shape, ack, decision context, and error code from this document without
  * reading any UI or server source.
  *
- * The two rulesets are published as **version-discriminated** types, never as a
- * single merged shape. `risk-demo-v1` `attack` is one
- * fight-and-occupy step; `risk-demo-v2` `declare-attack` is one throw that opens
- * a defence interrupt someone else must close. A client that guessed they were
- * the same command would be wrong about who moves next, so the schemas keep them
- * apart and the `ruleset` field on `GET /v1/games/{gameId}` says which applies.
+ * The document describes the sole Hex Domination command vocabulary and the
+ * causally-watermarked resources a player uses to act.
  */
 
-const territory = {
-  type: "object",
-  required: ["id", "armies"],
-  properties: {
-    id: { type: "string" },
-    ownerId: { type: "string" },
-    armies: { type: "integer" },
-    adjacentTerritoryIds: { type: "array", items: { type: "string" } },
-  },
-} as const;
-
-const legalAction = {
-  oneOf: [
-    {
-      type: "object",
-      required: ["type", "territoryIds", "minArmies", "maxArmies"],
-      properties: {
-        type: { const: "reinforce" },
-        territoryIds: { type: "array", items: { type: "string" } },
-        minArmies: { type: "integer" },
-        maxArmies: { type: "integer" },
-      },
-    },
-    {
-      type: "object",
-      required: ["type", "choices"],
-      properties: {
-        type: { const: "attack" },
-        choices: {
-          type: "array",
-          items: {
-            type: "object",
-            required: ["from", "to", "maxAttackerDice"],
-            properties: {
-              from: { type: "string" },
-              to: { type: "string" },
-              maxAttackerDice: { type: "integer" },
-            },
-          },
-        },
-      },
-    },
-    {
-      type: "object",
-      required: ["type", "choices"],
-      properties: {
-        type: { const: "fortify" },
-        choices: {
-          type: "array",
-          items: {
-            type: "object",
-            required: ["from", "to", "maxArmies"],
-            properties: {
-              from: { type: "string" },
-              to: { type: "string" },
-              maxArmies: { type: "integer" },
-            },
-          },
-        },
-      },
-    },
-    {
-      type: "object",
-      required: ["type"],
-      properties: { type: { const: "end-turn" } },
-    },
-  ],
-} as const;
-
 const commandAction = {
-  oneOf: [
-    {
-      type: "object",
-      required: ["type", "territoryId", "armies"],
-      properties: {
-        type: { const: "reinforce" },
-        territoryId: { type: "string" },
-        armies: { type: "integer", minimum: 1 },
-      },
-    },
-    {
-      type: "object",
-      required: ["type", "from", "to", "attackerDice"],
-      description: "risk-demo-v1 only: rolls both sides and, on a capture, occupies in one step.",
-      properties: {
-        type: { const: "attack" },
-        from: { type: "string" },
-        to: { type: "string" },
-        attackerDice: { type: "integer", minimum: 1, maximum: 3 },
-      },
-    },
-    {
-      type: "object",
-      required: ["type", "from", "to", "armies"],
-      properties: {
-        type: { const: "fortify" },
-        from: { type: "string" },
-        to: { type: "string" },
-        armies: { type: "integer", minimum: 1 },
-      },
-    },
-    {
-      type: "object",
-      required: ["type"],
-      properties: { type: { const: "end-turn" } },
-    },
-  ],
-} as const;
-
-// ---------------------------------------------------------------------------
-// risk-demo-v2
-// ---------------------------------------------------------------------------
-
-const commandActionV2 = {
   oneOf: [
     {
       type: "object",
@@ -152,8 +35,7 @@ const commandActionV2 = {
     {
       type: "object",
       required: ["type", "from", "to", "attackerDice"],
-      description:
-        "One throw. Rolls the attacker's dice and opens a defence interrupt; it is NOT the v1 `attack` action renamed.",
+      description: "One throw. Rolls the attacker's dice and opens a defence interrupt.",
       properties: {
         type: { const: "declare-attack" },
         from: { type: "string" },
@@ -201,7 +83,7 @@ const commandActionV2 = {
   ],
 } as const;
 
-const legalActionV2 = {
+const legalAction = {
   oneOf: [
     {
       type: "object",
@@ -389,7 +271,7 @@ const errorCodes = [
   "TOO_MANY_PLAYERS",
   "PLAYER_ID_TAKEN",
   "MAP_GENERATION_FAILED",
-  // risk-demo-v2 two-stage combat
+  // Hex Domination two-stage combat
   "PENDING_DEFENSE",
   "PENDING_OCCUPATION",
   "NOT_DEFENDING_PLAYER",
@@ -414,7 +296,7 @@ const schemas = {
     type: "string",
     enum: ["human", "bot", "agent"],
     description:
-      "`agent` reserves the seat for an external coding-agent harness using its private seat URL. `bot` is the repository's deterministic scripted policy. Persisted pre-migration `agent` events are read as `bot`.",
+      "`agent` reserves the seat for an external coding-agent harness using its private seat URL. Canonical events record that controller as `external-agent`; `bot` is the repository's deterministic scripted policy.",
   },
   CreateGameRequest: {
     type: "object",
@@ -426,7 +308,6 @@ const schemas = {
           "Optional colour request. The server assigns colours conflict-safely: a free requested colour is honoured; an absent or taken one is replaced by the first available palette colour. The response's `player.color` is the colour actually issued.",
       },
       commandId: { type: "string" },
-      ruleset: { enum: ["risk-demo-v1", "risk-demo-v2"] },
       controller: { $ref: "#/components/schemas/SeatControllerInput" },
       mapSeed: { type: "string" },
     },
@@ -445,24 +326,8 @@ const schemas = {
   },
   GameCommand: {
     type: "object",
-    description: "risk-demo-v1 play command.",
-    required: ["commandId", "turnId", "action"],
-    properties: {
-      commandId: {
-        type: "string",
-        description: "Stable idempotency key; reuse on transport retry.",
-      },
-      turnId: {
-        type: "string",
-        description: "Observed turn precondition, e.g. round-2:p1.",
-      },
-      action: commandAction,
-    },
-  },
-  GameCommandV2: {
-    type: "object",
     description:
-      "risk-demo-v2 play command. `roll-defense` is the one legal out-of-turn action; the internal timeout resolver is never exposed here.",
+      "Hex Domination play command. `roll-defense` is the one legal out-of-turn action; the internal timeout resolver is never exposed here.",
     required: ["commandId", "turnId", "action"],
     properties: {
       commandId: {
@@ -474,7 +339,7 @@ const schemas = {
         type: "string",
         description: "Observed turn precondition, e.g. round-2:p1.",
       },
-      action: commandActionV2,
+      action: commandAction,
     },
   },
   CommandAck: {
@@ -528,50 +393,11 @@ const schemas = {
   },
   DecisionContext: {
     type: "object",
-    description: "risk-demo-v1 decision context (active player only).",
-    required: ["gameId", "player", "turn", "board", "legalMoves"],
-    properties: {
-      gameId: { type: "string" },
-      player: {
-        type: "object",
-        required: ["id", "name", "color"],
-        properties: {
-          id: { type: "string" },
-          name: { type: "string" },
-          color: { type: "string" },
-        },
-      },
-      turn: {
-        type: "object",
-        required: ["id", "round", "phase"],
-        properties: {
-          id: { type: "string" },
-          round: { type: "integer" },
-          activePlayerId: { type: "string" },
-          phase: { enum: ["setup", "reinforce", "attack", "fortify"] },
-        },
-      },
-      board: {
-        type: "object",
-        required: ["sourceStreamId", "territories", "players"],
-        properties: {
-          sourceStreamId: { type: "string" },
-          sourceThroughOffset: { type: ["string", "null"] },
-          territories: { type: "array", items: territory },
-          players: { type: "array", items: { type: "object" } },
-        },
-      },
-      legalMoves: { type: "array", items: legalAction },
-    },
-  },
-  DecisionContextV2: {
-    type: "object",
     description:
-      "risk-demo-v2 decision context. Player-relative: an out-of-turn defender gets `roll-defense` here. Derived from canonical history through `board.sourceThroughOffset`, which the named board generation has already materialized — so the decision is never ahead of its board snapshot.",
-    required: ["gameId", "ruleset", "player", "mode", "turn", "board", "legalMoves"],
+      "Hex Domination decision context. Player-relative: an out-of-turn defender gets `roll-defense` here. Derived from canonical history through `board.sourceThroughOffset`, which the named board generation has already materialized — so the decision is never ahead of its board snapshot.",
+    required: ["gameId", "player", "mode", "turn", "board", "legalMoves"],
     properties: {
       gameId: { type: "string" },
-      ruleset: { const: "risk-demo-v2" },
       player: {
         type: "object",
         required: ["id", "name", "color", "controller"],
@@ -642,31 +468,15 @@ const schemas = {
           },
         },
       },
-      legalMoves: { type: "array", items: legalActionV2 },
+      legalMoves: { type: "array", items: legalAction },
     },
   },
   Board: {
     type: "object",
-    description: "risk-demo-v1 projected board plus its causal watermark.",
-    required: ["gameId", "sourceStreamId", "game", "players", "territories"],
-    properties: {
-      gameId: { type: "string" },
-      ruleset: { const: "risk-demo-v1" },
-      sourceStreamId: { type: "string" },
-      sourceThroughOffset: { type: ["string", "null"] },
-      generation: { type: "string" },
-      game: { type: "object" },
-      players: { type: "array", items: { type: "object" } },
-      territories: { type: "array", items: territory },
-    },
-  },
-  BoardV2: {
-    type: "object",
     description:
-      "risk-demo-v2 projected board. Static map rows (hexes/territories/continents) are served here once; `turn` and `combat` are zero-or-one current rows.",
+      "Hex Domination projected board. Static map rows (hexes/territories/continents) are served here once; `turn` and `combat` are zero-or-one current rows.",
     required: [
       "gameId",
-      "ruleset",
       "sourceStreamId",
       "generation",
       "boardStreamId",
@@ -681,7 +491,6 @@ const schemas = {
     ],
     properties: {
       gameId: { type: "string" },
-      ruleset: { const: "risk-demo-v2" },
       sourceStreamId: { type: "string" },
       sourceThroughOffset: { type: ["string", "null"] },
       generation: { type: "string" },
@@ -919,7 +728,7 @@ const schemas = {
           legalMoves: {
             type: "array",
             minItems: 1,
-            items: legalActionV2,
+            items: legalAction,
             description: "Exactly the moves that may be submitted in response to this message.",
           },
           board: {
@@ -1039,25 +848,13 @@ function jsonRequest(schemaRef: string) {
   };
 }
 
-function eitherRuleset(v1: string, v2: string) {
-  return {
-    content: {
-      "application/json": {
-        schema: {
-          oneOf: [{ $ref: `#/components/schemas/${v1}` }, { $ref: `#/components/schemas/${v2}` }],
-        },
-      },
-    },
-  };
-}
-
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "Streamsy Risk demo — command & capability API",
-    version: "2.0.0",
+    version: "1.0.0",
     description:
-      "Event-sourced Risk. Commands validate against canonical history and CAS-append; the board is a separate causally-watermarked projection. Two rulesets are published side by side: `risk-demo-v1` (fixed six-country map, single-step attack) and `risk-demo-v2` (procedural hex map, two-stage combat with a timed defence interrupt). `GET /v1/games/{gameId}` reports which one a game speaks; the v1 `attack` action is never reinterpreted as the v2 `declare-attack` action.",
+      "Event-sourced Hex Domination. Commands validate against canonical history and CAS-append; the board is a separate causally-watermarked projection over a procedural hex map with two-stage combat and timed defence interrupts.",
   },
   tags: [
     { name: "agent", description: "The complete four-endpoint playing-agent surface." },
@@ -1068,8 +865,7 @@ export const openApiDocument = {
     "/v1/games": {
       post: {
         tags: ["lobby"],
-        summary:
-          'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a v1 fixed-map game.',
+        summary: "Create a game; returns the host player and a one-time host capability.",
         requestBody: jsonRequest("CreateGameRequest"),
         responses: {
           "201": {
@@ -1112,14 +908,14 @@ export const openApiDocument = {
     },
     "/v1/games/{gameId}": {
       get: {
-        summary: "Game metadata, status, and the ruleset every other resource is shaped by.",
+        summary: "Game metadata and status.",
         responses: { "200": jsonResponse("Board") },
       },
     },
     "/v1/games/{gameId}/board": {
       get: {
         summary: "Projected board plus its canonical sourceThroughOffset watermark.",
-        responses: { "200": eitherRuleset("Board", "BoardV2") },
+        responses: { "200": jsonResponse("Board") },
       },
     },
     "/v1/games/{gameId}/map": {
@@ -1138,7 +934,7 @@ export const openApiDocument = {
         tags: ["agent"],
         summary: "Full player-relative snapshot for bootstrap and recovery.",
         responses: {
-          "200": eitherRuleset("DecisionContext", "DecisionContextV2"),
+          "200": jsonResponse("DecisionContext"),
         },
       },
     },
@@ -1146,7 +942,7 @@ export const openApiDocument = {
       post: {
         tags: ["agent"],
         summary: "Submit a typed command (player capability). Idempotent by commandId.",
-        requestBody: eitherRuleset("GameCommand", "GameCommandV2"),
+        requestBody: jsonRequest("GameCommand"),
         responses: {
           "200": jsonResponse("CommandAck"),
           "400": jsonResponse("ErrorResponse"),

@@ -1,4 +1,6 @@
-/** Risk board bindings for the generic Durable State projection adapter. */
+/**
+ * Hex Domination board bindings for the generic Durable State projection adapter.
+ */
 import type { StreamId, StreamProtocolFactory } from "@streamsy/core";
 import {
   durableStateProjectionAdapter,
@@ -8,34 +10,46 @@ import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 import type { DurableStateSchemaMap } from "@streamsy/state";
 
 import type { GameEvent } from "../domain/events.ts";
-import { RULESET } from "../domain/map.ts";
 import { boardProjectionTxId } from "./transaction.ts";
 import {
+  COMBAT_ROW_KEY,
+  TURN_ROW_KEY,
   initialProjection,
   projectEvent,
+  type ProjectedCombat,
+  type ProjectedContinent,
   type ProjectedGame,
-  type ProjectedPlayer,
+  type ProjectedHex,
   type ProjectedMove,
+  type ProjectedPlayer,
   type ProjectedTerritory,
+  type ProjectedTurn,
   type ProjectionState,
 } from "./projection.ts";
 
-export const BOARD_REDUCER_VERSION = `${RULESET}:board-1`;
+export const BOARD_REDUCER_VERSION = "hex-domination:board-1";
 
 const codec = <T>(): JsonCodec<T> => ({
   encode: (value) => value,
   decode: (value) => value as T,
 });
-const eventSchema = codec<GameEvent>();
+const eventSchema: JsonCodec<GameEvent> = {
+  encode: (event) => event,
+  decode: (value) => value as GameEvent,
+};
 
 const boardSchema = {
   games: { type: "game", primaryKey: "id", schema: codec<ProjectedGame>() },
-  players: { type: "player", primaryKey: "id", schema: codec<ProjectedPlayer>() },
-  territories: {
-    type: "territory",
+  players: {
+    type: "player",
     primaryKey: "id",
-    schema: codec<ProjectedTerritory>(),
+    schema: codec<ProjectedPlayer>(),
   },
+  hexes: { type: "hex", primaryKey: "id", schema: codec<ProjectedHex>() },
+  territories: { type: "territory", primaryKey: "id", schema: codec<ProjectedTerritory>() },
+  continents: { type: "continent", primaryKey: "id", schema: codec<ProjectedContinent>() },
+  turn: { type: "turn", primaryKey: "id", schema: codec<ProjectedTurn>() },
+  combat: { type: "combat", primaryKey: "id", schema: codec<ProjectedCombat>() },
   moves: { type: "move", primaryKey: "id", schema: codec<ProjectedMove>() },
   projectionMeta: {
     primaryKey: () => "board",
@@ -48,7 +62,7 @@ export interface BoardProjectionAdapterOptions {
   sourceStreamId: StreamId;
   outputStreamId: StreamId;
   processorId?: string;
-  generation?: string;
+  generation: string;
 }
 
 export function createBoardProjectionAdapter(
@@ -56,19 +70,25 @@ export function createBoardProjectionAdapter(
 ): ProjectionAdapter<ProjectionState, GameEvent> {
   return durableStateProjectionAdapter({
     processorId: options.processorId ?? `risk-board:${options.gameId}`,
-    generation: options.generation ?? "v1",
+    generation: options.generation,
     reducerVersion: BOARD_REDUCER_VERSION,
     sourceStreamId: options.sourceStreamId,
     outputStreamId: options.outputStreamId,
     sourceSchema: eventSchema,
     schema: boardSchema,
-    initial: initialProjection,
+    initial: () => initialProjection(options.gameId),
     reduce: (state, event, meta) => projectEvent(state, event, meta.sourceThroughOffset),
     txid: (event, meta) => boardProjectionTxId(event.commandId, meta.sourceThroughOffset),
+    // `turn` and `combat` are zero-or-one collections: omitting the row is what
+    // makes the adapter emit a delete, which is how a resolved combat clears.
     rows: (state) => [
-      { type: "game", key: state.game.id ?? options.gameId, value: state.game },
+      { type: "game", key: state.game.id || options.gameId, value: state.game },
       ...state.players.map((value) => ({ type: "player", key: value.id, value })),
+      ...state.hexes.map((value) => ({ type: "hex", key: value.id, value })),
       ...state.territories.map((value) => ({ type: "territory", key: value.id, value })),
+      ...state.continents.map((value) => ({ type: "continent", key: value.id, value })),
+      ...(state.turn ? [{ type: "turn", key: TURN_ROW_KEY, value: state.turn }] : []),
+      ...(state.combat ? [{ type: "combat", key: COMBAT_ROW_KEY, value: state.combat }] : []),
       ...state.moves.map((value) => ({ type: "move", key: value.id, value })),
     ],
     meta: { type: "projectionMeta", key: "board" },

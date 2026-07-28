@@ -1,8 +1,8 @@
-import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
-import type { GameActionV2 } from "../domain/commands-v2.ts";
+import type { LegalAction } from "../application/legal-actions.ts";
+import type { GameAction } from "../domain/commands.ts";
 import type { CombatView } from "./combat-view.ts";
 
-export type DeclareAttackAction = Extract<LegalActionV2, { type: "declare-attack" }>;
+export type DeclareAttackAction = Extract<LegalAction, { type: "declare-attack" }>;
 
 /**
  * Map affordances for the attack flow come only from the player-relative decision.
@@ -34,7 +34,7 @@ export function attackTerritoryIds(
 export function attackAgainAction(
   action: DeclareAttackAction | undefined,
   combat: CombatView | null,
-): Extract<GameActionV2, { type: "declare-attack" }> | null {
+): Extract<GameAction, { type: "declare-attack" }> | null {
   if (!action || !combat || combat.status !== "resolved" || combat.territoryCaptured) return null;
   const choice = action.choices.find(
     (candidate) => candidate.from === combat.from && candidate.to === combat.to,
@@ -53,7 +53,7 @@ export function fortifyAction(
   from: string,
   to: string,
   armies: number,
-): Extract<GameActionV2, { type: "fortify" }> {
+): Extract<GameAction, { type: "fortify" }> {
   return { type: "fortify", from, to, armies };
 }
 

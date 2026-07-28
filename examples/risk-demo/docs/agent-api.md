@@ -18,9 +18,6 @@ authenticated host capability's player. Any other value is `403 FORBIDDEN`. `con
 its internal spelling `external-agent`) is refused on the unauthenticated create and join routes with
 `403 AGENT_SEAT_REQUIRES_HOST`; this route is the only place an agent capability is minted.
 
-`risk-demo-v1` is a retained fixture with no agent surface: `/map`, `/agent-seats` and
-`/players/me/actions` all answer `400 BAD_REQUEST` for a v1 game, which uses `/decision` instead.
-
 ## Complete agent surface
 
 | Endpoint                                                 | Purpose                                                               |
@@ -79,5 +76,5 @@ Malformed command bodies return:
 ```
 
 The actions stream is derived replay-safely from `games/<gameId>/events` into the generation-suffixed
-private stream `games/<gameId>/players/<playerId>/actions/actions1`. It is never exposed by the
+private stream `games/<gameId>/players/<playerId>/actions`. It is never exposed by the
 public `/streams/` facade.

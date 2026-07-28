@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { hashGeneratedMap } from "../domain/hex-generator.ts";
-import { mapProfileFor } from "../domain/map-v2.ts";
+import { mapProfileFor } from "../domain/map.ts";
 import { LobbyTerrainPreview, surveyMap } from "./lobby-preview.tsx";
 
 describe("surveyMap", () => {
@@ -26,7 +26,7 @@ describe("surveyMap", () => {
     expect(hashGeneratedMap(surveyMap("another-seed", 2)!)).not.toBe(hashGeneratedMap(a));
   });
 
-  it("matches the ruleset profile and changes for each valid roster increase", () => {
+  it("matches the map profile and changes for each valid roster increase", () => {
     const maps = [2, 3, 4].map((playerCount) => surveyMap("lobby-survey-seed", playerCount)!);
 
     for (const [index, playerCount] of [2, 3, 4].entries()) {

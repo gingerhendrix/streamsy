@@ -3,48 +3,48 @@ import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { ProjectionRuntime } from "@streamsy/experimental/projection";
 
-import { foldAggregateV2 } from "../domain/aggregate-v2.ts";
-import type { GameEventV2 } from "../domain/events-v2.ts";
+import { foldAggregate } from "../domain/aggregate.ts";
+import type { GameEvent } from "../domain/events.ts";
 import {
   ProjectionIntegrityError,
-  aggregateBoardViewV2,
-  boardsEqualV2,
-  initialProjectionV2,
-  projectEventV2,
-  projectionBoardViewV2,
-  type ProjectionStateV2,
-} from "./projection-v2.ts";
-import { createBoardProjectionAdapterV2, writeCanonicalEventsV2 } from "./board-projection-v2.ts";
+  aggregateBoardView,
+  boardsEqual,
+  initialProjection,
+  projectEvent,
+  projectionBoardView,
+  type ProjectionState,
+} from "./projection.ts";
+import { createBoardProjectionAdapter, writeCanonicalEvents } from "./board-projection.ts";
 import { boardProjectionTxId } from "./transaction.ts";
 import {
   armForAttack,
-  declareAttackV2,
-  nextCommandIdV2,
+  declareAttack,
+  nextCommandId,
   occupyPending,
-  startGameV2,
+  startGame,
   throwUntilCapture,
   winThrow,
-  type ScriptedGameV2,
-} from "../../test/testkit-v2.ts";
+  type ScriptedGame,
+} from "../../test/testkit.ts";
 
-const SOURCE = "games/game-v2/events";
-const OUTPUT = "games/game-v2/projections/board/hex1";
+const SOURCE = "games/game/events";
+const OUTPUT = "games/game/projections/board/board1";
 
 function newProtocol(): StreamProtocolFactory {
   return createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
 }
 
-function adapterFor(generation = "hex1") {
-  return createBoardProjectionAdapterV2({
-    gameId: "game-v2",
+function adapterFor(generation = "board1") {
+  return createBoardProjectionAdapter({
+    gameId: "game",
     sourceStreamId: SOURCE,
-    outputStreamId: `games/game-v2/projections/board/${generation}`,
+    outputStreamId: `games/game/projections/board/${generation}`,
     generation,
   });
 }
 
 /** Any owned country with a spare army and an enemy neighbour, or null. */
-function findAttack(game: ScriptedGameV2) {
+function findAttack(game: ScriptedGame) {
   const state = game.state();
   const active = state.activePlayerId!;
   for (const territory of Object.values(state.territories).toSorted((a, b) =>
@@ -70,7 +70,7 @@ function findAttack(game: ScriptedGameV2) {
  * Reinforce → attack (always winning) → occupy → skip fortifications, for up to `maxSteps`
  * decisions. Whoever is active plays, so both seats take real turns.
  */
-function driveV2(game: ScriptedGameV2, maxSteps: number): readonly GameEventV2[] {
+function drive(game: ScriptedGame, maxSteps: number): readonly GameEvent[] {
   for (let step = 0; step < maxSteps; step += 1) {
     const state = game.state();
     if (state.status !== "playing") return game.log;
@@ -89,7 +89,7 @@ function driveV2(game: ScriptedGameV2, maxSteps: number): readonly GameEventV2[]
     }
     game.must({
       type: "skip-fortifications",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: state.activePlayerId!,
     });
@@ -106,8 +106,8 @@ function driveV2(game: ScriptedGameV2, maxSteps: number): readonly GameEventV2[]
  * `GameStarted`, folded by both reducers exactly as in a real game, and it
  * exercises capture, elimination, and victory in one log.
  */
-function playFullGameV2(mapSeed: string): readonly GameEventV2[] {
-  const game = startGameV2({
+function playFullGame(mapSeed: string): readonly GameEvent[] {
+  const game = startGame({
     players: 2,
     mapSeed,
     board: ({ map, turnOrder }) => {
@@ -122,33 +122,33 @@ function playFullGameV2(mapSeed: string): readonly GameEventV2[] {
       };
     },
   });
-  const log = driveV2(game, 400);
-  if (game.state().status !== "finished") throw new Error("scripted v2 game did not finish");
+  const log = drive(game, 400);
+  if (game.state().status !== "finished") throw new Error("scripted current game did not finish");
   if (!log.some((event) => event.type === "PlayerEliminated")) {
-    throw new Error("scripted v2 game did not eliminate anyone");
+    throw new Error("scripted current game did not eliminate anyone");
   }
   return log;
 }
 
 /** A long, ordinary two-sided game — many turns, captures, and turn resets. */
-function playLongGameV2(mapSeed: string, steps = 220): readonly GameEventV2[] {
-  return driveV2(startGameV2({ players: 3, mapSeed }), steps);
+function playLongGame(mapSeed: string, steps = 220): readonly GameEvent[] {
+  return drive(startGame({ players: 3, mapSeed }), steps);
 }
 
-describe("risk-demo-v2 board projection reducer", () => {
+describe("Hex Domination board projection reducer", () => {
   it.each([
-    ["a game played through to victory", () => playFullGameV2("projection-equivalence")],
-    ["a long three-player game", () => playLongGameV2("projection-long")],
+    ["a game played through to victory", () => playFullGame("projection-equivalence")],
+    ["a long three-player game", () => playLongGame("projection-long")],
   ])("agrees with the aggregate fold at every prefix of %s", (_label, build) => {
     const events = build();
     expect(events.length).toBeGreaterThan(8);
 
-    let projection = initialProjectionV2();
+    let projection = initialProjection();
     for (let index = 0; index < events.length; index += 1) {
-      projection = projectEventV2(projection, events[index]!, String(index));
-      const authoritative = aggregateBoardViewV2(foldAggregateV2(events.slice(0, index + 1)));
-      const projected = projectionBoardViewV2(projection);
-      if (!boardsEqualV2(projected, authoritative)) {
+      projection = projectEvent(projection, events[index]!, String(index));
+      const authoritative = aggregateBoardView(foldAggregate(events.slice(0, index + 1)));
+      const projected = projectionBoardView(projection);
+      if (!boardsEqual(projected, authoritative)) {
         // Surface the offending prefix rather than a bare `false`.
         expect({ index, kind: events[index]!.type, projected }).toEqual({
           index,
@@ -160,15 +160,15 @@ describe("risk-demo-v2 board projection reducer", () => {
   });
 
   it("carries the pending defence interrupt, including the recorded attacker dice", () => {
-    const game = startGameV2({ players: 2, mapSeed: "pending-defence" });
+    const game = startGame({ players: 2, mapSeed: "pending-defence" });
     const setup = armForAttack(game);
     game.rig([6, 6, 6]);
-    const attackId = declareAttackV2(game, setup);
+    const attackId = declareAttack(game, setup);
 
     const projection = replay(game.log);
-    const view = projectionBoardViewV2(projection);
+    const view = projectionBoardView(projection);
     expect(view.pending?.type).toBe("defense");
-    expect(boardsEqualV2(view, aggregateBoardViewV2(game.state()))).toBe(true);
+    expect(boardsEqual(view, aggregateBoardView(game.state()))).toBe(true);
 
     expect(projection.combat).toMatchObject({
       attackId,
@@ -179,7 +179,7 @@ describe("risk-demo-v2 board projection reducer", () => {
   });
 
   it("carries the pending occupation bounds and clears combat once occupied", () => {
-    const game = startGameV2({ players: 2, mapSeed: "pending-occupation" });
+    const game = startGame({ players: 2, mapSeed: "pending-occupation" });
     const setup = armForAttack(game);
     const pending = throwUntilCapture(game, setup);
 
@@ -190,22 +190,18 @@ describe("risk-demo-v2 board projection reducer", () => {
       maxArmies: pending.maxArmies,
       territoryCaptured: true,
     });
-    expect(boardsEqualV2(projectionBoardViewV2(captured), aggregateBoardViewV2(game.state()))).toBe(
-      true,
-    );
+    expect(boardsEqual(projectionBoardView(captured), aggregateBoardView(game.state()))).toBe(true);
 
     occupyPending(game, pending.maxArmies);
     const occupied = replay(game.log);
     expect(occupied.combat).toBeNull();
     expect(occupied.turn?.captures).toBe(1);
     expect(occupied.territories.find((t) => t.id === pending.to)!.ownerId).toBe(pending.playerId);
-    expect(boardsEqualV2(projectionBoardViewV2(occupied), aggregateBoardViewV2(game.state()))).toBe(
-      true,
-    );
+    expect(boardsEqual(projectionBoardView(occupied), aggregateBoardView(game.state()))).toBe(true);
   });
 
   it("projects the canonical map snapshot verbatim and derives nothing about geometry", () => {
-    const game = startGameV2({ players: 3, mapSeed: "map-rows" });
+    const game = startGame({ players: 3, mapSeed: "map-rows" });
     const started = game.log.find((event) => event.type === "GameStarted");
     if (started?.type !== "GameStarted") throw new Error("no GameStarted");
     const projection = replay(game.log);
@@ -223,7 +219,7 @@ describe("risk-demo-v2 board projection reducer", () => {
   });
 
   it("tracks the current-turn reinforcement breakdown and resets it on TurnEnded", () => {
-    const game = startGameV2({ players: 2, mapSeed: "turn-row" });
+    const game = startGame({ players: 2, mapSeed: "turn-row" });
     const before = replay(game.log);
     const first = before.turn!;
     expect(first.reinforcement.total).toBe(first.reinforcement.base + bonusSum(first));
@@ -238,7 +234,7 @@ describe("risk-demo-v2 board projection reducer", () => {
 
     game.must({
       type: "skip-fortifications",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: game.state().activePlayerId!,
     });
@@ -249,14 +245,14 @@ describe("risk-demo-v2 board projection reducer", () => {
   });
 
   it("fails loudly when an AttackResolved contradicts its declaration", () => {
-    const game = startGameV2({ players: 2, mapSeed: "integrity" });
+    const game = startGame({ players: 2, mapSeed: "integrity" });
     const setup = armForAttack(game);
     game.rig([6, 6, 6]);
-    declareAttackV2(game, setup);
+    declareAttack(game, setup);
     game.rig([1, 1]);
     game.must({
       type: "roll-defense",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: setup.defenderId,
       attackId: game.log.findLast((e) => e.type === "AttackDeclared")!.attackId,
@@ -277,19 +273,19 @@ function bonusSum(turn: { reinforcement: { continents: Array<{ bonus: number }> 
   return turn.reinforcement.continents.reduce((sum, c) => sum + c.bonus, 0);
 }
 
-function replay(events: readonly GameEventV2[]): ProjectionStateV2 {
-  let state = initialProjectionV2("game-v2");
+function replay(events: readonly GameEvent[]): ProjectionState {
+  let state = initialProjection("game");
   for (let index = 0; index < events.length; index += 1) {
-    state = projectEventV2(state, events[index]!, String(index));
+    state = projectEvent(state, events[index]!, String(index));
   }
   return state;
 }
 
-describe("risk-demo-v2 board projection materializer", () => {
+describe("Hex Domination board projection materializer", () => {
   it("materializes a full game so the projection equals the aggregate at the source head", async () => {
-    const events = playFullGameV2("materialize-full");
+    const events = playFullGame("materialize-full");
     const protocol = newProtocol();
-    await writeCanonicalEventsV2(protocol, SOURCE, events);
+    await writeCanonicalEvents(protocol, SOURCE, events);
 
     const runtime = new ProjectionRuntime({ protocol, adapter: adapterFor() });
     const { status } = await runtime.catchUp();
@@ -297,9 +293,9 @@ describe("risk-demo-v2 board projection materializer", () => {
     expect(status.caughtUp).toBe(true);
     expect(status.sourceSeq).toBe(events.length - 1);
     expect(
-      boardsEqualV2(
-        projectionBoardViewV2(runtime.currentState()),
-        aggregateBoardViewV2(foldAggregateV2(events)),
+      boardsEqual(
+        projectionBoardView(runtime.currentState()),
+        aggregateBoardView(foldAggregate(events)),
       ),
     ).toBe(true);
     expect(runtime.currentState().game.status).toBe("finished");
@@ -307,9 +303,9 @@ describe("risk-demo-v2 board projection materializer", () => {
   });
 
   it("marks each transition with its command and exact source position", async () => {
-    const events = playFullGameV2("materialize-txid").slice(0, 6);
+    const events = playFullGame("materialize-txid").slice(0, 6);
     const protocol = newProtocol();
-    const offsets = await writeCanonicalEventsV2(protocol, SOURCE, events);
+    const offsets = await writeCanonicalEvents(protocol, SOURCE, events);
     await new ProjectionRuntime({ protocol, adapter: adapterFor() }).catchUp();
 
     const output = await protocol.get(OUTPUT);
@@ -327,17 +323,17 @@ describe("risk-demo-v2 board projection materializer", () => {
 
   it("rebuilds a byte-identical generation, including combat and watermark", async () => {
     // Stop mid-combat so the rebuild has a pending interrupt to reproduce.
-    const game = startGameV2({ players: 2, mapSeed: "rebuild-pending" });
+    const game = startGame({ players: 2, mapSeed: "rebuild-pending" });
     const setup = armForAttack(game);
     game.rig([6, 6, 6]);
-    declareAttackV2(game, setup);
+    declareAttack(game, setup);
 
     const protocol = newProtocol();
-    await writeCanonicalEventsV2(protocol, SOURCE, game.log);
+    await writeCanonicalEvents(protocol, SOURCE, game.log);
 
-    const first = new ProjectionRuntime({ protocol, adapter: adapterFor("hex1") });
+    const first = new ProjectionRuntime({ protocol, adapter: adapterFor("board1") });
     await first.catchUp();
-    const rebuilt = new ProjectionRuntime({ protocol, adapter: adapterFor("hex2") });
+    const rebuilt = new ProjectionRuntime({ protocol, adapter: adapterFor("board2") });
     await rebuilt.catchUp();
 
     expect(rebuilt.currentState()).toEqual(first.currentState());
@@ -348,45 +344,45 @@ describe("risk-demo-v2 board projection materializer", () => {
   });
 
   it("catches up incrementally as canonical events arrive, gap-free", async () => {
-    const events = playFullGameV2("materialize-incremental");
+    const events = playFullGame("materialize-incremental");
     const protocol = newProtocol();
     const runtime = new ProjectionRuntime({ protocol, adapter: adapterFor() });
 
     const midpoint = Math.floor(events.length / 2);
-    await writeCanonicalEventsV2(protocol, SOURCE, events.slice(0, midpoint));
+    await writeCanonicalEvents(protocol, SOURCE, events.slice(0, midpoint));
     const first = await runtime.catchUp();
     expect(first.applied).toBe(midpoint);
     // The mid-game snapshot is itself a valid board.
     expect(
-      boardsEqualV2(
-        projectionBoardViewV2(runtime.currentState()),
-        aggregateBoardViewV2(foldAggregateV2(events.slice(0, midpoint))),
+      boardsEqual(
+        projectionBoardView(runtime.currentState()),
+        aggregateBoardView(foldAggregate(events.slice(0, midpoint))),
       ),
     ).toBe(true);
 
-    await writeCanonicalEventsV2(protocol, SOURCE, events.slice(midpoint));
+    await writeCanonicalEvents(protocol, SOURCE, events.slice(midpoint));
     const second = await runtime.catchUp();
     expect(second.applied).toBe(events.length - midpoint);
     expect(
-      boardsEqualV2(
-        projectionBoardViewV2(runtime.currentState()),
-        aggregateBoardViewV2(foldAggregateV2(events)),
+      boardsEqual(
+        projectionBoardView(runtime.currentState()),
+        aggregateBoardView(foldAggregate(events)),
       ),
     ).toBe(true);
   });
 
   it("recovers the board and watermark from the projection stream alone", async () => {
-    const events = playFullGameV2("materialize-reload");
+    const events = playFullGame("materialize-reload");
     const protocol = newProtocol();
-    await writeCanonicalEventsV2(protocol, SOURCE, events);
+    await writeCanonicalEvents(protocol, SOURCE, events);
     await new ProjectionRuntime({ protocol, adapter: adapterFor() }).catchUp();
 
     const reloaded = new ProjectionRuntime({ protocol, adapter: adapterFor() });
     await reloaded.load();
     expect(
-      boardsEqualV2(
-        projectionBoardViewV2(reloaded.currentState()),
-        aggregateBoardViewV2(foldAggregateV2(events)),
+      boardsEqual(
+        projectionBoardView(reloaded.currentState()),
+        aggregateBoardView(foldAggregate(events)),
       ),
     ).toBe(true);
     expect(reloaded.currentState().sourceThroughOffset).not.toBeNull();

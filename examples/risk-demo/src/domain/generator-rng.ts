@@ -14,7 +14,7 @@
  * replay — the seed is provenance, and the recorded snapshot is truth.
  */
 
-/** The named substreams consumed by `hex-generator-v1` and v2 setup. */
+/** The named substreams consumed by `hex-generator-v1` and current setup. */
 export const SUBSTREAMS = [
   "land",
   "territories",

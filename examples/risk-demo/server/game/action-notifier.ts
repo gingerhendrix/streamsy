@@ -3,11 +3,11 @@ import type { StreamProtocolFactory } from "@streamsy/core";
 import { catchUpDerived, readDerived } from "@streamsy/experimental/derived";
 import type { JsonCodec } from "@streamsy/json";
 
-import { foldAggregateV2, buildTurnIdV2 } from "../../src/domain/aggregate-v2.ts";
-import type { PendingInteraction, ReinforcementState } from "../../src/domain/aggregate-v2.ts";
-import { decisionModeV2, legalActionsV2 } from "../../src/application/legal-actions-v2.ts";
-import type { DecisionModeV2, LegalActionV2 } from "../../src/application/legal-actions-v2.ts";
-import { normalizeGameEventV2, type GameEventV2 } from "../../src/domain/events-v2.ts";
+import { foldAggregate, buildTurnId } from "../../src/domain/aggregate.ts";
+import type { PendingInteraction, ReinforcementState } from "../../src/domain/aggregate.ts";
+import { decisionMode, legalActions } from "../../src/application/legal-actions.ts";
+import type { DecisionMode, LegalAction } from "../../src/application/legal-actions.ts";
+import type { GameEvent } from "../../src/domain/events.ts";
 import { actionStreamId, eventStreamId } from "./names.ts";
 
 export type ActionReason =
@@ -32,14 +32,14 @@ export interface ActionRequired {
     activePlayerId: string;
     reinforcement: ReinforcementState;
   };
-  mode: Exclude<DecisionModeV2, "waiting" | "finished">;
+  mode: Exclude<DecisionMode, "waiting" | "finished">;
   pendingInteraction: PendingInteraction | null;
-  legalMoves: LegalActionV2[];
+  legalMoves: LegalAction[];
   board: {
     territories: Array<{ id: string; ownerId: string | null; armies: number }>;
     players: Array<{ id: string; eliminated: boolean }>;
   };
-  since: { fromEventOffset: string | null; events: GameEventV2[] };
+  since: { fromEventOffset: string | null; events: GameEvent[] };
   eventOffset: string;
 }
 
@@ -50,19 +50,19 @@ export interface GameOver {
   gameId: string;
   playerId: string;
   winner: { id: string; name: string };
-  since: { fromEventOffset: string | null; events: GameEventV2[] };
+  since: { fromEventOffset: string | null; events: GameEvent[] };
   eventOffset: string;
 }
 
 export type AgentMessage = ActionRequired | GameOver;
 interface OffsetEvent {
-  event: GameEventV2;
+  event: GameEvent;
   offset: string;
 }
 
-const eventSchema: JsonCodec<GameEventV2> = {
+const eventSchema: JsonCodec<GameEvent> = {
   encode: (event) => event,
-  decode: normalizeGameEventV2,
+  decode: (value) => value as GameEvent,
 };
 const messageSchema: JsonCodec<AgentMessage> = {
   encode: (message) => message,
@@ -76,7 +76,7 @@ const messageSchema: JsonCodec<AgentMessage> = {
  * placement that empties it moves the turn into `attack` (`phase-changed`).
  */
 function reasonFor(
-  event: GameEventV2,
+  event: GameEvent,
   pending: PendingInteraction | undefined,
   reinforcementRemaining: number,
 ): ActionReason {
@@ -91,11 +91,11 @@ function reasonFor(
 }
 
 function signature(
-  mode: DecisionModeV2,
+  mode: DecisionMode,
   turnId: string,
   phase: string | undefined,
   pending: PendingInteraction | undefined,
-  legalMoves: LegalActionV2[],
+  legalMoves: LegalAction[],
 ): string {
   return JSON.stringify([
     mode,
@@ -117,7 +117,7 @@ export function deriveActions(
   for (let index = 0; index < source.length; index += 1) {
     const current = source[index]!;
     const prefix = source.slice(0, index + 1);
-    const state = foldAggregateV2(prefix.map(({ event }) => event));
+    const state = foldAggregate(prefix.map(({ event }) => event));
 
     if (current.event.type === "GameWon") {
       const won = current.event;
@@ -146,9 +146,9 @@ export function deriveActions(
     }
 
     if (state.status !== "playing" || !state.activePlayerId || !state.phase) continue;
-    const turnId = buildTurnIdV2(state.round, state.activePlayerId);
+    const turnId = buildTurnId(state.round, state.activePlayerId);
     for (const player of state.players) {
-      const legalMoves = legalActionsV2(state, player.id);
+      const legalMoves = legalActions(state, player.id);
       if (legalMoves.length === 0) {
         // Becoming blocked is itself a signature transition. Forget the last
         // actionable signature so returning from defence resolution emits even
@@ -156,7 +156,7 @@ export function deriveActions(
         lastSignature.delete(player.id);
         continue;
       }
-      const mode = decisionModeV2(state, player.id);
+      const mode = decisionMode(state, player.id);
       if (mode !== "active-turn" && mode !== "defense") continue;
       const sig = signature(mode, turnId, state.phase, state.pendingInteraction, legalMoves);
       if (sig === lastSignature.get(player.id)) continue;

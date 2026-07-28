@@ -1,5 +1,5 @@
 /**
- * The `risk-demo-v2` map: one responsive SVG, drawn from canonical `(q, r)` tiles.
+ * The `Hex Domination` map: one responsive SVG, drawn from canonical `(q, r)` tiles.
  *
  * Layers, back to front:
  *
@@ -9,7 +9,7 @@
  * Terrain is never signalled by colour alone: each type has its own SVG pattern, so
  * the map stays readable under a translucent owner wash and for a player who cannot
  * separate the hues. Adjacency is not drawn at all — hexes touch, and that *is* the
- * explanation, which is why v1's dotted route lines have no successor here.
+ * explanation, so the surface does not draw abstract route lines.
  *
  * The interaction layer sits on top as transparent per-country paths carrying
  * `role="button"`, an `aria-label`, and a tab stop. Selection is a click or an
@@ -28,9 +28,9 @@ import {
   type ReactNode,
 } from "react";
 
-import type { ProjectedContinentV2, ProjectedHexV2 } from "../board/projection-v2.ts";
-import type { Terrain } from "../domain/map-v2.ts";
-import { TERRAIN_TYPES } from "../domain/map-v2.ts";
+import type { ProjectedContinent, ProjectedHex } from "../board/projection.ts";
+import type { Terrain } from "../domain/map.ts";
+import { TERRAIN_TYPES } from "../domain/map.ts";
 import type { Axial } from "../domain/hex.ts";
 import { layoutCountryLabels } from "./label-layout.ts";
 import {
@@ -90,9 +90,9 @@ export interface MapTerritory {
 }
 
 export interface HexMapProps {
-  hexes: ProjectedHexV2[];
+  hexes: ProjectedHex[];
   territories: MapTerritory[];
-  continents: ProjectedContinentV2[];
+  continents: ProjectedContinent[];
   colorOf(playerId: string | undefined): string;
   ownerNameOf(playerId: string | undefined): string;
   stateOf(territoryId: string): TerritoryInteractionState;

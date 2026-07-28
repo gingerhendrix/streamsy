@@ -12,7 +12,6 @@ import {
   type CapabilityRole,
 } from "../capabilities.ts";
 import { createBoardRuntimeCache, type BoardRuntimeCache } from "../game/board.ts";
-import { createBoardRuntimeCacheV2, type BoardRuntimeCacheV2 } from "../game/board-v2.ts";
 import type { CommandServiceDeps } from "../game/command-service.ts";
 import {
   createDefenseTimers,
@@ -32,8 +31,7 @@ export interface AppDeps {
   rng?: Rng;
   now?: () => number;
   boardCache?: BoardRuntimeCache;
-  boardCacheV2?: BoardRuntimeCacheV2;
-  /** `risk-demo-v2` defence window; injectable so tests need not wait 15s. */
+  /** `Hex Domination` defence window; injectable so tests need not wait 15s. */
   defenseTimeoutMs?: number;
   /** Delayed-execution primitive for defence timeouts; manual in tests. */
   scheduler?: TimerScheduler;
@@ -50,7 +48,6 @@ export interface AppContext {
   stores: Stores;
   now: () => number;
   boardCache: BoardRuntimeCache;
-  boardCacheV2: BoardRuntimeCacheV2;
   commandService: CommandServiceDeps;
   createGameId(): string;
   defenseTimers: DefenseTimers;
@@ -67,7 +64,6 @@ export interface AppContext {
 export function buildApp(deps: AppDeps): App {
   const now = deps.now ?? (() => Date.now());
   const boardCache = deps.boardCache ?? createBoardRuntimeCache();
-  const boardCacheV2 = deps.boardCacheV2 ?? createBoardRuntimeCacheV2();
   const commandService: CommandServiceDeps = {
     protocol: deps.protocol,
     commands: deps.stores.commands,
@@ -132,7 +128,6 @@ export function buildApp(deps: AppDeps): App {
     stores: deps.stores,
     now,
     boardCache,
-    boardCacheV2,
     commandService,
     createGameId: deps.createGameId ?? (() => randomId("game")),
     defenseTimers,

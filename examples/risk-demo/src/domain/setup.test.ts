@@ -1,19 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import type { GameCreatedV2, GameStartedV2 } from "./events-v2.ts";
+import type { GameCreated, GameStarted } from "./events.ts";
 import { canonicalJson, generateHexMap, hashGeneratedMap } from "./hex-generator.ts";
 import {
-  GENERATOR_VERSION_V2,
+  GENERATOR_VERSION,
   MAP_PROFILES,
-  MAP_VERSION_V2,
-  RULESET_V2,
-  RULES_V2,
+  MAP_VERSION,
+  RULES,
   generateMapSeed,
   indexMap,
   mapProfileFor,
-} from "./map-v2.ts";
+} from "./map.ts";
 import { createSeededRng } from "./rng.ts";
-import { planGameSetup, planGameStart } from "./setup-v2.ts";
+import { planGameSetup, planGameStart } from "./setup.ts";
 
 const PLAYERS = ["p_ada", "p_bob", "p_cai", "p_dee"];
 
@@ -21,7 +20,7 @@ function playersFor(count: number): string[] {
   return PLAYERS.slice(0, count);
 }
 
-describe.each(MAP_PROFILES)("v2 setup allocation: $players players", (profile) => {
+describe.each(MAP_PROFILES)("current setup allocation: $players players", (profile) => {
   const seeds = Array.from({ length: 25 }, (_, i) => `setup-${i}`);
   const plans = seeds.map((seed) =>
     planGameStart({ mapSeed: seed, playerIds: playersFor(profile.players) }),
@@ -72,7 +71,7 @@ describe.each(MAP_PROFILES)("v2 setup allocation: $players players", (profile) =
   it("leaves at least one army on every owned country", () => {
     for (const plan of plans) {
       for (const territory of plan.initialTerritories) {
-        expect(territory.armies).toBeGreaterThanOrEqual(RULES_V2.initialArmiesPerTerritory);
+        expect(territory.armies).toBeGreaterThanOrEqual(RULES.initialArmiesPerTerritory);
       }
     }
   });
@@ -109,7 +108,7 @@ describe.each(MAP_PROFILES)("v2 setup allocation: $players players", (profile) =
   });
 });
 
-describe("v2 setup determinism", () => {
+describe("current setup determinism", () => {
   it("produces an identical plan for the same seed and lobby", () => {
     const a = planGameStart({ mapSeed: "det-seed", playerIds: playersFor(3) });
     const b = planGameStart({ mapSeed: "det-seed", playerIds: playersFor(3) });
@@ -140,24 +139,22 @@ describe("v2 setup determinism", () => {
 // Canonical recording and replay independence
 // ---------------------------------------------------------------------------
 
-describe("v2 canonical recording", () => {
+describe("current canonical recording", () => {
   it("records seed and generator provenance on GameCreated", () => {
     const mapSeed = generateMapSeed(createSeededRng(2024));
-    const created: GameCreatedV2 = {
+    const created: GameCreated = {
       type: "GameCreated",
       gameId: "game_1",
       hostPlayerId: "p_ada",
       hostName: "Ada",
       hostColor: "#c33",
       hostController: "human",
-      ruleset: RULESET_V2,
-      mapVersion: MAP_VERSION_V2,
-      generatorVersion: GENERATOR_VERSION_V2,
+      mapVersion: MAP_VERSION,
+      generatorVersion: GENERATOR_VERSION,
       mapSeed,
       commandId: "cmd-create",
     };
 
-    expect(created.ruleset).toBe("risk-demo-v2");
     expect(created.mapVersion).toBe("procedural-hex-v1");
     expect(created.generatorVersion).toBe("hex-generator-v1");
     expect(created.mapSeed).toMatch(/^[0-9a-f]{32}$/);
@@ -166,7 +163,7 @@ describe("v2 canonical recording", () => {
   it("carries the whole map in GameStarted so replay needs no generator", () => {
     const mapSeed = generateMapSeed(createSeededRng(77));
     const plan = planGameStart({ mapSeed, playerIds: playersFor(4) });
-    const started: GameStartedV2 = {
+    const started: GameStarted = {
       type: "GameStarted",
       map: plan.map,
       turnOrder: [...plan.turnOrder],
@@ -176,7 +173,7 @@ describe("v2 canonical recording", () => {
     };
 
     // A replaying consumer only ever sees the serialized event.
-    const replayed = JSON.parse(JSON.stringify(started)) as GameStartedV2;
+    const replayed = JSON.parse(JSON.stringify(started)) as GameStarted;
     expect(hashGeneratedMap(replayed.map)).toBe(hashGeneratedMap(plan.map));
     expect(replayed.map.tiles).toHaveLength(mapProfileFor(4).hexes);
     expect(replayed.initialTerritories).toHaveLength(mapProfileFor(4).territories);

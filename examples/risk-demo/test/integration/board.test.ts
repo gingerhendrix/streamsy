@@ -1,8 +1,8 @@
 /**
- * The `risk-demo-v2` board projection over HTTP.
+ * The `Hex Domination` board projection over HTTP.
  *
  * The kernel tests already prove the reducer agrees with the aggregate. What is
- * under test here is the *surface*: `GET /board` serves a v2 game on its own
+ * under test here is the *surface*: `GET /board` serves a current game on its own
  * generation, the `combat` row walks awaiting-defense → awaiting-occupation →
  * gone as the interrupt resolves, and `/decision` reports the projection's real
  * watermark rather than a canonical-head placeholder.
@@ -11,22 +11,20 @@
 import { describe, expect, it } from "vitest";
 
 import { rebuildBoardGeneration } from "../../server/game/rebuild.ts";
-import { RULESET_V2 } from "../../src/domain/map-v2.ts";
-import { rendererForGame } from "../../src/ui/shared.tsx";
 import {
   boardFor,
   call,
-  createV2Game,
+  createGame,
   decisionFor,
   declareAttack,
   post,
   throwUntilCapture,
-  v2Harness,
-} from "../v2-harness.ts";
+  riskHarness,
+} from "../harness.ts";
 
-describe("risk-demo-v2 board projection surface", () => {
+describe("Hex Domination board projection surface", () => {
   it("assigns lobby colours conflict-safely instead of rejecting duplicates", async () => {
-    const h = v2Harness();
+    const h = riskHarness();
     const created = await call(h.app, "POST", "/v1/games", {
       body: { name: "Alice", color: "#E05A47", mapSeed: "unique-colours" },
     });
@@ -71,8 +69,8 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("maps public agent seats to external control and keeps bots explicit", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, {
+    const h = riskHarness();
+    const game = await createGame(h.app, {
       controllers: ["agent", "bot"],
       mapSeed: "controller-boundary",
     });
@@ -85,12 +83,11 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("projects the map, roster totals, and current turn once the game starts", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { players: 3, mapSeed: "board-surface" });
+    const h = riskHarness();
+    const game = await createGame(h.app, { players: 3, mapSeed: "board-surface" });
     const board = await boardFor(h.app, game);
 
     expect(board.game.status).toBe("playing");
-    expect(board.game.ruleset).toBe(RULESET_V2);
     expect(board.game.mapVersion).toBe("procedural-hex-v1");
     expect(board.hexes).toHaveLength(84);
     expect(board.territories).toHaveLength(18);
@@ -119,8 +116,8 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("commits a distributed reinforcement turn as one atomic command", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { mapSeed: "atomic-reinforcement" });
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "atomic-reinforcement" });
     const before = await boardFor(h.app, game);
     const active = before.game.activePlayerId as string;
     const decision = await decisionFor(h.app, game, active);
@@ -163,8 +160,8 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("walks the combat row from awaiting-defense to awaiting-occupation to cleared", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { mapSeed: "combat-lifecycle" });
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "combat-lifecycle" });
     const attack = await declareAttack(h, game, [6, 6, 6]);
 
     const declared = await boardFor(h.app, game);
@@ -219,8 +216,8 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("labels a timeout-resolved throw as such in the projected turn ledger", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { mapSeed: "combat-timeout" });
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "combat-timeout" });
     const attack = await declareAttack(h, game);
 
     h.clock.now += 15_001;
@@ -232,8 +229,8 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("reports a real projection watermark that the decision is never ahead of", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { mapSeed: "watermark" });
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "watermark" });
     const player = game.players[0]!;
 
     const decision = await decisionFor(h.app, game, player);
@@ -260,12 +257,12 @@ describe("risk-demo-v2 board projection surface", () => {
     expect(synced.board.sourceThroughOffset).toBe(ack.body.eventOffset);
   });
 
-  it("rebuilds the v2 generation and cuts over without touching v1 lineage", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app, { mapSeed: "v2-rebuild" });
+  it("rebuilds a fresh generation and cuts over after verification", async () => {
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "current-rebuild" });
     await declareAttack(h, game);
     const before = await boardFor(h.app, game);
-    expect(before.generation).toBe("hex1");
+    expect(before.generation).toBe("board1");
 
     const result = await rebuildBoardGeneration(
       { protocol: h.protocol, stores: h.stores },
@@ -273,61 +270,18 @@ describe("risk-demo-v2 board projection surface", () => {
       { now: () => h.clock.now + 1_000 },
     );
     expect(result.status).toBe("cutover");
-    expect(result.toGeneration).toBe("hex2");
+    expect(result.toGeneration).toBe("board2");
     expect(result.equivalence).toEqual({ boardEqual: true, watermarkEqual: true });
 
     const after = await boardFor(h.app, game);
-    expect(after.generation).toBe("hex2");
-    expect(after.reducerVersion).toBe("risk-demo-v2:board-1");
+    expect(after.generation).toBe("board2");
+    expect(after.reducerVersion).toBe("hex-domination:board-1");
     expect(after.sourceThroughOffset).toBe(before.sourceThroughOffset);
     expect(after.territories).toEqual(before.territories);
     expect(after.combat).toEqual(before.combat);
     expect(h.stores.generations.list(game.gameId).map((g) => g.generation)).toEqual([
-      "hex1",
-      "hex2",
+      "board1",
+      "board2",
     ]);
-  });
-
-  it("keeps a v1 game on the v1 generation and reducer", async () => {
-    const h = v2Harness();
-    const created = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Alice" },
-    });
-    const board = await call(h.app, "GET", `/v1/games/${created.body.game.id}/board`);
-    expect(board.status).toBe(200);
-    expect(board.body.ruleset).toBe("risk-demo-v1");
-    expect(board.body.generation).toBe("v1");
-    expect(board.body).not.toHaveProperty("hexes");
-  });
-
-  it("routes each game to its own renderer from the canonical ruleset alone", async () => {
-    // A v1 game stays viewable and playable on the v1 board. The renderer comes
-    // from `ruleset`, never from
-    // which rows a projection happens to be missing.
-    const h = v2Harness();
-    const v1 = await call(h.app, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Alice" },
-    });
-    const v2 = await call(h.app, "POST", "/v1/games", { body: { name: "Alice" } });
-
-    expect(rendererForGame(v1.body.game)).toBe("risk-demo-v1");
-    expect(rendererForGame(v2.body.game)).toBe("risk-demo-v2");
-    // Nothing is chosen before the game resource arrives, so neither board stream
-    // is opened speculatively.
-    expect(rendererForGame(null)).toBeNull();
-
-    // And the v1 game still accepts v1 play through the v1 kernel.
-    const joined = await call(h.app, "POST", `/v1/games/${v1.body.game.id}/players`, {
-      body: { name: "Bob", color: "blue" },
-    });
-    expect(joined.status).toBe(201);
-    const started = await call(h.app, "POST", `/v1/games/${v1.body.game.id}/start`, {
-      token: v1.body.capability,
-      body: {},
-    });
-    expect(started.status).toBe(200);
-    const playing = await call(h.app, "GET", `/v1/games/${v1.body.game.id}`);
-    expect(playing.body.status).toBe("playing");
-    expect(playing.body.ruleset).toBe("risk-demo-v1");
   });
 });

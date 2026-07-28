@@ -11,7 +11,7 @@
  * One printed system for the whole product: warm khaki stock, charcoal ink,
  * olive drab for commands, and a single signal red held back for urgency. Rules
  * and spacing do the work cards and shadows would otherwise do, so the landing
- * page, the lobby, the playing surface and the v1 board all read as
+ * page, the lobby, and the playing surface all read as
  * pages of the same document.
  *
  * Player colour belongs to game state — the map, army counters, standings — and
@@ -676,15 +676,15 @@ summary:focus-visible,
   font: 0.72rem/1.45 var(--mono-face);
 }
 
-/* --- lobby v2: the pre-deployment briefing ---------------------------------
+/* --- lobby: the pre-deployment briefing ---------------------------------
  *
- * The `.lobby-*` declarations above belong to the v1 surface and stay as
- * they are. The v2 lobby is a bounded briefing page: brief, then two panes —
+ * The lobby is
+ * they are. a bounded briefing page: brief, then two panes —
  * the muster roll (who) beside the terrain survey (where). Commands are normal
  * rectangles in one row rather than page-wide bars.
  * ------------------------------------------------------------------------- */
 
-.lobby-v2 {
+.lobby {
   max-width: 1100px;
   margin: 0 auto;
   padding-top: 1.2rem;
@@ -714,7 +714,7 @@ summary:focus-visible,
   padding-top: 1.1rem;
 }
 
-/* The muster roll: every ruleset seat is set, filled or not. */
+/* The muster roll: every seat is shown, filled or not. */
 .muster-list {
   margin: 0 0 0.4rem;
   padding: 0;
@@ -787,7 +787,7 @@ summary:focus-visible,
   padding-top: 0.9rem;
 }
 /* The briefing is a full-width document; its copy command is still a normal one. */
-.lobby-v2 .agent-seat button {
+.lobby .agent-seat button {
   justify-self: start;
 }
 
@@ -899,186 +899,6 @@ summary:focus-visible,
   }
 }
 
-/* ---------------------------------------------------------------------------
- * risk-demo-v1 board
- *
- * The original fixed-map surface, kept for games created before the hex ruleset
- * and set in the same language: flat owner fields, ink boundaries, ruled
- * columns instead of floating cards.
- * ------------------------------------------------------------------------- */
-
-.game-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 0;
-  margin-top: 1rem;
-}
-.main-column {
-  display: grid;
-  align-content: start;
-  gap: 0.9rem;
-  min-width: 0;
-  padding-right: 1rem;
-}
-.side-column {
-  display: grid;
-  align-content: start;
-  gap: 0;
-  min-width: 0;
-  padding-left: 1rem;
-  border-left: 1px solid var(--ink);
-}
-.turn-banner {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  padding-bottom: 0.8rem;
-  border-bottom: 2px solid var(--ink);
-}
-.turn-banner h1 {
-  margin: 0.2rem 0 0;
-  font-size: clamp(1.7rem, 3vw, 2.4rem);
-  font-weight: 800;
-  letter-spacing: -0.025em;
-  text-transform: uppercase;
-}
-/* Whose turn it is: a ruled colour block beside the name, not a tinted edge. */
-.active-chip {
-  --player: var(--olive);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  align-self: center;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--ink);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-.active-chip::before {
-  content: "";
-  width: 12px;
-  height: 6px;
-  border: 1px solid var(--ink);
-  background: var(--player);
-}
-.map-grid {
-  position: relative;
-  min-height: clamp(370px, 48vw, 590px);
-  overflow: hidden;
-  border: 1px solid var(--ink);
-  background: var(--map-field);
-}
-.map-lines {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.map-lines line {
-  stroke: var(--map-edge);
-  stroke-width: 0.8;
-  stroke-dasharray: 1.5 1.5;
-  vector-effect: non-scaling-stroke;
-  opacity: 0.55;
-}
-.territory-button {
-  --owner: #6f6e5a;
-  position: absolute;
-  transform: translate(-50%, -50%);
-  width: clamp(96px, 13vw, 148px);
-  aspect-ratio: 1.55;
-  padding: 0.5rem;
-  border: 2px solid var(--map-ink);
-  border-radius: 0;
-  background: var(--owner);
-  color: var(--cream);
-  display: grid;
-  place-items: center;
-  z-index: 2;
-}
-/* Actionable is a dashed signal border, so the cue survives without colour. */
-.territory-button.actionable {
-  outline: 3px dashed var(--signal);
-  outline-offset: 2px;
-}
-.territory-button:disabled {
-  opacity: 1;
-  cursor: default;
-}
-.territory-button.actionable:disabled {
-  outline: 0;
-  opacity: 0.48;
-}
-.territory-button b {
-  font-size: clamp(1.45rem, 3vw, 2.2rem);
-  font-weight: 800;
-  line-height: 1;
-}
-.territory-button small {
-  font-size: 0.62rem;
-  max-width: 86px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.territory-name {
-  font-size: 0.67rem;
-  font-weight: 800;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-}
-.map-caption {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.6rem 0 0;
-  color: var(--muted);
-  font-family: var(--mono-face);
-  font-size: 0.6rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.action-panel {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.33fr) 1fr;
-  gap: 1rem;
-  align-items: center;
-  padding: 0.8rem 0;
-  border-top: 2px solid var(--ink);
-  border-bottom: 1px solid var(--ink);
-}
-.action-panel h2 {
-  margin: 0.3rem 0 0;
-  font-size: 1rem;
-  text-transform: uppercase;
-}
-.action-list {
-  display: flex;
-  gap: 0.5rem;
-  overflow-x: auto;
-  padding: 0.2rem;
-}
-.action-list button {
-  display: grid;
-  gap: 0.15rem;
-  font-size: 0.7rem;
-  text-align: left;
-  white-space: nowrap;
-}
-.action-list button small {
-  color: var(--muted);
-  font-size: 0.58rem;
-}
-.action-list .end-turn {
-  margin-left: auto;
-  border-color: var(--olive-dark);
-  background: var(--olive-dark);
-  color: var(--cream);
-}
-.action-hint {
-  font-size: 0.75rem;
-}
-
 /* --- responsive ----------------------------------------------------------- */
 
 @media (max-width: 980px) {
@@ -1147,7 +967,7 @@ summary:focus-visible,
   }
 }
 /* ---------------------------------------------------------------------------
- * risk-demo-v2 playing surface — the field manual
+ * Hex Domination playing surface — the field manual
  *
  * A thin match bar over three columns: current turn, map, status. Each column owns
  * one question, so nothing needs to compete for the top of the page. The map itself
@@ -1160,7 +980,7 @@ summary:focus-visible,
  * declarations below describe the page once rather than decorating a box twice.
  * ------------------------------------------------------------------------- */
 
-.game-shell.v2 {
+.game-shell {
   max-width: 1800px;
   padding-bottom: 2rem;
 }

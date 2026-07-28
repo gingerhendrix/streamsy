@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
-import type { NameLookup } from "./presentation-v2.ts";
+import type { LegalAction } from "../application/legal-actions.ts";
+import type { NameLookup } from "./presentation.ts";
 
 export type PendingReinforcements = ReadonlyMap<string, number>;
 
@@ -36,7 +36,7 @@ export function adjustPendingReinforcements(
 }
 
 interface ReinforcementPlacementProps {
-  action: Extract<LegalActionV2, { type: "reinforce" }>;
+  action: Extract<LegalAction, { type: "reinforce" }>;
   names: NameLookup;
   pending: PendingReinforcements;
   busy: boolean;

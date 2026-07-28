@@ -1,5 +1,5 @@
 /**
- * The `risk-demo-v2` player palette and its conflict-safe assignment.
+ * The `Hex Domination` player palette and its conflict-safe assignment.
  *
  * Colour is game state, and the decider is the only race-safe place to choose it:
  * assignment happens after the command log has deduped `commandId` and folded the
@@ -9,21 +9,21 @@
  * otherwise the seat is issued the first available palette colour instead of the
  * join being rejected.
  *
- * The palette has exactly `RULES_V2.maxPlayers` entries, and every seat check runs
+ * The palette has exactly `RULES.maxPlayers` entries, and every seat check runs
  * after the roster-size guard, so a free palette colour always exists.
  */
 
-import { RULES_V2 } from "./map-v2.ts";
+import { RULES } from "./map.ts";
 
 /**
- * The palette is the seat budget: if the ruleset ever seats more players than the
+ * The palette is the seat budget: if the game ever seats more players than the
  * palette can issue, assignment could repeat a colour, so the length is checked
- * against `RULES_V2.maxPlayers` at compile time.
+ * against `RULES.maxPlayers` at compile time.
  */
-type SeatColorPalette = readonly string[] & { readonly length: typeof RULES_V2.maxPlayers };
+type SeatColorPalette = readonly string[] & { readonly length: typeof RULES.maxPlayers };
 
 /** One issued colour per possible seat, in issue order. */
-export const PLAYER_COLORS_V2 = [
+export const PLAYER_COLORS = [
   "#e05a47",
   "#3b82f6",
   "#d49b35",
@@ -39,15 +39,12 @@ export function normalizedPlayerColor(color: string): string {
  * The colour a new seat receives: the requested colour when it is present and
  * unclaimed, otherwise the first free palette colour.
  */
-export function assignPlayerColorV2(
-  takenColors: readonly string[],
-  requestedColor?: string,
-): string {
+export function assignPlayerColor(takenColors: readonly string[], requestedColor?: string): string {
   const taken = new Set(takenColors.map(normalizedPlayerColor));
   const requested = requestedColor?.trim();
   if (requested && !taken.has(normalizedPlayerColor(requested))) return requested;
-  const available = PLAYER_COLORS_V2.find((color) => !taken.has(normalizedPlayerColor(color)));
+  const available = PLAYER_COLORS.find((color) => !taken.has(normalizedPlayerColor(color)));
   // Unreachable while the palette matches `maxPlayers` and assignment follows the
   // roster-size guard; the first palette colour keeps the function total anyway.
-  return available ?? PLAYER_COLORS_V2[0];
+  return available ?? PLAYER_COLORS[0];
 }

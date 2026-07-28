@@ -10,13 +10,7 @@
 
 import type { CapabilityRole } from "../capabilities.ts";
 import type { GameEvent } from "../../src/domain/events.ts";
-import type { GameEventV2 } from "../../src/domain/events-v2.ts";
 import type { DecisionError } from "../../src/domain/decide.ts";
-import type { DecisionErrorV2 } from "../../src/domain/decide-v2.ts";
-
-/** The command log stores whichever ruleset's events/rejections a game speaks. */
-export type AnyGameEvent = GameEvent | GameEventV2;
-export type AnyDecisionError = DecisionError | DecisionErrorV2;
 
 export interface CapabilityRow {
   tokenId: string;
@@ -32,12 +26,6 @@ export interface GameRow {
   sourceStreamId: string;
   projectionStreamId: string;
   generation: string;
-  /**
-   * Which canonical ruleset this stream speaks. Recorded here so the command
-   * service can pick the right fold/decide pair without first reading the stream;
-   * the authoritative copy is still the `ruleset` field in `GameCreated`.
-   */
-  ruleset: string;
   createdAt: number;
 }
 
@@ -47,8 +35,8 @@ export interface CommandRow {
   payloadHash: string;
   status: "accepted" | "rejected";
   sourceOffset?: string;
-  events?: AnyGameEvent[];
-  error?: AnyDecisionError;
+  events?: GameEvent[];
+  error?: DecisionError;
   createdAt: number;
 }
 

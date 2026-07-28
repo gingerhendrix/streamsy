@@ -62,7 +62,7 @@ test("a board-generation cutover survives a SQLite restart and keeps the old gen
   const first = openApp();
 
   const created = await call(first.app, "POST", "/v1/games", {
-    body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
+    body: { name: "Alice", color: "red" },
   });
   const gameId: string = created.body.game.id;
   const hostToken: string = created.body.capability;
@@ -87,40 +87,39 @@ test("a board-generation cutover survives a SQLite restart and keeps the old gen
       turnId: decision.body.turn.id,
       action: {
         type: "reinforce",
-        territoryId: reinforce.territoryIds[0],
-        armies: reinforce.pool,
+        placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.pool }],
       },
     },
   });
 
   const before = await call(first.app, "GET", `/v1/games/${gameId}/board`);
-  expect(before.body.generation).toBe("v1");
+  expect(before.body.generation).toBe("board1");
 
   const result = await rebuildBoardGeneration(
     { protocol: first.protocol, stores: first.stores },
     gameId,
   );
   expect(result.status).toBe("cutover");
-  expect(result.toGeneration).toBe("v2");
+  expect(result.toGeneration).toBe("board2");
   const cutoverBoard = await call(first.app, "GET", `/v1/games/${gameId}/board`);
-  expect(cutoverBoard.body.generation).toBe("v2");
+  expect(cutoverBoard.body.generation).toBe("board2");
   first.close();
 
   // --- restart: reopen the same database file ---
   const second = openApp();
 
-  // The active pointer survived: reads use v2 with the same board + watermark.
+  // The active pointer survived with the same board and watermark.
   const after = await call(second.app, "GET", `/v1/games/${gameId}/board`);
-  expect(after.body.generation).toBe("v2");
+  expect(after.body.generation).toBe("board2");
   expect(after.body.sourceThroughOffset).toBe(before.body.sourceThroughOffset);
   expect(after.body.territories).toEqual(before.body.territories);
 
-  // Both generations are still recorded; v1 retired but retained, v2 active.
+  // Both generations are recorded: the first retired, the second active.
   const gens = second.stores.generations.list(gameId);
-  expect(gens.map((g) => g.generation)).toEqual(["v1", "v2"]);
-  expect(gens.find((g) => g.generation === "v1")!.status).toBe("retired");
-  expect(gens.find((g) => g.generation === "v2")!.status).toBe("active");
-  expect(second.stores.games.get(gameId)!.generation).toBe("v2");
+  expect(gens.map((g) => g.generation)).toEqual(["board1", "board2"]);
+  expect(gens.find((g) => g.generation === "board1")!.status).toBe("retired");
+  expect(gens.find((g) => g.generation === "board2")!.status).toBe("active");
+  expect(second.stores.games.get(gameId)!.generation).toBe("board2");
 
   second.close();
 });

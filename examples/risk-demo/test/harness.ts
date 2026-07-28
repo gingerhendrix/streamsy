@@ -1,5 +1,5 @@
 /**
- * HTTP-level fixtures for `risk-demo-v2` integration tests.
+ * HTTP-level fixtures for `Hex Domination` integration tests.
  *
  * Three things are injected that production leaves to the environment, and each
  * exists so a protocol property can be asserted rather than waited for:
@@ -20,7 +20,6 @@ import type { StreamProtocolFactory } from "@streamsy/core";
 import { buildApp, type App } from "../server/http/app.ts";
 import { createInMemoryStores, type Stores } from "../server/persistence/stores.ts";
 import { createManualScheduler, type ManualScheduler } from "../server/game/defense-timer.ts";
-import { RULESET_V2 } from "../src/domain/map-v2.ts";
 import type { Rng } from "../src/domain/rng.ts";
 import { createSeededRng } from "../src/domain/rng.ts";
 import type { HttpCall } from "../server/demo/bot.ts";
@@ -28,7 +27,7 @@ import type { HttpCall } from "../server/demo/bot.ts";
 export const BASE = "http://risk.test";
 export const DEFENSE_MS = 15_000;
 
-export interface V2Harness {
+export interface Harness {
   app: App;
   stores: Stores;
   protocol: StreamProtocolFactory;
@@ -49,7 +48,7 @@ export function riggableRng(seed: number): Rng & { rig(faces: readonly number[])
   };
 }
 
-export function v2Harness(seed = 11): V2Harness {
+export function riskHarness(seed = 11): Harness {
   const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
   const stores = createInMemoryStores();
   const scheduler = createManualScheduler();
@@ -67,7 +66,7 @@ export function v2Harness(seed = 11): V2Harness {
 }
 
 /** Rebuild the app over the SAME storage and stores — a process restart. */
-export function restartV2(previous: V2Harness, seed = 11): V2Harness {
+export function restart(previous: Harness, seed = 11): Harness {
   const scheduler = createManualScheduler();
   const rng = riggableRng(seed);
   const app = buildApp({
@@ -104,24 +103,23 @@ export function httpFor(app: App): HttpCall {
   return (method, path, opts = {}) => call(app, method, path, opts);
 }
 
-export interface V2Game {
+export interface Game {
   gameId: string;
   players: string[];
   tokenByPlayer: Record<string, string>;
 }
 
-export async function createV2Game(
+export async function createGame(
   app: App,
   options: {
     players?: number;
     controllers?: Array<"human" | "bot" | "agent">;
     mapSeed?: string;
   } = {},
-): Promise<V2Game> {
+): Promise<Game> {
   const count = options.players ?? 2;
   const created = await call(app, "POST", "/v1/games", {
     body: {
-      ruleset: RULESET_V2,
       name: "Alice",
       color: "red",
       controller:
@@ -130,7 +128,6 @@ export async function createV2Game(
     },
   });
   expect(created.status).toBe(201);
-  expect(created.body.game.ruleset).toBe(RULESET_V2);
   const gameId: string = created.body.game.id;
   const hostId: string = created.body.player.id;
   const players = [hostId];
@@ -176,7 +173,7 @@ export async function createV2Game(
   return { gameId, players, tokenByPlayer };
 }
 
-export async function decisionFor(app: App, game: V2Game, playerId: string) {
+export async function decisionFor(app: App, game: Game, playerId: string) {
   const res = await call(app, "GET", `/v1/games/${game.gameId}/decision`, {
     token: game.tokenByPlayer[playerId]!,
   });
@@ -184,12 +181,12 @@ export async function decisionFor(app: App, game: V2Game, playerId: string) {
   return res.body;
 }
 
-export async function gameMeta(app: App, game: V2Game) {
+export async function gameMeta(app: App, game: Game) {
   return (await call(app, "GET", `/v1/games/${game.gameId}`)).body;
 }
 
-/** The projected v2 board — including the static map rows `/decision` omits. */
-export async function boardFor(app: App, game: V2Game) {
+/** The projected current board — including the static map rows `/decision` omits. */
+export async function boardFor(app: App, game: Game) {
   const res = await call(app, "GET", `/v1/games/${game.gameId}/board`);
   expect(res.status).toBe(200);
   return res.body;
@@ -197,7 +194,7 @@ export async function boardFor(app: App, game: V2Game) {
 
 export async function post(
   app: App,
-  game: V2Game,
+  game: Game,
   playerId: string,
   body: { commandId: string; turnId: string; action: Record<string, unknown> },
 ) {
@@ -221,8 +218,8 @@ export interface PendingAttack {
  * game in the pending-defence interrupt.
  */
 export async function declareAttack(
-  h: V2Harness,
-  game: V2Game,
+  h: Harness,
+  game: Game,
   attackerFaces: readonly number[] = [3, 3, 3],
 ): Promise<PendingAttack> {
   const attacker = (await gameMeta(h.app, game)).activePlayerId as string;
@@ -282,8 +279,8 @@ export async function declareAttack(
  * one now awaiting occupation.
  */
 export async function throwUntilCapture(
-  h: V2Harness,
-  game: V2Game,
+  h: Harness,
+  game: Game,
   attack: PendingAttack,
 ): Promise<PendingAttack> {
   let current = attack;

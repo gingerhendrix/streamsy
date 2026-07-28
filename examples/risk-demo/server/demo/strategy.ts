@@ -1,5 +1,5 @@
 /**
- * The `risk-demo-v2` scripted-bot policy, kept pure and away from HTTP.
+ * The `Hex Domination` scripted-bot policy, kept pure and away from HTTP.
  *
  * It is deliberately shallow — no search, no evaluation of an opponent's reply —
  * but it does have to satisfy one structural property:

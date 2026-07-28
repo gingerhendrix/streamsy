@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { NameLookup } from "./presentation-v2.ts";
+import type { NameLookup } from "./presentation.ts";
 import {
   ReinforcementPlacement,
   adjustPendingReinforcements,

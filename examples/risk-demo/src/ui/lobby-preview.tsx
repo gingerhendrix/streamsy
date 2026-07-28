@@ -13,8 +13,8 @@ import { useMemo } from "react";
 
 import type { Axial } from "../domain/hex.ts";
 import { generateHexMap } from "../domain/hex-generator.ts";
-import type { GeneratedMap } from "../domain/map-v2.ts";
-import { RULES_V2 } from "../domain/map-v2.ts";
+import type { GeneratedMap } from "../domain/map.ts";
+import { RULES } from "../domain/map.ts";
 import {
   hexCenter,
   hexPolygonPoints,
@@ -30,13 +30,13 @@ const SURVEY_HEX_RADIUS = 26;
 
 /**
  * The generated sheet, or `null` when there is nothing honest to draw. A roster
- * below the ruleset minimum does not have a canonical map yet: drawing the
+ * below the player minimum does not have a canonical map yet: drawing the
  * two-player profile for a one-player lobby made the survey appear unchanged when
  * the challenger arrived. Invalid seeds and out-of-bounds rosters likewise remain
  * pending rather than inventing terrain.
  */
 export function surveyMap(seed: string | undefined, playerCount: number): GeneratedMap | null {
-  if (!seed || playerCount < RULES_V2.minPlayers || playerCount > RULES_V2.maxPlayers) {
+  if (!seed || playerCount < RULES.minPlayers || playerCount > RULES.maxPlayers) {
     return null;
   }
   try {
@@ -66,8 +66,8 @@ export function LobbyTerrainPreview(props: { seed: string | undefined; playerCou
   if (!map) {
     const reason = !props.seed
       ? "the game records its map seed"
-      : props.playerCount < RULES_V2.minPlayers
-        ? `at least ${RULES_V2.minPlayers} players are seated`
+      : props.playerCount < RULES.minPlayers
+        ? `at least ${RULES.minPlayers} players are seated`
         : "the roster is valid";
     return <div className="survey-pending">Survey pending — drawn once {reason}.</div>;
   }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { agentPlayInstructions } from "../../src/application/agent-play.ts";
-import { call, v2Harness } from "../v2-harness.ts";
+import { call, riskHarness } from "../harness.ts";
 
 describe("agent seat authority and contract", () => {
   it("rejects agent creation/join and mints one host-authorized seat descriptor", async () => {
-    const h = v2Harness();
+    const h = riskHarness();
     const forbiddenCreate = await call(h.app, "POST", "/v1/games", {
       body: { name: "Agent", controller: "agent" },
     });
@@ -44,7 +44,7 @@ describe("agent seat authority and contract", () => {
   });
 
   it("returns structured INVALID_ACTION details", async () => {
-    const h = v2Harness();
+    const h = riskHarness();
     const created = await call(h.app, "POST", "/v1/games", { body: { name: "Host" } });
     const response = await call(h.app, "POST", `/v1/games/${created.body.game.id}/commands`, {
       token: created.body.capability,

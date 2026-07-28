@@ -2,9 +2,9 @@ import { Children, isValidElement, type ReactElement, type ReactNode } from "rea
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
-import { PhaseControls } from "./game-v2.tsx";
-import type { NameLookup } from "./presentation-v2.ts";
+import type { LegalAction } from "../application/legal-actions.ts";
+import { PhaseControls } from "./game.tsx";
+import type { NameLookup } from "./presentation.ts";
 
 const NAMES: NameLookup = {
   territory: (id) => ({ a: "Ashfell", b: "Birchgate" })[id] ?? id,
@@ -12,7 +12,7 @@ const NAMES: NameLookup = {
   continent: (id) => id,
 };
 
-const FORTIFY: Extract<LegalActionV2, { type: "fortify" }> = {
+const FORTIFY: Extract<LegalAction, { type: "fortify" }> = {
   type: "fortify",
   choices: [{ from: "a", reachable: [{ to: "b", maxArmies: 3 }] }],
   submit: {
@@ -23,7 +23,7 @@ const FORTIFY: Extract<LegalActionV2, { type: "fortify" }> = {
   },
 };
 
-const SKIP_FORTIFICATIONS: Extract<LegalActionV2, { type: "skip-fortifications" }> = {
+const SKIP_FORTIFICATIONS: Extract<LegalAction, { type: "skip-fortifications" }> = {
   type: "skip-fortifications",
   submit: { type: "skip-fortifications" },
 };

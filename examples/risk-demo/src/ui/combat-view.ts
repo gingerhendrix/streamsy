@@ -20,12 +20,8 @@
  * guessed. The newest throw is always inside that window even when the turn is long.
  */
 
-import type {
-  ProjectedCombatV2,
-  ProjectedMoveV2,
-  ProjectedTurnV2,
-} from "../board/projection-v2.ts";
-import type { DefenseResolutionSource } from "../domain/events-v2.ts";
+import type { ProjectedCombat, ProjectedMove, ProjectedTurn } from "../board/projection.ts";
+import type { DefenseResolutionSource } from "../domain/events.ts";
 
 export type CombatViewStatus = "awaiting-defense" | "awaiting-occupation" | "resolved";
 
@@ -54,13 +50,13 @@ export interface CombatView {
 }
 
 export interface CombatSources {
-  combat: ProjectedCombatV2 | null;
-  turn: ProjectedTurnV2 | null;
-  moves: readonly ProjectedMoveV2[];
+  combat: ProjectedCombat | null;
+  turn: ProjectedTurn | null;
+  moves: readonly ProjectedMove[];
 }
 
 function seatFromMoves(
-  moves: readonly ProjectedMoveV2[],
+  moves: readonly ProjectedMove[],
   attackId: string,
   kind: "AttackDeclared" | "AttackResolved",
 ): string | undefined {

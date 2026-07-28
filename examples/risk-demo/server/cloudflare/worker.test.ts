@@ -49,7 +49,7 @@ describe("Cloudflare game routing", () => {
       `/v1/games/${gameId}/board`,
       `/v1/games/${gameId}/players/me/actions`,
       `/v1/games/${gameId}/map`,
-      `/streams/games/${gameId}/projections/board/hex1`,
+      `/streams/games/${gameId}/projections/board/board1`,
     ];
     for (const path of paths) {
       await worker.fetch(new Request(`https://risk.test${path}`), h.env);

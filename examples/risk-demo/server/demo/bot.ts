@@ -3,8 +3,7 @@
  * its per-player action stream — never the kernel directly.
  *
  * Loop: follow the self-sufficient action stream from a persisted cursor → choose
- * from `legalMoves` → POST one command → repeat. `/decision` is used only once
- * to detect and bootstrap v1 games.
+ * from `legalMoves` → POST one command → repeat.
  *
  * Restart-safe idempotency: a command's `commandId` is derived deterministically
  * from the observed board state (`playerId:turnId:<state fingerprint>`). After a
@@ -21,8 +20,7 @@
  * of a command that was posted but never seen acked, replayed byte-identically
  * on restart so a commit that did land collapses to `duplicate`.
  *
- * The harness speaks both rulesets. `risk-demo-v2` adds one shape it must handle
- * that v1 does not have: an out-of-turn `roll-defense`. That command uses the
+ * An out-of-turn `roll-defense` uses the
  * stable id `bot-defense:<attackId>` rather than a board fingerprint, because
  * the board has not changed and the point is that a duplicate wake, a retry, and
  * a race with the canonical timeout must all collapse to one roll. Duplicate and
@@ -38,7 +36,7 @@ import {
   chooseReinforce,
   strategyContext,
   type StrategyMap,
-} from "./strategy-v2.ts";
+} from "./strategy.ts";
 
 export type HttpCall = (
   method: string,
@@ -114,7 +112,6 @@ interface TerritoryView {
 type MapView = StrategyMap;
 
 interface Decision {
-  ruleset?: string;
   mode?: string;
   turn: {
     id: string;
@@ -131,13 +128,6 @@ interface Decision {
   legalMoves: any[];
 }
 
-const RULESET_V1 = "risk-demo-v1";
-const RULESET_V2 = "risk-demo-v2";
-
-function isV2(decision: Decision): boolean {
-  return decision.ruleset === RULESET_V2;
-}
-
 function boardFingerprint(playerId: string, decision: Decision): string {
   const terr = decision.board.territories
     .map((t) => `${t.id}:${t.ownerId ?? "-"}:${t.armies}`)
@@ -149,39 +139,7 @@ function boardFingerprint(playerId: string, decision: Decision): string {
   return fingerprint(`${decision.turn.phase}|${remaining}|${terr}`);
 }
 
-// ---------------------------------------------------------------------------
-// risk-demo-v1 strategy
-// ---------------------------------------------------------------------------
-
-function chooseActionV1(playerId: string, decision: Decision): Record<string, unknown> | null {
-  const reinforce = decision.legalMoves.find((a) => a.type === "reinforce");
-  if (reinforce) {
-    const owned = decision.board.territories.filter((t) => t.ownerId === playerId);
-    const frontier =
-      owned.find((t) =>
-        (t.adjacentTerritoryIds ?? []).some(
-          (adj) => decision.board.territories.find((x) => x.id === adj)?.ownerId !== playerId,
-        ),
-      ) ?? owned[0];
-    if (!frontier) return { type: "end-turn" };
-    return { type: "reinforce", territoryId: frontier.id, armies: reinforce.maxArmies };
-  }
-
-  const attack = decision.legalMoves.find((a) => a.type === "attack");
-  if (attack && attack.choices.length > 0) {
-    const c = attack.choices[0];
-    return { type: "attack", from: c.from, to: c.to, attackerDice: c.maxAttackerDice };
-  }
-
-  if (decision.legalMoves.some((a) => a.type === "end-turn")) return { type: "end-turn" };
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// risk-demo-v2 strategy
-// ---------------------------------------------------------------------------
-
-async function chooseActionV2(
+async function chooseAction(
   playerId: string,
   decision: Decision,
   loadMap: () => Promise<MapView | null>,
@@ -232,7 +190,6 @@ export function createBot(options: CreateBotOptions): Bot {
    * at a point whose action is still outstanding rather than past it.
    */
   let liveCursor = state.cursor;
-  let ruleset: string | undefined;
 
   async function commitCursor(): Promise<void> {
     state.cursor = liveCursor;
@@ -267,35 +224,8 @@ export function createBot(options: CreateBotOptions): Bot {
     }
   }
 
-  /** One bootstrap `/decision` read, purely to learn which ruleset this game speaks. */
-  async function isV2Game(): Promise<boolean> {
-    if (ruleset === undefined) {
-      const decision = await fetchDecision();
-      // A v1 decision context carries no `ruleset` discriminator at all, so an
-      // answer without one *is* the v1 answer. An unreadable one (not yet a
-      // seat, game not started) is assumed to be v2.
-      ruleset = decision ? (decision.ruleset ?? RULESET_V1) : RULESET_V2;
-    }
-    return ruleset === RULESET_V2;
-  }
-
   async function awaitTurn(waitMs = 0): Promise<AgentMessage | null> {
     await resumeInflight();
-    // The retained v1 demo has no agent actions stream — `/players/me/actions`
-    // answers 400 for it. Its bot stays decision-driven,
-    // re-reading `/decision` each time rather than trusting the bootstrap read.
-    if (!(await isV2Game())) {
-      const decision = await fetchDecision();
-      return decision && decision.legalMoves.length > 0
-        ? ({
-            type: "ActionRequired",
-            messageId: "v1-decision",
-            seq: 0,
-            playerId,
-            turn: decision.turn,
-          } as unknown as AgentMessage)
-        : null;
-    }
     const query = new URLSearchParams();
     if (liveCursor) query.set("offset", liveCursor);
     if (waitMs > 0) query.set("wait", String(waitMs));
@@ -311,11 +241,6 @@ export function createBot(options: CreateBotOptions): Bot {
     if (newest) pendingMessage = newest.type === "ActionRequired" ? newest : null;
     if (!pendingMessage) await commitCursor();
     return newest;
-  }
-
-  async function fetchDecision(): Promise<Decision | null> {
-    const res = await call("GET", `/v1/games/${gameId}/decision`, { token });
-    return res.status === 200 ? (res.body as Decision) : null;
   }
 
   /** Fetch the static map from the board surface once and keep it. */
@@ -354,27 +279,19 @@ export function createBot(options: CreateBotOptions): Bot {
 
   async function step(): Promise<Record<string, unknown> | null> {
     await resumeInflight();
-    const v1 = !(await isV2Game());
-    if (!v1 && !pendingMessage) await awaitTurn();
-    const decision = v1
-      ? await fetchDecision()
-      : pendingMessage
-        ? ({
-            ruleset: RULESET_V2,
-            mode: pendingMessage.mode,
-            turn: pendingMessage.turn,
-            pendingInteraction: pendingMessage.pendingInteraction ?? undefined,
-            board: pendingMessage.board,
-            legalMoves: pendingMessage.legalMoves,
-          } as Decision)
-        : null;
+    if (!pendingMessage) await awaitTurn();
+    const decision = pendingMessage
+      ? ({
+          mode: pendingMessage.mode,
+          turn: pendingMessage.turn,
+          pendingInteraction: pendingMessage.pendingInteraction ?? undefined,
+          board: pendingMessage.board,
+          legalMoves: pendingMessage.legalMoves,
+        } as Decision)
+      : null;
     if (!decision || decision.legalMoves.length === 0) return null;
 
-    const action = isV2(decision)
-      ? await chooseActionV2(playerId, decision, loadMap)
-      : decision.turn.activePlayerId === playerId
-        ? chooseActionV1(playerId, decision)
-        : null;
+    const action = await chooseAction(playerId, decision, loadMap);
     if (!action) return null;
 
     const body = JSON.stringify({
@@ -406,14 +323,8 @@ export function createBot(options: CreateBotOptions): Bot {
   }
 
   async function defend(): Promise<boolean> {
-    // A v2 defender learns it must roll from its own action stream — the same
-    // `defense-required` message an external agent would receive. Only the
-    // retained v1 fixture, which has no stream, still asks `/decision`.
-    if (!(await isV2Game())) {
-      const decision = await fetchDecision();
-      if (!decision?.legalMoves.some((a) => a.type === "roll-defense")) return false;
-      return (await step()) !== null;
-    }
+    // A defender learns it must roll from its own action stream — the same
+    // `defense-required` message an external agent receives.
     if (!pendingMessage) await awaitTurn();
     if (!pendingMessage?.legalMoves.some((a) => a.type === "roll-defense")) return false;
     return (await step()) !== null;

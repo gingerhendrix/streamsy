@@ -11,11 +11,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type {
-  ProjectedContinentV2,
-  ProjectedPlayerV2,
-  ProjectedTerritoryV2,
-} from "../board/projection-v2.ts";
-import type { NameLookup } from "./presentation-v2.ts";
+  ProjectedContinent,
+  ProjectedPlayer,
+  ProjectedTerritory,
+} from "../board/projection.ts";
+import type { NameLookup } from "./presentation.ts";
 import { StatusColumn } from "./status-column.tsx";
 
 const NAMES: NameLookup = {
@@ -24,7 +24,7 @@ const NAMES: NameLookup = {
   continent: (id) => ({ c1: "Northreach", c2: "Sunder" })[id] ?? id,
 };
 
-const PLAYERS: ProjectedPlayerV2[] = [
+const PLAYERS: ProjectedPlayer[] = [
   {
     id: "p1",
     name: "Ada",
@@ -45,7 +45,7 @@ const PLAYERS: ProjectedPlayerV2[] = [
   },
 ];
 
-const CONTINENTS: ProjectedContinentV2[] = [
+const CONTINENTS: ProjectedContinent[] = [
   {
     id: "c1",
     name: "Northreach",
@@ -63,7 +63,7 @@ const CONTINENTS: ProjectedContinentV2[] = [
   },
 ];
 
-const territory = (id: string, continentId: string, ownerId?: string): ProjectedTerritoryV2 => ({
+const territory = (id: string, continentId: string, ownerId?: string): ProjectedTerritory => ({
   id,
   name: id,
   continentId,
@@ -82,7 +82,7 @@ const TERRITORIES = [
   territory("t5", "c2"),
 ];
 
-const renderStatus = (territories: ProjectedTerritoryV2[] = TERRITORIES) =>
+const renderStatus = (territories: ProjectedTerritory[] = TERRITORIES) =>
   renderToStaticMarkup(
     <StatusColumn
       players={PLAYERS}

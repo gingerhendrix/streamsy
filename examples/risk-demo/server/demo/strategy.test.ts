@@ -1,5 +1,5 @@
 /**
- * The v2 scripted-bot policy, exercised on hand-built boards.
+ * The current scripted-bot policy, exercised on hand-built boards.
  *
  * The board that matters most here is the **turtle**: an opponent who never
  * attacks and stacks one unassailable fortress. The bot must reinforce and
@@ -19,7 +19,7 @@ import {
   weakestEnemyArmies,
   type StrategyMap,
   type StrategyTerritory,
-} from "./strategy-v2.ts";
+} from "./strategy.ts";
 
 const BOT = "bot";
 const HUMAN = "human";

@@ -1,5 +1,5 @@
 /**
- * The lobby rendered for real: the muster roll always sets all four ruleset
+ * The lobby rendered for real: the muster roll always shows all four
  * seats, annotations carry role/controller/self without colour, and the host's
  * commands change with the roster instead of guessing.
  */
@@ -7,11 +7,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { ProjectedPlayerV2 } from "../board/projection-v2.ts";
-import { LobbyV2 } from "./lobby.tsx";
+import type { ProjectedPlayer } from "../board/projection.ts";
+import { Lobby } from "./lobby.tsx";
 import type { Identity } from "./shared.tsx";
 
-function player(overrides: Partial<ProjectedPlayerV2> & { id: string }): ProjectedPlayerV2 {
+function player(overrides: Partial<ProjectedPlayer> & { id: string }): ProjectedPlayer {
   return {
     name: "Ada",
     color: "#e05a47",
@@ -26,12 +26,12 @@ function player(overrides: Partial<ProjectedPlayerV2> & { id: string }): Project
 const HOST_IDENTITY: Identity = { gameId: "g1", playerId: "p1", token: "t", role: "host" };
 
 function renderLobby(options: {
-  players: ProjectedPlayerV2[];
+  players: ProjectedPlayer[];
   identity?: Identity | null;
   mapSeed?: string;
 }): string {
   return renderToStaticMarkup(
-    <LobbyV2
+    <Lobby
       players={options.players}
       hostPlayerId="p1"
       identity={options.identity ?? null}
@@ -48,7 +48,7 @@ function renderLobby(options: {
   );
 }
 
-describe("LobbyV2 muster roll", () => {
+describe("Lobby muster roll", () => {
   it("always sets four seats, with open seats explained", () => {
     const markup = renderLobby({ players: [player({ id: "p1", name: "Ada" })] });
     expect(markup.match(/muster-row/g)?.length).toBeGreaterThanOrEqual(4);
@@ -72,7 +72,7 @@ describe("LobbyV2 muster roll", () => {
   });
 });
 
-describe("LobbyV2 commands", () => {
+describe("Lobby commands", () => {
   it("offers a join seat, not host commands, before an identity exists", () => {
     const markup = renderLobby({ players: [player({ id: "p1" })] });
     expect(markup).toContain("Join this game");
@@ -100,7 +100,7 @@ describe("LobbyV2 commands", () => {
   });
 });
 
-describe("LobbyV2 terrain survey", () => {
+describe("Lobby terrain survey", () => {
   it("waits for a valid roster, then draws for the current player count", () => {
     const waiting = renderLobby({
       players: [player({ id: "p1" })],

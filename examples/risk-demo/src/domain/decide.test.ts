@@ -1,31 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-import { ownedByV2 } from "./aggregate-v2.ts";
-import type { PendingInteraction } from "./aggregate-v2.ts";
-import { legalActionsV2, decisionModeV2 } from "../application/legal-actions-v2.ts";
-import { RULES_V2 } from "./map-v2.ts";
+import { ownedBy } from "./aggregate.ts";
+import type { PendingInteraction } from "./aggregate.ts";
+import { legalActions, decisionMode } from "../application/legal-actions.ts";
+import { RULES } from "./map.ts";
 import {
   armForAttack,
-  declareAttackV2,
-  nextCommandIdV2,
-  placeAllReinforcementsV2,
-  startGameV2,
+  declareAttack,
+  nextCommandId,
+  placeAllReinforcements,
+  startGame,
   throwUntilCapture,
   winThrow,
-  type ScriptedGameV2,
-} from "../../test/testkit-v2.ts";
+  type ScriptedGame,
+} from "../../test/testkit.ts";
 
-function expectRejected(outcome: ReturnType<ScriptedGameV2["submit"]>, code: string): void {
+function expectRejected(outcome: ReturnType<ScriptedGame["submit"]>, code: string): void {
   expect(outcome.status).toBe("rejected");
   if (outcome.status !== "rejected") return;
   expect(outcome.error.code).toBe(code);
 }
 
 /** Arm the active player and open a defence interrupt. */
-function pendingDefense(game: ScriptedGameV2, faces = [3, 3, 3]) {
+function pendingDefense(game: ScriptedGame, faces = [3, 3, 3]) {
   const setup = armForAttack(game);
   game.rig(faces);
-  const attackId = declareAttackV2(game, setup, 3);
+  const attackId = declareAttack(game, setup, 3);
   const pending = game.state().pendingInteraction as Extract<
     PendingInteraction,
     { type: "defense" }
@@ -37,9 +37,9 @@ function pendingDefense(game: ScriptedGameV2, faces = [3, 3, 3]) {
 // Turn discipline
 // ---------------------------------------------------------------------------
 
-describe("v2 turn discipline", () => {
+describe("current turn discipline", () => {
   it("rejects a command from the wrong player and a stale turnId", () => {
-    const game = startGameV2();
+    const game = startGame();
     const state = game.state();
     const active = state.activePlayerId!;
     const other = state.turnOrder.find((id) => id !== active)!;
@@ -47,30 +47,30 @@ describe("v2 turn discipline", () => {
     expectRejected(
       game.submit({
         type: "reinforce",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: other,
-        placements: [{ territoryId: ownedByV2(state, other)[0]!, armies: 1 }],
+        placements: [{ territoryId: ownedBy(state, other)[0]!, armies: 1 }],
       }),
       "NOT_YOUR_TURN",
     );
 
     const stale = game.submit({
       type: "reinforce",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: "round-99:nobody",
       playerId: active,
-      placements: [{ territoryId: ownedByV2(state, active)[0]!, armies: 1 }],
+      placements: [{ territoryId: ownedBy(state, active)[0]!, armies: 1 }],
     });
     expectRejected(stale, "STALE_TURN");
     if (stale.status === "rejected") expect(stale.error.currentTurnId).toBe(game.turnId());
   });
 
   it("returns the original events for a duplicate commandId without re-rolling", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     game.rig([6, 5, 4]);
-    const commandId = nextCommandIdV2("dup");
+    const commandId = nextCommandId("dup");
     const command = {
       type: "declare-attack" as const,
       commandId,
@@ -88,18 +88,18 @@ describe("v2 turn discipline", () => {
   });
 
   it("requires one exact, unique allocation across owned territories", () => {
-    const game = startGameV2();
+    const game = startGame();
     const state = game.state();
     const active = state.activePlayerId!;
     expectRejected(
       game.submit({
         type: "reinforce",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
         placements: [
           {
-            territoryId: ownedByV2(state, active)[0]!,
+            territoryId: ownedBy(state, active)[0]!,
             armies: state.reinforcement.remaining + 1,
           },
         ],
@@ -109,23 +109,23 @@ describe("v2 turn discipline", () => {
     expectRejected(
       game.submit({
         type: "reinforce",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
-        placements: [{ territoryId: ownedByV2(state, active)[0]!, armies: 1 }],
+        placements: [{ territoryId: ownedBy(state, active)[0]!, armies: 1 }],
       }),
       "INSUFFICIENT_ARMIES",
     );
     expectRejected(
       game.submit({
         type: "reinforce",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
         placements: [
-          { territoryId: ownedByV2(state, active)[0]!, armies: 1 },
+          { territoryId: ownedBy(state, active)[0]!, armies: 1 },
           {
-            territoryId: ownedByV2(state, active)[0]!,
+            territoryId: ownedBy(state, active)[0]!,
             armies: state.reinforcement.remaining - 1,
           },
         ],
@@ -136,7 +136,7 @@ describe("v2 turn discipline", () => {
     expectRejected(
       game.submit({
         type: "reinforce",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
         placements: [{ territoryId: enemy.id, armies: 1 }],
@@ -146,7 +146,7 @@ describe("v2 turn discipline", () => {
     expectRejected(
       game.submit({
         type: "reinforce",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
         placements: [{ territoryId: "no-such-country", armies: 1 }],
@@ -156,12 +156,12 @@ describe("v2 turn discipline", () => {
   });
 
   it("blocks attacking and ending the turn until the pool is placed", () => {
-    const game = startGameV2();
+    const game = startGame();
     const active = game.state().activePlayerId!;
     expectRejected(
       game.submit({
         type: "skip-fortifications",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
       }),
@@ -174,20 +174,20 @@ describe("v2 turn discipline", () => {
 // Declaration bounds
 // ---------------------------------------------------------------------------
 
-describe("v2 declare-attack", () => {
+describe("current declare-attack", () => {
   it("bounds attacker dice by the source garrison", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     const armies = game.state().territories[setup.from]!.armies;
     expectRejected(
       game.submit({
         type: "declare-attack",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: setup.attackerId,
         from: setup.from,
         to: setup.to,
-        attackerDice: RULES_V2.maxAttackerDice + 1,
+        attackerDice: RULES.maxAttackerDice + 1,
       }),
       "ILLEGAL_ACTION",
     );
@@ -206,7 +206,7 @@ describe("v2 declare-attack", () => {
         expectRejected(
           game.submit({
             type: "declare-attack",
-            commandId: nextCommandIdV2(),
+            commandId: nextCommandId(),
             turnId: game.turnId(),
             playerId: setup.attackerId,
             from: lone.id,
@@ -221,7 +221,7 @@ describe("v2 declare-attack", () => {
   });
 
   it("refuses a non-adjacent target and an own-country target", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     const state = game.state();
     const nonAdjacent = Object.values(state.territories).find(
@@ -232,7 +232,7 @@ describe("v2 declare-attack", () => {
     if (nonAdjacent) {
       const rejected = game.submit({
         type: "declare-attack",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: setup.attackerId,
         from: setup.from,
@@ -255,7 +255,7 @@ describe("v2 declare-attack", () => {
       expectRejected(
         game.submit({
           type: "declare-attack",
-          commandId: nextCommandIdV2(),
+          commandId: nextCommandId(),
           turnId: game.turnId(),
           playerId: setup.attackerId,
           from: setup.from,
@@ -272,24 +272,24 @@ describe("v2 declare-attack", () => {
 // Pending defence excludes every other command
 // ---------------------------------------------------------------------------
 
-describe("v2 pending defence", () => {
+describe("current pending defence", () => {
   it("suspends every command except the defender's roll", () => {
-    const game = startGameV2();
+    const game = startGame();
     const { setup, attackId } = pendingDefense(game);
     const turnId = game.turnId();
-    const owned = ownedByV2(game.state(), setup.attackerId);
+    const owned = ownedBy(game.state(), setup.attackerId);
 
     for (const command of [
       {
         type: "reinforce" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         placements: [{ territoryId: owned[0]!, armies: 1 }],
       },
       {
         type: "declare-attack" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         from: setup.from,
@@ -298,7 +298,7 @@ describe("v2 pending defence", () => {
       },
       {
         type: "fortify" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         from: owned[0]!,
@@ -307,7 +307,7 @@ describe("v2 pending defence", () => {
       },
       {
         type: "skip-fortifications" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
       },
@@ -319,7 +319,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "occupy-territory",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         attackId,
@@ -330,7 +330,7 @@ describe("v2 pending defence", () => {
   });
 
   it("only the named defender may roll, for the named attack, on the named turn", () => {
-    const game = startGameV2({ players: 3 });
+    const game = startGame({ players: 3 });
     const { setup, attackId } = pendingDefense(game);
     const bystander = game
       .state()
@@ -339,7 +339,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: bystander,
         attackId,
@@ -349,7 +349,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: setup.attackerId,
         attackId,
@@ -359,7 +359,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: setup.defenderId,
         attackId: "some-other-attack",
@@ -369,7 +369,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: "round-9:someone",
         playerId: setup.defenderId,
         attackId,
@@ -379,7 +379,7 @@ describe("v2 pending defence", () => {
   });
 
   it("rejects a human roll that arrives after the canonical deadline", () => {
-    const game = startGameV2({ defenseTimeoutMs: 1_000 });
+    const game = startGame({ defenseTimeoutMs: 1_000 });
     const { setup, attackId, pending } = pendingDefense(game);
     game.advanceClock(1_001);
     expect(game.clock.now).toBeGreaterThan(pending.defenseDeadlineAt);
@@ -387,7 +387,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: setup.defenderId,
         attackId,
@@ -399,7 +399,7 @@ describe("v2 pending defence", () => {
   });
 
   it("lets the timeout resolver close a combat the deadline has passed on", () => {
-    const game = startGameV2({ defenseTimeoutMs: 1_000 });
+    const game = startGame({ defenseTimeoutMs: 1_000 });
     const { attackId } = pendingDefense(game);
     game.advanceClock(5_000);
     const outcome = game.must({
@@ -416,11 +416,11 @@ describe("v2 pending defence", () => {
   });
 
   it("makes a second resolver lose after the first has committed", () => {
-    const game = startGameV2();
+    const game = startGame();
     const { setup, attackId } = pendingDefense(game);
     game.must({
       type: "roll-defense",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: setup.defenderId,
       attackId,
@@ -439,7 +439,7 @@ describe("v2 pending defence", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: setup.defenderId,
         attackId,
@@ -449,20 +449,20 @@ describe("v2 pending defence", () => {
   });
 
   it("cannot be resolved by a stale timer naming an earlier attack", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     game.rig([3, 3, 3]);
-    const firstAttack = declareAttackV2(game, setup, 3);
+    const firstAttack = declareAttack(game, setup, 3);
     game.must({
       type: "roll-defense",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: setup.defenderId,
       attackId: firstAttack,
     });
     if (game.state().pendingInteraction?.type === "occupation") return; // captured; not this case
 
-    const secondAttack = declareAttackV2(game, setup, 1);
+    const secondAttack = declareAttack(game, setup, 1);
     expect(game.state().pendingInteraction?.type).toBe("defense");
 
     // The first attack's timer fires late: it must not resolve the second attack.
@@ -486,25 +486,25 @@ describe("v2 pending defence", () => {
 // Pending occupation
 // ---------------------------------------------------------------------------
 
-describe("v2 pending occupation", () => {
+describe("current pending occupation", () => {
   it("suspends every command except the attacker's occupation", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     const pending = throwUntilCapture(game, setup);
     const turnId = game.turnId();
-    const owned = ownedByV2(game.state(), setup.attackerId);
+    const owned = ownedBy(game.state(), setup.attackerId);
 
     for (const command of [
       {
         type: "reinforce" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         placements: [{ territoryId: owned[0]!, armies: 1 }],
       },
       {
         type: "declare-attack" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         from: setup.from,
@@ -513,7 +513,7 @@ describe("v2 pending occupation", () => {
       },
       {
         type: "fortify" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         from: owned[0]!,
@@ -522,7 +522,7 @@ describe("v2 pending occupation", () => {
       },
       {
         type: "skip-fortifications" as const,
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
       },
@@ -533,7 +533,7 @@ describe("v2 pending occupation", () => {
     expectRejected(
       game.submit({
         type: "roll-defense",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.defenderId,
         attackId: pending.attackId,
@@ -543,7 +543,7 @@ describe("v2 pending occupation", () => {
   });
 
   it("enforces the occupation bounds exactly", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     const pending = throwUntilCapture(game, setup);
     const turnId = game.turnId();
@@ -552,7 +552,7 @@ describe("v2 pending occupation", () => {
       expectRejected(
         game.submit({
           type: "occupy-territory",
-          commandId: nextCommandIdV2(),
+          commandId: nextCommandId(),
           turnId,
           playerId: setup.attackerId,
           attackId: pending.attackId,
@@ -564,7 +564,7 @@ describe("v2 pending occupation", () => {
     expectRejected(
       game.submit({
         type: "occupy-territory",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.defenderId,
         attackId: pending.attackId,
@@ -575,7 +575,7 @@ describe("v2 pending occupation", () => {
     expectRejected(
       game.submit({
         type: "occupy-territory",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId,
         playerId: setup.attackerId,
         attackId: "not-this-attack",
@@ -587,7 +587,7 @@ describe("v2 pending occupation", () => {
     // The maximum always leaves exactly one army behind.
     game.must({
       type: "occupy-territory",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId,
       playerId: setup.attackerId,
       attackId: pending.attackId,
@@ -602,19 +602,19 @@ describe("v2 pending occupation", () => {
 // Fortify
 // ---------------------------------------------------------------------------
 
-describe("v2 fortify", () => {
+describe("current fortify", () => {
   it("moves armies and ends the turn in one canonical command", () => {
-    const game = startGameV2();
-    placeAllReinforcementsV2(game);
+    const game = startGame();
+    placeAllReinforcements(game);
     const state = game.state();
     const active = state.activePlayerId!;
-    const fortify = legalActionsV2(state, active).find((a) => a.type === "fortify");
+    const fortify = legalActions(state, active).find((a) => a.type === "fortify");
     expect(fortify).toBeDefined();
-    expect(legalActionsV2(state, active)).toContainEqual({
+    expect(legalActions(state, active)).toContainEqual({
       type: "skip-fortifications",
       submit: { type: "skip-fortifications" },
     });
-    expect(legalActionsV2(state, active).map((action) => action.type)).not.toContain("end-turn");
+    expect(legalActions(state, active).map((action) => action.type)).not.toContain("end-turn");
     if (fortify?.type !== "fortify") return;
     const choice = fortify.choices.find((c) => c.reachable.length > 0)!;
     const destination = choice.reachable[0]!;
@@ -623,7 +623,7 @@ describe("v2 fortify", () => {
     const beforeTo = state.territories[destination.to]!.armies;
     const outcome = game.must({
       type: "fortify",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: active,
       from: choice.from,
@@ -638,16 +638,16 @@ describe("v2 fortify", () => {
     expect(after.phase).toBe("reinforce");
     expect(after.territories[choice.from]!.armies).toBe(beforeFrom - 1);
     expect(after.territories[destination.to]!.armies).toBe(beforeTo + 1);
-    expect(legalActionsV2(after, active)).toEqual([]);
+    expect(legalActions(after, active)).toEqual([]);
   });
 
   it("skips the optional fortification and ends the turn", () => {
-    const game = startGameV2();
-    placeAllReinforcementsV2(game);
+    const game = startGame();
+    placeAllReinforcements(game);
     const active = game.state().activePlayerId!;
     const outcome = game.must({
       type: "skip-fortifications",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: active,
     });
@@ -660,18 +660,18 @@ describe("v2 fortify", () => {
   });
 
   it("rejects a destination with no friendly path", () => {
-    const game = startGameV2();
-    placeAllReinforcementsV2(game);
+    const game = startGame();
+    placeAllReinforcements(game);
     const state = game.state();
     const active = state.activePlayerId!;
     const enemy = Object.values(state.territories).find((t) => t.ownerId !== active)!;
-    const source = ownedByV2(state, active).find((id) => state.territories[id]!.armies > 1)!;
+    const source = ownedBy(state, active).find((id) => state.territories[id]!.armies > 1)!;
 
     // An enemy country is not a legal destination at all.
     expectRejected(
       game.submit({
         type: "fortify",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: active,
         from: source,
@@ -683,16 +683,16 @@ describe("v2 fortify", () => {
 
     // An owned country in a *different* connected component is NO_FRIENDLY_PATH.
     const reachable = new Set(
-      (legalActionsV2(state, active).find((a) => a.type === "fortify") as any)?.choices
+      (legalActions(state, active).find((a) => a.type === "fortify") as any)?.choices
         .find((c: any) => c.from === source)
         ?.reachable.map((r: any) => r.to) ?? [],
     );
-    const disconnected = ownedByV2(state, active).find((id) => id !== source && !reachable.has(id));
+    const disconnected = ownedBy(state, active).find((id) => id !== source && !reachable.has(id));
     if (disconnected) {
       expectRejected(
         game.submit({
           type: "fortify",
-          commandId: nextCommandIdV2(),
+          commandId: nextCommandId(),
           turnId: game.turnId(),
           playerId: active,
           from: source,
@@ -709,16 +709,16 @@ describe("v2 fortify", () => {
 // Legal actions are player-relative
 // ---------------------------------------------------------------------------
 
-describe("v2 legal actions", () => {
+describe("current legal actions", () => {
   it("gives the out-of-turn defender the only action while defence is pending", () => {
-    const game = startGameV2({ players: 3, defenseTimeoutMs: 15_000 });
+    const game = startGame({ players: 3, defenseTimeoutMs: 15_000 });
     const { setup, attackId, pending } = pendingDefense(game);
     const state = game.state();
     const bystander = state.turnOrder.find(
       (id) => id !== setup.defenderId && id !== setup.attackerId,
     )!;
 
-    expect(legalActionsV2(state, setup.defenderId)).toEqual([
+    expect(legalActions(state, setup.defenderId)).toEqual([
       {
         type: "roll-defense",
         attackId,
@@ -727,21 +727,21 @@ describe("v2 legal actions", () => {
         submit: { type: "roll-defense", attackId: "<attackId>" },
       },
     ]);
-    expect(legalActionsV2(state, setup.attackerId)).toEqual([]);
-    expect(legalActionsV2(state, bystander)).toEqual([]);
+    expect(legalActions(state, setup.attackerId)).toEqual([]);
+    expect(legalActions(state, bystander)).toEqual([]);
 
-    expect(decisionModeV2(state, setup.defenderId)).toBe("defense");
-    expect(decisionModeV2(state, setup.attackerId)).toBe("waiting");
-    expect(decisionModeV2(state, bystander)).toBe("waiting");
+    expect(decisionMode(state, setup.defenderId)).toBe("defense");
+    expect(decisionMode(state, setup.attackerId)).toBe("waiting");
+    expect(decisionMode(state, bystander)).toBe("waiting");
   });
 
   it("gives only the attacker an action while occupation is pending", () => {
-    const game = startGameV2();
+    const game = startGame();
     const setup = armForAttack(game);
     const pending = throwUntilCapture(game, setup);
     const state = game.state();
 
-    expect(legalActionsV2(state, setup.attackerId)).toEqual([
+    expect(legalActions(state, setup.attackerId)).toEqual([
       {
         type: "occupy-territory",
         attackId: pending.attackId,
@@ -756,8 +756,8 @@ describe("v2 legal actions", () => {
         },
       },
     ]);
-    expect(legalActionsV2(state, setup.defenderId)).toEqual([]);
-    expect(decisionModeV2(state, setup.attackerId)).toBe("active-turn");
+    expect(legalActions(state, setup.defenderId)).toEqual([]);
+    expect(decisionMode(state, setup.attackerId)).toBe("active-turn");
   });
 });
 
@@ -765,10 +765,10 @@ describe("v2 legal actions", () => {
 // Elimination and victory
 // ---------------------------------------------------------------------------
 
-describe("v2 elimination and victory", () => {
+describe("current elimination and victory", () => {
   /** All countries to `attacker` except one lone enemy holding, adjacent to a stack. */
   function nearFinalBoard(players: number) {
-    return startGameV2({
+    return startGame({
       players,
       board: ({ map, turnOrder, initialTerritories }) => {
         const attacker = turnOrder[0]!;
@@ -796,18 +796,18 @@ describe("v2 elimination and victory", () => {
   }
 
   /** Reinforce, then capture the victim's last country. */
-  function conquerLastCountry(game: ScriptedGameV2) {
+  function conquerLastCountry(game: ScriptedGame) {
     const state = game.state();
     const attacker = state.activePlayerId!;
     const victim = state.turnOrder.find(
-      (id) => id !== attacker && ownedByV2(state, id).length === 1,
+      (id) => id !== attacker && ownedBy(state, id).length === 1,
     )!;
-    const to = ownedByV2(state, victim)[0]!;
+    const to = ownedBy(state, victim)[0]!;
     const from = state
       .index!.territoryById.get(to)!
       .adjacentTerritoryIds.find((id) => state.territories[id]!.ownerId === attacker)!;
 
-    placeAllReinforcementsV2(game, from);
+    placeAllReinforcements(game, from);
     winThrow(game, { from, to, attackerId: attacker, defenderId: victim }, 1);
     const pending = game.state().pendingInteraction as Extract<
       PendingInteraction,
@@ -816,7 +816,7 @@ describe("v2 elimination and victory", () => {
     expect(pending.type).toBe("occupation");
     const outcome = game.must({
       type: "occupy-territory",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: attacker,
       attackId: pending.attackId,
@@ -843,7 +843,7 @@ describe("v2 elimination and victory", () => {
     expectRejected(
       game.submit({
         type: "skip-fortifications",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: game.turnId(),
         playerId: victim,
       }),
@@ -851,7 +851,7 @@ describe("v2 elimination and victory", () => {
     );
     game.must({
       type: "skip-fortifications",
-      commandId: nextCommandIdV2(),
+      commandId: nextCommandId(),
       turnId: game.turnId(),
       playerId: attacker,
     });
@@ -873,7 +873,7 @@ describe("v2 elimination and victory", () => {
     expectRejected(
       game.submit({
         type: "skip-fortifications",
-        commandId: nextCommandIdV2(),
+        commandId: nextCommandId(),
         turnId: `round-1:${attacker}`,
         playerId: attacker,
       }),

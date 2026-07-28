@@ -2,11 +2,11 @@
  * One-command, watchable Risk demo.
  *
  * Bootstraps missing workspace builds, launches the real SQLite-backed server,
- * creates a two-player `risk-demo-v2` game, and lets the existing HTTP-only
+ * creates a two-player `Hex Domination` game, and lets the existing HTTP-only
  * scripted bots play it on a procedurally generated hex map. The spectator board remains
  * available until Ctrl-C, including after a winner is decided.
  *
- * V2 adds one shape the loop has to respect: an attack *stops* the attacker's
+ *  adds one shape the loop has to respect: an attack *stops* the attacker's
  * turn until the defender rolls. The orchestrator therefore follows canonical
  * state rather than assuming a turn is one actor's uninterrupted run — and if a
  * defending bot ever failed to answer, the server's own 15-second timeout would
@@ -145,12 +145,11 @@ interface DemoPlayer {
 }
 
 /**
- * Both demo seats are machine players on the v2 ruleset: the one-command demo has
+ * Both demo seats are machine players: the one-command demo has
  * nobody at a keyboard, so a bot must also be able to answer the defence
  * interrupt, not merely take its own turn.
  */
 export const DEMO_HOST_REQUEST = {
-  ruleset: "risk-demo-v2",
   name: "Ada",
   color: "#e05a47",
   controller: "bot",
@@ -163,8 +162,7 @@ export const DEMO_GUEST_REQUEST = {
 
 export const DEMO_LEAD_IN_MS = 10_000;
 /**
- * A v2 game is roughly 250–550 commands — a bigger map and one throw per attack —
- * so the pace is a second rather than the v1 second and a half, which keeps a
+ * A game is roughly 250–550 commands, so a one-second pace keeps a
  * complete watchable game to something between five and ten minutes.
  */
 export const DEMO_COMMAND_PACE_MS = 1_000;
@@ -307,7 +305,7 @@ async function run(): Promise<void> {
     console.log(`│  ${url.padEnd(58)}│`);
     console.log("╰──────────────────────────────────────────────────────────────╯\n");
     console.log(
-      "Ada and Bob are scripted HTTP bots playing risk-demo-v2 on a seeded hex map:\n" +
+      "Ada and Bob are scripted HTTP bots playing Hex Domination on a seeded hex map:\n" +
         "declared attacks, recorded dice, and an out-of-turn defence roll each throw.\n" +
         "The server stays up until Ctrl-C.\n",
     );

@@ -1,5 +1,5 @@
 /**
- * Pure presentation helpers for the `risk-demo-v2` playing surface.
+ * Pure presentation helpers for the `Hex Domination` playing surface.
  *
  * Everything a player reads — the reinforcement equation, the current-turn ledger,
  * the defence countdown, the dice pairing — is derived here so it can be tested
@@ -11,23 +11,23 @@
  *  - **No architecture in the product surface.** Nothing here formats an offset, a
  *    watermark, or a generation. The compact sync pill is the only place those
  *    exist, and it is not built from these helpers.
- *  - **The ledger reads the `turn` row.** `moves` is bounded at 40 rows and a v2
+ *  - **The ledger reads the `turn` row.** `moves` is bounded at 40 rows and a current
  *    turn burns roughly three events per throw, so paging it for "what happened
  *    this turn" silently loses the start of a busy turn. The projection's `turn`
  *    row is the derived summary that cannot.
  */
 
 import type {
-  ProjectedContinentV2,
-  ProjectedDiceV2,
-  ProjectedMoveV2,
-  ProjectedPlayerV2,
-  ProjectedTerritoryV2,
-  ProjectedTurnV2,
-} from "../board/projection-v2.ts";
-import type { GamePhaseV2, ReinforcementState } from "../domain/aggregate-v2.ts";
-import type { DefenseResolutionSource } from "../domain/events-v2.ts";
-import type { Terrain } from "../domain/map-v2.ts";
+  ProjectedContinent,
+  ProjectedDice,
+  ProjectedMove,
+  ProjectedPlayer,
+  ProjectedTerritory,
+  ProjectedTurn,
+} from "../board/projection.ts";
+import type { GamePhase, ReinforcementState } from "../domain/aggregate.ts";
+import type { DefenseResolutionSource } from "../domain/events.ts";
+import type { Terrain } from "../domain/map.ts";
 
 /** Names the presentation layer needs but the projection rows only reference by id. */
 export interface NameLookup {
@@ -189,7 +189,7 @@ const plural = (count: number, one: string, many = `${one}s`): string =>
  * A defence nobody clicked is named as such, so the dice line under a ledger or
  * history row carries the same truth as the combat card did while it was live.
  */
-export function diceOutcomeText(dice: ProjectedDiceV2, names: NameLookup): string {
+export function diceOutcomeText(dice: ProjectedDice, names: NameLookup): string {
   const losses = [
     dice.attackerLosses > 0 ? `${plural(dice.attackerLosses, "attacker")} lost` : null,
     dice.defenderLosses > 0 ? `${plural(dice.defenderLosses, "defender")} lost` : null,
@@ -210,7 +210,7 @@ export function diceOutcomeText(dice: ProjectedDiceV2, names: NameLookup): strin
  * Derived wholly from the projection's `turn` row: counters, the reinforcement
  * breakdown, and the latest recorded throw. Nothing here needs the move feed.
  */
-export function turnLedger(turn: ProjectedTurnV2, names: NameLookup): LedgerEntry[] {
+export function turnLedger(turn: ProjectedTurn, names: NameLookup): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   const { reinforcement } = turn;
 
@@ -278,9 +278,9 @@ export function turnLedger(turn: ProjectedTurnV2, names: NameLookup): LedgerEntr
 // ---------------------------------------------------------------------------
 
 /** Canonical phase order — the order a turn happens in, and the order it reads in. */
-export const PHASE_ORDER_V2: readonly GamePhaseV2[] = ["reinforce", "attack", "fortify"];
+export const PHASE_ORDER: readonly GamePhase[] = ["reinforce", "attack", "fortify"];
 
-export const PHASE_LABELS_V2: Record<GamePhaseV2, string> = {
+export const PHASE_LABELS: Record<GamePhase, string> = {
   reinforce: "Reinforce",
   attack: "Attack",
   fortify: "Fortify",
@@ -293,10 +293,10 @@ export const PHASE_LABELS_V2: Record<GamePhaseV2, string> = {
  */
 export type PhaseState = "completed" | "active" | "upcoming";
 
-export function phaseState(phase: GamePhaseV2, current: GamePhaseV2 | undefined): PhaseState {
+export function phaseState(phase: GamePhase, current: GamePhase | undefined): PhaseState {
   if (current === undefined) return "upcoming";
-  const index = PHASE_ORDER_V2.indexOf(phase);
-  const currentIndex = PHASE_ORDER_V2.indexOf(current);
+  const index = PHASE_ORDER.indexOf(phase);
+  const currentIndex = PHASE_ORDER.indexOf(current);
   if (index === currentIndex) return "active";
   return index < currentIndex ? "completed" : "upcoming";
 }
@@ -315,7 +315,7 @@ export const PHASE_STATE_LABELS: Record<PhaseState, string> = {
  * country" would be false for two of them.
  */
 export function phaseInstruction(
-  phase: GamePhaseV2,
+  phase: GamePhase,
   options: {
     state: PhaseState;
     yourTurn: boolean;
@@ -358,7 +358,7 @@ export function phaseInstruction(
 }
 
 /** What a finished phase achieved, read from the turn row rather than the move feed. */
-export function phaseSummary(phase: GamePhaseV2, turn: ProjectedTurnV2 | null): string {
+export function phaseSummary(phase: GamePhase, turn: ProjectedTurn | null): string {
   if (!turn) return "Nothing recorded.";
   switch (phase) {
     case "reinforce":
@@ -415,8 +415,8 @@ export interface ContinentStanding {
  * yet — which is the question the status column exists to answer.
  */
 export function continentStandings(
-  continents: readonly ProjectedContinentV2[],
-  territories: readonly ProjectedTerritoryV2[],
+  continents: readonly ProjectedContinent[],
+  territories: readonly ProjectedTerritory[],
 ): ContinentStanding[] {
   const territoryById = new Map(territories.map((territory) => [territory.id, territory]));
   return continents.map((continent) => {
@@ -457,21 +457,18 @@ export function continentOccupationLabel(standing: ContinentStanding, names: Nam
 }
 
 /** `"7 countries · 19 armies"` — the roster line under a player's name. */
-export function playerStrengthLabel(player: ProjectedPlayerV2): string {
+export function playerStrengthLabel(player: ProjectedPlayer): string {
   return `${plural(player.territoryCount, "country", "countries")} · ${plural(player.armyCount, "army", "armies")}`;
 }
 
 /** Share of all armies on the board, 0..1, for a proportional bar. */
-export function armyShare(
-  player: ProjectedPlayerV2,
-  players: readonly ProjectedPlayerV2[],
-): number {
+export function armyShare(player: ProjectedPlayer, players: readonly ProjectedPlayer[]): number {
   const total = players.reduce((sum, other) => sum + other.armyCount, 0);
   return total <= 0 ? 0 : player.armyCount / total;
 }
 
 /** How a seat is driven, when that is not simply "a person at the keyboard". */
-export function controllerLabel(player: ProjectedPlayerV2): string | null {
+export function controllerLabel(player: ProjectedPlayer): string | null {
   switch (player.controller) {
     case "external-agent":
       return "Agent";
@@ -490,7 +487,7 @@ export function controllerLabel(player: ProjectedPlayerV2): string | null {
  * One past move in product language. Deliberately free of source offsets: the
  * compact sync pill is the only architectural status the game surface keeps.
  */
-export function moveTextV2(move: ProjectedMoveV2, names: NameLookup): string {
+export function moveText(move: ProjectedMove, names: NameLookup): string {
   const who = names.player(move.playerId);
   switch (move.kind) {
     case "GameCreated":
@@ -526,7 +523,7 @@ export function moveTextV2(move: ProjectedMoveV2, names: NameLookup): string {
 }
 
 /** The dice line under a history row, when that row recorded a throw. */
-export function moveDetailV2(move: ProjectedMoveV2, names: NameLookup): string | null {
+export function moveDetail(move: ProjectedMove, names: NameLookup): string | null {
   if (move.kind !== "AttackResolved" || !move.attackerRolls || !move.defenderRolls) return null;
   return diceOutcomeText(
     {
@@ -556,7 +553,7 @@ export const TERRAIN_LABELS: Record<Terrain, string> = {
   mountains: "Mountains",
 };
 
-/** `"3 Forest · 2 Hills"` — terrain is visual-only in v2, so this is character, not maths. */
+/** `"3 Forest · 2 Hills"` — terrain is visual-only in current, so this is character, not maths. */
 export function terrainMix(terrains: readonly Terrain[]): string {
   const counts = new Map<Terrain, number>();
   for (const terrain of terrains) counts.set(terrain, (counts.get(terrain) ?? 0) + 1);

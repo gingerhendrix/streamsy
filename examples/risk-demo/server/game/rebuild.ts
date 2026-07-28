@@ -11,10 +11,9 @@
  * and usable; old generations are retained, never deleted, so a cutover is
  * reversible.
  *
- * Both rulesets take the same route. Only the (reducer, adapter, equivalence
- * view) triple differs, which is exactly what a {@link RebuildPlan} carries — so
- * a v2 game rebuilds under the v2 reducer version and its own generation lineage
- * without any v1 projection history being touched.
+ * This is a first-class durability demonstration: a replacement projection is
+ * verified before the active pointer changes, and every generation remains
+ * available for inspection.
  */
 
 import type { StreamProtocolFactory } from "@streamsy/core";
@@ -22,9 +21,7 @@ import { ProjectionRuntime } from "@streamsy/experimental/projection";
 import type { ProjectionAdapter } from "@streamsy/experimental/projection";
 
 import type { GameEvent } from "../../src/domain/events.ts";
-import type { GameEventV2 } from "../../src/domain/events-v2.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
-import { foldAggregateV2 } from "../../src/domain/aggregate-v2.ts";
 import {
   aggregateBoardView,
   boardsEqual,
@@ -32,22 +29,11 @@ import {
   type ProjectionState,
 } from "../../src/board/projection.ts";
 import {
-  aggregateBoardViewV2,
-  boardsEqualV2,
-  projectionBoardViewV2,
-  type ProjectionStateV2,
-} from "../../src/board/projection-v2.ts";
-import {
   BOARD_REDUCER_VERSION,
   createBoardProjectionAdapter,
   type BoardProjectionAdapterOptions,
 } from "../../src/board/board-projection.ts";
-import {
-  BOARD_REDUCER_VERSION_V2,
-  createBoardProjectionAdapterV2,
-  type BoardProjectionAdapterOptionsV2,
-} from "../../src/board/board-projection-v2.ts";
-import { isRulesetV2, readCanonical, readCanonicalV2 } from "./command-service.ts";
+import { readCanonical } from "./command-service.ts";
 import { boardStreamId, eventStreamId, nextGeneration } from "./names.ts";
 import type { GameRow, Stores } from "../persistence/stores.ts";
 
@@ -64,10 +50,6 @@ export interface RebuildOptions {
   makeAdapter?: (
     options: BoardProjectionAdapterOptions,
   ) => ProjectionAdapter<ProjectionState, GameEvent>;
-  /** The v2 equivalent of {@link makeAdapter}. */
-  makeAdapterV2?: (
-    options: BoardProjectionAdapterOptionsV2,
-  ) => ProjectionAdapter<ProjectionStateV2, GameEventV2>;
 }
 
 export interface RebuildEquivalence {
@@ -93,10 +75,9 @@ export interface RebuildResult {
   retainedGenerations: string[];
 }
 
-/** The ruleset-specific half of a rebuild: reducer identity plus verification. */
 interface RebuildPlan<State, Event> {
   reducerVersion: string;
-  adapter(options: BoardProjectionAdapterOptionsV2): ProjectionAdapter<State, Event>;
+  adapter(options: BoardProjectionAdapterOptions): ProjectionAdapter<State, Event>;
   readCanonical(
     protocol: StreamProtocolFactory,
     streamId: string,
@@ -104,23 +85,13 @@ interface RebuildPlan<State, Event> {
   boardEqual(state: State, events: readonly Event[]): boolean;
 }
 
-function v1Plan(options: RebuildOptions): RebuildPlan<ProjectionState, GameEvent> {
+function rebuildPlan(options: RebuildOptions): RebuildPlan<ProjectionState, GameEvent> {
   return {
     reducerVersion: BOARD_REDUCER_VERSION,
     adapter: options.makeAdapter ?? createBoardProjectionAdapter,
     readCanonical: (protocol, streamId) => readCanonical(protocol, streamId),
     boardEqual: (state, events) =>
       boardsEqual(projectionBoardView(state), aggregateBoardView(foldAggregate(events))),
-  };
-}
-
-function v2Plan(options: RebuildOptions): RebuildPlan<ProjectionStateV2, GameEventV2> {
-  return {
-    reducerVersion: BOARD_REDUCER_VERSION_V2,
-    adapter: options.makeAdapterV2 ?? createBoardProjectionAdapterV2,
-    readCanonical: (protocol, streamId) => readCanonicalV2(protocol, streamId),
-    boardEqual: (state, events) =>
-      boardsEqualV2(projectionBoardViewV2(state), aggregateBoardViewV2(foldAggregateV2(events))),
   };
 }
 
@@ -235,7 +206,5 @@ export async function rebuildBoardGeneration(
 ): Promise<RebuildResult> {
   const game = deps.stores.games.get(gameId);
   if (!game) return notFound(gameId);
-  return isRulesetV2(game.ruleset)
-    ? runRebuild(deps, game, options, v2Plan(options))
-    : runRebuild(deps, game, options, v1Plan(options));
+  return runRebuild(deps, game, options, rebuildPlan(options));
 }

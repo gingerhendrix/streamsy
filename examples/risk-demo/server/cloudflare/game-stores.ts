@@ -1,14 +1,14 @@
 import type { CapabilityRole } from "../capabilities.ts";
 import type { DurableObjectStorage, SqlStorageValue } from "@cloudflare/workers-types";
 import type {
-  AnyDecisionError,
-  AnyGameEvent,
   CommandRow,
   GameRow,
   GenerationRow,
   GenerationStatus,
   Stores,
 } from "../persistence/stores.ts";
+import type { DecisionError } from "../../src/domain/decide.ts";
+import type { GameEvent } from "../../src/domain/events.ts";
 
 const SCHEMA = [
   `create table if not exists risk_capabilities (
@@ -18,7 +18,7 @@ const SCHEMA = [
   `create table if not exists risk_games (
     game_id text primary key, source_stream_id text not null,
     projection_stream_id text not null, generation text not null,
-    ruleset text not null, created_at integer not null
+    created_at integer not null
   )`,
   `create table if not exists risk_commands (
     game_id text not null, command_id text not null, payload_hash text not null,
@@ -48,7 +48,6 @@ interface GameDbRow {
   source_stream_id: string;
   projection_stream_id: string;
   generation: string;
-  ruleset: string;
   created_at: number;
 }
 
@@ -80,7 +79,6 @@ const gameFromDb = (row: GameDbRow): GameRow => ({
   sourceStreamId: row.source_stream_id,
   projectionStreamId: row.projection_stream_id,
   generation: row.generation,
-  ruleset: row.ruleset,
   createdAt: row.created_at,
 });
 
@@ -137,13 +135,12 @@ export function createGameStores(storage: DurableObjectStorage): Stores {
       put(row) {
         sql.exec(
           `insert or replace into risk_games
-           (game_id, source_stream_id, projection_stream_id, generation, ruleset, created_at)
-           values (?, ?, ?, ?, ?, ?)`,
+           (game_id, source_stream_id, projection_stream_id, generation, created_at)
+           values (?, ?, ?, ?, ?)`,
           row.gameId,
           row.sourceStreamId,
           row.projectionStreamId,
           row.generation,
-          row.ruleset,
           row.createdAt,
         );
       },
@@ -189,8 +186,8 @@ export function createGameStores(storage: DurableObjectStorage): Stores {
           payloadHash: row.payload_hash,
           status: row.status as CommandRow["status"],
           sourceOffset: row.source_offset ?? undefined,
-          events: row.events_json ? (JSON.parse(row.events_json) as AnyGameEvent[]) : undefined,
-          error: row.error_json ? (JSON.parse(row.error_json) as AnyDecisionError) : undefined,
+          events: row.events_json ? (JSON.parse(row.events_json) as GameEvent[]) : undefined,
+          error: row.error_json ? (JSON.parse(row.error_json) as DecisionError) : undefined,
           createdAt: row.created_at,
         };
       },

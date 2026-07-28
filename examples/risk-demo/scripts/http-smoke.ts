@@ -81,7 +81,7 @@ async function main(): Promise<void> {
   let server = await startServer(port, dbPath);
   try {
     const created = await api(server.baseUrl, "POST", "/v1/games", {
-      body: { ruleset: "risk-demo-v1", name: "Alice", color: "red" },
+      body: { name: "Alice", color: "red" },
     });
     assert(created.status === 201, `create game: ${created.status}`);
     const gameId: string = created.body.game.id;
@@ -112,7 +112,10 @@ async function main(): Promise<void> {
     const commandBody = {
       commandId: "smoke-cmd",
       turnId: decision.body.turn.id,
-      action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 2 },
+      action: {
+        type: "reinforce",
+        placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.pool }],
+      },
     };
     const ack = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
       token: tokenByPlayer[active],
@@ -124,7 +127,7 @@ async function main(): Promise<void> {
     const board = await api(server.baseUrl, "GET", `/v1/games/${gameId}/board`);
     assert(board.body.sourceThroughOffset === committedOffset, "board watermark != ack offset");
 
-    // The v2 agent contract is header-only and action-stream driven.
+    // The current agent contract is header-only and action-stream driven.
     const agentGame = await api(server.baseUrl, "POST", "/v1/games", {
       body: { name: "Agent Host", mapSeed: "http-smoke-agent-routes" },
     });
@@ -160,17 +163,6 @@ async function main(): Promise<void> {
       "no actionable agent message after start",
     );
 
-    // The React board SPA is served and mounts on #root.
-    // The v1 fixture has no actions stream and says so, rather than serving an
-    // empty one that would read as "nothing is required of you".
-    const v1Actions = await api(server.baseUrl, "GET", `/v1/games/${gameId}/players/me/actions`, {
-      token: tokenByPlayer[active],
-    });
-    assert(
-      v1Actions.status === 400 && v1Actions.body.error.code === "BAD_REQUEST",
-      `v1 actions guard returned ${v1Actions.status}`,
-    );
-
     // Seat-scoped reads are never cached, and the private actions stream is not
     // reachable through the public spectator facade.
     const decisionHeaders = await fetch(`${server.baseUrl}/v1/games/${gameId}/decision`, {
@@ -181,7 +173,7 @@ async function main(): Promise<void> {
       "decision response was cacheable",
     );
     const leakedStream = await fetch(
-      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions/actions1`,
+      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions`,
     );
     assert(leakedStream.status === 404, "the private actions stream is publicly readable");
 
@@ -208,7 +200,7 @@ async function main(): Promise<void> {
       body: {
         commandId: "nope",
         turnId: decision.body.turn.id,
-        action: { type: "end-turn" },
+        action: { type: "skip-fortifications" },
       },
     });
     assert(forbidden.status === 409, `expected NOT_YOUR_TURN, got ${forbidden.status}`);

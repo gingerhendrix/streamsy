@@ -1,86 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
-  type CommandAck,
   type AgentSeatResponse,
   type CreateGameResponse,
-  type DecisionResponse,
   type GameResponse,
-  type JoinGameResponse,
-  type PlayAction,
-  type PlayCommandRequest,
 } from "../application/api.ts";
-import type { GameStatus } from "../domain/aggregate.ts";
-import type { LegalAction } from "../application/legal-actions.ts";
-import { TERRITORIES } from "../domain/map.ts";
-import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
-import { ackTxId } from "../board/transaction.ts";
-import { useRiskBoardStream } from "./board-stream-db.ts";
-import { GameV2Screen, type AgentSeat } from "./game-v2.tsx";
+import { GameScreen, type AgentSeat } from "./game.tsx";
 import {
-  COLORS,
   PlayerFields,
   STORAGE_KEY,
-  SyncPill,
-  TopBar,
-  acknowledgementNotice,
   api,
   errorMessage,
   gameFromUrl,
   gamePath,
   isError,
   loadIdentity,
-  normalizedColor,
-  playerRoleLabel,
-  rendererForGame,
-  shortOffset,
   type Identity,
 } from "./shared.tsx";
 
-export { acknowledgementNotice, playerRoleLabel, rendererForGame, shortOffset } from "./shared.tsx";
-
-const POSITIONS: Record<string, { x: number; y: number }> = {
-  alpha: { x: 15, y: 25 },
-  bravo: { x: 50, y: 18 },
-  charlie: { x: 84, y: 29 },
-  delta: { x: 18, y: 72 },
-  echo: { x: 52, y: 68 },
-  foxtrot: { x: 84, y: 75 },
-};
-
-export function didGameStatusChange(previous: GameStatus | null, current: GameStatus): boolean {
-  return previous !== null && previous !== current;
-}
-
-function moveText(move: ProjectedMove, players: ProjectedPlayer[]): string {
-  const player = players.find((item) => item.id === move.playerId)?.name ?? "A player";
-  switch (move.kind) {
-    case "GameCreated":
-      return `${player} opened the lobby`;
-    case "PlayerJoined":
-      return `${player} joined the game`;
-    case "GameStarted":
-      return "Territories dealt — the campaign begins";
-    case "ArmiesReinforced":
-      return `${player} reinforced ${move.territoryId} with ${move.armies}`;
-    case "AttackResolved":
-      return `${player} attacked ${move.from} → ${move.to}`;
-    case "ArmiesFortified":
-      return `${player} moved ${move.armies} armies ${move.from} → ${move.to}`;
-    case "TurnEnded":
-      return `${player} ended their turn`;
-    case "PlayerEliminated":
-      return `${player} was eliminated`;
-    case "GameWon":
-      return `${player} conquered the map`;
-  }
-}
-
-function attackResult(move: ProjectedMove): string | null {
-  if (!move.attackerRolls || !move.defenderRolls) return null;
-  const losses = `${move.attackerLosses ?? 0} attacker / ${move.defenderLosses ?? 0} defender lost`;
-  return `⚄ ${move.attackerRolls.join(" · ")} vs ${move.defenderRolls.join(" · ")} · ${losses}${move.territoryCaptured ? " · captured" : ""}`;
-}
+export { acknowledgementNotice, playerRoleLabel, shortOffset } from "./shared.tsx";
 
 export function App() {
   const [identity, setIdentity] = useState<Identity | null>(() => {
@@ -91,35 +29,10 @@ export function App() {
   const [gameId, setGameId] = useState(() => gameFromUrl());
   const [joinId, setJoinId] = useState(() => gameFromUrl());
   const [game, setGame] = useState<GameResponse | null>(null);
-  const [decision, setDecision] = useState<DecisionResponse | null>(null);
   const [name, setName] = useState("Player");
-  const [color, setColor] = useState(COLORS[0]!);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [initialAgentSeats, setInitialAgentSeats] = useState<AgentSeat[]>([]);
-  const previousStatus = useRef<GameStatus | null>(null);
-  // The renderer is chosen from the game's canonical ruleset, never inferred from
-  // missing rows — so only a v1 game opens the v1 board stream.
-  const renderer = rendererForGame(game);
-  const live = useRiskBoardStream(
-    renderer === "risk-demo-v1" ? (game?.boardStreamId ?? null) : null,
-  );
-  const board = live.rows;
-
-  useEffect(() => {
-    const current = board?.game.status;
-    if (!current) return;
-    if (didGameStatusChange(previousStatus.current, current)) setNotice("");
-    previousStatus.current = current;
-  }, [board?.game.status]);
-
-  useEffect(() => {
-    if (identity || !board) return;
-    const used = new Set(board.players.map((player) => normalizedColor(player.color)));
-    if (used.has(normalizedColor(color))) {
-      setColor(COLORS.find((candidate) => !used.has(normalizedColor(candidate))) ?? COLORS[0]!);
-    }
-  }, [board, color, identity]);
 
   const persist = useCallback((next: Identity | null) => {
     setIdentity(next);
@@ -181,26 +94,10 @@ export function App() {
     };
   }, [gameId, refreshGame]);
 
-  useEffect(() => {
-    if (!identity || board?.game.activePlayerId !== identity.playerId) {
-      setDecision(null);
-      return;
-    }
-    const aborter = new AbortController();
-    void api<DecisionResponse>("GET", `/v1/games/${identity.gameId}/decision`, {
-      token: identity.token,
-    }).then((result) => {
-      if (!aborter.signal.aborted && result.status === 200 && !isError(result.body)) {
-        setDecision(result.body);
-      }
-    });
-    return () => aborter.abort();
-  }, [identity, board?.game.activePlayerId, board?.meta?.sourceThroughOffset]);
-
   const createGame = async () => {
     setBusy(true);
     const result = await api<CreateGameResponse>("POST", "/v1/games", {
-      body: { name, color },
+      body: { name },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
@@ -284,93 +181,11 @@ export function App() {
     );
   };
 
-  const joinGame = async () => {
-    const target = joinId.trim();
-    if (!target) return;
-    setBusy(true);
-    const result = await api<JoinGameResponse>("POST", `/v1/games/${target}/players`, {
-      body: { name, color },
-    });
-    setBusy(false);
-    if (result.status !== 201 || isError(result.body)) {
-      setNotice(errorMessage(result.body, "Could not join the game."));
-      return;
-    }
-    persist({
-      gameId: target,
-      playerId: result.body.player.id,
-      token: result.body.capability,
-      role: "player",
-    });
-    openGame(target);
-    await refreshGame();
-    setNotice(`Joined as ${result.body.player.name}.`);
-  };
-
-  const startGame = async () => {
-    if (!identity) return;
-    setBusy(true);
-    const result = await api<CommandAck>("POST", `/v1/games/${identity.gameId}/start`, {
-      token: identity.token,
-      body: {},
-    });
-    if (result.status === 200 && !isError(result.body)) {
-      try {
-        if (!live.session) throw new Error("Board session is not connected.");
-        await live.session.awaitTxId(ackTxId(result.body));
-        setNotice("Game started — watch the live board deal territories.");
-      } catch {
-        setNotice("Game started, but the live board is still catching up.");
-      }
-    } else {
-      setNotice(errorMessage(result.body, "Could not start the game."));
-    }
-    setBusy(false);
-    await refreshGame();
-  };
-
-  const submit = async (action: PlayAction) => {
-    if (!identity || !decision) return;
-    setBusy(true);
-    const body: PlayCommandRequest = {
-      commandId: `${identity.playerId}:${decision.turn.id}:${crypto.randomUUID().slice(0, 8)}`,
-      turnId: decision.turn.id,
-      action,
-    };
-    const result = await api<CommandAck>("POST", `/v1/games/${identity.gameId}/commands`, {
-      token: identity.token,
-      body,
-    });
-    if (result.status === 200 && !isError(result.body)) {
-      try {
-        if (!live.session) throw new Error("Board session is not connected.");
-        await live.session.awaitTxId(ackTxId(result.body));
-        setNotice(acknowledgementNotice(action.type));
-      } catch {
-        setNotice(`${acknowledgementNotice(action.type)} Live board still catching up.`);
-      }
-    } else {
-      setNotice(errorMessage(result.body, "Move rejected."));
-    }
-    setBusy(false);
-    await refreshGame();
-  };
-
   const copyInvite = async () => {
     const url = new URL(gamePath(gameId), window.location.origin);
     await navigator.clipboard.writeText(url.toString());
     setNotice("Invite link copied.");
   };
-
-  const playerById = useMemo(
-    () => new Map((board?.players ?? []).map((player) => [player.id, player])),
-    [board?.players],
-  );
-  const reinforce = decision?.legalMoves.find(
-    (action): action is Extract<LegalAction, { type: "reinforce" }> => action.type === "reinforce",
-  );
-  const active = board ? playerById.get(board.game.activePlayerId ?? "") : undefined;
-  const winner = board ? playerById.get(board.game.winnerId ?? "") : undefined;
 
   if (!gameId) {
     return (
@@ -429,9 +244,9 @@ export function App() {
     );
   }
 
-  if (renderer === "risk-demo-v2" && game) {
+  if (game) {
     return (
-      <GameV2Screen
+      <GameScreen
         gameId={gameId}
         game={game}
         identity={identity}
@@ -447,108 +262,12 @@ export function App() {
 
   return (
     <main className="game-shell">
-      <TopBar gameId={gameId}>
-        <SyncPill
-          status={live.status}
-          offset={board?.meta?.sourceThroughOffset ?? live.streamOffset}
-          error={live.error}
-        />
-      </TopBar>
-
-      {!board ? (
-        <section className="honest-empty">
-          <div className="loader-ring" />
-          <h1>Connecting to the board stream</h1>
-          <p>
-            No placeholder armies here—the map appears when the projection’s first state arrives.
-          </p>
-          {live.error && <div className="notice error">{live.error}</div>}
-        </section>
-      ) : (
-        <div className="game-layout">
-          <section className="main-column">
-            <div className="turn-banner">
-              <div>
-                <span className="eyebrow">
-                  Round {board.game.round || "—"} · {board.game.status}
-                </span>
-                <h1>
-                  {winner
-                    ? `${winner.name} wins the map`
-                    : board.game.status === "lobby"
-                      ? "Gather your players"
-                      : `${active?.name ?? "Player"} · ${board.game.phase}`}
-                </h1>
-              </div>
-              {active && (
-                <span
-                  className="active-chip"
-                  style={{ "--player": active.color } as React.CSSProperties}
-                >
-                  {active.id === identity?.playerId ? "Your turn" : `${active.name}’s turn`}
-                </span>
-              )}
-            </div>
-
-            {board.game.status === "lobby" ? (
-              <Lobby
-                players={board.players}
-                hostPlayerId={board.game.hostPlayerId}
-                identity={identity}
-                name={name}
-                color={color}
-                busy={busy}
-                onName={setName}
-                onColor={setColor}
-                onJoin={joinGame}
-                onStart={startGame}
-                onCopy={copyInvite}
-              />
-            ) : (
-              <RiskMap
-                territories={board.territories}
-                players={board.players}
-                reinforceIds={new Set(reinforce?.territoryIds ?? [])}
-                disabled={busy || !reinforce}
-                onTerritory={(id) =>
-                  reinforce && void submit({ type: "reinforce", territoryId: id, armies: 1 })
-                }
-              />
-            )}
-
-            {decision && board.game.status === "playing" && (
-              <ActionPanel decision={decision} busy={busy} onSubmit={submit} />
-            )}
-            {notice && (
-              <div className="notice" role="status">
-                {notice}
-              </div>
-            )}
-          </section>
-
-          <aside className="side-column">
-            <Roster
-              players={board.players}
-              activePlayerId={board.game.activePlayerId}
-              selfId={identity?.playerId}
-              territories={board.territories}
-            />
-            <EventFeed moves={board.moves} players={board.players} />
-            <div className="session-card">
-              <button className="ghost" onClick={copyInvite}>
-                Copy game link
-              </button>
-              {identity ? (
-                <button className="text-button" onClick={() => persist(null)}>
-                  Leave player seat
-                </button>
-              ) : board.game.status === "lobby" ? null : (
-                <small>Spectating live</small>
-              )}
-            </div>
-          </aside>
-        </div>
-      )}
+      <section className="honest-empty">
+        <div className="loader-ring" />
+        <h1>Connecting to the game</h1>
+        <p>The board appears when the game resource is available.</p>
+        {notice && <div className="notice error">{notice}</div>}
+      </section>
     </main>
   );
 }
@@ -562,302 +281,5 @@ function StoryStep({ number, title, copy }: { number: string; title: string; cop
         <p>{copy}</p>
       </div>
     </div>
-  );
-}
-
-function Lobby(props: {
-  players: ProjectedPlayer[];
-  hostPlayerId?: string;
-  identity: Identity | null;
-  name: string;
-  color: string;
-  busy: boolean;
-  onName(value: string): void;
-  onColor(value: string): void;
-  onJoin(): void;
-  onStart(): void;
-  onCopy(): void;
-}) {
-  const isHost = props.identity?.role === "host";
-  return (
-    <section className="lobby-card">
-      <div className="lobby-top">
-        <div>
-          <span className="section-label">Lobby · {props.players.length}/4</span>
-          <h2>{props.players.length < 2 ? "Waiting for a challenger" : "Ready to deploy"}</h2>
-          <p>
-            {isHost
-              ? "Share the link, then start when everyone has arrived."
-              : props.identity
-                ? "The host will begin when the lobby is ready."
-                : "Choose a name and claim a player seat."}
-          </p>
-        </div>
-        <button className="invite-button" onClick={props.onCopy}>
-          Copy invite link
-        </button>
-      </div>
-      <div className="lobby-players">
-        {props.players.map((player) => (
-          <div className="lobby-player" key={player.id}>
-            <span className="avatar" style={{ background: player.color }}>
-              {player.name.slice(0, 1).toUpperCase()}
-            </span>
-            <div>
-              <b>{player.name}</b>
-              <small>
-                {playerRoleLabel(props.hostPlayerId, player.id)}
-                {player.id === props.identity?.playerId ? " · you" : ""}
-              </small>
-            </div>
-            <span className="ready">Ready</span>
-          </div>
-        ))}
-        {Array.from({ length: Math.max(0, 2 - props.players.length) }, (_, index) => (
-          <div className="empty-seat" key={index}>
-            Open player seat
-          </div>
-        ))}
-      </div>
-      {!props.identity && (
-        <div className="join-panel">
-          <PlayerFields name={props.name} onName={props.onName} />
-          <button
-            className="primary"
-            onClick={props.onJoin}
-            disabled={props.busy || !props.name.trim()}
-          >
-            {props.busy ? "Joining…" : "Join this game"}
-          </button>
-        </div>
-      )}
-      {isHost && (
-        <button
-          className="primary start-button"
-          onClick={props.onStart}
-          disabled={props.busy || props.players.length < 2}
-        >
-          {props.players.length < 2 ? "Waiting for 2 players" : "Start game"}
-        </button>
-      )}
-    </section>
-  );
-}
-
-function RiskMap(props: {
-  territories: ProjectedTerritory[];
-  players: ProjectedPlayer[];
-  reinforceIds: Set<string>;
-  disabled: boolean;
-  onTerritory(id: string): void;
-}) {
-  const byId = new Map(props.territories.map((territory) => [territory.id, territory]));
-  const colorOf = (ownerId?: string) =>
-    props.players.find((player) => player.id === ownerId)?.color ?? "#667085";
-  const edges = TERRITORIES.flatMap((territory) =>
-    territory.adjacent
-      .filter((other) => territory.id < other)
-      .map((other) => [territory.id, other] as const),
-  );
-  return (
-    <section className="map-card" aria-label="Hex Domination territory map">
-      <div className="map-grid">
-        <svg
-          className="map-lines"
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          {edges.map(([from, to]) => (
-            <line
-              key={`${from}-${to}`}
-              x1={POSITIONS[from]!.x}
-              y1={POSITIONS[from]!.y}
-              x2={POSITIONS[to]!.x}
-              y2={POSITIONS[to]!.y}
-            />
-          ))}
-        </svg>
-        {TERRITORIES.map((definition) => {
-          const territory = byId.get(definition.id);
-          const owner = props.players.find((player) => player.id === territory?.ownerId);
-          const actionable = props.reinforceIds.has(definition.id);
-          return (
-            <button
-              key={definition.id}
-              className={`territory-button ${actionable ? "actionable" : ""}`}
-              style={
-                {
-                  left: `${POSITIONS[definition.id]!.x}%`,
-                  top: `${POSITIONS[definition.id]!.y}%`,
-                  "--owner": colorOf(territory?.ownerId),
-                } as React.CSSProperties
-              }
-              disabled={props.disabled || !actionable}
-              onClick={() => props.onTerritory(definition.id)}
-              aria-label={`${definition.name}, ${territory?.armies ?? 0} armies, owned by ${owner?.name ?? "nobody"}`}
-            >
-              <span className="territory-name">{definition.name}</span>
-              <b>{territory?.armies ?? 0}</b>
-              <small>{owner?.name ?? "Unclaimed"}</small>
-            </button>
-          );
-        })}
-      </div>
-      <div className="map-caption">
-        <span>Connected territories share a route</span>
-        <span>Click a marked territory to reinforce</span>
-      </div>
-    </section>
-  );
-}
-
-function Roster({
-  players,
-  activePlayerId,
-  selfId,
-  territories,
-}: {
-  players: ProjectedPlayer[];
-  activePlayerId?: string;
-  selfId?: string;
-  territories: ProjectedTerritory[];
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <h2>Players</h2>
-        <span>{players.length}</span>
-      </div>
-      <div className="roster">
-        {players.map((player) => {
-          const armies =
-            territories
-              .filter((territory) => territory.ownerId === player.id)
-              .reduce((sum, territory) => sum + territory.armies, 0) + player.remainingArmies;
-          return (
-            <div
-              className={`roster-player ${player.eliminated ? "eliminated" : ""}`}
-              key={player.id}
-            >
-              <span className="player-color" style={{ background: player.color }} />
-              <div>
-                <b>
-                  {player.name}
-                  {player.id === selfId ? " (you)" : ""}
-                </b>
-                <small>
-                  {player.eliminated
-                    ? "Eliminated"
-                    : `${armies} armies · ${territories.filter((territory) => territory.ownerId === player.id).length} territories`}
-                </small>
-              </div>
-              {player.id === activePlayerId && <span className="turn-marker">Turn</span>}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function EventFeed({ moves, players }: { moves: ProjectedMove[]; players: ProjectedPlayer[] }) {
-  return (
-    <section className="panel feed-panel">
-      <div className="panel-heading">
-        <h2>Event stream</h2>
-        <span>latest</span>
-      </div>
-      <div className="event-feed">
-        {moves.length === 0 ? (
-          <p className="muted">Events will appear here as they commit.</p>
-        ) : (
-          moves.slice(0, 12).map((move) => (
-            <article className="event-item" key={move.id}>
-              <span className={`event-icon ${move.kind === "AttackResolved" ? "battle" : ""}`}>
-                {move.kind === "AttackResolved" ? "⚔" : "◆"}
-              </span>
-              <div>
-                <b>{moveText(move, players)}</b>
-                {attackResult(move) && <small>{attackResult(move)}</small>}
-                <code>{shortOffset(move.sourceOffset)}</code>
-              </div>
-            </article>
-          ))
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ActionPanel({
-  decision,
-  busy,
-  onSubmit,
-}: {
-  decision: DecisionResponse;
-  busy: boolean;
-  onSubmit(action: PlayAction): Promise<void>;
-}) {
-  const actions = decision.legalMoves;
-  return (
-    <section className="action-panel">
-      <div>
-        <span className="section-label">Your move</span>
-        <h2>
-          {decision.turn.phase === "reinforce"
-            ? "Place reinforcements"
-            : decision.turn.phase === "attack"
-              ? "Choose an attack or fortify"
-              : "Finish your turn"}
-        </h2>
-      </div>
-      <div className="action-list">
-        {actions.flatMap((action) => {
-          if (action.type === "reinforce")
-            return [
-              <span className="action-hint" key="reinforce">
-                Select one of your marked territories · {action.maxArmies} remaining
-              </span>,
-            ];
-          if (action.type === "attack")
-            return action.choices.map((choice) => (
-              <button
-                key={`attack-${choice.from}-${choice.to}`}
-                disabled={busy}
-                onClick={() =>
-                  void onSubmit({ type: "attack", ...choice, attackerDice: choice.maxAttackerDice })
-                }
-              >
-                ⚔ {choice.from} → {choice.to}
-                <small>{choice.maxAttackerDice} dice</small>
-              </button>
-            ));
-          if (action.type === "fortify")
-            return action.choices.map((choice) => (
-              <button
-                key={`fortify-${choice.from}-${choice.to}`}
-                disabled={busy}
-                onClick={() =>
-                  void onSubmit({ type: "fortify", from: choice.from, to: choice.to, armies: 1 })
-                }
-              >
-                Move {choice.from} → {choice.to}
-                <small>1 army</small>
-              </button>
-            ));
-          return [
-            <button
-              className="end-turn"
-              key="end-turn"
-              disabled={busy}
-              onClick={() => void onSubmit({ type: "end-turn" })}
-            >
-              End turn →
-            </button>,
-          ];
-        })}
-      </div>
-    </section>
   );
 }

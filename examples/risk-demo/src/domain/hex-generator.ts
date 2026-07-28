@@ -42,15 +42,9 @@ import type {
   HexTileDef,
   MapProfile,
   Terrain,
-  TerritoryDefV2,
-} from "./map-v2.ts";
-import {
-  GENERATOR_VERSION_V2,
-  MAP_VERSION_V2,
-  RULES_V2,
-  continentBonus,
-  mapProfileFor,
-} from "./map-v2.ts";
+  TerritoryDef,
+} from "./map.ts";
+import { GENERATOR_VERSION, MAP_VERSION, RULES, continentBonus, mapProfileFor } from "./map.ts";
 
 /** Number of neighbour-averaging passes applied to elevation and moisture. */
 const TERRAIN_SMOOTHING_PASSES = 2;
@@ -202,8 +196,8 @@ function growLand(rng: IntRng, target: number): Axial[] {
 
 /** Target country sizes in `[min, max]`, deterministically rebalanced to sum to `total`. */
 function planTerritorySizes(rng: IntRng, count: number, total: number): number[] | null {
-  const min = RULES_V2.minTerritoryHexes;
-  const max = RULES_V2.maxTerritoryHexes;
+  const min = RULES.minTerritoryHexes;
+  const max = RULES.maxTerritoryHexes;
   if (count * min > total || count * max < total) return null;
 
   const sizes: number[] = [];
@@ -321,7 +315,7 @@ function partitionTerritories(
       }
       if (neighbourIndices.size === 0) continue;
       const options = [...neighbourIndices].toSorted((a, b) => a - b);
-      const underMax = options.filter((i) => groups[i]!.length < RULES_V2.maxTerritoryHexes);
+      const underMax = options.filter((i) => groups[i]!.length < RULES.maxTerritoryHexes);
       const pool = underMax.length > 0 ? underMax : options;
       let best = pool[0]!;
       for (const i of pool) {
@@ -352,7 +346,7 @@ function partitionTerritories(
  * are evaluated in coordinate order and the first legal transfer wins.
  */
 function repairUndersizedTerritories(groups: string[][], owner: Map<string, number>): boolean {
-  const min = RULES_V2.minTerritoryHexes;
+  const min = RULES.minTerritoryHexes;
   for (let i = 0; i < groups.length; i += 1) {
     let guard = 0;
     while (groups[i]!.length < min) {
@@ -419,7 +413,7 @@ function partitionContinents(
   const base = Math.floor(territoryCount / continentCount);
   const remainder = territoryCount % continentCount;
   const targets = Array.from({ length: continentCount }, (_, i) => base + (i < remainder ? 1 : 0));
-  if (targets.some((t) => t < RULES_V2.minContinentTerritories)) return null;
+  if (targets.some((t) => t < RULES.minContinentTerritories)) return null;
 
   // Farthest-point seeds on the territory graph.
   const seeds: number[] = [rng.nextInt(territoryCount)];
@@ -644,9 +638,9 @@ export function validateGeneratedMap(map: GeneratedMap, profile: MapProfile): st
   const seenHexes = new Set<string>();
   for (const territory of map.territories) {
     const size = territory.hexIds.length;
-    if (size < RULES_V2.minTerritoryHexes || size > RULES_V2.maxTerritoryHexes) {
+    if (size < RULES.minTerritoryHexes || size > RULES.maxTerritoryHexes) {
       problems.push(
-        `${territory.id} has ${size} hexes, outside ${RULES_V2.minTerritoryHexes}..${RULES_V2.maxTerritoryHexes}`,
+        `${territory.id} has ${size} hexes, outside ${RULES.minTerritoryHexes}..${RULES.maxTerritoryHexes}`,
       );
     }
     if (!isHexSetConnected(territory.hexIds)) problems.push(`${territory.id} is not connected`);
@@ -685,9 +679,9 @@ export function validateGeneratedMap(map: GeneratedMap, profile: MapProfile): st
 
   const assignedTerritories = new Set<string>();
   for (const continent of map.continents) {
-    if (continent.territoryIds.length < RULES_V2.minContinentTerritories) {
+    if (continent.territoryIds.length < RULES.minContinentTerritories) {
       problems.push(
-        `${continent.id} has ${continent.territoryIds.length} territories, fewer than ${RULES_V2.minContinentTerritories}`,
+        `${continent.id} has ${continent.territoryIds.length} territories, fewer than ${RULES.minContinentTerritories}`,
       );
     }
     if (continent.reinforcementBonus !== continentBonus(continent.territoryIds.length)) {
@@ -786,7 +780,7 @@ function attemptGenerate(
     return null;
   }
 
-  const territories: TerritoryDefV2[] = order.map((groupIndex, position) => {
+  const territories: TerritoryDef[] = order.map((groupIndex, position) => {
     const hexIds = sortHexIds(partition.groups[groupIndex]!);
     return {
       id: territoryIdFor(position),
@@ -824,8 +818,8 @@ function attemptGenerate(
   const qs = land.map((h) => h.q);
   const rs = land.map((h) => h.r);
   const map: GeneratedMap = {
-    mapVersion: MAP_VERSION_V2,
-    generatorVersion: GENERATOR_VERSION_V2,
+    mapVersion: MAP_VERSION,
+    generatorVersion: GENERATOR_VERSION,
     seed: recordedSeed,
     widthHint: Math.max(...qs) - Math.min(...qs) + 1,
     heightHint: Math.max(...rs) - Math.min(...rs) + 1,
@@ -850,14 +844,14 @@ export function generateHexMap(request: GenerateMapRequest): GeneratedMap {
   const profile = mapProfileFor(request.playerCount);
   const problems: string[] = [];
 
-  for (let attempt = 0; attempt < RULES_V2.maxGenerationAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < RULES.maxGenerationAttempts; attempt += 1) {
     const attemptSeed = attempt === 0 ? request.seed : `${request.seed}#${attempt}`;
     const candidate = attemptGenerate(request.seed, attemptSeed, profile);
     if (candidate && candidate.problems.length === 0) return candidate.map;
     if (candidate) problems.push(`attempt ${attempt}: ${candidate.problems.join(", ")}`);
   }
 
-  throw new MapGenerationError(request.seed, RULES_V2.maxGenerationAttempts, problems);
+  throw new MapGenerationError(request.seed, RULES.maxGenerationAttempts, problems);
 }
 
 // ---------------------------------------------------------------------------

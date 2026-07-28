@@ -1,10 +1,8 @@
 /**
- * Board materialization for `GET /board` and the decision watermark.
+ * `Hex Domination` board materialization for `GET /board` and the decision
+ * watermark.
  *
- * Wraps the replay-safe {@link ProjectionRuntime}: catches the separate
- * board projection up to the canonical head and returns its state plus the
- * causal `sourceThroughOffset`. Runtimes are cached per game so repeated reads
- * continue from memory instead of re-scanning the projection stream.
+ * A replay-safe {@link ProjectionRuntime} is cached per game and generation.
  */
 
 import type { StreamProtocolFactory } from "@streamsy/core";
@@ -21,7 +19,6 @@ export function createBoardRuntimeCache(): BoardRuntimeCache {
   return new Map();
 }
 
-/** Cache runtimes per (game, generation) so a cutover transparently switches streams. */
 function cacheKey(gameId: string, generation: string): string {
   return `${gameId}:${generation}`;
 }
@@ -56,10 +53,8 @@ export interface MaterializedBoard {
 }
 
 /**
- * Catch the active board projection up to the canonical head and return it. The
- * `generation` names which projection stream is live; after a cutover, callers
- * pass the new generation and a fresh runtime is used, leaving the old stream
- * intact.
+ * Catch the active current board projection up to the canonical head and return it,
+ * together with the causal watermark the decision resource reports.
  */
 export async function materializeBoard(
   protocol: StreamProtocolFactory,

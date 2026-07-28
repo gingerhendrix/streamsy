@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type {
-  ProjectedContinentV2,
-  ProjectedMoveV2,
-  ProjectedPlayerV2,
-  ProjectedTerritoryV2,
-  ProjectedTurnV2,
-} from "../board/projection-v2.ts";
+  ProjectedContinent,
+  ProjectedMove,
+  ProjectedPlayer,
+  ProjectedTerritory,
+  ProjectedTurn,
+} from "../board/projection.ts";
 import {
   armyShare,
   continentOccupationLabel,
@@ -18,8 +18,8 @@ import {
   defenseAttribution,
   dicePairs,
   diceOutcomeText,
-  moveDetailV2,
-  moveTextV2,
+  moveDetail,
+  moveText,
   phaseInstruction,
   phaseState,
   phaseSummary,
@@ -32,7 +32,7 @@ import {
   terrainMix,
   turnLedger,
   type NameLookup,
-} from "./presentation-v2.ts";
+} from "./presentation.ts";
 
 const NAMES: NameLookup = {
   territory: (id) => ({ t1: "Ashfell", t2: "Northgate", t3: "Karrow" })[id] ?? id,
@@ -40,7 +40,7 @@ const NAMES: NameLookup = {
   continent: (id) => ({ c1: "Northreach", c2: "Sunder" })[id] ?? id,
 };
 
-function turn(overrides: Partial<ProjectedTurnV2> = {}): ProjectedTurnV2 {
+function turn(overrides: Partial<ProjectedTurn> = {}): ProjectedTurn {
   return {
     id: "turn",
     turnId: "round-2:p1",
@@ -226,7 +226,7 @@ describe("current-turn ledger", () => {
   });
 });
 
-const move = (overrides: Partial<ProjectedMoveV2>): ProjectedMoveV2 => ({
+const move = (overrides: Partial<ProjectedMove>): ProjectedMove => ({
   id: "7",
   commandId: "c1",
   kind: "ArmiesReinforced",
@@ -236,16 +236,16 @@ const move = (overrides: Partial<ProjectedMoveV2>): ProjectedMoveV2 => ({
 
 describe("game history", () => {
   it("names countries and players rather than ids", () => {
-    expect(moveTextV2(move({ playerId: "p1", territoryId: "t1", armies: 2 }), NAMES)).toBe(
+    expect(moveText(move({ playerId: "p1", territoryId: "t1", armies: 2 }), NAMES)).toBe(
       "Ada reinforced Ashfell with 2",
     );
     expect(
-      moveTextV2(move({ kind: "TerritoryOccupied", playerId: "p1", to: "t2", armies: 3 }), NAMES),
+      moveText(move({ kind: "TerritoryOccupied", playerId: "p1", to: "t2", armies: 3 }), NAMES),
     ).toBe("Ada occupied Northgate with 3");
   });
 
   it("never puts a source offset in player-facing text", () => {
-    const text = moveTextV2(move({ kind: "GameStarted" }), NAMES);
+    const text = moveText(move({ kind: "GameStarted" }), NAMES);
     expect(text).not.toContain(move({}).sourceOffset);
   });
 
@@ -261,24 +261,24 @@ describe("game history", () => {
       defenderLosses: 1,
       territoryCaptured: false,
     };
-    expect(moveTextV2(move({ ...resolved, resolutionSource: "human" }), NAMES)).toBe(
+    expect(moveText(move({ ...resolved, resolutionSource: "human" }), NAMES)).toBe(
       "Mina defended Northgate",
     );
-    expect(moveTextV2(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
+    expect(moveText(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
       "Northgate was auto-rolled — Mina’s window expired",
     );
-    expect(moveTextV2(move({ ...resolved, resolutionSource: "bot" }), NAMES)).toBe(
+    expect(moveText(move({ ...resolved, resolutionSource: "bot" }), NAMES)).toBe(
       "Mina’s bot defended Northgate",
     );
-    expect(moveDetailV2(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
+    expect(moveDetail(move({ ...resolved, resolutionSource: "timeout" }), NAMES)).toBe(
       "6 · 2 vs 3 — 1 defender lost · Auto-rolled after timeout",
     );
   });
 
   it("adds a dice line only for a resolved throw", () => {
-    expect(moveDetailV2(move({ kind: "ArmiesFortified" }), NAMES)).toBeNull();
+    expect(moveDetail(move({ kind: "ArmiesFortified" }), NAMES)).toBeNull();
     expect(
-      moveDetailV2(
+      moveDetail(
         move({
           kind: "AttackResolved",
           from: "t1",
@@ -391,7 +391,7 @@ describe("turn phases", () => {
   });
 });
 
-const player = (overrides: Partial<ProjectedPlayerV2> = {}): ProjectedPlayerV2 => ({
+const player = (overrides: Partial<ProjectedPlayer> = {}): ProjectedPlayer => ({
   id: "p1",
   name: "Ada",
   color: "#e05a47",
@@ -402,7 +402,7 @@ const player = (overrides: Partial<ProjectedPlayerV2> = {}): ProjectedPlayerV2 =
   ...overrides,
 });
 
-const continent = (overrides: Partial<ProjectedContinentV2> = {}): ProjectedContinentV2 => ({
+const continent = (overrides: Partial<ProjectedContinent> = {}): ProjectedContinent => ({
   id: "c1",
   name: "Northreach",
   territoryIds: ["t1", "t2"],
@@ -411,7 +411,7 @@ const continent = (overrides: Partial<ProjectedContinentV2> = {}): ProjectedCont
   ...overrides,
 });
 
-const territory = (id: string, ownerId?: string): ProjectedTerritoryV2 => ({
+const territory = (id: string, ownerId?: string): ProjectedTerritory => ({
   id,
   name: id,
   continentId: "c1",

@@ -1,33 +1,22 @@
 import type { GamePhase, GameStatus } from "../domain/aggregate.ts";
 import type { RiskErrorCode } from "../domain/commands.ts";
-import type { RiskErrorCodeV2 } from "../domain/commands-v2.ts";
 import type { DecisionContext } from "./decision.ts";
-import type { DecisionContextV2 } from "./decision-v2.ts";
 import type {
   BoardView,
+  ProjectedCombat,
+  ProjectedContinent,
   ProjectedGame,
+  ProjectedHex,
   ProjectedMove,
   ProjectedPlayer,
   ProjectedTerritory,
+  ProjectedTurn,
   ProjectionState,
 } from "../board/projection.ts";
-import type {
-  BoardViewV2,
-  ProjectedCombatV2,
-  ProjectedContinentV2,
-  ProjectedGameV2,
-  ProjectedHexV2,
-  ProjectedMoveV2,
-  ProjectedPlayerV2,
-  ProjectedTerritoryV2,
-  ProjectedTurnV2,
-  ProjectionStateV2,
-} from "../board/projection-v2.ts";
-import type { GameActionV2, PlayCommandV2 } from "../domain/commands-v2.ts";
+import type { GameAction, PlayCommand } from "../domain/commands.ts";
 
 export type ApiErrorCode =
   | RiskErrorCode
-  | RiskErrorCodeV2
   | "UNAUTHORIZED"
   | "FORBIDDEN"
   | "WRONG_GAME"
@@ -96,7 +85,7 @@ export function statusForErrorCode(code: ApiErrorCode): number {
     case "TOO_MANY_PLAYERS":
     case "PLAYER_ID_TAKEN":
     case "COMMAND_ID_REUSED":
-    // The v2 combat interrupt: every one of these means "the canonical board
+    // Combat interrupts mean the canonical board moved on or is waiting on
     // moved on, or is waiting on someone else" — a conflict, not a bad request.
     case "PENDING_DEFENSE":
     case "PENDING_OCCUPATION":
@@ -158,18 +147,13 @@ export interface CommandAck {
 export interface CreateGameRequest {
   name?: string;
   /**
-   * Optional colour request. For `risk-demo-v2` the server assigns the seat's
+   * Optional colour request. The server assigns the seat's
    * colour conflict-safely: a free requested colour is honoured, and an absent
    * or taken one is replaced by the first available palette colour. The
    * response's `player.color` is the colour actually issued.
    */
   color?: string;
   commandId?: string;
-  /**
-   * Ruleset for the new game. Absent means `risk-demo-v2`; pass `risk-demo-v1`
-   * explicitly to create a v1 fixed-map game.
-   */
-  ruleset?: string;
   /**
    * Public seat vocabulary. `"agent"` means an external coding agent; the
    * deterministic showcase uses the explicit `"bot"` value.
@@ -180,7 +164,7 @@ export interface CreateGameRequest {
 }
 
 export interface CreateGameResponse {
-  game: { id: string; ruleset: string; mapVersion: string };
+  game: { id: string; mapVersion: string };
   player: PlayerIdentity;
   capability: string;
   ack: CommandAck;
@@ -226,7 +210,6 @@ export interface AgentSeatResponse {
 export interface GameResponse {
   gameId: string;
   status: GameStatus;
-  ruleset: string;
   mapVersion: string;
   round: number;
   activePlayerId?: string;
@@ -235,69 +218,37 @@ export interface GameResponse {
   generation: string;
   boardStreamId: string;
   players: Array<Pick<ProjectedPlayer, "id" | "name" | "color" | "eliminated">>;
-  /** Present only for `risk-demo-v2`: the open combat interrupt, if any. */
-  pendingInteraction?: DecisionContextV2["pendingInteraction"];
-}
-
-export interface BoardResponse {
-  gameId: string;
-  ruleset: string;
-  sourceStreamId: string;
-  sourceThroughOffset: string | null;
-  generation: string;
-  game: ProjectedGame;
-  players: ProjectedPlayer[];
-  territories: ProjectedTerritory[];
-  view: BoardView;
+  /** The open combat interrupt, if any. */
+  pendingInteraction?: DecisionContext["pendingInteraction"];
 }
 
 /**
- * `GET /board` for a `risk-demo-v2` game. Static map rows (hexes, territories,
+ * `GET /board`. Static map rows (hexes, territories,
  * continents) are served here, once, rather than repeated on every `/decision`
  * fetch; `turn` and `combat` are the zero-or-one current-turn rows.
  */
-export interface BoardResponseV2 {
+export interface BoardResponse {
   gameId: string;
-  ruleset: string;
   sourceStreamId: string;
   sourceThroughOffset: string | null;
   generation: string;
   /** Durable State stream a browser can follow live for this generation. */
   boardStreamId: string;
   reducerVersion: string;
-  game: ProjectedGameV2;
-  players: ProjectedPlayerV2[];
-  hexes: ProjectedHexV2[];
-  territories: ProjectedTerritoryV2[];
-  continents: ProjectedContinentV2[];
-  turn: ProjectedTurnV2 | null;
-  combat: ProjectedCombatV2 | null;
-  moves: ProjectedMoveV2[];
-  view: BoardViewV2;
+  game: ProjectedGame;
+  players: ProjectedPlayer[];
+  hexes: ProjectedHex[];
+  territories: ProjectedTerritory[];
+  continents: ProjectedContinent[];
+  turn: ProjectedTurn | null;
+  combat: ProjectedCombat | null;
+  moves: ProjectedMove[];
+  view: BoardView;
 }
 
 export type DecisionResponse = DecisionContext;
-export type DecisionResponseV2 = DecisionContextV2;
-
-export type PlayAction =
-  | { type: "reinforce"; territoryId: string; armies: number }
-  | { type: "attack"; from: string; to: string; attackerDice: number }
-  | { type: "fortify"; from: string; to: string; armies: number }
-  | { type: "end-turn" };
-
-export interface PlayCommandRequest {
-  commandId: string;
-  turnId: string;
-  action: PlayAction;
-}
-
-/**
- * The v2 command envelope. Version-discriminated on purpose: v1 `attack` is a
- * whole fight-and-occupy step, while v2 `declare-attack` is one throw that opens
- * a defence interrupt. Neither is a rename of the other.
- */
-export type PlayActionV2 = GameActionV2;
-export type PlayCommandRequestV2 = PlayCommandV2;
+export type PlayAction = GameAction;
+export type PlayCommandRequest = PlayCommand;
 
 export interface BoardProjectionMeta {
   sourceStreamId: string;
@@ -308,32 +259,15 @@ export interface BoardProjectionMeta {
   snapshot: ProjectionState;
 }
 
+/** The client-side shape of one board generation's collections. */
 export interface BoardRows {
   game: ProjectedGame;
   players: ProjectedPlayer[];
+  hexes: ProjectedHex[];
   territories: ProjectedTerritory[];
+  continents: ProjectedContinent[];
+  turn: ProjectedTurn | null;
+  combat: ProjectedCombat | null;
   moves: ProjectedMove[];
   meta: BoardProjectionMeta | null;
-}
-
-export interface BoardProjectionMetaV2 {
-  sourceStreamId: string;
-  sourceThroughOffset: string;
-  sourceSeq: number;
-  generation: string;
-  reducerVersion: string;
-  snapshot: ProjectionStateV2;
-}
-
-/** The client-side shape of one v2 board generation's collections. */
-export interface BoardRowsV2 {
-  game: ProjectedGameV2;
-  players: ProjectedPlayerV2[];
-  hexes: ProjectedHexV2[];
-  territories: ProjectedTerritoryV2[];
-  continents: ProjectedContinentV2[];
-  turn: ProjectedTurnV2 | null;
-  combat: ProjectedCombatV2 | null;
-  moves: ProjectedMoveV2[];
-  meta: BoardProjectionMetaV2 | null;
 }

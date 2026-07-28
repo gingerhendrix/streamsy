@@ -15,27 +15,27 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import type {
-  ProjectedContinentV2,
-  ProjectedMoveV2,
-  ProjectedPlayerV2,
-  ProjectedTerritoryV2,
-} from "../board/projection-v2.ts";
+  ProjectedContinent,
+  ProjectedMove,
+  ProjectedPlayer,
+  ProjectedTerritory,
+} from "../board/projection.ts";
 import {
   armyShare,
   continentOccupationLabel,
   continentStandings,
   controllerLabel,
-  moveDetailV2,
-  moveTextV2,
+  moveDetail,
+  moveText,
   playerStrengthLabel,
   type NameLookup,
-} from "./presentation-v2.ts";
+} from "./presentation.ts";
 
 /** How many past moves the feed keeps on screen; the stream itself is unbounded. */
 const HISTORY_LIMIT = 14;
 
 function PlayerStandings(props: {
-  players: ProjectedPlayerV2[];
+  players: ProjectedPlayer[];
   activePlayerId?: string;
   selfId?: string;
 }) {
@@ -86,8 +86,8 @@ function PlayerStandings(props: {
 }
 
 function ContinentStandings(props: {
-  continents: ProjectedContinentV2[];
-  territories: ProjectedTerritoryV2[];
+  continents: ProjectedContinent[];
+  territories: ProjectedTerritory[];
   names: NameLookup;
   colorOf(playerId: string | undefined): string;
 }) {
@@ -133,7 +133,7 @@ function ContinentStandings(props: {
   );
 }
 
-function GameHistory(props: { moves: ProjectedMoveV2[]; names: NameLookup }) {
+function GameHistory(props: { moves: ProjectedMove[]; names: NameLookup }) {
   return (
     <section className="panel feed-panel" aria-label="Game history">
       <div className="panel-heading">
@@ -146,12 +146,12 @@ function GameHistory(props: { moves: ProjectedMoveV2[]; names: NameLookup }) {
         ) : (
           props.moves.slice(0, HISTORY_LIMIT).map((move) => {
             const battle = move.kind === "AttackResolved" || move.kind === "AttackDeclared";
-            const detail = moveDetailV2(move, props.names);
+            const detail = moveDetail(move, props.names);
             return (
               <article className="event-item" key={move.id}>
                 <span className={`event-icon ${battle ? "battle" : ""}`}>{battle ? "⚔" : "◆"}</span>
                 <div>
-                  <b>{moveTextV2(move, props.names)}</b>
+                  <b>{moveText(move, props.names)}</b>
                   {detail && <small>{detail}</small>}
                 </div>
               </article>
@@ -164,10 +164,10 @@ function GameHistory(props: { moves: ProjectedMoveV2[]; names: NameLookup }) {
 }
 
 export interface StatusColumnProps {
-  players: ProjectedPlayerV2[];
-  continents: ProjectedContinentV2[];
-  territories: ProjectedTerritoryV2[];
-  moves: ProjectedMoveV2[];
+  players: ProjectedPlayer[];
+  continents: ProjectedContinent[];
+  territories: ProjectedTerritory[];
+  moves: ProjectedMove[];
   names: NameLookup;
   colorOf(playerId: string | undefined): string;
   activePlayerId?: string;

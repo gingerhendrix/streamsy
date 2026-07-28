@@ -9,18 +9,18 @@ import {
   hashGeneratedMap,
   validateGeneratedMap,
 } from "./hex-generator.ts";
-import type { GeneratedMap } from "./map-v2.ts";
+import type { GeneratedMap } from "./map.ts";
 import {
-  GENERATOR_VERSION_V2,
+  GENERATOR_VERSION,
   MAP_PROFILES,
-  MAP_VERSION_V2,
-  RULES_V2,
+  MAP_VERSION,
+  RULES,
   TERRAIN_TYPES,
   continentBonus,
   generateMapSeed,
   indexMap,
   mapProfileFor,
-} from "./map-v2.ts";
+} from "./map.ts";
 import { createSeededRng } from "./rng.ts";
 
 // ---------------------------------------------------------------------------
@@ -146,8 +146,8 @@ describe("known-seed map snapshots", () => {
   it("records provenance without depending on it for replay", () => {
     const map = generateHexMap({ seed: "provenance", playerCount: 2 });
     expect(map.seed).toBe("provenance");
-    expect(map.mapVersion).toBe(MAP_VERSION_V2);
-    expect(map.generatorVersion).toBe(GENERATOR_VERSION_V2);
+    expect(map.mapVersion).toBe(MAP_VERSION);
+    expect(map.generatorVersion).toBe(GENERATOR_VERSION);
   });
 });
 
@@ -177,8 +177,8 @@ describe.each(MAP_PROFILES)("profile: $players players", (profile) => {
   it("keeps every country connected and within the size bounds", () => {
     for (const map of maps) {
       for (const territory of map.territories) {
-        expect(territory.hexIds.length).toBeGreaterThanOrEqual(RULES_V2.minTerritoryHexes);
-        expect(territory.hexIds.length).toBeLessThanOrEqual(RULES_V2.maxTerritoryHexes);
+        expect(territory.hexIds.length).toBeGreaterThanOrEqual(RULES.minTerritoryHexes);
+        expect(territory.hexIds.length).toBeLessThanOrEqual(RULES.maxTerritoryHexes);
         expect(isConnectedHexes(territory.hexIds)).toBe(true);
       }
     }
@@ -206,11 +206,9 @@ describe.each(MAP_PROFILES)("profile: $players players", (profile) => {
     for (const map of maps) {
       const index = indexMap(map);
       for (const continent of map.continents) {
-        expect(continent.territoryIds.length).toBeGreaterThanOrEqual(
-          RULES_V2.minContinentTerritories,
-        );
+        expect(continent.territoryIds.length).toBeGreaterThanOrEqual(RULES.minContinentTerritories);
         expect(continent.reinforcementBonus).toBe(continentBonus(continent.territoryIds.length));
-        expect(continent.reinforcementBonus).toBeGreaterThanOrEqual(RULES_V2.minContinentBonus);
+        expect(continent.reinforcementBonus).toBeGreaterThanOrEqual(RULES.minContinentBonus);
 
         const members = new Set(continent.territoryIds);
         const start = continent.territoryIds[0]!;

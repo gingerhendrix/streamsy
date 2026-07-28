@@ -14,7 +14,7 @@
  */
 
 import type { CSSProperties } from "react";
-import type { PlayerController } from "../domain/events-v2.ts";
+import type { PlayerController } from "../domain/events.ts";
 
 import type { CombatView } from "./combat-view.ts";
 import {
@@ -25,7 +25,7 @@ import {
   type NameLookup,
   type RevealPlan,
   type SeatMode,
-} from "./presentation-v2.ts";
+} from "./presentation.ts";
 
 /** Pip positions on a 100×100 die face, by value. */
 const PIPS: Record<number, Array<[number, number]>> = {

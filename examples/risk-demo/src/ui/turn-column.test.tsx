@@ -10,8 +10,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { ProjectedTurnV2 } from "../board/projection-v2.ts";
-import type { NameLookup } from "./presentation-v2.ts";
+import type { ProjectedTurn } from "../board/projection.ts";
+import type { NameLookup } from "./presentation.ts";
 import { TurnColumn, VictoryCard } from "./turn-column.tsx";
 
 const NAMES: NameLookup = {
@@ -20,7 +20,7 @@ const NAMES: NameLookup = {
   continent: (id) => ({ c1: "Northreach" })[id] ?? id,
 };
 
-const TURN: ProjectedTurnV2 = {
+const TURN: ProjectedTurn = {
   id: "turn",
   turnId: "round-4:p1",
   round: 4,

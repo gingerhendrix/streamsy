@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  ProjectedCombatV2,
-  ProjectedMoveV2,
-  ProjectedTurnV2,
-} from "../board/projection-v2.ts";
+import type { ProjectedCombat, ProjectedMove, ProjectedTurn } from "../board/projection.ts";
 import { combatView } from "./combat-view.ts";
 
-const PENDING: ProjectedCombatV2 = {
+const PENDING: ProjectedCombat = {
   id: "combat",
   attackId: "cmd-42",
   turnId: "round-2:p1",
@@ -23,7 +19,7 @@ const PENDING: ProjectedCombatV2 = {
   defenseDeadlineAt: 16_000,
 };
 
-const TURN: ProjectedTurnV2 = {
+const TURN: ProjectedTurn = {
   id: "turn",
   turnId: "round-2:p1",
   round: 2,
@@ -48,7 +44,7 @@ const TURN: ProjectedTurnV2 = {
   },
 };
 
-const MOVES: ProjectedMoveV2[] = [
+const MOVES: ProjectedMove[] = [
   {
     id: "9",
     commandId: "c9",

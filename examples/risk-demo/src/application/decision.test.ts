@@ -1,5 +1,5 @@
 /**
- * The player-relative v2 decision resource.
+ * The player-relative current decision resource.
  *
  * Two properties matter here beyond "the right actions come back": the resource
  * is *player-relative*, so an out-of-turn defender is the only one with a move
@@ -9,31 +9,31 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildDecisionContextV2, type BoardWatermarkV2 } from "./decision-v2.ts";
+import { buildDecisionContext, type BoardWatermark } from "./decision.ts";
 import {
   armForAttack,
-  declareAttackV2,
+  declareAttack,
   occupyPending,
-  startGameV2,
+  startGame,
   throwUntilCapture,
   winThrow,
-  type ScriptedGameV2,
-} from "../../test/testkit-v2.ts";
+  type ScriptedGame,
+} from "../../test/testkit.ts";
 
-const WATERMARK: BoardWatermarkV2 = {
-  sourceStreamId: "games/game-v2/events",
+const WATERMARK: BoardWatermark = {
+  sourceStreamId: "games/game/events",
   sourceThroughOffset: "0000000000000042",
-  generation: "hex1",
-  boardStreamId: "games/game-v2/projections/board/hex1",
+  generation: "board1",
+  boardStreamId: "games/game/projections/board/board1",
 };
 
-function decisionFor(game: ScriptedGameV2, playerId: string) {
-  return buildDecisionContextV2(game.state(), playerId, WATERMARK);
+function decisionFor(game: ScriptedGame, playerId: string) {
+  return buildDecisionContext(game.state(), playerId, WATERMARK);
 }
 
 /** A two-player game where the second seat holds a single country. */
-function nearlyWonGame(mapSeed: string): ScriptedGameV2 {
-  return startGameV2({
+function nearlyWonGame(mapSeed: string): ScriptedGame {
+  return startGame({
     players: 2,
     mapSeed,
     board: ({ map, turnOrder }) => {
@@ -50,14 +50,13 @@ function nearlyWonGame(mapSeed: string): ScriptedGameV2 {
   });
 }
 
-describe("risk-demo-v2 decision context", () => {
+describe("Hex Domination decision context", () => {
   it("reports active-turn for the player whose turn it is", () => {
-    const game = startGameV2({ players: 3, mapSeed: "decision-active" });
+    const game = startGame({ players: 3, mapSeed: "decision-active" });
     const active = game.state().activePlayerId!;
     const decision = decisionFor(game, active);
 
     expect(decision.mode).toBe("active-turn");
-    expect(decision.ruleset).toBe("risk-demo-v2");
     expect(decision.turn.id).toBe(game.turnId());
     expect(decision.turn.phase).toBe("reinforce");
     expect(decision.turn.reinforcement.total).toBeGreaterThanOrEqual(3);
@@ -65,22 +64,22 @@ describe("risk-demo-v2 decision context", () => {
   });
 
   it("reports waiting, with no actions, for everyone else", () => {
-    const game = startGameV2({ players: 3, mapSeed: "decision-waiting" });
+    const game = startGame({ players: 3, mapSeed: "decision-waiting" });
     const active = game.state().activePlayerId!;
     const bystander = game.playerIds.find((id) => id !== active)!;
     const decision = decisionFor(game, bystander);
 
     expect(decision.mode).toBe("waiting");
     expect(decision.legalMoves).toEqual([]);
-    // The board is still fully visible — v2 has no fog of war.
+    // The board is still fully visible — current has no fog of war.
     expect(decision.board.territories.length).toBeGreaterThan(0);
   });
 
   it("reports defense for the defender only, and waiting for the attacker", () => {
-    const game = startGameV2({ players: 3, mapSeed: "decision-defense" });
+    const game = startGame({ players: 3, mapSeed: "decision-defense" });
     const setup = armForAttack(game);
     game.rig([6, 6, 6]);
-    const attackId = declareAttackV2(game, setup);
+    const attackId = declareAttack(game, setup);
 
     const defender = decisionFor(game, setup.defenderId);
     expect(defender.mode).toBe("defense");
@@ -108,7 +107,7 @@ describe("risk-demo-v2 decision context", () => {
   });
 
   it("keeps the attacker on active-turn while an occupation is pending", () => {
-    const game = startGameV2({ players: 2, mapSeed: "decision-occupation" });
+    const game = startGame({ players: 2, mapSeed: "decision-occupation" });
     const setup = armForAttack(game);
     const pending = throwUntilCapture(game, setup);
 
@@ -148,7 +147,7 @@ describe("risk-demo-v2 decision context", () => {
   });
 
   it("names the map instead of shipping it, and reports the projection watermark", () => {
-    const game = startGameV2({ players: 2, mapSeed: "decision-map-ref" });
+    const game = startGame({ players: 2, mapSeed: "decision-map-ref" });
     const decision = decisionFor(game, game.state().activePlayerId!);
 
     expect(decision.board.map).toEqual({
@@ -169,7 +168,7 @@ describe("risk-demo-v2 decision context", () => {
   });
 
   it("rejects a player who is not in the game", () => {
-    const game = startGameV2({ players: 2, mapSeed: "decision-unknown" });
+    const game = startGame({ players: 2, mapSeed: "decision-unknown" });
     expect(() => decisionFor(game, "nobody")).toThrow("unknown player nobody");
   });
 });

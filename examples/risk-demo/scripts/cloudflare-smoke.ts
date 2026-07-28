@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   assert(health.status === 200 && health.body.ok === true, "health check failed");
 
   const created = await api("POST", "/v1/games", {
-    body: { ruleset: "risk-demo-v1", name: "Cloud Host", color: "red" },
+    body: { name: "Cloud Host", color: "red" },
   });
   assert(created.status === 201, `create returned ${created.status}`);
   const gameId = created.body.game.id as string;
@@ -62,7 +62,10 @@ async function main(): Promise<void> {
   const command = {
     commandId: "cloud-smoke-reinforce",
     turnId: decision.body.turn.id,
-    action: { type: "reinforce", territoryId: reinforce.territoryIds[0], armies: 1 },
+    action: {
+      type: "reinforce",
+      placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.pool }],
+    },
   };
   const accepted = await api("POST", `/v1/games/${gameId}/commands`, {
     token: tokens[active],
