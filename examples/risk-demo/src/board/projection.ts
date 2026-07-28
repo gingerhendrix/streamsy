@@ -120,7 +120,7 @@ function movePlayerId(event: GameEvent): string | undefined {
  *
  * `sourceOffset` is the canonical source offset the event sits at. In the pure
  * kernel it is the event's positional index (see {@link projectEvents}); when the
- * projection is materialized off a Streamsy stream (Batch 2) it is the real
+ * projection is materialized off a Streamsy stream it is the real
  * stream offset, so the embedded `sourceThroughOffset` is a genuine watermark.
  */
 export function projectEvent(

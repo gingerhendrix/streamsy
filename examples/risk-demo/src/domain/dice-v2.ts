@@ -1,5 +1,5 @@
 /**
- * V2 dice comparison (design spec §4.4).
+ * V2 dice comparison.
  *
  * Unlike v1's `./dice.ts`, nothing here consumes randomness. The two halves of a
  * v2 throw are rolled at different times by different actors — the attacker's at

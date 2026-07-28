@@ -1,5 +1,5 @@
 /**
- * The player-relative v2 decision resource (design spec §6.1).
+ * The player-relative v2 decision resource.
  *
  * Two properties matter here beyond "the right actions come back": the resource
  * is *player-relative*, so an out-of-turn defender is the only one with a move

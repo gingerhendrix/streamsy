@@ -1,7 +1,7 @@
 /**
  * Deterministic integer PRNG for `hex-generator-v1`.
  *
- * Requirements this file exists to satisfy (design spec §3.3):
+ * Requirements this file exists to satisfy:
  *  - explicit 32-bit integer operations only — no `Math.random`, no reliance on
  *    platform floating-point behaviour, no locale-sensitive comparisons;
  *  - independent *named substreams*, so adding a draw to (say) terrain assignment

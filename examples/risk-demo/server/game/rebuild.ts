@@ -1,5 +1,5 @@
 /**
- * Board-projection generation rebuild + durable cutover (Batch 5).
+ * Board-projection generation rebuild and durable cutover.
  *
  * A generation is a *separate, rebuildable* Durable State board stream
  * (`games/<id>/projections/board/<generation>`). Rebuilding replays the whole

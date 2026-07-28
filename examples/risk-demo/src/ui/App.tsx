@@ -99,7 +99,7 @@ export function App() {
   const [initialAgentSeats, setInitialAgentSeats] = useState<AgentSeat[]>([]);
   const previousStatus = useRef<GameStatus | null>(null);
   // The renderer is chosen from the game's canonical ruleset, never inferred from
-  // missing rows (design spec §11) — so only a v1 game opens the v1 board stream.
+  // missing rows — so only a v1 game opens the v1 board stream.
   const renderer = rendererForGame(game);
   const live = useRiskBoardStream(
     renderer === "risk-demo-v1" ? (game?.boardStreamId ?? null) : null,

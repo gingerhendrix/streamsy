@@ -1,6 +1,5 @@
 /**
- * The current-turn column: one section per phase, in the order a turn happens
- * (design spec §8.4).
+ * The current-turn column: one section per phase, in the order a turn happens.
  *
  * The information architecture is the point of this file. A turn is three phases,
  * so the column is three sections and never a scroll of undifferentiated cards:

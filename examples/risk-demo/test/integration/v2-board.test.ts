@@ -301,9 +301,9 @@ describe("risk-demo-v2 board projection surface", () => {
   });
 
   it("routes each game to its own renderer from the canonical ruleset alone", async () => {
-    // Slice 7 acceptance: a v1 game stays viewable and playable on the v1 board
-    // after v2 became the default. The choice comes from `ruleset`, never from
-    // which rows a projection happens to be missing (design spec §11).
+    // A v1 game stays viewable and playable on the v1 board. The renderer comes
+    // from `ruleset`, never from
+    // which rows a projection happens to be missing.
     const h = v2Harness();
     const v1 = await call(h.app, "POST", "/v1/games", {
       body: { ruleset: "risk-demo-v1", name: "Alice" },

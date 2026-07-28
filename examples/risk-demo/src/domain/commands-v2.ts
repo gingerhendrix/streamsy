@@ -1,5 +1,5 @@
 /**
- * `risk-demo-v2` command envelopes and rejection codes (design spec §5.2).
+ * `risk-demo-v2` command envelopes and rejection codes.
  *
  * The v1 discipline carries over unchanged: a stable `commandId` is the
  * idempotency key, and every play command carries an observed `turnId` as an
@@ -173,8 +173,6 @@ export type RiskErrorCodeV2 =
   | "NOT_ENOUGH_PLAYERS"
   | "TOO_MANY_PLAYERS"
   | "PLAYER_ID_TAKEN"
-  /** Legacy code kept for API compatibility; the decider now assigns a free colour instead. */
-  | "COLOR_TAKEN"
   | "UNKNOWN_PLAYER"
   | "NOT_YOUR_TURN"
   | "STALE_TURN"

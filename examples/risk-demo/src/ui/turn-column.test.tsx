@@ -4,7 +4,7 @@
  * These are server-rendered snapshots of the information architecture the column
  * exists to enforce: exactly one phase carries controls, earlier phases collapse to
  * what they achieved, later ones are inert, and a finished game is a result rather
- * than a turn in progress (D6).
+ * than a turn in progress.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -102,7 +102,7 @@ describe("current-turn column", () => {
     expect(html).toMatch(/phase-section active[\s\S]*Fortify[\s\S]*← Back/);
   });
 
-  it("describes legacy post-fortification state as automatically ending", () => {
+  it("describes a persisted post-fortification state as automatically ending", () => {
     const html = renderToStaticMarkup(
       <TurnColumn
         status="playing"

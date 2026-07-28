@@ -177,7 +177,7 @@ describe("risk-demo-v2 scripted bot", () => {
   });
 
   it("keeps making territorial progress against an opponent who only turtles", async () => {
-    // The defect this pins down (D4): a human who never attacks and pours every
+    // A human who never attacks and pours every
     // reinforcement into one fortress used to freeze the game outright. The bot
     // stacked the border facing the fortress, could not attack out of it, would
     // not fortify away from it, and the position never changed again.

@@ -8,7 +8,7 @@
  * The recorded seed and generator version remain useful for audit and for
  * reproducing the generator's output in tests.
  *
- * Determinism rules obeyed throughout (design spec §3.3):
+ * Determinism rules obeyed throughout:
  *  - randomness comes only from named substreams in `./generator-rng.ts`;
  *  - every collection is sorted into an explicit canonical order *before* any
  *    seeded selection, so no result depends on `Map`/`Set` iteration order;

@@ -1,5 +1,5 @@
 /**
- * Player-relative `risk-demo-v2` decision context (design spec §6.1).
+ * Player-relative `risk-demo-v2` decision context.
  *
  * Built purely from the authoritative aggregate fold, so an agent has everything
  * needed for one move — fresh turn, live board, pending interrupt, and structured

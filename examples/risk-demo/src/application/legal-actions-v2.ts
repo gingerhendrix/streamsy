@@ -1,5 +1,5 @@
 /**
- * Structured `risk-demo-v2` legal-action affordances (design spec §6.2).
+ * Structured `risk-demo-v2` legal-action affordances.
  *
  * Pure and authoritative: derived from a folded {@link AggregateStateV2}, not from
  * the (possibly lagging) board projection.
@@ -205,6 +205,6 @@ export function legalActionsV2(state: AggregateStateV2, playerId: string): Legal
   }
 
   // A fortify command ends the turn atomically, so this state is only observable
-  // while replaying an older event stream.
+  // while replaying a persisted history with an intermediate fortify phase.
   return [];
 }

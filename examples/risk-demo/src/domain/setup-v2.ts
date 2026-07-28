@@ -1,5 +1,5 @@
 /**
- * Fast deterministic setup and allocation for `risk-demo-v2` (design spec §4.2).
+ * Fast deterministic setup and allocation for `risk-demo-v2`.
  *
  * V2 deliberately has no manual claim phase. `GameStarted` atomically establishes
  * a fair, replayable initial board: turn order, a round-robin territory deal, and

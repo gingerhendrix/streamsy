@@ -4,7 +4,7 @@
  *
  * These are the boundaries the four-endpoint contract rests on: an agent
  * capability that only plays, a host that can hand over its own seat and no
- * one else's, a private stream that stays behind the bearer, and a legacy
+ * one else's, a private stream that stays behind the bearer, and a v1
  * ruleset that says so instead of answering with silence.
  */
 

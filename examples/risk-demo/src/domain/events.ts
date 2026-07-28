@@ -9,7 +9,7 @@
  * kernel:
  *  - `occurredAt` timestamps are omitted. Nothing in the folded state depends on
  *    wall-clock time, and omitting it keeps decision logic pure without a clock
- *    injection. The command/persistence layer (Batch 3) owns timestamps and the
+ *    injection. The command/persistence layer owns timestamps and the
  *    stream offset; here offsets are the positional index of an event.
  *  - Dice and any other randomness are resolved once by the command service and
  *    recorded here as facts. Replay never rolls.

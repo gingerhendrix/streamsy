@@ -1,6 +1,5 @@
 /**
- * Pure `risk-demo-v2` board projection reducer — the query-shaped read model
- * (design spec §7).
+ * Pure `risk-demo-v2` board projection reducer — the query-shaped read model.
  *
  * As in v1 this is deliberately a *second, independent* reduction over the same
  * canonical events: nothing here imports `foldAggregateV2`, and the equivalence
@@ -131,7 +130,7 @@ export interface ProjectedTurnV2 {
 
 export type CombatRowStatus = "awaiting-defense" | "awaiting-occupation";
 
-/** Zero or one pending-combat presentation row (design spec §7.1). */
+/** Zero or one pending-combat presentation row. */
 export interface ProjectedCombatV2 {
   id: string;
   attackId: string;
@@ -440,7 +439,7 @@ function applyEvent(state: ProjectionStateV2, event: GameEventV2): void {
       refreshDerivedTotals(state);
       if (state.turn) state.turn.captures += 1;
       // The canonical projection clears combat immediately; a client may keep the
-      // last resolved throw locally for its reveal animation (design spec §7.2).
+      // last resolved throw locally for its reveal animation.
       state.combat = null;
       break;
     }

@@ -10,14 +10,8 @@ export const BOARD_GENERATION = "v1";
  */
 export const BOARD_GENERATION_V2 = "hex1";
 
-/**
- * The agent actions stream is a derived projection of the canonical event log,
- * so its generation is bumped whenever derivation changes for an unchanged
- * history. `actions2` is the first generation to carry the corrected
- * reinforcement `reason` derivation; `actions1` messages were derived by the
- * older rule and are left in place rather than reinterpreted.
- */
-export const ACTIONS_GENERATION_V2 = "actions2";
+/** First generation of the per-player actions projection. */
+export const ACTIONS_GENERATION_V2 = "actions1";
 
 export function eventStreamId(gameId: string): string {
   return `games/${gameId}/events`;

@@ -89,13 +89,13 @@ export const RULES_V2 = {
   maxTerritoryHexes: 6,
   minContinentTerritories: 3,
   minContinentBonus: 2,
-  /** Human defence interrupt window, in milliseconds (design spec §1.2). */
+  /** Human defence interrupt window, in milliseconds. */
   defenseTimeoutMs: 15_000,
   /** Bounded retry budget for map generation before game start is rejected. */
   maxGenerationAttempts: 32,
 } as const;
 
-/** Per-player-count map size profile (design spec §3.2). */
+/** Per-player-count map size profile. */
 export interface MapProfile {
   readonly players: number;
   readonly hexes: number;

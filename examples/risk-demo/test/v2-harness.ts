@@ -295,7 +295,7 @@ export async function throwUntilCapture(
       action: { type: "roll-defense", attackId: current.attackId },
     });
     expect(rolled.status).toBe(200);
-    // The ack is a receipt, not the outcome (C8): a capture is observed as the
+    // The ack is a receipt, not the outcome: a capture is observed as the
     // occupation the canonical board now demands.
     const after = await gameMeta(h.app, game);
     if (after.pendingInteraction?.type === "occupation") return current;

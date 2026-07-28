@@ -1,5 +1,5 @@
 /**
- * Pure `risk-demo-v2` command decision + validation (design spec §4, §5.2).
+ * Pure `risk-demo-v2` command decision + validation.
  *
  * `decideV2` evaluates a *fresh* command against a folded aggregate and returns
  * either the canonical events to append or a stable rejection. It is the only
@@ -234,7 +234,7 @@ function decideStart(
     });
   } catch (error) {
     // A generation cap failure rejects game start rather than silently switching
-    // algorithms (design spec §3.3).
+    // algorithms.
     if (error instanceof MapGenerationError) {
       return reject("MAP_GENERATION_FAILED", error.message);
     }

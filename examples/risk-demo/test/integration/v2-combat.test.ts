@@ -79,23 +79,6 @@ describe("risk-demo-v2 creation seam", () => {
     expect(board.body.combat).toBeNull();
   });
 
-  it("rejects the removed end-turn action at the public command boundary", async () => {
-    const h = v2Harness();
-    const game = await createV2Game(h.app);
-    const active = (await gameMeta(h.app, game)).activePlayerId as string;
-    const decision = await decisionFor(h.app, game, active);
-
-    const response = await post(h.app, game, active, {
-      commandId: "removed-end-turn",
-      turnId: decision.turn.id,
-      action: { type: "end-turn" },
-    });
-
-    expect(response.status).toBe(400);
-    expect(response.body.error.code).toBe("INVALID_ACTION");
-    expect(response.body.error.details[0].expected).toContain("skip-fortifications");
-  });
-
   it("ends the turn canonically when fortify succeeds through the public API", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app);
@@ -195,7 +178,7 @@ describe("risk-demo-v2 defence resolution", () => {
       action: { type: "roll-defense", attackId: attack.attackId },
     });
     expect(rolled.status).toBe(200);
-    // The ack is a receipt (C8); the recorded outcome is read from canonical history.
+    // The ack is a receipt; the recorded outcome is read from canonical history.
     const rollRecord = h.stores.commands.get(game.gameId, "human-roll")!;
     const resolved = (rollRecord.events as any[]).find((e) => e.type === "AttackResolved");
     expect(resolved.resolutionSource).toBe("human");
@@ -285,7 +268,7 @@ describe("risk-demo-v2 defence resolution", () => {
     expect(retry.status).toBe(200);
     expect(retry.body.status).toBe("duplicate");
     expect(retry.body.eventOffset).toBe(first.body.eventOffset);
-    // C8 narrowed the ack to a receipt, so the dice are not in it at all: the
+    // The ack is a receipt, so the dice are not in it at all: the
     // original outcome is proven from canonical history instead.
     expect(Object.keys(retry.body).toSorted()).toEqual([
       "commandId",

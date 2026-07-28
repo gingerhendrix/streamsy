@@ -2,7 +2,7 @@
  * Pieces both ruleset surfaces share: the player session, the typed fetch helper,
  * the identity fields, and the compact sync pill.
  *
- * The renderer is chosen from the game's canonical `ruleset` (design spec §11), so
+ * The renderer is chosen from the game's canonical `ruleset`, so
  * a v1 game keeps its fixed-map board for as long as it exists while every new game
  * gets the hex map. These helpers are what the two screens have in common — not a
  * shared abstraction over two different games.
@@ -38,7 +38,7 @@ export type BoardRenderer = "risk-demo-v1" | "risk-demo-v2";
 
 /**
  * Which board surface a game gets, decided by its canonical ruleset and nothing
- * else (design spec §11).
+ * else.
  *
  * `null` while the game resource is still loading: with no ruleset there is no
  * answer yet, and guessing would open the wrong projection stream. An older game
@@ -126,7 +126,7 @@ const compactOffsetPart = (part: string): string => part.replace(/^0+(?=\d)/, ""
 
 /**
  * The one place an offset is still shown, and only inside the sync pill. The game
- * surface itself carries no offsets, generations, or watermarks (design spec §8.4).
+ * surface itself carries no offsets, generations, or watermarks.
  */
 export function shortOffset(offset: string | null | undefined): string {
   if (!offset) return "awaiting first event";

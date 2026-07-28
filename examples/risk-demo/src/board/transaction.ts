@@ -11,7 +11,7 @@ export function boardProjectionTxId(commandId: string, sourceOffset: string): st
 
 /**
  * The transition a client waits for after its own command. The ack deliberately
- * carries no `txid` (C8) — it is derivable, so publishing it would be a second
+ * carries no `txid` — it is derivable, so publishing it would be a second
  * spelling of the same fact rather than information the client lacked.
  */
 export function ackTxId(ack: { commandId: string; eventOffset: string }): string {

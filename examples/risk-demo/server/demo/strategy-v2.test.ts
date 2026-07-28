@@ -2,11 +2,9 @@
  * The v2 scripted-bot policy, exercised on hand-built boards.
  *
  * The board that matters most here is the **turtle**: an opponent who never
- * attacks and stacks one unassailable fortress. That position froze a real
- * browser game for ~17 rounds — the bot poured every reinforcement into the
- * border facing the fortress, could not attack out of it, and would not fortify
- * away from it — so each rule that breaks the freeze has a test that fails
- * against the old behaviour.
+ * attacks and stacks one unassailable fortress. The bot must reinforce and
+ * fortify toward attacks it can actually make instead of accumulating armies
+ * against the fortress.
  */
 
 import { describe, expect, it } from "vitest";

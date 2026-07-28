@@ -4,7 +4,7 @@
  *
  * Loop: follow the self-sufficient action stream from a persisted cursor → choose
  * from `legalMoves` → POST one command → repeat. `/decision` is used only once
- * to detect/bootstrap legacy v1 games.
+ * to detect and bootstrap v1 games.
  *
  * Restart-safe idempotency: a command's `commandId` is derived deterministically
  * from the observed board state (`playerId:turnId:<state fingerprint>`). After a
@@ -79,7 +79,7 @@ export interface Bot {
   step(): Promise<Record<string, unknown> | null>;
   /** Play until this bot has nothing legal left (turn passed, or waiting). */
   playTurn(maxSteps?: number): Promise<void>;
-  /** Resolve a pending defence if one is waiting on this bot (§9.1). */
+  /** Resolve a pending defence if one is waiting on this bot. */
   defend(): Promise<boolean>;
 }
 
@@ -178,7 +178,7 @@ function chooseActionV1(playerId: string, decision: Decision): Record<string, un
 }
 
 // ---------------------------------------------------------------------------
-// risk-demo-v2 strategy (design spec §9.2, implemented in `strategy-v2.ts`)
+// risk-demo-v2 strategy
 // ---------------------------------------------------------------------------
 
 async function chooseActionV2(
@@ -208,7 +208,7 @@ async function chooseActionV2(
   }
 
   // No favourable attack anywhere: move idle armies toward one rather than
-  // passing the turn, which is what a turtling opponent relies on (D4).
+  // passing the turn, which is what a turtling opponent relies on.
   const fortify = decision.legalMoves.find((a) => a.type === "fortify");
   if (fortify) {
     const chosen = chooseFortify(ctx, fortify);
@@ -273,7 +273,7 @@ export function createBot(options: CreateBotOptions): Bot {
       const decision = await fetchDecision();
       // A v1 decision context carries no `ruleset` discriminator at all, so an
       // answer without one *is* the v1 answer. An unreadable one (not yet a
-      // seat, game not started) is assumed modern rather than legacy.
+      // seat, game not started) is assumed to be v2.
       ruleset = decision ? (decision.ruleset ?? RULESET_V1) : RULESET_V2;
     }
     return ruleset === RULESET_V2;
@@ -282,14 +282,14 @@ export function createBot(options: CreateBotOptions): Bot {
   async function awaitTurn(waitMs = 0): Promise<AgentMessage | null> {
     await resumeInflight();
     // The retained v1 demo has no agent actions stream — `/players/me/actions`
-    // answers 400 for it. Its bot stays a decision-driven compatibility fixture,
+    // answers 400 for it. Its bot stays decision-driven,
     // re-reading `/decision` each time rather than trusting the bootstrap read.
     if (!(await isV2Game())) {
       const decision = await fetchDecision();
       return decision && decision.legalMoves.length > 0
         ? ({
             type: "ActionRequired",
-            messageId: "legacy-v1",
+            messageId: "v1-decision",
             seq: 0,
             playerId,
             turn: decision.turn,
@@ -354,9 +354,9 @@ export function createBot(options: CreateBotOptions): Bot {
 
   async function step(): Promise<Record<string, unknown> | null> {
     await resumeInflight();
-    const legacy = !(await isV2Game());
-    if (!legacy && !pendingMessage) await awaitTurn();
-    const decision = legacy
+    const v1 = !(await isV2Game());
+    if (!v1 && !pendingMessage) await awaitTurn();
+    const decision = v1
       ? await fetchDecision()
       : pendingMessage
         ? ({

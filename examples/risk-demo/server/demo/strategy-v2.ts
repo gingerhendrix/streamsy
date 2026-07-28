@@ -1,20 +1,16 @@
 /**
- * The `risk-demo-v2` scripted-bot policy (design spec §9.2), kept pure and away from HTTP.
+ * The `risk-demo-v2` scripted-bot policy, kept pure and away from HTTP.
  *
  * It is deliberately shallow — no search, no evaluation of an opponent's reply —
- * but it does have to satisfy one structural property the naive version did not:
+ * but it does have to satisfy one structural property:
  *
  *   **a turtling opponent must not be able to freeze the game.**
  *
- * A human who never attacks and stacks one fortress used to stall the demo
- * forever: the bot reinforced whichever border was most *exposed*, which is
- * exactly the border facing the fortress, then found no favourable attack from
- * it, then declined to fortify because that border was not an interior country.
- * Armies accumulated where they could never be spent while the bot's countries
- * facing genuinely weak enemies stayed at one army each.
+ * A human who never attacks and stacks one fortress must not draw all
+ * reinforcements to that border. Armies need to flow toward favourable attacks
+ * elsewhere on the map.
  *
- * Three rules replace that, and each is about turning armies into attacks rather
- * than into a wall:
+ * Three rules turn armies into attacks rather than a wall:
  *
  *  - **Reinforce toward weakness, not toward danger.** A border is scored by the
  *    weakest enemy it touches and by whether this turn's pool is enough to make
@@ -25,8 +21,7 @@
  *    as idle as an interior garrison, so it is a legal fortify source too, and
  *    destinations are ranked by the attack they unlock.
  *
- * Continent value still breaks ties, so the spec's continent-aware behaviour
- * survives; it simply no longer outranks being able to move at all.
+ * Continent value breaks ties, but never outranks being able to move at all.
  */
 
 /** Ownership and armies as `/decision` reports them. */

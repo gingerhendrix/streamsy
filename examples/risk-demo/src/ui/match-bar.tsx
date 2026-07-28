@@ -8,7 +8,7 @@
  * standings.
  *
  * The compact sync pill is passed in rather than built here: it is the one piece of
- * architectural status the game surface keeps (design spec §8.4).
+ * architectural status the game surface keeps.
  */
 
 import type { CSSProperties, ReactNode } from "react";

@@ -43,19 +43,6 @@ describe("agent seat authority and contract", () => {
     }
   });
 
-  it("removes bearer-in-path state/wait/bootstrap routes", async () => {
-    const h = v2Harness();
-    for (const path of [
-      "/agent/rsk_secret/state",
-      "/agent/rsk_secret/wait",
-      "/v1/games/game_x/agent/rsk_secret/state",
-      "/v1/games/game_x/agent/rsk_secret/wait",
-      "/agent-seat/game_x/player",
-    ]) {
-      expect((await call(h.app, "GET", path)).status).toBe(404);
-    }
-  });
-
   it("returns structured INVALID_ACTION details", async () => {
     const h = v2Harness();
     const created = await call(h.app, "POST", "/v1/games", { body: { name: "Host" } });

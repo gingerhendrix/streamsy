@@ -1,5 +1,5 @@
 /**
- * The canonical `risk-demo-v2` event vocabulary (design spec §5.1).
+ * The canonical `risk-demo-v2` event vocabulary.
  *
  * The defining property of the two setup events: `GameCreated` carries the seed
  * and the generator's *provenance*, while `GameStarted` carries the generator's

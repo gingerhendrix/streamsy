@@ -5,19 +5,21 @@ recorded dice — played by HTTP-only agents, by humans in a browser, or by both
 commands, deterministic decisions, replay-safe projections, and official Stream DB + TanStack DB
 browser sync over Streamsy's protocol.
 
-## Run the live demo
+## Run the app
 
 From the repository root:
 
 ```bash
-bun run demo:risk
+bun run demo:domination
 ```
 
-Or from this directory, run `bun run demo`. The command builds missing workspace outputs, chooses a
-free port, starts a SQLite-backed server, creates and starts a `risk-demo-v2` game on a freshly
-generated hex map, and runs Ada and Bob as deterministic in-process HTTP bots. Open the prominently printed
-spectator URL; the server and final board stay available until Ctrl-C. Temporary SQLite data is
-removed on shutdown.
+This starts the development server. Open the printed local URL to create, join, or spectate games.
+
+For a watchable bot-versus-bot game, run `bun run --cwd examples/risk-demo demo`. That command builds
+missing workspace outputs, chooses a free port, starts a SQLite-backed server, creates and starts a
+`risk-demo-v2` game on a freshly generated hex map, and runs Ada and Bob as deterministic
+in-process HTTP bots. Open the prominently printed spectator URL; the server and final board stay
+available until Ctrl-C. Temporary SQLite data is removed on shutdown.
 
 For the one-Durable-Object-per-game Cloudflare target, see
 [`docs/cloudflare.md`](docs/cloudflare.md). It includes the isolation model, local Workers smoke,
@@ -43,8 +45,8 @@ DB_PATH=./risk.sqlite PORT=1339 bun run --cwd examples/risk-demo start
 - **Fill the seats.** Share the invite link for another human, or press **Open an agent seat** — one
   per external coding agent, up to four seats in total. Each seat displays a complete instruction
   block to paste into Claude Code, Codex, or any other fetch-capable coding-agent harness. The block
-  contains the seat token, personalized wait/state URLs, commands endpoint, and the control loop; the
-  agent needs no repository checkout.
+  contains the seat token, personalized map/actions/decision URLs, commands endpoint, and the control
+  loop; the agent needs no repository checkout.
 - **Run agent versus agent.** From the landing page, press **Create agent vs agent game** to create a
   two-agent lobby in one step. Copy each seat's separate instruction block into a separate agent
   session, then press **Start game** and watch the live board. The browser retains the host capability
@@ -134,7 +136,7 @@ as long as they exist.
 - `src/ui/styles.css` is the whole product's visual system — a field manual: warm khaki stock,
   charcoal rules, olive commands, and one signal red for urgency, with player colour reserved for
   game state and every colour-carried state also carried by a label, rule weight or dash pattern.
-  Its tokens live in `:root`, so the landing page, lobby, playing surface and legacy v1 board are
+  Its tokens live in `:root`, so the landing page, lobby, playing surface and v1 board are
   one document rather than a base plus a theme. The display face is Barlow Condensed, bundled from
   the `@fontsource/barlow-condensed` dependency (SIL Open Font License 1.1) so nothing is fetched
   from a font CDN at runtime.
@@ -168,7 +170,8 @@ as long as they exist.
 
 | Check                       | Command                                                     | Evidence                                                                                                    |
 | --------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Watchable product demo      | `bun run demo:risk`                                         | Bootstraps workspace outputs, prints the spectator URL, and plays a bot-vs-bot v2 game to a winner          |
+| Local development server    | `bun run demo:domination`                                   | Starts the Risk demo development server                                                                     |
+| Watchable product demo      | `bun run --cwd examples/risk-demo demo`                     | Bootstraps workspace outputs, prints the spectator URL, and plays a bot-vs-bot v2 game to a winner          |
 | Risk unit/integration suite | `bun run --cwd examples/risk-demo test`                     | Kernel, API, materializer, turn streams, bots, agent bootstrap, rebuild, Stream DB shaping, and proof tests |
 | SQLite durability           | `bun run --cwd examples/risk-demo test:sqlite`              | Persistence, cursor resume, duplicate command retry, and generation cutover survive restart                 |
 | Real HTTP smoke             | `bun run --cwd examples/risk-demo smoke:http`               | Server, SPA, auth, command/board flow, and SQLite restart                                                   |
@@ -244,7 +247,7 @@ message's `legalMoves`, through a compact indexed-choice contract, while the lau
 resolution, one bounded corrective prompt, cursor waits, stable byte-equivalent retries,
 monotonic redacted evidence, process bounds, and cancellation.
 
-### Controller compatibility
+### Persisted controller events
 
 The v2 canonical vocabulary is `human | bot | external-agent`. The public create/join API uses
 `human | bot | agent`, mapping `agent` to `external-agent` before appending an event. Builds before

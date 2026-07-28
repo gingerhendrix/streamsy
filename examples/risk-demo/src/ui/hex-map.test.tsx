@@ -2,7 +2,7 @@
  * The map rendered for real: one server-rendered pass over a small hand-built
  * board, checking the things a pure geometry test cannot — that every country
  * gets exactly one name and one army badge, that names are drawn at the
- * de-collided positions rather than blindly above their anchors (D3), and that
+ * de-collided positions rather than blindly above their anchors, and that
  * each country is still a labelled, focusable control.
  */
 

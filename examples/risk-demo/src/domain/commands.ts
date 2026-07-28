@@ -8,7 +8,7 @@
  * later turn.
  *
  * In this headless kernel the acting `playerId` is passed explicitly. The
- * capability/authorization layer (Batch 3) will instead derive it from a bearer
+ * capability/authorization layer derives it from a bearer
  * token; the kernel only checks that the named player is allowed to act.
  */
 

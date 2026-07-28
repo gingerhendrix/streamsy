@@ -95,10 +95,8 @@ export const riskBoardState = createStateSchema({
 // ---------------------------------------------------------------------------
 // risk-demo-v2 collections
 //
-// Client-side schema only: the SVG hex renderer, turn rail, and dice experience
-// land in the next batch. What is here is the typed surface they consume — the
-// same eight collections the v2 projection writes, so a Batch 4 component can
-// live-query `combat` or `turn` without decoding a stream itself.
+// The client schema mirrors the eight collections written by the v2 projection,
+// so components can live-query `combat` or `turn` without decoding a stream.
 // ---------------------------------------------------------------------------
 
 const axialSchema = z.object({ q: z.number(), r: z.number() });
@@ -629,7 +627,7 @@ export interface RiskBoardV2StreamResult {
  *
  * Structurally identical to {@link useRiskBoardStream} — a separate hook rather
  * than a parameterised one because the two rulesets have different collections,
- * and a game's renderer is chosen from its canonical `ruleset` (design spec §11).
+ * and a game's renderer is chosen from its canonical `ruleset`.
  */
 export function useRiskBoardV2Stream(streamId: string | null): RiskBoardV2StreamResult {
   const [active, setActive] = useState<{

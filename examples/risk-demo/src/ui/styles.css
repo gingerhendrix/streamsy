@@ -11,7 +11,7 @@
  * One printed system for the whole product: warm khaki stock, charcoal ink,
  * olive drab for commands, and a single signal red held back for urgency. Rules
  * and spacing do the work cards and shadows would otherwise do, so the landing
- * page, the lobby, the playing surface and the legacy v1 board all read as
+ * page, the lobby, the playing surface and the v1 board all read as
  * pages of the same document.
  *
  * Player colour belongs to game state — the map, army counters, standings — and
@@ -678,7 +678,7 @@ summary:focus-visible,
 
 /* --- lobby v2: the pre-deployment briefing ---------------------------------
  *
- * The legacy `.lobby-*` declarations above belong to the v1 surface and stay as
+ * The `.lobby-*` declarations above belong to the v1 surface and stay as
  * they are. The v2 lobby is a bounded briefing page: brief, then two panes —
  * the muster roll (who) beside the terrain survey (where). Commands are normal
  * rectangles in one row rather than page-wide bars.

@@ -1,5 +1,5 @@
 /**
- * Pure authoritative `risk-demo-v2` aggregate fold (design spec §4).
+ * Pure authoritative `risk-demo-v2` aggregate fold.
  *
  * Like its v1 counterpart this is total and deterministic: the same events always
  * produce the same state, and it never consults an `Rng` or a clock. Every die is
@@ -23,9 +23,9 @@
  *    grants nothing until the *next* reinforcement phase.
  *
  * A successful fortify records `ArmiesFortified` followed by `TurnEnded` in the
- * same command batch. The fold still understands the intermediate `fortify` phase
- * for old logs and event-by-event replay, but it is no longer a player decision
- * boundary.
+ * same command batch. The fold still understands an intermediate `fortify` phase
+ * in persisted histories and event-by-event replay, but it is not a player
+ * decision boundary.
  */
 
 import { compareRolls } from "./dice-v2.ts";
@@ -452,7 +452,7 @@ export function nextTurnV2(
 
 /**
  * Territories reachable from `from` through a path of countries owned by
- * `playerId` (design spec §4.6). The source itself is excluded: a fortify moves
+ * `playerId`. The source itself is excluded: a fortify moves
  * armies somewhere else.
  *
  * The path is derived from the canonical territory adjacency graph and current

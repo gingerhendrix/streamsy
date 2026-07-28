@@ -47,7 +47,6 @@ const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
   NOT_ENOUGH_PLAYERS: "Invite at least one more player before starting.",
   TOO_MANY_PLAYERS: "This game already has the maximum number of players.",
   PLAYER_ID_TAKEN: "That player identity is already in use.",
-  COLOR_TAKEN: "That colour was just claimed. Choose another available colour and try again.",
   UNKNOWN_PLAYER: "This player is not part of the game.",
   NOT_YOUR_TURN: "It is another player’s turn.",
   STALE_TURN: "The turn changed before that move arrived. The board is now up to date.",
@@ -96,7 +95,6 @@ export function statusForErrorCode(code: ApiErrorCode): number {
     case "NOT_ENOUGH_PLAYERS":
     case "TOO_MANY_PLAYERS":
     case "PLAYER_ID_TAKEN":
-    case "COLOR_TAKEN":
     case "COMMAND_ID_REUSED":
     // The v2 combat interrupt: every one of these means "the canonical board
     // moved on, or is waiting on someone else" — a conflict, not a bad request.
@@ -169,7 +167,7 @@ export interface CreateGameRequest {
   commandId?: string;
   /**
    * Ruleset for the new game. Absent means `risk-demo-v2`; pass `risk-demo-v1`
-   * explicitly to create a legacy fixed-map game (design spec §11).
+   * explicitly to create a v1 fixed-map game.
    */
   ruleset?: string;
   /**
@@ -296,7 +294,7 @@ export interface PlayCommandRequest {
 /**
  * The v2 command envelope. Version-discriminated on purpose: v1 `attack` is a
  * whole fight-and-occupy step, while v2 `declare-attack` is one throw that opens
- * a defence interrupt. Neither is a rename of the other (design spec §11).
+ * a defence interrupt. Neither is a rename of the other.
  */
 export type PlayActionV2 = GameActionV2;
 export type PlayCommandRequestV2 = PlayCommandV2;

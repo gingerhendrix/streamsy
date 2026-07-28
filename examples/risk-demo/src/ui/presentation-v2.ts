@@ -5,7 +5,7 @@
  * the defence countdown, the dice pairing — is derived here so it can be tested
  * without a DOM, and so the components stay layout only.
  *
- * Two rules from the design spec are enforced by construction rather than by
+ * Two presentation rules are enforced by construction rather than by
  * convention:
  *
  *  - **No architecture in the product surface.** Nothing here formats an offset, a
@@ -14,7 +14,7 @@
  *  - **The ledger reads the `turn` row.** `moves` is bounded at 40 rows and a v2
  *    turn burns roughly three events per throw, so paging it for "what happened
  *    this turn" silently loses the start of a busy turn. The projection's `turn`
- *    row is the derived summary that cannot (design spec §7.1).
+ *    row is the derived summary that cannot.
  */
 
 import type {
@@ -129,7 +129,7 @@ export function resolutionLabel(source: DefenseResolutionSource, defenderName: s
 /**
  * The same fact as a sentence about a country, for the history feed.
  *
- * Design spec §8.5.6: a defence the human never touched must not read as one they
+ * A defence the human never touched must not read as one they
  * did. The combat card has always branched on this; history and the ledger now
  * say it too, so a player scrolling back cannot mistake a lapsed window for a roll.
  */
@@ -274,7 +274,7 @@ export function turnLedger(turn: ProjectedTurnV2, names: NameLookup): LedgerEntr
 }
 
 // ---------------------------------------------------------------------------
-// Turn phases (design spec §8.4; information architecture: one section per phase)
+// Turn phases
 // ---------------------------------------------------------------------------
 
 /** Canonical phase order — the order a turn happens in, and the order it reads in. */
@@ -488,8 +488,7 @@ export function controllerLabel(player: ProjectedPlayerV2): string | null {
 
 /**
  * One past move in product language. Deliberately free of source offsets: the
- * compact sync pill is the only architectural status the game surface keeps
- * (design spec §8.4).
+ * compact sync pill is the only architectural status the game surface keeps.
  */
 export function moveTextV2(move: ProjectedMoveV2, names: NameLookup): string {
   const who = names.player(move.playerId);

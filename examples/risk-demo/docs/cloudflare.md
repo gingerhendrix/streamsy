@@ -30,8 +30,7 @@ Agent requests are game-scoped and carry the capability only in the bearer heade
 /v1/games/:gameId/commands
 ```
 
-This lets the edge select the game object without a global token registry. Token-bearing URL paths,
-the old personalized state/wait resources, and the seat-bootstrap URL are removed in both runtimes.
+This lets the edge select the game object without a global token registry or token-bearing URL paths.
 
 ## Local Workers verification
 

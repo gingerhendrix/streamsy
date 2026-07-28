@@ -151,7 +151,7 @@ describe("risk command API", () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("accepted");
-    // A receipt and nothing more (C8): status, id, the echoed turn, and where it
+    // A receipt and nothing more: status, id, the echoed turn, and where it
     // landed. The projection transaction a browser waits on is derived from it.
     expect(Object.keys(res.body).toSorted()).toEqual([
       "commandId",

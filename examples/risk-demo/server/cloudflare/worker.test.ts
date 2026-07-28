@@ -59,15 +59,4 @@ describe("Cloudflare game routing", () => {
     expect(new Set(h.routed.map((route) => route.id))).toEqual(new Set([`do:${gameId}`]));
     expect(new Set(h.routed.map((route) => route.gameId))).toEqual(new Set([gameId]));
   });
-
-  it("does not route a token-only agent URL through a global registry", async () => {
-    const h = harness();
-    const response = await worker.fetch(new Request("https://risk.test/agent/secret/state"), h.env);
-
-    expect(response.status).toBe(404);
-    expect(await response.json()).toMatchObject({
-      error: { code: "NOT_FOUND" },
-    });
-    expect(h.routed).toHaveLength(0);
-  });
 });

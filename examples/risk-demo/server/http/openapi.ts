@@ -6,7 +6,7 @@
  * reading any UI or server source.
  *
  * The two rulesets are published as **version-discriminated** types, never as a
- * single merged shape (design spec §11). `risk-demo-v1` `attack` is one
+ * single merged shape. `risk-demo-v1` `attack` is one
  * fight-and-occupy step; `risk-demo-v2` `declare-attack` is one throw that opens
  * a defence interrupt someone else must close. A client that guessed they were
  * the same command would be wrong about who moves next, so the schemas keep them
@@ -388,7 +388,6 @@ const errorCodes = [
   "NOT_ENOUGH_PLAYERS",
   "TOO_MANY_PLAYERS",
   "PLAYER_ID_TAKEN",
-  "COLOR_TAKEN",
   "MAP_GENERATION_FAILED",
   // risk-demo-v2 two-stage combat
   "PENDING_DEFENSE",
@@ -1070,7 +1069,7 @@ export const openApiDocument = {
       post: {
         tags: ["lobby"],
         summary:
-          'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a legacy fixed-map game.',
+          'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a v1 fixed-map game.',
         requestBody: jsonRequest("CreateGameRequest"),
         responses: {
           "201": {

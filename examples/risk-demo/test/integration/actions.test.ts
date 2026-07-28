@@ -189,13 +189,13 @@ describe("player actions stream", () => {
     expect(asks.at(-1).turn.reinforcement.remaining).toBe(0);
   });
 
-  it("rejects the cursor alias", async () => {
+  it("rejects unknown query parameters", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app);
     const response = await call(
       h.app,
       "GET",
-      `/v1/games/${game.gameId}/players/me/actions?cursor=old`,
+      `/v1/games/${game.gameId}/players/me/actions?unexpected=value`,
       { token: game.tokenByPlayer[game.players[0]!]! },
     );
     expect(response.status).toBe(400);

@@ -1,5 +1,5 @@
 /**
- * The published contract must stay version-discriminated (design spec §11).
+ * The published contract must stay version-discriminated.
  *
  * The failure this guards against is subtle and expensive: a client that reads
  * one merged command schema and assumes v1 `attack` and v2 `declare-attack` are
@@ -141,7 +141,6 @@ describe("published OpenAPI contract", () => {
       "INVALID_OCCUPATION",
       "NO_FRIENDLY_PATH",
       "MAP_GENERATION_FAILED",
-      "COLOR_TAKEN",
     ];
     for (const code of [...v1Codes, ...v2Codes]) expect(published.has(code)).toBe(true);
   });

@@ -58,7 +58,7 @@ type AnyAccepted = Extract<SubmitResult | SubmitResultV2, { status: "accepted" |
 type AnyRejected = Extract<SubmitResult | SubmitResultV2, { status: "rejected" }>;
 
 /**
- * The ack says only that the command was recorded, and where (design plan C8).
+ * The ack says only that the command was recorded, and where.
  * It is deliberately *not* the outcome: dice, captures and phase changes reach a
  * player on their actions stream, and a browser recomputes the board-projection
  * transaction id it waits on from `commandId` + `eventOffset`. An ack that
@@ -104,7 +104,7 @@ function controllerOf(value: unknown): PlayerController {
 
 /**
  * Agent seats are minted in exactly one place. The public vocabulary for one is
- * `agent` (C5), but the canonical event vocabulary is `external-agent` — so an
+ * `agent`, but the canonical event vocabulary is `external-agent` — so an
  * unauthenticated create/join must refuse *both* spellings rather than letting
  * the internal one fall through `controllerOf`'s default to a human seat.
  */
@@ -150,9 +150,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
-    // New games are `risk-demo-v2` (design spec §11). V1 is not migrated and not
-    // reinterpreted — it stays selectable by name so existing demo fixtures and
-    // v1-subject tests keep exercising the v1 kernel, renderer, and projection.
+    // New games are `risk-demo-v2`. V1 remains explicitly selectable and keeps
+    // its own kernel, renderer, and projection.
     const wantsV2 = (body.ruleset ?? RULESET_V2) === RULESET_V2;
     const ruleset = wantsV2 ? RULESET_V2 : RULESET;
 
@@ -176,7 +175,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           gameId,
           hostPlayerId,
           hostName: name,
-          // The v1 kernel is not migrated: it keeps its fixed request default.
+          // The v1 kernel keeps its fixed request default.
           hostColor: body.color ?? "#e05a47",
         });
     if (result.status === "rejected") return rejection(result);
@@ -259,7 +258,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           commandId,
           playerId,
           name,
-          // The v1 kernel is not migrated: it keeps its fixed request default.
+          // The v1 kernel keeps its fixed request default.
           color: body.color ?? "#3b82f6",
         });
     if (result.status === "rejected") return rejection(result);
@@ -519,13 +518,12 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
     const ruleset = rulesetOf(gameId);
-    // Seat-scoped and bearer-authenticated: never cached, never referred out (C4).
+    // Seat-scoped and bearer-authenticated: never cached and never referred out.
     const seatScoped = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
 
     if (isRulesetV2(ruleset)) {
       // Project first, then fold exactly the canonical prefix that projection has
-      // incorporated: the decision is never ahead of the board snapshot it names
-      // (design spec §6.1, and see `decision-v2.ts` for the full stance).
+      // incorporated: the decision is never ahead of the board snapshot it names.
       const board = await syncBoardV2(gameId);
       const { events } = await readCanonicalV2Through(
         ctx.protocol,
@@ -614,8 +612,11 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       );
     }
     const url = new URL(request.url);
-    if (url.searchParams.has("cursor")) {
-      return error(400, "BAD_REQUEST", "Use the offset query parameter.");
+    const unknownQueryParameters = [...url.searchParams.keys()].filter(
+      (key) => key !== "offset" && key !== "wait",
+    );
+    if (unknownQueryParameters.length > 0) {
+      return error(400, "BAD_REQUEST", `Unknown query parameter: ${unknownQueryParameters[0]}.`);
     }
     await catchUpActions(ctx.protocol, gameId);
     const requested = Number.parseInt(url.searchParams.get("wait") ?? "0", 10);

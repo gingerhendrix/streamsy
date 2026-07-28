@@ -1,7 +1,7 @@
 /**
  * Board materialization for `GET /board` and the decision watermark.
  *
- * Wraps the Batch 2 replay-safe {@link ProjectionRuntime}: catches the separate
+ * Wraps the replay-safe {@link ProjectionRuntime}: catches the separate
  * board projection up to the canonical head and returns its state plus the
  * causal `sourceThroughOffset`. Runtimes are cached per game so repeated reads
  * continue from memory instead of re-scanning the projection stream.

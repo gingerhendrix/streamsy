@@ -1,6 +1,6 @@
 /**
  * The `risk-demo-v2` playing surface: hex map, phase interactions, current-turn
- * column, and the defence/dice experience (design spec §8).
+ * column, and the defence/dice experience.
  *
  * The screen is three regions under one thin match bar, and each answers exactly one
  * question:

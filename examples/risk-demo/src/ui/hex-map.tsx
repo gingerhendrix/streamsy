@@ -1,7 +1,7 @@
 /**
  * The `risk-demo-v2` map: one responsive SVG, drawn from canonical `(q, r)` tiles.
  *
- * Layers, back to front (design spec §8.2):
+ * Layers, back to front:
  *
  *   terrain → ownership → continent boundary → country boundary → highlight →
  *   attack route → labels → interaction
@@ -236,7 +236,7 @@ export function HexMap(props: HexMapProps) {
     );
     // Anchors are canonical; where the *text* sits is not. A procedural map can
     // put two of them close enough that the names collide, so labels are nudged
-    // clear of each other and of every army badge before anything is drawn (D3).
+    // clear of each other and of every army badge before anything is drawn.
     const labels = layoutCountryLabels(
       territories.map((territory) => ({
         id: territory.id,
@@ -260,7 +260,7 @@ export function HexMap(props: HexMapProps) {
     };
   }, [hexes, territories, continents]);
 
-  // ---- direct manipulation (D7) ---------------------------------------------
+  // ---- direct manipulation --------------------------------------------------
   // Buttons remain the accessible path; these are the gestures a map is expected
   // to answer to. Everything is computed in viewBox units by `pan-zoom.ts`, so a
   // drag means the same thing at any screen size.

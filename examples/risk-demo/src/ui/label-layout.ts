@@ -1,5 +1,5 @@
 /**
- * Deterministic de-collision for country labels (D3).
+ * Deterministic de-collision for country labels.
  *
  * A procedural map puts countries wherever the generator put them, so two label
  * anchors can land close enough that the names run together — a real game showed

@@ -2,7 +2,7 @@
  * End-to-end HTTP smoke for the durable Risk API.
  *
  * Spawns the real Bun server against a temp SQLite file, drives create → join →
- * start → decision → command → board → personalized agent routes → duplicate retry over HTTP,
+ * start → decision → command → board → agent routes → duplicate retry over HTTP,
  * then kills the server, respawns it against the SAME database file, and proves events, board projection,
  * idempotent command retries and capability verifiers all survived the restart.
  *
@@ -181,7 +181,7 @@ async function main(): Promise<void> {
       "decision response was cacheable",
     );
     const leakedStream = await fetch(
-      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions/actions2`,
+      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions/actions1`,
     );
     assert(leakedStream.status === 404, "the private actions stream is publicly readable");
 
@@ -208,7 +208,7 @@ async function main(): Promise<void> {
       body: {
         commandId: "nope",
         turnId: decision.body.turn.id,
-        action: { type: "skip-fortifications" },
+        action: { type: "end-turn" },
       },
     });
     assert(forbidden.status === 409, `expected NOT_YOUR_TURN, got ${forbidden.status}`);

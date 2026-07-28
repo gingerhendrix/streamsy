@@ -1,5 +1,5 @@
 /**
- * Signature Risk demo proof (Batch 5) — runnable and deterministic.
+ * Runnable, deterministic signature Risk demo proof.
  *
  * Runs the whole signature sequence over real Streamsy storage + the HTTP
  * command/turn resources, streams structured JSONL trace events for the article,

@@ -1,5 +1,5 @@
 /**
- * The signature Risk demo, as a deterministic, reusable scenario (Batch 5).
+ * The signature Risk demo as a deterministic, reusable scenario.
  *
  * One coherent run over real Streamsy storage + the HTTP command/turn resources
  * that emits structured trace events for the accompanying article and returns a
@@ -242,7 +242,7 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
       res.status === 200 &&
       body.status === "accepted"
     ) {
-      // The ack is a receipt, not the outcome (C8). The events this command
+      // The ack is a receipt, not the outcome. The events this command
       // recorded are read back from the durable command log, which is where the
       // demo's "recorded dice" claim has always actually lived.
       const commandGameId = /^\/v1\/games\/([^/]+)\/commands$/.exec(path)?.[1] ?? "";

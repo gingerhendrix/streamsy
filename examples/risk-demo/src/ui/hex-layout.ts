@@ -86,7 +86,7 @@ export function viewBoxAttribute(box: ViewBox): string {
 /**
  * The tightest box containing every tile, plus padding. Computed from coordinates
  * so it is stable across devices — zoom and pan transform a group *inside* this
- * box rather than changing it (design spec §8.6).
+ * box rather than changing it.
  */
 export function hexesViewBox(
   hexes: readonly Axial[],

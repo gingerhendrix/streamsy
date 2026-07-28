@@ -1,5 +1,5 @@
 /**
- * Durable defence-timeout runtime for `risk-demo-v2` (design spec §4.4, §10).
+ * Durable defence-timeout runtime for `risk-demo-v2`.
  *
  * A declared attack opens a defence interrupt with a canonical deadline. External-agent
  * seats are resolved immediately; if no human or demo bot closes it, this component does by

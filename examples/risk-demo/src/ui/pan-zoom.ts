@@ -1,8 +1,8 @@
 /**
- * Pan and zoom arithmetic for the hex map (D7), kept pure and dependency-free.
+ * Pan and zoom arithmetic for the hex map, kept pure and dependency-free.
  *
  * The SVG's `viewBox` never changes — it is derived from canonical coordinates so
- * the board is the same shape on every device (design spec §8.6). Zooming and
+ * the board is the same shape on every device. Zooming and
  * panning transform a group *inside* that box, which is why every function here
  * works in viewBox units and the only browser-flavoured helper is the one that
  * converts a pointer's client position into them.

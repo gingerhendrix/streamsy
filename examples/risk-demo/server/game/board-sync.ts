@@ -1,5 +1,5 @@
 /**
- * Causal client reconciliation — `syncedThrough(ack)` (Batch 5).
+ * Causal client reconciliation through `syncedThrough(ack)`.
  *
  * A command acknowledgement names the *canonical source* stream and offset. The
  * board is a separate projection that may lag. This helper waits until the board
