@@ -222,7 +222,7 @@ describe("risk-demo-v2 scripted bot", () => {
       await post(h.app, game, turtleId, {
         commandId: `turtle-end:${decision.turn.id}`,
         turnId: decision.turn.id,
-        action: { type: "end-turn" },
+        action: { type: "skip-fortifications" },
       });
     };
 
@@ -361,7 +361,7 @@ async function declareAttackOrContinue(h: V2Harness, game: V2Game, guard: number
     await post(h.app, game, active, {
       commandId: `end-${guard}`,
       turnId: decision.turn.id,
-      action: { type: "end-turn" },
+      action: { type: "skip-fortifications" },
     });
     return;
   }

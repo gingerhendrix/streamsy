@@ -832,13 +832,13 @@ function buildPlayCommandV2(value: unknown, playerId: string): ParsedPlayCommand
         armies: action.armies as number,
       };
       break;
-    case "end-turn":
-      parsed = { type: "end-turn" };
+    case "skip-fortifications":
+      parsed = { type: "skip-fortifications" };
       break;
     default:
       return invalid(
         "action.type",
-        "reinforce | declare-attack | roll-defense | occupy-territory | fortify | end-turn",
+        "reinforce | declare-attack | roll-defense | occupy-territory | fortify | skip-fortifications",
         action.type,
       );
   }

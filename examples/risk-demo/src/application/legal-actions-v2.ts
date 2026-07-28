@@ -66,7 +66,7 @@ export type LegalActionV2 =
         armies: "<1..choice.reachable.maxArmies>";
       };
     }
-  | { type: "end-turn"; submit: { type: "end-turn" } };
+  | { type: "skip-fortifications"; submit: { type: "skip-fortifications" } };
 
 /** How the decision resource labels this player's relationship to the moment. */
 export type DecisionModeV2 = "active-turn" | "defense" | "waiting" | "finished";
@@ -197,10 +197,14 @@ export function legalActionsV2(state: AggregateStateV2, playerId: string): Legal
           armies: "<1..choice.reachable.maxArmies>",
         },
       });
-    actions.push({ type: "end-turn", submit: { type: "end-turn" } });
+    actions.push({
+      type: "skip-fortifications",
+      submit: { type: "skip-fortifications" },
+    });
     return actions;
   }
 
-  // fortify phase: the single manoeuvre is spent; only ending the turn remains.
-  return [{ type: "end-turn", submit: { type: "end-turn" } }];
+  // A fortify command ends the turn atomically, so this state is only observable
+  // while replaying an older event stream.
+  return [];
 }

@@ -323,7 +323,7 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
         body: {
           commandId: `stale-${staleSeed.turnId}`,
           turnId: staleSeed.turnId,
-          action: { type: "end-turn" },
+          action: { type: "skip-fortifications" },
         },
       });
       staleCommand = { code: rej.body.error?.code ?? "UNKNOWN", rejected: rej.status !== 200 };

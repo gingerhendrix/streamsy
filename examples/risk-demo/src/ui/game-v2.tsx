@@ -194,7 +194,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const fortifyAction = findAction(legalActions, "fortify");
   const occupyAction = findAction(legalActions, "occupy-territory");
   const defenseAction = findAction(legalActions, "roll-defense");
-  const canEndTurn = Boolean(findAction(legalActions, "end-turn"));
+  const skipFortificationsAction = findAction(legalActions, "skip-fortifications");
 
   const turnId = board?.turn?.turnId ?? decision?.turn.id ?? "";
 
@@ -746,7 +746,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                 names={names}
                 busy={interactionBusy}
                 selection={selection}
-                attackPhase={board.game.phase === "attack" && canEndTurn}
+                attackPhase={board.game.phase === "attack" && Boolean(skipFortificationsAction)}
                 setSelection={setSelection}
                 intent={intent}
                 setIntent={setIntent}
@@ -756,6 +756,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                 finishReinforcements={() => void finishReinforcements()}
                 attackAction={attackAction}
                 fortifyAction={fortifyAction}
+                skipFortificationsAction={skipFortificationsAction}
                 occupyAction={occupyAction}
                 occupyArmies={occupyArmies}
                 setOccupyArmies={setOccupyArmies}
@@ -763,17 +764,6 @@ export function GameV2Screen(props: GameV2ScreenProps) {
                 fortifyChoiceFrom={fortifyChoiceFrom}
               />
             )
-          }
-          endTurn={
-            canEndTurn && !spectating ? (
-              <button
-                className="end-turn"
-                disabled={busy}
-                onClick={() => void submit({ type: "end-turn" })}
-              >
-                End turn →
-              </button>
-            ) : null
           }
         />
 
@@ -919,6 +909,7 @@ interface PhaseControlsProps {
   finishReinforcements(): void;
   attackAction?: Extract<LegalActionV2, { type: "declare-attack" }>;
   fortifyAction?: Extract<LegalActionV2, { type: "fortify" }>;
+  skipFortificationsAction?: Extract<LegalActionV2, { type: "skip-fortifications" }>;
   occupyAction?: Extract<LegalActionV2, { type: "occupy-territory" }>;
   occupyArmies: number | null;
   setOccupyArmies(value: number): void;
@@ -934,7 +925,7 @@ interface PhaseControlsProps {
  * The phase section around these controls already says what the phase is for and
  * whose it is, so nothing here repeats that: this renders the state of the move
  * being composed — source, target, amount, confirm — plus the compulsory occupation
- * card. Ending the turn is a turn-level action and lives under the sections instead.
+ * card. The optional fortification can also be skipped from its own phase.
  */
 export function PhaseControls(props: PhaseControlsProps): ReactNode {
   const { names, selection } = props;
@@ -987,7 +978,12 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
     );
   }
 
-  if (props.attackPhase || props.attackAction || props.fortifyAction) {
+  if (
+    props.attackPhase ||
+    props.attackAction ||
+    props.fortifyAction ||
+    props.skipFortificationsAction
+  ) {
     return (
       <section className="controls-card">
         {props.intent === "fortify" && (
@@ -1098,8 +1094,22 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
               ? "Pick a highlighted country to attack from."
               : props.fortifyAction
                 ? "Pick a highlighted country to make your one fortification."
-                : "No fortification is available. End the turn when ready."}
+                : "No fortification is available."}
           </p>
+        )}
+
+        {props.intent === "fortify" && props.skipFortificationsAction && (
+          <button
+            className="skip-fortifications"
+            disabled={props.busy}
+            onClick={() =>
+              void props
+                .submit({ type: "skip-fortifications" })
+                .then((accepted) => accepted && props.setSelection(null))
+            }
+          >
+            Skip fortifications
+          </button>
         )}
 
         {props.intent === "attack" && (

@@ -1660,19 +1660,6 @@ summary:focus-visible,
   font-weight: 500;
 }
 
-/* The turn-level action: not owned by any one phase, so it sits under them all. */
-.turn-column > .end-turn {
-  width: 100%;
-  margin-top: 0.8rem;
-  padding: 0.7rem 0.9rem;
-  border-color: var(--olive-dark);
-  background: var(--olive-dark);
-  color: var(--cream);
-  font-size: 0.76rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 /* --- supporting facts use rules and spacing in place of nested cards ------ */
 
 .reinforcement-card {
@@ -1835,7 +1822,7 @@ summary:focus-visible,
   color: var(--ink);
 }
 .phase-back {
-  align-self: flex-start;
+  align-self: flex-end;
   min-height: 0;
   padding: 0.15rem 0;
   border: 0;
@@ -1851,6 +1838,9 @@ summary:focus-visible,
 .phase-back:hover:not(:disabled) {
   background: transparent;
   color: var(--ink);
+}
+.skip-fortifications {
+  width: 100%;
 }
 .attack-again {
   width: 100%;

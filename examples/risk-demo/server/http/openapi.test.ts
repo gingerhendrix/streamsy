@@ -48,11 +48,12 @@ describe("published OpenAPI contract", () => {
       "roll-defense",
       "occupy-territory",
       "fortify",
-      "end-turn",
+      "skip-fortifications",
     ]);
     // Neither vocabulary leaks into the other.
     expect(v1).not.toContain("declare-attack");
     expect(v2).not.toContain("attack");
+    expect(v2).not.toContain("end-turn");
     // The internal timeout resolver is never a player action.
     expect(v2).not.toContain("resolve-defense-timeout");
   });

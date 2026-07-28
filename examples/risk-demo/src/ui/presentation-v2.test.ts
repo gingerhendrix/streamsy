@@ -203,6 +203,7 @@ describe("current-turn ledger", () => {
   it("notes a spent fortify", () => {
     const entries = turnLedger(turn({ phase: "fortify" }), NAMES);
     expect(entries.at(-1)?.id).toBe("fortify");
+    expect(entries.at(-1)?.text).toContain("turn ends automatically");
   });
 
   it("reports a hold with its losses rather than a capture", () => {

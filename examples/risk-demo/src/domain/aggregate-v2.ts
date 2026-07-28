@@ -18,10 +18,14 @@
  *
  * Derived (event-free) transitions kept here so the event log stays minimal:
  *  - reinforce -> attack once the reinforcement pool is fully placed;
- *  - attack -> fortify after the single fortify move;
  *  - the reinforcement pool and its continent breakdown are recomputed whenever a
  *    turn begins — which is why capturing a continent's last country mid-turn
  *    grants nothing until the *next* reinforcement phase.
+ *
+ * A successful fortify records `ArmiesFortified` followed by `TurnEnded` in the
+ * same command batch. The fold still understands the intermediate `fortify` phase
+ * for old logs and event-by-event replay, but it is no longer a player decision
+ * boundary.
  */
 
 import { compareRolls } from "./dice-v2.ts";

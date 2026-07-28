@@ -23,6 +23,11 @@ const FORTIFY: Extract<LegalActionV2, { type: "fortify" }> = {
   },
 };
 
+const SKIP_FORTIFICATIONS: Extract<LegalActionV2, { type: "skip-fortifications" }> = {
+  type: "skip-fortifications",
+  submit: { type: "skip-fortifications" },
+};
+
 function controls(
   overrides: Partial<Parameters<typeof PhaseControls>[0]> = {},
 ): ReturnType<typeof PhaseControls> {
@@ -31,6 +36,7 @@ function controls(
     busy: false,
     selection: null,
     attackPhase: true,
+    skipFortificationsAction: SKIP_FORTIFICATIONS,
     setSelection: () => {},
     intent: "attack",
     setIntent: () => {},
@@ -93,7 +99,7 @@ describe("attack controls", () => {
     expect(html).toMatch(/class="fortify-next">Fortify →/);
   });
 
-  it("offers Back before the fortification controls and submits the canonical move", () => {
+  it("offers top-right Back before the fortification controls and submits the canonical move", () => {
     let submitted: unknown;
     let intent = "fortify";
     let selectionCleared = false;
@@ -113,6 +119,7 @@ describe("attack controls", () => {
       },
     });
     const html = renderToStaticMarkup(rendered);
+    expect(html).toContain('class="phase-back"');
     expect(html.indexOf("← Back")).toBeLessThan(html.indexOf("Move armies"));
     expect(html).toContain("Fortify with 2");
     buttonNamed(rendered, "← Back").props.onClick();
@@ -120,5 +127,24 @@ describe("attack controls", () => {
     expect(selectionCleared).toBe(true);
     buttonNamed(rendered, "Fortify with 2").props.onClick();
     expect(submitted).toEqual({ type: "fortify", from: "a", to: "b", armies: 2 });
+  });
+
+  it("skips fortifications from the Fortify controls", () => {
+    let submitted: unknown;
+    const rendered = controls({
+      intent: "fortify",
+      fortifyAction: undefined,
+      submit: async (action) => {
+        submitted = action;
+        return true;
+      },
+    });
+
+    const html = renderToStaticMarkup(rendered);
+    expect(html).toContain("No fortification is available.");
+    expect(html).toContain("Skip fortifications");
+    expect(html).not.toContain("End turn");
+    buttonNamed(rendered, "Skip fortifications").props.onClick();
+    expect(submitted).toEqual({ type: "skip-fortifications" });
   });
 });

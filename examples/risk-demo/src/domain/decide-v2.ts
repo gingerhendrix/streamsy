@@ -23,7 +23,6 @@ import type {
   CommandV2,
   DelegateAgentSeatCommandV2,
   DeclareAttackCommandV2,
-  EndTurnCommandV2,
   FortifyCommandV2,
   JoinGameCommandV2,
   OccupyTerritoryCommandV2,
@@ -31,6 +30,7 @@ import type {
   ResolveDefenseTimeoutCommandV2,
   RiskErrorCodeV2,
   RollDefenseCommandV2,
+  SkipFortificationsCommandV2,
   StartGameCommandV2,
 } from "./commands-v2.ts";
 import type { AggregateStateV2 } from "./aggregate-v2.ts";
@@ -627,22 +627,36 @@ function decideFortify(state: AggregateStateV2, command: FortifyCommandV2): Deci
       `${territoryLabel(state, command.from)} has ${from.armies} armies; cannot move ${command.armies} while leaving one behind.`,
     );
   }
-  return accept({
-    type: "ArmiesFortified",
-    turnId: command.turnId,
-    playerId: command.playerId,
-    from: command.from,
-    to: command.to,
-    armies: command.armies,
-    commandId: command.commandId,
-  });
+  const { nextPlayerId, round } = nextTurnV2(state, command.playerId);
+  return accept(
+    {
+      type: "ArmiesFortified",
+      turnId: command.turnId,
+      playerId: command.playerId,
+      from: command.from,
+      to: command.to,
+      armies: command.armies,
+      commandId: command.commandId,
+    },
+    {
+      type: "TurnEnded",
+      turnId: command.turnId,
+      playerId: command.playerId,
+      nextPlayerId,
+      round,
+      commandId: command.commandId,
+    },
+  );
 }
 
-function decideEndTurn(state: AggregateStateV2, command: EndTurnCommandV2): DecisionV2 {
+function decideSkipFortifications(
+  state: AggregateStateV2,
+  command: SkipFortificationsCommandV2,
+): DecisionV2 {
   const turnError = ensureTurn(state, command);
   if (turnError) return { status: "rejected", error: turnError };
-  if (state.phase === "reinforce") {
-    return reject("INVALID_PHASE", "Place all reinforcements before ending the turn.");
+  if (state.phase !== "attack") {
+    return reject("INVALID_PHASE", "May skip fortifications only after reinforcing.");
   }
   const { nextPlayerId, round } = nextTurnV2(state, command.playerId);
   return accept({
@@ -695,7 +709,7 @@ export function decideV2(
       return decideOccupy(state, command);
     case "fortify":
       return decideFortify(state, command);
-    case "end-turn":
-      return decideEndTurn(state, command);
+    case "skip-fortifications":
+      return decideSkipFortifications(state, command);
   }
 }

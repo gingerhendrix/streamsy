@@ -264,7 +264,7 @@ export function turnLedger(turn: ProjectedTurnV2, names: NameLookup): LedgerEntr
   }
 
   if (turn.phase === "fortify") {
-    entries.push({ id: "fortify", icon: "⇢", text: "Fortified — only ending the turn remains" });
+    entries.push({ id: "fortify", icon: "⇢", text: "Fortified — turn ends automatically" });
   }
 
   if (entries.length === 0) {
@@ -331,7 +331,7 @@ export function phaseInstruction(
       case "attack":
         return "Opens once every reinforcement is placed.";
       case "fortify":
-        return "Opens after the single fortify move — then only ending the turn remains.";
+        return "Opens after attacking, for one optional army move.";
     }
   }
   if (!options.yourTurn) {
@@ -352,8 +352,8 @@ export function phaseInstruction(
       return "Attack a highlighted enemy neighbour from a country holding two or more armies. When finished, end attacking and make your one fortification.";
     case "fortify":
       return options.fortifyPending
-        ? "Move armies once between any two countries connected through your own territory, or end the turn without moving."
-        : "The manoeuvre is spent. End the turn when you are ready.";
+        ? "Move armies once between any two countries connected through your own territory, or skip fortifications."
+        : "The manoeuvre is spent and the turn ends automatically.";
   }
 }
 

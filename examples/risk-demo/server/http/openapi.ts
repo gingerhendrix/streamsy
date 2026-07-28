@@ -195,7 +195,8 @@ const commandActionV2 = {
     {
       type: "object",
       required: ["type"],
-      properties: { type: { const: "end-turn" } },
+      description: "Declines the optional fortification and ends the turn.",
+      properties: { type: { const: "skip-fortifications" } },
     },
   ],
 } as const;
@@ -293,7 +294,10 @@ const legalActionV2 = {
     {
       type: "object",
       required: ["type", "submit"],
-      properties: { type: { const: "end-turn" }, submit: { type: "object" } },
+      properties: {
+        type: { const: "skip-fortifications" },
+        submit: { type: "object" },
+      },
     },
   ],
 } as const;

@@ -78,6 +78,63 @@ describe("risk-demo-v2 creation seam", () => {
     expect(board.body.sourceThroughOffset).not.toBeNull();
     expect(board.body.combat).toBeNull();
   });
+
+  it("rejects the removed end-turn action at the public command boundary", async () => {
+    const h = v2Harness();
+    const game = await createV2Game(h.app);
+    const active = (await gameMeta(h.app, game)).activePlayerId as string;
+    const decision = await decisionFor(h.app, game, active);
+
+    const response = await post(h.app, game, active, {
+      commandId: "removed-end-turn",
+      turnId: decision.turn.id,
+      action: { type: "end-turn" },
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_ACTION");
+    expect(response.body.error.details[0].expected).toContain("skip-fortifications");
+  });
+
+  it("ends the turn canonically when fortify succeeds through the public API", async () => {
+    const h = v2Harness();
+    const game = await createV2Game(h.app);
+    const active = (await gameMeta(h.app, game)).activePlayerId as string;
+    let decision = await decisionFor(h.app, game, active);
+    const reinforce = decision.legalMoves.find((move: any) => move.type === "reinforce");
+
+    const reinforced = await post(h.app, game, active, {
+      commandId: "fortify-setup",
+      turnId: decision.turn.id,
+      action: {
+        type: "reinforce",
+        placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.pool }],
+      },
+    });
+    expect(reinforced.status).toBe(200);
+
+    decision = await decisionFor(h.app, game, active);
+    const fortify = decision.legalMoves.find((move: any) => move.type === "fortify");
+    const choice = fortify.choices[0];
+    const destination = choice.reachable[0];
+    const fortified = await post(h.app, game, active, {
+      commandId: "fortify-and-end",
+      turnId: decision.turn.id,
+      action: {
+        type: "fortify",
+        from: choice.from,
+        to: destination.to,
+        armies: 1,
+      },
+    });
+
+    expect(fortified.status).toBe(200);
+    expect(fortified.body.status).toBe("accepted");
+    const board = await boardFor(h.app, game);
+    expect(board.game.activePlayerId).not.toBe(active);
+    expect(board.game.phase).toBe("reinforce");
+    expect(board.turn.playerId).toBe(board.game.activePlayerId);
+  });
 });
 
 describe("risk-demo-v2 defence resolution", () => {
@@ -286,7 +343,7 @@ describe("risk-demo-v2 defence resolution", () => {
     const impatient = await post(h.app, game, attack.attacker, {
       commandId: "impatient",
       turnId: attack.turnId,
-      action: { type: "end-turn" },
+      action: { type: "skip-fortifications" },
     });
     expect(impatient.status).toBe(409);
     expect(impatient.body.error.code).toBe("PENDING_DEFENSE");

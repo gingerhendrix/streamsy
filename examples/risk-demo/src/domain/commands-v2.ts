@@ -113,8 +113,8 @@ export interface FortifyCommandV2 {
   armies: number;
 }
 
-export interface EndTurnCommandV2 {
-  type: "end-turn";
+export interface SkipFortificationsCommandV2 {
+  type: "skip-fortifications";
   commandId: string;
   turnId: string;
   playerId: string;
@@ -138,7 +138,7 @@ export type PlayCommandV2Envelope =
   | RollDefenseCommandV2
   | OccupyTerritoryCommandV2
   | FortifyCommandV2
-  | EndTurnCommandV2;
+  | SkipFortificationsCommandV2;
 
 export type CommandV2 =
   | CreateGameCommandV2
@@ -155,7 +155,7 @@ export type GameActionV2 =
   | { type: "roll-defense"; attackId: string }
   | { type: "occupy-territory"; attackId: string; armies: number }
   | { type: "fortify"; from: string; to: string; armies: number }
-  | { type: "end-turn" };
+  | { type: "skip-fortifications" };
 
 export interface PlayCommandV2 {
   commandId: string;

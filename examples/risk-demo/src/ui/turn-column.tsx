@@ -177,8 +177,6 @@ export interface TurnColumnProps {
   combatLive?: boolean;
   /** Controls for the phase in progress, or the closing card once the game ends. */
   controls?: ReactNode;
-  /** A turn-level action rather than a phase one, so it sits under the sections. */
-  endTurn?: ReactNode;
   footer?: ReactNode;
 }
 
@@ -244,8 +242,6 @@ export function TurnColumn(props: TurnColumnProps) {
       ) : (
         props.controls
       )}
-
-      {props.endTurn}
 
       {turn && (
         <section className="ledger" aria-label="This turn">

@@ -169,7 +169,11 @@ async function main(): Promise<void> {
     const inactive = active === hostId ? joined.body.player.id : hostId;
     const forbidden = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
       token: tokenByPlayer[inactive],
-      body: { commandId: "nope", turnId: decision.body.turn.id, action: { type: "end-turn" } },
+      body: {
+        commandId: "nope",
+        turnId: decision.body.turn.id,
+        action: { type: "skip-fortifications" },
+      },
     });
     assert(forbidden.status === 409, `expected NOT_YOUR_TURN, got ${forbidden.status}`);
 

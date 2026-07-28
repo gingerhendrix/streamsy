@@ -80,7 +80,7 @@ describe("current-turn column", () => {
     // Fortify has not started: visible, explained, and inert.
     expect(html).toContain('class="phase-section upcoming"');
     expect(html).toContain('aria-disabled="true"');
-    expect(html).toContain("Opens after the single fortify move");
+    expect(html).toContain("Opens after attacking, for one optional army move.");
   });
 
   it("presents an uncommitted fortification in the active Fortify section", () => {
@@ -102,7 +102,7 @@ describe("current-turn column", () => {
     expect(html).toMatch(/phase-section active[\s\S]*Fortify[\s\S]*← Back/);
   });
 
-  it("keeps canonical post-fortification copy when only ending the turn remains", () => {
+  it("describes legacy post-fortification state as automatically ending", () => {
     const html = renderToStaticMarkup(
       <TurnColumn
         status="playing"
@@ -115,7 +115,7 @@ describe("current-turn column", () => {
         selfId="p1"
       />,
     );
-    expect(html).toContain("The manoeuvre is spent. End the turn when you are ready.");
+    expect(html).toContain("The manoeuvre is spent and the turn ends automatically.");
     expect(html).not.toContain("Move armies once");
   });
 

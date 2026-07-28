@@ -160,7 +160,7 @@ describe("v2 turn discipline", () => {
     const active = game.state().activePlayerId!;
     expectRejected(
       game.submit({
-        type: "end-turn",
+        type: "skip-fortifications",
         commandId: nextCommandIdV2(),
         turnId: game.turnId(),
         playerId: active,
@@ -306,7 +306,7 @@ describe("v2 pending defence", () => {
         armies: 1,
       },
       {
-        type: "end-turn" as const,
+        type: "skip-fortifications" as const,
         commandId: nextCommandIdV2(),
         turnId,
         playerId: setup.attackerId,
@@ -521,7 +521,7 @@ describe("v2 pending occupation", () => {
         armies: 1,
       },
       {
-        type: "end-turn" as const,
+        type: "skip-fortifications" as const,
         commandId: nextCommandIdV2(),
         turnId,
         playerId: setup.attackerId,
@@ -603,18 +603,25 @@ describe("v2 pending occupation", () => {
 // ---------------------------------------------------------------------------
 
 describe("v2 fortify", () => {
-  it("moves armies along a path of owned countries and spends the phase", () => {
+  it("moves armies and ends the turn in one canonical command", () => {
     const game = startGameV2();
     placeAllReinforcementsV2(game);
     const state = game.state();
     const active = state.activePlayerId!;
     const fortify = legalActionsV2(state, active).find((a) => a.type === "fortify");
     expect(fortify).toBeDefined();
+    expect(legalActionsV2(state, active)).toContainEqual({
+      type: "skip-fortifications",
+      submit: { type: "skip-fortifications" },
+    });
+    expect(legalActionsV2(state, active).map((action) => action.type)).not.toContain("end-turn");
     if (fortify?.type !== "fortify") return;
     const choice = fortify.choices.find((c) => c.reachable.length > 0)!;
     const destination = choice.reachable[0]!;
 
-    game.must({
+    const beforeFrom = state.territories[choice.from]!.armies;
+    const beforeTo = state.territories[destination.to]!.armies;
+    const outcome = game.must({
       type: "fortify",
       commandId: nextCommandIdV2(),
       turnId: game.turnId(),
@@ -623,23 +630,33 @@ describe("v2 fortify", () => {
       to: destination.to,
       armies: 1,
     });
-    expect(game.state().phase).toBe("fortify");
-    // Only ending the turn remains.
-    expect(legalActionsV2(game.state(), active)).toEqual([
-      { type: "end-turn", submit: { type: "end-turn" } },
-    ]);
-    expectRejected(
-      game.submit({
-        type: "fortify",
-        commandId: nextCommandIdV2(),
-        turnId: game.turnId(),
-        playerId: active,
-        from: choice.from,
-        to: destination.to,
-        armies: 1,
-      }),
-      "INVALID_PHASE",
-    );
+    expect(outcome.status).toBe("accepted");
+    if (outcome.status !== "accepted") return;
+    expect(outcome.events.map((event) => event.type)).toEqual(["ArmiesFortified", "TurnEnded"]);
+    const after = game.state();
+    expect(after.activePlayerId).not.toBe(active);
+    expect(after.phase).toBe("reinforce");
+    expect(after.territories[choice.from]!.armies).toBe(beforeFrom - 1);
+    expect(after.territories[destination.to]!.armies).toBe(beforeTo + 1);
+    expect(legalActionsV2(after, active)).toEqual([]);
+  });
+
+  it("skips the optional fortification and ends the turn", () => {
+    const game = startGameV2();
+    placeAllReinforcementsV2(game);
+    const active = game.state().activePlayerId!;
+    const outcome = game.must({
+      type: "skip-fortifications",
+      commandId: nextCommandIdV2(),
+      turnId: game.turnId(),
+      playerId: active,
+    });
+
+    expect(outcome.status).toBe("accepted");
+    if (outcome.status !== "accepted") return;
+    expect(outcome.events.map((event) => event.type)).toEqual(["TurnEnded"]);
+    expect(game.state().activePlayerId).not.toBe(active);
+    expect(game.state().phase).toBe("reinforce");
   });
 
   it("rejects a destination with no friendly path", () => {
@@ -825,7 +842,7 @@ describe("v2 elimination and victory", () => {
     // The eliminated player is skipped in turn order and can no longer act.
     expectRejected(
       game.submit({
-        type: "end-turn",
+        type: "skip-fortifications",
         commandId: nextCommandIdV2(),
         turnId: game.turnId(),
         playerId: victim,
@@ -833,7 +850,7 @@ describe("v2 elimination and victory", () => {
       "NOT_YOUR_TURN",
     );
     game.must({
-      type: "end-turn",
+      type: "skip-fortifications",
       commandId: nextCommandIdV2(),
       turnId: game.turnId(),
       playerId: attacker,
@@ -855,7 +872,7 @@ describe("v2 elimination and victory", () => {
 
     expectRejected(
       game.submit({
-        type: "end-turn",
+        type: "skip-fortifications",
         commandId: nextCommandIdV2(),
         turnId: `round-1:${attacker}`,
         playerId: attacker,

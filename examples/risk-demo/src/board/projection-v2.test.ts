@@ -67,7 +67,7 @@ function findAttack(game: ScriptedGameV2) {
 }
 
 /**
- * Reinforce → attack (always winning) → occupy → end turn, for up to `maxSteps`
+ * Reinforce → attack (always winning) → occupy → skip fortifications, for up to `maxSteps`
  * decisions. Whoever is active plays, so both seats take real turns.
  */
 function driveV2(game: ScriptedGameV2, maxSteps: number): readonly GameEventV2[] {
@@ -88,7 +88,7 @@ function driveV2(game: ScriptedGameV2, maxSteps: number): readonly GameEventV2[]
       continue;
     }
     game.must({
-      type: "end-turn",
+      type: "skip-fortifications",
       commandId: nextCommandIdV2(),
       turnId: game.turnId(),
       playerId: state.activePlayerId!,
@@ -237,7 +237,7 @@ describe("risk-demo-v2 board projection reducer", () => {
     expect(placed.phase).toBe("attack");
 
     game.must({
-      type: "end-turn",
+      type: "skip-fortifications",
       commandId: nextCommandIdV2(),
       turnId: game.turnId(),
       playerId: game.state().activePlayerId!,

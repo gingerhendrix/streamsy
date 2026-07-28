@@ -171,7 +171,7 @@ function flattenLegalChoices(legalActions) {
           }
         }
         break;
-      case "end-turn":
+      case "skip-fortifications":
         choices.push({ type: legal.type });
         break;
     }
@@ -344,7 +344,7 @@ export function resolveModelSelection(selection, resolution) {
           armies: selection.armies,
         },
       };
-    case "end-turn":
+    case "skip-fortifications":
       return { ok: true, action: { type: choice.type } };
     default:
       return { ok: false, reason: "CHOICE_TYPE_UNSUPPORTED" };
@@ -418,7 +418,7 @@ export function actionIsLegal(action, legalActions) {
           action.armies >= 1 &&
           action.armies <= candidate.maxArmies,
       );
-    case "end-turn":
+    case "skip-fortifications":
       return Object.keys(action).length === 1;
     default:
       return false;

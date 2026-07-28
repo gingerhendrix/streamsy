@@ -194,7 +194,9 @@ async function chooseActionV2(
     if (chosen) return chosen;
   }
 
-  if (decision.legalMoves.some((a) => a.type === "end-turn")) return { type: "end-turn" };
+  if (decision.legalMoves.some((a) => a.type === "skip-fortifications")) {
+    return { type: "skip-fortifications" };
+  }
   return null;
 }
 
@@ -332,7 +334,14 @@ export function createBot(options: CreateBotOptions): Bot {
   async function playTurn(maxSteps = 300): Promise<void> {
     for (let taken = 0; taken < maxSteps; taken += 1) {
       const action = await step();
-      if (!action || action.type === "end-turn") return;
+      if (
+        !action ||
+        action.type === "end-turn" ||
+        action.type === "fortify" ||
+        action.type === "skip-fortifications"
+      ) {
+        return;
+      }
     }
     throw new Error(`bot ${playerId} exceeded ${maxSteps} steps in one turn`);
   }
