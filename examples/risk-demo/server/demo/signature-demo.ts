@@ -275,15 +275,15 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
     players: players.map((id) => ({ id, name: id === hostId ? "Ada" : "Bob" })),
   });
 
-  // --- 2. initial turn notifications for each player -----------------------
+  // --- 2. initial player-relative decisions for each player ----------------
   for (const id of players) {
-    const turns = await call("GET", `/v1/games/${gameId}/players/me/turns`, {
+    const decision = await call("GET", `/v1/games/${gameId}/decision`, {
       token: tokenByPlayer[id],
     });
     emit("turn-notifications", {
       playerId: id,
-      wakes: turns.body.notifications.length,
-      firstTurnId: turns.body.notifications[0]?.turnId ?? null,
+      wakes: decision.body.legalMoves.length > 0 ? 1 : 0,
+      firstTurnId: decision.body.legalMoves.length > 0 ? decision.body.turn.id : null,
     });
   }
 
@@ -352,7 +352,11 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
 
     const bot = bots[active]!;
     const wake = await bot.awaitTurn();
-    emit("turn-wake", { playerId: active, round: meta.body.round, turnId: wake?.turnId ?? null });
+    emit("turn-wake", {
+      playerId: active,
+      round: meta.body.round,
+      turnId: wake?.type === "ActionRequired" ? wake.turn.id : null,
+    });
 
     const acksBefore = captures.length;
     await bot.playTurn();

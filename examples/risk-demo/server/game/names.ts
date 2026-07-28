@@ -9,6 +9,7 @@ export const BOARD_GENERATION = "v1";
  * ever reinterpreted in place.
  */
 export const BOARD_GENERATION_V2 = "hex1";
+export const ACTIONS_GENERATION_V2 = "actions1";
 
 export function eventStreamId(gameId: string): string {
   return `games/${gameId}/events`;
@@ -18,8 +19,12 @@ export function boardStreamId(gameId: string, generation = BOARD_GENERATION): st
   return `games/${gameId}/projections/board/${generation}`;
 }
 
-export function turnStreamId(gameId: string, playerId: string): string {
-  return `games/${gameId}/players/${playerId}/turns`;
+export function actionStreamId(
+  gameId: string,
+  playerId: string,
+  generation = ACTIONS_GENERATION_V2,
+): string {
+  return `games/${gameId}/players/${playerId}/actions/${generation}`;
 }
 
 /**

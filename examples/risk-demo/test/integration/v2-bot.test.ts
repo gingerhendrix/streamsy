@@ -118,7 +118,7 @@ describe("risk-demo-v2 scripted bot", () => {
     // tight enough to fail on a loaded machine rather than on a real regression.
   }, 60_000);
 
-  it("auto-rolls from a DefenseAvailable wake under a stable command id", async () => {
+  it("auto-rolls from a defense-required action message under a stable command id", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { controllers: ["bot", "bot"] });
     const attack = await declareAttack(h, game);
@@ -126,10 +126,15 @@ describe("risk-demo-v2 scripted bot", () => {
     const defender = bots[attack.defender]!;
 
     const wake = await defender.awaitTurn();
-    expect(wake?.type).toBe("DefenseAvailable");
-    if (wake?.type !== "DefenseAvailable") throw new Error("unreachable");
-    expect(wake.attackId).toBe(attack.attackId);
-    expect(wake.deadlineAt).toBe(h.clock.now + DEFENSE_MS);
+    expect(wake?.type).toBe("ActionRequired");
+    if (wake?.type !== "ActionRequired") throw new Error("unreachable");
+    expect(wake.reason).toBe("defense-required");
+    expect(wake.pendingInteraction?.attackId).toBe(attack.attackId);
+    expect(
+      wake.pendingInteraction?.type === "defense"
+        ? wake.pendingInteraction.defenseDeadlineAt
+        : undefined,
+    ).toBe(h.clock.now + DEFENSE_MS);
 
     expect(await defender.defend()).toBe(true);
     const record = h.stores.commands.get(game.gameId, `bot-defense:${attack.attackId}`)!;
@@ -146,7 +151,7 @@ describe("risk-demo-v2 scripted bot", () => {
       state: {},
     });
     const replayed = await replay.awaitTurn();
-    expect(replayed?.notificationId).toBe(wake.notificationId);
+    expect(replayed?.messageId).toBe(wake.messageId);
     await replay.defend();
     const after = h.stores.commands.get(game.gameId, `bot-defense:${attack.attackId}`)!;
     expect(after.sourceOffset).toBe(record.sourceOffset);
@@ -168,7 +173,7 @@ describe("risk-demo-v2 scripted bot", () => {
 
     // And the attacker can carry on with their turn.
     const decision = await decisionFor(h.app, game, attack.attacker);
-    expect(decision.legalActions.length).toBeGreaterThan(0);
+    expect(decision.legalMoves.length).toBeGreaterThan(0);
   });
 
   it("keeps making territorial progress against an opponent who only turtles", async () => {
@@ -195,7 +200,7 @@ describe("risk-demo-v2 scripted bot", () => {
     let fortress: string | null = null;
     const turtleStep = async (round: number): Promise<void> => {
       const decision = await decisionFor(h.app, game, turtleId);
-      const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+      const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
       if (reinforce) {
         // Stick to the same country while it is still held; if it ever falls,
         // turtle onto the next one rather than spreading out.
@@ -208,7 +213,7 @@ describe("risk-demo-v2 scripted bot", () => {
           turnId: decision.turn.id,
           action: {
             type: "reinforce",
-            placements: [{ territoryId: target, armies: reinforce.maxArmies }],
+            placements: [{ territoryId: target, armies: reinforce.pool }],
           },
         });
         return;
@@ -330,7 +335,7 @@ async function declareAttackOrContinue(h: V2Harness, game: V2Game, guard: number
   const meta = await gameMeta(h.app, game);
   const active = meta.activePlayerId as string;
   const decision = await decisionFor(h.app, game, active);
-  const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+  const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
   if (reinforce) {
     const board = await boardFor(h.app, game);
     const ownerOf = (id: string) =>
@@ -346,12 +351,12 @@ async function declareAttackOrContinue(h: V2Harness, game: V2Game, guard: number
       turnId: decision.turn.id,
       action: {
         type: "reinforce",
-        placements: [{ territoryId: border.id, armies: reinforce.maxArmies }],
+        placements: [{ territoryId: border.id, armies: reinforce.pool }],
       },
     });
     return;
   }
-  const attack = decision.legalActions.find((a: any) => a.type === "declare-attack");
+  const attack = decision.legalMoves.find((a: any) => a.type === "declare-attack");
   if (!attack) {
     await post(h.app, game, active, {
       commandId: `end-${guard}`,

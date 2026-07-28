@@ -28,7 +28,6 @@ import type {
 import type { GamePhaseV2, ReinforcementState } from "../domain/aggregate-v2.ts";
 import type { DefenseResolutionSource } from "../domain/events-v2.ts";
 import type { Terrain } from "../domain/map-v2.ts";
-import { privateAgentSeatUrl } from "../application/agent-seat-bootstrap.ts";
 
 /** Names the presentation layer needs but the projection rows only reference by id. */
 export interface NameLookup {
@@ -499,6 +498,8 @@ export function moveTextV2(move: ProjectedMoveV2, names: NameLookup): string {
       return `${who} opened the lobby`;
     case "PlayerJoined":
       return `${who} joined the game`;
+    case "PlayerControllerChanged":
+      return `${who} was delegated to an agent`;
     case "GameStarted":
       return "Countries dealt — the campaign begins";
     case "ArmiesReinforced":
@@ -564,21 +565,6 @@ export function terrainMix(terrains: readonly Terrain[]): string {
     .toSorted((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([terrain, count]) => `${count} ${TERRAIN_LABELS[terrain]}`)
     .join(" · ");
-}
-
-/** Private one-URL bootstrap for a repository-independent external harness. */
-export function agentSeatUrl(options: {
-  origin: string;
-  gameId: string;
-  playerId: string;
-  token: string;
-}): string {
-  return privateAgentSeatUrl({
-    origin: options.origin,
-    gameId: options.gameId,
-    playerId: options.playerId,
-    capability: options.token,
-  });
 }
 
 // ---------------------------------------------------------------------------

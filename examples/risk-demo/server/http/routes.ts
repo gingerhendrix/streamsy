@@ -1,6 +1,8 @@
 import type {
   BoardResponse,
   BoardResponseV2,
+  AgentSeatRequest,
+  AgentSeatResponse,
   CommandAck,
   CreateGameRequest,
   CreateGameResponse,
@@ -9,8 +11,7 @@ import type {
   JoinGameResponse,
   PlayCommandRequest,
 } from "../../src/application/api.ts";
-import { agentSeatBootstrapDocument } from "../../src/application/agent-seat-bootstrap.ts";
-import { agentPlayInstructions } from "../../src/application/agent-play.ts";
+import { agentPlayInstructions, agentSeatDescriptor } from "../../src/application/agent-play.ts";
 import type { Command } from "../../src/domain/commands.ts";
 import type { CommandV2, GameActionV2, PlayCommandV2 } from "../../src/domain/commands-v2.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
@@ -37,15 +38,7 @@ import {
   type SubmitResult,
   type SubmitResultV2,
 } from "../game/command-service.ts";
-import {
-  error,
-  json,
-  readJsonBody,
-  statusForCode,
-  text,
-  type ErrorCode,
-  type Route,
-} from "./router.ts";
+import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } from "./router.ts";
 import {
   BOARD_GENERATION,
   BOARD_GENERATION_V2,
@@ -53,9 +46,8 @@ import {
   eventStreamId,
 } from "../game/names.ts";
 import { openApiDocument } from "./openapi.ts";
-import { catchUpTurns, readTurns } from "../game/turn-notifier.ts";
+import { catchUpActions, readActions } from "../game/action-notifier.ts";
 import type { AppContext } from "./app.ts";
-import type { CapabilityRow } from "../persistence/stores.ts";
 
 function randomId(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -82,8 +74,7 @@ function assignedSeatColor(result: AnyAccepted, fallback: string): string {
   return fallback;
 }
 
-const STATE_GUIDANCE =
-  "Fetch your personalized state URL again and choose from its current legalMoves.";
+const STATE_GUIDANCE = "Read your actions stream again and act on the newest message.";
 
 function rejection(result: AnyRejected, guideToState = false): Response {
   const code = result.error.code as ErrorCode;
@@ -113,14 +104,25 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       // Agent seats do not make a dice decision. Resolve their defence first,
       // then materialize/wake from the complete canonical result.
       await ctx.defenseTimers.ensure(gameId);
-      await Promise.all([catchUpTurns(ctx.protocol, gameId), syncBoardV2(gameId)]);
+      await Promise.all([catchUpActions(ctx.protocol, gameId), syncBoardV2(gameId)]);
       return;
     }
-    await Promise.all([catchUpTurns(ctx.protocol, gameId), syncBoard(gameId)]);
+    await syncBoard(gameId);
   }
 
   async function createGame(request: Request): Promise<Response> {
     const body = (await readJsonBody<CreateGameRequest>(request)) ?? {};
+    const caller = await ctx.authenticateCapability(request);
+    if (caller?.role === "agent") {
+      return error(403, "FORBIDDEN", "Agent capabilities cannot create games.");
+    }
+    if (body.controller === "agent") {
+      return error(
+        403,
+        "AGENT_SEAT_REQUIRES_HOST",
+        "Create a human-hosted game, then open agent seats with POST /agent-seats.",
+      );
+    }
     const name = body.name ?? "Host";
     const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
@@ -193,16 +195,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         role: "host",
       },
       capability,
-      ...(wantsV2 && controllerOf(body.controller) === "external-agent"
-        ? {
-            agentInstructions: agentPlayInstructions({
-              origin: new URL(request.url).origin,
-              gameId,
-              playerId: hostPlayerId,
-              token: capability,
-            }),
-          }
-        : {}),
       ack: ackBody(result),
     };
     return json(response, 201);
@@ -212,6 +204,17 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
     const body = (await readJsonBody<JoinGameRequest>(request)) ?? {};
+    const caller = await ctx.authenticateCapability(request);
+    if (caller?.role === "agent") {
+      return error(403, "FORBIDDEN", "Agent capabilities cannot join games.");
+    }
+    if (body.controller === "agent") {
+      return error(
+        403,
+        "AGENT_SEAT_REQUIRES_HOST",
+        "The host must open agent seats with POST /agent-seats.",
+      );
+    }
     const name = body.name ?? "Player";
     const playerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
@@ -248,16 +251,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         role: "player",
       },
       capability,
-      ...(controllerOf(body.controller) === "external-agent"
-        ? {
-            agentInstructions: agentPlayInstructions({
-              origin: new URL(request.url).origin,
-              gameId,
-              playerId,
-              token: capability,
-            }),
-          }
-        : {}),
       ack: ackBody(result),
     };
     return json(response, 201);
@@ -285,6 +278,70 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (result.status === "rejected") return rejection(result);
     await afterCommand(gameId, ruleset);
     return json(ackBody(result));
+  }
+
+  async function createAgentSeat(
+    request: Request,
+    params: Record<string, string>,
+  ): Promise<Response> {
+    const gameId = params.gameId!;
+    const cap = await ctx.requireCapability(request, gameId, "host");
+    if (cap instanceof Response) return cap;
+    const game = ctx.stores.games.get(gameId);
+    if (!game || !isRulesetV2(game.ruleset)) {
+      return error(400, "BAD_REQUEST", "Agent seats are available for v2 games only.");
+    }
+    const body = (await readJsonBody<AgentSeatRequest>(request)) ?? {};
+    const commandId = body.commandId ?? randomId("cmd");
+    let playerId = body.playerId;
+    let name = body.name ?? "Agent";
+    let color = body.color ?? "";
+
+    if (playerId) {
+      const { events } = await readCanonicalV2(ctx.protocol, eventStreamId(gameId));
+      const state = foldAggregateV2(events);
+      const player = state.players.find((candidate) => candidate.id === playerId);
+      if (!player) return error(404, "NOT_FOUND", "That seat is not part of this game.");
+      const delegated = await submitCommandV2(ctx.commandService, eventStreamId(gameId), {
+        type: "delegate-agent-seat",
+        commandId,
+        playerId,
+      });
+      if (delegated.status === "rejected") return rejection(delegated);
+      name = player.name;
+      color = player.color;
+    } else {
+      playerId = randomId("p");
+      const joined = await submitCommandV2(ctx.commandService, eventStreamId(gameId), {
+        type: "join-game",
+        commandId,
+        playerId,
+        name,
+        color: body.color,
+        controller: "external-agent",
+      });
+      if (joined.status === "rejected") return rejection(joined);
+      color = assignedSeatColor(joined, color);
+    }
+
+    await syncBoardV2(gameId);
+    const token = await ctx.issueAndStore(gameId, playerId, "agent");
+    const input = {
+      origin: new URL(request.url).origin,
+      gameId,
+      playerId,
+      name,
+      color,
+      token,
+    };
+    const response: AgentSeatResponse = {
+      seat: agentSeatDescriptor(input),
+      instructions: agentPlayInstructions(input),
+    };
+    return json(response, 201, {
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+    });
   }
 
   async function getGame(_request: Request, params: Record<string, string>): Promise<Response> {
@@ -385,6 +442,44 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     return json(response);
   }
 
+  async function getMap(_request: Request, params: Record<string, string>): Promise<Response> {
+    const gameId = params.gameId!;
+    const game = ctx.stores.games.get(gameId);
+    if (!game) return error(404, "GAME_NOT_FOUND", "Unknown game.");
+    if (!isRulesetV2(game.ruleset)) {
+      return error(
+        400,
+        "BAD_REQUEST",
+        "The immutable map resource is available for v2 games only.",
+      );
+    }
+    const { events } = await readCanonicalV2(ctx.protocol, eventStreamId(gameId));
+    const state = foldAggregateV2(events);
+    if (!state.map) return error(409, "GAME_NOT_STARTED", "The map is available after game start.");
+    return json(
+      {
+        gameId,
+        mapVersion: state.mapVersion,
+        generatorVersion: state.generatorVersion,
+        seed: state.mapSeed,
+        territories: state.map.territories.map((territory) => ({
+          id: territory.id,
+          name: territory.name,
+          neighbours: territory.adjacentTerritoryIds,
+          continentId: territory.continentId,
+        })),
+        continents: state.map.continents.map((continent) => ({
+          id: continent.id,
+          name: continent.name,
+          territoryIds: continent.territoryIds,
+          reinforcementBonus: continent.reinforcementBonus,
+        })),
+      },
+      200,
+      { "cache-control": "public, max-age=31536000, immutable" },
+    );
+  }
+
   async function getDecision(request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId);
@@ -439,20 +534,21 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
 
     if (isRulesetV2(ruleset)) {
       const parsed = buildPlayCommandV2(raw, cap.playerId);
-      if (!parsed)
-        return error(
-          400,
-          "BAD_REQUEST",
-          `Body must be { commandId, turnId, action }. ${STATE_GUIDANCE}`,
-        );
+      if (!parsed.ok)
+        return error(400, "INVALID_ACTION", `Command validation failed. ${STATE_GUIDANCE}`, {
+          details: parsed.details,
+        });
       const result = await submitCommandV2(
         ctx.commandService,
         eventStreamId(gameId),
-        parsed.command,
+        parsed.value.command,
       );
       if (result.status === "rejected") return rejection(result, true);
       await afterCommand(gameId, ruleset);
-      return json(ackBody(result, parsed.body.turnId));
+      return json(ackBody(result, parsed.value.body.turnId), 200, {
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      });
     }
 
     const parsed = buildPlayCommand(raw, cap.playerId);
@@ -463,164 +559,25 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     return json(ackBody(result, parsed.body.turnId));
   }
 
-  async function getTurns(request: Request, params: Record<string, string>): Promise<Response> {
+  async function getActions(request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
     const url = new URL(request.url);
-    await catchUpTurns(ctx.protocol, gameId);
+    if (url.searchParams.has("cursor")) {
+      return error(400, "BAD_REQUEST", "Use the offset query parameter.");
+    }
+    await catchUpActions(ctx.protocol, gameId);
+    const requested = Number.parseInt(url.searchParams.get("wait") ?? "0", 10);
+    const waitMs = Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30_000)) : 0;
     return json(
-      await readTurns(ctx.protocol, gameId, cap.playerId, {
-        cursor: url.searchParams.get("offset") ?? url.searchParams.get("cursor") ?? undefined,
-        waitMs: Number.parseInt(url.searchParams.get("wait") ?? "0", 10) || 0,
+      await readActions(ctx.protocol, gameId, cap.playerId, {
+        cursor: url.searchParams.get("offset") ?? undefined,
+        waitMs,
         signal: request.signal,
       }),
-    );
-  }
-
-  async function personalizedCapability(
-    request: Request,
-    token: string,
-  ): Promise<CapabilityRow | Response> {
-    const headers = new Headers(request.headers);
-    headers.set("authorization", `Bearer ${token}`);
-    const cap = await ctx.authenticateCapability(new Request(request, { headers }));
-    return cap ?? error(401, "UNAUTHORIZED", "This personalized seat URL has an invalid token.");
-  }
-
-  async function loadAgentState(cap: CapabilityRow) {
-    const game = ctx.stores.games.get(cap.gameId);
-    if (!game) return null;
-    if (!isRulesetV2(game.ruleset)) return null;
-    const board = await syncBoardV2(cap.gameId);
-    const { events } = await readCanonicalV2Through(
-      ctx.protocol,
-      eventStreamId(cap.gameId),
-      board.sourceThroughOffset,
-    );
-    const state = foldAggregateV2(events);
-    const decision = buildDecisionContextV2(state, cap.playerId, {
-      sourceStreamId: board.sourceStreamId,
-      sourceThroughOffset: board.sourceThroughOffset,
-      generation: board.generation,
-      boardStreamId: boardStreamId(cap.gameId, board.generation),
-    });
-    const playerName = (id: string | undefined) =>
-      id ? state.players.find((player) => player.id === id)?.name : undefined;
-    const territoryName = (id: string) => state.index?.territoryById.get(id)?.name ?? id;
-    return {
-      gameId: cap.gameId,
-      status: state.status,
-      player: decision.player,
-      winner: state.winnerId
-        ? {
-            id: state.winnerId,
-            name: playerName(state.winnerId) ?? state.winnerId,
-          }
-        : null,
-      turn: {
-        ...decision.turn,
-        activePlayerName: playerName(decision.turn.activePlayerId),
-      },
-      mode: decision.mode,
-      pendingInteraction: decision.pendingInteraction ?? null,
-      players: state.players.map(({ id, name, color, controller, eliminated }) => ({
-        id,
-        name,
-        color,
-        controller,
-        eliminated,
-      })),
-      territories: (state.map?.territories ?? []).map((territory) => {
-        const occupied = state.territories[territory.id];
-        return {
-          id: territory.id,
-          name: territory.name,
-          continentId: territory.continentId,
-          neighbours: territory.adjacentTerritoryIds.map((id) => ({
-            id,
-            name: territoryName(id),
-          })),
-          owner: occupied?.ownerId
-            ? {
-                id: occupied.ownerId,
-                name: playerName(occupied.ownerId) ?? occupied.ownerId,
-              }
-            : null,
-          armies: occupied?.armies ?? 0,
-        };
-      }),
-      legalMoves: decision.legalActions,
-    };
-  }
-
-  async function getAgentState(
-    request: Request,
-    params: Record<string, string>,
-  ): Promise<Response> {
-    const cap = await personalizedCapability(request, params.token!);
-    if (cap instanceof Response) return cap;
-    if (params.gameId && cap.gameId !== params.gameId) {
-      return error(403, "WRONG_GAME", "Capability is scoped to another game.");
-    }
-    const state = await loadAgentState(cap);
-    if (!state)
-      return error(400, "BAD_REQUEST", "Personalized state is available for v2 games only.");
-    return json(state, 200, { "cache-control": "no-store" });
-  }
-
-  async function waitForAgent(request: Request, params: Record<string, string>): Promise<Response> {
-    const cap = await personalizedCapability(request, params.token!);
-    if (cap instanceof Response) return cap;
-    if (params.gameId && cap.gameId !== params.gameId) {
-      return error(403, "WRONG_GAME", "Capability is scoped to another game.");
-    }
-    const current = await loadAgentState(cap);
-    if (!current)
-      return error(400, "BAD_REQUEST", "Personalized wait is available for v2 games only.");
-    const stateUrl = `/v1/games/${encodeURIComponent(cap.gameId)}/agent/${encodeURIComponent(params.token!)}/state`;
-    if (current.status === "finished" || current.legalMoves.length > 0) {
-      return json({ changed: true, reason: "actionable", stateUrl });
-    }
-
-    await catchUpTurns(ctx.protocol, cap.gameId);
-    const baseline = await readTurns(ctx.protocol, cap.gameId, cap.playerId);
-    const url = new URL(request.url);
-    const requested = Number.parseInt(url.searchParams.get("wait") ?? "30000", 10);
-    const waitMs = Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30_000)) : 30_000;
-    const result = await readTurns(ctx.protocol, cap.gameId, cap.playerId, {
-      cursor: baseline.cursor,
-      waitMs,
-      signal: request.signal,
-    });
-    return json({
-      changed: result.notifications.length > 0,
-      reason: result.notifications.length > 0 ? "notification" : "timeout",
-      stateUrl,
-    });
-  }
-
-  function getAgentSeatBootstrap(request: Request, params: Record<string, string>): Response {
-    const url = new URL(request.url);
-    if (url.search !== "") {
-      return text(
-        "Query parameters are not accepted. Keep the capability in the URL fragment, strip the fragment locally, and send it only as an Authorization bearer token.\n",
-        400,
-        { "cache-control": "no-store", "referrer-policy": "no-referrer" },
-      );
-    }
-    return text(
-      agentSeatBootstrapDocument({
-        origin: url.origin,
-        gameId: params.gameId!,
-        playerId: params.playerId!,
-      }),
       200,
-      {
-        "cache-control": "no-store",
-        "referrer-policy": "no-referrer",
-        "x-content-type-options": "nosniff",
-      },
+      { "cache-control": "no-store", "referrer-policy": "no-referrer" },
     );
   }
 
@@ -635,30 +592,13 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       pattern: "/openapi.json",
       handler: () => json(openApiDocument),
     },
-    {
-      method: "GET",
-      pattern: "/agent-seat/:gameId/:playerId",
-      handler: getAgentSeatBootstrap,
-    },
-    {
-      method: "GET",
-      pattern: "/v1/games/:gameId/agent/:token/state",
-      handler: getAgentState,
-    },
-    {
-      method: "GET",
-      pattern: "/v1/games/:gameId/agent/:token/wait",
-      handler: waitForAgent,
-    },
-    // Local Bun compatibility. Cloudflare intentionally routes only the
-    // game-scoped variants because a token alone cannot select a game DO.
-    { method: "GET", pattern: "/agent/:token/state", handler: getAgentState },
-    { method: "GET", pattern: "/agent/:token/wait", handler: waitForAgent },
     { method: "POST", pattern: "/v1/games", handler: createGame },
     { method: "POST", pattern: "/v1/games/:gameId/players", handler: joinGame },
+    { method: "POST", pattern: "/v1/games/:gameId/agent-seats", handler: createAgentSeat },
     { method: "POST", pattern: "/v1/games/:gameId/start", handler: startGame },
     { method: "GET", pattern: "/v1/games/:gameId", handler: getGame },
     { method: "GET", pattern: "/v1/games/:gameId/board", handler: getBoard },
+    { method: "GET", pattern: "/v1/games/:gameId/map", handler: getMap },
     {
       method: "GET",
       pattern: "/v1/games/:gameId/decision",
@@ -671,8 +611,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     },
     {
       method: "GET",
-      pattern: "/v1/games/:gameId/players/me/turns",
-      handler: getTurns,
+      pattern: "/v1/games/:gameId/players/me/actions",
+      handler: getActions,
     },
   ];
 }
@@ -770,18 +710,37 @@ function buildPlayCommand(
  * is authorized by the game service, not by a player capability, so there is no
  * transport path by which a player could submit one.
  */
-function buildPlayCommandV2(
-  value: unknown,
-  playerId: string,
-): { body: PlayCommandV2; command: CommandV2 } | null {
+type ValidationDetail = { path: string; expected: string; received: unknown };
+type ParsedPlayCommandV2 =
+  | { ok: true; value: { body: PlayCommandV2; command: CommandV2 } }
+  | { ok: false; details: ValidationDetail[] };
+
+/** One malformed field, in the shape `INVALID_ACTION` publishes to the agent. */
+function invalid(path: string, expected: string, received: unknown): ParsedPlayCommandV2 {
+  return { ok: false, details: [{ path, expected, received }] };
+}
+
+function buildPlayCommandV2(value: unknown, playerId: string): ParsedPlayCommandV2 {
   const envelope = readEnvelope(value);
-  if (!envelope) return null;
+  if (!envelope) {
+    return {
+      ok: false,
+      details: [
+        {
+          path: "body",
+          expected: "{ commandId: string, turnId: string, action: object }",
+          received: value,
+        },
+      ],
+    };
+  }
   const { commandId, turnId, action } = envelope;
 
   let parsed: GameActionV2;
   switch (action.type) {
     case "reinforce": {
-      if (!Array.isArray(action.placements)) return null;
+      if (!Array.isArray(action.placements))
+        return invalid("action.placements", "array", action.placements);
       const placements = action.placements.map((placement) => {
         if (
           !isRecord(placement) ||
@@ -792,7 +751,25 @@ function buildPlayCommandV2(
         }
         return { territoryId: placement.territoryId, armies: placement.armies };
       });
-      if (placements.some((placement) => placement === null)) return null;
+      const invalidIndex = placements.findIndex((placement) => placement === null);
+      if (invalidIndex >= 0) {
+        return invalid(
+          `action.placements[${invalidIndex}]`,
+          "{ territoryId: string, armies: integer >= 1 }",
+          action.placements[invalidIndex],
+        );
+      }
+      const invalidArmies = placements.findIndex(
+        (placement) =>
+          placement !== null && (!Number.isInteger(placement.armies) || placement.armies < 1),
+      );
+      if (invalidArmies >= 0) {
+        return invalid(
+          `action.placements[${invalidArmies}].armies`,
+          "integer >= 1",
+          (action.placements[invalidArmies] as Record<string, unknown>).armies,
+        );
+      }
       parsed = {
         type: "reinforce",
         placements: placements as Array<{ territoryId: string; armies: number }>,
@@ -803,49 +780,67 @@ function buildPlayCommandV2(
       if (
         typeof action.from !== "string" ||
         typeof action.to !== "string" ||
-        typeof action.attackerDice !== "number"
+        !Number.isInteger(action.attackerDice) ||
+        (action.attackerDice as number) < 1
       ) {
-        return null;
+        return invalid(
+          "action",
+          "{ type: declare-attack, from: string, to: string, attackerDice: integer }",
+          action,
+        );
       }
       parsed = {
         type: "declare-attack",
         from: action.from,
         to: action.to,
-        attackerDice: action.attackerDice,
+        attackerDice: action.attackerDice as number,
       };
       break;
     case "roll-defense":
-      if (typeof action.attackId !== "string") return null;
+      if (typeof action.attackId !== "string")
+        return invalid("action.attackId", "string", action.attackId);
       parsed = { type: "roll-defense", attackId: action.attackId };
       break;
     case "occupy-territory":
-      if (typeof action.attackId !== "string" || typeof action.armies !== "number") return null;
+      if (typeof action.attackId !== "string")
+        return invalid("action.attackId", "string", action.attackId);
+      if (!Number.isInteger(action.armies) || (action.armies as number) < 1)
+        return invalid("action.armies", "integer >= 1", action.armies);
       parsed = {
         type: "occupy-territory",
         attackId: action.attackId,
-        armies: action.armies,
+        armies: action.armies as number,
       };
       break;
     case "fortify":
       if (
         typeof action.from !== "string" ||
         typeof action.to !== "string" ||
-        typeof action.armies !== "number"
+        !Number.isInteger(action.armies) ||
+        (action.armies as number) < 1
       ) {
-        return null;
+        return invalid(
+          "action",
+          "{ type: fortify, from: string, to: string, armies: integer }",
+          action,
+        );
       }
       parsed = {
         type: "fortify",
         from: action.from,
         to: action.to,
-        armies: action.armies,
+        armies: action.armies as number,
       };
       break;
     case "end-turn":
       parsed = { type: "end-turn" };
       break;
     default:
-      return null;
+      return invalid(
+        "action.type",
+        "reinforce | declare-attack | roll-defense | occupy-territory | fortify | end-turn",
+        action.type,
+      );
   }
 
   const body: PlayCommandV2 = { commandId, turnId, action: parsed };
@@ -853,5 +848,5 @@ function buildPlayCommandV2(
   // derives human/bot/agent attribution from the defending seat's canonical
   // controller, so a client cannot mislabel its own roll.
   const command: CommandV2 = { commandId, turnId, playerId, ...parsed };
-  return { body, command };
+  return { ok: true, value: { body, command } };
 }

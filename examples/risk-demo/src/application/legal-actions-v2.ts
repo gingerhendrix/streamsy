@@ -17,12 +17,32 @@ import { maxAttackerDice } from "../domain/dice-v2.ts";
 import { adjacentToV2 } from "../domain/map-v2.ts";
 
 export type LegalActionV2 =
-  | { type: "reinforce"; territoryIds: string[]; minArmies: 1; maxArmies: number }
+  | {
+      type: "reinforce";
+      territoryIds: string[];
+      pool: number;
+      submit: {
+        type: "reinforce";
+        placements: Array<{ territoryId: "<one of territoryIds>"; armies: "<1..pool>" }>;
+      };
+    }
   | {
       type: "declare-attack";
       choices: Array<{ from: string; to: string; maxAttackerDice: number }>;
+      submit: {
+        type: "declare-attack";
+        from: "<choice.from>";
+        to: "<choice.to>";
+        attackerDice: "<1..choice.maxAttackerDice>";
+      };
     }
-  | { type: "roll-defense"; attackId: string; dice: number; deadlineAt: number }
+  | {
+      type: "roll-defense";
+      attackId: string;
+      dice: number;
+      deadlineAt: number;
+      submit: { type: "roll-defense"; attackId: "<attackId>" };
+    }
   | {
       type: "occupy-territory";
       attackId: string;
@@ -30,12 +50,23 @@ export type LegalActionV2 =
       to: string;
       minArmies: number;
       maxArmies: number;
+      submit: {
+        type: "occupy-territory";
+        attackId: "<attackId>";
+        armies: "<minArmies..maxArmies>";
+      };
     }
   | {
       type: "fortify";
       choices: Array<{ from: string; reachable: Array<{ to: string; maxArmies: number }> }>;
+      submit: {
+        type: "fortify";
+        from: "<choice.from>";
+        to: "<choice.reachable.to>";
+        armies: "<1..choice.reachable.maxArmies>";
+      };
     }
-  | { type: "end-turn" };
+  | { type: "end-turn"; submit: { type: "end-turn" } };
 
 /** How the decision resource labels this player's relationship to the moment. */
 export type DecisionModeV2 = "active-turn" | "defense" | "waiting" | "finished";
@@ -69,6 +100,7 @@ function pendingActions(
         attackId: pending.attackId,
         dice: pending.defenderDice,
         deadlineAt: pending.defenseDeadlineAt,
+        submit: { type: "roll-defense", attackId: "<attackId>" },
       },
     ];
   }
@@ -81,6 +113,11 @@ function pendingActions(
       to: pending.to,
       minArmies: pending.minArmies,
       maxArmies: pending.maxArmies,
+      submit: {
+        type: "occupy-territory",
+        attackId: "<attackId>",
+        armies: "<minArmies..maxArmies>",
+      },
     },
   ];
 }
@@ -103,7 +140,17 @@ export function legalActionsV2(state: AggregateStateV2, playerId: string): Legal
   if (state.phase === "reinforce") {
     const remaining = state.reinforcement.remaining;
     if (remaining <= 0 || owned.length === 0) return [];
-    return [{ type: "reinforce", territoryIds: owned, minArmies: 1, maxArmies: remaining }];
+    return [
+      {
+        type: "reinforce",
+        territoryIds: owned,
+        pool: remaining,
+        submit: {
+          type: "reinforce",
+          placements: [{ territoryId: "<one of territoryIds>", armies: "<1..pool>" }],
+        },
+      },
+    ];
   }
 
   if (state.phase === "attack") {
@@ -128,12 +175,32 @@ export function legalActionsV2(state: AggregateStateV2, playerId: string): Legal
       if (reachable.length > 0) fortifyChoices.push({ from, reachable });
     }
     const actions: LegalActionV2[] = [];
-    if (attackChoices.length > 0) actions.push({ type: "declare-attack", choices: attackChoices });
-    if (fortifyChoices.length > 0) actions.push({ type: "fortify", choices: fortifyChoices });
-    actions.push({ type: "end-turn" });
+    if (attackChoices.length > 0)
+      actions.push({
+        type: "declare-attack",
+        choices: attackChoices,
+        submit: {
+          type: "declare-attack",
+          from: "<choice.from>",
+          to: "<choice.to>",
+          attackerDice: "<1..choice.maxAttackerDice>",
+        },
+      });
+    if (fortifyChoices.length > 0)
+      actions.push({
+        type: "fortify",
+        choices: fortifyChoices,
+        submit: {
+          type: "fortify",
+          from: "<choice.from>",
+          to: "<choice.reachable.to>",
+          armies: "<1..choice.reachable.maxArmies>",
+        },
+      });
+    actions.push({ type: "end-turn", submit: { type: "end-turn" } });
     return actions;
   }
 
   // fortify phase: the single manoeuvre is spent; only ending the turn remains.
-  return [{ type: "end-turn" }];
+  return [{ type: "end-turn", submit: { type: "end-turn" } }];
 }

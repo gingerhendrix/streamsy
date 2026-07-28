@@ -35,6 +35,8 @@ export type ApiErrorCode =
   | "WRONG_GAME"
   | "NOT_FOUND"
   | "BAD_REQUEST"
+  | "INVALID_ACTION"
+  | "AGENT_SEAT_REQUIRES_HOST"
   | "PROJECTION_UNAVAILABLE"
   | "INTERNAL";
 
@@ -71,6 +73,8 @@ const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
   WRONG_GAME: "This player session belongs to another game.",
   NOT_FOUND: "The requested resource could not be found.",
   BAD_REQUEST: "The request was incomplete or malformed.",
+  INVALID_ACTION: "The command action was incomplete or malformed.",
+  AGENT_SEAT_REQUIRES_HOST: "Agent seats must be created by the human host.",
   PROJECTION_UNAVAILABLE: "The live board is temporarily unavailable.",
   INTERNAL: "Something unexpected happened. Please try again.",
 };
@@ -122,14 +126,19 @@ export function statusForErrorCode(code: ApiErrorCode): number {
 
 export interface ApiErrorResponse {
   status: "rejected";
-  error: { code: ApiErrorCode; message: string; currentTurnId?: string };
+  error: {
+    code: ApiErrorCode;
+    message: string;
+    currentTurnId?: string;
+    details?: Array<{ path: string; expected: string; received: unknown }>;
+  };
 }
 
 export interface PlayerIdentity {
   id: string;
   name: string;
   color: string;
-  role: "host" | "player";
+  role: "host" | "player" | "agent";
 }
 
 export interface CommandAck {
@@ -171,8 +180,6 @@ export interface CreateGameResponse {
   game: { id: string; ruleset: string; mapVersion: string };
   player: PlayerIdentity;
   capability: string;
-  /** Present when the host seat belongs to an external agent. */
-  agentInstructions?: string;
   ack: CommandAck;
 }
 
@@ -187,9 +194,30 @@ export interface JoinGameRequest {
 export interface JoinGameResponse {
   player: PlayerIdentity;
   capability: string;
-  /** Present when an external-agent seat is created; ready to paste into any fetch-capable agent. */
-  agentInstructions?: string;
   ack: CommandAck;
+}
+
+export interface AgentSeatRequest {
+  name?: string;
+  color?: string;
+  /** Delegate an existing seat (normally the host's own seat) instead of joining a new one. */
+  playerId?: string;
+  commandId?: string;
+}
+
+export interface AgentSeatDescriptor {
+  origin: string;
+  gameId: string;
+  playerId: string;
+  name: string;
+  color: string;
+  token: string;
+  urls: { map: string; actions: string; decision: string; commands: string };
+}
+
+export interface AgentSeatResponse {
+  seat: AgentSeatDescriptor;
+  instructions: string;
 }
 
 export interface GameResponse {

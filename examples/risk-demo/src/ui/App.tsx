@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type CommandAck,
+  type AgentSeatResponse,
   type CreateGameResponse,
   type DecisionResponse,
   type GameResponse,
@@ -204,7 +205,7 @@ export function App() {
   const createAgentGame = async () => {
     setBusy(true);
     const created = await api<CreateGameResponse>("POST", "/v1/games", {
-      body: { name: "Agent 1", color: "#8b5cf6", controller: "agent" },
+      body: { name: "Agent 1" },
     });
     if (created.status !== 201 || isError(created.body)) {
       setBusy(false);
@@ -212,25 +213,40 @@ export function App() {
       return;
     }
 
-    const firstSeat: AgentSeat = {
-      playerId: created.body.player.id,
-      name: created.body.player.name,
-      instructions: created.body.agentInstructions ?? "Agent instructions were not returned.",
-    };
     persist({
       gameId: created.body.game.id,
       playerId: created.body.player.id,
       token: created.body.capability,
       role: "host",
     });
-    setInitialAgentSeats([firstSeat]);
     openGame(created.body.game.id);
 
-    const joined = await api<JoinGameResponse>(
+    const first = await api<AgentSeatResponse>(
       "POST",
-      `/v1/games/${created.body.game.id}/players`,
+      `/v1/games/${created.body.game.id}/agent-seats`,
       {
-        body: { name: "Agent 2", color: "#22c1a5", controller: "agent" },
+        token: created.body.capability,
+        body: { playerId: created.body.player.id },
+      },
+    );
+    if (first.status !== 201 || isError(first.body)) {
+      setBusy(false);
+      setNotice(errorMessage(first.body, "Could not delegate the first agent seat."));
+      return;
+    }
+    const firstSeat: AgentSeat = {
+      playerId: first.body.seat.playerId,
+      name: first.body.seat.name,
+      instructions: first.body.instructions,
+    };
+    setInitialAgentSeats([firstSeat]);
+
+    const joined = await api<AgentSeatResponse>(
+      "POST",
+      `/v1/games/${created.body.game.id}/agent-seats`,
+      {
+        token: created.body.capability,
+        body: { name: "Agent 2" },
       },
     );
     setBusy(false);
@@ -243,9 +259,9 @@ export function App() {
     setInitialAgentSeats([
       firstSeat,
       {
-        playerId: joined.body.player.id,
-        name: joined.body.player.name,
-        instructions: joined.body.agentInstructions ?? "Agent instructions were not returned.",
+        playerId: joined.body.seat.playerId,
+        name: joined.body.seat.name,
+        instructions: joined.body.instructions,
       },
     ]);
     setNotice(
@@ -336,7 +352,7 @@ export function App() {
     () => new Map((board?.players ?? []).map((player) => [player.id, player])),
     [board?.players],
   );
-  const reinforce = decision?.legalActions.find(
+  const reinforce = decision?.legalMoves.find(
     (action): action is Extract<LegalAction, { type: "reinforce" }> => action.type === "reinforce",
   );
   const active = board ? playerById.get(board.game.activePlayerId ?? "") : undefined;
@@ -769,7 +785,7 @@ function ActionPanel({
   busy: boolean;
   onSubmit(action: PlayAction): Promise<void>;
 }) {
-  const actions = decision.legalActions;
+  const actions = decision.legalMoves;
   return (
     <section className="action-panel">
       <div>

@@ -3,12 +3,13 @@
 `risk-seat.mjs` is a copyable, dependency-free Node launcher for one private
 external-agent seat. It imports no repository or bot code. The launcher enforces
 the HTTP protocol; Claude Code or Codex chooses one strategic action from each
-fresh `legalActions`.
+fresh `ActionRequired` message.
 
-Initialize protected state from the complete private URL:
+Initialize protected state from the JSON `seat` descriptor returned by
+`POST /v1/games/:gameId/agent-seats`:
 
 ```bash
-node risk-seat.mjs init --seat-url '<private-seat-url>' --state ./seat-state
+node risk-seat.mjs init --seat-file ./seat.json --state ./seat-state
 ```
 
 Run a bounded control loop:
@@ -26,8 +27,8 @@ node risk-seat.mjs run \
   --max-budget-usd 1
 ```
 
-Use `--harness codex` for Codex. Both profiles use the same observation,
-freshness, validation, retry, evidence, and cancellation path. Claude runs with
+Use `--harness codex` for Codex. Both profiles use the same action-message,
+validation, retry, evidence, and cancellation path. Claude runs with
 no tools, no session persistence, safe mode, `dontAsk`, and a spend bound. Codex
 runs ephemerally, read-only, with approvals disabled and no repository
 requirement. Neither model working directory contains the capability.
@@ -37,8 +38,7 @@ are numbered for that decision, plus a flattened `legalChoices` list. It returns
 one `choiceIndex` and only the named bounded scalar (`armies` or
 `attackerDice`) when that choice needs one. The launcher alone retains the
 resolution table and reconstructs the exact command identifiers. An invalid
-selection is never POSTed: after confirming that the decision is unchanged,
-the launcher makes at most one corrective model call with a stable redacted
+selection is never POSTed: the launcher makes at most one corrective model call with a stable redacted
 reason code, provided the configured decision bound has room for it. A second
 invalid selection terminates that launcher invocation.
 

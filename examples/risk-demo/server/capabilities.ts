@@ -9,7 +9,7 @@
 
 const encoder = new TextEncoder();
 
-export type CapabilityRole = "host" | "player";
+export type CapabilityRole = "host" | "player" | "agent";
 
 export interface Capability {
   gameId: string;

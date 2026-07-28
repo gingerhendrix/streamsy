@@ -21,6 +21,7 @@
 
 import type {
   CommandV2,
+  DelegateAgentSeatCommandV2,
   DeclareAttackCommandV2,
   EndTurnCommandV2,
   FortifyCommandV2,
@@ -177,6 +178,25 @@ function decideJoin(state: AggregateStateV2, command: JoinGameCommandV2): Decisi
       command.color,
     ),
     controller: command.controller,
+    commandId: command.commandId,
+  });
+}
+
+function decideDelegateAgent(
+  state: AggregateStateV2,
+  command: DelegateAgentSeatCommandV2,
+): DecisionV2 {
+  if (!state.gameId) return reject("GAME_NOT_FOUND", "No game to delegate.");
+  if (state.status !== "lobby") {
+    return reject("GAME_ALREADY_STARTED", "Agent seats must be delegated before the game starts.");
+  }
+  if (!state.players.some((player) => player.id === command.playerId)) {
+    return reject("UNKNOWN_PLAYER", "That player is not part of this game.");
+  }
+  return accept({
+    type: "PlayerControllerChanged",
+    playerId: command.playerId,
+    controller: "external-agent",
     commandId: command.commandId,
   });
 }
@@ -659,6 +679,8 @@ export function decideV2(
     }
     case "join-game":
       return decideJoin(state, command);
+    case "delegate-agent-seat":
+      return decideDelegateAgent(state, command);
     case "start-game":
       return decideStart(state, command, ctx);
     case "reinforce":

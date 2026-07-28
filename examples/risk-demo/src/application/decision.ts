@@ -32,7 +32,7 @@ export interface DecisionContext {
     }>;
     players: Array<{ id: string; remainingArmies: number; eliminated: boolean }>;
   };
-  legalActions: LegalAction[];
+  legalMoves: LegalAction[];
 }
 
 export interface BoardWatermark {
@@ -80,6 +80,6 @@ export function buildDecisionContext(
         }))
         .toSorted((a, b) => a.id.localeCompare(b.id)),
     },
-    legalActions: legalActions(state, playerId),
+    legalMoves: legalActions(state, playerId),
   };
 }

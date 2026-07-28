@@ -12,7 +12,7 @@ and external-agent request is routed by that same id.
 `GameDurableObject` owns one SQLite database containing:
 
 - every Streamsy stream for that game (canonical events, active and retired board projections, and
-  player turn notifications);
+  player action-required streams);
 - capability verifier hashes (never plaintext tokens), command idempotency records, game metadata,
   and projection-generation records;
 - the canonical pending-defence state and the Durable Object alarm used to recover its deadline.
@@ -21,15 +21,17 @@ The game-local Streamsy adapter does not call a Durable Object namespace and doe
 stream id. `@streamsy/storage-durable-object` is intentionally not used here because its model is
 one object per stream.
 
-Token-personalized routes are game-scoped:
+Agent requests are game-scoped and carry the capability only in the bearer header:
 
 ```text
-/v1/games/:gameId/agent/:token/state
-/v1/games/:gameId/agent/:token/wait
+/v1/games/:gameId/map
+/v1/games/:gameId/players/me/actions
+/v1/games/:gameId/decision
+/v1/games/:gameId/commands
 ```
 
-This lets the edge select the game object without a global token registry. The Bun server retains
-the old token-only routes as local compatibility aliases; the Cloudflare edge rejects them.
+This lets the edge select the game object without a global token registry. Token-bearing URL paths,
+the old personalized state/wait resources, and the seat-bootstrap URL are removed in both runtimes.
 
 ## Local Workers verification
 

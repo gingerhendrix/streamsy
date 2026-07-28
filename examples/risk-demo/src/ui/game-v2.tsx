@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
+  AgentSeatResponse,
   CommandAck,
   DecisionResponseV2,
   GameResponse,
@@ -187,7 +188,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     return () => controller.abort();
   }, [gameId, identity, offset, board?.game.status]);
 
-  const legalActions = decision?.legalActions;
+  const legalActions = decision?.legalMoves;
   const reinforceAction = findAction(legalActions, "reinforce");
   const attackAction = findAction(legalActions, "declare-attack");
   const fortifyAction = findAction(legalActions, "fortify");
@@ -339,7 +340,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           territoryId,
           delta,
           reinforceAction.territoryIds,
-          reinforceAction.maxArmies,
+          reinforceAction.pool,
         ),
       );
     },
@@ -350,7 +351,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     if (
       !reinforceAction ||
       interactionBusy ||
-      pendingReinforcementTotal(pendingReinforcements) !== reinforceAction.maxArmies
+      pendingReinforcementTotal(pendingReinforcements) !== reinforceAction.pool
     ) {
       return;
     }
@@ -412,8 +413,9 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     setBusy(true);
     const seat = agentSeats.length + 1;
     // The agent seat's colour is assigned server-side like every other seat.
-    const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
-      body: { name: `Agent ${seat}`, controller: "agent" },
+    const result = await api<AgentSeatResponse>("POST", `/v1/games/${gameId}/agent-seats`, {
+      token: identity?.token,
+      body: { name: `Agent ${seat}` },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
@@ -421,9 +423,9 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       return;
     }
     const opened: AgentSeat = {
-      playerId: result.body.player.id,
-      name: result.body.player.name,
-      instructions: result.body.agentInstructions ?? "Agent instructions were not returned.",
+      playerId: result.body.seat.playerId,
+      name: result.body.seat.name,
+      instructions: result.body.instructions,
     };
     setAgentSeats((seats) => [...seats, opened]);
     setNotice("Agent seat opened — copy its instructions into your coding-agent UI.");

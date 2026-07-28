@@ -84,14 +84,14 @@ describe("board reading", () => {
 
 describe("reinforcement against a turtle", () => {
   it("feeds the border that can attack, not the border facing the fortress", () => {
-    const chosen = chooseReinforce(turtle(), { territoryIds: ["a1", "a2"], maxArmies: 3 });
+    const chosen = chooseReinforce(turtle(), { territoryIds: ["a1", "a2"], pool: 3 });
     expect(chosen).toEqual({ type: "reinforce", placements: [{ territoryId: "a2", armies: 3 }] });
   });
 
   it("still builds toward the softer border when this turn's pool is too small", () => {
     // Neither border can attack after one army; the softer one is nonetheless
     // the one worth accumulating on across turns.
-    const chosen = chooseReinforce(turtle(), { territoryIds: ["a1", "a2"], maxArmies: 1 });
+    const chosen = chooseReinforce(turtle(), { territoryIds: ["a1", "a2"], pool: 1 });
     expect(chosen).toEqual({ type: "reinforce", placements: [{ territoryId: "a2", armies: 1 }] });
   });
 
@@ -110,7 +110,7 @@ describe("reinforcement against a turtle", () => {
         continents: [{ id: "c1", territoryIds: ["a1", "a2"], reinforcementBonus: 2 }],
       },
     );
-    expect(chooseReinforce(ctx, { territoryIds: ["a1", "a2"], maxArmies: 4 })).toEqual({
+    expect(chooseReinforce(ctx, { territoryIds: ["a1", "a2"], pool: 4 })).toEqual({
       type: "reinforce",
       placements: [{ territoryId: "a1", armies: 4 }],
     });

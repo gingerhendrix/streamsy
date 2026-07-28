@@ -47,9 +47,9 @@ describe("Cloudflare game routing", () => {
     const gameId = "game_00112233445566778899aabb";
     const paths = [
       `/v1/games/${gameId}/board`,
-      `/v1/games/${gameId}/agent/token/state`,
+      `/v1/games/${gameId}/players/me/actions`,
+      `/v1/games/${gameId}/map`,
       `/streams/games/${gameId}/projections/board/hex1`,
-      `/agent-seat/${gameId}/player`,
     ];
     for (const path of paths) {
       await worker.fetch(new Request(`https://risk.test${path}`), h.env);
@@ -66,7 +66,7 @@ describe("Cloudflare game routing", () => {
 
     expect(response.status).toBe(404);
     expect(await response.json()).toMatchObject({
-      error: { code: "GAME_SCOPED_ROUTE_REQUIRED" },
+      error: { code: "NOT_FOUND" },
     });
     expect(h.routed).toHaveLength(0);
   });

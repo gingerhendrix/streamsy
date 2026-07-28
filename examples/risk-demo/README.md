@@ -71,18 +71,18 @@ The map supports drag to pan and wheel or pinch to zoom, with buttons for the sa
 
 The demo keeps the Risk-specific application small by composing Streamsy primitives:
 
-| Layer              | Risk module                                             | Streamsy role                                                                                                                        |
-| ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Kernel             | `src/domain/aggregate.ts`, `src/domain/decide.ts`       | Pure fold and decision function; injected RNG is recorded as events                                                                  |
-| Command log        | `server/game/command-service.ts`                        | `@streamsy/experimental/command` provides idempotent command submission over the canonical event stream                              |
-| Board projection   | `src/board/board-projection.ts`, `server/game/board.ts` | `ProjectionRuntime` materializes an independently rebuildable, causally watermarked board stream                                     |
-| Turn notifications | `server/game/turn-notifier.ts`                          | Derived per-player wake streams tell HTTP agents when to fetch a fresh decision                                                      |
-| Browser sync       | `src/ui/board-stream-db.ts`                             | Official `@durable-streams/state` Stream DB consumes Streamsy's read-only protocol facade; TanStack DB live queries render the board |
+| Layer            | Risk module                                             | Streamsy role                                                                                                                        |
+| ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Kernel           | `src/domain/aggregate.ts`, `src/domain/decide.ts`       | Pure fold and decision function; injected RNG is recorded as events                                                                  |
+| Command log      | `server/game/command-service.ts`                        | `@streamsy/experimental/command` provides idempotent command submission over the canonical event stream                              |
+| Board projection | `src/board/board-projection.ts`, `server/game/board.ts` | `ProjectionRuntime` materializes an independently rebuildable, causally watermarked board stream                                     |
+| Agent actions    | `server/game/action-notifier.ts`                        | Derived per-player streams carry self-sufficient action requests, canonical events, and resumable cursors                            |
+| Browser sync     | `src/ui/board-stream-db.ts`                             | Official `@durable-streams/state` Stream DB consumes Streamsy's read-only protocol facade; TanStack DB live queries render the board |
 
 ```text
 HTTP command → command log → canonical game events
                              ├─ replay-safe board projection → Stream DB → TanStack live queries
-                             └─ derived turn streams → HTTP-only agents
+                             └─ derived action streams → HTTP-only agents
 ```
 
 Command POSTs use the REST API. Browser board state does not poll a REST snapshot: one
@@ -94,8 +94,8 @@ cutovers; it does not drive board state.
 
 - `server/game/command-service.ts` binds the Risk fold/decide functions to the reusable command log.
 - `src/board/board-projection.ts` declares the durable board schema and event-to-row mapping.
-- `server/demo/bot.ts` is deterministic bot infrastructure. It follows turn streams, fetches
-  structured legal actions, and submits stable `commandId`s for demos and proofs.
+- `server/demo/bot.ts` is deterministic bot infrastructure. It follows self-sufficient action
+  streams and submits stable `commandId`s for demos and proofs.
 - `server/demo/signature-demo.ts` runs the complete deterministic guarantee proof.
 - `src/ui/board-stream-db.ts` is the official Stream DB + TanStack DB integration.
 
@@ -217,24 +217,24 @@ CURSOR_FILE=./player.cursor \
 bun run --cwd examples/risk-demo bot
 ```
 
-The bot persists only its turn-stream cursor. On each wake it fetches a fresh `/decision`, chooses
-from structured `legalActions`, and derives stable command IDs from the observed turn and board. In a
-v2 game the same process also answers `DefenseAvailable` wakes out of turn, under the stable id
-`bot-defense:<attackId>`, so a duplicate wake, a retry, and a race with the canonical timeout all
-collapse to one recorded roll.
+The bot persists only its actions-stream cursor. Each `ActionRequired` message contains the current
+turn, `legalMoves`, ownership/armies, and canonical events since the previous message, so steady-state
+play needs no `/decision` fetch. Human/bot defence prompts use the same stream; external-agent
+defence is server-resolved.
 
 `BASE_URL` must name the server's actual origin — the bot defaults to `http://localhost:1339`, and
 the server takes its port from `$PORT`. This repository-local command is bot infrastructure; it is
-not printed for agent seats. External harnesses must use the private fragment-bearing seat URL.
+not printed for agent seats. External harnesses initialize from the machine-readable seat descriptor
+returned once by the host-authorized `POST /v1/games/:gameId/agent-seats`.
 
 For bounded external-agent runs, copy
 [`external-agent/risk-seat.mjs`](external-agent/risk-seat.mjs) to a protected working directory.
-The dependency-free Node launcher initializes from the private seat URL and runs the same
-fresh-decision/control-loop contract with either `--harness claude` or `--harness codex`; see
+The dependency-free Node launcher initializes from the seat descriptor and runs the same
+actions-stream control loop with either `--harness claude` or `--harness codex`; see
 [`external-agent/README.md`](external-agent/README.md) for the bounded invocation. It imports no
-game or bot code. The selected model chooses one strategy action from each fresh `legalActions`,
-through a compact indexed-choice contract, while the launcher owns identifier resolution, one
-bounded corrective prompt, cursor waits, a second freshness check, stable byte-equivalent retries,
+game or bot code. The selected model chooses one strategy action from each `ActionRequired`
+message's `legalMoves`, through a compact indexed-choice contract, while the launcher owns identifier
+resolution, one bounded corrective prompt, cursor waits, stable byte-equivalent retries,
 monotonic redacted evidence, process bounds, and cancellation.
 
 ### Controller compatibility

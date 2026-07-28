@@ -204,19 +204,19 @@ const legalActionV2 = {
   oneOf: [
     {
       type: "object",
-      required: ["type", "territoryIds", "minArmies", "maxArmies"],
+      required: ["type", "territoryIds", "pool", "submit"],
       description:
-        "Submit one reinforce command whose placements use distinct territoryIds and sum exactly to maxArmies.",
+        "Submit one reinforce command whose placements use distinct territoryIds and sum exactly to pool.",
       properties: {
         type: { const: "reinforce" },
         territoryIds: { type: "array", items: { type: "string" } },
-        minArmies: { type: "integer" },
-        maxArmies: { type: "integer" },
+        pool: { type: "integer", minimum: 1 },
+        submit: { type: "object" },
       },
     },
     {
       type: "object",
-      required: ["type", "choices"],
+      required: ["type", "choices", "submit"],
       properties: {
         type: { const: "declare-attack" },
         choices: {
@@ -231,11 +231,12 @@ const legalActionV2 = {
             },
           },
         },
+        submit: { type: "object" },
       },
     },
     {
       type: "object",
-      required: ["type", "attackId", "dice", "deadlineAt"],
+      required: ["type", "attackId", "dice", "deadlineAt", "submit"],
       properties: {
         type: { const: "roll-defense" },
         attackId: { type: "string" },
@@ -244,11 +245,12 @@ const legalActionV2 = {
           type: "integer",
           description: "Canonical epoch-ms defence deadline.",
         },
+        submit: { type: "object" },
       },
     },
     {
       type: "object",
-      required: ["type", "attackId", "from", "to", "minArmies", "maxArmies"],
+      required: ["type", "attackId", "from", "to", "minArmies", "maxArmies", "submit"],
       properties: {
         type: { const: "occupy-territory" },
         attackId: { type: "string" },
@@ -256,11 +258,12 @@ const legalActionV2 = {
         to: { type: "string" },
         minArmies: { type: "integer" },
         maxArmies: { type: "integer" },
+        submit: { type: "object" },
       },
     },
     {
       type: "object",
-      required: ["type", "choices"],
+      required: ["type", "choices", "submit"],
       properties: {
         type: { const: "fortify" },
         choices: {
@@ -284,12 +287,13 @@ const legalActionV2 = {
             },
           },
         },
+        submit: { type: "object" },
       },
     },
     {
       type: "object",
-      required: ["type"],
-      properties: { type: { const: "end-turn" } },
+      required: ["type", "submit"],
+      properties: { type: { const: "end-turn" }, submit: { type: "object" } },
     },
   ],
 } as const;
@@ -508,7 +512,7 @@ const schemas = {
   DecisionContext: {
     type: "object",
     description: "risk-demo-v1 decision context (active player only).",
-    required: ["gameId", "player", "turn", "board", "legalActions"],
+    required: ["gameId", "player", "turn", "board", "legalMoves"],
     properties: {
       gameId: { type: "string" },
       player: {
@@ -540,14 +544,14 @@ const schemas = {
           players: { type: "array", items: { type: "object" } },
         },
       },
-      legalActions: { type: "array", items: legalAction },
+      legalMoves: { type: "array", items: legalAction },
     },
   },
   DecisionContextV2: {
     type: "object",
     description:
       "risk-demo-v2 decision context. Player-relative: an out-of-turn defender gets `roll-defense` here. Derived from canonical history through `board.sourceThroughOffset`, which the named board generation has already materialized — so the decision is never ahead of its board snapshot.",
-    required: ["gameId", "ruleset", "player", "mode", "turn", "board", "legalActions"],
+    required: ["gameId", "ruleset", "player", "mode", "turn", "board", "legalMoves"],
     properties: {
       gameId: { type: "string" },
       ruleset: { const: "risk-demo-v2" },
@@ -621,7 +625,7 @@ const schemas = {
           },
         },
       },
-      legalActions: { type: "array", items: legalActionV2 },
+      legalMoves: { type: "array", items: legalActionV2 },
     },
   },
   Board: {
@@ -861,79 +865,15 @@ export const openApiDocument = {
     description:
       "Event-sourced Risk. Commands validate against canonical history and CAS-append; the board is a separate causally-watermarked projection. Two rulesets are published side by side: `risk-demo-v1` (fixed six-country map, single-step attack) and `risk-demo-v2` (procedural hex map, two-stage combat with a timed defence interrupt). `GET /v1/games/{gameId}` reports which one a game speaks; the v1 `attack` action is never reinterpreted as the v2 `declare-attack` action.",
   },
+  tags: [
+    { name: "agent", description: "The complete four-endpoint playing-agent surface." },
+    { name: "lobby" },
+    { name: "browser" },
+  ],
   paths: {
-    "/v1/games/{gameId}/agent/{token}/state": {
-      get: {
-        summary: "Compact personalized v2 state: named map, turn, and current legal moves.",
-        parameters: [
-          {
-            name: "gameId",
-            in: "path",
-            required: true,
-            schema: { type: "string" },
-          },
-          {
-            name: "token",
-            in: "path",
-            required: true,
-            description: "Player seat capability embedded in the personalized URL.",
-            schema: { type: "string" },
-          },
-        ],
-        responses: {
-          "200": {
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  required: ["status", "player", "turn", "territories", "legalMoves"],
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    "/v1/games/{gameId}/agent/{token}/wait": {
-      get: {
-        summary: "Cursor-free bounded wait; always refetch the personalized state after return.",
-        parameters: [
-          {
-            name: "gameId",
-            in: "path",
-            required: true,
-            schema: { type: "string" },
-          },
-          {
-            name: "token",
-            in: "path",
-            required: true,
-            schema: { type: "string" },
-          },
-          {
-            name: "wait",
-            in: "query",
-            required: false,
-            description: "Bounded wait in milliseconds, capped at 30000.",
-            schema: { type: "integer", minimum: 0, maximum: 30000 },
-          },
-        ],
-        responses: {
-          "200": {
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  required: ["changed", "reason", "stateUrl"],
-                },
-              },
-            },
-          },
-        },
-      },
-    },
     "/v1/games": {
       post: {
+        tags: ["lobby"],
         summary:
           'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a legacy fixed-map game.',
         requestBody: jsonRequest("CreateGameRequest"),
@@ -942,9 +882,17 @@ export const openApiDocument = {
     },
     "/v1/games/{gameId}/players": {
       post: {
+        tags: ["lobby"],
         summary: "Join a game; returns the player and a one-time player capability.",
         requestBody: jsonRequest("JoinGameRequest"),
         responses: { "201": jsonResponse("CommandAck") },
+      },
+    },
+    "/v1/games/{gameId}/agent-seats": {
+      post: {
+        tags: ["lobby"],
+        summary: "Open or delegate an agent seat (host capability required).",
+        responses: { "201": { description: "One-time seat descriptor and instructions." } },
       },
     },
     "/v1/games/{gameId}/start": {
@@ -965,9 +913,17 @@ export const openApiDocument = {
         responses: { "200": eitherRuleset("Board", "BoardV2") },
       },
     },
+    "/v1/games/{gameId}/map": {
+      get: {
+        tags: ["agent"],
+        summary: "Immutable map geometry, names, adjacency, continents, and bonuses.",
+        responses: { "200": { description: "Immutable map document." } },
+      },
+    },
     "/v1/games/{gameId}/decision": {
       get: {
-        summary: "Fresh agent decision context and legal actions (player capability).",
+        tags: ["agent"],
+        summary: "Full player-relative snapshot for bootstrap and recovery.",
         responses: {
           "200": eitherRuleset("DecisionContext", "DecisionContextV2"),
         },
@@ -975,6 +931,7 @@ export const openApiDocument = {
     },
     "/v1/games/{gameId}/commands": {
       post: {
+        tags: ["agent"],
         summary: "Submit a typed command (player capability). Idempotent by commandId.",
         requestBody: eitherRuleset("GameCommand", "GameCommandV2"),
         responses: {
@@ -983,16 +940,17 @@ export const openApiDocument = {
         },
       },
     },
-    "/v1/games/{gameId}/players/me/turns": {
+    "/v1/games/{gameId}/players/me/actions": {
       get: {
-        summary: "Follow this player's durable action stream (player capability).",
+        tags: ["agent"],
+        summary: "Follow this player's durable self-sufficient action-required stream.",
         parameters: [
           {
             name: "offset",
             in: "query",
             required: false,
             description:
-              "Opaque cursor returned by the previous turns response. Omit for the initial read.",
+              "Opaque nextOffset returned by the previous actions response. Omit initially.",
             schema: { type: "string" },
           },
           {
@@ -1001,10 +959,10 @@ export const openApiDocument = {
             required: false,
             description:
               "Maximum long-poll duration in milliseconds. Omit or use 0 for an immediate read.",
-            schema: { type: "integer", minimum: 0 },
+            schema: { type: "integer", minimum: 0, maximum: 30000 },
           },
         ],
-        responses: { "200": jsonResponse("PlayerActionNotification") },
+        responses: { "200": { description: "messages, nextOffset, and upToDate." } },
       },
     },
   },

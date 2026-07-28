@@ -32,8 +32,7 @@ function json(body: unknown, status = 200): Response {
 function gameIdFromPath(pathname: string): string | null {
   const match =
     /^\/v1\/games\/([^/]+)(?:\/|$)/.exec(pathname) ??
-    /^\/streams\/games\/([^/]+)(?:\/|$)/.exec(pathname) ??
-    /^\/agent-seat\/([^/]+)(?:\/|$)/.exec(pathname);
+    /^\/streams\/games\/([^/]+)(?:\/|$)/.exec(pathname);
   if (!match) return null;
   const gameId = decodeURIComponent(match[1]!);
   return GAME_ID_PATTERN.test(gameId) ? gameId : null;
@@ -59,20 +58,10 @@ export default {
     const gameId = gameIdFromPath(url.pathname);
     if (gameId) return forwardToGame(request, env, gameId);
 
-    if (url.pathname.startsWith("/agent/")) {
-      return json(
-        {
-          error: {
-            code: "GAME_SCOPED_ROUTE_REQUIRED",
-            message: "Use /v1/games/:gameId/agent/:token/... on Cloudflare.",
-          },
-        },
-        404,
-      );
-    }
     if (
       url.pathname.startsWith("/v1/") ||
       url.pathname.startsWith("/streams/") ||
+      url.pathname.startsWith("/agent/") ||
       url.pathname.startsWith("/agent-seat/")
     ) {
       return json({ error: { code: "NOT_FOUND", message: "Unknown game-scoped route." } }, 404);

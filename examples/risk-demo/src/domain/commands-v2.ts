@@ -47,6 +47,12 @@ export interface StartGameCommandV2 {
   commandId: string;
 }
 
+export interface DelegateAgentSeatCommandV2 {
+  type: "delegate-agent-seat";
+  commandId: string;
+  playerId: string;
+}
+
 export interface ReinforcementPlacementV2 {
   territoryId: string;
   armies: number;
@@ -137,6 +143,7 @@ export type PlayCommandV2Envelope =
 export type CommandV2 =
   | CreateGameCommandV2
   | JoinGameCommandV2
+  | DelegateAgentSeatCommandV2
   | StartGameCommandV2
   | PlayCommandV2Envelope
   | ResolveDefenseTimeoutCommandV2;

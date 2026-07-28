@@ -124,7 +124,8 @@ export async function createV2Game(
       ruleset: RULESET_V2,
       name: "Alice",
       color: "red",
-      controller: options.controllers?.[0] ?? "human",
+      controller:
+        (options.controllers?.[0] ?? "human") === "agent" ? "human" : options.controllers?.[0],
       mapSeed: options.mapSeed ?? "integration-seed",
     },
   });
@@ -134,22 +135,41 @@ export async function createV2Game(
   const hostId: string = created.body.player.id;
   const players = [hostId];
   const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };
+  const hostCapability = created.body.capability as string;
+
+  if (options.controllers?.[0] === "agent") {
+    const delegated = await call(app, "POST", `/v1/games/${gameId}/agent-seats`, {
+      token: hostCapability,
+      body: { playerId: hostId },
+    });
+    expect(delegated.status).toBe(201);
+    tokenByPlayer[hostId] = delegated.body.seat.token;
+  }
 
   for (let i = 1; i < count; i += 1) {
-    const joined = await call(app, "POST", `/v1/games/${gameId}/players`, {
-      body: {
-        name: `Player ${i + 1}`,
-        color: ["blue", "green", "yellow"][i - 1],
-        controller: options.controllers?.[i] ?? "human",
-      },
-    });
+    const controller = options.controllers?.[i] ?? "human";
+    const joined =
+      controller === "agent"
+        ? await call(app, "POST", `/v1/games/${gameId}/agent-seats`, {
+            token: hostCapability,
+            body: { name: `Player ${i + 1}`, color: ["blue", "green", "yellow"][i - 1] },
+          })
+        : await call(app, "POST", `/v1/games/${gameId}/players`, {
+            body: {
+              name: `Player ${i + 1}`,
+              color: ["blue", "green", "yellow"][i - 1],
+              controller,
+            },
+          });
     expect(joined.status).toBe(201);
-    players.push(joined.body.player.id);
-    tokenByPlayer[joined.body.player.id] = joined.body.capability;
+    const player = controller === "agent" ? joined.body.seat : joined.body.player;
+    players.push(player.playerId ?? player.id);
+    tokenByPlayer[player.playerId ?? player.id] =
+      controller === "agent" ? player.token : joined.body.capability;
   }
 
   const started = await call(app, "POST", `/v1/games/${gameId}/start`, {
-    token: tokenByPlayer[hostId],
+    token: hostCapability,
     body: {},
   });
   expect(started.status).toBe(200);
@@ -211,7 +231,7 @@ export async function declareAttack(
 
   const ownerOf = (id: string): string | undefined =>
     decision.board.territories.find((x: any) => x.id === id)?.ownerId;
-  const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+  const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
   const border = board.territories.find(
     (t: any) =>
       ownerOf(t.id) === attacker &&
@@ -222,13 +242,13 @@ export async function declareAttack(
     turnId: decision.turn.id,
     action: {
       type: "reinforce",
-      placements: [{ territoryId: border.id, armies: reinforce.maxArmies }],
+      placements: [{ territoryId: border.id, armies: reinforce.pool }],
     },
   });
   expect(placed.status).toBe(200);
 
   decision = await decisionFor(h.app, game, attacker);
-  const choice = decision.legalActions
+  const choice = decision.legalMoves
     .find((a: any) => a.type === "declare-attack")
     .choices.find((c: any) => c.from === border.id);
   const attackId = `atk:${decision.turn.id}:${choice.to}`;
@@ -279,7 +299,7 @@ export async function throwUntilCapture(
     if (resolved.territoryCaptured) return current;
 
     const decision = await decisionFor(h.app, game, current.attacker);
-    const choice = decision.legalActions
+    const choice = decision.legalMoves
       .find((a: any) => a.type === "declare-attack")
       ?.choices.find((c: any) => c.from === current.from && c.to === current.to);
     if (!choice) throw new Error(`${current.to} can no longer be attacked from ${current.from}`);

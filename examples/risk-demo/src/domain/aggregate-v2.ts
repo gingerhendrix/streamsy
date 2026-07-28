@@ -270,6 +270,11 @@ function applyEvent(state: AggregateStateV2, event: GameEventV2): void {
       });
       break;
     }
+    case "PlayerControllerChanged": {
+      const player = state.players.find((candidate) => candidate.id === event.playerId);
+      if (player) player.controller = event.controller;
+      break;
+    }
     case "GameStarted": {
       state.status = "playing";
       state.map = event.map;

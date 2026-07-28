@@ -80,7 +80,10 @@ async function main(): Promise<void> {
       // whenever canonical state says one is open, not only on a `DefenseAvailable`
       // wake: the wake is a hint, and a missed one must not leave a human attacker
       // watching the full 15-second timeout.
-      if (wake?.type === "DefenseAvailable" || meta.body.pendingInteraction?.type === "defense") {
+      if (
+        (wake?.type === "ActionRequired" && wake.reason === "defense-required") ||
+        meta.body.pendingInteraction?.type === "defense"
+      ) {
         if (await bot.defend()) console.log("rolled defence");
       }
     }

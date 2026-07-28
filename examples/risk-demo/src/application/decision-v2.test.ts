@@ -61,7 +61,7 @@ describe("risk-demo-v2 decision context", () => {
     expect(decision.turn.id).toBe(game.turnId());
     expect(decision.turn.phase).toBe("reinforce");
     expect(decision.turn.reinforcement.total).toBeGreaterThanOrEqual(3);
-    expect(decision.legalActions.map((a) => a.type)).toContain("reinforce");
+    expect(decision.legalMoves.map((a) => a.type)).toContain("reinforce");
   });
 
   it("reports waiting, with no actions, for everyone else", () => {
@@ -71,7 +71,7 @@ describe("risk-demo-v2 decision context", () => {
     const decision = decisionFor(game, bystander);
 
     expect(decision.mode).toBe("waiting");
-    expect(decision.legalActions).toEqual([]);
+    expect(decision.legalMoves).toEqual([]);
     // The board is still fully visible — v2 has no fog of war.
     expect(decision.board.territories.length).toBeGreaterThan(0);
   });
@@ -85,18 +85,19 @@ describe("risk-demo-v2 decision context", () => {
     const defender = decisionFor(game, setup.defenderId);
     expect(defender.mode).toBe("defense");
     expect(defender.pendingInteraction?.type).toBe("defense");
-    expect(defender.legalActions).toEqual([
+    expect(defender.legalMoves).toEqual([
       {
         type: "roll-defense",
         attackId,
         dice: expect.any(Number),
         deadlineAt: expect.any(Number),
+        submit: { type: "roll-defense", attackId: "<attackId>" },
       },
     ]);
 
     const attacker = decisionFor(game, setup.attackerId);
     expect(attacker.mode).toBe("waiting");
-    expect(attacker.legalActions).toEqual([]);
+    expect(attacker.legalMoves).toEqual([]);
     // The attacker still sees the interrupt they are blocked on.
     expect(attacker.pendingInteraction?.attackId).toBe(attackId);
 
@@ -113,7 +114,7 @@ describe("risk-demo-v2 decision context", () => {
 
     const attacker = decisionFor(game, setup.attackerId);
     expect(attacker.mode).toBe("active-turn");
-    expect(attacker.legalActions).toEqual([
+    expect(attacker.legalMoves).toEqual([
       {
         type: "occupy-territory",
         attackId: pending.attackId,
@@ -121,6 +122,11 @@ describe("risk-demo-v2 decision context", () => {
         to: pending.to,
         minArmies: pending.minArmies,
         maxArmies: pending.maxArmies,
+        submit: {
+          type: "occupy-territory",
+          attackId: "<attackId>",
+          armies: "<minArmies..maxArmies>",
+        },
       },
     ]);
     expect(decisionFor(game, setup.defenderId).mode).toBe("waiting");
@@ -137,7 +143,7 @@ describe("risk-demo-v2 decision context", () => {
     for (const playerId of game.playerIds) {
       const decision = decisionFor(game, playerId);
       expect(decision.mode).toBe("finished");
-      expect(decision.legalActions).toEqual([]);
+      expect(decision.legalMoves).toEqual([]);
     }
   });
 

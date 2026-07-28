@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   const decision = await api("GET", `/v1/games/${gameId}/decision`, {
     token: tokens[active],
   });
-  const reinforce = decision.body.legalActions.find(
+  const reinforce = decision.body.legalMoves.find(
     (action: { type: string }) => action.type === "reinforce",
   );
   assert(reinforce, "no reinforce action");
@@ -88,26 +88,40 @@ async function main(): Promise<void> {
   assert(canonical.status === 404, "canonical event stream became public");
 
   const agentGame = await api("POST", "/v1/games", {
-    body: { name: "Agent Host", color: "green", controller: "agent" },
+    body: { name: "Agent Host" },
   });
   assert(agentGame.status === 201, "agent game create failed");
   const agentGameId = agentGame.body.game.id as string;
   assert(agentGameId !== gameId, "two creates returned the same game id");
-  const state = await api(
-    "GET",
-    `/v1/games/${agentGameId}/agent/${agentGame.body.capability}/state`,
+  const seat = await api("POST", `/v1/games/${agentGameId}/agent-seats`, {
+    token: agentGame.body.capability,
+    body: { playerId: agentGame.body.player.id },
+  });
+  assert(seat.status === 201, "agent seat delegation failed");
+  const crossGame = await api("GET", `/v1/games/${gameId}/decision`, {
+    token: seat.body.seat.token,
+  });
+  assert(crossGame.status === 403, "an agent capability crossed game isolation");
+
+  // The actions stream long-polls *inside* the per-game Durable Object. A bounded
+  // wait that returns empty and up-to-date — without the edge cutting it short —
+  // is the property no local harness can prove.
+  const seatToken = seat.body.seat.token as string;
+  const opening = await api("GET", `/v1/games/${agentGameId}/players/me/actions`, {
+    token: seatToken,
+  });
+  assert(opening.status === 200, `actions read returned ${opening.status}`);
+  const startedAt = Date.now();
+  const held = await api(
+    `GET`,
+    `/v1/games/${agentGameId}/players/me/actions?offset=${opening.body.nextOffset}&wait=2000`,
+    { token: seatToken },
   );
-  assert(state.status === 200 && state.body.gameId === agentGameId, "agent state route failed");
-  const wait = await api(
-    "GET",
-    `/v1/games/${agentGameId}/agent/${agentGame.body.capability}/wait?wait=0`,
-  );
-  assert(wait.status === 200, "agent wait route failed");
-  const crossGame = await api(
-    "GET",
-    `/v1/games/${gameId}/agent/${agentGame.body.capability}/state`,
-  );
-  assert(crossGame.status === 401, "a capability crossed game DO isolation");
+  const heldMs = Date.now() - startedAt;
+  assert(held.status === 200, `long poll returned ${held.status}`);
+  assert(held.body.messages.length === 0, "long poll on an unstarted game produced messages");
+  assert(held.body.nextOffset === opening.body.nextOffset, "long poll moved the cursor");
+  assert(heldMs >= 1500, `long poll returned after ${heldMs}ms instead of holding`);
 
   const spa = await fetch(`${baseUrl}/games/${gameId}`);
   assert(spa.status === 200 && (await spa.text()).includes('id="root"'), "SPA fallback failed");
@@ -121,7 +135,8 @@ async function main(): Promise<void> {
         "create/join/start/command/duplicate",
         "board/spectator restriction",
         "two-game capability isolation",
-        "agent state/wait",
+        "agent seat authority",
+        "actions stream bounded long poll",
         "SPA fallback",
       ],
     }),

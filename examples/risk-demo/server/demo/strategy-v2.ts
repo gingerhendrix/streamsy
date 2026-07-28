@@ -44,7 +44,7 @@ export interface StrategyMap {
 
 export interface ReinforceAction {
   territoryIds: string[];
-  maxArmies: number;
+  pool: number;
 }
 export interface AttackChoice {
   from: string;
@@ -150,7 +150,7 @@ export function chooseReinforce(
   ctx: StrategyContext,
   action: ReinforceAction,
 ): Record<string, unknown> {
-  const pool = action.maxArmies;
+  const pool = action.pool;
   const scored = action.territoryIds
     .map((id) => ({
       id,

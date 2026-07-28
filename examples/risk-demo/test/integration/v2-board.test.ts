@@ -38,10 +38,10 @@ describe("risk-demo-v2 board projection surface", () => {
     // the loser the first free palette colour rather than rejecting the join.
     const contenders = await Promise.all([
       call(h.app, "POST", `/v1/games/${gameId}/players`, {
-        body: { name: "Bob", color: "#3B82F6", controller: "agent" },
+        body: { name: "Bob", color: "#3B82F6" },
       }),
       call(h.app, "POST", `/v1/games/${gameId}/players`, {
-        body: { name: "Cara", color: " #3b82f6 ", controller: "agent" },
+        body: { name: "Cara", color: " #3b82f6 " },
       }),
     ]);
     for (const contender of contenders) expect(contender.status).toBe(201);
@@ -51,10 +51,9 @@ describe("risk-demo-v2 board projection surface", () => {
 
     // A join that requests no colour at all is issued a free palette colour.
     const colourless = await call(h.app, "POST", `/v1/games/${gameId}/players`, {
-      body: { name: "Latecomer", controller: "agent" },
+      body: { name: "Latecomer" },
     });
     expect(colourless.status).toBe(201);
-    expect(colourless.body.agentInstructions).toContain(`Player ID: ${colourless.body.player.id}`);
 
     // The canonical roster holds four players with four distinct colours, and
     // every response reported the colour its seat was actually issued.
@@ -125,7 +124,7 @@ describe("risk-demo-v2 board projection surface", () => {
     const before = await boardFor(h.app, game);
     const active = before.game.activePlayerId as string;
     const decision = await decisionFor(h.app, game, active);
-    const reinforce = decision.legalActions.find((action: any) => action.type === "reinforce");
+    const reinforce = decision.legalMoves.find((action: any) => action.type === "reinforce");
     const [first, second] = reinforce.territoryIds as [string, string];
     const firstBefore = before.territories.find((territory: any) => territory.id === first).armies;
     const secondBefore = before.territories.find(
@@ -138,7 +137,7 @@ describe("risk-demo-v2 board projection surface", () => {
       action: {
         type: "reinforce",
         placements: [
-          { territoryId: first, armies: reinforce.maxArmies - 1 },
+          { territoryId: first, armies: reinforce.pool - 1 },
           { territoryId: second, armies: 1 },
         ],
       },
@@ -153,7 +152,7 @@ describe("risk-demo-v2 board projection surface", () => {
     expect(after.turn.phase).toBe("attack");
     expect(after.turn.reinforcement.remaining).toBe(0);
     expect(after.territories.find((territory: any) => territory.id === first).armies).toBe(
-      firstBefore + reinforce.maxArmies - 1,
+      firstBefore + reinforce.pool - 1,
     );
     expect(after.territories.find((territory: any) => territory.id === second).armies).toBe(
       secondBefore + 1,
@@ -244,13 +243,13 @@ describe("risk-demo-v2 board projection surface", () => {
     // After a command, the ack's canonical offset is already incorporated.
     const active = decision.turn.activePlayerId as string;
     const activeDecision = await decisionFor(h.app, game, active);
-    const reinforce = activeDecision.legalActions.find((a: any) => a.type === "reinforce");
+    const reinforce = activeDecision.legalMoves.find((a: any) => a.type === "reinforce");
     const ack = await post(h.app, game, active, {
       commandId: "wm-1",
       turnId: activeDecision.turn.id,
       action: {
         type: "reinforce",
-        placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.maxArmies }],
+        placements: [{ territoryId: reinforce.territoryIds[0], armies: reinforce.pool }],
       },
     });
     expect(ack.status).toBe(200);

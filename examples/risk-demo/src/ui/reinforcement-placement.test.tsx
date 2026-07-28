@@ -11,8 +11,16 @@ import {
 const ACTION = {
   type: "reinforce" as const,
   territoryIds: ["t1", "t2"],
-  minArmies: 1 as const,
-  maxArmies: 4,
+  pool: 4,
+  submit: {
+    type: "reinforce" as const,
+    placements: [
+      {
+        territoryId: "<one of territoryIds>" as const,
+        armies: "<1..pool>" as const,
+      },
+    ],
+  },
 };
 
 const NAMES: NameLookup = {

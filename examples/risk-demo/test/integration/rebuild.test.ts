@@ -61,7 +61,7 @@ async function playedGame(seed: number): Promise<Harness> {
   const decision = await http("GET", `/v1/games/${gameId}/decision`, {
     token: tokenByPlayer[active]!,
   });
-  const reinforce = decision.body.legalActions.find((a: any) => a.type === "reinforce");
+  const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
   await http("POST", `/v1/games/${gameId}/commands`, {
     token: tokenByPlayer[active]!,
     body: {
@@ -70,7 +70,7 @@ async function playedGame(seed: number): Promise<Harness> {
       action: {
         type: "reinforce",
         territoryId: reinforce.territoryIds[0],
-        armies: reinforce.maxArmies,
+        armies: reinforce.pool,
       },
     },
   });

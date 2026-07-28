@@ -79,7 +79,7 @@ export interface DecisionContextV2 {
   };
   pendingInteraction?: PendingInteraction;
   board: DecisionBoardV2;
-  legalActions: LegalActionV2[];
+  legalMoves: LegalActionV2[];
 }
 
 export interface BoardWatermarkV2 {
@@ -135,6 +135,6 @@ export function buildDecisionContextV2(
         .map((p) => ({ id: p.id, controller: p.controller, eliminated: p.eliminated }))
         .toSorted(byId),
     },
-    legalActions: legalActionsV2(state, playerId),
+    legalMoves: legalActionsV2(state, playerId),
   };
 }

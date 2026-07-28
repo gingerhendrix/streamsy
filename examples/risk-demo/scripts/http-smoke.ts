@@ -106,7 +106,7 @@ async function main(): Promise<void> {
       token: tokenByPlayer[active],
     });
     assert(decision.status === 200, `decision: ${decision.status}`);
-    const reinforce = decision.body.legalActions.find((a: any) => a.type === "reinforce");
+    const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
     assert(reinforce, "expected a reinforce action");
 
     const commandBody = {
@@ -124,46 +124,41 @@ async function main(): Promise<void> {
     const board = await api(server.baseUrl, "GET", `/v1/games/${gameId}/board`);
     assert(board.body.sourceThroughOffset === committedOffset, "board watermark != ack offset");
 
-    // Turn stream: the active player has a durable TurnAvailable wake.
-    const turns = await api(server.baseUrl, "GET", `/v1/games/${gameId}/players/me/turns`, {
-      token: tokenByPlayer[active],
-    });
-    assert(
-      turns.body.notifications.some((n: any) => n.type === "TurnAvailable"),
-      "no TurnAvailable wake for active player",
-    );
-
-    // Personalized token-bearing URLs must be dispatched through the real Bun
-    // route table, rather than swallowed by the SPA fallback.
+    // The v2 agent contract is header-only and action-stream driven.
     const agentGame = await api(server.baseUrl, "POST", "/v1/games", {
-      body: { name: "Human", color: "red", mapSeed: "http-smoke-agent-routes" },
+      body: { name: "Agent Host", mapSeed: "http-smoke-agent-routes" },
     });
     assert(agentGame.status === 201, `create agent game: ${agentGame.status}`);
     const agentGameId: string = agentGame.body.game.id;
-    const agentJoin = await api(server.baseUrl, "POST", `/v1/games/${agentGameId}/players`, {
-      body: { name: "Agent", color: "blue", controller: "agent" },
+    const firstAgent = await api(server.baseUrl, "POST", `/v1/games/${agentGameId}/agent-seats`, {
+      token: agentGame.body.capability,
+      body: { playerId: agentGame.body.player.id },
+    });
+    const agentJoin = await api(server.baseUrl, "POST", `/v1/games/${agentGameId}/agent-seats`, {
+      token: agentGame.body.capability,
+      body: { name: "Agent 2" },
     });
     assert(agentJoin.status === 201, `join agent: ${agentJoin.status}`);
-    const agentToken: string = agentJoin.body.capability;
-    const statePath = `/v1/games/${agentGameId}/agent/${agentToken}/state`;
-    const waitPath = `/v1/games/${agentGameId}/agent/${agentToken}/wait?wait=0`;
-
-    const lobbyState = await api(server.baseUrl, "GET", statePath);
-    assert(lobbyState.status === 200, `agent lobby state: ${lobbyState.status}`);
-    assert(lobbyState.contentType.startsWith("application/json"), "agent state returned the SPA");
-    assert(lobbyState.body.gameId === agentGameId, "agent state was not token-scoped");
-    const lobbyWait = await api(server.baseUrl, "GET", waitPath);
-    assert(lobbyWait.status === 200, `agent lobby wait: ${lobbyWait.status}`);
-    assert(lobbyWait.contentType.startsWith("application/json"), "agent wait returned the SPA");
 
     const agentStarted = await api(server.baseUrl, "POST", `/v1/games/${agentGameId}/start`, {
       token: agentGame.body.capability,
       body: {},
     });
     assert(agentStarted.status === 200, `start agent game: ${agentStarted.status}`);
-    const playingState = await api(server.baseUrl, "GET", statePath);
-    assert(playingState.status === 200, `agent playing state: ${playingState.status}`);
-    assert(playingState.body.status === "playing", "agent state did not update after game start");
+    const map = await api(server.baseUrl, "GET", `/v1/games/${agentGameId}/map`);
+    assert(map.status === 200 && map.body.territories.length > 0, "agent map route failed");
+    const agentTokens = [firstAgent.body.seat.token, agentJoin.body.seat.token];
+    const actionReads = await Promise.all(
+      agentTokens.map((token) =>
+        api(server.baseUrl, "GET", `/v1/games/${agentGameId}/players/me/actions`, { token }),
+      ),
+    );
+    assert(
+      actionReads.some((read) =>
+        read.body.messages.some((message: any) => message.type === "ActionRequired"),
+      ),
+      "no actionable agent message after start",
+    );
 
     // The React board SPA is served and mounts on #root.
     const spa = await fetch(`${server.baseUrl}/`);

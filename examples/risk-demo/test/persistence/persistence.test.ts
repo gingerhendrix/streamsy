@@ -75,7 +75,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
   const decision = await call(first.app, "GET", `/v1/games/${gameId}/decision`, {
     token: tokenByPlayer[active]!,
   });
-  const reinforce = decision.body.legalActions.find((a: any) => a.type === "reinforce");
+  const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
   const commandBody = {
     commandId: "persist-cmd",
     turnId: decision.body.turn.id,
@@ -130,10 +130,10 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
   second.close();
 });
 
-test("turn-stream cursor resume and rebuild idempotency survive restart", async () => {
+test("actions-stream cursor resume and rebuild idempotency survive restart", async () => {
   const first = openApp();
   const created = await call(first.app, "POST", "/v1/games", {
-    body: { ruleset: "risk-demo-v1", name: "A", color: "red" },
+    body: { ruleset: "risk-demo-v2", name: "A", color: "red" },
   });
   const gameId: string = created.body.game.id;
   const hostToken: string = created.body.capability;
@@ -146,11 +146,11 @@ test("turn-stream cursor resume and rebuild idempotency survive restart", async 
   // Read the host's own durable turn stream and remember the cursor. (The host
   // has one wake if it drew the first turn, otherwise zero — the invariant below
   // holds either way.)
-  const initial = await call(first.app, "GET", `/v1/games/${gameId}/players/me/turns`, {
+  const initial = await call(first.app, "GET", `/v1/games/${gameId}/players/me/actions`, {
     token: hostToken,
   });
-  const cursor: string = initial.body.cursor;
-  const wakeCount: number = initial.body.notifications.length;
+  const cursor: string = initial.body.nextOffset;
+  const messageCount: number = initial.body.messages.length;
   first.close();
 
   // --- restart: reopen the same database file ---
@@ -160,18 +160,18 @@ test("turn-stream cursor resume and rebuild idempotency survive restart", async 
   const resumed = await call(
     second.app,
     "GET",
-    `/v1/games/${gameId}/players/me/turns?offset=${cursor}`,
+    `/v1/games/${gameId}/players/me/actions?offset=${cursor}`,
     { token: hostToken },
   );
-  expect(resumed.body.notifications).toHaveLength(0);
+  expect(resumed.body.messages).toHaveLength(0);
 
   // Reading from the start after restart still yields the SAME wakes: the notifier
   // rebuilt from canonical history without appending duplicates.
-  const rebuilt = await call(second.app, "GET", `/v1/games/${gameId}/players/me/turns`, {
+  const rebuilt = await call(second.app, "GET", `/v1/games/${gameId}/players/me/actions`, {
     token: hostToken,
   });
-  expect(rebuilt.body.notifications).toHaveLength(wakeCount);
-  for (const note of rebuilt.body.notifications) expect(note.playerId).toBe(hostId);
+  expect(rebuilt.body.messages).toHaveLength(messageCount);
+  for (const message of rebuilt.body.messages) expect(message.playerId).toBe(hostId);
 
   second.close();
 });

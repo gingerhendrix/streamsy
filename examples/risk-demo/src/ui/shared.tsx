@@ -18,7 +18,7 @@ export interface Identity {
   gameId: string;
   playerId: string;
   token: string;
-  role: "host" | "player";
+  role: "host" | "player" | "agent";
 }
 
 export interface ApiResult<T> {

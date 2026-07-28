@@ -26,13 +26,13 @@ describe("published OpenAPI contract", () => {
     expect(Object.keys(openApiDocument.paths).toSorted()).toEqual([
       "/v1/games",
       "/v1/games/{gameId}",
-      "/v1/games/{gameId}/agent/{token}/state",
-      "/v1/games/{gameId}/agent/{token}/wait",
+      "/v1/games/{gameId}/agent-seats",
       "/v1/games/{gameId}/board",
       "/v1/games/{gameId}/commands",
       "/v1/games/{gameId}/decision",
+      "/v1/games/{gameId}/map",
       "/v1/games/{gameId}/players",
-      "/v1/games/{gameId}/players/me/turns",
+      "/v1/games/{gameId}/players/me/actions",
       "/v1/games/{gameId}/start",
     ]);
   });
@@ -110,10 +110,10 @@ describe("published OpenAPI contract", () => {
   });
 
   it("documents `roll-defense` as an out-of-turn legal action with a deadline", () => {
-    const rollDefense = jsonSchemas.DecisionContextV2.properties.legalActions.items.oneOf.find(
+    const rollDefense = jsonSchemas.DecisionContextV2.properties.legalMoves.items.oneOf.find(
       (variant: any) => variant.properties.type.const === "roll-defense",
     ) as any;
-    expect(rollDefense.required).toEqual(["type", "attackId", "dice", "deadlineAt"]);
+    expect(rollDefense.required).toEqual(["type", "attackId", "dice", "deadlineAt", "submit"]);
   });
 
   it("publishes every stable rejection code both rulesets can emit", () => {
@@ -145,30 +145,35 @@ describe("published OpenAPI contract", () => {
     for (const code of [...v1Codes, ...v2Codes]) expect(published.has(code)).toBe(true);
   });
 
-  it("documents the DefenseAvailable wake alongside TurnAvailable", () => {
-    expect(actionTypes(jsonSchemas.PlayerActionNotification as any)).toEqual([
-      "TurnAvailable",
-      "DefenseAvailable",
-    ]);
-  });
-
-  it("documents cursor-free personalized state and wait resources", () => {
-    expect(openApiDocument.paths["/v1/games/{gameId}/agent/{token}/state"].get.summary).toContain(
-      "named map",
+  it("publishes exactly four agent-tagged endpoints and no token paths", () => {
+    const agentPaths = Object.entries(openApiDocument.paths)
+      .filter(([, item]) =>
+        Object.values(item).some(
+          (operation: any) => Array.isArray(operation.tags) && operation.tags.includes("agent"),
+        ),
+      )
+      .map(([path]) => path)
+      .toSorted();
+    expect(agentPaths).toEqual(
+      [
+        "/v1/games/{gameId}/commands",
+        "/v1/games/{gameId}/decision",
+        "/v1/games/{gameId}/map",
+        "/v1/games/{gameId}/players/me/actions",
+      ].toSorted(),
     );
-    const wait = openApiDocument.paths["/v1/games/{gameId}/agent/{token}/wait"].get;
-    expect(wait.summary).toContain("Cursor-free");
-    expect(wait.parameters.map((parameter) => parameter.name)).toEqual(["gameId", "token", "wait"]);
+    expect(Object.keys(openApiDocument.paths).every((path) => !path.includes("token"))).toBe(true);
   });
 
-  it("documents the turns cursor and bounded wait query parameters", () => {
-    const parameters = openApiDocument.paths["/v1/games/{gameId}/players/me/turns"].get.parameters;
+  it("documents the actions offset and bounded wait query parameters", () => {
+    const parameters =
+      openApiDocument.paths["/v1/games/{gameId}/players/me/actions"].get.parameters;
     expect(parameters.map((parameter) => parameter.name)).toEqual(["offset", "wait"]);
     expect(parameters[0]).toMatchObject({ in: "query", required: false });
     expect(parameters[1]).toMatchObject({
       in: "query",
       required: false,
-      schema: { type: "integer", minimum: 0 },
+      schema: { type: "integer", minimum: 0, maximum: 30000 },
     });
   });
 });

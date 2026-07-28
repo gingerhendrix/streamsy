@@ -6,7 +6,7 @@
  * This file intentionally uses only Node built-ins and imports no game or bot
  * code. The launcher owns protocol correctness and process bounds. A selected
  * coding-agent CLI receives a fresh, secret-free observation and chooses one
- * action from legalActions.
+ * action from legalMoves.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -104,10 +104,6 @@ function stable(value) {
   return value;
 }
 
-function decisionFingerprint(decision) {
-  return sha256(JSON.stringify(stable(decision)));
-}
-
 function samePrimitive(actual, expected) {
   return typeof actual === typeof expected && actual === expected;
 }
@@ -127,7 +123,7 @@ function flattenLegalChoices(legalActions) {
           choices.push({
             type: legal.type,
             territoryId,
-            scalar: { name: "armies", min: legal.maxArmies, max: legal.maxArmies },
+            scalar: { name: "armies", min: legal.pool, max: legal.pool },
           });
         }
         break;
@@ -189,7 +185,7 @@ function flattenLegalChoices(legalActions) {
  * decision and only the scalar bounds it must choose within.
  */
 export function buildModelContract(decision, board) {
-  const resolution = flattenLegalChoices(decision.legalActions);
+  const resolution = flattenLegalChoices(decision.legalMoves);
   const territoryIds = [
     ...(board.territories ?? []).map((territory) => territory.id),
     ...resolution.flatMap((choice) => [choice.territoryId, choice.from, choice.to]),
@@ -380,7 +376,7 @@ export function actionIsLegal(action, legalActions) {
         seen.add(placement.territoryId);
         total += placement.armies;
       }
-      return total === legal.maxArmies;
+      return total === (legal.pool ?? legal.maxArmies);
     }
     case "attack":
     case "declare-attack": {
@@ -436,11 +432,10 @@ function authorizedHeaders(session) {
 function resourceUrls(session) {
   const game = `${session.origin}/v1/games/${encodeURIComponent(session.gameId)}`;
   return {
-    metadata: game,
     decision: `${game}/decision`,
-    board: `${game}/board`,
+    map: `${game}/map`,
     commands: `${game}/commands`,
-    turns: `${game}/players/me/turns`,
+    actions: `${game}/players/me/actions`,
   };
 }
 
@@ -467,17 +462,21 @@ async function fetchJson(url, options = {}, timeoutMs = 10_000, externalSignal) 
 }
 
 async function initialize(options) {
-  const seatUrl = String(options["seat-url"] ?? "");
   const directory = path.resolve(String(options.state ?? ""));
-  if (!seatUrl || !options.state) fail("init requires --seat-url and --state");
+  if ((!options.seat && !options["seat-file"]) || !options.state)
+    fail("init requires --seat '<descriptor JSON>' or --seat-file plus --state");
   await ensureStateDir(directory);
 
-  const privateUrl = new URL(seatUrl);
-  const fragment = new URLSearchParams(privateUrl.hash.slice(1));
-  const capability = fragment.get("token");
-  if (!capability) fail("private seat URL has no #token capability");
-  privateUrl.hash = "";
-  if (privateUrl.search) fail("private seat URL must not contain a query string");
+  const seat = JSON.parse(
+    options["seat-file"]
+      ? await readFile(path.resolve(String(options["seat-file"])), "utf8")
+      : String(options.seat),
+  );
+  const { origin, gameId, playerId, token: capability } = seat;
+  if (![origin, gameId, playerId, capability].every((value) => typeof value === "string")) {
+    fail("seat descriptor is missing origin, gameId, playerId, or token");
+  }
+  const privateUrl = new URL(origin);
   if (
     privateUrl.protocol !== "https:" &&
     !["127.0.0.1", "localhost", "::1"].includes(privateUrl.hostname)
@@ -485,52 +484,19 @@ async function initialize(options) {
     fail("plain HTTP is allowed only for loopback origins");
   }
 
-  const bootstrapResponse = await fetch(privateUrl, { redirect: "error" });
-  if (!bootstrapResponse.ok) fail(`bootstrap returned HTTP ${bootstrapResponse.status}`);
-  const bootstrap = await bootstrapResponse.text();
-  const origin = bootstrap.match(/^API origin: (.+)$/m)?.[1];
-  const gameId = bootstrap.match(/^Game ID: (.+)$/m)?.[1];
-  const playerId = bootstrap.match(/^Player ID: (.+)$/m)?.[1];
-  const openApi = bootstrap.match(/^OpenAPI: (.+)$/m)?.[1];
-  if (!origin || !gameId || !playerId || !openApi)
-    fail("bootstrap is missing required discovery fields");
-  if (
-    new URL(origin).origin !== privateUrl.origin ||
-    new URL(openApi).origin !== privateUrl.origin
-  ) {
-    fail("bootstrap attempted to change origin");
-  }
-  const openApiResponse = await fetch(openApi, { redirect: "error" });
-  if (!openApiResponse.ok) fail(`OpenAPI returned HTTP ${openApiResponse.status}`);
-  const openApiDocument = await openApiResponse.json();
-  if (openApiDocument.openapi !== "3.1.0") fail("unsupported OpenAPI document");
-  for (const requiredPath of [
-    "/v1/games/{gameId}",
-    "/v1/games/{gameId}/decision",
-    "/v1/games/{gameId}/commands",
-    "/v1/games/{gameId}/board",
-    "/v1/games/{gameId}/players/me/turns",
-  ]) {
-    if (!openApiDocument.paths?.[requiredPath]) fail(`OpenAPI is missing ${requiredPath}`);
-  }
-
   const session = {
-    version: 1,
+    version: 2,
     origin: privateUrl.origin,
     gameId,
     playerId,
     capability,
     cursor: null,
-    discovery: {
-      bootstrapSha256: sha256(bootstrap),
-      openApiSha256: sha256(JSON.stringify(openApiDocument)),
-    },
+    discovery: { seatSha256: sha256(JSON.stringify(stable(seat))) },
   };
   await atomicJson(path.join(directory, SESSION_FILE), session);
   await appendEvidence(directory, "initialized", {
     origin: privateUrl.origin,
-    bootstrapStatus: bootstrapResponse.status,
-    openApiStatus: openApiResponse.status,
+    descriptorVersion: 2,
   });
   process.stdout.write(`${JSON.stringify({ status: "initialized", origin: privateUrl.origin })}\n`);
 }
@@ -857,50 +823,67 @@ async function runLoop(options) {
       if (error?.code !== "ENOENT") throw error;
     }
 
-    while (!controller.signal.aborted && decisions < maxDecisions && commands < maxCommands) {
-      const metadata = await fetchJson(urls.metadata, {}, requestTimeoutMs, controller.signal);
-      if (metadata.status !== 200) fail(`metadata returned HTTP ${metadata.status}`);
-      if (metadata.body.status === "finished") {
-        await appendEvidence(directory, "finished", { commands, decisions, posts });
-        process.stdout.write(
-          `${JSON.stringify({ status: "finished", commands, decisions, posts })}\n`,
-        );
-        return;
-      }
+    const map = await fetchJson(urls.map, {}, requestTimeoutMs, controller.signal);
+    if (map.status !== 200) fail(`map returned HTTP ${map.status}`);
 
-      const turnsUrl = new URL(urls.turns);
-      if (session.cursor) turnsUrl.searchParams.set("offset", session.cursor);
-      turnsUrl.searchParams.set("wait", String(waitMs));
-      const turns = await fetchJson(
-        turnsUrl,
+    while (!controller.signal.aborted && decisions < maxDecisions && commands < maxCommands) {
+      const actionsUrl = new URL(urls.actions);
+      if (session.cursor) actionsUrl.searchParams.set("offset", session.cursor);
+      actionsUrl.searchParams.set("wait", String(waitMs));
+      const stream = await fetchJson(
+        actionsUrl,
         { headers: authorizedHeaders(session) },
         waitMs + requestTimeoutMs,
         controller.signal,
       );
-      if (turns.status !== 200) fail(`turn stream returned HTTP ${turns.status}`);
-      session.cursor = turns.body.cursor;
+      if (stream.status !== 200) fail(`actions stream returned HTTP ${stream.status}`);
+      session.cursor = stream.body.nextOffset;
       await atomicJson(path.join(directory, SESSION_FILE), session);
-
-      const observed = await fetchJson(
-        urls.decision,
-        { headers: authorizedHeaders(session) },
-        requestTimeoutMs,
-        controller.signal,
-      );
-      if (observed.status !== 200) fail(`decision returned HTTP ${observed.status}`);
+      const message = stream.body.messages?.at(-1);
+      if (!message) continue;
+      if (message.type === "GameOver") {
+        await appendEvidence(directory, "finished", {
+          commands,
+          decisions,
+          posts,
+          winner: message.winner,
+        });
+        process.stdout.write(
+          `${JSON.stringify({ status: "finished", commands, decisions, posts, winner: message.winner })}\n`,
+        );
+        return;
+      }
+      if (message.type !== "ActionRequired") continue;
+      const observed = {
+        player: { id: session.playerId },
+        mode: message.mode,
+        turn: message.turn,
+        board: message.board,
+        legalMoves: message.legalMoves,
+      };
       decisions += 1;
-      await appendEvidence(directory, "fresh-decision", {
-        mode: observed.body.mode,
-        legalActionTypes: observed.body.legalActions.map((action) => action.type),
-        wakeCount: turns.body.notifications.length,
+      await appendEvidence(directory, "action-required", {
+        messageId: message.messageId,
+        mode: observed.mode,
+        legalMoveTypes: observed.legalMoves.map((action) => action.type),
         cursorHash: sha256(String(session.cursor)),
       });
-      if (observed.body.legalActions.length === 0) continue;
-
-      const board = await fetchJson(urls.board, {}, requestTimeoutMs, controller.signal);
-      if (board.status !== 200) fail(`board returned HTTP ${board.status}`);
-      const fingerprint = decisionFingerprint(observed.body);
-      let modelContract = buildModelContract(observed.body, board.body);
+      const dynamicById = new Map(message.board.territories.map((row) => [row.id, row]));
+      const board = {
+        status: "playing",
+        phase: message.turn.phase,
+        round: message.turn.round,
+        activePlayerId: message.turn.activePlayerId,
+        reinforcement: message.turn.reinforcement,
+        players: message.board.players,
+        territories: map.body.territories.map((territory) => ({
+          ...territory,
+          adjacentTerritoryIds: territory.neighbours,
+          ...dynamicById.get(territory.id),
+        })),
+        continents: map.body.continents,
+      };
+      let modelContract = buildModelContract(observed, board);
       let attemptId = await nextAttemptId(directory);
       await appendEvidence(directory, "model-attempt-started", { attemptId, corrective: false });
       let modelResult = await chooseSelection(
@@ -922,23 +905,6 @@ async function runLoop(options) {
           failureCode: resolved.reason,
           commandSubmitted: false,
         });
-        const correctionDecision = await fetchJson(
-          urls.decision,
-          { headers: authorizedHeaders(session) },
-          requestTimeoutMs,
-          controller.signal,
-        );
-        if (correctionDecision.status !== 200) {
-          fail(`correction decision returned HTTP ${correctionDecision.status}`);
-        }
-        if (decisionFingerprint(correctionDecision.body) !== fingerprint) {
-          await appendEvidence(directory, "stale-choice-discarded", {
-            attemptId,
-            failureCode: "DECISION_CHANGED_BEFORE_CORRECTION",
-            commandSubmitted: false,
-          });
-          continue;
-        }
         if (decisions >= maxDecisions) {
           await appendEvidence(directory, "model-correction-skipped", {
             attemptId,
@@ -949,7 +915,6 @@ async function runLoop(options) {
           fail(`${harness} model correction would exceed the decision bound`);
         }
         decisions += 1;
-        modelContract = buildModelContract(correctionDecision.body, board.body);
         attemptId = await nextAttemptId(directory);
         await appendEvidence(directory, "model-attempt-started", {
           attemptId,
@@ -980,27 +945,11 @@ async function runLoop(options) {
         }
       }
       const action = resolved.action;
-
-      const fresh = await fetchJson(
-        urls.decision,
-        { headers: authorizedHeaders(session) },
-        requestTimeoutMs,
-        controller.signal,
-      );
-      if (fresh.status !== 200) fail(`freshness decision returned HTTP ${fresh.status}`);
-      if (decisionFingerprint(fresh.body) !== fingerprint) {
-        await appendEvidence(directory, "stale-choice-discarded", {
-          attemptId,
-          actionType: action.type,
-          commandSubmitted: false,
-        });
-        continue;
-      }
-      if (!actionIsLegal(action, fresh.body.legalActions)) continue;
+      if (!actionIsLegal(action, observed.legalMoves)) continue;
 
       const payload = {
         commandId: `${harness}-${randomUUID()}`,
-        turnId: fresh.body.turn.id,
+        turnId: observed.turn.id,
         action,
       };
       const result = await submitStable({
@@ -1041,7 +990,7 @@ async function main() {
   else if (command === "run") await runLoop(options);
   else {
     fail(
-      "usage: risk-seat.mjs init --seat-url <private-url> --state <0700-dir> | run --state <dir> --harness <claude|codex> [bounds]",
+      "usage: risk-seat.mjs init (--seat '<json>' | --seat-file <file>) --state <0700-dir> | run --state <dir> --harness <claude|codex> [bounds]",
     );
   }
 }

@@ -82,7 +82,7 @@ async function playToAttack(app: App, game: StartedGame) {
   for (let guard = 0; guard < 50; guard += 1) {
     const { active, token, decision } = await activeContext(app, game);
     if (decision.turn.phase === "attack") return { active, token, decision };
-    const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+    const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
     const owned = decision.board.territories.filter((t: any) => t.ownerId === active);
     const frontier =
       owned.find((t: any) =>
@@ -138,7 +138,7 @@ describe("risk command API", () => {
 
     const { token, decision } = await activeContext(app, game);
     expect(decision.turn.phase).toBe("reinforce");
-    const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+    const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
     expect(reinforce.maxArmies).toBeGreaterThanOrEqual(3);
 
     const res = await call(app, "POST", `/v1/games/${game.gameId}/commands`, {
@@ -207,7 +207,7 @@ describe("risk command API", () => {
     const game = await createJoinStart(app);
     const { token, decision } = await playToAttack(app, game);
 
-    const choice = decision.legalActions.find((a: any) => a.type === "attack").choices[0];
+    const choice = decision.legalMoves.find((a: any) => a.type === "attack").choices[0];
     const body = {
       commandId: "attack-once",
       turnId: decision.turn.id,
@@ -233,7 +233,7 @@ describe("risk command API", () => {
     const { app } = harness();
     const game = await createJoinStart(app);
     const { token, decision } = await activeContext(app, game);
-    const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+    const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
 
     const first = await call(app, "POST", `/v1/games/${game.gameId}/commands`, {
       token,
@@ -289,7 +289,7 @@ describe("risk command API", () => {
     const { app } = harness();
     const game = await createJoinStart(app);
     const { token, decision } = await activeContext(app, game);
-    const reinforce = decision.legalActions.find((a: any) => a.type === "reinforce");
+    const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
 
     const ack = await call(app, "POST", `/v1/games/${game.gameId}/commands`, {
       token,
@@ -341,8 +341,8 @@ describe("risk command API", () => {
     expect(a.body.sourceOffset).not.toBe(b.body.sourceOffset); // distinct commits, no lost update
 
     const after = await call(app, "GET", `/v1/games/${game.gameId}/decision`, { token });
-    expect(after.body.legalActions.find((x: any) => x.type === "reinforce")?.maxArmies).toBe(
-      decision.legalActions.find((x: any) => x.type === "reinforce").maxArmies - 2,
+    expect(after.body.legalMoves.find((x: any) => x.type === "reinforce")?.maxArmies).toBe(
+      decision.legalMoves.find((x: any) => x.type === "reinforce").maxArmies - 2,
     );
   });
 

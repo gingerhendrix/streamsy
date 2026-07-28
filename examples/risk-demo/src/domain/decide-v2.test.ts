@@ -625,7 +625,9 @@ describe("v2 fortify", () => {
     });
     expect(game.state().phase).toBe("fortify");
     // Only ending the turn remains.
-    expect(legalActionsV2(game.state(), active)).toEqual([{ type: "end-turn" }]);
+    expect(legalActionsV2(game.state(), active)).toEqual([
+      { type: "end-turn", submit: { type: "end-turn" } },
+    ]);
     expectRejected(
       game.submit({
         type: "fortify",
@@ -705,6 +707,7 @@ describe("v2 legal actions", () => {
         attackId,
         dice: pending.defenderDice,
         deadlineAt: pending.defenseDeadlineAt,
+        submit: { type: "roll-defense", attackId: "<attackId>" },
       },
     ]);
     expect(legalActionsV2(state, setup.attackerId)).toEqual([]);
@@ -729,6 +732,11 @@ describe("v2 legal actions", () => {
         to: pending.to,
         minArmies: pending.minArmies,
         maxArmies: pending.maxArmies,
+        submit: {
+          type: "occupy-territory",
+          attackId: "<attackId>",
+          armies: "<minArmies..maxArmies>",
+        },
       },
     ]);
     expect(legalActionsV2(state, setup.defenderId)).toEqual([]);

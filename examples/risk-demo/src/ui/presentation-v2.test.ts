@@ -8,7 +8,6 @@ import type {
   ProjectedTurnV2,
 } from "../board/projection-v2.ts";
 import {
-  agentSeatUrl,
   armyShare,
   continentOccupationLabel,
   continentStandings,
@@ -336,19 +335,6 @@ describe("map and seat language", () => {
         yourTurn: true,
       }),
     ).toBe("Your turn");
-  });
-});
-
-describe("agent seat URL", () => {
-  it("builds a private fragment-bearing seat URL without a query capability", () => {
-    const url = agentSeatUrl({
-      origin: "http://localhost:22392/",
-      gameId: "game/a",
-      playerId: "p 1",
-      token: "rsk_secret",
-    });
-    expect(url).toBe("http://localhost:22392/agent-seat/game%2Fa/p%201#token=rsk_secret");
-    expect(new URL(url).search).toBe("");
   });
 });
 

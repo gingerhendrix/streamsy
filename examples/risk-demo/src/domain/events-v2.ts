@@ -56,6 +56,13 @@ export interface PlayerJoinedV2 {
   commandId: string;
 }
 
+export interface PlayerControllerChangedV2 {
+  type: "PlayerControllerChanged";
+  playerId: string;
+  controller: PlayerController;
+  commandId: string;
+}
+
 export interface GameStartedV2 {
   type: "GameStarted";
   /** The complete generated map. Replay reads this; it never regenerates. */
@@ -184,6 +191,7 @@ export interface GameWonV2 {
 export type GameEventV2 =
   | GameCreatedV2
   | PlayerJoinedV2
+  | PlayerControllerChangedV2
   | GameStartedV2
   | ArmiesReinforcedV2
   | AttackDeclaredV2

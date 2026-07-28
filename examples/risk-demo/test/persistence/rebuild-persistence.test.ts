@@ -79,7 +79,7 @@ test("a board-generation cutover survives a SQLite restart and keeps the old gen
   const decision = await call(first.app, "GET", `/v1/games/${gameId}/decision`, {
     token: tokenByPlayer[active]!,
   });
-  const reinforce = decision.body.legalActions.find((a: any) => a.type === "reinforce");
+  const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
   await call(first.app, "POST", `/v1/games/${gameId}/commands`, {
     token: tokenByPlayer[active]!,
     body: {
@@ -88,7 +88,7 @@ test("a board-generation cutover survives a SQLite restart and keeps the old gen
       action: {
         type: "reinforce",
         territoryId: reinforce.territoryIds[0],
-        armies: reinforce.maxArmies,
+        armies: reinforce.pool,
       },
     },
   });

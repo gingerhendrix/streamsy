@@ -17,6 +17,12 @@ const ACTION: DeclareAttackAction = {
     { from: "a", to: "y", maxAttackerDice: 2 },
     { from: "b", to: "z", maxAttackerDice: 1 },
   ],
+  submit: {
+    type: "declare-attack",
+    from: "<choice.from>",
+    to: "<choice.to>",
+    attackerDice: "<1..choice.maxAttackerDice>",
+  },
 };
 
 const RESOLVED: CombatView = {

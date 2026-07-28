@@ -95,37 +95,34 @@ describe("risk-demo-v2 defence resolution", () => {
 
     const defender = await decisionFor(h.app, game, attack.defender);
     expect(defender.mode).toBe("waiting");
-    expect(defender.legalActions).not.toContainEqual(
+    expect(defender.legalMoves).not.toContainEqual(
       expect.objectContaining({ type: "roll-defense" }),
     );
   });
 
-  it("wakes the defender with DefenseAvailable and no one else", async () => {
+  it("sends a defense-required action message to the defender and no one else", async () => {
     const h = v2Harness();
     const game = await createV2Game(h.app, { players: 3 });
     const attack = await declareAttack(h, game);
 
-    const defenderWakes = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/turns`, {
+    const defenderWakes = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {
       token: game.tokenByPlayer[attack.defender]!,
     });
-    const defense = defenderWakes.body.notifications.filter(
-      (n: any) => n.type === "DefenseAvailable",
+    const defense = defenderWakes.body.messages.filter(
+      (message: any) => message.type === "ActionRequired" && message.reason === "defense-required",
     );
     expect(defense).toHaveLength(1);
-    expect(defense[0].attackId).toBe(attack.attackId);
+    expect(defense[0].pendingInteraction.attackId).toBe(attack.attackId);
     expect(defense[0].playerId).toBe(attack.defender);
-    expect(defense[0].turnId).toBe(attack.turnId);
-    expect(defense[0].notificationId).toBe(
-      `defense:${game.gameId}:${attack.defender}:${attack.attackId}`,
-    );
+    expect(defense[0].turn.id).toBe(attack.turnId);
 
     const bystander = game.players.find((p) => p !== attack.defender && p !== attack.attacker)!;
-    const other = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/turns`, {
+    const other = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {
       token: game.tokenByPlayer[bystander]!,
     });
-    expect(other.body.notifications.filter((n: any) => n.type === "DefenseAvailable")).toHaveLength(
-      0,
-    );
+    expect(
+      other.body.messages.filter((message: any) => message.reason === "defense-required"),
+    ).toHaveLength(0);
   });
 
   it("lets a human roll before the deadline, and the timeout then finds nothing", async () => {
@@ -306,7 +303,7 @@ describe("risk-demo-v2 defence resolution", () => {
       action: { type: "resolve-defense-timeout", attackId: attack.attackId },
     });
     expect(forged.status).toBe(400);
-    expect(forged.body.error.code).toBe("BAD_REQUEST");
+    expect(forged.body.error.code).toBe("INVALID_ACTION");
   });
 });
 

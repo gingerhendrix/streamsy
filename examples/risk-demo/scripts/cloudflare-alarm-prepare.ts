@@ -36,7 +36,7 @@ await call("POST", `/v1/games/${gameId}/start`, {
 const metadata = await call("GET", `/v1/games/${gameId}`);
 const active = metadata.activePlayerId as string;
 let decision = await call("GET", `/v1/games/${gameId}/decision`, { token: tokens[active] });
-const reinforce = decision.legalActions.find(
+const reinforce = decision.legalMoves.find(
   (action: { type: string }) => action.type === "reinforce",
 );
 if (!reinforce) throw new Error("no reinforce action");
@@ -48,12 +48,12 @@ await call("POST", `/v1/games/${gameId}/commands`, {
     action: {
       type: "reinforce",
       territoryId: reinforce.territoryIds[0],
-      armies: reinforce.maxArmies,
+      armies: reinforce.pool,
     },
   },
 });
 decision = await call("GET", `/v1/games/${gameId}/decision`, { token: tokens[active] });
-const attack = decision.legalActions.find(
+const attack = decision.legalMoves.find(
   (action: { type: string }) => action.type === "declare-attack",
 );
 if (!attack) throw new Error("no declare-attack action");

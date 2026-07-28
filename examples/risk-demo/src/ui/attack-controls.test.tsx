@@ -15,6 +15,12 @@ const NAMES: NameLookup = {
 const FORTIFY: Extract<LegalActionV2, { type: "fortify" }> = {
   type: "fortify",
   choices: [{ from: "a", reachable: [{ to: "b", maxArmies: 3 }] }],
+  submit: {
+    type: "fortify",
+    from: "<choice.from>",
+    to: "<choice.reachable.to>",
+    armies: "<1..choice.reachable.maxArmies>",
+  },
 };
 
 function controls(
