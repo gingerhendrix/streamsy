@@ -40,7 +40,7 @@
     "smoke:issue-tracker": "bun run --cwd examples/issue-tracker-demo smoke:http",
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
     "smoke:risk-demo": "bun run --cwd examples/risk-demo smoke:http",
-    "demo:risk": "bun run --cwd examples/risk-demo demo",
+    "demo:domination": "bun run --cwd examples/risk-demo dev",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:client": "bun run --cwd packages/conformance-tests test:client",
     "test:conformance:fs": "bun run --cwd packages/conformance-tests test:fs",
