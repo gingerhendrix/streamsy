@@ -26,6 +26,7 @@ import {
   api,
   errorMessage,
   gameFromUrl,
+  gamePath,
   isError,
   loadIdentity,
   normalizedColor,
@@ -81,8 +82,12 @@ function attackResult(move: ProjectedMove): string | null {
 }
 
 export function App() {
-  const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity());
-  const [gameId, setGameId] = useState(() => loadIdentity()?.gameId ?? gameFromUrl());
+  const [identity, setIdentity] = useState<Identity | null>(() => {
+    const routedGameId = gameFromUrl();
+    const savedIdentity = loadIdentity();
+    return savedIdentity?.gameId === routedGameId ? savedIdentity : null;
+  });
+  const [gameId, setGameId] = useState(() => gameFromUrl());
   const [joinId, setJoinId] = useState(() => gameFromUrl());
   const [game, setGame] = useState<GameResponse | null>(null);
   const [decision, setDecision] = useState<DecisionResponse | null>(null);
@@ -124,10 +129,19 @@ export function App() {
   const openGame = useCallback((nextGameId: string) => {
     setGameId(nextGameId);
     setJoinId(nextGameId);
-    const url = new URL(window.location.href);
-    if (nextGameId) url.searchParams.set("game", nextGameId);
-    else url.searchParams.delete("game");
-    window.history.replaceState({}, "", url);
+    window.history.pushState({}, "", nextGameId ? gamePath(nextGameId) : "/");
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const routedGameId = gameFromUrl();
+      const savedIdentity = loadIdentity();
+      setGameId(routedGameId);
+      setJoinId(routedGameId);
+      setIdentity(savedIdentity?.gameId === routedGameId ? savedIdentity : null);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   const refreshGame = useCallback(async (): Promise<GameResponse | null> => {
@@ -342,8 +356,7 @@ export function App() {
   };
 
   const copyInvite = async () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("game", gameId);
+    const url = new URL(gamePath(gameId), window.location.origin);
     await navigator.clipboard.writeText(url.toString());
     setNotice("Invite link copied.");
   };

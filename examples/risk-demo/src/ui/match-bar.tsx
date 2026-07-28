@@ -35,12 +35,12 @@ export function MatchBar(props: MatchBarProps) {
 
   return (
     <header className="match-bar">
-      <div className="match-brand">
+      <a className="match-brand" href="/" aria-label="Hex Domination home">
         <span className="brand-mark">S</span>
         <span className="match-game">
           Hex Domination <code>{props.gameId}</code>
         </span>
-      </div>
+      </a>
 
       <div className="match-state" style={{ "--player": activeColor } as CSSProperties}>
         <span className="match-fact">

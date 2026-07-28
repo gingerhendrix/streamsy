@@ -59,8 +59,22 @@ export function loadIdentity(): Identity | null {
   }
 }
 
+export function gameFromPath(pathname: string): string {
+  const match = /^\/game\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return "";
+  }
+}
+
 export function gameFromUrl(): string {
-  return new URLSearchParams(window.location.search).get("game") ?? "";
+  return gameFromPath(window.location.pathname);
+}
+
+export function gamePath(gameId: string): string {
+  return `/game/${encodeURIComponent(gameId)}`;
 }
 
 export async function api<T>(
@@ -142,9 +156,9 @@ export function TopBar(props: { gameId: string; children: ReactNode }) {
   return (
     <header className="topbar">
       <div>
-        <div className="brand">
+        <a className="brand" href="/" aria-label="Hex Domination home">
           <span className="brand-mark">S</span> Streamsy <b>Hex Domination</b>
-        </div>
+        </a>
         <div className="game-code">
           Game <code>{props.gameId}</code>
         </div>
