@@ -14,7 +14,7 @@
 
 import type { ProjectedPlayerV2 } from "../board/projection-v2.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
-import { LobbyTerrainPreview, surveyPlayerCount } from "./lobby-preview.tsx";
+import { LobbyTerrainPreview } from "./lobby-preview.tsx";
 import { playerRoleLabel, type Identity } from "./shared.tsx";
 
 /** A seat opened for a user-supplied coding agent, with its pasteable instructions. */
@@ -188,7 +188,11 @@ export function LobbyV2(props: {
             <h2>Terrain survey</h2>
             <span>Advance copy</span>
           </div>
-          <LobbyTerrainPreview seed={props.mapSeed} playerCount={surveyPlayerCount(seated)} />
+          <LobbyTerrainPreview
+            key={`${props.mapSeed ?? "pending"}:${seated}`}
+            seed={props.mapSeed}
+            playerCount={seated}
+          />
           <p className="survey-note">
             Drawn from this game's recorded map seed. The sheet is re-surveyed if the roster changes
             size; the canonical snapshot issued at the start of the game is final.

@@ -101,11 +101,27 @@ describe("LobbyV2 commands", () => {
 });
 
 describe("LobbyV2 terrain survey", () => {
-  it("draws the survey from the projected map seed", () => {
-    const markup = renderLobby({ players: [player({ id: "p1" })], mapSeed: "lobby-test-seed" });
-    expect(markup).toContain("Terrain survey");
-    expect(markup).toContain("<svg");
-    expect(markup).toContain("surveyed for 2 players");
+  it("waits for a valid roster, then draws for the current player count", () => {
+    const waiting = renderLobby({
+      players: [player({ id: "p1" })],
+      mapSeed: "lobby-test-seed",
+    });
+    expect(waiting).toContain("Terrain survey");
+    expect(waiting).toContain("at least 2 players are seated");
+    expect(waiting).not.toContain("<svg");
+
+    const twoPlayers = renderLobby({
+      players: [player({ id: "p1" }), player({ id: "p2" })],
+      mapSeed: "lobby-test-seed",
+    });
+    const threePlayers = renderLobby({
+      players: [player({ id: "p1" }), player({ id: "p2" }), player({ id: "p3" })],
+      mapSeed: "lobby-test-seed",
+    });
+    expect(twoPlayers).toContain("<svg");
+    expect(twoPlayers).toContain("surveyed for 2 players");
+    expect(threePlayers).toContain("surveyed for 3 players");
+    expect(threePlayers).not.toBe(twoPlayers);
   });
 
   it("keeps a pending sheet when the seed is not yet projected", () => {

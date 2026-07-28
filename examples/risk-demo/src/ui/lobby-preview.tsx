@@ -28,18 +28,17 @@ import { TerrainDefs } from "./hex-map.tsx";
 /** Sheet scale. The viewBox normalizes it; it only fixes stroke/label ratios. */
 const SURVEY_HEX_RADIUS = 26;
 
-/** The roster size the survey is drawn for: current seats, held to ruleset bounds. */
-export function surveyPlayerCount(seatedPlayers: number): number {
-  return Math.min(Math.max(seatedPlayers, RULES_V2.minPlayers), RULES_V2.maxPlayers);
-}
-
 /**
- * The generated sheet, or `null` when there is nothing honest to draw. A seed that
- * cannot produce a valid map is rejected canonically at game start, so the lobby
- * keeps its pending sheet rather than inventing terrain.
+ * The generated sheet, or `null` when there is nothing honest to draw. A roster
+ * below the ruleset minimum does not have a canonical map yet: drawing the
+ * two-player profile for a one-player lobby made the survey appear unchanged when
+ * the challenger arrived. Invalid seeds and out-of-bounds rosters likewise remain
+ * pending rather than inventing terrain.
  */
 export function surveyMap(seed: string | undefined, playerCount: number): GeneratedMap | null {
-  if (!seed) return null;
+  if (!seed || playerCount < RULES_V2.minPlayers || playerCount > RULES_V2.maxPlayers) {
+    return null;
+  }
   try {
     return generateHexMap({ seed, playerCount });
   } catch {
@@ -65,11 +64,12 @@ export function LobbyTerrainPreview(props: { seed: string | undefined; playerCou
   );
 
   if (!map) {
-    return (
-      <div className="survey-pending">
-        Survey pending — the sheet is drawn once the game records its map seed.
-      </div>
-    );
+    const reason = !props.seed
+      ? "the game records its map seed"
+      : props.playerCount < RULES_V2.minPlayers
+        ? `at least ${RULES_V2.minPlayers} players are seated`
+        : "the roster is valid";
+    return <div className="survey-pending">Survey pending — drawn once {reason}.</div>;
   }
 
   const axialById = new Map<string, Axial>(map.tiles.map((tile) => [tile.id, tile]));
@@ -135,7 +135,7 @@ export function LobbyTerrainPreview(props: { seed: string | undefined; playerCou
       </svg>
       <figcaption>
         {map.territories.length} territories · {map.continents.length} continents · surveyed for{" "}
-        {props.playerCount} players
+        {props.playerCount} {props.playerCount === 1 ? "player" : "players"}
       </figcaption>
     </figure>
   );
