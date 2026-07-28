@@ -17,7 +17,7 @@ describe("player identity fields", () => {
 describe("game routes", () => {
   it("keeps the home page at the root path", () => {
     expect(gameFromPath("/")).toBe("");
-    expect(gameFromPath("/?game=legacy")).toBe("");
+    expect(gameFromPath("/?game=ignored")).toBe("");
   });
 
   it("reads and builds game paths", () => {
