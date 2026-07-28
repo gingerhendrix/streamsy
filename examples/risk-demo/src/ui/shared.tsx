@@ -11,6 +11,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import { friendlyError, type ApiErrorCode, type ApiErrorResponse } from "../application/api.ts";
+import { PLAYER_COLORS_V2 } from "../domain/colors-v2.ts";
 import type { SyncStatus } from "./board-stream-db.ts";
 
 export interface Identity {
@@ -26,7 +27,8 @@ export interface ApiResult<T> {
 }
 
 export const STORAGE_KEY = "risk-demo-identity";
-export const COLORS = ["#e05a47", "#3b82f6", "#d49b35", "#8b5cf6"];
+/** The canonical v2 palette; the v1 surface offers the same four swatches. */
+export const COLORS: readonly string[] = PLAYER_COLORS_V2;
 
 export function normalizedColor(color: string): string {
   return color.trim().toLowerCase();

@@ -74,14 +74,12 @@ import {
 } from "./presentation-v2.ts";
 import { LobbyV2, type AgentSeat } from "./lobby.tsx";
 import {
-  COLORS,
   SyncPill,
   TopBar,
   acknowledgementNotice,
   api,
   errorMessage,
   isError,
-  normalizedColor,
   type Identity,
 } from "./shared.tsx";
 import { StatusColumn } from "./status-column.tsx";
@@ -97,8 +95,6 @@ type Intent = "attack" | "fortify";
 
 export type { AgentSeat } from "./lobby.tsx";
 
-const AGENT_COLORS = ["#8b5cf6", "#22c1a5", "#d49b35", "#3b82f6"];
-
 export interface GameV2ScreenProps {
   gameId: string;
   game: GameResponse;
@@ -106,9 +102,7 @@ export interface GameV2ScreenProps {
   onIdentity(next: Identity | null): void;
   refreshGame(): Promise<GameResponse | null>;
   name: string;
-  color: string;
   onName(value: string): void;
-  onColor(value: string): void;
   onCopyInvite(): Promise<void>;
   initialAgentSeats?: AgentSeat[];
 }
@@ -176,27 +170,6 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const reducedMotion = usePrefersReducedMotion();
 
   const offset = board?.meta?.sourceThroughOffset ?? null;
-  const lobbyPlayers = useMemo(() => {
-    const players = new Map(props.game.players.map((player) => [player.id, player]));
-    for (const player of board?.players ?? []) players.set(player.id, player);
-    return [...players.values()];
-  }, [props.game.players, board?.players]);
-  const unavailableColors = useMemo(
-    () =>
-      lobbyPlayers
-        .filter((player) => player.id !== identity?.playerId)
-        .map((player) => player.color),
-    [lobbyPlayers, identity?.playerId],
-  );
-
-  useEffect(() => {
-    if (identity || (board && board.game.status !== "lobby")) return;
-    const taken = new Set(unavailableColors.map(normalizedColor));
-    if (!taken.has(normalizedColor(props.color))) return;
-    const available = COLORS.find((candidate) => !taken.has(normalizedColor(candidate)));
-    if (available) props.onColor(available);
-    setNotice("That colour is already selected. Choose one of the available colours.");
-  }, [board, identity, props.color, props.onColor, unavailableColors]);
 
   // ---- decision (player-relative: a defender acts out of turn) --------------
   useEffect(() => {
@@ -415,20 +388,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
 
   const joinGame = async () => {
     setBusy(true);
+    // No colour is requested: the server assigns a free palette colour
+    // canonically, so simultaneous joins cannot collide on a swatch.
     const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
-      body: { name: props.name, color: props.color },
+      body: { name: props.name },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not join the game."));
-      if (isError(result.body) && result.body.error.code === "COLOR_TAKEN") {
-        const refreshed = await props.refreshGame();
-        const taken = new Set(
-          (refreshed?.players ?? []).map((player) => normalizedColor(player.color)),
-        );
-        const available = COLORS.find((candidate) => !taken.has(normalizedColor(candidate)));
-        if (available) props.onColor(available);
-      }
       return;
     }
     props.onIdentity({
@@ -443,21 +410,14 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   /** Open an external-agent seat and hand back its private bootstrap URL. */
   const addAgentSeat = async () => {
     setBusy(true);
-    const taken = new Set(lobbyPlayers.map((player) => normalizedColor(player.color)));
     const seat = agentSeats.length + 1;
+    // The agent seat's colour is assigned server-side like every other seat.
     const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
-      body: {
-        name: `Agent ${seat}`,
-        color: AGENT_COLORS.find((color) => !taken.has(normalizedColor(color))) ?? AGENT_COLORS[0],
-        controller: "agent",
-      },
+      body: { name: `Agent ${seat}`, controller: "agent" },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not open an agent seat."));
-      if (isError(result.body) && result.body.error.code === "COLOR_TAKEN") {
-        await props.refreshGame();
-      }
       return;
     }
     const opened: AgentSeat = {

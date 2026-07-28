@@ -25,14 +25,17 @@ import {
 } from "../v2-harness.ts";
 
 describe("risk-demo-v2 board projection surface", () => {
-  it("authoritatively rejects a duplicate lobby colour without adding a player", async () => {
+  it("assigns lobby colours conflict-safely instead of rejecting duplicates", async () => {
     const h = v2Harness();
     const created = await call(h.app, "POST", "/v1/games", {
       body: { name: "Alice", color: "#E05A47", mapSeed: "unique-colours" },
     });
     expect(created.status).toBe(201);
+    expect(created.body.player.color).toBe("#E05A47");
     const gameId = created.body.game.id as string;
 
+    // Both contenders ask for the same colour; the decider seats both and issues
+    // the loser the first free palette colour rather than rejecting the join.
     const contenders = await Promise.all([
       call(h.app, "POST", `/v1/games/${gameId}/players`, {
         body: { name: "Bob", color: "#3B82F6", controller: "agent" },
@@ -41,26 +44,31 @@ describe("risk-demo-v2 board projection surface", () => {
         body: { name: "Cara", color: " #3b82f6 ", controller: "agent" },
       }),
     ]);
-    const accepted = contenders.find((result) => result.status === 201);
-    const conflict = contenders.find((result) => result.status === 409);
-    expect(accepted).toBeDefined();
-    expect(conflict?.body).toMatchObject({
-      status: "rejected",
-      error: { code: "COLOR_TAKEN" },
-    });
-    expect(conflict?.body.error.message).toContain("choose an available colour");
-
-    const lobby = await call(h.app, "GET", `/v1/games/${gameId}`);
-    expect(lobby.body.players).toHaveLength(2);
+    for (const contender of contenders) expect(contender.status).toBe(201);
     expect(
-      new Set(lobby.body.players.map((player: any) => player.color.trim().toLowerCase())).size,
-    ).toBe(lobby.body.players.length);
+      new Set(contenders.map((contender) => contender.body.player.color.trim().toLowerCase())).size,
+    ).toBe(2);
 
-    const recovered = await call(h.app, "POST", `/v1/games/${gameId}/players`, {
-      body: { name: "Recovered contender", color: "#d49b35", controller: "agent" },
+    // A join that requests no colour at all is issued a free palette colour.
+    const colourless = await call(h.app, "POST", `/v1/games/${gameId}/players`, {
+      body: { name: "Latecomer", controller: "agent" },
     });
-    expect(recovered.status).toBe(201);
-    expect(recovered.body.agentInstructions).toContain(`Player ID: ${recovered.body.player.id}`);
+    expect(colourless.status).toBe(201);
+    expect(colourless.body.agentInstructions).toContain(`Player ID: ${colourless.body.player.id}`);
+
+    // The canonical roster holds four players with four distinct colours, and
+    // every response reported the colour its seat was actually issued.
+    const lobby = await call(h.app, "GET", `/v1/games/${gameId}`);
+    expect(lobby.body.players).toHaveLength(4);
+    const rosterColors = new Map(
+      lobby.body.players.map((player: any) => [player.id, player.color.trim().toLowerCase()]),
+    );
+    expect(new Set(rosterColors.values()).size).toBe(4);
+    for (const seated of [...contenders, colourless]) {
+      expect(rosterColors.get(seated.body.player.id)).toBe(
+        seated.body.player.color.trim().toLowerCase(),
+      );
+    }
   });
 
   it("maps public agent seats to external control and keeps bots explicit", async () => {

@@ -25,7 +25,8 @@ export interface CreateGameCommandV2 {
   gameId: string;
   hostPlayerId: string;
   hostName: string;
-  hostColor: string;
+  /** Requested colour; the decider assigns a free palette colour when absent or taken. */
+  hostColor?: string;
   hostController: PlayerController;
   /** Server-generated unless a demo/test explicitly supplies one. */
   mapSeed: string;
@@ -36,7 +37,8 @@ export interface JoinGameCommandV2 {
   commandId: string;
   playerId: string;
   name: string;
-  color: string;
+  /** Requested colour; the decider assigns a free palette colour when absent or taken. */
+  color?: string;
   controller: PlayerController;
 }
 
@@ -164,6 +166,7 @@ export type RiskErrorCodeV2 =
   | "NOT_ENOUGH_PLAYERS"
   | "TOO_MANY_PLAYERS"
   | "PLAYER_ID_TAKEN"
+  /** Legacy code kept for API compatibility; the decider now assigns a free colour instead. */
   | "COLOR_TAKEN"
   | "UNKNOWN_PLAYER"
   | "NOT_YOUR_TURN"

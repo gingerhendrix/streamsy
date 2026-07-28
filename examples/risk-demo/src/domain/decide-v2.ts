@@ -33,6 +33,7 @@ import type {
   StartGameCommandV2,
 } from "./commands-v2.ts";
 import type { AggregateStateV2 } from "./aggregate-v2.ts";
+import { assignPlayerColorV2 } from "./colors-v2.ts";
 import {
   currentTurnIdV2,
   friendlyReachable,
@@ -164,18 +165,17 @@ function decideJoin(state: AggregateStateV2, command: JoinGameCommandV2): Decisi
   if (state.players.some((p) => p.id === command.playerId)) {
     return reject("PLAYER_ID_TAKEN", "That player id is already in the game.");
   }
-  const requestedColor = command.color.trim().toLowerCase();
-  if (state.players.some((player) => player.color.trim().toLowerCase() === requestedColor)) {
-    return reject(
-      "COLOR_TAKEN",
-      "That colour was claimed by another player. Refresh the lobby and choose an available colour.",
-    );
-  }
   return accept({
     type: "PlayerJoined",
     playerId: command.playerId,
     name: command.name,
-    color: command.color,
+    // Assigned here — after dedupe and fold — so simultaneous joins can never
+    // seat two players on one colour. A free requested colour is honoured; a
+    // taken or absent one is replaced by the first available palette colour.
+    color: assignPlayerColorV2(
+      state.players.map((player) => player.color),
+      command.color,
+    ),
     controller: command.controller,
     commandId: command.commandId,
   });
@@ -648,7 +648,7 @@ export function decideV2(
         gameId: command.gameId,
         hostPlayerId: command.hostPlayerId,
         hostName: command.hostName,
-        hostColor: command.hostColor,
+        hostColor: assignPlayerColorV2([], command.hostColor),
         hostController: command.hostController,
         ruleset: RULESET_V2,
         mapVersion: MAP_VERSION_V2,

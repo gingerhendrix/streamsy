@@ -411,7 +411,11 @@ const schemas = {
     type: "object",
     properties: {
       name: { type: "string" },
-      color: { type: "string" },
+      color: {
+        type: "string",
+        description:
+          "Optional colour request. The server assigns colours conflict-safely: a free requested colour is honoured; an absent or taken one is replaced by the first available palette colour. The response's `player.color` is the colour actually issued.",
+      },
       commandId: { type: "string" },
       ruleset: { enum: ["risk-demo-v1", "risk-demo-v2"] },
       controller: { $ref: "#/components/schemas/SeatControllerInput" },
@@ -422,7 +426,10 @@ const schemas = {
     type: "object",
     properties: {
       name: { type: "string" },
-      color: { type: "string" },
+      color: {
+        type: "string",
+        description: "Optional colour request; assigned conflict-safely as on CreateGameRequest.",
+      },
       commandId: { type: "string" },
       controller: { $ref: "#/components/schemas/SeatControllerInput" },
     },

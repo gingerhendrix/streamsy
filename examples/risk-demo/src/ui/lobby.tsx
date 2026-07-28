@@ -15,7 +15,7 @@
 import type { ProjectedPlayerV2 } from "../board/projection-v2.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
 import { LobbyTerrainPreview, surveyPlayerCount } from "./lobby-preview.tsx";
-import { PlayerFields, playerRoleLabel, type Identity } from "./shared.tsx";
+import { playerRoleLabel, type Identity } from "./shared.tsx";
 
 /** A seat opened for a user-supplied coding agent, with its pasteable instructions. */
 export interface AgentSeat {
@@ -121,7 +121,18 @@ export function LobbyV2(props: {
 
           {!props.identity && (
             <div className="muster-join">
-              <PlayerFields name={props.name} onName={props.onName} />
+              {/* Name only: the seat's colour is issued canonically on join, so
+                  two players can never claim one colour or race for a swatch. */}
+              <div className="player-fields">
+                <label>
+                  <span>Your name</span>
+                  <input
+                    value={props.name}
+                    maxLength={24}
+                    onChange={(event) => props.onName(event.target.value)}
+                  />
+                </label>
+              </div>
               <button
                 className="primary"
                 onClick={props.onJoin}
@@ -129,6 +140,7 @@ export function LobbyV2(props: {
               >
                 {props.busy ? "Joining…" : "Join this game"}
               </button>
+              <p className="muted">Your standard colour is issued when you take the seat.</p>
             </div>
           )}
 

@@ -408,9 +408,7 @@ export function App() {
         onIdentity={persist}
         refreshGame={refreshGame}
         name={name}
-        color={color}
         onName={setName}
-        onColor={setColor}
         onCopyInvite={copyInvite}
         initialAgentSeats={initialAgentSeats}
       />

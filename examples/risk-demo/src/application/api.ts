@@ -145,6 +145,12 @@ export interface CommandAck {
 
 export interface CreateGameRequest {
   name?: string;
+  /**
+   * Optional colour request. For `risk-demo-v2` the server assigns the seat's
+   * colour conflict-safely: a free requested colour is honoured, and an absent
+   * or taken one is replaced by the first available palette colour. The
+   * response's `player.color` is the colour actually issued.
+   */
   color?: string;
   commandId?: string;
   /**
@@ -172,6 +178,7 @@ export interface CreateGameResponse {
 
 export interface JoinGameRequest {
   name?: string;
+  /** Optional colour request; assigned conflict-safely as on `CreateGameRequest`. */
   color?: string;
   commandId?: string;
   controller?: "human" | "bot" | "agent";

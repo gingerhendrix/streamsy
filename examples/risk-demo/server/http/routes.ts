@@ -69,6 +69,19 @@ function ackBody(result: AnyAccepted, turnId?: string): CommandAck {
   return { ...result, ...(turnId ? { turnId } : {}) };
 }
 
+/**
+ * The colour a seat was canonically issued. The v2 decider assigns colours
+ * conflict-safely, so the response must report the recorded event's colour
+ * rather than echoing whatever the request happened to ask for.
+ */
+function assignedSeatColor(result: AnyAccepted, fallback: string): string {
+  for (const event of result.events) {
+    if (event.type === "GameCreated" && "hostColor" in event) return event.hostColor;
+    if (event.type === "PlayerJoined") return event.color;
+  }
+  return fallback;
+}
+
 const STATE_GUIDANCE =
   "Fetch your personalized state URL again and choose from its current legalMoves.";
 
@@ -109,7 +122,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   async function createGame(request: Request): Promise<Response> {
     const body = (await readJsonBody<CreateGameRequest>(request)) ?? {};
     const name = body.name ?? "Host";
-    const color = body.color ?? "#e05a47";
     const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
@@ -126,7 +138,9 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           gameId,
           hostPlayerId,
           hostName: name,
-          hostColor: color,
+          // Optional: the v2 decider honours a free requested colour and
+          // otherwise issues the first available palette colour.
+          hostColor: body.color,
           hostController: controllerOf(body.controller),
           // Production lets the server mint the seed; a demo or test may pin one.
           mapSeed: body.mapSeed ?? generateMapSeed(ctx.commandService.rng),
@@ -137,7 +151,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           gameId,
           hostPlayerId,
           hostName: name,
-          hostColor: color,
+          // The v1 kernel is not migrated: it keeps its fixed request default.
+          hostColor: body.color ?? "#e05a47",
         });
     if (result.status === "rejected") return rejection(result);
 
@@ -171,7 +186,12 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         ruleset,
         mapVersion: wantsV2 ? MAP_VERSION_V2 : MAP_VERSION,
       },
-      player: { id: hostPlayerId, name, color, role: "host" },
+      player: {
+        id: hostPlayerId,
+        name,
+        color: assignedSeatColor(result, body.color ?? "#e05a47"),
+        role: "host",
+      },
       capability,
       ...(wantsV2 && controllerOf(body.controller) === "external-agent"
         ? {
@@ -193,7 +213,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
     const body = (await readJsonBody<JoinGameRequest>(request)) ?? {};
     const name = body.name ?? "Player";
-    const color = body.color ?? "#3b82f6";
     const playerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
     const ruleset = rulesetOf(gameId);
@@ -204,7 +223,9 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           commandId,
           playerId,
           name,
-          color,
+          // Optional: the v2 decider honours a free requested colour and
+          // otherwise issues the first available palette colour.
+          color: body.color,
           controller: controllerOf(body.controller),
         })
       : await submitCommand(ctx.commandService, eventStreamId(gameId), {
@@ -212,14 +233,20 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           commandId,
           playerId,
           name,
-          color,
+          // The v1 kernel is not migrated: it keeps its fixed request default.
+          color: body.color ?? "#3b82f6",
         });
     if (result.status === "rejected") return rejection(result);
     if (isRulesetV2(ruleset)) await syncBoardV2(gameId);
     else await syncBoard(gameId);
     const capability = await ctx.issueAndStore(gameId, playerId, "player");
     const response: JoinGameResponse = {
-      player: { id: playerId, name, color, role: "player" },
+      player: {
+        id: playerId,
+        name,
+        color: assignedSeatColor(result, body.color ?? "#3b82f6"),
+        role: "player",
+      },
       capability,
       ...(controllerOf(body.controller) === "external-agent"
         ? {
