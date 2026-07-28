@@ -41,6 +41,7 @@ import type {
 } from "../application/api.ts";
 import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
 import type { ProjectedHexV2 } from "../board/projection-v2.ts";
+import { ackTxId } from "../board/transaction.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
 import {
   attackAgainAction,
@@ -315,7 +316,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
       if (accepted) {
         try {
           if (!live.session) throw new Error("Board session is not connected.");
-          await live.session.awaitTxId((result.body as CommandAck).txid);
+          await live.session.awaitTxId(ackTxId(result.body as CommandAck));
           setNotice(acknowledgementNotice(action.type));
         } catch {
           setNotice(`${acknowledgementNotice(action.type)} Live board still catching up.`);
@@ -375,7 +376,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
     if (result.status === 200 && !isError(result.body)) {
       try {
         if (!live.session) throw new Error("Board session is not connected.");
-        await live.session.awaitTxId(result.body.txid);
+        await live.session.awaitTxId(ackTxId(result.body));
         setNotice("Game started — the map is dealt.");
       } catch {
         setNotice("Game started, but the live board is still catching up.");

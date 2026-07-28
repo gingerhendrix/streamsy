@@ -52,7 +52,17 @@ function saveState(state: BotState): void {
 
 async function main(): Promise<void> {
   const state = loadState();
-  const bot = createBot({ call: httpCall, gameId, playerId, token, state });
+  // Persist on every durable change, not just between turns: the in-flight
+  // record exists precisely for a crash mid-command, and would be worthless if
+  // it were only written after the command had already settled.
+  const bot = createBot({
+    call: httpCall,
+    gameId,
+    playerId,
+    token,
+    state,
+    onStateChanged: saveState,
+  });
 
   for (;;) {
     const meta = await httpCall("GET", `/v1/games/${gameId}`);

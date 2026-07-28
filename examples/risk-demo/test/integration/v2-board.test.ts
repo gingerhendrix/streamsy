@@ -144,8 +144,11 @@ describe("risk-demo-v2 board projection surface", () => {
     });
 
     expect(ack.status).toBe(200);
-    expect(ack.body.events).toHaveLength(2);
-    expect(new Set(ack.body.events.map((event: any) => event.commandId))).toEqual(
+    // One command, one canonical batch: the ack names only the batch's final
+    // offset, so atomicity is read off the recorded events rather than the ack.
+    const record = h.stores.commands.get(game.gameId, "reinforce-all-at-once")!;
+    expect(record.events).toHaveLength(2);
+    expect(new Set((record.events as any[]).map((event) => event.commandId))).toEqual(
       new Set(["reinforce-all-at-once"]),
     );
     const after = await boardFor(h.app, game);
@@ -254,7 +257,7 @@ describe("risk-demo-v2 board projection surface", () => {
     });
     expect(ack.status).toBe(200);
     const synced = await decisionFor(h.app, game, active);
-    expect(synced.board.sourceThroughOffset).toBe(ack.body.sourceOffset);
+    expect(synced.board.sourceThroughOffset).toBe(ack.body.eventOffset);
   });
 
   it("rebuilds the v2 generation and cuts over without touching v1 lineage", async () => {

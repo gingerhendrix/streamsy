@@ -10,7 +10,16 @@
  * from the observed board state (`playerId:turnId:<state fingerprint>`). After a
  * crash + resume from the saved cursor, re-deriving at the same board yields the
  * same id (idempotent retry); once a command commits the board changes, so the
- * next id differs. Only the action-stream cursor needs to be persisted.
+ * next id differs.
+ *
+ * Crash-resume: the durable cursor never advances past a message whose command
+ * has not been acknowledged. Advancing at *read* time is a livelock — a crash in
+ * that window leaves the still-required action behind a cursor the consumer will
+ * never rewind to, and the server has nothing new to emit because nothing new
+ * has happened. So the persisted state carries two things: `cursor`, which
+ * advances only on a terminal outcome, and `inflight`, the exact serialized body
+ * of a command that was posted but never seen acked, replayed byte-identically
+ * on restart so a commit that did land collapses to `duplicate`.
  *
  * The harness speaks both rulesets. `risk-demo-v2` adds one shape it must handle
  * that v1 does not have: an out-of-turn `roll-defense`. That command uses the
@@ -37,9 +46,12 @@ export type HttpCall = (
   opts?: { token?: string; body?: unknown },
 ) => Promise<{ status: number; body: any }>;
 
-/** Persisted bot state — just the last consumed action-stream cursor. */
+/** Persisted bot state: an answered-through cursor plus any unacked command. */
 export interface BotState {
+  /** Advances only once the message it points past has been answered. */
   cursor?: string;
+  /** A command posted but not yet known-terminal; replayed verbatim on restart. */
+  inflight?: { body: string; cursorAfter?: string };
 }
 
 export interface CreateBotOptions {
@@ -51,6 +63,12 @@ export interface CreateBotOptions {
   state?: BotState;
   /** Optional observer hook after each successful command; used to pace the live demo. */
   onCommandCommitted?: (action: Record<string, unknown>) => void | Promise<void>;
+  /**
+   * Called whenever durable state changes — before a command is posted, and
+   * again once it settles. A runner that only persists between turns would lose
+   * the in-flight record in exactly the window it exists to cover.
+   */
+  onStateChanged?: (state: BotState) => void | Promise<void>;
 }
 
 export interface Bot {
@@ -113,8 +131,11 @@ interface Decision {
   legalMoves: any[];
 }
 
+const RULESET_V1 = "risk-demo-v1";
+const RULESET_V2 = "risk-demo-v2";
+
 function isV2(decision: Decision): boolean {
-  return decision.ruleset === "risk-demo-v2";
+  return decision.ruleset === RULESET_V2;
 }
 
 function boardFingerprint(playerId: string, decision: Decision): string {
@@ -205,34 +226,90 @@ export function createBot(options: CreateBotOptions): Bot {
   const state: BotState = options.state ?? {};
 
   let pendingMessage: ActionRequired | null = null;
-  let bootstrapDecision: Decision | null | undefined;
+  /**
+   * Where *this process* has read to. The durable `state.cursor` trails it until
+   * the message in hand is answered, so a snapshot taken at any instant resumes
+   * at a point whose action is still outstanding rather than past it.
+   */
+  let liveCursor = state.cursor;
+  let ruleset: string | undefined;
+
+  async function commitCursor(): Promise<void> {
+    state.cursor = liveCursor;
+    delete state.inflight;
+    await options.onStateChanged?.(state);
+  }
+
+  /**
+   * Re-serializing the stored body reproduces it byte for byte: it was produced
+   * by `JSON.stringify`, and a parse/stringify round trip preserves both key
+   * order and number formatting for such a value.
+   */
+  async function postCommand(body: string): Promise<{ status: number; body: any }> {
+    return call("POST", `/v1/games/${gameId}/commands`, { token, body: JSON.parse(body) });
+  }
+
+  /**
+   * Replay a command a previous process posted but never saw acked. The server
+   * dedupes on `commandId`, so a commit that did land answers `duplicate` and a
+   * lost one is applied now. Only then may the cursor move past its message.
+   */
+  async function resumeInflight(): Promise<void> {
+    const inflight = state.inflight;
+    if (!inflight) return;
+    const res = await postCommand(inflight.body);
+    // 200 is accepted|duplicate. A 4xx means the canonical board already moved
+    // past this command — a resolved attack, a passed turn. Either way the ask
+    // that produced it is answered and the cursor may advance.
+    if (res.status === 200 || (res.status >= 400 && res.status < 500)) {
+      liveCursor = inflight.cursorAfter;
+      await commitCursor();
+    }
+  }
+
+  /** One bootstrap `/decision` read, purely to learn which ruleset this game speaks. */
+  async function isV2Game(): Promise<boolean> {
+    if (ruleset === undefined) {
+      const decision = await fetchDecision();
+      // A v1 decision context carries no `ruleset` discriminator at all, so an
+      // answer without one *is* the v1 answer. An unreadable one (not yet a
+      // seat, game not started) is assumed modern rather than legacy.
+      ruleset = decision ? (decision.ruleset ?? RULESET_V1) : RULESET_V2;
+    }
+    return ruleset === RULESET_V2;
+  }
 
   async function awaitTurn(waitMs = 0): Promise<AgentMessage | null> {
-    if (bootstrapDecision === undefined) bootstrapDecision = await fetchDecision();
-    // The retained v1 demo has no agent actions stream. Its bot remains a
-    // decision-driven compatibility fixture; the published v2 agent loop does not.
-    if (bootstrapDecision && !isV2(bootstrapDecision)) {
-      return bootstrapDecision.legalMoves.length > 0
+    await resumeInflight();
+    // The retained v1 demo has no agent actions stream — `/players/me/actions`
+    // answers 400 for it. Its bot stays a decision-driven compatibility fixture,
+    // re-reading `/decision` each time rather than trusting the bootstrap read.
+    if (!(await isV2Game())) {
+      const decision = await fetchDecision();
+      return decision && decision.legalMoves.length > 0
         ? ({
             type: "ActionRequired",
             messageId: "legacy-v1",
             seq: 0,
             playerId,
-            turn: bootstrapDecision.turn,
+            turn: decision.turn,
           } as unknown as AgentMessage)
         : null;
     }
     const query = new URLSearchParams();
-    if (state.cursor) query.set("offset", state.cursor);
+    if (liveCursor) query.set("offset", liveCursor);
     if (waitMs > 0) query.set("wait", String(waitMs));
     const res = await call("GET", `/v1/games/${gameId}/players/me/actions?${query.toString()}`, {
       token,
     });
     if (res.status !== 200) return null;
-    state.cursor = res.body.nextOffset;
+    liveCursor = res.body.nextOffset;
     const messages: AgentMessage[] = res.body.messages ?? [];
     const newest = messages.length > 0 ? messages[messages.length - 1]! : null;
-    pendingMessage = newest?.type === "ActionRequired" ? newest : null;
+    // An empty page never clears an outstanding ask: the message is still owed
+    // a command, and forgetting it here would strand it behind the cursor.
+    if (newest) pendingMessage = newest.type === "ActionRequired" ? newest : null;
+    if (!pendingMessage) await commitCursor();
     return newest;
   }
 
@@ -276,14 +353,14 @@ export function createBot(options: CreateBotOptions): Bot {
   }
 
   async function step(): Promise<Record<string, unknown> | null> {
-    if (bootstrapDecision === undefined) bootstrapDecision = await fetchDecision();
-    const legacy = bootstrapDecision && !isV2(bootstrapDecision);
+    await resumeInflight();
+    const legacy = !(await isV2Game());
     if (!legacy && !pendingMessage) await awaitTurn();
     const decision = legacy
       ? await fetchDecision()
       : pendingMessage
         ? ({
-            ruleset: "risk-demo-v2",
+            ruleset: RULESET_V2,
             mode: pendingMessage.mode,
             turn: pendingMessage.turn,
             pendingInteraction: pendingMessage.pendingInteraction ?? undefined,
@@ -300,18 +377,31 @@ export function createBot(options: CreateBotOptions): Bot {
         : null;
     if (!action) return null;
 
-    const submitted = await call("POST", `/v1/games/${gameId}/commands`, {
-      token,
-      body: { commandId: commandIdFor(action, decision), turnId: decision.turn.id, action },
+    const body = JSON.stringify({
+      commandId: commandIdFor(action, decision),
+      turnId: decision.turn.id,
+      action,
     });
+    // Recorded *before* the POST: a crash between request and response must not
+    // lose the fact that this exact command may already be committed.
+    state.inflight = { body, cursorAfter: liveCursor };
+    await options.onStateChanged?.(state);
+    const submitted = await postCommand(body);
+    if (submitted.status >= 500) {
+      // The server may or may not have committed this. Keep the in-flight record
+      // and the cursor exactly where they are, so a retry — in this process or
+      // the next one — replays the same bytes and collapses to `duplicate`.
+      return null;
+    }
+    pendingMessage = null;
+    await commitCursor();
     if (submitted.status !== 200) {
-      // Any rejection means the canonical board moved on — a resolved attack, a
-      // passed turn, a closed deadline. All of these are ordinary outcomes for a
-      // client acting on a wake, not errors to retry blindly.
+      // A 4xx means the canonical board moved on — a resolved attack, a passed
+      // turn, a closed deadline. All of these are ordinary outcomes for a client
+      // acting on a wake, not errors to retry blindly.
       return null;
     }
     await options.onCommandCommitted?.(action);
-    pendingMessage = null;
     return action;
   }
 
@@ -319,9 +409,7 @@ export function createBot(options: CreateBotOptions): Bot {
     // A v2 defender learns it must roll from its own action stream — the same
     // `defense-required` message an external agent would receive. Only the
     // retained v1 fixture, which has no stream, still asks `/decision`.
-    if (bootstrapDecision === undefined) bootstrapDecision = await fetchDecision();
-    const legacy = bootstrapDecision && !isV2(bootstrapDecision);
-    if (legacy) {
+    if (!(await isV2Game())) {
       const decision = await fetchDecision();
       if (!decision?.legalMoves.some((a) => a.type === "roll-defense")) return false;
       return (await step()) !== null;

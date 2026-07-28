@@ -69,11 +69,22 @@ const messageSchema: JsonCodec<AgentMessage> = {
   decode: (value) => value as AgentMessage,
 };
 
-function reasonFor(event: GameEventV2, pending: PendingInteraction | undefined): ActionReason {
+/**
+ * Why the server needs an action now. `ArmiesReinforced` is the one event whose
+ * reason is not a function of the event type alone: while the pool still holds
+ * armies the same phase is asking again (`reinforcement-remaining`), and the
+ * placement that empties it moves the turn into `attack` (`phase-changed`).
+ */
+function reasonFor(
+  event: GameEventV2,
+  pending: PendingInteraction | undefined,
+  reinforcementRemaining: number,
+): ActionReason {
   if (event.type === "GameStarted" || event.type === "TurnEnded") return "turn-started";
   if (pending?.type === "occupation") return "occupation-required";
   if (pending?.type === "defense") return "defense-required";
-  if (event.type === "ArmiesReinforced") return "reinforcement-remaining";
+  if (event.type === "ArmiesReinforced")
+    return reinforcementRemaining > 0 ? "reinforcement-remaining" : "phase-changed";
   if (event.type === "AttackResolved" || event.type === "TerritoryOccupied")
     return "attack-resolved";
   return "phase-changed";
@@ -164,7 +175,7 @@ export function deriveActions(
         seq,
         gameId,
         playerId: player.id,
-        reason: reasonFor(current.event, state.pendingInteraction),
+        reason: reasonFor(current.event, state.pendingInteraction, state.reinforcement.remaining),
         turn: {
           id: turnId,
           round: state.round,

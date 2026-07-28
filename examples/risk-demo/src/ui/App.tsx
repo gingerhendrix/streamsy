@@ -14,6 +14,7 @@ import type { GameStatus } from "../domain/aggregate.ts";
 import type { LegalAction } from "../application/legal-actions.ts";
 import { TERRITORIES } from "../domain/map.ts";
 import type { ProjectedMove, ProjectedPlayer, ProjectedTerritory } from "../board/projection.ts";
+import { ackTxId } from "../board/transaction.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { GameV2Screen, type AgentSeat } from "./game-v2.tsx";
 import {
@@ -316,7 +317,7 @@ export function App() {
     if (result.status === 200 && !isError(result.body)) {
       try {
         if (!live.session) throw new Error("Board session is not connected.");
-        await live.session.awaitTxId(result.body.txid);
+        await live.session.awaitTxId(ackTxId(result.body));
         setNotice("Game started — watch the live board deal territories.");
       } catch {
         setNotice("Game started, but the live board is still catching up.");
@@ -343,7 +344,7 @@ export function App() {
     if (result.status === 200 && !isError(result.body)) {
       try {
         if (!live.session) throw new Error("Board session is not connected.");
-        await live.session.awaitTxId(result.body.txid);
+        await live.session.awaitTxId(ackTxId(result.body));
         setNotice(acknowledgementNotice(action.type));
       } catch {
         setNotice(`${acknowledgementNotice(action.type)} Live board still catching up.`);

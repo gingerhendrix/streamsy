@@ -683,11 +683,22 @@ function optionsExecutable(environmentName, fallback) {
   return process.env[environmentName] || fallback;
 }
 
+/**
+ * Post one command, retaining the exact bytes until the server has answered.
+ *
+ * `cursorAfter` is the stream position this command answers *for*. It is
+ * committed to the session only once an outcome is in hand, and strictly before
+ * the in-flight record is dropped — so every crash window either replays the
+ * command (and the server dedupes it) or has already recorded that it is done.
+ * The reverse order would let a crash strand a still-required action behind an
+ * advanced cursor, which no subsequent server event would ever re-announce.
+ */
 async function submitStable({
   session,
   directory,
   payload,
   bodyOverride,
+  cursorAfter,
   maxPosts,
   requestTimeoutMs,
   retryDelayMs,
@@ -696,7 +707,16 @@ async function submitStable({
   const urls = resourceUrls(session);
   const body = bodyOverride ?? JSON.stringify(payload);
   const bodySha256 = sha256(body);
-  await atomicJson(path.join(directory, INFLIGHT_FILE), { body, bodySha256 });
+  const inflightFile = path.join(directory, INFLIGHT_FILE);
+  const sessionFile = path.join(directory, SESSION_FILE);
+  await atomicJson(inflightFile, { body, bodySha256, cursorAfter: cursorAfter ?? null });
+  const settle = async () => {
+    if (cursorAfter !== undefined) {
+      session.cursor = cursorAfter;
+      await atomicJson(sessionFile, session);
+    }
+    await rm(inflightFile, { force: true });
+  };
   let posts = 0;
   let firstAck = null;
   while (posts < maxPosts) {
@@ -718,11 +738,11 @@ async function submitStable({
         await appendEvidence(directory, "command-ack", {
           actionType: payload.action.type,
           ackStatus: response.body.status,
-          sourceOffsetHash: sha256(String(response.body.sourceOffset)),
+          eventOffsetHash: sha256(String(response.body.eventOffset)),
           bodySha256,
           post: posts,
         });
-        await rm(path.join(directory, INFLIGHT_FILE), { force: true });
+        await settle();
         return { response: response.body, posts, bodySha256, firstAck };
       }
       if (response.status === 409) {
@@ -732,7 +752,7 @@ async function submitStable({
           bodySha256,
           post: posts,
         });
-        await rm(path.join(directory, INFLIGHT_FILE), { force: true });
+        await settle();
         return { conflict: response.body, posts, bodySha256 };
       }
       fail(`command returned HTTP ${response.status}`);
@@ -807,6 +827,9 @@ async function runLoop(options) {
         directory,
         payload,
         bodyOverride: inflight.body,
+        // `null` is a legitimate recorded position (the stream's start), so the
+        // absent case is distinguished from it rather than merged with it.
+        cursorAfter: inflight.cursorAfter === undefined ? undefined : inflight.cursorAfter,
         maxPosts: maxPostsPerCommand,
         requestTimeoutMs,
         retryDelayMs,
@@ -823,12 +846,35 @@ async function runLoop(options) {
       if (error?.code !== "ENOENT") throw error;
     }
 
-    const map = await fetchJson(urls.map, {}, requestTimeoutMs, controller.signal);
-    if (map.status !== 200) fail(`map returned HTTP ${map.status}`);
+    // The map does not exist until `GameStarted`, and a host may well launch the
+    // seat before pressing start. 409 is "not yet", so the map is fetched lazily
+    // at the first ask — by which point the game is provably running — and the
+    // launcher spends the interval waiting on the stream rather than exiting.
+    let mapDocument = null;
+    const loadMap = async () => {
+      for (let attempt = 0; attempt < 5 && !controller.signal.aborted; attempt += 1) {
+        if (mapDocument) return mapDocument;
+        const response = await fetchJson(urls.map, {}, requestTimeoutMs, controller.signal);
+        if (response.status === 200) {
+          mapDocument = response.body;
+          return mapDocument;
+        }
+        if (response.status !== 409) fail(`map returned HTTP ${response.status}`);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+      fail("map is still unavailable after the game started");
+    };
+
+    /** The stream position this process has read to, ahead of the durable cursor. */
+    let liveCursor = session.cursor;
+    const commitCursor = async () => {
+      session.cursor = liveCursor;
+      await atomicJson(path.join(directory, SESSION_FILE), session);
+    };
 
     while (!controller.signal.aborted && decisions < maxDecisions && commands < maxCommands) {
       const actionsUrl = new URL(urls.actions);
-      if (session.cursor) actionsUrl.searchParams.set("offset", session.cursor);
+      if (liveCursor) actionsUrl.searchParams.set("offset", liveCursor);
       actionsUrl.searchParams.set("wait", String(waitMs));
       const stream = await fetchJson(
         actionsUrl,
@@ -837,9 +883,11 @@ async function runLoop(options) {
         controller.signal,
       );
       if (stream.status !== 200) fail(`actions stream returned HTTP ${stream.status}`);
-      session.cursor = stream.body.nextOffset;
-      await atomicJson(path.join(directory, SESSION_FILE), session);
+      liveCursor = stream.body.nextOffset;
       const message = stream.body.messages?.at(-1);
+      // Nothing is owed for an empty page or a terminal one, so the cursor is
+      // safe to persist. An `ActionRequired` is committed only by its command.
+      if (message?.type !== "ActionRequired") await commitCursor();
       if (!message) continue;
       if (message.type === "GameOver") {
         await appendEvidence(directory, "finished", {
@@ -866,8 +914,9 @@ async function runLoop(options) {
         messageId: message.messageId,
         mode: observed.mode,
         legalMoveTypes: observed.legalMoves.map((action) => action.type),
-        cursorHash: sha256(String(session.cursor)),
+        cursorHash: sha256(String(liveCursor)),
       });
+      const map = await loadMap();
       const dynamicById = new Map(message.board.territories.map((row) => [row.id, row]));
       const board = {
         status: "playing",
@@ -876,12 +925,12 @@ async function runLoop(options) {
         activePlayerId: message.turn.activePlayerId,
         reinforcement: message.turn.reinforcement,
         players: message.board.players,
-        territories: map.body.territories.map((territory) => ({
+        territories: map.territories.map((territory) => ({
           ...territory,
           adjacentTerritoryIds: territory.neighbours,
           ...dynamicById.get(territory.id),
         })),
-        continents: map.body.continents,
+        continents: map.continents,
       };
       let modelContract = buildModelContract(observed, board);
       let attemptId = await nextAttemptId(directory);
@@ -956,6 +1005,7 @@ async function runLoop(options) {
         session,
         directory,
         payload,
+        cursorAfter: liveCursor ?? null,
         maxPosts: maxPostsPerCommand,
         requestTimeoutMs,
         retryDelayMs,

@@ -77,7 +77,7 @@ async function main(): Promise<void> {
 
   const board = await api("GET", `/v1/games/${gameId}/board`);
   assert(
-    board.body.sourceThroughOffset === accepted.body.sourceOffset,
+    board.body.sourceThroughOffset === accepted.body.eventOffset,
     "board watermark did not reach command",
   );
   const publicBoard = await fetch(
@@ -98,10 +98,35 @@ async function main(): Promise<void> {
     body: { playerId: agentGame.body.player.id },
   });
   assert(seat.status === 201, "agent seat delegation failed");
+
+  // Isolation is stronger on Cloudflare than in a single-process host, and the
+  // status code says which mechanism enforced it. Each game is its own Durable
+  // Object with its own capability table, so a token minted for another game is
+  // not merely out of scope — it does not exist here at all, and authentication
+  // fails (401) before any game-scoping check could answer 403. A single-process
+  // deployment shares one capability store and answers 403 WRONG_GAME. Both are
+  // a refusal; this smoke runs against the edge, so it asserts the edge's.
   const crossGame = await api("GET", `/v1/games/${gameId}/decision`, {
     token: seat.body.seat.token,
   });
-  assert(crossGame.status === 403, "an agent capability crossed game isolation");
+  assert(
+    crossGame.status === 401,
+    `an agent capability crossed game isolation (expected 401 from an isolated Durable Object, got ${crossGame.status})`,
+  );
+  assert(
+    crossGame.body?.error?.code === "UNAUTHORIZED",
+    `cross-game read reported ${crossGame.body?.error?.code} rather than UNAUTHORIZED`,
+  );
+
+  // A host may hand over its own seat and no one else's.
+  const foreignDelegation = await api("POST", `/v1/games/${agentGameId}/agent-seats`, {
+    token: agentGame.body.capability,
+    body: { playerId: "p_not_the_host" },
+  });
+  assert(
+    foreignDelegation.status === 403,
+    `foreign seat delegation returned ${foreignDelegation.status}`,
+  );
 
   // The actions stream long-polls *inside* the per-game Durable Object. A bounded
   // wait that returns empty and up-to-date — without the edge cutting it short —
@@ -134,8 +159,8 @@ async function main(): Promise<void> {
       checks: [
         "create/join/start/command/duplicate",
         "board/spectator restriction",
-        "two-game capability isolation",
-        "agent seat authority",
+        "two-game capability isolation (401 from an isolated Durable Object)",
+        "agent seat authority (own seat only)",
         "actions stream bounded long poll",
         "SPA fallback",
       ],

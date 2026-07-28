@@ -195,7 +195,9 @@ describe("risk-demo-v2 defence resolution", () => {
       action: { type: "roll-defense", attackId: attack.attackId },
     });
     expect(rolled.status).toBe(200);
-    const resolved = rolled.body.events.find((e: any) => e.type === "AttackResolved");
+    // The ack is a receipt (C8); the recorded outcome is read from canonical history.
+    const rollRecord = h.stores.commands.get(game.gameId, "human-roll")!;
+    const resolved = (rollRecord.events as any[]).find((e) => e.type === "AttackResolved");
     expect(resolved.resolutionSource).toBe("human");
     expect(resolved.defenderRolls).toEqual([1, 1].slice(0, resolved.defenderRolls.length));
 
@@ -272,7 +274,7 @@ describe("risk-demo-v2 defence resolution", () => {
     const retry = await post(h.app, game, attack.defender, body);
     expect(retry.status).toBe(200);
     expect(retry.body.status).toBe("duplicate");
-    expect(retry.body.sourceOffset).toBe(first.body.sourceOffset);
+    expect(retry.body.eventOffset).toBe(first.body.eventOffset);
     expect(retry.body.events).toEqual(first.body.events);
   });
 

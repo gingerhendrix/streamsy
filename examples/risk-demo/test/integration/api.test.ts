@@ -4,7 +4,7 @@ import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core
 import { buildApp, type App } from "../../server/http/app.ts";
 import { createInMemoryStores, type Stores } from "../../server/persistence/stores.ts";
 import { createSeededRng } from "../../src/domain/rng.ts";
-import { boardProjectionTxId } from "../../src/board/transaction.ts";
+import { ackTxId, boardProjectionTxId } from "../../src/board/transaction.ts";
 
 interface Harness {
   app: App;
@@ -151,10 +151,19 @@ describe("risk command API", () => {
     });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("accepted");
-    expect(res.body.sourceStreamId).toBe(`games/${game.gameId}/events`);
-    expect(typeof res.body.sourceOffset).toBe("string");
-    expect(res.body.sourceOffset).not.toBe("");
-    expect(res.body.txid).toBe(boardProjectionTxId("cmd-1", res.body.sourceOffset));
+    // A receipt and nothing more (C8): status, id, the echoed turn, and where it
+    // landed. The projection transaction a browser waits on is derived from it.
+    expect(Object.keys(res.body).toSorted()).toEqual([
+      "commandId",
+      "eventOffset",
+      "status",
+      "turnId",
+    ]);
+    expect(res.body.commandId).toBe("cmd-1");
+    expect(res.body.turnId).toBe(decision.turn.id);
+    expect(typeof res.body.eventOffset).toBe("string");
+    expect(res.body.eventOffset).not.toBe("");
+    expect(ackTxId(res.body)).toBe(boardProjectionTxId("cmd-1", res.body.eventOffset));
   });
 
   it("enforces capability isolation across players and games", async () => {
@@ -202,8 +211,8 @@ describe("risk command API", () => {
     expect(badStart.status).toBeGreaterThanOrEqual(400);
   });
 
-  it("returns the original ack and dice on an idempotent attack retry", async () => {
-    const { app } = harness(3);
+  it("re-answers an idempotent attack retry at the original canonical offset", async () => {
+    const { app, stores } = harness(3);
     const game = await createJoinStart(app);
     const { token, decision } = await playToAttack(app, game);
 
@@ -224,9 +233,12 @@ describe("risk command API", () => {
 
     const retry = await call(app, "POST", `/v1/games/${game.gameId}/commands`, { token, body });
     expect(retry.status).toBe(200);
-    expect(retry.body.status).toBe("duplicate");
-    expect(retry.body.sourceOffset).toBe(first.body.sourceOffset);
-    expect(retry.body.events).toEqual(first.body.events);
+    // Only `status` distinguishes the retry: it points at the same commit, and
+    // the dice rolled once are read from canonical history, never re-rolled.
+    expect(retry.body).toEqual({ ...first.body, status: "duplicate" });
+    const record = stores.commands.get(game.gameId, "attack-once")!;
+    const attacked = (record.events as any[]).find((event) => event.type === "AttackResolved");
+    expect(attacked.attackerRolls.length).toBe(choice.maxAttackerDice);
   });
 
   it("rejects a reused commandId that carries a different payload", async () => {
@@ -303,7 +315,7 @@ describe("risk command API", () => {
 
     const board = await call(app, "GET", `/v1/games/${game.gameId}/board`);
     expect(board.status).toBe(200);
-    expect(board.body.sourceThroughOffset).toBe(ack.body.sourceOffset);
+    expect(board.body.sourceThroughOffset).toBe(ack.body.eventOffset);
     // The reinforced territory's army count reflects the accepted command.
     const reinforced = board.body.territories.find((t: any) => t.id === reinforce.territoryIds[0]);
     expect(reinforced.armies).toBeGreaterThanOrEqual(3);
@@ -338,7 +350,7 @@ describe("risk command API", () => {
     ]);
     expect(a.status).toBe(200);
     expect(b.status).toBe(200);
-    expect(a.body.sourceOffset).not.toBe(b.body.sourceOffset); // distinct commits, no lost update
+    expect(a.body.eventOffset).not.toBe(b.body.eventOffset); // distinct commits, no lost update
 
     const after = await call(app, "GET", `/v1/games/${game.gameId}/decision`, { token });
     expect(after.body.legalMoves.find((x: any) => x.type === "reinforce")?.maxArmies).toBe(
@@ -353,8 +365,12 @@ describe("risk command API", () => {
     expect(res.body.openapi).toMatch(/^3\./);
     const schemas = res.body.components.schemas;
     expect(schemas.GameCommand.properties.action.oneOf).toHaveLength(4);
-    expect(schemas.CommandAck.properties.sourceOffset).toBeDefined();
-    expect(schemas.CommandAck.properties.txid).toBeDefined();
+    expect(Object.keys(schemas.CommandAck.properties).toSorted()).toEqual([
+      "commandId",
+      "eventOffset",
+      "status",
+      "turnId",
+    ]);
     expect(schemas.ErrorResponse.properties.error.properties.code.enum).toContain("STALE_TURN");
   });
 

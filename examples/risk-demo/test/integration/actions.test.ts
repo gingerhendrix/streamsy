@@ -4,12 +4,13 @@ import {
   call,
   createV2Game,
   decisionFor,
+  httpFor,
   restartV2,
   v2Harness,
   type V2Game,
   type V2Harness,
 } from "../v2-harness.ts";
-import { createBot, type HttpCall } from "../../server/demo/bot.ts";
+import { createBot, type BotState, type HttpCall } from "../../server/demo/bot.ts";
 import { deriveActions, type AgentMessage } from "../../server/game/action-notifier.ts";
 import { actionStreamId, eventStreamId } from "../../server/game/names.ts";
 
@@ -121,10 +122,12 @@ describe("player actions stream", () => {
       `/v1/games/${game.gameId}/players/me/actions?offset=${first.body.nextOffset}`,
       { token },
     );
+    // The placement spent the whole pool, so the turn moved into `attack`. That
+    // is a phase change, not "there is still reinforcement to place".
     expect(next.body.messages.at(-1)).toMatchObject({
       type: "ActionRequired",
       seq: 2,
-      reason: "reinforcement-remaining",
+      reason: "phase-changed",
       turn: { phase: "attack" },
     });
     expect(
@@ -132,6 +135,58 @@ describe("player actions stream", () => {
         .at(-1)
         .since.events.some((event: any) => event.type === "ArmiesReinforced"),
     ).toBe(true);
+  });
+
+  it("separates a partly-spent reinforcement pool from the placement that empties it", async () => {
+    const h = v2Harness();
+    const game = await createV2Game(h.app, { controllers: ["agent", "agent"] });
+    const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
+    const active = meta.activePlayerId as string;
+    const token = game.tokenByPlayer[active]!;
+
+    const opening = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {
+      token,
+    });
+    expect(opening.body.messages.at(-1).reason).toBe("turn-started");
+
+    // One command, two placements: the deriver folds the events one at a time,
+    // so the pool is briefly non-empty between them.
+    const decision = await decisionFor(h.app, game, active);
+    const reinforce = decision.legalMoves.find((move: any) => move.type === "reinforce");
+    expect(reinforce.pool).toBeGreaterThanOrEqual(2);
+    expect(reinforce.territoryIds.length).toBeGreaterThanOrEqual(2);
+    const submitted = await call(h.app, "POST", `/v1/games/${game.gameId}/commands`, {
+      token,
+      body: {
+        commandId: "reason-mapping-reinforce",
+        turnId: decision.turn.id,
+        action: {
+          type: "reinforce",
+          placements: [
+            { territoryId: reinforce.territoryIds[0], armies: reinforce.pool - 1 },
+            { territoryId: reinforce.territoryIds[1], armies: 1 },
+          ],
+        },
+      },
+    });
+    expect(submitted.status).toBe(200);
+
+    const page = await call(
+      h.app,
+      "GET",
+      `/v1/games/${game.gameId}/players/me/actions?offset=${opening.body.nextOffset}`,
+      { token },
+    );
+    const asks = page.body.messages.filter((m: any) => m.type === "ActionRequired");
+    // Pool still holding armies → asked again in the same phase.
+    expect(asks.at(-2)).toMatchObject({
+      reason: "reinforcement-remaining",
+      turn: { phase: "reinforce" },
+    });
+    expect(asks.at(-2).turn.reinforcement.remaining).toBeGreaterThan(0);
+    // Pool emptied → the turn is in a different phase, and says so.
+    expect(asks.at(-1)).toMatchObject({ reason: "phase-changed", turn: { phase: "attack" } });
+    expect(asks.at(-1).turn.reinforcement.remaining).toBe(0);
   });
 
   it("rejects the cursor alias", async () => {
@@ -248,6 +303,84 @@ describe("player actions stream", () => {
       }
       expect(message.legalMoves.some((move) => move.type === "roll-defense")).toBe(false);
     }
+  }, 60_000);
+
+  it("never strands a consumer that crashes between reading an ask and answering it", async () => {
+    const h = v2Harness(4242);
+    const game = await createV2Game(h.app, {
+      controllers: ["agent", "agent"],
+      mapSeed: "consumer-crash",
+    });
+    const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
+    const active = meta.activePlayerId as string;
+    const options = {
+      call: httpFor(h.app),
+      gameId: game.gameId,
+      playerId: active,
+      token: game.tokenByPlayer[active]!,
+    };
+
+    // Crash A: the message has been read, no command has been sent. The durable
+    // cursor must NOT have moved — nothing new will ever be emitted for an ask
+    // that is still outstanding, so a cursor past it would wait forever.
+    const reader = createBot({ ...options, state: {} });
+    const ask = await reader.awaitTurn();
+    expect(ask?.type).toBe("ActionRequired");
+    const afterRead: BotState = structuredClone(reader.state);
+    expect(afterRead.cursor).toBeUndefined();
+
+    const resumedReader = createBot({ ...options, state: structuredClone(afterRead) });
+    const replayed = await resumedReader.awaitTurn();
+    expect(replayed?.messageId).toBe(ask!.messageId);
+    expect(await resumedReader.step()).not.toBeNull();
+
+    // Crash B: the command reached the server, but the response never reached
+    // the client. The retained in-flight body is replayed verbatim and the
+    // server dedupes it — one recorded command, and the loop keeps moving.
+    const nextMeta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
+    const stillActive = nextMeta.activePlayerId as string;
+    let lostResponses = 0;
+    const losing: HttpCall = async (method, path, opts) => {
+      const response = await call(h.app, method, path, opts);
+      if (method === "POST" && path.includes("/commands")) {
+        lostResponses += 1;
+        return { status: 503, body: {} };
+      }
+      return response;
+    };
+    const crashing = createBot({
+      call: losing,
+      gameId: game.gameId,
+      playerId: stillActive,
+      token: game.tokenByPlayer[stillActive]!,
+      state: {},
+    });
+    expect(await crashing.step()).toBeNull();
+    expect(lostResponses).toBe(1);
+    const midFlight: BotState = structuredClone(crashing.state);
+    expect(midFlight.inflight).toBeDefined();
+    const inflightCommandId = JSON.parse(midFlight.inflight!.body).commandId as string;
+    expect(h.stores.commands.get(game.gameId, inflightCommandId)?.status).toBe("accepted");
+
+    const recovered = createBot({
+      call: httpFor(h.app),
+      gameId: game.gameId,
+      playerId: stillActive,
+      token: game.tokenByPlayer[stillActive]!,
+      state: structuredClone(midFlight),
+    });
+    expect(await recovered.step()).not.toBeNull();
+    // The replay was a duplicate, not a second command: canonical history holds
+    // one record under that id, and the cursor has finally moved past the ask.
+    const record = h.stores.commands.get(game.gameId, inflightCommandId)!;
+    expect(record.status).toBe("accepted");
+    expect(recovered.state.inflight).toBeUndefined();
+    expect(recovered.state.cursor).toBeDefined();
+
+    // And the game as a whole still finishes — the crashes cost nothing but time.
+    const counts = await playByMessagesOnly(h, game);
+    expect(counts.commandCalls).toBeGreaterThan(0);
+    expect((await call(h.app, "GET", `/v1/games/${game.gameId}`)).body.status).toBe("finished");
   }, 60_000);
 
   it("resumes exactly across a process restart and re-derives identical messages", async () => {

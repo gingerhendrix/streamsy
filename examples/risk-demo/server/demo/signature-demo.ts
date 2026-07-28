@@ -242,13 +242,18 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
       res.status === 200 &&
       body.status === "accepted"
     ) {
+      // The ack is a receipt, not the outcome (C8). The events this command
+      // recorded are read back from the durable command log, which is where the
+      // demo's "recorded dice" claim has always actually lived.
+      const commandGameId = /^\/v1\/games\/([^/]+)\/commands$/.exec(path)?.[1] ?? "";
       captures.push({
         commandId: body.commandId,
         turnId: body.turnId,
         playerId: playerByToken.get(opts.token ?? "") ?? "",
         token: opts.token ?? "",
-        sourceOffset: body.sourceOffset,
-        events: body.events ?? [],
+        sourceOffset: body.eventOffset,
+        events: (deps.stores.commands.get(commandGameId, body.commandId)?.events ??
+          []) as GameEvent[],
         request: opts.body,
       });
     }
@@ -428,7 +433,7 @@ export async function runSignatureDemo(deps: SignatureDemoDeps): Promise<Signatu
     idempotentRetry = {
       commandId: firstAck.commandId,
       duplicate: retry.body.status === "duplicate",
-      sameOffset: retry.body.sourceOffset === firstAck.sourceOffset,
+      sameOffset: retry.body.eventOffset === firstAck.sourceOffset,
     };
     emit("idempotent-retry", idempotentRetry);
   }

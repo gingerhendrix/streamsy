@@ -54,6 +54,12 @@ Control loop:
 6. Treat accepted and duplicate as success. Retry a transport failure byte-identically with the same commandId. Never reuse a commandId for different input.
 7. On any rejection, return to the actions stream and act on its newest message. Use decision only for bootstrap/recovery if the stream and rejection appear inconsistent.
 
+The ack is a receipt, not the outcome: {"status","commandId","turnId","eventOffset"}. What your move actually did arrives on the actions stream.
+
+If you persist your cursor, only advance it past an ActionRequired once that message's command has been accepted or duplicated. An ActionRequired is never re-announced, so a cursor saved past an unanswered one waits forever. Keep the exact request body until then so a restart can replay it unchanged.
+
+The map does not exist until the game starts; a 409 there means "not yet", so keep polling the actions stream.
+
 Canonical event and message type values use PascalCase. Command action type values use kebab-case. Agent defence is server-resolved; agent seats never submit roll-defense.
 
 Start now and continue until GameOver.`;

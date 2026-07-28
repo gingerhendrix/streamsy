@@ -57,8 +57,21 @@ function randomId(prefix: string): string {
 type AnyAccepted = Extract<SubmitResult | SubmitResultV2, { status: "accepted" | "duplicate" }>;
 type AnyRejected = Extract<SubmitResult | SubmitResultV2, { status: "rejected" }>;
 
+/**
+ * The ack says only that the command was recorded, and where (design plan C8).
+ * It is deliberately *not* the outcome: dice, captures and phase changes reach a
+ * player on their actions stream, and a browser recomputes the board-projection
+ * transaction id it waits on from `commandId` + `eventOffset`. An ack that
+ * carried a partial `events` array invited clients to treat one command's slice
+ * of canonical history as the whole result of the move.
+ */
 function ackBody(result: AnyAccepted, turnId?: string): CommandAck {
-  return { ...result, ...(turnId ? { turnId } : {}) };
+  return {
+    status: result.status,
+    commandId: result.commandId,
+    ...(turnId ? { turnId } : {}),
+    eventOffset: result.sourceOffset,
+  };
 }
 
 /**
@@ -89,6 +102,16 @@ function controllerOf(value: unknown): PlayerController {
   return "human";
 }
 
+/**
+ * Agent seats are minted in exactly one place. The public vocabulary for one is
+ * `agent` (C5), but the canonical event vocabulary is `external-agent` — so an
+ * unauthenticated create/join must refuse *both* spellings rather than letting
+ * the internal one fall through `controllerOf`'s default to a human seat.
+ */
+function requestsAgentSeat(value: unknown): boolean {
+  return value === "agent" || value === "external-agent";
+}
+
 export function createRiskRoutes(ctx: AppContext): Route[] {
   const rulesetOf = (gameId: string): string => ctx.stores.games.get(gameId)?.ruleset ?? RULESET;
 
@@ -116,7 +139,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (caller?.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot create games.");
     }
-    if (body.controller === "agent") {
+    if (requestsAgentSeat(body.controller)) {
       return error(
         403,
         "AGENT_SEAT_REQUIRES_HOST",
@@ -208,7 +231,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (caller?.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot join games.");
     }
-    if (body.controller === "agent") {
+    if (requestsAgentSeat(body.controller)) {
       return error(
         403,
         "AGENT_SEAT_REQUIRES_HOST",
@@ -298,6 +321,17 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     let color = body.color ?? "";
 
     if (playerId) {
+      // Delegation converts an *existing* seat into an agent seat, and the only
+      // seat a host is entitled to hand over is its own (plan A3). Allowing any
+      // player id would let the host mint a playing capability for someone
+      // else's seat and take over their game.
+      if (playerId !== cap.playerId) {
+        return error(
+          403,
+          "FORBIDDEN",
+          "A host may delegate only its own seat. Omit playerId to open a new agent seat.",
+        );
+      }
       const { events } = await readCanonicalV2(ctx.protocol, eventStreamId(gameId));
       const state = foldAggregateV2(events);
       const player = state.players.find((candidate) => candidate.id === playerId);
@@ -485,6 +519,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
     const ruleset = rulesetOf(gameId);
+    // Seat-scoped and bearer-authenticated: never cached, never referred out (C4).
+    const seatScoped = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
 
     if (isRulesetV2(ruleset)) {
       // Project first, then fold exactly the canonical prefix that projection has
@@ -508,6 +544,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
           generation: board.generation,
           boardStreamId: boardStreamId(gameId, board.generation),
         }),
+        200,
+        seatScoped,
       );
     }
 
@@ -522,6 +560,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         sourceStreamId: board.sourceStreamId,
         sourceThroughOffset: board.sourceThroughOffset,
       }),
+      200,
+      seatScoped,
     );
   }
 
@@ -563,6 +603,16 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
+    // `risk-demo-v1` is a retained fixture with no derived action stream. Say so
+    // in the same shape `/map` does rather than serving an empty stream that
+    // would read as "nothing is required of you" forever.
+    if (!isRulesetV2(rulesetOf(gameId))) {
+      return error(
+        400,
+        "BAD_REQUEST",
+        "The actions stream is available for v2 games only. Use GET /decision for a risk-demo-v1 seat.",
+      );
+    }
     const url = new URL(request.url);
     if (url.searchParams.has("cursor")) {
       return error(400, "BAD_REQUEST", "Use the offset query parameter.");

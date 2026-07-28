@@ -86,7 +86,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
     body: commandBody,
   });
   expect(ack.status).toBe(200);
-  const committedOffset: string = ack.body.sourceOffset;
+  const committedOffset: string = ack.body.eventOffset;
 
   // Materialize the board so its projection stream is persisted too.
   const boardBefore = await call(first.app, "GET", `/v1/games/${gameId}/board`);
@@ -125,7 +125,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
   });
   expect(retry.status).toBe(200);
   expect(retry.body.status).toBe("duplicate");
-  expect(retry.body.sourceOffset).toBe(committedOffset);
+  expect(retry.body.eventOffset).toBe(committedOffset);
 
   second.close();
 });

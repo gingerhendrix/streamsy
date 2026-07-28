@@ -3,8 +3,6 @@ import type { RiskErrorCode } from "../domain/commands.ts";
 import type { RiskErrorCodeV2 } from "../domain/commands-v2.ts";
 import type { DecisionContext } from "./decision.ts";
 import type { DecisionContextV2 } from "./decision-v2.ts";
-import type { GameEvent } from "../domain/events.ts";
-import type { GameEventV2 } from "../domain/events-v2.ts";
 import type {
   BoardView,
   ProjectedGame,
@@ -141,15 +139,22 @@ export interface PlayerIdentity {
   role: "host" | "player" | "agent";
 }
 
+/**
+ * A command ack states that the command was recorded and at which canonical
+ * offset — nothing more. Outcomes (dice, captures, phase changes) are published
+ * on the player's actions stream, so the ack never carries a partial `events`
+ * slice that reads like the whole result of the move.
+ *
+ * A browser that needs to wait for the board projection to catch up derives the
+ * transaction id itself with `boardProjectionTxId(commandId, eventOffset)`.
+ */
 export interface CommandAck {
   status: "accepted" | "duplicate";
   commandId: string;
-  sourceStreamId: string;
-  sourceOffset: string;
-  /** Final board-projection transition for this accepted command. */
-  txid: string;
-  events: Array<GameEvent | GameEventV2>;
+  /** Echo of the submitted turn precondition; absent on lobby commands. */
   turnId?: string;
+  /** Committed final canonical offset of this command's batch. */
+  eventOffset: string;
 }
 
 export interface CreateGameRequest {

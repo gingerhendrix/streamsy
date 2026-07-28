@@ -217,10 +217,17 @@ CURSOR_FILE=./player.cursor \
 bun run --cwd examples/risk-demo bot
 ```
 
-The bot persists only its actions-stream cursor. Each `ActionRequired` message contains the current
-turn, `legalMoves`, ownership/armies, and canonical events since the previous message, so steady-state
-play needs no `/decision` fetch. Human/bot defence prompts use the same stream; external-agent
-defence is server-resolved.
+The bot persists an actions-stream cursor plus any command it has posted but not yet seen
+acknowledged. Each `ActionRequired` message contains the current turn, `legalMoves`,
+ownership/armies, and canonical events since the previous message, so steady-state play needs no
+`/decision` fetch. Human/bot defence prompts use the same stream; external-agent defence is
+server-resolved.
+
+The cursor advances only once the message it points past has been answered. An `ActionRequired` is
+never re-announced — the server has already said everything it has to say about that position — so a
+consumer that persisted its cursor at read time and then crashed would wait for an event that is
+never coming. The retained in-flight body is replayed byte-identically on restart and the server
+dedupes it on `commandId`.
 
 `BASE_URL` must name the server's actual origin — the bot defaults to `http://localhost:1339`, and
 the server takes its port from `$PORT`. This repository-local command is bot infrastructure; it is

@@ -42,6 +42,17 @@ selection is never POSTed: the launcher makes at most one corrective model call 
 reason code, provided the configured decision bound has room for it. A second
 invalid selection terminates that launcher invocation.
 
+The launcher may be started before the host presses start. The immutable map does not exist until
+`GameStarted`, so `GET /map` answers `409 GAME_NOT_STARTED`; the launcher fetches it lazily at the
+first `ActionRequired` and spends the interval polling the actions stream rather than exiting.
+
+Crash resume is exact. `session.json`'s cursor advances only after the command answering a message
+reaches a terminal outcome, and `inflight.json` retains that command's exact request bytes until
+then. A process killed anywhere in between either replays the same bytes — which the server dedupes
+on `commandId` — or has already recorded that the ask is done. Advancing the cursor at read time
+would deadlock the seat: an `ActionRequired` is never re-announced, so nothing would ever arrive to
+replace the message that was skipped.
+
 Pass `--cancel-file <path>` to make creation of that file abort an active wait or
 strategy subprocess. `SIGINT` and `SIGTERM` use the same cleanup path. Every HTTP
 wait, model call, command retry, decision count, command count, and total run has

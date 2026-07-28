@@ -404,6 +404,8 @@ const errorCodes = [
   "WRONG_GAME",
   "NOT_FOUND",
   "BAD_REQUEST",
+  "INVALID_ACTION",
+  "AGENT_SEAT_REQUIRES_HOST",
   "PROJECTION_UNAVAILABLE",
   "INTERNAL",
 ] as const;
@@ -478,23 +480,21 @@ const schemas = {
   },
   CommandAck: {
     type: "object",
-    required: ["status", "commandId", "sourceStreamId", "sourceOffset", "txid", "events"],
+    description:
+      "Receipt only: the command was recorded, at this canonical offset. It is not the outcome — dice, captures and phase changes arrive on the player's actions stream. `accepted` and `duplicate` are both success.",
+    required: ["status", "commandId", "eventOffset"],
+    additionalProperties: false,
     properties: {
       status: { enum: ["accepted", "duplicate"] },
       commandId: { type: "string" },
-      sourceStreamId: {
+      turnId: {
         type: "string",
-        description: "Canonical event stream id.",
+        description: "Echo of the submitted turn precondition; absent on lobby commands.",
       },
-      sourceOffset: {
+      eventOffset: {
         type: "string",
         description: "Committed final canonical offset of the batch.",
       },
-      txid: {
-        type: "string",
-        description: "Identity of the command’s final board-projection transition.",
-      },
-      events: { type: "array", items: { type: "object" } },
     },
   },
   ErrorResponse: {
@@ -509,6 +509,20 @@ const schemas = {
           code: { enum: errorCodes },
           message: { type: "string" },
           currentTurnId: { type: "string" },
+          details: {
+            type: "array",
+            description:
+              "Field-level validation failures accompanying INVALID_ACTION. Each entry names the offending path, what was expected there, and what arrived.",
+            items: {
+              type: "object",
+              required: ["path", "expected", "received"],
+              properties: {
+                path: { type: "string" },
+                expected: { type: "string" },
+                received: {},
+              },
+            },
+          },
         },
       },
     },
@@ -790,42 +804,219 @@ const schemas = {
       moves: { type: "array", items: { type: "object" } },
     },
   },
-  PlayerActionNotification: {
+  AgentSeatRequest: {
+    type: "object",
     description:
-      "Derived, rebuildable wake hints on the per-player action stream. Never a correctness channel: a missed wake is covered by polling and, for combat, by the canonical timeout.",
+      "Open an agent seat. Omit `playerId` to join a new agent-controlled seat; pass the host's own player id to convert that existing seat into an agent seat. No other seat may be delegated.",
+    additionalProperties: false,
+    properties: {
+      name: { type: "string" },
+      color: {
+        type: "string",
+        description: "Optional colour request; assigned conflict-safely as on JoinGameRequest.",
+      },
+      playerId: {
+        type: "string",
+        description:
+          "Must equal the authenticated host capability's own playerId. Any other value is rejected with FORBIDDEN.",
+      },
+      commandId: { type: "string" },
+    },
+  },
+  AgentSeatResponse: {
+    type: "object",
+    description:
+      "The one place an agent capability is minted. Returned once, `Cache-Control: no-store`; the token never appears in a URL path or query.",
+    required: ["seat", "instructions"],
+    properties: {
+      seat: {
+        type: "object",
+        required: ["origin", "gameId", "playerId", "name", "color", "token", "urls"],
+        properties: {
+          origin: { type: "string" },
+          gameId: { type: "string" },
+          playerId: { type: "string" },
+          name: { type: "string" },
+          color: { type: "string" },
+          token: { type: "string", description: "Bearer capability; header use only." },
+          urls: {
+            type: "object",
+            description: "The complete four-endpoint agent surface, as origin-relative paths.",
+            required: ["map", "actions", "decision", "commands"],
+            properties: {
+              map: { type: "string" },
+              actions: { type: "string" },
+              decision: { type: "string" },
+              commands: { type: "string" },
+            },
+          },
+        },
+      },
+      instructions: {
+        type: "string",
+        description: "Pasteable seat instructions generated from the same descriptor.",
+      },
+    },
+  },
+  AgentMessage: {
+    description:
+      "One message on a player's durable, replay-safe actions stream. `ActionRequired` always wants exactly one command in response and is self-sufficient; `GameOver` is terminal and wants none.",
     oneOf: [
       {
         type: "object",
-        required: ["type", "notificationId", "gameId", "playerId", "turnId", "round", "phase"],
+        required: [
+          "type",
+          "messageId",
+          "seq",
+          "gameId",
+          "playerId",
+          "reason",
+          "turn",
+          "mode",
+          "pendingInteraction",
+          "legalMoves",
+          "board",
+          "since",
+          "eventOffset",
+        ],
         properties: {
-          type: { const: "TurnAvailable" },
-          notificationId: { type: "string" },
+          type: { const: "ActionRequired" },
+          messageId: {
+            type: "string",
+            description: "`act:<gameId>:<playerId>:<seq>`; stable across a stream rebuild.",
+          },
+          seq: { type: "integer", minimum: 1, description: "Dense, 1-based, per player." },
           gameId: { type: "string" },
           playerId: { type: "string" },
-          turnId: { type: "string" },
-          round: { type: "integer" },
-          phase: { const: "reinforce" },
-          causedBySourceOffset: { type: "string" },
-          decisionUrl: { type: "string" },
+          reason: {
+            enum: [
+              "turn-started",
+              "phase-changed",
+              "reinforcement-remaining",
+              "attack-resolved",
+              "occupation-required",
+              "defense-required",
+            ],
+            description:
+              "Why an action is needed now. A reinforcement that empties the pool reports `phase-changed`, not `reinforcement-remaining`.",
+          },
+          turn: {
+            type: "object",
+            required: ["id", "round", "phase", "activePlayerId", "reinforcement"],
+            properties: {
+              id: { type: "string" },
+              round: { type: "integer" },
+              phase: { enum: ["reinforce", "attack", "fortify"] },
+              activePlayerId: { type: "string" },
+              reinforcement,
+            },
+          },
+          mode: { enum: ["active-turn", "defense"] },
+          pendingInteraction: {
+            oneOf: [pendingInteraction, { type: "null" }],
+            description:
+              "Null for an agent seat's own defence: that is server-resolved, and its outcome arrives in `since.events`.",
+          },
+          legalMoves: {
+            type: "array",
+            minItems: 1,
+            items: legalActionV2,
+            description: "Exactly the moves that may be submitted in response to this message.",
+          },
+          board: {
+            type: "object",
+            required: ["territories", "players"],
+            properties: {
+              territories: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["id", "ownerId", "armies"],
+                  properties: {
+                    id: { type: "string" },
+                    ownerId: { type: ["string", "null"] },
+                    armies: { type: "integer" },
+                  },
+                },
+              },
+              players: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["id", "eliminated"],
+                  properties: {
+                    id: { type: "string" },
+                    eliminated: { type: "boolean" },
+                  },
+                },
+              },
+            },
+          },
+          since: {
+            type: "object",
+            description:
+              "Every canonical event since this player's previous message. Chains without gaps: `fromEventOffset` is the predecessor's `eventOffset`, or null for the first message.",
+            required: ["fromEventOffset", "events"],
+            properties: {
+              fromEventOffset: { type: ["string", "null"] },
+              events: { type: "array", items: { type: "object" } },
+            },
+          },
+          eventOffset: {
+            type: "string",
+            description:
+              "Canonical offset this message was derived at. Not the stream cursor — use `nextOffset` for that.",
+          },
         },
       },
       {
         type: "object",
-        description: "risk-demo-v2 only: an out-of-turn defence is waiting on this player.",
-        required: ["type", "notificationId", "gameId", "playerId", "turnId", "attackId"],
+        required: [
+          "type",
+          "messageId",
+          "seq",
+          "gameId",
+          "playerId",
+          "winner",
+          "since",
+          "eventOffset",
+        ],
         properties: {
-          type: { const: "DefenseAvailable" },
-          notificationId: { type: "string" },
+          type: { const: "GameOver" },
+          messageId: { type: "string" },
+          seq: { type: "integer", minimum: 1 },
           gameId: { type: "string" },
           playerId: { type: "string" },
-          turnId: { type: "string" },
-          attackId: { type: "string" },
-          deadlineAt: { type: "integer" },
-          causedBySourceOffset: { type: "string" },
-          decisionUrl: { type: "string" },
+          winner: {
+            type: "object",
+            required: ["id", "name"],
+            properties: { id: { type: "string" }, name: { type: "string" } },
+          },
+          since: {
+            type: "object",
+            required: ["fromEventOffset", "events"],
+            properties: {
+              fromEventOffset: { type: ["string", "null"] },
+              events: { type: "array", items: { type: "object" } },
+            },
+          },
+          eventOffset: { type: "string" },
         },
       },
     ],
+  },
+  AgentActionsPage: {
+    type: "object",
+    required: ["messages", "nextOffset", "upToDate"],
+    properties: {
+      messages: { type: "array", items: { $ref: "#/components/schemas/AgentMessage" } },
+      nextOffset: {
+        type: "string",
+        description:
+          "Opaque cursor to send as `offset` on the next read. Always returned, including on an empty bounded wait, so resume after a crash is exact.",
+      },
+      upToDate: { type: "boolean" },
+    },
   },
 } as const;
 
@@ -881,7 +1072,12 @@ export const openApiDocument = {
         summary:
           'Create a game; returns the host player and a one-time host capability. New games are `risk-demo-v2`; pass `ruleset: "risk-demo-v1"` for a legacy fixed-map game.',
         requestBody: jsonRequest("CreateGameRequest"),
-        responses: { "201": jsonResponse("CommandAck") },
+        responses: {
+          "201": {
+            description:
+              "Game, host identity, one-time host capability, and the CommandAck for the create.",
+          },
+        },
       },
     },
     "/v1/games/{gameId}/players": {
@@ -889,14 +1085,24 @@ export const openApiDocument = {
         tags: ["lobby"],
         summary: "Join a game; returns the player and a one-time player capability.",
         requestBody: jsonRequest("JoinGameRequest"),
-        responses: { "201": jsonResponse("CommandAck") },
+        responses: {
+          "201": {
+            description:
+              "Player identity, one-time player capability, and the CommandAck for the join.",
+          },
+        },
       },
     },
     "/v1/games/{gameId}/agent-seats": {
       post: {
         tags: ["lobby"],
-        summary: "Open or delegate an agent seat (host capability required).",
-        responses: { "201": { description: "One-time seat descriptor and instructions." } },
+        summary:
+          "Open a new agent seat, or convert the host's own seat into one (host capability required). This is the only place an agent capability is minted.",
+        requestBody: jsonRequest("AgentSeatRequest"),
+        responses: {
+          "201": jsonResponse("AgentSeatResponse"),
+          "403": jsonResponse("ErrorResponse"),
+        },
       },
     },
     "/v1/games/{gameId}/start": {
@@ -920,8 +1126,12 @@ export const openApiDocument = {
     "/v1/games/{gameId}/map": {
       get: {
         tags: ["agent"],
-        summary: "Immutable map geometry, names, adjacency, continents, and bonuses.",
-        responses: { "200": { description: "Immutable map document." } },
+        summary:
+          "Immutable map geometry, names, adjacency, continents, and bonuses. Available once the game has started; 409 GAME_NOT_STARTED before that.",
+        responses: {
+          "200": { description: "Immutable map document." },
+          "409": jsonResponse("ErrorResponse"),
+        },
       },
     },
     "/v1/games/{gameId}/decision": {
@@ -940,6 +1150,7 @@ export const openApiDocument = {
         requestBody: eitherRuleset("GameCommand", "GameCommandV2"),
         responses: {
           "200": jsonResponse("CommandAck"),
+          "400": jsonResponse("ErrorResponse"),
           "409": jsonResponse("ErrorResponse"),
         },
       },
@@ -966,7 +1177,10 @@ export const openApiDocument = {
             schema: { type: "integer", minimum: 0, maximum: 30000 },
           },
         ],
-        responses: { "200": { description: "messages, nextOffset, and upToDate." } },
+        responses: {
+          "200": jsonResponse("AgentActionsPage"),
+          "400": jsonResponse("ErrorResponse"),
+        },
       },
     },
   },

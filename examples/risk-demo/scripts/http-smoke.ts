@@ -119,7 +119,7 @@ async function main(): Promise<void> {
       body: commandBody,
     });
     assert(ack.status === 200 && ack.body.status === "accepted", `command: ${ack.status}`);
-    const committedOffset: string = ack.body.sourceOffset;
+    const committedOffset: string = ack.body.eventOffset;
 
     const board = await api(server.baseUrl, "GET", `/v1/games/${gameId}/board`);
     assert(board.body.sourceThroughOffset === committedOffset, "board watermark != ack offset");
@@ -161,6 +161,42 @@ async function main(): Promise<void> {
     );
 
     // The React board SPA is served and mounts on #root.
+    // The v1 fixture has no actions stream and says so, rather than serving an
+    // empty one that would read as "nothing is required of you".
+    const v1Actions = await api(server.baseUrl, "GET", `/v1/games/${gameId}/players/me/actions`, {
+      token: tokenByPlayer[active],
+    });
+    assert(
+      v1Actions.status === 400 && v1Actions.body.error.code === "BAD_REQUEST",
+      `v1 actions guard returned ${v1Actions.status}`,
+    );
+
+    // Seat-scoped reads are never cached, and the private actions stream is not
+    // reachable through the public spectator facade.
+    const decisionHeaders = await fetch(`${server.baseUrl}/v1/games/${gameId}/decision`, {
+      headers: { authorization: `Bearer ${tokenByPlayer[active]}` },
+    });
+    assert(
+      decisionHeaders.headers.get("cache-control") === "no-store",
+      "decision response was cacheable",
+    );
+    const leakedStream = await fetch(
+      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions/actions1`,
+    );
+    assert(leakedStream.status === 404, "the private actions stream is publicly readable");
+
+    // A host may delegate its own seat and no other.
+    const foreignDelegation = await api(
+      server.baseUrl,
+      "POST",
+      `/v1/games/${agentGameId}/agent-seats`,
+      { token: agentGame.body.capability, body: { playerId: "p_not_the_host" } },
+    );
+    assert(
+      foreignDelegation.status === 403,
+      `foreign seat delegation returned ${foreignDelegation.status}`,
+    );
+
     const spa = await fetch(`${server.baseUrl}/`);
     const html = await spa.text();
     assert(spa.status === 200 && html.includes('id="root"'), "board SPA did not render");
@@ -190,7 +226,7 @@ async function main(): Promise<void> {
     });
     assert(retry.body.status === "duplicate", "command retry was not deduplicated after restart");
     assert(
-      retry.body.sourceOffset === committedOffset,
+      retry.body.eventOffset === committedOffset,
       "command retry offset changed after restart",
     );
 
@@ -207,7 +243,7 @@ async function main(): Promise<void> {
     assert(decisionAfter.status === 200, "capability verifier lost across restart");
 
     console.log(
-      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/agent routes/authz + SQLite restart)",
+      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/agent routes/authz/seat-scoped headers + SQLite restart)",
     );
   } finally {
     await server.stop();

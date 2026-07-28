@@ -295,8 +295,10 @@ export async function throwUntilCapture(
       action: { type: "roll-defense", attackId: current.attackId },
     });
     expect(rolled.status).toBe(200);
-    const resolved = rolled.body.events.find((e: any) => e.type === "AttackResolved");
-    if (resolved.territoryCaptured) return current;
+    // The ack is a receipt, not the outcome (C8): a capture is observed as the
+    // occupation the canonical board now demands.
+    const after = await gameMeta(h.app, game);
+    if (after.pendingInteraction?.type === "occupation") return current;
 
     const decision = await decisionFor(h.app, game, current.attacker);
     const choice = decision.legalMoves

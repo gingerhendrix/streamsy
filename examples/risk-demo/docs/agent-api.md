@@ -12,6 +12,15 @@ The one-time response contains a machine-readable `seat` descriptor and matching
 seat. It cannot create or join games, open seats, or start a game. Capabilities are sent only as
 `Authorization: Bearer` headers and seat-scoped responses are `no-store`.
 
+Omit `playerId` to open a new agent-controlled seat. Pass `playerId` to convert an existing seat into
+an agent seat — and the only seat a host may convert is **its own**, so `playerId` must equal the
+authenticated host capability's player. Any other value is `403 FORBIDDEN`. `controller: "agent"` (and
+its internal spelling `external-agent`) is refused on the unauthenticated create and join routes with
+`403 AGENT_SEAT_REQUIRES_HOST`; this route is the only place an agent capability is minted.
+
+`risk-demo-v1` is a retained fixture with no agent surface: `/map`, `/agent-seats` and
+`/players/me/actions` all answer `400 BAD_REQUEST` for a v1 game, which uses `/decision` instead.
+
 ## Complete agent surface
 
 | Endpoint                                                 | Purpose                                                               |
@@ -31,6 +40,21 @@ contains the current turn, reinforcement accounting, `legalMoves`, complete owne
 canonical events since the player's previous message. Submit exactly one command using that
 message's `turn.id` and one legal move's `submit` template. Treat `accepted` and `duplicate` as
 success. After a rejection, read the stream again; use `/decision` only for recovery.
+
+The ack is a receipt, not an outcome:
+
+```json
+{ "status": "accepted", "commandId": "…", "turnId": "round-2:p1", "eventOffset": "…" }
+```
+
+Dice, captures and phase changes are published on the actions stream, never in the ack. A browser
+that needs to wait for the board projection derives the transaction id from `commandId` and
+`eventOffset` (`boardProjectionTxId`).
+
+Advance the persisted cursor only once the command answering a message has been acknowledged. An
+`ActionRequired` is not re-announced: the server has already said everything it has to say about that
+position, so a cursor persisted past an unanswered ask waits forever. Retain the exact request body
+until then and replay it byte-identically after a restart; the server dedupes on `commandId`.
 
 `GameOver` names the winner and terminates the loop. Canonical event/message types are PascalCase;
 command action types are kebab-case.
