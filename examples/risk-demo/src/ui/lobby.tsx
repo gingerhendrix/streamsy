@@ -44,13 +44,10 @@ export function LobbyV2(props: {
   hostPlayerId?: string;
   identity: Identity | null;
   name: string;
-  color: string;
   busy: boolean;
   agentSeats: AgentSeat[];
-  unavailableColors: readonly string[];
   mapSeed?: string;
   onName(value: string): void;
-  onColor(value: string): void;
   onJoin(): void;
   onStart(): void;
   onAddAgent(): void;
@@ -124,13 +121,7 @@ export function LobbyV2(props: {
 
           {!props.identity && (
             <div className="muster-join">
-              <PlayerFields
-                name={props.name}
-                color={props.color}
-                onName={props.onName}
-                onColor={props.onColor}
-                unavailableColors={props.unavailableColors}
-              />
+              <PlayerFields name={props.name} onName={props.onName} />
               <button
                 className="primary"
                 onClick={props.onJoin}

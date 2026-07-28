@@ -36,13 +36,10 @@ function renderLobby(options: {
       hostPlayerId="p1"
       identity={options.identity ?? null}
       name="Visitor"
-      color="#3b82f6"
       busy={false}
       agentSeats={[]}
-      unavailableColors={[]}
       mapSeed={options.mapSeed}
       onName={() => {}}
-      onColor={() => {}}
       onJoin={() => {}}
       onStart={() => {}}
       onAddAgent={() => {}}
@@ -79,6 +76,8 @@ describe("LobbyV2 commands", () => {
   it("offers a join seat, not host commands, before an identity exists", () => {
     const markup = renderLobby({ players: [player({ id: "p1" })] });
     expect(markup).toContain("Join this game");
+    expect(markup).toContain("Your name");
+    expect(markup).not.toContain("Colour");
     expect(markup).not.toContain("Start game");
     expect(markup).not.toContain("Open an agent seat");
     expect(markup).toContain("Copy invite link");

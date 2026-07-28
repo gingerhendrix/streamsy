@@ -152,17 +152,7 @@ export function TopBar(props: { gameId: string; children: ReactNode }) {
   );
 }
 
-export function PlayerFields(props: {
-  name: string;
-  color: string;
-  onName(value: string): void;
-  onColor(value: string): void;
-  unavailableColors?: readonly string[];
-  /** The player's canonical colour remains selectable even when it appears in the roster. */
-  ownedColor?: string;
-}) {
-  const unavailable = new Set((props.unavailableColors ?? []).map(normalizedColor));
-  const ownedColor = props.ownedColor ? normalizedColor(props.ownedColor) : null;
+export function PlayerFields(props: { name: string; onName(value: string): void }) {
   return (
     <div className="player-fields">
       <label>
@@ -173,35 +163,6 @@ export function PlayerFields(props: {
           onChange={(event) => props.onName(event.target.value)}
         />
       </label>
-      <fieldset>
-        <legend>Colour</legend>
-        <div className="swatches">
-          {COLORS.map((color) => {
-            const selected = normalizedColor(color) === normalizedColor(props.color);
-            const unavailableToPlayer =
-              unavailable.has(normalizedColor(color)) && normalizedColor(color) !== ownedColor;
-            return (
-              <button
-                key={color}
-                type="button"
-                className={`swatch${selected ? " selected" : ""}${unavailableToPlayer ? " unavailable" : ""}`}
-                style={{ backgroundColor: color }}
-                onClick={() => props.onColor(color)}
-                aria-label={
-                  unavailableToPlayer
-                    ? `${color} unavailable — already selected`
-                    : `Choose ${color}`
-                }
-                aria-pressed={selected}
-                disabled={unavailableToPlayer}
-                title={unavailableToPlayer ? "Already selected by another player" : undefined}
-              >
-                {unavailableToPlayer && <span aria-hidden="true">×</span>}
-              </button>
-            );
-          })}
-        </div>
-      </fieldset>
     </div>
   );
 }

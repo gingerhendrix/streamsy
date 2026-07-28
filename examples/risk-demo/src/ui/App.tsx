@@ -354,7 +354,7 @@ export function App() {
             A procedurally generated hex map. Recorded dice. A board that rebuilds and synchronises
             live from a durable projection.
           </p>
-          <PlayerFields name={name} color={color} onName={setName} onColor={setColor} />
+          <PlayerFields name={name} onName={setName} />
           <button className="primary big" onClick={createGame} disabled={busy}>
             {busy ? "Creating…" : "Create a game"}
           </button>
@@ -593,12 +593,7 @@ function Lobby(props: {
       </div>
       {!props.identity && (
         <div className="join-panel">
-          <PlayerFields
-            name={props.name}
-            color={props.color}
-            onName={props.onName}
-            onColor={props.onColor}
-          />
+          <PlayerFields name={props.name} onName={props.onName} />
           <button
             className="primary"
             onClick={props.onJoin}

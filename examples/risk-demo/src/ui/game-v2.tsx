@@ -671,12 +671,9 @@ export function GameV2Screen(props: GameV2ScreenProps) {
           mapSeed={board.game.mapSeed}
           identity={identity}
           name={props.name}
-          color={props.color}
           busy={busy}
           agentSeats={agentSeats}
-          unavailableColors={unavailableColors}
           onName={props.onName}
-          onColor={props.onColor}
           onJoin={joinGame}
           onStart={startGame}
           onAddAgent={addAgentSeat}
