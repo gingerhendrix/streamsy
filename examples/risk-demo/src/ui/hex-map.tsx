@@ -177,7 +177,7 @@ function terrainMarks(terrain: Terrain): ReactNode {
   }
 }
 
-function TerrainDefs() {
+export function TerrainDefs() {
   return (
     <defs>
       {TERRAIN_TYPES.map((terrain) => (

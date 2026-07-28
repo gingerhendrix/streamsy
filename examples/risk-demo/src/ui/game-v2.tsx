@@ -39,7 +39,7 @@ import type {
   PlayCommandRequestV2,
 } from "../application/api.ts";
 import type { LegalActionV2 } from "../application/legal-actions-v2.ts";
-import type { ProjectedHexV2, ProjectedPlayerV2 } from "../board/projection-v2.ts";
+import type { ProjectedHexV2 } from "../board/projection-v2.ts";
 import { RULES_V2 } from "../domain/map-v2.ts";
 import {
   attackAgainAction,
@@ -72,9 +72,9 @@ import {
   type NameLookup,
   type RevealPlan,
 } from "./presentation-v2.ts";
+import { LobbyV2, type AgentSeat } from "./lobby.tsx";
 import {
   COLORS,
-  PlayerFields,
   SyncPill,
   TopBar,
   acknowledgementNotice,
@@ -82,7 +82,6 @@ import {
   errorMessage,
   isError,
   normalizedColor,
-  playerRoleLabel,
   type Identity,
 } from "./shared.tsx";
 import { StatusColumn } from "./status-column.tsx";
@@ -96,12 +95,7 @@ type Selection =
 /** Which manoeuvre a click means during the attack phase; both share sources. */
 type Intent = "attack" | "fortify";
 
-/** A seat opened for a user-supplied coding agent, with its pasteable instructions. */
-export interface AgentSeat {
-  playerId: string;
-  name: string;
-  instructions: string;
-}
+export type { AgentSeat } from "./lobby.tsx";
 
 const AGENT_COLORS = ["#8b5cf6", "#22c1a5", "#d49b35", "#3b82f6"];
 
@@ -674,6 +668,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
         <LobbyV2
           players={board.players}
           hostPlayerId={board.game.hostPlayerId}
+          mapSeed={board.game.mapSeed}
           identity={identity}
           name={props.name}
           color={props.color}
@@ -1150,128 +1145,4 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
   }
 
   return null;
-}
-
-// ---------------------------------------------------------------------------
-// Supporting panels
-// ---------------------------------------------------------------------------
-
-function LobbyV2(props: {
-  players: ProjectedPlayerV2[];
-  hostPlayerId?: string;
-  identity: Identity | null;
-  name: string;
-  color: string;
-  busy: boolean;
-  agentSeats: AgentSeat[];
-  unavailableColors: readonly string[];
-  onName(value: string): void;
-  onColor(value: string): void;
-  onJoin(): void;
-  onStart(): void;
-  onAddAgent(): void;
-  onCopy(): Promise<void>;
-}) {
-  const isHost = props.identity?.role === "host";
-  return (
-    <section className="lobby-card">
-      <div className="lobby-top">
-        <div>
-          <span className="section-label">Lobby · {props.players.length}/4</span>
-          <h2>{props.players.length < 2 ? "Waiting for a challenger" : "Ready to deploy"}</h2>
-          <p>
-            {isHost
-              ? "Share the link or open an agent seat, then start when everyone has arrived."
-              : props.identity
-                ? "The host will begin when the lobby is ready."
-                : "Choose a name and claim a player seat."}
-          </p>
-        </div>
-        <button className="invite-button" onClick={() => void props.onCopy()}>
-          Copy invite link
-        </button>
-      </div>
-      <div className="lobby-players">
-        {props.players.map((player) => (
-          <div className="lobby-player" key={player.id}>
-            <span className="avatar" style={{ background: player.color }}>
-              {player.name.slice(0, 1).toUpperCase()}
-            </span>
-            <div>
-              <b>{player.name}</b>
-              <small>
-                {playerRoleLabel(props.hostPlayerId, player.id)}
-                {player.controller === "external-agent"
-                  ? " · agent"
-                  : player.controller === "bot"
-                    ? " · bot"
-                    : ""}
-                {player.id === props.identity?.playerId ? " · you" : ""}
-              </small>
-            </div>
-            <span className="ready">Ready</span>
-          </div>
-        ))}
-        {Array.from({ length: Math.max(0, 2 - props.players.length) }, (_, index) => (
-          <div className="empty-seat" key={index}>
-            Open player seat
-          </div>
-        ))}
-      </div>
-
-      {!props.identity && (
-        <div className="join-panel">
-          <PlayerFields
-            name={props.name}
-            color={props.color}
-            onName={props.onName}
-            onColor={props.onColor}
-            unavailableColors={props.unavailableColors}
-          />
-          <button
-            className="primary"
-            onClick={props.onJoin}
-            disabled={props.busy || !props.name.trim()}
-          >
-            {props.busy ? "Joining…" : "Join this game"}
-          </button>
-        </div>
-      )}
-
-      {isHost && (
-        <div className="host-actions">
-          <button onClick={props.onAddAgent} disabled={props.busy || props.players.length >= 4}>
-            Open an agent seat
-          </button>
-          <button
-            className="primary start-button"
-            onClick={props.onStart}
-            disabled={props.busy || props.players.length < 2}
-          >
-            {props.players.length < 2 ? "Waiting for 2 players" : "Start game"}
-          </button>
-        </div>
-      )}
-
-      {props.agentSeats.map((seat) => (
-        <div className="agent-seat" key={seat.playerId}>
-          <b>{seat.name} is seated.</b>
-          <span>Paste this complete block into your coding-agent UI:</span>
-          <textarea
-            readOnly
-            rows={14}
-            value={seat.instructions}
-            aria-label={`${seat.name} instructions`}
-          />
-          <button
-            onClick={async () => {
-              await navigator.clipboard.writeText(seat.instructions);
-            }}
-          >
-            Copy agent instructions
-          </button>
-        </div>
-      ))}
-    </section>
-  );
 }
