@@ -118,6 +118,19 @@ describe("combat view", () => {
     });
   });
 
+  it("returns to attack selection after a captured country has been occupied", () => {
+    const view = combatView({
+      combat: null,
+      turn: {
+        ...TURN,
+        captures: 1,
+        latestDice: { ...TURN.latestDice!, territoryCaptured: true },
+      },
+      moves: MOVES,
+    });
+    expect(view).toBeNull();
+  });
+
   it("still names the attacker when the move feed has scrolled past the throw", () => {
     const view = combatView({ combat: null, turn: TURN, moves: [] });
     expect(view?.attackerId).toBe("p1");

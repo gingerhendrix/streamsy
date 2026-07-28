@@ -8,8 +8,11 @@
  * function is where the two sources are reconciled:
  *
  *  - a live `combat` row is authoritative while an attack is open;
- *  - once it clears, `turn.latestDice` still carries the recorded faces, losses,
- *    capture flag, and resolution source for the newest throw of this turn.
+ *  - once a non-capturing throw clears, `turn.latestDice` still carries the
+ *    recorded faces, losses, and resolution source for the newest throw of this
+ *    turn;
+ *  - once a captured country has been occupied, there is no combat card: the
+ *    attacker returns to the phase's initial country-selection view.
  *
  * Both are recorded values. Nothing here invents a face, a loss, or a deadline —
  * the fallback path simply has less identity to work with, which is why the
@@ -95,7 +98,7 @@ export function combatView(sources: CombatSources): CombatView | null {
   }
 
   const dice = sources.turn?.latestDice;
-  if (!dice) return null;
+  if (!dice || dice.territoryCaptured) return null;
   // The attacker is the active player by definition, so that seat is always
   // recoverable; the defender is only named by the move feed.
   const attackerId =
