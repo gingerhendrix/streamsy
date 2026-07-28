@@ -317,7 +317,13 @@ export const PHASE_STATE_LABELS: Record<PhaseState, string> = {
  */
 export function phaseInstruction(
   phase: GamePhaseV2,
-  options: { state: PhaseState; yourTurn: boolean; activePlayerName: string },
+  options: {
+    state: PhaseState;
+    yourTurn: boolean;
+    activePlayerName: string;
+    /** The player is composing the optional manoeuvre, before it is canonically spent. */
+    fortifyPending?: boolean;
+  },
 ): string {
   if (options.state === "upcoming") {
     switch (phase) {
@@ -346,7 +352,9 @@ export function phaseInstruction(
     case "attack":
       return "Attack a highlighted enemy neighbour from a country holding two or more armies. When finished, end attacking and make your one fortification.";
     case "fortify":
-      return "The manoeuvre is spent. End the turn when you are ready.";
+      return options.fortifyPending
+        ? "Move armies once between any two countries connected through your own territory, or end the turn without moving."
+        : "The manoeuvre is spent. End the turn when you are ready.";
   }
 }
 

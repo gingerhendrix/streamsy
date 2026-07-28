@@ -67,7 +67,7 @@ function buttonNamed(node: ReactNode, name: string): ReactElement<{ onClick(): v
 }
 
 describe("attack controls", () => {
-  it("replaces the Fortify toggle with one explicit End attack control", () => {
+  it("puts the Fortify transition after the attack controls", () => {
     let intent = "attack";
     const rendered = controls({
       fortifyAction: FORTIFY,
@@ -76,32 +76,43 @@ describe("attack controls", () => {
       },
     });
     const html = renderToStaticMarkup(rendered);
-    expect(html).toContain("End attack →");
-    expect(html).not.toMatch(/>Fortify</);
-    buttonNamed(rendered, "End attack →").props.onClick();
+    expect(html).not.toContain("End attack");
+    expect(html.indexOf("Pick a highlighted country")).toBeLessThan(html.indexOf("Fortify →"));
+    buttonNamed(rendered, "Fortify →").props.onClick();
     expect(intent).toBe("fortify");
   });
 
-  it("keeps End attack available when no fortification is legal", () => {
+  it("keeps Fortify available when no fortification is legal", () => {
     const html = renderToStaticMarkup(controls());
-    expect(html).toMatch(/class="end-attack">End attack →/);
+    expect(html).toMatch(/class="fortify-next">Fortify →/);
   });
 
-  it("names the existing fortify submission as the end of attacking", () => {
+  it("offers Back before the fortification controls and submits the canonical move", () => {
     let submitted: unknown;
+    let intent = "fortify";
+    let selectionCleared = false;
     const rendered = controls({
       intent: "fortify",
       fortifyAction: FORTIFY,
       selection: { kind: "fortify", from: "a", to: "b", armies: 2 },
+      setIntent: (next) => {
+        intent = next;
+      },
+      setSelection: (next) => {
+        selectionCleared = next === null;
+      },
       submit: async (action) => {
         submitted = action;
         return true;
       },
     });
     const html = renderToStaticMarkup(rendered);
-    expect(html).toContain("Attack ended · choose your fortification");
-    expect(html).toContain("End attack · move 2");
-    buttonNamed(rendered, "End attack · move 2").props.onClick();
+    expect(html.indexOf("← Back")).toBeLessThan(html.indexOf("Move armies"));
+    expect(html).toContain("Fortify with 2");
+    buttonNamed(rendered, "← Back").props.onClick();
+    expect(intent).toBe("attack");
+    expect(selectionCleared).toBe(true);
+    buttonNamed(rendered, "Fortify with 2").props.onClick();
     expect(submitted).toEqual({ type: "fortify", from: "a", to: "b", armies: 2 });
   });
 });

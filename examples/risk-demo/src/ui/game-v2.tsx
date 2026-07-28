@@ -578,6 +578,12 @@ export function GameV2Screen(props: GameV2ScreenProps) {
   const spectating = !identity || !playerById.has(identity.playerId);
   const activePlayer = playerById.get(board?.game.activePlayerId ?? "");
   const winner = playerById.get(board?.game.winnerId ?? "");
+  // Choosing a fortification is still canonically legal from `attack`; presenting
+  // it as the active section does not advance or rewind the aggregate.
+  const presentedPhase =
+    board?.game.phase === "attack" && decision?.mode === "active-turn" && intent === "fortify"
+      ? "fortify"
+      : board?.game.phase;
   const route: { from: string; to: string } | null =
     selection?.kind === "attack" && selection.to
       ? { from: selection.from, to: selection.to }
@@ -687,7 +693,7 @@ export function GameV2Screen(props: GameV2ScreenProps) {
         <TurnColumn
           status={board.game.status}
           turn={board.turn}
-          phase={board.game.phase}
+          phase={presentedPhase}
           activePlayer={activePlayer}
           names={names}
           statusLine={statusLine}
@@ -982,22 +988,18 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
   if (props.attackPhase || props.attackAction || props.fortifyAction) {
     return (
       <section className="controls-card">
-        <div className="intent-toggle" role="group" aria-label="Manoeuvre">
-          {props.intent === "attack" ? (
-            <button
-              className="end-attack"
-              disabled={props.busy}
-              onClick={() => {
-                props.setIntent("fortify");
-                props.setSelection(null);
-              }}
-            >
-              End attack →
-            </button>
-          ) : (
-            <span className="intent-state">Attack ended · choose your fortification</span>
-          )}
-        </div>
+        {props.intent === "fortify" && (
+          <button
+            className="phase-back"
+            disabled={props.busy}
+            onClick={() => {
+              props.setIntent("attack");
+              props.setSelection(null);
+            }}
+          >
+            ← Back
+          </button>
+        )}
 
         {selection?.kind === "attack" && props.attackAction ? (
           selection.to ? (
@@ -1075,7 +1077,7 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
                       .then((accepted) => accepted && props.setSelection(null))
                   }
                 >
-                  End attack · move {selection.armies}
+                  Fortify with {selection.armies}
                 </button>
                 <button onClick={() => props.setSelection({ ...selection, to: undefined })}>
                   Change destination
@@ -1096,6 +1098,19 @@ export function PhaseControls(props: PhaseControlsProps): ReactNode {
                 ? "Pick a highlighted country to make your one fortification."
                 : "No fortification is available. End the turn when ready."}
           </p>
+        )}
+
+        {props.intent === "attack" && (
+          <button
+            className="fortify-next"
+            disabled={props.busy}
+            onClick={() => {
+              props.setIntent("fortify");
+              props.setSelection(null);
+            }}
+          >
+            Fortify →
+          </button>
         )}
       </section>
     );

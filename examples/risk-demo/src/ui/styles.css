@@ -1807,13 +1807,11 @@ summary:focus-visible,
   flex: 1;
   font-size: 0.78rem;
 }
-.intent-toggle,
 .seat-toggle {
   display: flex;
   gap: 0;
   border: 1px solid var(--ink);
 }
-.intent-toggle button,
 .seat-toggle button {
   flex: 1;
   /* Collapsed borders, so the group reads as one segmented control. */
@@ -1821,25 +1819,34 @@ summary:focus-visible,
   padding: 0.5rem 0.6rem;
   font-size: 0.75rem;
 }
-.intent-toggle button.selected,
 .seat-toggle button.selected {
   border-color: var(--ink);
   background: var(--ink);
   color: var(--paper-raised);
 }
-.intent-toggle .end-attack {
+.fortify-next {
   width: 100%;
-  margin: -1px;
+  margin-top: 0.35rem;
   background: var(--paper-raised);
   color: var(--ink);
 }
-.intent-state {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
+.phase-back {
+  align-self: flex-start;
+  min-height: 0;
+  padding: 0.15rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.phase-back:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink);
 }
 .attack-again {
   width: 100%;

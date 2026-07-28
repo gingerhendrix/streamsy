@@ -224,6 +224,8 @@ export function TurnColumn(props: TurnColumnProps) {
                   state,
                   yourTurn: props.yourTurn,
                   activePlayerName,
+                  fortifyPending:
+                    phase === "fortify" && props.phase === "fortify" && turn?.phase === "attack",
                 })}
                 summary={phaseSummary(phase, turn)}
                 detail={

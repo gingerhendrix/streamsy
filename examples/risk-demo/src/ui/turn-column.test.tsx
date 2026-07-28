@@ -83,6 +83,42 @@ describe("current-turn column", () => {
     expect(html).toContain("Opens after the single fortify move");
   });
 
+  it("presents an uncommitted fortification in the active Fortify section", () => {
+    const html = renderToStaticMarkup(
+      <TurnColumn
+        status="playing"
+        turn={TURN}
+        phase="fortify"
+        activePlayer={ADA}
+        names={NAMES}
+        statusLine="Your turn"
+        yourTurn
+        selfId="p1"
+        controls={<button>← Back</button>}
+      />,
+    );
+    expect(html).toContain("Move armies once between any two countries");
+    expect(html).toMatch(/phase-section completed[\s\S]*Attack/);
+    expect(html).toMatch(/phase-section active[\s\S]*Fortify[\s\S]*← Back/);
+  });
+
+  it("keeps canonical post-fortification copy when only ending the turn remains", () => {
+    const html = renderToStaticMarkup(
+      <TurnColumn
+        status="playing"
+        turn={{ ...TURN, phase: "fortify" }}
+        phase="fortify"
+        activePlayer={ADA}
+        names={NAMES}
+        statusLine="Your turn"
+        yourTurn
+        selfId="p1"
+      />,
+    );
+    expect(html).toContain("The manoeuvre is spent. End the turn when you are ready.");
+    expect(html).not.toContain("Move armies once");
+  });
+
   it("ranks an open attack above the phases and files a resolved one under Attack", () => {
     const card = <p>combat card</p>;
     const live = renderToStaticMarkup(
