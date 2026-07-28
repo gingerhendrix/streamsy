@@ -1646,7 +1646,7 @@ summary:focus-visible,
   font-size: 0.68rem;
 }
 .phase-back {
-  align-self: flex-end;
+  justify-self: end;
   min-height: 0;
   padding: 0.15rem 0;
   border: 0;
