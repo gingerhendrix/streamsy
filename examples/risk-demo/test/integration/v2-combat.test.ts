@@ -269,13 +269,32 @@ describe("risk-demo-v2 defence resolution", () => {
       turnId: attack.turnId,
       action: { type: "roll-defense", attackId: attack.attackId },
     };
+    // Rigged faces are consumed once. A retry that rolled again would fall back
+    // to the seeded rng and record different dice.
+    h.rig([1, 1]);
     const first = await post(h.app, game, attack.defender, body);
     expect(first.status).toBe(200);
+    const original = structuredClone(
+      (h.stores.commands.get(game.gameId, "retry-me")!.events as any[]).find(
+        (e) => e.type === "AttackResolved",
+      ),
+    );
+    expect(original.defenderRolls.length).toBeGreaterThan(0);
+
     const retry = await post(h.app, game, attack.defender, body);
     expect(retry.status).toBe(200);
     expect(retry.body.status).toBe("duplicate");
     expect(retry.body.eventOffset).toBe(first.body.eventOffset);
-    expect(retry.body.events).toEqual(first.body.events);
+    // C8 narrowed the ack to a receipt, so the dice are not in it at all: the
+    // original outcome is proven from canonical history instead.
+    expect(Object.keys(retry.body).toSorted()).toEqual([
+      "commandId",
+      "eventOffset",
+      "status",
+      "turnId",
+    ]);
+    const afterRetry = h.stores.commands.get(game.gameId, "retry-me")!;
+    expect((afterRetry.events as any[]).find((e) => e.type === "AttackResolved")).toEqual(original);
   });
 
   it("returns the original dice on a duplicate timeout delivery", async () => {

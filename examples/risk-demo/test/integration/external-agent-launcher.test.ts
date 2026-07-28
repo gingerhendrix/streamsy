@@ -96,6 +96,23 @@ function occupationAsk(seq: number) {
   };
 }
 
+/**
+ * An ask whose published legal space reads two ways: the first `fortify` entry
+ * offers no choices at all, so the contract builder skips it and the validator —
+ * which matches on the first entry of the action's type — refuses whatever the
+ * model picks from the second. Any such disagreement leaves the ask owed.
+ */
+function driftingAsk(seq: number) {
+  return {
+    ...occupationAsk(seq),
+    pendingInteraction: undefined,
+    legalMoves: [
+      { type: "fortify", choices: [] },
+      { type: "fortify", choices: [{ from: "a", to: "b", maxArmies: 3 }] },
+    ],
+  };
+}
+
 interface FixtureState {
   /** Before the host presses start there is no map: `/map` answers 409. */
   started: boolean;
@@ -558,6 +575,41 @@ describe("repository-independent external-seat launcher", () => {
         const result = await run(session, "claude", binary);
         expect(JSON.parse(result.stdout).commands).toBe(1);
         expect(state.commandBodies).toHaveLength(1);
+        expect((await readJson(path.join(session, "session.json"))).cursor).toBe("1");
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    it("stops on validator drift rather than stranding the ask behind the cursor", async () => {
+      const root = await fixtureRoot();
+      const state = fixtureState({ messages: [driftingAsk(1)] });
+      const fixture = await startFixture(state);
+      try {
+        const session = await initialize(root, fixture.origin);
+        const binary = await fakeHarness(root);
+
+        // Drift is the one outstanding-ask path that submits nothing. Left to
+        // keep looping, the very next (empty) page would commit the cursor past
+        // an occupation the server still expects, and no later event would ever
+        // re-announce it. It is terminal instead, and the owed-ask guard would
+        // hold the cursor even if it were not.
+        await expect(run(session, "claude", binary)).rejects.toMatchObject({
+          stderr: expect.stringContaining("failed launcher validation"),
+        });
+        expect(state.commandBodies).toHaveLength(0);
+        const evidence = await evidenceOf(session);
+        expect(evidence).toContain('"kind":"action-validation-drift"');
+        expect(evidence).toContain('"terminal":true,"commandSubmitted":false');
+        expect((await readJson(path.join(session, "session.json"))).cursor).toBeNull();
+
+        // Republished consistently, the same ask is still there for a fresh
+        // process to answer: the restart resumed at it, not past it.
+        state.messages = [occupationAsk(1)];
+        const result = await run(session, "claude", binary);
+        expect(JSON.parse(result.stdout).commands).toBe(1);
+        expect(state.commandBodies).toHaveLength(1);
+        expect(JSON.parse(state.commandBodies[0]!).action.type).toBe("occupy-territory");
         expect((await readJson(path.join(session, "session.json"))).cursor).toBe("1");
       } finally {
         await fixture.close();

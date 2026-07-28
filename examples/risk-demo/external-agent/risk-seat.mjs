@@ -21,6 +21,13 @@ const INFLIGHT_FILE = "inflight.json";
 const ATTEMPT_SEQUENCE_FILE = "attempt-sequence.json";
 const ATTEMPTS_DIRECTORY = "model-attempts";
 
+/**
+ * Command statuses that re-posting cannot change. Authorization (401/403) and
+ * throttling (429) are deliberately excluded: those are conditions of the
+ * caller, not verdicts on the command, and must never settle an owed ask.
+ */
+const DETERMINISTIC_REJECTIONS = new Set([400, 404, 409, 410, 422]);
+
 function fail(message, code = 1) {
   const error = new Error(message);
   error.exitCode = code;
@@ -745,10 +752,16 @@ async function submitStable({
         await settle();
         return { response: response.body, posts, bodySha256, firstAck };
       }
-      if (response.status === 409) {
+      // A deterministic rejection is an answer, not a transport failure: the
+      // canonical board has already moved past this command (a resolved attack,
+      // a passed turn), so re-posting the same bytes can only repeat it. The
+      // ask it answers is settled and the cursor may advance — the same reading
+      // the in-repo bot applies to its own replays.
+      if (DETERMINISTIC_REJECTIONS.has(response.status)) {
         await appendEvidence(directory, "command-conflict", {
           actionType: payload.action.type,
           errorCode: response.body?.error?.code ?? "UNKNOWN",
+          httpStatus: response.status,
           bodySha256,
           post: posts,
         });
@@ -867,7 +880,15 @@ async function runLoop(options) {
 
     /** The stream position this process has read to, ahead of the durable cursor. */
     let liveCursor = session.cursor;
+    /**
+     * The `messageId` of an `ActionRequired` that has been read but not yet
+     * answered by a settled command. While one is owed, no later page — not even
+     * an empty one — may move the durable cursor, because the durable cursor is
+     * the only thing that would ever bring the ask back after a restart.
+     */
+    let owedAsk = null;
     const commitCursor = async () => {
+      if (owedAsk) return;
       session.cursor = liveCursor;
       await atomicJson(path.join(directory, SESSION_FILE), session);
     };
@@ -885,9 +906,10 @@ async function runLoop(options) {
       if (stream.status !== 200) fail(`actions stream returned HTTP ${stream.status}`);
       liveCursor = stream.body.nextOffset;
       const message = stream.body.messages?.at(-1);
+      if (message?.type === "ActionRequired") owedAsk = message.messageId ?? true;
       // Nothing is owed for an empty page or a terminal one, so the cursor is
       // safe to persist. An `ActionRequired` is committed only by its command.
-      if (message?.type !== "ActionRequired") await commitCursor();
+      await commitCursor();
       if (!message) continue;
       if (message.type === "GameOver") {
         await appendEvidence(directory, "finished", {
@@ -994,7 +1016,21 @@ async function runLoop(options) {
         }
       }
       const action = resolved.action;
-      if (!actionIsLegal(action, observed.legalMoves)) continue;
+      // A resolved choice the launcher's own validator refuses means the two
+      // readings of the published legal space disagree. Continuing would leave
+      // the ask owed forever, so drift is terminal and the cursor stays put:
+      // the ask survives, and a fixed process picks it up unchanged.
+      if (!actionIsLegal(action, observed.legalMoves)) {
+        await appendEvidence(directory, "action-validation-drift", {
+          attemptId,
+          actionType: action.type,
+          terminal: true,
+          commandSubmitted: false,
+        });
+        fail(
+          `resolved ${action.type} failed launcher validation against the published legal moves`,
+        );
+      }
 
       const payload = {
         commandId: `${harness}-${randomUUID()}`,
@@ -1012,6 +1048,9 @@ async function runLoop(options) {
         signal: controller.signal,
       });
       posts += result.posts;
+      // Answered either way: `submitStable` has already committed the cursor
+      // through this ask before dropping its in-flight record.
+      owedAsk = null;
       if (result.response) commands += 1;
       if (result.conflict) continue;
     }

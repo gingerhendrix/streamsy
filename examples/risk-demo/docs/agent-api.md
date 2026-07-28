@@ -79,5 +79,5 @@ Malformed command bodies return:
 ```
 
 The actions stream is derived replay-safely from `games/<gameId>/events` into the generation-suffixed
-private stream `games/<gameId>/players/<playerId>/actions/actions1`. It is never exposed by the
+private stream `games/<gameId>/players/<playerId>/actions/actions2`. It is never exposed by the
 public `/streams/` facade.

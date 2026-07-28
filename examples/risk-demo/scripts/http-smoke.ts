@@ -181,7 +181,7 @@ async function main(): Promise<void> {
       "decision response was cacheable",
     );
     const leakedStream = await fetch(
-      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions/actions1`,
+      `${server.baseUrl}/streams/games/${agentGameId}/players/${agentGame.body.player.id}/actions/actions2`,
     );
     assert(leakedStream.status === 404, "the private actions stream is publicly readable");
 
