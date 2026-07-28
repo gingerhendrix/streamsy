@@ -119,7 +119,7 @@ describe("current-turn column", () => {
     expect(html).not.toContain("Move armies once");
   });
 
-  it("ranks an open attack above the phases and files a resolved one under Attack", () => {
+  it("keeps both an open attack and a resolved throw inside the Attack phase", () => {
     const card = <p>combat card</p>;
     const live = renderToStaticMarkup(
       <TurnColumn
@@ -132,11 +132,11 @@ describe("current-turn column", () => {
         yourTurn={false}
         selfId="p2"
         combatCard={card}
-        combatLive
       />,
     );
-    // Above the phase list while the attack is open — it can interrupt anyone.
-    expect(live.indexOf("combat card")).toBeLessThan(live.indexOf("phase-list"));
+    expect(live.indexOf("combat card")).toBeGreaterThan(live.indexOf("phase-list"));
+    expect(live.indexOf("combat card")).toBeLessThan(live.lastIndexOf("Fortify"));
+    expect(live.split("combat card")).toHaveLength(2);
 
     const resolved = renderToStaticMarkup(
       <TurnColumn
@@ -151,8 +151,8 @@ describe("current-turn column", () => {
         combatCard={card}
       />,
     );
-    // Once resolved it is evidence, shown once, inside the phase that produced it.
     expect(resolved.indexOf("combat card")).toBeGreaterThan(resolved.indexOf("phase-list"));
+    expect(resolved.indexOf("combat card")).toBeLessThan(resolved.lastIndexOf("Fortify"));
     expect(resolved.split("combat card")).toHaveLength(2);
   });
 

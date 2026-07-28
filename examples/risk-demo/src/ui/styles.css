@@ -1636,10 +1636,14 @@ summary:focus-visible,
   color: var(--paper-raised);
 }
 .fortify-next {
-  width: 100%;
+  justify-self: start;
+  min-height: 0;
   margin-top: 0.35rem;
+  padding: 0.38rem 0.55rem;
+  border-color: var(--line);
   background: var(--paper-raised);
-  color: var(--ink);
+  color: var(--ink-muted);
+  font-size: 0.68rem;
 }
 .phase-back {
   align-self: flex-end;
@@ -1663,8 +1667,12 @@ summary:focus-visible,
   width: 100%;
 }
 .attack-again {
-  width: 100%;
+  display: grid;
+  gap: 0.55rem;
   margin-top: 0.65rem;
+}
+.attack-again > .primary {
+  width: 100%;
 }
 .stepper {
   display: flex;

@@ -34,6 +34,7 @@ export function attackTerritoryIds(
 export function attackAgainAction(
   action: DeclareAttackAction | undefined,
   combat: CombatView | null,
+  attackerDice = combat?.attackerDice ?? 1,
 ): Extract<GameAction, { type: "declare-attack" }> | null {
   if (!action || !combat || combat.status !== "resolved" || combat.territoryCaptured) return null;
   const choice = action.choices.find(
@@ -44,7 +45,7 @@ export function attackAgainAction(
         type: "declare-attack",
         from: choice.from,
         to: choice.to,
-        attackerDice: choice.maxAttackerDice,
+        attackerDice: Math.max(1, Math.min(attackerDice, choice.maxAttackerDice)),
       }
     : null;
 }

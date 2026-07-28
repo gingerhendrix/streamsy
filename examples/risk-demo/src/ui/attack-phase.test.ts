@@ -67,13 +67,25 @@ describe("attack-phase canonical actions", () => {
     });
   });
 
-  it("attacks the same pair again directly using fresh legal dice", () => {
+  it("defaults a repeat to the last attack troop count", () => {
     expect(attackAgainAction(ACTION, RESOLVED)).toEqual({
       type: "declare-attack",
       from: "a",
       to: "x",
       attackerDice: 3,
     });
+  });
+
+  it("clamps the repeat troop count to the fresh legal range", () => {
+    const reduced = {
+      ...ACTION,
+      choices: ACTION.choices.map((choice) =>
+        choice.from === "a" && choice.to === "x" ? { ...choice, maxAttackerDice: 2 } : choice,
+      ),
+    };
+    expect(attackAgainAction(reduced, RESOLVED)).toMatchObject({ attackerDice: 2 });
+    expect(attackAgainAction(ACTION, RESOLVED, 0)).toMatchObject({ attackerDice: 1 });
+    expect(attackAgainAction(ACTION, RESOLVED, 99)).toMatchObject({ attackerDice: 3 });
   });
 
   it("does not repeat a conquest or a pairing that is no longer legal", () => {

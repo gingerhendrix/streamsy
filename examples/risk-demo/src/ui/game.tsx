@@ -702,10 +702,10 @@ export function GameScreen(props: GameScreenProps) {
           statusLine={statusLine}
           yourTurn={yourTurn}
           selfId={identity?.playerId}
-          combatLive={visibleCombat !== null && visibleCombat.status !== "resolved"}
           combatCard={
             visibleCombat && (
               <CombatCard
+                key={visibleCombat.attackId}
                 combat={visibleCombat}
                 names={names}
                 colorOf={colorOf}
@@ -728,11 +728,24 @@ export function GameScreen(props: GameScreenProps) {
                     `${identity.playerId}:defense:${defenseAction.attackId}`,
                   );
                 }}
-                onAttackAgain={
+                attackAgain={
                   repeatAttack
-                    ? () => {
-                        setSelection(null);
-                        void submit(repeatAttack);
+                    ? {
+                        maxAttackerDice:
+                          attackAction?.choices.find(
+                            (choice) =>
+                              choice.from === visibleCombat.from && choice.to === visibleCombat.to,
+                          )?.maxAttackerDice ?? repeatAttack.attackerDice,
+                        onSubmit: (attackerDice) => {
+                          const action = attackAgainAction(
+                            attackAction,
+                            visibleCombat,
+                            attackerDice,
+                          );
+                          if (!action) return;
+                          setSelection(null);
+                          void submit(action);
+                        },
                       }
                     : undefined
                 }

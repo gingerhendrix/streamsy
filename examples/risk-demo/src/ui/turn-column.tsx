@@ -10,9 +10,8 @@
  *    what is about to be asked — is legible before it is your problem.
  *
  * Everything the sections read comes from the projection's `turn` row, so the column
- * never reconstructs turn state by paging the bounded move feed. Combat is an
- * interrupt rather than a phase: its card sits above the sections because it can
- * arrive during someone else's turn and outranks whatever phase is in progress.
+ * never reconstructs turn state by paging the bounded move feed. Combat belongs to
+ * Attack: both an open declaration and its resolved dice stay inside that phase.
  */
 
 import type { CSSProperties, ReactNode } from "react";
@@ -167,13 +166,8 @@ export interface TurnColumnProps {
   /** Whether the reader is the seat being asked to act this turn. */
   yourTurn: boolean;
   selfId?: string;
-  /**
-   * The attack card, when there is one. An *open* attack is an interrupt and is
-   * ranked above the phases; a resolved throw is evidence and belongs to the attack
-   * phase that produced it, which is why it is placed rather than repeated.
-   */
+  /** The open declaration or resolved dice, placed inside the Attack phase. */
   combatCard?: ReactNode;
-  combatLive?: boolean;
   /** Controls for the phase in progress, or the closing card once the game ends. */
   controls?: ReactNode;
   footer?: ReactNode;
@@ -189,8 +183,6 @@ export function TurnColumn(props: TurnColumnProps) {
     turn && turn.reinforcement.total > 0 ? (
       <ReinforcementDetail turn={turn} names={names} />
     ) : undefined;
-  const attackDetail = props.combatLive ? undefined : props.combatCard;
-
   return (
     <aside className="turn-column" aria-label="Current turn">
       <div className="column-head" style={{ "--player": activeColor } as CSSProperties}>
@@ -204,8 +196,6 @@ export function TurnColumn(props: TurnColumnProps) {
           </p>
         )}
       </div>
-
-      {props.combatLive ? props.combatCard : null}
 
       {playing ? (
         <ol className="phase-list" aria-label="Turn phases">
@@ -229,7 +219,7 @@ export function TurnColumn(props: TurnColumnProps) {
                   phase === "reinforce"
                     ? reinforcementDetail
                     : phase === "attack"
-                      ? attackDetail
+                      ? props.combatCard
                       : undefined
                 }
               >

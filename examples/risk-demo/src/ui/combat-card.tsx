@@ -8,12 +8,11 @@
  * already rolled. The countdown likewise displays the canonical
  * `defenseDeadlineAt` — it never decides when the window closes.
  *
- * Combat is an interrupt rather than a phase, so this card is placed at the top of
- * the current-turn column: it can arrive during somebody else's turn, and when it
- * does it is the only thing being asked of the reader.
+ * Combat remains inside the Attack phase so its declaration, dice, and repeat
+ * controls retain the turn context that produced them.
  */
 
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import type { PlayerController } from "../domain/events.ts";
 
 import type { CombatView } from "./combat-view.ts";
@@ -128,7 +127,10 @@ export interface CombatCardProps {
   reveal: RevealPlan;
   busy: boolean;
   onRollDefense(): void;
-  onAttackAgain?: () => void;
+  attackAgain?: {
+    maxAttackerDice: number;
+    onSubmit(attackerDice: number): void;
+  };
 }
 
 export function CombatCard(props: CombatCardProps) {
@@ -140,6 +142,16 @@ export function CombatCard(props: CombatCardProps) {
   const pairs = combat.defenderRolls ? dicePairs(combat.attackerRolls, combat.defenderRolls) : null;
   const isDefender = props.mode === "defense" && combat.defenderId === props.selfId;
   const defenderController = props.controllerOf(combat.defenderId);
+  const repeatMax = props.attackAgain?.maxAttackerDice ?? 1;
+  const [repeatSelection, setRepeatSelection] = useState<{
+    attackId: string;
+    attackerDice: number;
+  } | null>(null);
+  const requestedRepeatDice =
+    repeatSelection?.attackId === combat.attackId
+      ? repeatSelection.attackerDice
+      : combat.attackerDice;
+  const boundedRepeatDice = Math.max(1, Math.min(requestedRepeatDice, repeatMax));
 
   return (
     <section className="combat-card" aria-live="polite">
@@ -252,14 +264,44 @@ export function CombatCard(props: CombatCardProps) {
           {combat.resolutionSource && (
             <small>{resolutionLabel(combat.resolutionSource, defenderName)}</small>
           )}
-          {props.onAttackAgain && (
-            <button
-              className="primary attack-again"
-              disabled={props.busy}
-              onClick={props.onAttackAgain}
-            >
-              Attack again
-            </button>
+          {props.attackAgain && (
+            <div className="attack-again">
+              <div className="stepper" role="group" aria-label="Attacking troops">
+                <button
+                  onClick={() =>
+                    setRepeatSelection({
+                      attackId: combat.attackId,
+                      attackerDice: Math.max(1, boundedRepeatDice - 1),
+                    })
+                  }
+                  disabled={props.busy || boundedRepeatDice <= 1}
+                  aria-label="Attacking troops: one fewer"
+                >
+                  −
+                </button>
+                <b aria-live="polite">{boundedRepeatDice}</b>
+                <button
+                  onClick={() =>
+                    setRepeatSelection({
+                      attackId: combat.attackId,
+                      attackerDice: Math.min(repeatMax, boundedRepeatDice + 1),
+                    })
+                  }
+                  disabled={props.busy || boundedRepeatDice >= repeatMax}
+                  aria-label="Attacking troops: one more"
+                >
+                  +
+                </button>
+                <small>1–{repeatMax}</small>
+              </div>
+              <button
+                className="primary"
+                disabled={props.busy}
+                onClick={() => props.attackAgain?.onSubmit(boundedRepeatDice)}
+              >
+                Attack again with {boundedRepeatDice}
+              </button>
+            </div>
           )}
         </div>
       )}

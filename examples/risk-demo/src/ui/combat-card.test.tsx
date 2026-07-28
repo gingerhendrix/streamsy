@@ -97,10 +97,35 @@ describe("combat card", () => {
       resolutionSource: "human" as const,
       defenseDeadlineAt: undefined,
     };
-    expect(card({ combat: resolved, onAttackAgain: () => {} })).toContain("Attack again");
+    const repeat = card({
+      combat: resolved,
+      attackAgain: { maxAttackerDice: 3, onSubmit: () => {} },
+    });
+    expect(repeat).toContain("Attacking troops");
+    expect(repeat).toContain("Attack again with 3");
     expect(card({ combat: resolved })).not.toContain("Attack again");
     expect(
-      card({ combat: { ...resolved, territoryCaptured: true }, onAttackAgain: undefined }),
+      card({ combat: { ...resolved, territoryCaptured: true }, attackAgain: undefined }),
     ).not.toContain("Attack again");
+  });
+
+  it("clamps the repeat control's initial troop count to the current maximum", () => {
+    const resolved = {
+      ...PENDING,
+      status: "resolved" as const,
+      defenderRolls: [5, 3],
+      attackerLosses: 1,
+      defenderLosses: 1,
+      territoryCaptured: false,
+      resolutionSource: "human" as const,
+      defenseDeadlineAt: undefined,
+    };
+    const html = card({
+      combat: resolved,
+      attackAgain: { maxAttackerDice: 2, onSubmit: () => {} },
+    });
+    expect(html).toContain("1–2");
+    expect(html).toContain("Attack again with 2");
+    expect(html).not.toContain("Attack again with 3");
   });
 });
