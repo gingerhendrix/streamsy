@@ -154,7 +154,10 @@ The public request vocabulary uses `controller: "agent"`; canonical events use
 The returned one-time bootstrap includes the four playing resources:
 
 - `GET /v1/games/:gameId/map`
-- `GET /v1/games/:gameId/players/me/actions?offset=&wait=`
+- `GET /v1/games/:gameId/players/me/actions?offset=` — a `text/event-stream` the
+  server holds for 30 seconds per connection; the client reconnects from the
+  latest `nextOffset`. `Accept: application/json` asks for one immediate page
+  instead.
 - `GET /v1/games/:gameId/decision`
 - `POST /v1/games/:gameId/commands`
 

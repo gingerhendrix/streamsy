@@ -23,9 +23,15 @@ node risk-seat.mjs run \
   --max-posts-per-command 2 \
   --wall-ms 120000 \
   --model-timeout-ms 45000 \
-  --wait-ms 3000 \
   --max-budget-usd 1
 ```
+
+The actions resource is a Server-Sent Events stream, so there is no long-poll
+duration to configure: the launcher opens one connection per iteration, takes
+the first batch it delivers, and reconnects from that batch's `nextOffset`. The
+server closes an idle connection after 30 seconds. `--wait-ms` configured the
+long poll that no longer exists and is now refused with an explanatory error
+rather than ignored.
 
 Use `--harness codex` for Codex. Both profiles use the same action-message,
 validation, retry, evidence, and cancellation path. Claude runs with
@@ -44,7 +50,7 @@ invalid selection terminates that launcher invocation.
 
 The launcher may be started before the host presses start. The immutable map does not exist until
 `GameStarted`, so `GET /map` answers `409 GAME_NOT_STARTED`; the launcher fetches it lazily at the
-first `ActionRequired` and spends the interval polling the actions stream rather than exiting.
+first `ActionRequired` and spends the interval held on the actions stream rather than exiting.
 
 Crash resume is exact. `session.json`'s cursor advances only after the command answering a message
 reaches a terminal outcome, and `inflight.json` retains that command's exact request bytes until

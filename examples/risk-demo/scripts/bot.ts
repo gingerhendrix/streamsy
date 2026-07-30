@@ -12,14 +12,19 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { createBot, type BotState, type HttpCall } from "../server/demo/bot.ts";
+import { ACTIONS_STREAM_TIMEOUT_MS } from "../src/application/actions-stream.ts";
+import {
+  createBot,
+  type BotState,
+  type HttpCall,
+  type OpenActionsStream,
+} from "../server/demo/bot.ts";
 
 const baseUrl = process.env.BASE_URL ?? "http://localhost:1339";
 const gameId = process.env.GAME_ID ?? "";
 const playerId = process.env.PLAYER_ID ?? "";
 const token = process.env.PLAYER_TOKEN ?? "";
 const cursorFile = process.env.CURSOR_FILE ?? "";
-const longPollMs = Number.parseInt(process.env.POLL_MS ?? "5000", 10);
 
 if (!gameId || !playerId || !token) {
   console.error("Set GAME_ID, PLAYER_ID, and PLAYER_TOKEN.");
@@ -27,13 +32,23 @@ if (!gameId || !playerId || !token) {
 }
 
 const httpCall: HttpCall = async (method, path, opts = {}) => {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: opts.accept ?? "application/json",
+  };
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   const init: RequestInit = { method, headers };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   const res = await fetch(`${baseUrl}${path}`, init);
   return { status: res.status, body: await res.json().catch(() => ({})) };
 };
+
+/** The actions resource is SSE; `EventSource` cannot carry the capability. */
+const openStream: OpenActionsStream = (path, opts) =>
+  fetch(`${baseUrl}${path}`, {
+    headers: { accept: "text/event-stream", authorization: `Bearer ${opts.token}` },
+    signal: opts.signal,
+  });
 
 function loadState(): BotState {
   if (cursorFile && existsSync(cursorFile)) {
@@ -57,6 +72,7 @@ async function main(): Promise<void> {
   // it were only written after the command had already settled.
   const bot = createBot({
     call: httpCall,
+    openStream,
     gameId,
     playerId,
     token,
@@ -83,8 +99,9 @@ async function main(): Promise<void> {
       await bot.playTurn();
       saveState(state);
     } else {
-      // Block on the turn stream until control passes to me.
-      const wake = await bot.awaitTurn(longPollMs);
+      // Block on the SSE turn stream until control passes to me. The server
+      // closes the connection on its own bound; this is one such connection.
+      const wake = await bot.awaitTurn(ACTIONS_STREAM_TIMEOUT_MS);
       saveState(state);
       // `Hex Domination` asks this seat to act out of turn too. Defence is attempted
       // whenever canonical state says one is open, not only on a `DefenseAvailable`

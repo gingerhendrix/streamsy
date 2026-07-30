@@ -91,9 +91,13 @@ async function api(
   baseUrl: string,
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<HttpResult> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // The actions resource streams by default; a JSON reader says so explicitly.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: options.accept ?? "application/json",
+  };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   const response = await fetch(`${baseUrl}${path}`, {
     method,

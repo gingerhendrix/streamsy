@@ -28,6 +28,7 @@
  * canonical timeout resolves the combat without it.
  */
 
+import { readActionsBatches } from "../../src/application/actions-stream.ts";
 import type { ActionRequired, AgentMessage } from "../game/action-notifier.ts";
 import {
   chooseAttack,
@@ -41,8 +42,17 @@ import {
 export type HttpCall = (
   method: string,
   path: string,
-  opts?: { token?: string; body?: unknown },
+  opts?: { token?: string; body?: unknown; accept?: string },
 ) => Promise<{ status: number; body: any }>;
+
+/**
+ * Open the actions SSE stream. Optional: a bot given one blocks on the stream,
+ * and a bot without one reads the immediate JSON page each time it is asked.
+ */
+export type OpenActionsStream = (
+  path: string,
+  opts: { token: string; signal: AbortSignal },
+) => Promise<Response>;
 
 /** Persisted bot state: an answered-through cursor plus any unacked command. */
 export interface BotState {
@@ -54,6 +64,8 @@ export interface BotState {
 
 export interface CreateBotOptions {
   call: HttpCall;
+  /** Supply to let `awaitTurn(ms)` block on the SSE stream instead of re-reading. */
+  openStream?: OpenActionsStream;
   gameId: string;
   playerId: string;
   token: string;
@@ -71,7 +83,11 @@ export interface CreateBotOptions {
 
 export interface Bot {
   readonly state: BotState;
-  /** Poll the action stream once; advance the cursor; return the latest wake seen. */
+  /**
+   * Take the next batch from the action stream and advance the cursor; return
+   * the latest wake seen. With `waitMs` and an `openStream`, block on the SSE
+   * stream for up to that long; otherwise read one immediate page.
+   */
   awaitTurn(waitMs?: number): Promise<any>;
   /** Take one action if this bot has a legal one right now. */
   step(): Promise<Record<string, unknown> | null>;
@@ -224,17 +240,58 @@ export function createBot(options: CreateBotOptions): Bot {
     }
   }
 
-  async function awaitTurn(waitMs = 0): Promise<AgentMessage | null> {
-    await resumeInflight();
+  function actionsPath(): string {
     const query = new URLSearchParams();
     if (liveCursor) query.set("offset", liveCursor);
-    if (waitMs > 0) query.set("wait", String(waitMs));
-    const res = await call("GET", `/v1/games/${gameId}/players/me/actions?${query.toString()}`, {
-      token,
-    });
+    const suffix = query.toString();
+    return `/v1/games/${gameId}/players/me/actions${suffix ? `?${suffix}` : ""}`;
+  }
+
+  /** One immediate page — the explicitly negotiated non-streaming reading. */
+  async function readPage(): Promise<{ messages: AgentMessage[]; nextOffset?: string } | null> {
+    const res = await call("GET", actionsPath(), { token, accept: "application/json" });
     if (res.status !== 200) return null;
-    liveCursor = res.body.nextOffset;
-    const messages: AgentMessage[] = res.body.messages ?? [];
+    return { messages: res.body.messages ?? [], nextOffset: res.body.nextOffset };
+  }
+
+  /**
+   * Block on the SSE stream until something arrives or `waitMs` elapses. The
+   * first batch carries the backlog, so this is also a catch-up read: a bot that
+   * blocks never needs a separate one.
+   */
+  async function readStream(
+    waitMs: number,
+  ): Promise<{ messages: AgentMessage[]; nextOffset?: string } | null> {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), waitMs);
+    try {
+      const response = await options.openStream!(actionsPath(), { token, signal: abort.signal });
+      if (response.status !== 200) return null;
+      const collected: AgentMessage[] = [];
+      let nextOffset: string | undefined;
+      for await (const batch of readActionsBatches<AgentMessage>(response)) {
+        nextOffset = batch.nextOffset;
+        collected.push(...batch.messages);
+        // The opening batch is the backlog and may legitimately be empty; keep
+        // holding the connection until it produces something or the bound ends.
+        if (collected.length > 0 || batch.closed) break;
+      }
+      return { messages: collected, nextOffset };
+    } catch {
+      // An aborted wait is an ordinary empty result: nothing happened in time.
+      return { messages: [] };
+    } finally {
+      clearTimeout(timer);
+      abort.abort();
+    }
+  }
+
+  async function awaitTurn(waitMs = 0): Promise<AgentMessage | null> {
+    await resumeInflight();
+    const page = waitMs > 0 && options.openStream ? await readStream(waitMs) : await readPage();
+    if (!page) return null;
+    if (page.nextOffset !== undefined) liveCursor = page.nextOffset;
+    const messages = page.messages;
     const newest = messages.length > 0 ? messages[messages.length - 1]! : null;
     // An empty page never clears an outstanding ask: the message is still owed
     // a command, and forgetting it here would strand it behind the cursor.

@@ -28,6 +28,15 @@ const ATTEMPTS_DIRECTORY = "model-attempts";
  */
 const DETERMINISTIC_REJECTIONS = new Set([400, 404, 409, 410, 422]);
 
+/**
+ * The actions resource is a Server-Sent Events stream. The server holds one
+ * connection for 30 seconds and then closes it; the client reconnects from the
+ * last `nextOffset` it was given, so resume is exact and no position state lives
+ * anywhere but that cursor. This bound is the protocol's, not a tunable: the
+ * launcher only sizes its own abort timer generously against it.
+ */
+const ACTIONS_STREAM_TIMEOUT_MS = 30_000;
+
 function fail(message, code = 1) {
   const error = new Error(message);
   error.exitCode = code;
@@ -468,6 +477,106 @@ async function fetchJson(url, options = {}, timeoutMs = 10_000, externalSignal) 
   }
 }
 
+/**
+ * Incremental Server-Sent Events parser.
+ *
+ * Chunk boundaries fall anywhere, so a partial trailing line is buffered until
+ * its newline arrives, and a frame is dispatched only on a blank line. Multiple
+ * `data:` lines in one frame are joined with newlines, per the EventSource
+ * specification — the actions stream writes a JSON array that way.
+ */
+function createSseParser() {
+  let buffer = "";
+  let event = "";
+  let data = [];
+  return {
+    push(chunk) {
+      buffer += chunk;
+      const frames = [];
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const raw of lines) {
+        const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+        if (line === "") {
+          if (data.length > 0 || event !== "") {
+            frames.push({ event: event || "message", data: data.join("\n") });
+          }
+          event = "";
+          data = [];
+          continue;
+        }
+        if (line.startsWith(":")) continue;
+        const colon = line.indexOf(":");
+        const field = colon === -1 ? line : line.slice(0, colon);
+        let value = colon === -1 ? "" : line.slice(colon + 1);
+        if (value.startsWith(" ")) value = value.slice(1);
+        if (field === "event") event = value;
+        else if (field === "data") data.push(value);
+      }
+      return frames;
+    },
+  };
+}
+
+/**
+ * Hold one actions connection until it produces messages, terminates, or the
+ * server closes it at its own bound. Returns the messages seen and the offset
+ * to reconnect from — never an offset ahead of messages this call returned, so
+ * a reconnection can neither skip an ask nor replay an answered one.
+ */
+async function nextActions({ url, headers, signal }) {
+  const controller = new AbortController();
+  // The server closes first; this only guards a connection that never does.
+  const bound = setTimeout(
+    () => controller.abort(new Error("actions stream bound")),
+    ACTIONS_STREAM_TIMEOUT_MS + 5_000,
+  );
+  bound.unref?.();
+  const abort = () => controller.abort(signal.reason);
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const response = await fetch(url, {
+      headers: { ...headers, accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    if (response.status !== 200) fail(`actions stream returned HTTP ${response.status}`);
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/event-stream")) {
+      fail(`actions stream returned ${contentType || "no content type"}`);
+    }
+    const parser = createSseParser();
+    const decoder = new TextDecoder();
+    const reader = response.body.getReader();
+    let messages = [];
+    let nextOffset;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
+          if (frame.event === "data") {
+            messages = messages.concat(JSON.parse(frame.data));
+            continue;
+          }
+          if (frame.event !== "control") continue;
+          const control = JSON.parse(frame.data);
+          nextOffset = control.nextOffset;
+          // A batch is complete at its control event: act on it now rather than
+          // holding a connection whose remaining bound buys nothing.
+          if (messages.length > 0 || control.closed) return { messages, nextOffset };
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+    return { messages, nextOffset };
+  } finally {
+    clearTimeout(bound);
+    signal?.removeEventListener("abort", abort);
+    controller.abort();
+  }
+}
+
 async function initialize(options) {
   const directory = path.resolve(String(options.state ?? ""));
   if ((!options.seat && !options["seat-file"]) || !options.state)
@@ -795,7 +904,12 @@ async function runLoop(options) {
   );
   const maxDecisions = positiveInteger(options["max-decisions"], "--max-decisions", 8);
   const wallMs = positiveInteger(options["wall-ms"], "--wall-ms", 120_000);
-  const waitMs = positiveInteger(options["wait-ms"], "--wait-ms", 3_000);
+  // The long poll it configured no longer exists. Refusing it by name is the
+  // only way an operator learns that, rather than silently getting a different
+  // blocking behaviour than the one they asked for.
+  if (options["wait-ms"] !== undefined) {
+    fail("--wait-ms is gone: the actions resource is an SSE stream with a fixed 30s bound");
+  }
   const modelTimeoutMs = positiveInteger(options["model-timeout-ms"], "--model-timeout-ms", 45_000);
   const requestTimeoutMs = positiveInteger(
     options["request-timeout-ms"],
@@ -896,16 +1010,16 @@ async function runLoop(options) {
     while (!controller.signal.aborted && decisions < maxDecisions && commands < maxCommands) {
       const actionsUrl = new URL(urls.actions);
       if (liveCursor) actionsUrl.searchParams.set("offset", liveCursor);
-      actionsUrl.searchParams.set("wait", String(waitMs));
-      const stream = await fetchJson(
-        actionsUrl,
-        { headers: authorizedHeaders(session) },
-        waitMs + requestTimeoutMs,
-        controller.signal,
-      );
-      if (stream.status !== 200) fail(`actions stream returned HTTP ${stream.status}`);
-      liveCursor = stream.body.nextOffset;
-      const message = stream.body.messages?.at(-1);
+      // One SSE connection per iteration: the batch that wakes this loop is
+      // followed by a long stretch of thinking and posting, so holding the
+      // connection across it would buy nothing and risk a stale socket.
+      const stream = await nextActions({
+        url: actionsUrl,
+        headers: authorizedHeaders(session),
+        signal: controller.signal,
+      });
+      if (stream.nextOffset !== undefined) liveCursor = stream.nextOffset;
+      const message = stream.messages.at(-1);
       if (message?.type === "ActionRequired") owedAsk = message.messageId ?? true;
       // Nothing is owed for an empty page or a terminal one, so the cursor is
       // safe to persist. An `ActionRequired` is committed only by its command.

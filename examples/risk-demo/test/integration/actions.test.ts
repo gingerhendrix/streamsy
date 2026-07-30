@@ -197,7 +197,7 @@ describe("player actions stream", () => {
     expect(response.status).toBe(400);
   });
 
-  it("returns an empty, up-to-date page when a bounded wait expires", async () => {
+  it("returns an empty, up-to-date page when the negotiated JSON reading has nothing new", async () => {
     const h = riskHarness();
     const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
@@ -207,16 +207,20 @@ describe("player actions stream", () => {
     const drained = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {
       token,
     });
+    // `Accept: application/json` never blocks: it answers immediately, whether
+    // or not there is anything to say.
+    const started = performance.now();
     const timed = await call(
       h.app,
       "GET",
-      `/v1/games/${game.gameId}/players/me/actions?offset=${drained.body.nextOffset}&wait=25`,
+      `/v1/games/${game.gameId}/players/me/actions?offset=${drained.body.nextOffset}`,
       { token },
     );
+    expect(performance.now() - started).toBeLessThan(1_000);
     expect(timed.status).toBe(200);
     expect(timed.body.messages).toEqual([]);
     expect(timed.body.upToDate).toBe(true);
-    // The cursor survives a timeout, so the next poll resumes from the same place.
+    // The cursor survives, so the next read resumes from the same place.
     expect(timed.body.nextOffset).toBe(drained.body.nextOffset);
   });
 

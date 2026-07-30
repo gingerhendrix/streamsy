@@ -13,6 +13,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { readActionsBatches, type ActionsBatch } from "../src/application/actions-stream.ts";
+
 const packageDir = new URL("..", import.meta.url).pathname;
 
 class SmokeError extends Error {}
@@ -57,9 +59,13 @@ async function api(
   baseUrl: string,
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; contentType: string; body: any }> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // The actions resource streams unless a caller negotiates the JSON reading.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: options.accept ?? "application/json",
+  };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   const res = await fetch(`${baseUrl}${path}`, {
     method,
@@ -70,6 +76,39 @@ async function api(
     status: res.status,
     contentType: res.headers.get("content-type") ?? "",
     body: await res.json(),
+  };
+}
+
+/** Open the actions resource as what it is: a Server-Sent Events stream. */
+function openActions(
+  baseUrl: string,
+  gameId: string,
+  token: string,
+  offset?: string,
+): Promise<Response> {
+  const query = offset ? `?offset=${encodeURIComponent(offset)}` : "";
+  return fetch(`${baseUrl}/v1/games/${gameId}/players/me/actions${query}`, {
+    headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+  });
+}
+
+/**
+ * Batch-by-batch reader over one connection. `next` answers `null` when nothing
+ * arrives within `timeoutMs`, which is how "the connection is still holding" is
+ * observed from the outside.
+ */
+function actionsReader(response: Response) {
+  const batches = readActionsBatches(response);
+  return {
+    async next(timeoutMs: number): Promise<ActionsBatch | null> {
+      const timer = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
+      const arrival = batches.next().then((result) => (result.done ? null : result.value));
+      return Promise.race([arrival, timer]);
+    },
+    async close(): Promise<void> {
+      await batches.return(undefined as never).catch(() => {});
+      await response.body?.cancel().catch(() => {});
+    },
   };
 }
 
@@ -163,6 +202,54 @@ async function main(): Promise<void> {
       "no actionable agent message after start",
     );
 
+    // The published reading of that resource is SSE, over a real socket: the
+    // backlog arrives at once, framed as data/control, and a reconnection from
+    // the offset the control frame named holds open instead of answering.
+    const seatToken = agentTokens[0]!;
+    const opened = await openActions(server.baseUrl, agentGameId, seatToken);
+    assert(opened.status === 200, `actions stream returned ${opened.status}`);
+    assert(
+      (opened.headers.get("content-type") ?? "").includes("text/event-stream"),
+      `actions stream is ${opened.headers.get("content-type")}`,
+    );
+    assert(
+      opened.headers.get("cache-control") === "no-store" &&
+        opened.headers.get("referrer-policy") === "no-referrer",
+      "the actions stream is cacheable or referable",
+    );
+    const first = actionsReader(opened);
+    const backlog = await first.next(5_000);
+    await first.close();
+    assert(backlog !== null, "the actions stream delivered no opening batch");
+    assert(
+      backlog.messages.some((message: any) => message.type === "ActionRequired"),
+      "the actions stream backlog carried no ActionRequired",
+    );
+    assert(typeof backlog.nextOffset === "string", "no control frame cursor");
+
+    const resumed = actionsReader(
+      await openActions(server.baseUrl, agentGameId, seatToken, backlog.nextOffset),
+    );
+    // Reconnecting re-states the cursor immediately and reports nothing new…
+    const caughtUp = await resumed.next(5_000);
+    assert(
+      caughtUp !== null && caughtUp.messages.length === 0,
+      "a resumed actions stream replayed or lost messages",
+    );
+    assert(caughtUp.nextOffset === backlog.nextOffset, "the resumed cursor moved");
+    // …and then holds the connection instead of answering empty and closing.
+    const held = await resumed.next(500);
+    assert(held === null, "a caught-up actions stream returned instead of holding");
+    await resumed.close();
+
+    const waited = await api(
+      server.baseUrl,
+      "GET",
+      `/v1/games/${agentGameId}/players/me/actions?wait=1000`,
+      { token: seatToken },
+    );
+    assert(waited.status === 400, `the removed long poll returned ${waited.status}`);
+
     // Seat-scoped reads are never cached, and the private actions stream is not
     // reachable through the public spectator facade.
     const decisionHeaders = await fetch(`${server.baseUrl}/v1/games/${gameId}/decision`, {
@@ -235,7 +322,7 @@ async function main(): Promise<void> {
     assert(decisionAfter.status === 200, "capability verifier lost across restart");
 
     console.log(
-      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/agent routes/authz/seat-scoped headers + SQLite restart)",
+      "✓ risk-demo HTTP smoke passed (create/join/start/command/board/agent routes/actions SSE/authz/seat-scoped headers + SQLite restart)",
     );
   } finally {
     await server.stop();

@@ -35,9 +35,13 @@ async function call(
   app: App,
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; body: any }> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // The actions resource streams unless a caller negotiates the JSON reading.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: options.accept ?? "application/json",
+  };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   const res = await app.fetch(
     new Request(`${BASE}${path}`, {

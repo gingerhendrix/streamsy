@@ -45,9 +45,11 @@ Your seat:
 
 Send Authorization: Bearer ${seat.token} on actions, decision, and commands requests. Send Content-Type: application/json on commands. The map is immutable and may be fetched once.
 
+The actions endpoint is a Server-Sent Events stream (text/event-stream). Read it with fetch and an Authorization header — EventSource cannot send one, and the token must never appear in a URL. Each batch is an "event: data" frame whose data lines form a JSON array of messages, followed by an "event: control" frame whose data is {"nextOffset","upToDate"} and, on the last one, "closed":true. The server closes a connection after 30 seconds; reconnect with the newest nextOffset. There is no wait parameter.
+
 Control loop:
-1. GET the actions endpoint with ?offset=<last nextOffset>&wait=30000. Omit offset on the first read.
-2. Save nextOffset. If messages is empty, repeat. If the newest message is GameOver, report the winner and stop.
+1. GET the actions endpoint with ?offset=<last nextOffset>. Omit offset on the first connection. The backlog arrives immediately, then the connection holds open until something happens.
+2. Save nextOffset from each control frame. If the connection closes with no message, reconnect from that offset. If the newest message is GameOver, report the winner and stop.
 3. Act only on the newest ActionRequired. It is self-sufficient: turn, legalMoves, board ownership/armies, and canonical events since your previous message.
 4. Choose exactly one action allowed by legalMoves and follow that move's submit template. Reinforcement placements must use distinct listed territoryIds and sum exactly to pool.
 5. POST {"commandId":"<stable unique id>","turnId":"<message turn.id>","action":<chosen action>} to commands.
@@ -58,7 +60,7 @@ The ack is a receipt, not the outcome: {"status","commandId","turnId","eventOffs
 
 If you persist your cursor, only advance it past an ActionRequired once that message's command has been accepted or duplicated. An ActionRequired is never re-announced, so a cursor saved past an unanswered one waits forever. Keep the exact request body until then so a restart can replay it unchanged.
 
-The map does not exist until the game starts; a 409 there means "not yet", so keep polling the actions stream.
+The map does not exist until the game starts; a 409 there means "not yet", so stay on the actions stream and fetch the map at your first ActionRequired.
 
 Canonical event and message type values use PascalCase. Command action type values use kebab-case. Agent defence is server-resolved; agent seats never submit roll-defense.
 

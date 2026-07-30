@@ -22,7 +22,7 @@ import { createInMemoryStores, type Stores } from "../server/persistence/stores.
 import { createManualScheduler, type ManualScheduler } from "../server/game/defense-timer.ts";
 import type { Rng } from "../src/domain/rng.ts";
 import { createSeededRng } from "../src/domain/rng.ts";
-import type { HttpCall } from "../server/demo/bot.ts";
+import type { HttpCall, OpenActionsStream } from "../server/demo/bot.ts";
 
 export const BASE = "http://risk.test";
 export const DEFENSE_MS = 15_000;
@@ -48,7 +48,7 @@ export function riggableRng(seed: number): Rng & { rig(faces: readonly number[])
   };
 }
 
-export function riskHarness(seed = 11): Harness {
+export function riskHarness(seed = 11, options: { actionsStreamTimeoutMs?: number } = {}): Harness {
   const protocol = createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
   const stores = createInMemoryStores();
   const scheduler = createManualScheduler();
@@ -61,6 +61,7 @@ export function riskHarness(seed = 11): Harness {
     now: () => clock.now,
     scheduler,
     defenseTimeoutMs: DEFENSE_MS,
+    actionsStreamTimeoutMs: options.actionsStreamTimeoutMs,
   });
   return { app, stores, protocol, scheduler, clock, rig: rng.rig };
 }
@@ -84,9 +85,14 @@ export async function call(
   app: App,
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; body: any }> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // The actions resource streams unless a caller asks for the immediate page, so
+  // every JSON-reading helper says so explicitly.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: options.accept ?? "application/json",
+  };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   const res = await app.fetch(
     new Request(`${BASE}${path}`, {
@@ -101,6 +107,17 @@ export async function call(
 /** The `HttpCall` shape the scripted bot consumes. */
 export function httpFor(app: App): HttpCall {
   return (method, path, opts = {}) => call(app, method, path, opts);
+}
+
+/** Open an SSE actions stream against an in-process app. */
+export function streamFor(app: App): OpenActionsStream {
+  return (path, opts) =>
+    app.fetch(
+      new Request(`${BASE}${path}`, {
+        headers: { accept: "text/event-stream", authorization: `Bearer ${opts.token}` },
+        signal: opts.signal,
+      }),
+    );
 }
 
 export interface Game {

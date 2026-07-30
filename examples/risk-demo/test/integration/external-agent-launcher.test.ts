@@ -26,6 +26,7 @@ import {
   buildModelContract,
   resolveModelSelection,
 } from "../../external-agent/risk-seat.mjs";
+import { actionsControlFrame, actionsDataFrame } from "../../src/application/actions-stream.ts";
 
 const execFileAsync = promisify(execFile);
 const LAUNCHER = path.resolve("external-agent/risk-seat.mjs");
@@ -124,6 +125,10 @@ interface FixtureState {
   hangCommand: boolean;
   parked: ServerResponse[];
   mapReads: number;
+  /** How long an idle SSE connection is held before the server closes it. */
+  holdMs: number;
+  /** Hold an idle connection open indefinitely, so a cancellation has something to abort. */
+  holdOpen: boolean;
 }
 
 function fixtureState(overrides: Partial<FixtureState> = {}): FixtureState {
@@ -135,6 +140,8 @@ function fixtureState(overrides: Partial<FixtureState> = {}): FixtureState {
     hangCommand: false,
     parked: [],
     mapReads: 0,
+    holdMs: 25,
+    holdOpen: false,
     ...overrides,
   };
 }
@@ -167,24 +174,38 @@ async function startFixture(state: FixtureState) {
     }
 
     if (url.pathname === "/v1/games/game/players/me/actions") {
+      // The published contract is SSE, framed exactly as the server frames it —
+      // a launcher that parsed only this fixture would prove nothing. `wait` is
+      // no longer part of the contract, so a request carrying one is refused.
+      if (url.searchParams.has("wait")) {
+        return sendJson(
+          response,
+          { status: "rejected", error: { code: "BAD_REQUEST", message: "wait is gone" } },
+          400,
+        );
+      }
       // Offsets are plain indexes into the fixture's message list.
       const from = Number.parseInt(url.searchParams.get("offset") ?? "0", 10);
       const pending = state.messages.slice(from);
-      if (pending.length === 0) {
-        const wait = Number.parseInt(url.searchParams.get("wait") ?? "0", 10);
-        // A long wait is parked, so an external cancellation has something real
-        // to abort. A short one returns promptly, so the loop keeps spinning.
-        if (wait >= 5_000) {
-          state.parked.push(response);
-          return;
-        }
-        return sendJson(response, { messages: [], nextOffset: String(from), upToDate: true });
+      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+      if (pending.length > 0) {
+        response.write(actionsDataFrame(pending));
+        response.write(
+          actionsControlFrame({ nextOffset: String(state.messages.length), upToDate: true }),
+        );
+        return response.end();
       }
-      return sendJson(response, {
-        messages: pending,
-        nextOffset: String(state.messages.length),
-        upToDate: true,
-      });
+      // Nothing to report: re-state the cursor, then either hold the connection
+      // open (a cancellation has something real to abort) or close on the
+      // server's own bound, which is what makes the loop reconnect and spin.
+      response.write(actionsControlFrame({ nextOffset: String(from), upToDate: true }));
+      if (state.holdOpen) {
+        state.parked.push(response);
+        return;
+      }
+      const bound = setTimeout(() => response.end(), state.holdMs);
+      request.once("close", () => clearTimeout(bound));
+      return;
     }
 
     if (url.pathname === "/v1/games/game/commands") {
@@ -305,8 +326,6 @@ function run(
       "2",
       "--wall-ms",
       "8000",
-      "--wait-ms",
-      "10",
       "--model-timeout-ms",
       "4000",
       "--request-timeout-ms",
@@ -497,6 +516,42 @@ describe("repository-independent external-seat launcher", () => {
     }
   });
 
+  it("refuses the long-poll control the SSE stream replaced", async () => {
+    const root = await fixtureRoot();
+    const state = fixtureState();
+    const fixture = await startFixture(state);
+    try {
+      const session = await initialize(root, fixture.origin);
+      // Silently ignoring it would leave an operator believing they had
+      // configured a blocking duration that no longer exists.
+      await expect(
+        run(session, "claude", await fakeHarness(root), ["--wait-ms", "3000"]),
+      ).rejects.toMatchObject({ stderr: expect.stringContaining("--wait-ms is gone") });
+      expect(state.commandBodies).toHaveLength(0);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("reconnects across a closed connection and resumes from the last offset", async () => {
+    const root = await fixtureRoot();
+    // Nothing to say on the first connection: the launcher must reconnect from
+    // the offset that connection re-stated rather than give up or start over.
+    const state = fixtureState({ messages: [] });
+    const fixture = await startFixture(state);
+    try {
+      const session = await initialize(root, fixture.origin);
+      const binary = await fakeHarness(root);
+      setTimeout(() => state.messages.push(occupationAsk(1)), 60);
+      const result = await run(session, "claude", binary, ["--max-decisions", "3"]);
+      expect(JSON.parse(result.stdout).commands).toBe(1);
+      expect(state.commandBodies).toHaveLength(1);
+      expect((await readJson(path.join(session, "session.json"))).cursor).toBe("1");
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("retries a lost response with byte-identical input and takes the duplicate", async () => {
     const root = await fixtureRoot();
     const state = fixtureState({ dropFirstResponse: true });
@@ -514,9 +569,9 @@ describe("repository-independent external-seat launcher", () => {
     }
   });
 
-  it("external cancellation aborts a pending long poll and exits 130", async () => {
+  it("external cancellation aborts a held actions stream and exits 130", async () => {
     const root = await fixtureRoot();
-    const state = fixtureState({ messages: [] });
+    const state = fixtureState({ messages: [], holdOpen: true });
     const fixture = await startFixture(state);
     try {
       const session = await initialize(root, fixture.origin);
@@ -537,8 +592,6 @@ describe("repository-independent external-seat launcher", () => {
           "1",
           "--wall-ms",
           "8000",
-          "--wait-ms",
-          "30000",
           "--cancel-file",
           cancelFile,
         ],

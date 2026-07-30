@@ -35,6 +35,12 @@ export interface AppDeps {
   defenseTimeoutMs?: number;
   /** Delayed-execution primitive for defence timeouts; manual in tests. */
   scheduler?: TimerScheduler;
+  /**
+   * How long one actions SSE connection is held before the server closes it and
+   * the client reconnects. Defaults to `ACTIONS_STREAM_TIMEOUT_MS` (30s);
+   * injectable so a test can prove the bound without waiting 30 real seconds.
+   */
+  actionsStreamTimeoutMs?: number;
 }
 
 export interface App {
@@ -51,6 +57,7 @@ export interface AppContext {
   commandService: CommandServiceDeps;
   createGameId(): string;
   defenseTimers: DefenseTimers;
+  actionsStreamTimeoutMs?: number;
   activeGeneration(gameId: string): string;
   authenticateCapability(request: Request): Promise<CapabilityRow | null>;
   requireCapability(
@@ -131,6 +138,7 @@ export function buildApp(deps: AppDeps): App {
     commandService,
     createGameId: deps.createGameId ?? (() => randomId("game")),
     defenseTimers,
+    actionsStreamTimeoutMs: deps.actionsStreamTimeoutMs,
     activeGeneration: (gameId) => deps.stores.games.get(gameId)?.generation ?? BOARD_GENERATION,
     authenticateCapability: authenticate,
     requireCapability,

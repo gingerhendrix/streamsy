@@ -199,15 +199,21 @@ describe("published OpenAPI contract", () => {
     expect((leave.responses["409"] as any).description).toContain("ILLEGAL_ACTION");
   });
 
-  it("documents the actions offset and bounded wait query parameters", () => {
-    const parameters =
-      openApiDocument.paths["/v1/games/{gameId}/players/me/actions"].get.parameters;
-    expect(parameters.map((parameter) => parameter.name)).toEqual(["offset", "wait"]);
-    expect(parameters[0]).toMatchObject({ in: "query", required: false });
-    expect(parameters[1]).toMatchObject({
-      in: "query",
-      required: false,
-      schema: { type: "integer", minimum: 0, maximum: 30000 },
-    });
+  it("documents the actions resource as an SSE stream resumed by offset alone", () => {
+    const actions = openApiDocument.paths["/v1/games/{gameId}/players/me/actions"].get;
+    // `offset` is the whole parameter surface: the long poll it replaced is gone.
+    expect(actions.parameters.map((parameter) => parameter.name)).toEqual(["offset"]);
+    expect(actions.parameters[0]).toMatchObject({ in: "query", required: false });
+
+    const ok = actions.responses["200"] as any;
+    expect(Object.keys(ok.content)).toEqual(["text/event-stream", "application/json"]);
+    expect(ok.content["application/json"].schema.$ref).toBe(
+      "#/components/schemas/AgentActionsPage",
+    );
+    expect(actions.description).toContain("Server-Sent Events");
+    expect(actions.description).toContain("30 seconds");
+    // The immediate page is documented as the negotiated exception, not the rule.
+    expect(jsonSchemas.AgentActionsPage.description).toContain("Accept: application/json");
+    expect(jsonSchemas.AgentActionsControl.required).toEqual(["nextOffset", "upToDate"]);
   });
 });

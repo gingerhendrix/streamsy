@@ -32,7 +32,18 @@ import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } 
 import { BOARD_GENERATION, boardStreamId, eventStreamId } from "../game/names.ts";
 import { openApiDocument } from "./openapi.ts";
 import { catchUpActions, readActions } from "../game/action-notifier.ts";
+import { actionsStreamResponse } from "./actions-sse.ts";
 import type { AppContext } from "./app.ts";
+
+/**
+ * A client opts into the immediate JSON page by asking for it and nothing else.
+ * A wildcard Accept, an absent header, or any `text/event-stream` in the list
+ * all mean the streaming representation, which is the resource's contract.
+ */
+function wantsImmediateJsonPage(request: Request): boolean {
+  const accept = request.headers.get("accept") ?? "";
+  return accept.includes("application/json") && !accept.includes("text/event-stream");
+}
 
 function randomId(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -539,29 +550,53 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     });
   }
 
+  /**
+   * Follow a seat's action-required stream.
+   *
+   * The published contract is Server-Sent Events: the connection carries the
+   * backlog immediately, then holds open until an action lands, and closes on
+   * its own after `ACTIONS_STREAM_TIMEOUT_MS` so a client reconnects from the
+   * `nextOffset` it last saw. The former `wait` long poll is gone, and is
+   * refused by name rather than ignored — a client still sending it is asking
+   * for a semantic that no longer exists.
+   *
+   * `Accept: application/json` still answers one immediate, non-blocking page.
+   * That representation exists for bootstrap, recovery and the repository's own
+   * scripted consumers; it is explicitly negotiated, never the default, and it
+   * never blocks, so nothing can mistake it for the old long poll.
+   */
   async function getActions(request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
     const url = new URL(request.url);
-    const unknownQueryParameters = [...url.searchParams.keys()].filter(
-      (key) => key !== "offset" && key !== "wait",
-    );
+    const unknownQueryParameters = [...url.searchParams.keys()].filter((key) => key !== "offset");
+    if (unknownQueryParameters.includes("wait")) {
+      return error(
+        400,
+        "BAD_REQUEST",
+        "The actions resource is a Server-Sent Events stream and no longer long-polls; drop `wait` and reconnect with ?offset=<last nextOffset>.",
+      );
+    }
     if (unknownQueryParameters.length > 0) {
       return error(400, "BAD_REQUEST", `Unknown query parameter: ${unknownQueryParameters[0]}.`);
     }
     await catchUpActions(ctx.protocol, gameId);
-    const requested = Number.parseInt(url.searchParams.get("wait") ?? "0", 10);
-    const waitMs = Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30_000)) : 0;
-    return json(
-      await readActions(ctx.protocol, gameId, cap.playerId, {
-        cursor: url.searchParams.get("offset") ?? undefined,
-        waitMs,
-        signal: request.signal,
-      }),
-      200,
-      { "cache-control": "no-store", "referrer-policy": "no-referrer" },
-    );
+    const offset = url.searchParams.get("offset") ?? undefined;
+    // Seat-scoped and bearer-authenticated: never cached and never referred out.
+    const seatScoped = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
+    const read = (cursor: string | undefined, waitMs: number, signal: AbortSignal) =>
+      readActions(ctx.protocol, gameId, cap.playerId, { cursor, waitMs, signal });
+
+    if (wantsImmediateJsonPage(request)) {
+      return json(await read(offset, 0, request.signal), 200, seatScoped);
+    }
+    return actionsStreamResponse({
+      offset,
+      read,
+      signal: request.signal,
+      timeoutMs: ctx.actionsStreamTimeoutMs,
+    });
   }
 
   return [

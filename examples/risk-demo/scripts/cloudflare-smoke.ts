@@ -3,6 +3,8 @@
  * It prints no capabilities and uses only disposable games.
  */
 
+import { readActionsBatches, type ActionsBatch } from "../src/application/actions-stream.ts";
+
 const baseUrl = new URL(process.env.BASE_URL ?? "http://127.0.0.1:8791").origin;
 
 class SmokeError extends Error {}
@@ -13,9 +15,13 @@ function assert(condition: unknown, message: string): asserts condition {
 async function api(
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; body: any }> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // The actions resource streams unless a caller negotiates the JSON reading.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: options.accept ?? "application/json",
+  };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -24,6 +30,33 @@ async function api(
   });
   const body = await response.json().catch(() => null);
   return { status: response.status, body };
+}
+
+/** Open the actions resource as what it is: a Server-Sent Events stream. */
+function openActions(gameId: string, token: string, offset?: string): Promise<Response> {
+  const query = offset ? `?offset=${encodeURIComponent(offset)}` : "";
+  return fetch(`${baseUrl}/v1/games/${gameId}/players/me/actions${query}`, {
+    headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+  });
+}
+
+/**
+ * Batch-by-batch reader over one connection. `next` answers `null` when nothing
+ * arrives within `timeoutMs` — which is how a held connection is observed.
+ */
+function actionsReader(response: Response) {
+  const batches = readActionsBatches(response);
+  return {
+    async next(timeoutMs: number): Promise<ActionsBatch | null> {
+      const timer = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
+      const arrival = batches.next().then((result) => (result.done ? null : result.value));
+      return Promise.race([arrival, timer]);
+    },
+    async close(): Promise<void> {
+      await batches.return(undefined as never).catch(() => {});
+      await response.body?.cancel().catch(() => {});
+    },
+  };
 }
 
 async function main(): Promise<void> {
@@ -131,25 +164,44 @@ async function main(): Promise<void> {
     `foreign seat delegation returned ${foreignDelegation.status}`,
   );
 
-  // The actions stream long-polls *inside* the per-game Durable Object. A bounded
-  // wait that returns empty and up-to-date — without the edge cutting it short —
-  // is the property no local harness can prove.
+  // The actions stream is served *inside* the per-game Durable Object and must
+  // survive the edge intact: correct SSE framing, an unbuffered first batch, and
+  // a connection genuinely held open rather than cut short by a proxy. None of
+  // that is provable from a local harness.
   const seatToken = seat.body.seat.token as string;
-  const opening = await api("GET", `/v1/games/${agentGameId}/players/me/actions`, {
+  const opened = await openActions(agentGameId, seatToken);
+  assert(opened.status === 200, `actions stream returned ${opened.status}`);
+  assert(
+    (opened.headers.get("content-type") ?? "").includes("text/event-stream"),
+    `actions stream is ${opened.headers.get("content-type")}`,
+  );
+  assert(opened.headers.get("cache-control") === "no-store", "the actions stream is cacheable");
+  const first = actionsReader(opened);
+  const opening = await first.next(10_000);
+  await first.close();
+  assert(opening !== null, "the edge delivered no opening batch");
+  assert(typeof opening.nextOffset === "string", "no control frame cursor across the edge");
+
+  // Reconnecting from that cursor restates it, delivers nothing twice, and then
+  // holds — the streaming equivalent of the bounded wait this replaced.
+  const resumed = actionsReader(await openActions(agentGameId, seatToken, opening.nextOffset));
+  const caughtUp = await resumed.next(10_000);
+  assert(
+    caughtUp !== null && caughtUp.messages.length === 0,
+    "a resumed actions stream replayed or lost messages across the edge",
+  );
+  assert(caughtUp.nextOffset === opening.nextOffset, "the resumed cursor moved");
+  const startedAt = Date.now();
+  const held = await resumed.next(2_000);
+  await resumed.close();
+  assert(held === null, "the edge cut a held actions stream short");
+  assert(Date.now() - startedAt >= 1_500, "the held connection ended early");
+
+  // The long poll it replaced is refused rather than quietly reinterpreted.
+  const waited = await api("GET", `/v1/games/${agentGameId}/players/me/actions?wait=2000`, {
     token: seatToken,
   });
-  assert(opening.status === 200, `actions read returned ${opening.status}`);
-  const startedAt = Date.now();
-  const held = await api(
-    `GET`,
-    `/v1/games/${agentGameId}/players/me/actions?offset=${opening.body.nextOffset}&wait=2000`,
-    { token: seatToken },
-  );
-  const heldMs = Date.now() - startedAt;
-  assert(held.status === 200, `long poll returned ${held.status}`);
-  assert(held.body.messages.length === 0, "long poll on an unstarted game produced messages");
-  assert(held.body.nextOffset === opening.body.nextOffset, "long poll moved the cursor");
-  assert(heldMs >= 1500, `long poll returned after ${heldMs}ms instead of holding`);
+  assert(waited.status === 400, `the removed long poll returned ${waited.status}`);
 
   const spa = await fetch(`${baseUrl}/games/${gameId}`);
   assert(spa.status === 200 && (await spa.text()).includes('id="root"'), "SPA fallback failed");
@@ -164,7 +216,7 @@ async function main(): Promise<void> {
         "board/spectator restriction",
         "two-game capability isolation (401 from an isolated Durable Object)",
         "agent seat authority (own seat only)",
-        "actions stream bounded long poll",
+        "actions stream SSE framing, resume, and hold across the edge",
         "SPA fallback",
       ],
     }),

@@ -20,15 +20,49 @@ its internal spelling `external-agent`) is refused on the unauthenticated create
 
 ## Complete agent surface
 
-| Endpoint                                                 | Purpose                                                               |
-| -------------------------------------------------------- | --------------------------------------------------------------------- |
-| `GET /v1/games/:gameId/map`                              | Public immutable territory names, neighbours, continents, and bonuses |
-| `GET /v1/games/:gameId/players/me/actions?offset=&wait=` | Capability-scoped action-required stream                              |
-| `GET /v1/games/:gameId/decision`                         | Capability-scoped bootstrap/recovery snapshot                         |
-| `POST /v1/games/:gameId/commands`                        | Capability-scoped idempotent command submission                       |
+| Endpoint                                           | Purpose                                                               |
+| -------------------------------------------------- | --------------------------------------------------------------------- |
+| `GET /v1/games/:gameId/map`                        | Public immutable territory names, neighbours, continents, and bonuses |
+| `GET /v1/games/:gameId/players/me/actions?offset=` | Capability-scoped action-required stream (SSE)                        |
+| `GET /v1/games/:gameId/decision`                   | Capability-scoped bootstrap/recovery snapshot                         |
+| `POST /v1/games/:gameId/commands`                  | Capability-scoped idempotent command submission                       |
 
-`wait` is clamped to 0–30000 ms. Omitting `offset` reads from the beginning. Every response returns
-`nextOffset`; offsets are opaque and meaningful only within this player's actions stream.
+Omitting `offset` reads from the beginning of this player's stream. Offsets are opaque and meaningful
+only within it.
+
+## The actions stream
+
+The resource is `text/event-stream`, and `offset` is its only parameter. `wait` is gone: a request
+carrying it is refused with `400 BAD_REQUEST` rather than silently interpreted.
+
+```text
+event: data
+data:[
+data:{"type":"ActionRequired","messageId":"act:g:p:1", …}
+data:]
+
+event: control
+data:{"nextOffset":"…","upToDate":true}
+```
+
+A `data` frame carries a JSON array of messages, split one element per `data:` line; the `control`
+frame that follows names the offset those messages were read through. Advance the cursor only on a
+`control` frame, and never past a message the same batch did not deliver. The terminal control frame
+— the one following `GameOver` — adds `"closed": true`.
+
+One connection carries the backlog immediately, then holds open until an action lands. The server
+closes it after **30 seconds** (`ACTIONS_STREAM_TIMEOUT_MS` in `src/application/actions-stream.ts`,
+which is also what the launcher and the first-party bot size themselves against). Reconnect with the
+newest `nextOffset`; a bounded connection plus an exact durable offset is what makes resume
+gap-free and duplicate-free.
+
+Capabilities travel only in `Authorization: Bearer`, so clients use `fetch` and parse the stream
+themselves — `EventSource` cannot set headers, and the token must never enter a URL. Responses are
+`no-store` and `no-referrer`.
+
+`Accept: application/json` returns one immediate, non-blocking `AgentActionsPage` instead
+(`{messages, nextOffset, upToDate}`). That representation is for bootstrap, recovery and the
+repository's own scripted consumers; it never blocks and is never the default.
 
 ## Control loop
 

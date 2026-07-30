@@ -860,15 +860,31 @@ const schemas = {
   },
   AgentActionsPage: {
     type: "object",
+    description:
+      "The immediate, non-blocking reading of the actions resource, selected with `Accept: application/json`. Bootstrap and recovery; the streaming representation is the contract.",
     required: ["messages", "nextOffset", "upToDate"],
     properties: {
       messages: { type: "array", items: { $ref: "#/components/schemas/AgentMessage" } },
       nextOffset: {
         type: "string",
         description:
-          "Opaque cursor to send as `offset` on the next read. Always returned, including on an empty bounded wait, so resume after a crash is exact.",
+          "Opaque cursor to send as `offset` on the next read. Always returned, including when there is nothing new, so resume after a crash is exact.",
       },
       upToDate: { type: "boolean" },
+    },
+  },
+  AgentActionsControl: {
+    type: "object",
+    description:
+      "The `control` event that closes each SSE batch: the offset those messages were read through. A cursor advances here and nowhere else.",
+    required: ["nextOffset", "upToDate"],
+    properties: {
+      nextOffset: { type: "string", description: "Send as `offset` when reconnecting." },
+      upToDate: { type: "boolean" },
+      closed: {
+        type: "boolean",
+        description: "Terminal batch: `GameOver` has been delivered and the server is closing.",
+      },
     },
   },
 } as const;
@@ -1089,26 +1105,33 @@ export const openApiDocument = {
       get: {
         tags: ["agent"],
         summary: "Follow this player's durable self-sufficient action-required stream.",
+        description:
+          "A Server-Sent Events stream. The backlog from `offset` is written immediately, the connection then holds open until an action lands, and the server closes it after 30 seconds so the client reconnects from the newest `nextOffset`. Each batch is an `event: data` frame carrying a JSON array of messages, split one element per `data:` line, followed by an `event: control` frame carrying `{nextOffset, upToDate}` — plus `closed: true` on the terminal one after `GameOver`. Advance a cursor only on a control frame. `Accept: application/json` selects one immediate, non-blocking page instead, for bootstrap and recovery. Capabilities travel only in `Authorization: Bearer`, so clients use fetch rather than EventSource.",
         parameters: [
           {
             name: "offset",
             in: "query",
             required: false,
             description:
-              "Opaque nextOffset returned by the previous actions response. Omit initially.",
+              "Opaque nextOffset from the previous control frame or page. Omit initially.",
             schema: { type: "string" },
-          },
-          {
-            name: "wait",
-            in: "query",
-            required: false,
-            description:
-              "Maximum long-poll duration in milliseconds. Omit or use 0 for an immediate read.",
-            schema: { type: "integer", minimum: 0, maximum: 30000 },
           },
         ],
         responses: {
-          "200": jsonResponse("AgentActionsPage"),
+          "200": {
+            description:
+              "The action stream, or one immediate page under `Accept: application/json`.",
+            content: {
+              "text/event-stream": {
+                schema: {
+                  type: "string",
+                  description:
+                    "`event: data` / `event: control` frames as described above; control data matches AgentActionsControl.",
+                },
+              },
+              "application/json": { schema: { $ref: "#/components/schemas/AgentActionsPage" } },
+            },
+          },
           "400": jsonResponse("ErrorResponse"),
         },
       },
