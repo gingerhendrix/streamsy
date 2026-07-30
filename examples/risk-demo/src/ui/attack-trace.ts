@@ -37,6 +37,20 @@ export interface AttackTrace {
   sourceOffset: string;
 }
 
+/**
+ * Order two stream offsets.
+ *
+ * Codepoint comparison, deliberately, not `localeCompare`. Offsets are fixed-width
+ * and may carry a separator (`00000024_00000000`), and locale collation treats
+ * punctuation as variable-weight: `"00000024_00000000".localeCompare("0000002400000000")`
+ * returns `-1` where codepoint order returns `+1`, and digit handling varies by
+ * locale. The feed's own ordering is bytewise, so the client must compare the same
+ * way or the watermark gate can misjudge which of two throws is newer.
+ */
+export function compareOffsets(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace | null {
   let newest: ProjectedMove | undefined;
   for (const move of moves) {
@@ -44,7 +58,7 @@ export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace 
     // A row missing its route cannot be drawn; skipping it is better than guessing
     // at coordinates the projection did not record.
     if (move.attackId === undefined || move.from === undefined || move.to === undefined) continue;
-    if (!newest || move.sourceOffset.localeCompare(newest.sourceOffset) > 0) newest = move;
+    if (!newest || compareOffsets(move.sourceOffset, newest.sourceOffset) > 0) newest = move;
   }
   if (!newest) return null;
   return {
@@ -98,8 +112,7 @@ export function traceToDraw(
   if (!trace) return null;
   if (openedThroughOffset === undefined) return null;
   if (openedThroughOffset === null) return trace;
-  // Offsets are fixed-width, so the feed's own ordering rule compares them.
-  return trace.sourceOffset.localeCompare(openedThroughOffset) <= 0 ? null : trace;
+  return compareOffsets(trace.sourceOffset, openedThroughOffset) <= 0 ? null : trace;
 }
 
 /** How the authoritative `GET /board` watermark read is getting on. */

@@ -354,7 +354,13 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       moves: board.state.moves,
       view: projectionBoardView(board.state),
     };
-    return json(response);
+    // `no-store` is a contract, not a nicety. The UI reads this endpoint once per
+    // screen-open to learn the offset canonical history stood at, and compares
+    // every throw against it (`openedThroughWatermark`). A cached answer would
+    // reintroduce the stale-trace defect this watermark exists to close, because
+    // core's stream catch-up reads *are* cacheable (`public, max-age=60`) and a
+    // reload can hydrate a minute-old projection. Nothing else may weaken this.
+    return json(response, 200, { "cache-control": "no-store" });
   }
 
   async function getMap(_request: Request, params: Record<string, string>): Promise<Response> {

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import type { BoardRows } from "../application/api.ts";
+import { compareOffsets } from "./attack-trace.ts";
 
 // The client schema mirrors the collections written by the board projection.
 
@@ -280,8 +281,9 @@ export function boardRowsFromQueries(rows: QueryRows): BoardRows | null {
     continents: rows.continents,
     turn: rows.turn[0] ?? null,
     combat: rows.combat[0] ?? null,
+    // Newest first, by codepoint — the feed's own ordering. See `compareOffsets`.
     moves: rows.moves.toSorted((left, right) =>
-      right.sourceOffset.localeCompare(left.sourceOffset),
+      compareOffsets(right.sourceOffset, left.sourceOffset),
     ),
     meta: rows.projectionMeta[0] ?? null,
   };

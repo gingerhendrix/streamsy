@@ -161,6 +161,33 @@ const SAMPLE_SEEDS = Array.from({ length: 40 }, (_, i) => `sample-${i}`);
 describe.each(MAP_PROFILES)("profile: $players players", (profile) => {
   const maps = SAMPLE_SEEDS.map((seed) => generateHexMap({ seed, playerCount: profile.players }));
 
+  // A static guard on the profile itself, not on any generated map.
+  //
+  // Two rules now interact: continent size targets start from the even share and are
+  // skewed by single-territory transfers, and a candidate whose continents all pay the
+  // same bonus is rejected and regenerated. A profile whose even share sits exactly on
+  // `minContinentTerritories` with no remainder can satisfy neither — every donor is
+  // already at the floor, so no transfer is legal, so the targets stay level, so every
+  // candidate is rejected and generation burns the whole attempt budget before failing.
+  // The shipped profiles all have slack; nothing asserted it until this test, and the
+  // failure mode of adding a profile without it is a hard generation failure, not a
+  // worse map.
+  it("leaves room to skew continent sizes away from a flat bonus set", () => {
+    const evenShare = Math.floor(profile.territories / profile.continents);
+    const remainder = profile.territories % profile.continents;
+    const canDonate = evenShare - 1 >= RULES.minContinentTerritories;
+    const canReceive = maxContinentTerritories(profile) > evenShare;
+
+    expect(
+      canDonate || remainder > 0,
+      `profile ${profile.players}p: even share ${evenShare} is at the floor with no remainder, so size targets can never be skewed`,
+    ).toBe(true);
+    expect(
+      canReceive,
+      `profile ${profile.players}p: ceiling leaves no room to receive a territory`,
+    ).toBe(true);
+  });
+
   it("matches the profile's hex, territory, and continent counts", () => {
     for (const map of maps) {
       expect(map.tiles).toHaveLength(profile.hexes);
