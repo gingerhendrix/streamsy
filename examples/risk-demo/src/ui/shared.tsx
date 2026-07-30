@@ -45,6 +45,13 @@ export function agentSeatName(input: string | undefined, seat: number): string {
  * game reads as a spectator's game — the creator delegates its own seat to an agent
  * that plays through its own capability, so this UI must never compose that seat's
  * moves even though the same browser still holds the host capability.
+ *
+ * Note the precedence: the persisted `spectator` marker is checked *before* the seat,
+ * so it deliberately outranks canonical state. That is only safe while delegation is
+ * one-way. Anyone adding an un-delegate, takeover, or disconnect-recovery flow that
+ * returns a seat to `human` must clear the marker from the stored identity at the same
+ * time — otherwise that browser stays a spectator forever with no UI path back, a
+ * stale local flag overriding the board, which is backwards for this codebase.
  */
 export function spectatingSeat(
   identity: Identity | null,

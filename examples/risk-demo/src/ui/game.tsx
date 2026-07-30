@@ -136,7 +136,7 @@ function usePrefersReducedMotion(): boolean {
 /**
  * The source-stream watermark canonical history stood at when this screen opened.
  *
- * Read once from `GET /board`, which is served without cache headers, so the answer
+ * Read once from `GET /board`, which is served `Cache-Control: no-store`, so the answer
  * is canonical rather than whatever a cache still holds — the whole point, since the
  * projection stream's own first response *is* cacheable and is what made a historic
  * throw look new. The response is otherwise unused: only its watermark is kept.
