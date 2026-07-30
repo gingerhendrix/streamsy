@@ -145,6 +145,47 @@ describe("resolved throws on the map", () => {
     expect(html).toContain('class="throw-route captured"');
     expect(html).toContain('class="capture-flash"');
     expect(html.match(/class="loss-badge"/g)).toHaveLength(2);
+    // The head follows the route into signal red; a two-tone arrow would read as
+    // two statements about one throw.
+    expect(html).toContain('marker-end="url(#throw-arrowhead-captured)"');
+  });
+
+  it("draws the arrow and the losses over the name plates, and the capture wash under them", () => {
+    const html = render(() => "normal", { ...BOUNCE, defenderLosses: 1, captured: true });
+    const labels = html.indexOf('class="layer-labels"');
+    // Loss figures behind a name plate or an army counter are unreadable, and the
+    // figures are the whole point of the overlay — so they are painted last.
+    expect(html.indexOf('class="layer-throw-marks"')).toBeGreaterThan(labels);
+    // The wash is a region fill and stays with the other region fills, so the
+    // captured country keeps a legible name and army count while it changes hands.
+    expect(html.indexOf('class="layer-throw"')).toBeLessThan(labels);
+    // ...and still below the hit targets, which must keep receiving clicks.
+    expect(html.indexOf('class="layer-throw-marks"')).toBeLessThan(
+      html.indexOf('class="layer-interaction"'),
+    );
+  });
+
+  it("stops the route short of both army counters so the arrowhead is not buried", () => {
+    const html = render(() => "normal", BOUNCE);
+    const path =
+      /class="throw-route" d="M ([-\d.]+) ([-\d.]+) Q [-\d.]+ [-\d.]+ ([-\d.]+) ([-\d.]+)"/.exec(
+        html,
+      );
+    expect(path).not.toBeNull();
+    // The anchors are the two label anchors, which is exactly where the counters are.
+    const anchors = [
+      ...html.matchAll(/class="army-marker" cx="([-\d.]+)" cy="([-\d.]+)" r="([-\d.]+)"/g),
+    ];
+    expect(anchors).toHaveLength(2);
+    const radius = Number(anchors[0]![3]);
+    const start = { x: Number(path![1]), y: Number(path![2]) };
+    const end = { x: Number(path![3]), y: Number(path![4]) };
+    for (const anchor of anchors) {
+      const centre = { x: Number(anchor[1]), y: Number(anchor[2]) };
+      for (const point of [start, end]) {
+        expect(Math.hypot(point.x - centre.x, point.y - centre.y)).toBeGreaterThan(radius - 0.01);
+      }
+    }
   });
 });
 

@@ -49,3 +49,22 @@ export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace 
     captured: newest.territoryCaptured === true,
   };
 }
+
+/**
+ * The trace to actually draw, given the throw that was already history when this
+ * screen opened.
+ *
+ * A throw that resolved before the viewer arrived is state, not an event they are
+ * watching, so it must not fade in front of them on load. Identity is the honest
+ * test: the newest throw at mount is named once and suppressed until a *different*
+ * throw replaces it. Comparing snapshot offsets instead — as the first cut did —
+ * only suppressed the very first snapshot, so any later projection update (a
+ * catch-up transaction, an unrelated change) re-promoted the historic throw to news.
+ */
+export function traceToDraw(
+  trace: AttackTrace | null,
+  historicAttackId: string | null,
+): AttackTrace | null {
+  if (!trace) return null;
+  return trace.attackId === historicAttackId ? null : trace;
+}

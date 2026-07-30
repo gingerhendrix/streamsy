@@ -4,7 +4,13 @@
  * Layers, back to front:
  *
  *   terrain → ownership → continent boundary → country boundary → highlight →
- *   attack route → resolved throw → labels → interaction
+ *   attack route → capture flash → labels → throw marks → interaction
+ *
+ * The resolved throw is split across two of those layers on purpose. Its capture
+ * wash is a region, so it belongs under the labels with the other region fills; its
+ * arrow and loss figures are the newest thing on the map and only live for a few
+ * seconds, so they are drawn *over* the name plates and army counters rather than
+ * disappearing behind them.
  *
  * Terrain is never signalled by colour alone: each type has its own SVG pattern, so
  * the map stays readable under a translucent owner wash and for a player who cannot
@@ -48,6 +54,7 @@ import {
   hexCenter,
   hexPolygonPoints,
   hexesViewBox,
+  insetSegment,
   regionOutlinePath,
   viewBoxAttribute,
   type Point,
@@ -57,6 +64,14 @@ import {
 const HEX_RADIUS = 26;
 /** Army badge; also the obstacle no country label may be drawn underneath. */
 const BADGE_RADIUS = HEX_RADIUS * 0.62;
+/** A route starts clear of the attacker's own counter rather than out from under it. */
+const ROUTE_TAIL_INSET = BADGE_RADIUS;
+/**
+ * ...and stops short of the defender's by the counter plus the arrowhead itself, so
+ * the head — the only thing on the map that says which way the attack went — is not
+ * painted over by a counter that is both larger and drawn later.
+ */
+const ROUTE_HEAD_INSET = BADGE_RADIUS + 6;
 /** Matches `.country-label` in the stylesheet, so the layout measures what renders. */
 const LABEL_FONT_SIZE = 12;
 
@@ -211,6 +226,19 @@ export function TerrainDefs() {
         orient="auto-start-reverse"
       >
         <path d="M0 0 L10 5 L0 10 z" fill="#20221a" />
+      </marker>
+      {/* A capture turns the whole route signal red, head included: a two-tone arrow
+          would read as two different statements about the same throw. */}
+      <marker
+        id="throw-arrowhead-captured"
+        viewBox="0 0 10 10"
+        refX="8"
+        refY="5"
+        markerWidth="5"
+        markerHeight="5"
+        orient="auto-start-reverse"
+      >
+        <path d="M0 0 L10 5 L0 10 z" fill="#8e2f25" />
       </marker>
       <marker
         id="attack-arrowhead"
@@ -376,11 +404,15 @@ export function HexMap(props: HexMapProps) {
     return () => element.removeEventListener("wheel", onWheel);
   }, [onView, geometry.box]);
 
+  // Both routes are inset off their anchors for the same reason: an arrowhead drawn
+  // at the anchor is an arrowhead drawn under an army counter.
   const routePath = useMemo(() => {
     if (!props.route) return null;
     const from = geometry.anchors.get(props.route.from);
     const to = geometry.anchors.get(props.route.to);
-    return from && to ? attackArrowPath(from, to) : null;
+    if (!from || !to) return null;
+    const ends = insetSegment(from, to, ROUTE_TAIL_INSET, ROUTE_HEAD_INSET);
+    return attackArrowPath(ends.from, ends.to);
   }, [props.route, geometry.anchors]);
 
   // Where the two loss badges sit for the newest resolved throw: along the route,
@@ -398,8 +430,9 @@ export function HexMap(props: HexMapProps) {
     const across = { x: -along.y, y: along.x };
     const inset = Math.min(BADGE_RADIUS * 1.9, span / 2);
     const lift = BADGE_RADIUS * 1.05;
+    const ends = insetSegment(from, to, ROUTE_TAIL_INSET, ROUTE_HEAD_INSET);
     return {
-      path: attackArrowPath(from, to),
+      path: attackArrowPath(ends.from, ends.to),
       attacker: {
         x: from.x + along.x * inset + across.x * lift,
         y: from.y + along.y * inset + across.y * lift,
@@ -498,29 +531,18 @@ export function HexMap(props: HexMapProps) {
             </g>
           )}
 
-          {/* The throw that just happened. Keyed by `attackId` so a new throw
-              remounts the group and restarts the fade — the fade is presentation
+          {/* The capture wash is a region fill, so it sits with the other region
+              fills — under the name plate and army counter of the country it marks,
+              which stay legible while it changes hands. Keyed by `attackId` so a new
+              throw remounts the group and restarts the fade; the fade is presentation
               only, and the trace itself is read from recorded losses. */}
-          {props.trace && traceGeometry && (
+          {props.trace?.captured && traceGeometry && (
             <g className="layer-throw" key={props.trace.attackId} aria-hidden="true">
-              {props.trace.captured && (
-                <path
-                  className="capture-flash"
-                  d={geometry.outlines.get(props.trace.to) ?? ""}
-                  fillRule="evenodd"
-                />
-              )}
               <path
-                className={`throw-route${props.trace.captured ? " captured" : ""}`}
-                d={traceGeometry.path}
-                markerEnd="url(#throw-arrowhead)"
+                className="capture-flash"
+                d={geometry.outlines.get(props.trace.to) ?? ""}
+                fillRule="evenodd"
               />
-              {props.trace.attackerLosses > 0 && (
-                <LossBadge point={traceGeometry.attacker} losses={props.trace.attackerLosses} />
-              )}
-              {props.trace.defenderLosses > 0 && (
-                <LossBadge point={traceGeometry.defender} losses={props.trace.defenderLosses} />
-              )}
             </g>
           )}
 
@@ -581,6 +603,27 @@ export function HexMap(props: HexMapProps) {
               );
             })}
           </g>
+
+          {/* The arrow and the two loss figures are the newest thing on the map and
+              they clear themselves in a few seconds, so they are drawn over the name
+              plates and counters. Placing them underneath — as the first cut did —
+              left a `−N` readable only as an outline whenever a plate happened to
+              cover it, which is precisely the reading the overlay exists to give. */}
+          {props.trace && traceGeometry && (
+            <g className="layer-throw-marks" key={props.trace.attackId} aria-hidden="true">
+              <path
+                className={`throw-route${props.trace.captured ? " captured" : ""}`}
+                d={traceGeometry.path}
+                markerEnd={`url(#throw-arrowhead${props.trace.captured ? "-captured" : ""})`}
+              />
+              {props.trace.attackerLosses > 0 && (
+                <LossBadge point={traceGeometry.attacker} losses={props.trace.attackerLosses} />
+              )}
+              {props.trace.defenderLosses > 0 && (
+                <LossBadge point={traceGeometry.defender} losses={props.trace.defenderLosses} />
+              )}
+            </g>
+          )}
 
           <g className="layer-interaction">
             {territories.map((territory) => {

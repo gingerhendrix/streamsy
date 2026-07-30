@@ -9,6 +9,7 @@ import {
   hexCorners,
   hexPolygonPoints,
   hexesViewBox,
+  insetSegment,
   regionOutlinePath,
   viewBoxAttribute,
 } from "./hex-layout.ts";
@@ -129,5 +130,34 @@ describe("attack route", () => {
     expect(path).toMatch(/^M 0 0 Q [\d.-]+ [\d.-]+ 100 0$/);
     // The bow is perpendicular to the run, so a horizontal route bends vertically.
     expect(path).toContain("Q 50 16");
+  });
+});
+
+describe("route insets", () => {
+  it("pulls each end in by its own inset so an arrowhead clears the army counter", () => {
+    const ends = insetSegment({ x: 0, y: 0 }, { x: 100, y: 0 }, 16, 22);
+    expect(ends.from).toEqual({ x: 16, y: 0 });
+    expect(ends.to).toEqual({ x: 78, y: 0 });
+  });
+
+  it("insets along the run, not along an axis", () => {
+    const ends = insetSegment({ x: 0, y: 0 }, { x: 0, y: -50 }, 10, 10);
+    expect(ends.from.y).toBeCloseTo(-10, 9);
+    expect(ends.to.y).toBeCloseTo(-40, 9);
+    expect(ends.from.x).toBeCloseTo(0, 9);
+  });
+
+  it("scales both insets down rather than letting close neighbours invert the line", () => {
+    const ends = insetSegment({ x: 0, y: 0 }, { x: 20, y: 0 }, 16, 22);
+    // Still pointing the same way, still leaving a stretch of line to see.
+    expect(ends.to.x).toBeGreaterThan(ends.from.x);
+    expect(ends.to.x - ends.from.x).toBeCloseTo(20 * 0.3, 9);
+    // The larger inset still takes the larger share.
+    expect(ends.from.x).toBeLessThan(20 - ends.to.x);
+  });
+
+  it("leaves a zero-length run alone rather than dividing by it", () => {
+    const point = { x: 4, y: 9 };
+    expect(insetSegment(point, point, 5, 5)).toEqual({ from: point, to: point });
   });
 });

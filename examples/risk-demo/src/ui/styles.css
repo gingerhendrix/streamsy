@@ -1193,8 +1193,12 @@ summary:focus-visible,
 /* The throw that just resolved. The live attack above is dashed signal red because
    it is still being decided; this one is solid map ink because it is already history.
    The whole layer fades itself out after a few seconds so throws never accumulate on
-   the map — the fade is presentation, and every figure it shows is a recorded loss. */
-.hex-map .layer-throw {
+   the map — the fade is presentation, and every figure it shows is a recorded loss.
+   The trace is drawn in two groups — the capture wash under the labels, the arrow
+   and loss figures over them — so they carry the same fade and the same
+   transparency to pointers. */
+.hex-map .layer-throw,
+.hex-map .layer-throw-marks {
   pointer-events: none;
   animation: throw-fade 4.5s ease-out forwards;
 }
@@ -1210,8 +1214,12 @@ summary:focus-visible,
   stroke: var(--signal);
   stroke-width: 4;
 }
+/* The wash has to read as captured-red over *any* owner colour: the country is still
+   the defender's until it is occupied, and a thin wash over a blue owner reads
+   violet, which names no outcome at all. The name plate and counter are drawn above
+   this layer, so a wash strong enough to carry the hue costs no legibility. */
 .hex-map .capture-flash {
-  fill: color-mix(in srgb, var(--signal) 26%, transparent);
+  fill: color-mix(in srgb, var(--signal) 55%, transparent);
   stroke: var(--cream);
   stroke-width: 5;
   stroke-linejoin: round;
@@ -1237,7 +1245,8 @@ summary:focus-visible,
 /* Without motion the trace is state rather than an animation: it stays put until the
    next throw replaces it, which is the same information without the movement. */
 @media (prefers-reduced-motion: reduce) {
-  .hex-map .layer-throw {
+  .hex-map .layer-throw,
+  .hex-map .layer-throw-marks {
     animation: none;
   }
 }

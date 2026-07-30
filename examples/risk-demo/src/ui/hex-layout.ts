@@ -173,6 +173,39 @@ export function regionOutlinePath(hexes: readonly Axial[], radius: number): stri
 }
 
 /**
+ * Pull both ends of a route in towards its middle.
+ *
+ * An attack route runs anchor to anchor, and an anchor is exactly where the army
+ * counter is drawn — so an arrowhead placed at the raw endpoint lands underneath a
+ * counter that is both larger than the head and painted after it, and the direction
+ * of the attack becomes unreadable. Insetting the ends is what makes the head
+ * visible; the caller decides by how much, because only it knows the counter size.
+ *
+ * Adjacent countries can sit closer together than the two insets combined, so the
+ * insets are scaled down together rather than allowed to cross: a short route stays
+ * a shorter line, never an inverted one.
+ */
+export function insetSegment(
+  from: Point,
+  to: Point,
+  startInset: number,
+  endInset: number,
+): { from: Point; to: Point } {
+  const span = Math.hypot(to.x - from.x, to.y - from.y);
+  const total = startInset + endInset;
+  if (span === 0 || total <= 0) return { from, to };
+  // Never eat more than this much of the run, so even neighbours whose anchors
+  // nearly touch keep a stretch of line between the two ends.
+  const budget = span * 0.7;
+  const scale = total > budget ? budget / total : 1;
+  const unit = { x: (to.x - from.x) / span, y: (to.y - from.y) / span };
+  return {
+    from: { x: from.x + unit.x * startInset * scale, y: from.y + unit.y * startInset * scale },
+    to: { x: to.x - unit.x * endInset * scale, y: to.y - unit.y * endInset * scale },
+  };
+}
+
+/**
  * A gently curved attack route from one country's label anchor to another's, bowed
  * perpendicular to the straight line so source and target stay readable underneath.
  */

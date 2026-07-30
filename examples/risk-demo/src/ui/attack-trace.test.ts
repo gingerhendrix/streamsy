@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProjectedMove } from "../board/projection.ts";
-import { latestAttackTrace } from "./attack-trace.ts";
+import { latestAttackTrace, traceToDraw, type AttackTrace } from "./attack-trace.ts";
 
 function resolved(offset: string, detail: Partial<ProjectedMove>): ProjectedMove {
   return {
@@ -71,5 +71,32 @@ describe("latest attack trace", () => {
     expect(
       latestAttackTrace([resolved("0009", { attackerLosses: undefined, defenderLosses: 2 })]),
     ).toMatchObject({ attackerLosses: 0, defenderLosses: 2 });
+  });
+});
+
+const trace = (attackId: string): AttackTrace => ({
+  attackId,
+  from: "t1",
+  to: "t2",
+  attackerLosses: 1,
+  defenderLosses: 0,
+  captured: false,
+});
+
+describe("suppressing the throw that was already history at mount", () => {
+  it("never replays the throw that had already resolved when the screen opened", () => {
+    expect(traceToDraw(trace("atk-1"), "atk-1")).toBeNull();
+    // Not just on the first update: any later projection transaction still leaves
+    // that throw history, which is exactly the case an offset comparison missed.
+    expect(traceToDraw(trace("atk-1"), "atk-1")).toBeNull();
+  });
+
+  it("draws the next throw, which did happen in front of the viewer", () => {
+    expect(traceToDraw(trace("atk-2"), "atk-1")).toEqual(trace("atk-2"));
+  });
+
+  it("draws the first throw of a game joined before anyone attacked", () => {
+    expect(traceToDraw(trace("atk-1"), null)).toEqual(trace("atk-1"));
+    expect(traceToDraw(null, null)).toBeNull();
   });
 });

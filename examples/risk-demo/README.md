@@ -119,6 +119,12 @@ bun run --cwd examples/risk-demo build:cloudflare
 bun run --cwd examples/risk-demo smoke:http
 ```
 
+When driving the UI from a browser automation harness, run it against
+`bun run --cwd examples/risk-demo start` rather than `dev`: Bun's dev-mode
+`<bun-hmr>` overlay is a full-viewport fixed element at the top of the stacking
+order, so `elementFromPoint` returns it everywhere and synthesized clicks land on
+it silently. Against the dev server, remove that element from the DOM first.
+
 The Vitest suite covers the kernel, generated-map invariants, projection
 equivalence, HTTP contract, action streams, defence timing, scripted bots,
 external-agent launcher, UI presentation, and rebuild cutover. The Bun SQLite

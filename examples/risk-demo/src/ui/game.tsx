@@ -23,8 +23,8 @@
  *    screen refetches it on every board change rather than only when the seat is
  *    the active player — a defender is asked to act during someone else's turn.
  *  - **Combat clears canonically.** The projection drops the `combat` row the moment
- *    an attack closes, so the reveal is held client-side and keyed to the board's
- *    source offset: a result already present in the first snapshot after a reload is
+ *    an attack closes, so the reveal is held client-side and keyed to the throw's
+ *    own identity: a result that had already happened when this screen opened is
  *    shown, not re-animated.
  */
 
@@ -49,7 +49,7 @@ import {
   fortifyAction as canonicalFortifyAction,
   shouldDismissAttackSummary,
 } from "./attack-phase.ts";
-import { latestAttackTrace } from "./attack-trace.ts";
+import { latestAttackTrace, traceToDraw } from "./attack-trace.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
@@ -245,29 +245,35 @@ export function GameScreen(props: GameScreenProps) {
   const visibleCombat = combat?.attackId === dismissedCombatId ? null : combat;
 
   const seenReveals = useRef(new Set<string>());
-  const firstOffset = useRef<string | null | undefined>(undefined);
-  if (board && firstOffset.current === undefined) firstOffset.current = offset;
+
+  // The map's own record of the newest throw: route plus both losses, read from the
+  // move feed.
+  const trace = useMemo(() => latestAttackTrace(board?.moves ?? []), [board?.moves]);
 
   const revealKey = combat ? `${combat.attackId}:${combat.status}` : null;
+
+  // What was already history when this screen opened, named once at mount. Both the
+  // dice reveal and the map trace are animations of something happening *now*, so
+  // each is suppressed for the throw that had already happened — by identity, not by
+  // snapshot offset, which only ever silenced the first update to arrive.
+  const historicTraceId = useRef<string | null | undefined>(undefined);
+  if (board && historicTraceId.current === undefined) {
+    historicTraceId.current = trace?.attackId ?? null;
+    if (revealKey) seenReveals.current.add(revealKey);
+  }
+
   const [reveal, setReveal] = useState<RevealPlan>({
     mode: "none",
     durationMs: 0,
   });
   useEffect(() => {
     if (!revealKey) return;
-    // Keyed to the source offset: a throw already present in the first snapshot
-    // after a reload is state to display, not an animation to replay.
-    const alreadySeen = seenReveals.current.has(revealKey) || offset === firstOffset.current;
+    const alreadySeen = seenReveals.current.has(revealKey);
     seenReveals.current.add(revealKey);
     setReveal(revealPlan({ reducedMotion, alreadySeen }));
-  }, [revealKey, offset, reducedMotion]);
+  }, [revealKey, reducedMotion]);
 
-  // The map's own record of the newest throw: route plus both losses, read from the
-  // move feed. Suppressed in the first snapshot after a load for the same reason the
-  // dice reveal is — a throw that had already resolved before this screen existed is
-  // history, not something that just happened in front of the viewer.
-  const trace = useMemo(() => latestAttackTrace(board?.moves ?? []), [board?.moves]);
-  const visibleTrace = offset === firstOffset.current ? null : trace;
+  const visibleTrace = traceToDraw(trace, historicTraceId.current ?? null);
 
   // The countdown only needs to tick while a defence window is actually open.
   const pendingDeadline =
@@ -610,10 +616,18 @@ export function GameScreen(props: GameScreenProps) {
     board?.game.phase === "attack" && decision?.mode === "active-turn" && intent === "fortify"
       ? "fortify"
       : board?.game.phase;
+  // The live route is the attack still being decided. Once its own throw has landed
+  // on the map, the resolved trace draws the same two countries along the same curve,
+  // so keeping the dashed route as well hides it underneath the solid one and says
+  // nothing the trace does not already say. The attack still awaiting occupation is
+  // announced by the combat card, not by a second arrow.
+  const tracedAttackId = visibleTrace?.attackId ?? null;
   const route: { from: string; to: string } | null =
     selection?.kind === "attack" && selection.to
       ? { from: selection.from, to: selection.to }
-      : visibleCombat && visibleCombat.status !== "resolved"
+      : visibleCombat &&
+          visibleCombat.status !== "resolved" &&
+          visibleCombat.attackId !== tracedAttackId
         ? { from: visibleCombat.from, to: visibleCombat.to }
         : null;
 
