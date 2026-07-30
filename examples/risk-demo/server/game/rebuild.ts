@@ -70,6 +70,15 @@ export interface RebuildResult {
   sourceThroughOffset: string | null;
   /** The durable active generation after this operation. */
   activeGeneration: string;
+  /**
+   * Reducer version the outgoing generation was recorded under, or null if no
+   * generation row exists for it. When this differs from `toReducerVersion` the
+   * rebuild is a reducer migration, not just a fresh replay — which is the only
+   * way a stream written by an older reducer is brought onto the current one.
+   */
+  fromReducerVersion: string | null;
+  /** Reducer version the new generation was built by; always the current one. */
+  toReducerVersion: string;
   equivalence: RebuildEquivalence;
   /** Every generation retained for the game, oldest first. */
   retainedGenerations: string[];
@@ -104,6 +113,8 @@ function notFound(gameId: string): RebuildResult {
     canonicalHead: null,
     sourceThroughOffset: null,
     activeGeneration: "",
+    fromReducerVersion: null,
+    toReducerVersion: BOARD_REDUCER_VERSION,
     equivalence: { boardEqual: false, watermarkEqual: false },
     retainedGenerations: [],
   };
@@ -162,6 +173,8 @@ async function runRebuild<State, Event>(
     toGeneration,
     canonicalHead,
     sourceThroughOffset: rebuiltWatermark,
+    fromReducerVersion: deps.stores.generations.get(gameId, fromGeneration)?.reducerVersion ?? null,
+    toReducerVersion: plan.reducerVersion,
     equivalence,
   };
 

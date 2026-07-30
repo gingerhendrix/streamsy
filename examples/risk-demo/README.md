@@ -103,6 +103,22 @@ active. Previous generations remain recorded for inspection.
 bun run --cwd examples/risk-demo rebuild -- <game-id>
 ```
 
+A _generation_ names one game's output stream; `BOARD_REDUCER_VERSION` names the
+code that filled it, and every generation row records the version it was built
+under. Any change to what the reducer emits — new event types handled, new or
+changed row fields — must bump that constant, for the same reason an
+output-changing generator change must mint a new generator id: a projection
+stream is a durable artefact, and a resumed runtime appends to rows an older
+version already wrote. `hex-domination:board-2` is the current version; it added
+`PlayerRenamed` and `PlayerLeft` handling.
+
+Bumping the version does not migrate anything on its own — nothing gates on it at
+runtime. The rebuild above is the migration: it replays canonical history into a
+fresh generation built entirely by the current reducer, verifies it, and only
+then cuts over, reporting `fromReducerVersion → toReducerVersion` when the two
+differ. A pinned-output test (`src/board/reducer-version.test.ts`) fails if the
+reducer's output changes without the version changing with it.
+
 ## Lobby API
 
 Beyond create, join, and start, the roster is edited with two capability-scoped
@@ -117,6 +133,13 @@ The rename admits exactly two callers — the seat's own capability, and the hos
 for an agent seat it opened — and never a host on another person's seat. The
 leave is scoped to `me` rather than a seat id, so no shape of the request removes
 somebody else, and it refuses a seat an agent is playing.
+
+Seat names are normalized and bounded by the _decider_, not by the transport:
+create, join, and rename all trim to `RULES.maxPlayerNameLength` and reject a
+name with nothing visible in it, so the limit holds for the browser, the scripted
+bot, and an external agent alike. Choosing a provisional default for a caller
+that supplied no name at all — which is how the front page creates a game — stays
+at the HTTP boundary, where that product decision belongs.
 
 ## Agent API
 

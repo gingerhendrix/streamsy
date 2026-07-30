@@ -127,6 +127,68 @@ describe("rename authority", () => {
   });
 });
 
+describe("documented rejections", () => {
+  // One assertion per status the OpenAPI document claims these routes answer, so
+  // the published contract is backed by behaviour rather than by intent.
+  it("answers each rename rejection with the documented status", async () => {
+    const h = riskHarness();
+    const { gameId, guestId, guestToken, hostToken } = await lobby(h);
+
+    const noName = await call(h.app, "PATCH", `/v1/games/${gameId}/players/${guestId}`, {
+      token: guestToken,
+      body: {},
+    });
+    expect(noName.status).toBe(400);
+    expect(noName.body.error.code).toBe("BAD_REQUEST");
+
+    const unknownGame = await call(h.app, "PATCH", `/v1/games/no_such_game/players/${guestId}`, {
+      token: guestToken,
+      body: { name: "Ghost" },
+    });
+    expect(unknownGame.status).toBe(404);
+    expect(unknownGame.body.error.code).toBe("GAME_NOT_FOUND");
+
+    const unknownSeat = await call(h.app, "PATCH", `/v1/games/${gameId}/players/p_nobody`, {
+      token: guestToken,
+      body: { name: "Ghost" },
+    });
+    expect(unknownSeat.status).toBe(404);
+    expect(unknownSeat.body.error.code).toBe("NOT_FOUND");
+
+    const started = await call(h.app, "POST", `/v1/games/${gameId}/start`, {
+      token: hostToken,
+      body: {},
+    });
+    expect(started.status).toBe(200);
+    const late = await call(h.app, "PATCH", `/v1/games/${gameId}/players/${guestId}`, {
+      token: guestToken,
+      body: { name: "Too late" },
+    });
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe("GAME_ALREADY_STARTED");
+  });
+
+  it("answers a repeated leave with the documented status", async () => {
+    const h = riskHarness();
+    const { gameId, guestToken } = await lobby(h);
+
+    expect(
+      (await call(h.app, "DELETE", `/v1/games/${gameId}/players/me`, { token: guestToken })).status,
+    ).toBe(200);
+    const again = await call(h.app, "DELETE", `/v1/games/${gameId}/players/me`, {
+      token: guestToken,
+    });
+    expect(again.status).toBe(400);
+    expect(again.body.error.code).toBe("UNKNOWN_PLAYER");
+
+    const unknownGame = await call(h.app, "DELETE", "/v1/games/no_such_game/players/me", {
+      token: guestToken,
+    });
+    expect(unknownGame.status).toBe(404);
+    expect(unknownGame.body.error.code).toBe("GAME_NOT_FOUND");
+  });
+});
+
 describe("leaving a lobby", () => {
   it("removes the seat from the projected roster", async () => {
     const h = riskHarness();

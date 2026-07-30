@@ -27,7 +27,29 @@ import {
   type ProjectionState,
 } from "./projection.ts";
 
-export const BOARD_REDUCER_VERSION = "hex-domination:board-1";
+/**
+ * Identity of the reduce function, not of the stream it writes into.
+ *
+ * The two are deliberately separate. A *generation* (`board1`, `board2`, …) names
+ * one rebuildable output stream for one game; this names the code that built it,
+ * and every generation row records the version it was produced under. The rule
+ * that follows is the same one the map generator lives by: **any change to what
+ * the reducer emits — new event types handled, new or changed row fields — must
+ * bump this**, because a projection stream is a durable artefact and a resumed
+ * runtime appends to whatever a previous version already wrote.
+ *
+ * Bumping does not migrate anything by itself. Nothing gates on the value at
+ * runtime; it is the signal an operator reads, and `rebuildBoardGeneration`
+ * (`bun run rebuild <game-id>`) is what acts on it, replaying canonical history
+ * into a fresh generation built entirely by the current reducer and cutting over
+ * only after verification.
+ *
+ * `board-2` handles `PlayerRenamed` and `PlayerLeft` — which mutate and delete
+ * player rows in the lobby — and carries a departing seat's `name` on its move.
+ * A `board1` stream written by `board-1` therefore cannot be resumed by this
+ * reducer without a rebuild: its history predates those events entirely.
+ */
+export const BOARD_REDUCER_VERSION = "hex-domination:board-2";
 
 const codec = <T>(): JsonCodec<T> => ({
   encode: (value) => value,

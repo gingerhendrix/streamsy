@@ -63,6 +63,78 @@ function attempt(game: ReturnType<typeof lobby>, command: Command) {
   return decide(game.state(), command, ctx);
 }
 
+describe("the canonical name invariant", () => {
+  // Every path that records a seat name goes through the same gate, so
+  // `RULES.maxPlayerNameLength` is a property of the game rather than of whichever
+  // client happened to be calling.
+  const overlong = "W".repeat(40);
+
+  it("normalizes the host's name at creation", () => {
+    const events: GameEvent[] = [];
+    const created = decide(
+      foldAggregate(events),
+      {
+        type: "create-game",
+        commandId: commandId(),
+        gameId: "game",
+        hostPlayerId: "p1",
+        hostName: `  ${overlong}  `,
+        hostController: "human",
+        mapSeed: "name-invariant-seed",
+      },
+      ctx,
+    );
+    expect(created.status).toBe("accepted");
+    if (created.status !== "accepted") return;
+    expect(created.events[0]).toMatchObject({
+      type: "GameCreated",
+      hostName: overlong.slice(0, RULES.maxPlayerNameLength),
+    });
+  });
+
+  it("refuses a blank host name rather than inventing one", () => {
+    // Choosing a provisional default for a caller that supplied nothing is an
+    // HTTP-boundary product decision; the decider will not guess.
+    const blank = decide(
+      foldAggregate([]),
+      {
+        type: "create-game",
+        commandId: commandId(),
+        gameId: "game",
+        hostPlayerId: "p1",
+        hostName: "  ",
+        hostController: "human",
+        mapSeed: "name-invariant-seed",
+      },
+      ctx,
+    );
+    expect(blank.status).toBe("rejected");
+    if (blank.status === "rejected") expect(blank.error.code).toBe("INVALID_NAME");
+  });
+
+  it("normalizes a joining seat and refuses a blank one", () => {
+    const game = lobby();
+    const blank = attempt(game, {
+      type: "join-game",
+      commandId: commandId(),
+      playerId: "p4",
+      name: "\t\n ",
+      controller: "human",
+    });
+    expect(blank.status).toBe("rejected");
+    if (blank.status === "rejected") expect(blank.error.code).toBe("INVALID_NAME");
+
+    game.run({
+      type: "join-game",
+      commandId: commandId(),
+      playerId: "p4",
+      name: `  ${overlong}  `,
+      controller: "human",
+    });
+    expect(game.state().players[3]!.name).toBe(overlong.slice(0, RULES.maxPlayerNameLength));
+  });
+});
+
 describe("seat names", () => {
   it("trims, bounds, and refuses a name that is only whitespace", () => {
     expect(normalizePlayerName("   Napoleon   ")).toBe("Napoleon");

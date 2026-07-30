@@ -39,6 +39,14 @@ try {
       `✓ cut over ${gameId}: ${result.fromGeneration} → ${result.toGeneration} ` +
         `(watermark ${result.sourceThroughOffset ?? "∅"}; retained ${result.retainedGenerations.join(", ")})`,
     );
+    // Worth calling out separately: a rebuild across reducer versions is the
+    // migration, and until it runs the active stream still holds rows an older
+    // reducer wrote.
+    if (result.fromReducerVersion !== result.toReducerVersion) {
+      console.log(
+        `  reducer ${result.fromReducerVersion ?? "unrecorded"} → ${result.toReducerVersion}`,
+      );
+    }
     process.exit(0);
   }
   console.error(`✗ rebuild ${result.status} for ${gameId}; active generation unchanged.`);

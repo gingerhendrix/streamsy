@@ -64,7 +64,7 @@ describe("Hex Domination creation seam", () => {
     const board = await call(h.app, "GET", `/v1/games/${game.gameId}/board`);
     expect(board.status).toBe(200);
     expect(board.body.generation).toBe("board1");
-    expect(board.body.reducerVersion).toBe("hex-domination:board-1");
+    expect(board.body.reducerVersion).toBe("hex-domination:board-2");
     expect(board.body.boardStreamId).toBe(`games/${game.gameId}/projections/board/board1`);
     expect(board.body.sourceThroughOffset).not.toBeNull();
     expect(board.body.combat).toBeNull();

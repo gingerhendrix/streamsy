@@ -158,10 +158,12 @@ function decideJoin(state: AggregateState, command: JoinGameCommand): Decision {
   if (state.players.some((p) => p.id === command.playerId)) {
     return reject("PLAYER_ID_TAKEN", "That player id is already in the game.");
   }
+  const named = seatName(command.name);
+  if (isRejection(named)) return named;
   return accept({
     type: "PlayerJoined",
     playerId: command.playerId,
-    name: command.name,
+    name: named.name,
     // Assigned here — after dedupe and fold — so simultaneous joins can never
     // seat two players on one colour. A free requested colour is honoured; a
     // taken or absent one is replaced by the first available palette colour.
@@ -177,13 +179,34 @@ function decideJoin(state: AggregateState, command: JoinGameCommand): Decision {
 /**
  * Trim and bound a requested seat name.
  *
- * Returned rather than silently applied so the decider can reject a name that is
- * only whitespace: a blank seat makes both the muster roll and the move feed
- * ambiguous, and there is no sensible name to substitute for one a player asked
- * for and did not get.
+ * Returned rather than silently applied so a caller can tell a usable name from
+ * one that is only whitespace: a blank seat makes both the muster roll and the
+ * move feed ambiguous, and there is no sensible name to substitute for one a
+ * player asked for and did not get.
  */
 export function normalizePlayerName(input: string): string {
   return input.trim().slice(0, RULES.maxPlayerNameLength).trim();
+}
+
+/**
+ * The one gate every seat name passes through, on every path that records one.
+ *
+ * `RULES.maxPlayerNameLength` is only canonical if the decider enforces it — a
+ * transport that trimmed on the way in would leave the guarantee resting on
+ * whichever client happened to be calling, and this demo has three (browser,
+ * scripted bot, external agent) plus its own tests. So create, join, and rename
+ * all normalize *here*, and a name with nothing visible in it is rejected rather
+ * than quietly replaced. Choosing a provisional default for a caller that gave no
+ * name at all stays at the HTTP boundary, where the product decision lives.
+ */
+function seatName(input: string): { name: string } | Decision {
+  const name = normalizePlayerName(input);
+  if (!name) return reject("INVALID_NAME", "A seat name cannot be blank.");
+  return { name };
+}
+
+function isRejection(result: { name: string } | Decision): result is Decision {
+  return "status" in result;
 }
 
 function decideRename(state: AggregateState, command: RenamePlayerCommand): Decision {
@@ -193,12 +216,12 @@ function decideRename(state: AggregateState, command: RenamePlayerCommand): Deci
   }
   const seat = findPlayer(state, command.playerId);
   if (!seat) return reject("UNKNOWN_PLAYER", "That player is not part of this game.");
-  const name = normalizePlayerName(command.name);
-  if (!name) return reject("INVALID_NAME", "A seat name cannot be blank.");
+  const named = seatName(command.name);
+  if (isRejection(named)) return named;
   return accept({
     type: "PlayerRenamed",
     playerId: command.playerId,
-    name,
+    name: named.name,
     commandId: command.commandId,
   });
 }
@@ -716,11 +739,13 @@ export function decide(state: AggregateState, command: Command, ctx: DecideConte
   switch (command.type) {
     case "create-game": {
       if (state.gameId) return reject("GAME_ALREADY_EXISTS", "A game already exists.");
+      const named = seatName(command.hostName);
+      if (isRejection(named)) return named;
       return accept({
         type: "GameCreated",
         gameId: command.gameId,
         hostPlayerId: command.hostPlayerId,
-        hostName: command.hostName,
+        hostName: named.name,
         hostColor: assignPlayerColor([], command.hostColor),
         hostController: command.hostController,
         mapVersion: MAP_VERSION,

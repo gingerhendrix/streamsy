@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { jsonSchemas, openApiDocument } from "./openapi.ts";
 import type { RiskErrorCode } from "../../src/domain/commands.ts";
+import { RULES } from "../../src/domain/map.ts";
 
 function actionTypes(schema: {
   oneOf: ReadonlyArray<{ properties: { type: { const: string } } }>;
@@ -147,6 +148,55 @@ describe("published OpenAPI contract", () => {
       ].toSorted(),
     );
     expect(Object.keys(openApiDocument.paths).every((path) => !path.includes("token"))).toBe(true);
+  });
+
+  it("declares a path parameter for every identifier it templates", () => {
+    // A route that documented its body but not the ids in its own URL would be
+    // undiscoverable from the document alone, which is the whole point of it.
+    for (const [path, item] of Object.entries(openApiDocument.paths)) {
+      const templated = [...path.matchAll(/\{(\w+)\}/g)].map((match) => match[1]);
+      const declared = ((item as any).parameters ?? []).map((parameter: any) =>
+        parameter.$ref.replace("#/components/parameters/", ""),
+      );
+      const resolved = declared.map(
+        (name: string) => (openApiDocument.components.parameters as any)[name],
+      );
+      expect(resolved.map((parameter: any) => parameter.name)).toEqual(templated);
+      for (const parameter of resolved) {
+        expect(parameter).toMatchObject({ in: "path", required: true, schema: { type: "string" } });
+      }
+    }
+  });
+
+  it("bounds a seat rename by the rule the decider enforces", () => {
+    const name = jsonSchemas.RenamePlayerRequest.properties.name;
+    expect(jsonSchemas.RenamePlayerRequest.required).toEqual(["name"]);
+    expect(name.minLength).toBe(1);
+    // Published from RULES, so the document cannot drift from the enforced bound.
+    expect(name.maxLength).toBe(RULES.maxPlayerNameLength);
+    expect(jsonSchemas.RenamePlayerRequest.description).toContain("INVALID_NAME");
+  });
+
+  it("documents what the roster routes actually answer, not just their happy path", () => {
+    const rename = openApiDocument.paths["/v1/games/{gameId}/players/{playerId}"].patch;
+    const leave = openApiDocument.paths["/v1/games/{gameId}/players/me"].delete;
+    expect(Object.keys(rename.responses)).toEqual(["200", "400", "401", "403", "404", "409"]);
+    expect(Object.keys(leave.responses)).toEqual(["200", "400", "401", "403", "404", "409"]);
+
+    for (const operation of [rename, leave]) {
+      for (const [status, response] of Object.entries(operation.responses)) {
+        // Every documented status names a schema and says something specific
+        // about when it happens; a bare `{ "403": {} }` documents nothing.
+        const schema = (response as any).content["application/json"].schema.$ref;
+        if (status === "200") expect(schema).toMatch(/^#\/components\/schemas\/(Rename|Leave)/);
+        else expect(schema).toBe("#/components/schemas/ErrorResponse");
+        expect((response as any).description.length).toBeGreaterThan(20);
+      }
+    }
+    // The specific rejections each route is documented to distinguish.
+    expect((rename.responses["403"] as any).description).toContain("agent seat it hosts");
+    expect((rename.responses["409"] as any).description).toContain("GAME_ALREADY_STARTED");
+    expect((leave.responses["409"] as any).description).toContain("ILLEGAL_ACTION");
   });
 
   it("documents the actions offset and bounded wait query parameters", () => {

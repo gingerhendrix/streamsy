@@ -9,6 +9,14 @@
  * causally-watermarked resources a player uses to act.
  */
 
+import { RULES } from "../../src/domain/map.ts";
+
+/**
+ * Published from the rule rather than restated, so the documented bound cannot
+ * drift from the one the decider actually enforces.
+ */
+const MAX_PLAYER_NAME_LENGTH = RULES.maxPlayerNameLength;
+
 const commandAction = {
   oneOf: [
     {
@@ -615,11 +623,16 @@ const schemas = {
   RenamePlayerRequest: {
     type: "object",
     description:
-      "The recorded name is trimmed and bounded to 24 characters; a name that is only whitespace is rejected with INVALID_NAME.",
+      "The decider trims the name and bounds it to RULES.maxPlayerNameLength before recording it, so a longer string is accepted and truncated rather than refused. `minLength` is the one hard floor: a name that trims to nothing is rejected with INVALID_NAME.",
     additionalProperties: false,
     required: ["name"],
     properties: {
-      name: { type: "string" },
+      name: {
+        type: "string",
+        minLength: 1,
+        maxLength: MAX_PLAYER_NAME_LENGTH,
+        description: `Trimmed, then truncated to ${MAX_PLAYER_NAME_LENGTH} characters. The recorded name is echoed in the response.`,
+      },
       commandId: { type: "string" },
     },
   },
@@ -880,6 +893,40 @@ function jsonRequest(schemaRef: string) {
   };
 }
 
+/**
+ * Path parameters, declared once and referenced by every path that templates
+ * them. Every operation under a path item inherits the item's `parameters`, so a
+ * route cannot document its body while leaving the identifiers in its own URL
+ * undescribed.
+ */
+const parameters = {
+  GameId: {
+    name: "gameId",
+    in: "path",
+    required: true,
+    description: "Game identifier, as returned by POST /v1/games.",
+    schema: { type: "string" },
+  },
+  PlayerId: {
+    name: "playerId",
+    in: "path",
+    required: true,
+    description: "Seat identifier, as it appears in the projected board's players.",
+    schema: { type: "string" },
+  },
+} as const;
+
+const gameIdParameter = [{ $ref: "#/components/parameters/GameId" }] as const;
+const gameAndPlayerParameters = [
+  { $ref: "#/components/parameters/GameId" },
+  { $ref: "#/components/parameters/PlayerId" },
+] as const;
+
+/** The rejection shape, described once per status a route actually returns. */
+function errorResponse(description: string) {
+  return { description, ...jsonResponse("ErrorResponse") };
+}
+
 export const openApiDocument = {
   openapi: "3.1.0",
   info: {
@@ -908,6 +955,7 @@ export const openApiDocument = {
       },
     },
     "/v1/games/{gameId}/players": {
+      parameters: gameIdParameter,
       post: {
         tags: ["lobby"],
         summary: "Join a game; returns the player and a one-time player capability.",
@@ -921,31 +969,54 @@ export const openApiDocument = {
       },
     },
     "/v1/games/{gameId}/players/me": {
+      parameters: gameIdParameter,
       delete: {
         tags: ["lobby"],
         summary:
           "Give up this capability's own seat (lobby only, human-controlled seats only). Scoped to `me`, so no request shape removes another player. A host that leaves keeps its host capability and the lobby it opened.",
         responses: {
-          "200": jsonResponse("LeaveGameResponse"),
-          "403": jsonResponse("ErrorResponse"),
-          "409": jsonResponse("ErrorResponse"),
+          "200": {
+            description: "The seat is gone from canonical history.",
+            ...jsonResponse("LeaveGameResponse"),
+          },
+          "400": errorResponse("UNKNOWN_PLAYER — this capability's seat is already given up."),
+          "401": errorResponse("UNAUTHORIZED — missing or invalid bearer capability."),
+          "403": errorResponse(
+            "FORBIDDEN for an agent capability; WRONG_GAME for a capability scoped to another game.",
+          ),
+          "404": errorResponse("GAME_NOT_FOUND — no such game."),
+          "409": errorResponse(
+            "GAME_ALREADY_STARTED once the game is under way; ILLEGAL_ACTION for a seat something other than a person plays.",
+          ),
         },
       },
     },
     "/v1/games/{gameId}/players/{playerId}": {
+      parameters: gameAndPlayerParameters,
       patch: {
         tags: ["lobby"],
         summary:
           "Rename a seat (lobby only). Permitted for the seat's own capability, and for the host on an agent seat it opened — never on another person's seat.",
         requestBody: jsonRequest("RenamePlayerRequest"),
         responses: {
-          "200": jsonResponse("RenamePlayerResponse"),
-          "403": jsonResponse("ErrorResponse"),
-          "409": jsonResponse("ErrorResponse"),
+          "200": {
+            description: "The seat's name as canonical history now records it.",
+            ...jsonResponse("RenamePlayerResponse"),
+          },
+          "400": errorResponse(
+            "BAD_REQUEST when the body carries no `name`; INVALID_NAME when it trims to nothing; UNKNOWN_PLAYER when the caller's own seat is no longer in the game.",
+          ),
+          "401": errorResponse("UNAUTHORIZED — missing or invalid bearer capability."),
+          "403": errorResponse(
+            "FORBIDDEN for an agent capability, and for any caller renaming a seat that is neither its own nor an agent seat it hosts; WRONG_GAME for a capability scoped to another game.",
+          ),
+          "404": errorResponse("GAME_NOT_FOUND, or NOT_FOUND when the named seat is not in it."),
+          "409": errorResponse("GAME_ALREADY_STARTED — names are fixed once the board is dealt."),
         },
       },
     },
     "/v1/games/{gameId}/agent-seats": {
+      parameters: gameIdParameter,
       post: {
         tags: ["lobby"],
         summary:
@@ -958,24 +1029,28 @@ export const openApiDocument = {
       },
     },
     "/v1/games/{gameId}/start": {
+      parameters: gameIdParameter,
       post: {
         summary: "Start the game (host capability required).",
         responses: { "200": jsonResponse("CommandAck") },
       },
     },
     "/v1/games/{gameId}": {
+      parameters: gameIdParameter,
       get: {
         summary: "Game metadata and status.",
         responses: { "200": jsonResponse("Board") },
       },
     },
     "/v1/games/{gameId}/board": {
+      parameters: gameIdParameter,
       get: {
         summary: "Projected board plus its canonical sourceThroughOffset watermark.",
         responses: { "200": jsonResponse("Board") },
       },
     },
     "/v1/games/{gameId}/map": {
+      parameters: gameIdParameter,
       get: {
         tags: ["agent"],
         summary:
@@ -987,6 +1062,7 @@ export const openApiDocument = {
       },
     },
     "/v1/games/{gameId}/decision": {
+      parameters: gameIdParameter,
       get: {
         tags: ["agent"],
         summary: "Full player-relative snapshot for bootstrap and recovery.",
@@ -996,6 +1072,7 @@ export const openApiDocument = {
       },
     },
     "/v1/games/{gameId}/commands": {
+      parameters: gameIdParameter,
       post: {
         tags: ["agent"],
         summary: "Submit a typed command (player capability). Idempotent by commandId.",
@@ -1008,6 +1085,7 @@ export const openApiDocument = {
       },
     },
     "/v1/games/{gameId}/players/me/actions": {
+      parameters: gameIdParameter,
       get: {
         tags: ["agent"],
         summary: "Follow this player's durable self-sufficient action-required stream.",
@@ -1036,7 +1114,7 @@ export const openApiDocument = {
       },
     },
   },
-  components: { schemas },
+  components: { schemas, parameters },
 } as const;
 
 export const jsonSchemas = schemas;

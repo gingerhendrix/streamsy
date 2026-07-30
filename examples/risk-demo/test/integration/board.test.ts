@@ -273,10 +273,15 @@ describe("Hex Domination board projection surface", () => {
     expect(result.status).toBe("cutover");
     expect(result.toGeneration).toBe("board2");
     expect(result.equivalence).toEqual({ boardEqual: true, watermarkEqual: true });
+    // Both generations here were built by the current reducer, so the rebuild is
+    // a fresh replay rather than a migration. The fields are still reported, and
+    // are what tells the two cases apart.
+    expect(result.fromReducerVersion).toBe("hex-domination:board-2");
+    expect(result.toReducerVersion).toBe("hex-domination:board-2");
 
     const after = await boardFor(h.app, game);
     expect(after.generation).toBe("board2");
-    expect(after.reducerVersion).toBe("hex-domination:board-1");
+    expect(after.reducerVersion).toBe("hex-domination:board-2");
     expect(after.sourceThroughOffset).toBe(before.sourceThroughOffset);
     expect(after.territories).toEqual(before.territories);
     expect(after.combat).toEqual(before.combat);
@@ -284,6 +289,31 @@ describe("Hex Domination board projection surface", () => {
       "board1",
       "board2",
     ]);
+  });
+
+  it("reports a rebuild that moves a generation onto a newer reducer", async () => {
+    const h = riskHarness();
+    const game = await createGame(h.app, { mapSeed: "reducer-migration" });
+    await declareAttack(h, game);
+
+    // Stand in for a stream this deployment inherited: the rows are the current
+    // reducer's, but the generation is *recorded* as an older reducer's, which is
+    // the only durable trace a bump leaves behind.
+    const active = h.stores.generations.get(game.gameId, "board1")!;
+    h.stores.generations.put({ ...active, reducerVersion: "hex-domination:board-1" });
+
+    const result = await rebuildBoardGeneration(
+      { protocol: h.protocol, stores: h.stores },
+      game.gameId,
+      { now: () => h.clock.now + 1_000 },
+    );
+    expect(result.status).toBe("cutover");
+    expect(result.fromReducerVersion).toBe("hex-domination:board-1");
+    expect(result.toReducerVersion).toBe("hex-domination:board-2");
+    // The rebuilt generation is recorded under the reducer that actually built it.
+    expect(h.stores.generations.get(game.gameId, "board2")?.reducerVersion).toBe(
+      "hex-domination:board-2",
+    );
   });
 
   it("keeps the active generation and board unchanged when rebuild verification fails", async () => {
