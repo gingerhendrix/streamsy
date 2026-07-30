@@ -20,6 +20,7 @@ import {
   generateMapSeed,
   indexMap,
   mapProfileFor,
+  maxContinentTerritories,
 } from "./map.ts";
 import { createSeededRng } from "./rng.ts";
 
@@ -109,14 +110,14 @@ describe("generator rng", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Pinned hashes of `hex-generator-v1` output. These are the byte-stability
+ * Pinned hashes of `hex-generator-v2` output. These are the byte-stability
  * guarantee: any change to the algorithm, the name pools, or the normalization
  * order must break these and force a new generator version.
  */
 const KNOWN_SEED_HASHES: ReadonlyArray<{ seed: string; players: number; hash: string }> = [
-  { seed: "seed-alpha", players: 2, hash: "46ae4f415de631a2" },
-  { seed: "seed-alpha", players: 3, hash: "d8ab9d9030aba690" },
-  { seed: "seed-alpha", players: 4, hash: "340efbdf4ca2aa5f" },
+  { seed: "seed-alpha", players: 2, hash: "15ab0101e9b0c9f0" },
+  { seed: "seed-alpha", players: 3, hash: "1374c408e270800b" },
+  { seed: "seed-alpha", players: 4, hash: "e19f3b85c8a95e35" },
 ];
 
 describe("known-seed map snapshots", () => {
@@ -209,6 +210,7 @@ describe.each(MAP_PROFILES)("profile: $players players", (profile) => {
         expect(continent.territoryIds.length).toBeGreaterThanOrEqual(RULES.minContinentTerritories);
         expect(continent.reinforcementBonus).toBe(continentBonus(continent.territoryIds.length));
         expect(continent.reinforcementBonus).toBeGreaterThanOrEqual(RULES.minContinentBonus);
+        expect(continent.territoryIds.length).toBeLessThanOrEqual(maxContinentTerritories(profile));
 
         const members = new Set(continent.territoryIds);
         const start = continent.territoryIds[0]!;
@@ -224,6 +226,16 @@ describe.each(MAP_PROFILES)("profile: $players players", (profile) => {
         }
         expect(seen.size).toBe(members.size);
       }
+    }
+  });
+
+  // The bonus is paid for territory count, so continents that all hold the same
+  // number of countries make the choice of which to hold arbitrary. Every seed must
+  // offer a continent worth more than another.
+  it("gives every map a more and a less valuable continent", () => {
+    for (const map of maps) {
+      const bonuses = map.continents.map((continent) => continent.reinforcementBonus);
+      expect(Math.max(...bonuses)).toBeGreaterThan(Math.min(...bonuses));
     }
   });
 

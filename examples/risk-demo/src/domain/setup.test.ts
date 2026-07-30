@@ -156,7 +156,7 @@ describe("current canonical recording", () => {
     };
 
     expect(created.mapVersion).toBe("procedural-hex-v1");
-    expect(created.generatorVersion).toBe("hex-generator-v1");
+    expect(created.generatorVersion).toBe("hex-generator-v2");
     expect(created.mapSeed).toMatch(/^[0-9a-f]{32}$/);
   });
 

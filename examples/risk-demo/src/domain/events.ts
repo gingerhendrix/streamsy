@@ -4,7 +4,7 @@
  * The defining property of the two setup events: `GameCreated` carries the seed
  * and the generator's *provenance*, while `GameStarted` carries the generator's
  * complete *output*. Replay consumes the snapshot and never invokes
- * `hex-generator-v1`, so a later generator version cannot rewrite the board of a
+ * `hex-generator-v2`, so a later generator version cannot rewrite the board of a
  * game already in progress.
  *
  * Combat is two-staged. `AttackDeclared` records the attacker's roll and opens a

@@ -152,7 +152,7 @@ describe("Hex Domination decision context", () => {
 
     expect(decision.board.map).toEqual({
       mapVersion: "procedural-hex-v1",
-      generatorVersion: "hex-generator-v1",
+      generatorVersion: "hex-generator-v2",
       seed: "decision-map-ref",
       boardStreamId: WATERMARK.boardStreamId,
       territoryCount: 16,

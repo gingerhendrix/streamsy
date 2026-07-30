@@ -14,7 +14,7 @@ import { hexDistance, parseHexId } from "./hex.ts";
 import type { Rng } from "./rng.ts";
 
 export const MAP_VERSION = "procedural-hex-v1";
-export const GENERATOR_VERSION = "hex-generator-v1";
+export const GENERATOR_VERSION = "hex-generator-v2";
 
 export type MapVersion = typeof MAP_VERSION;
 export type GeneratorVersion = typeof GENERATOR_VERSION;
@@ -82,6 +82,13 @@ export const RULES = {
   maxTerritoryHexes: 6,
   minContinentTerritories: 3,
   minContinentBonus: 2,
+  /**
+   * How far above the even share a continent's target size may be pushed during
+   * generation. Continents that all hold the same number of territories all pay
+   * the same bonus, which makes holding one an arbitrary choice; a bounded skew
+   * gives every map a continent worth fighting for and one worth trading away.
+   */
+  continentSizeSpread: 2,
   /** Human defence interrupt window, in milliseconds. */
   defenseTimeoutMs: 15_000,
   /** Bounded retry budget for map generation before game start is rejected. */
@@ -115,11 +122,32 @@ export function mapProfileFor(playerCount: number): MapProfile {
 }
 
 /**
+ * Largest continent a valid map may carry: the even share plus the allowed skew.
+ *
+ * The floor (`minContinentTerritories`) keeps a continent worth owning; this is the
+ * matching ceiling. Without it a stranded pocket of countries can all fall to the
+ * one continent they touch, and because the bonus rises with territory count, that
+ * continent alone would decide the game. A candidate over the ceiling is rejected
+ * and regenerated rather than shipped.
+ */
+export function maxContinentTerritories(profile: MapProfile): number {
+  return Math.floor(profile.territories / profile.continents) + RULES.continentSizeSpread;
+}
+
+/**
  * Continent bonus, computed once during generation and stored in the snapshot.
  * Kept here so tests and the generator share one definition.
+ *
+ * One territory below the count, floored at `minContinentBonus`: strictly
+ * increasing across the sizes a real map produces (3→2, 4→3, 5→4, 6→5), so a
+ * larger continent is visibly worth more than a smaller one. A halved count is
+ * not — at 3–6 territories it collapses to 2 or 3 and the mechanic reads as flat.
+ *
+ * Bonuses are frozen into the `GameStarted` map snapshot, so a change here only
+ * affects games started afterwards; a game in progress keeps its recorded bonuses.
  */
 export function continentBonus(territoryCount: number): number {
-  return Math.max(RULES.minContinentBonus, Math.floor(territoryCount / 2));
+  return Math.max(RULES.minContinentBonus, territoryCount - 1);
 }
 
 /**

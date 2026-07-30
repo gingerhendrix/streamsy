@@ -1,5 +1,5 @@
 /**
- * Versioned name pools for `hex-generator-v1`.
+ * Versioned name pools for `hex-generator-v2`.
  *
  * These lists are part of the generator's contract: reordering, editing, or
  * extending them changes the output of every seed. Any change therefore needs a

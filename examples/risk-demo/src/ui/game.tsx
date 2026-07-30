@@ -861,6 +861,9 @@ export function GameScreen(props: GameScreenProps) {
               <div>
                 <span className="section-label">
                   {names.continent(focused.continentId)}
+                  {/* Continents no longer all pay the same bonus, so what this one is
+                      worth belongs next to its name and not only in the standings. */}
+                  {` · +${continentById.get(focused.continentId)?.reinforcementBonus ?? 0} per turn`}
                   {continentById.get(focused.continentId)?.controllerId
                     ? ` · held by ${names.player(continentById.get(focused.continentId)?.controllerId)}`
                     : ""}

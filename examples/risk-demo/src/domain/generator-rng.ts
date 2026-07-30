@@ -1,5 +1,5 @@
 /**
- * Deterministic integer PRNG for `hex-generator-v1`.
+ * Deterministic integer PRNG for `hex-generator-v2`.
  *
  * Requirements this file exists to satisfy:
  *  - explicit 32-bit integer operations only — no `Math.random`, no reliance on
@@ -14,7 +14,7 @@
  * replay — the seed is provenance, and the recorded snapshot is truth.
  */
 
-/** The named substreams consumed by `hex-generator-v1` and current setup. */
+/** The named substreams consumed by `hex-generator-v2` and current setup. */
 export const SUBSTREAMS = [
   "land",
   "territories",

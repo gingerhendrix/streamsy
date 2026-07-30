@@ -1,5 +1,5 @@
 /**
- * `hex-generator-v1` — the pure, seeded procedural hex-map generator.
+ * `hex-generator-v2` — the pure, seeded procedural hex-map generator.
  *
  * The generator is a *pure function of its seed*. It runs exactly once per game,
  * inside the start-game command service, and its complete output is recorded in
@@ -44,7 +44,14 @@ import type {
   Terrain,
   TerritoryDef,
 } from "./map.ts";
-import { GENERATOR_VERSION, MAP_VERSION, RULES, continentBonus, mapProfileFor } from "./map.ts";
+import {
+  GENERATOR_VERSION,
+  MAP_VERSION,
+  RULES,
+  continentBonus,
+  mapProfileFor,
+  maxContinentTerritories,
+} from "./map.ts";
 
 /** Number of neighbour-averaging passes applied to elevation and moisture. */
 const TERRAIN_SMOOTHING_PASSES = 2;
@@ -59,7 +66,7 @@ export class MapGenerationError extends Error {
 
   constructor(seed: string, attempts: number, problems: readonly string[]) {
     super(
-      `hex-generator-v1 could not produce a valid map for seed "${seed}" in ${attempts} attempts: ${
+      `hex-generator-v2 could not produce a valid map for seed "${seed}" in ${attempts} attempts: ${
         problems.join("; ") || "no candidate reached validation"
       }`,
     );
@@ -404,16 +411,57 @@ function deriveTerritoryAdjacency(
 // Step 5 — continent partition
 // ---------------------------------------------------------------------------
 
+/**
+ * Target size per continent, deliberately uneven.
+ *
+ * An even split is the wrong shape for this game: the bonus is paid for territory
+ * count, so four equal continents pay four equal bonuses and holding any one of
+ * them is the same decision. The even share is therefore skewed by moving whole
+ * territories from one continent's target to another's, bounded on both sides —
+ * never below `RULES.minContinentTerritories` (the generator's own invariant) and
+ * never more than `RULES.continentSizeSpread` above the even share, so no continent
+ * can swallow the board. Returns `null` when the profile cannot be split at all,
+ * which the caller treats as a failed attempt against its retry budget.
+ */
+function continentSizeTargets(
+  rng: IntRng,
+  territoryCount: number,
+  continentCount: number,
+): number[] | null {
+  const base = Math.floor(territoryCount / continentCount);
+  const remainder = territoryCount % continentCount;
+  const targets = Array.from({ length: continentCount }, (_, i) => base + (i < remainder ? 1 : 0));
+  if (targets.some((t) => t < RULES.minContinentTerritories)) return null;
+
+  const ceiling = base + RULES.continentSizeSpread;
+  // One transfer per continent. The bounds reject most draws, so asking for fewer
+  // leaves the targets level too often; the bounds themselves stop this from
+  // running away, since a donor at the floor and a receiver at the ceiling both
+  // refuse to move.
+  const wanted = continentCount;
+  let made = 0;
+  for (let attempt = 0; attempt < continentCount * 4 && made < wanted; attempt += 1) {
+    const donor = rng.nextInt(continentCount);
+    const receiver = rng.nextInt(continentCount);
+    if (donor === receiver) continue;
+    const given = targets[donor]!;
+    const taken = targets[receiver]!;
+    if (given - 1 < RULES.minContinentTerritories || taken + 1 > ceiling) continue;
+    targets[donor] = given - 1;
+    targets[receiver] = taken + 1;
+    made += 1;
+  }
+  return targets;
+}
+
 function partitionContinents(
   rng: IntRng,
   adjacency: readonly (readonly number[])[],
   continentCount: number,
 ): number[][] | null {
   const territoryCount = adjacency.length;
-  const base = Math.floor(territoryCount / continentCount);
-  const remainder = territoryCount % continentCount;
-  const targets = Array.from({ length: continentCount }, (_, i) => base + (i < remainder ? 1 : 0));
-  if (targets.some((t) => t < RULES.minContinentTerritories)) return null;
+  const targets = continentSizeTargets(rng, territoryCount, continentCount);
+  if (!targets) return null;
 
   // Farthest-point seeds on the territory graph.
   const seeds: number[] = [rng.nextInt(territoryCount)];
@@ -469,7 +517,9 @@ function partitionContinents(
     }
   }
 
-  // Unreached territories join the smallest adjacent continent.
+  // Unreached territories join the adjacent continent furthest below its target,
+  // so a stranded pocket does not quietly level the skew back out. Ties fall to the
+  // smaller continent and then to the lower index, keeping the choice deterministic.
   let leftovers = Array.from({ length: territoryCount }, (_, i) => i).filter((t) => !group.has(t));
   while (leftovers.length > 0) {
     let assignedAny = false;
@@ -481,8 +531,16 @@ function partitionContinents(
       }
       if (options.size === 0) continue;
       const sorted = [...options].toSorted((a, b) => a - b);
+      const deficitOf = (i: number): number => targets[i]! - members[i]!.length;
       let best = sorted[0]!;
-      for (const i of sorted) if (members[i]!.length < members[best]!.length) best = i;
+      for (const i of sorted) {
+        if (
+          deficitOf(i) > deficitOf(best) ||
+          (deficitOf(i) === deficitOf(best) && members[i]!.length < members[best]!.length)
+        ) {
+          best = i;
+        }
+      }
       group.set(t, best);
       members[best]!.push(t);
       assignedAny = true;
@@ -677,11 +735,28 @@ export function validateGeneratedMap(map: GeneratedMap, profile: MapProfile): st
     problems.push("territory adjacency graph is not connected");
   }
 
+  // A map whose continents all pay the same bonus makes the choice of which one to
+  // hold arbitrary, which is the opposite of what a continent bonus is for. The
+  // partition aims for uneven sizes but the graph can level them back out, so the
+  // requirement is checked here and an even candidate is regenerated.
+  if (map.continents.length > 1) {
+    const bonuses = new Set(map.continents.map((continent) => continent.reinforcementBonus));
+    if (bonuses.size === 1) {
+      problems.push(`every continent pays the same bonus (+${[...bonuses][0]})`);
+    }
+  }
+
   const assignedTerritories = new Set<string>();
   for (const continent of map.continents) {
     if (continent.territoryIds.length < RULES.minContinentTerritories) {
       problems.push(
         `${continent.id} has ${continent.territoryIds.length} territories, fewer than ${RULES.minContinentTerritories}`,
+      );
+    }
+    const ceiling = maxContinentTerritories(profile);
+    if (continent.territoryIds.length > ceiling) {
+      problems.push(
+        `${continent.id} has ${continent.territoryIds.length} territories, more than ${ceiling}`,
       );
     }
     if (continent.reinforcementBonus !== continentBonus(continent.territoryIds.length)) {

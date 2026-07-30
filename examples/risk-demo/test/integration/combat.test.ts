@@ -41,7 +41,7 @@ describe("Hex Domination creation seam", () => {
     const decision = await decisionFor(h.app, game, game.players[0]!);
     // `/decision` names the map; the snapshot itself lives on the board surface.
     expect(decision.board.map.seed).toBe("fixed-seed-1");
-    expect(decision.board.map.generatorVersion).toBe("hex-generator-v1");
+    expect(decision.board.map.generatorVersion).toBe("hex-generator-v2");
     expect(decision.board.map.territoryCount).toBe(16);
     const board = await boardFor(h.app, game);
     expect(board.game.mapSeed).toBe("fixed-seed-1");
