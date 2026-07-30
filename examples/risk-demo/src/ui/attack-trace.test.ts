@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProjectedMove } from "../board/projection.ts";
-import {
-  historicAttackId,
-  latestAttackTrace,
-  traceToDraw,
-  type AttackTrace,
-} from "./attack-trace.ts";
+import { latestAttackTrace, traceToDraw, type AttackTrace } from "./attack-trace.ts";
 
 function resolved(offset: string, detail: Partial<ProjectedMove>): ProjectedMove {
   return {
@@ -52,6 +47,7 @@ describe("latest attack trace", () => {
         attackerLosses: 0,
         defenderLosses: 2,
         captured: false,
+        sourceOffset: "0011",
       });
     }
   });
@@ -79,53 +75,85 @@ describe("latest attack trace", () => {
   });
 });
 
-const trace = (attackId: string): AttackTrace => ({
-  attackId,
+const trace = (offset: string): AttackTrace => ({
+  attackId: `atk-${offset}`,
   from: "t1",
   to: "t2",
   attackerLosses: 1,
   defenderLosses: 0,
   captured: false,
+  sourceOffset: offset,
 });
 
-describe("suppressing the throw that was already history at mount", () => {
-  it("never replays the throw that had already resolved when the screen opened", () => {
-    expect(traceToDraw(trace("atk-1"), "atk-1")).toBeNull();
-    // Not just on the first update: any later projection transaction still leaves
-    // that throw history, which is exactly the case an offset comparison missed.
-    expect(traceToDraw(trace("atk-1"), "atk-1")).toBeNull();
+/**
+ * One page load, as the map actually sees it: a sequence of move feeds, each render's
+ * trace judged against the watermark canonical history stood at when the screen
+ * opened. Returns every throw that would have been drawn.
+ *
+ * The sequence is the point. A single feed cannot express this defect — the flash
+ * needs a *first* state that is coherent and stale followed by a catch-up, which is
+ * exactly what the projection stream's cacheable first response produces.
+ */
+function drawnDuringLoad(
+  openedThroughOffset: string | null | undefined,
+  feeds: readonly ProjectedMove[][],
+): string[] {
+  const drawn: string[] = [];
+  for (const feed of feeds) {
+    const visible = traceToDraw(latestAttackTrace(feed), openedThroughOffset);
+    if (visible && drawn.at(-1) !== visible.attackId) drawn.push(visible.attackId);
+  }
+  return drawn;
+}
+
+describe("suppressing throws that were already history when the screen opened", () => {
+  // A reload whose first state comes from the stream's `max-age=60` cached response:
+  // the browser hydrates a feed that is internally coherent — its own watermark, meta
+  // row and move rows all agree — but a transaction or two behind canonical history,
+  // and everything committed since arrives immediately afterwards as ordinary changes.
+  const CACHED = [resolved("0006", {})];
+  const CAUGHT_UP = [resolved("0006", {}), resolved("0020", {})];
+
+  it("draws nothing when a stale cached feed is followed by a catch-up", () => {
+    // `/board` is uncacheable, so the watermark knows about atk-0020 even though the
+    // cached hydration did not. Neither throw is news, so neither may be drawn.
+    expect(drawnDuringLoad("0020", [[], CACHED, CACHED, CAUGHT_UP])).toEqual([]);
   });
 
-  it("draws the next throw, which did happen in front of the viewer", () => {
-    expect(traceToDraw(trace("atk-2"), "atk-1")).toEqual(trace("atk-2"));
+  it("suppresses every throw already in history, not only the newest one", () => {
+    expect(drawnDuringLoad("0020", [CAUGHT_UP])).toEqual([]);
+    expect(traceToDraw(trace("0006"), "0020")).toBeNull();
   });
 
-  it("draws the first throw of a game joined before anyone attacked", () => {
-    expect(traceToDraw(trace("atk-1"), null)).toEqual(trace("atk-1"));
+  it("still draws a genuinely new throw after that same load", () => {
+    // The positive control, and the reason this is a comparison rather than a latch:
+    // suppression must not become a blanket, or the overlay is silently deleted.
+    const NEW_THROW = [...CAUGHT_UP, resolved("0031", {})];
+    expect(drawnDuringLoad("0020", [CACHED, CAUGHT_UP, NEW_THROW])).toEqual(["atk-0031"]);
+  });
+
+  it("counts a throw at the watermark itself as history", () => {
+    // The watermark is inclusive: it is the offset history has been read *through*.
+    expect(traceToDraw(trace("0020"), "0020")).toBeNull();
+    expect(traceToDraw(trace("0021"), "0020")).toEqual(trace("0021"));
+  });
+
+  it("draws the first throw of a game opened before anyone attacked", () => {
+    expect(traceToDraw(trace("0006"), null)).toEqual(trace("0006"));
     expect(traceToDraw(null, null)).toBeNull();
   });
 
-  it("draws nothing at all until history has been named", () => {
-    // The board is assembled from one live query per collection, so a render can see
-    // a game with no moves yet. Drawing then is how a historic throw flashed in.
-    expect(traceToDraw(trace("atk-1"), undefined)).toBeNull();
-  });
-});
-
-describe("naming history from the projection's own snapshot", () => {
-  it("is not knowable until the meta row carrying the feed has arrived", () => {
-    expect(historicAttackId(null)).toBeUndefined();
-    expect(historicAttackId(undefined)).toBeUndefined();
+  it("draws nothing at all until the watermark is known", () => {
+    // In flight, or unreadable: a throw drawn now might be one that resolved before
+    // the viewer arrived, and a missed flash costs less than a false one.
+    expect(traceToDraw(trace("0006"), undefined)).toBeNull();
+    expect(drawnDuringLoad(undefined, [CACHED, CAUGHT_UP])).toEqual([]);
   });
 
-  it("names the newest throw in the snapshot, not whatever the collections hold", () => {
-    // The snapshot is written per transaction and holds the whole feed, oldest first.
-    const snapshot = { moves: [resolved("0006", {}), DECLARED, resolved("0011", {})] };
-    expect(historicAttackId({ snapshot })).toBe("atk-0011");
-  });
-
-  it("reports no history for a game where nobody has attacked yet", () => {
-    expect(historicAttackId({ snapshot: { moves: [DECLARED] } })).toBeNull();
-    expect(historicAttackId({ snapshot: { moves: [] } })).toBeNull();
+  it("draws a throw that landed while the watermark was still in flight", () => {
+    // Not latched, so the throw is not lost: the render after the watermark arrives
+    // proves it is above the watermark and draws it.
+    expect(drawnDuringLoad(undefined, [CAUGHT_UP])).toEqual([]);
+    expect(drawnDuringLoad("0006", [CAUGHT_UP])).toEqual(["atk-0020"]);
   });
 });

@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import type {
   AgentSeatResponse,
+  BoardResponse,
   CommandAck,
   DecisionResponse,
   GameResponse,
@@ -49,7 +50,7 @@ import {
   fortifyAction as canonicalFortifyAction,
   shouldDismissAttackSummary,
 } from "./attack-phase.ts";
-import { historicAttackId, latestAttackTrace, traceToDraw } from "./attack-trace.ts";
+import { latestAttackTrace, traceToDraw } from "./attack-trace.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
@@ -124,6 +125,52 @@ function usePrefersReducedMotion(): boolean {
     return () => query.removeEventListener("change", onChange);
   }, []);
   return reduced;
+}
+
+/**
+ * The source-stream watermark canonical history stood at when this screen opened.
+ *
+ * Read once from `GET /board`, which is served without cache headers, so the answer
+ * is canonical rather than whatever a cache still holds — the whole point, since the
+ * projection stream's own first response *is* cacheable and is what made a historic
+ * throw look new. The response is otherwise unused: only its watermark is kept.
+ *
+ * Three values, and the distinction matters at both ends:
+ *   `undefined` — not known yet (or in flight); no animation may claim to be news.
+ *   `null`      — canonical history was empty; every throw since is news.
+ *   an offset   — everything at or below it is history.
+ *
+ * `fallbackOffset` keeps the feature alive if that read fails: the projection's own
+ * watermark, which is the best the live collections can offer and is exactly as
+ * lag-prone as the state carrying it. Degrading to the old, weaker guarantee is the
+ * right direction — suppressing every throw for the rest of the session would
+ * silently delete the overlay instead.
+ */
+function useOpenedThroughOffset(
+  gameId: string,
+  fallbackOffset: string | undefined,
+): string | null | undefined {
+  const [watermark, setWatermark] = useState<
+    { state: "known"; offset: string | null } | { state: "failed" } | null
+  >(null);
+  useEffect(() => {
+    setWatermark(null);
+    let cancelled = false;
+    void fetch(`/v1/games/${gameId}/board`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("no board"))))
+      .then((body: BoardResponse) => {
+        if (!cancelled) setWatermark({ state: "known", offset: body.sourceThroughOffset ?? null });
+      })
+      .catch(() => {
+        if (!cancelled) setWatermark({ state: "failed" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameId]);
+  if (watermark?.state === "known") return watermark.offset;
+  if (watermark?.state === "failed") return fallbackOffset;
+  return undefined;
 }
 
 export function detailTerritoryId(
@@ -252,16 +299,21 @@ export function GameScreen(props: GameScreenProps) {
 
   const revealKey = combat ? `${combat.attackId}:${combat.status}` : null;
 
-  // What was already history when this screen opened, named once — from the
-  // projection's own snapshot rather than from the live collections. Both the dice
-  // reveal and the map trace are animations of something happening *now*, so each is
-  // suppressed for the throw that had already happened; naming it from the first
-  // render that merely *had a game row* named it before the move feed existed, which
-  // is what left a historic throw able to flash in on roughly one load in sixty.
-  const historicThrowId = useRef<string | null | undefined>(undefined);
-  if (historicThrowId.current === undefined) {
-    historicThrowId.current = historicAttackId(board?.meta);
-    if (historicThrowId.current !== undefined && revealKey) seenReveals.current.add(revealKey);
+  // How far canonical history had run when this screen opened. Both the dice reveal
+  // and the map trace are animations of something happening *now*, so both are
+  // suppressed for anything that had already happened — and "already happened" cannot
+  // be read off the stream, whose first response a browser may answer from a
+  // `max-age=60` cache with an internally coherent but stale state that claims to be
+  // up to date. Every throw committed since arrives afterwards looking like news, which
+  // is what redrew a historic throw at first paint. So the watermark is taken from the
+  // board resource, which is served uncacheable, and the comparison is offset against
+  // offset. `undefined` while it is in flight: nothing is drawn until it is known.
+  const openedThrough = useOpenedThroughOffset(gameId, board?.meta?.sourceThroughOffset);
+  const historyNamed = openedThrough !== undefined;
+  const revealSeeded = useRef(false);
+  if (!revealSeeded.current && historyNamed) {
+    revealSeeded.current = true;
+    if (revealKey) seenReveals.current.add(revealKey);
   }
 
   const [reveal, setReveal] = useState<RevealPlan>({
@@ -271,13 +323,13 @@ export function GameScreen(props: GameScreenProps) {
   useEffect(() => {
     if (!revealKey) return;
     // Until history has been named, a reveal cannot be told from a replay of one.
-    if (historicThrowId.current === undefined) return;
+    if (!historyNamed) return;
     const alreadySeen = seenReveals.current.has(revealKey);
     seenReveals.current.add(revealKey);
     setReveal(revealPlan({ reducedMotion, alreadySeen }));
-  }, [revealKey, reducedMotion]);
+  }, [revealKey, reducedMotion, historyNamed]);
 
-  const visibleTrace = traceToDraw(trace, historicThrowId.current);
+  const visibleTrace = traceToDraw(trace, openedThrough);
 
   // The countdown only needs to tick while a defence window is actually open.
   const pendingDeadline =

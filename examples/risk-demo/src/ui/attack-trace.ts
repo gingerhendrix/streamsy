@@ -28,6 +28,13 @@ export interface AttackTrace {
   defenderLosses: number;
   /** A capture is drawn differently from a bounce: the target changed hands. */
   captured: boolean;
+  /**
+   * Where this throw sits in canonical history — the source stream offset of its
+   * `AttackResolved` event. Carried so "did this happen before I opened the screen?"
+   * can be answered by comparing two offsets from the same total order rather than
+   * by guessing from what has arrived.
+   */
+  sourceOffset: string;
 }
 
 export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace | null {
@@ -47,48 +54,47 @@ export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace 
     attackerLosses: newest.attackerLosses ?? 0,
     defenderLosses: newest.defenderLosses ?? 0,
     captured: newest.territoryCaptured === true,
+    sourceOffset: newest.sourceOffset,
   };
 }
 
 /**
- * The throw that was already history when this screen opened, named from a snapshot
- * that carries the whole move feed.
- *
- * The board is assembled from one live query per collection, so a render can see the
- * game row before the move rows have landed. Naming history from *that* render records
- * "there was no previous throw", and the historic throw is promoted to news the moment
- * the feed arrives — which is the residual flash left after the offset comparison was
- * replaced by identity. The projection's own meta row is written per transaction and
- * carries the complete state, so it is the one place a coherent feed can be read.
- *
- * `undefined` means *not knowable yet*, which is deliberately different from `null`
- * ("there was no previous throw"): until the snapshot exists, nothing may be drawn.
- */
-export function historicAttackId(
-  meta: { snapshot: { moves: readonly ProjectedMove[] } } | null | undefined,
-): string | null | undefined {
-  if (!meta) return undefined;
-  return latestAttackTrace(meta.snapshot.moves)?.attackId ?? null;
-}
-
-/**
- * The trace to actually draw, given the throw that was already history when this
+ * The trace to actually draw, given how far canonical history had run when this
  * screen opened.
  *
  * A throw that resolved before the viewer arrived is state, not an event they are
- * watching, so it must not fade in front of them on load. Identity is the honest
- * test: the newest throw at mount is named once and suppressed until a *different*
- * throw replaces it. Comparing snapshot offsets instead — as the first cut did —
- * only suppressed the very first snapshot, so any later projection update (a
- * catch-up transaction, an unrelated change) re-promoted the historic throw to news.
+ * watching, so it must not fade in front of them on load. Every earlier cut of this
+ * gate asked *"is the newest throw I can see the same one I could see a moment ago?"*
+ * and every one of them leaked, because what a freshly loaded page "can see a moment
+ * ago" is not canonical history — the projection stream's first response is served
+ * `Cache-Control: public, max-age=60, stale-while-revalidate=300`, so the browser
+ * hydrates from an HTTP-cached snapshot that is internally coherent (its meta row,
+ * its move rows and its watermark all agree) but up to a minute stale, and *claims*
+ * `stream-up-to-date: true`. Everything committed since then is then delivered as
+ * ordinary live changes, indistinguishable from news. Naming history from the first
+ * state to arrive — a truthy `board`, then a non-null `meta` row — could only ever
+ * name the cached one.
+ *
+ * So the comparison is not between two views of the feed but between two points in
+ * one total order: the throw's own `sourceOffset`, and the watermark canonical
+ * history stood at when the screen opened, read from an authoritative resource that
+ * no cache answers for. A throw at or below that watermark provably already existed;
+ * a throw above it provably did not. Which batch delivered it, and whether that
+ * batch came from a cache, a catch-up or a long poll, stops mattering.
+ *
+ * `undefined` means *the watermark is not known yet*, which is deliberately
+ * different from `null` ("history was empty when we opened"): until it is known,
+ * nothing may be drawn, because a missed flash costs less than a false one. The
+ * comparison is re-made on every render rather than latched, so a throw that lands
+ * during that window is drawn as soon as the watermark proves it is new.
  */
 export function traceToDraw(
   trace: AttackTrace | null,
-  historicId: string | null | undefined,
+  openedThroughOffset: string | null | undefined,
 ): AttackTrace | null {
   if (!trace) return null;
-  // History not yet named: a throw drawn now might be one that resolved before the
-  // viewer arrived, and a missed flash costs less than a false one.
-  if (historicId === undefined) return null;
-  return trace.attackId === historicId ? null : trace;
+  if (openedThroughOffset === undefined) return null;
+  if (openedThroughOffset === null) return trace;
+  // Offsets are fixed-width, so the feed's own ordering rule compares them.
+  return trace.sourceOffset.localeCompare(openedThroughOffset) <= 0 ? null : trace;
 }

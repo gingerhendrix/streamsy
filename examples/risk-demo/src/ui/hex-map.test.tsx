@@ -130,6 +130,7 @@ describe("resolved throws on the map", () => {
     attackerLosses: 2,
     defenderLosses: 0,
     captured: false,
+    sourceOffset: "0006",
   };
 
   it("draws nothing until a throw has resolved", () => {
