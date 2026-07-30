@@ -36,10 +36,12 @@ prints the spectator URL, and plays through to a winner.
 - Fortification can move through any connected path of owned countries.
 - Terrain is visual character only; it does not affect the rules.
 
-`procedural-hex-v1` and `hex-generator-v1` are replay provenance identifiers,
+`procedural-hex-v1` and `hex-generator-v2` are replay provenance identifiers,
 not alternate game modes. Changing the generator in a way that changes
 output requires a new generator identifier because generated maps are durable
-facts.
+facts. `hex-generator-v1` remains a valid identifier for games generated
+before continent sizing was skewed; those games replay against their own
+recorded snapshot and keep the bonuses they were dealt.
 
 ## Architecture
 
