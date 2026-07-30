@@ -496,6 +496,14 @@ export function moveText(move: ProjectedMove, names: NameLookup): string {
       return `${who} joined the game`;
     case "PlayerControllerChanged":
       return `${who} was delegated to an agent`;
+    case "PlayerRenamed":
+      // The seat lookup already resolves to the new name, so the feed reads in
+      // the roster's present tense rather than as a before/after diff.
+      return `${who} renamed their seat`;
+    case "PlayerLeft":
+      // The seat row is deleted by this very event, so the name is carried on the
+      // move itself; the lookup has nothing left to resolve.
+      return `${move.name ?? who} left the lobby`;
     case "GameStarted":
       return "Countries dealt — the campaign begins";
     case "ArmiesReinforced":

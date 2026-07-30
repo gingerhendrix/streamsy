@@ -612,6 +612,38 @@ const schemas = {
       moves: { type: "array", items: { type: "object" } },
     },
   },
+  RenamePlayerRequest: {
+    type: "object",
+    description:
+      "The recorded name is trimmed and bounded to 24 characters; a name that is only whitespace is rejected with INVALID_NAME.",
+    additionalProperties: false,
+    required: ["name"],
+    properties: {
+      name: { type: "string" },
+      commandId: { type: "string" },
+    },
+  },
+  RenamePlayerResponse: {
+    type: "object",
+    required: ["player", "ack"],
+    properties: {
+      player: {
+        type: "object",
+        description: "The seat as canonical history now records it, not as requested.",
+        required: ["id", "name"],
+        properties: { id: { type: "string" }, name: { type: "string" } },
+      },
+      ack: { $ref: "#/components/schemas/CommandAck" },
+    },
+  },
+  LeaveGameResponse: {
+    type: "object",
+    required: ["playerId", "ack"],
+    properties: {
+      playerId: { type: "string" },
+      ack: { $ref: "#/components/schemas/CommandAck" },
+    },
+  },
   AgentSeatRequest: {
     type: "object",
     description:
@@ -885,6 +917,31 @@ export const openApiDocument = {
             description:
               "Player identity, one-time player capability, and the CommandAck for the join.",
           },
+        },
+      },
+    },
+    "/v1/games/{gameId}/players/me": {
+      delete: {
+        tags: ["lobby"],
+        summary:
+          "Give up this capability's own seat (lobby only, human-controlled seats only). Scoped to `me`, so no request shape removes another player. A host that leaves keeps its host capability and the lobby it opened.",
+        responses: {
+          "200": jsonResponse("LeaveGameResponse"),
+          "403": jsonResponse("ErrorResponse"),
+          "409": jsonResponse("ErrorResponse"),
+        },
+      },
+    },
+    "/v1/games/{gameId}/players/{playerId}": {
+      patch: {
+        tags: ["lobby"],
+        summary:
+          "Rename a seat (lobby only). Permitted for the seat's own capability, and for the host on an agent seat it opened — never on another person's seat.",
+        requestBody: jsonRequest("RenamePlayerRequest"),
+        responses: {
+          "200": jsonResponse("RenamePlayerResponse"),
+          "403": jsonResponse("ErrorResponse"),
+          "409": jsonResponse("ErrorResponse"),
         },
       },
     },

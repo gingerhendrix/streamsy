@@ -23,7 +23,9 @@ describe("published OpenAPI contract", () => {
       "/v1/games/{gameId}/decision",
       "/v1/games/{gameId}/map",
       "/v1/games/{gameId}/players",
+      "/v1/games/{gameId}/players/me",
       "/v1/games/{gameId}/players/me/actions",
+      "/v1/games/{gameId}/players/{playerId}",
       "/v1/games/{gameId}/start",
     ]);
   });

@@ -52,6 +52,37 @@ export interface PlayerControllerChanged {
   commandId: string;
 }
 
+/**
+ * A seat's display name, changed in the lobby.
+ *
+ * Names are canonical because everything that reads as a name — the muster roll,
+ * the move feed, an agent's own briefing — reads this one. A rename is therefore
+ * an event rather than a client-side label, and it is confined to the lobby: once
+ * `GameStarted` has dealt the board, the names in the recorded history of the
+ * match stay the names the match was played under.
+ */
+export interface PlayerRenamed {
+  type: "PlayerRenamed";
+  playerId: string;
+  name: string;
+  commandId: string;
+}
+
+/**
+ * A seat given up in the lobby.
+ *
+ * The seat is removed outright — there is no "empty but reserved" state — so the
+ * roster the projection publishes is exactly the roster the game will start with.
+ * `GameCreated.hostPlayerId` is deliberately *not* rewritten: host authority is a
+ * capability the creator holds, not a property of holding a seat, so a creator who
+ * gives up their seat keeps the lobby they opened and watches it instead.
+ */
+export interface PlayerLeft {
+  type: "PlayerLeft";
+  playerId: string;
+  commandId: string;
+}
+
 export interface GameStarted {
   type: "GameStarted";
   /** The complete generated map. Replay reads this; it never regenerates. */
@@ -180,6 +211,8 @@ export type GameEvent =
   | GameCreated
   | PlayerJoined
   | PlayerControllerChanged
+  | PlayerRenamed
+  | PlayerLeft
   | GameStarted
   | ArmiesReinforced
   | AttackDeclared

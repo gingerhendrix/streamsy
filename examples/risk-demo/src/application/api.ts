@@ -37,6 +37,7 @@ const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
   TOO_MANY_PLAYERS: "This game already has the maximum number of players.",
   PLAYER_ID_TAKEN: "That player identity is already in use.",
   UNKNOWN_PLAYER: "This player is not part of the game.",
+  INVALID_NAME: "That name cannot be used. Enter at least one visible character.",
   NOT_YOUR_TURN: "It is another player’s turn.",
   STALE_TURN: "The turn changed before that move arrived. The board is now up to date.",
   INVALID_PHASE: "That move is not available in the current phase.",
@@ -181,6 +182,23 @@ export interface JoinGameRequest {
 export interface JoinGameResponse {
   player: PlayerIdentity;
   capability: string;
+  ack: CommandAck;
+}
+
+/** `PATCH /players/:playerId`. The only mutable seat property. */
+export interface RenamePlayerRequest {
+  name: string;
+  commandId?: string;
+}
+
+export interface RenamePlayerResponse {
+  player: { id: string; name: string };
+  ack: CommandAck;
+}
+
+/** `DELETE /players/me`. Nothing to send: the capability names the seat. */
+export interface LeaveGameResponse {
+  playerId: string;
   ack: CommandAck;
 }
 

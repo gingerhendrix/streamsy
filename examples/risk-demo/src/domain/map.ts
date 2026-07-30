@@ -72,6 +72,13 @@ export interface GeneratedMap {
 export const RULES = {
   minPlayers: 2,
   maxPlayers: 4,
+  /**
+   * Longest seat name canonical history will record. The limit lives here rather
+   * than in the browser because the muster roll, the move feed, and an agent's
+   * briefing all render the recorded name — a client-side cap would only be a
+   * suggestion.
+   */
+  maxPlayerNameLength: 24,
   initialArmiesPerTerritory: 1,
   minReinforcements: 3,
   reinforcementDivisor: 3,

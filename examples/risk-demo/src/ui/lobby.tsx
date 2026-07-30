@@ -7,10 +7,12 @@
  * open rows say plainly whether they are needed or optional — so the state of the
  * lobby is legible at a glance instead of implied by blank space.
  *
- * Commands are normal-sized rectangles in one row, in Field Manual weight order:
- * start (olive primary), open an agent seat, copy the invite — preceded, for a host
- * with a free seat, by the name the next agent seat will carry. Nothing here decides
- * game legality — starting is validated canonically like every other command.
+ * Every command here is role-derived rather than mode-derived, because a browser's
+ * role is a fact about the roster and its capability, not a screen it navigated to:
+ * share is for everyone; join for a visitor holding no seat; rename for the seat
+ * you hold, and for agent seats if you opened them; leave for a seat a person is
+ * actually playing; opening an agent seat and starting for the creator. Nothing
+ * here decides game legality — every command is validated canonically.
  */
 
 import { useState } from "react";
@@ -42,11 +44,78 @@ function seatAnnotations(props: {
     .join(" · ");
 }
 
+/**
+ * The renameable-by-me test.
+ *
+ * Your own seat, and — for the creator — any agent seat, because the creator is
+ * the only party that can open one. Deliberately not another person's seat: the
+ * server refuses that for the same reason it refuses delegating one.
+ */
+export function canRenameSeat(props: {
+  player: ProjectedPlayer;
+  identity: Identity | null;
+  isHost: boolean;
+}): boolean {
+  if (!props.identity) return false;
+  if (props.player.id === props.identity.playerId) return true;
+  return props.isHost && props.player.controller === "external-agent";
+}
+
+function SeatName(props: {
+  player: ProjectedPlayer;
+  editing: boolean;
+  editable: boolean;
+  busy: boolean;
+  draft: string;
+  onDraft(value: string): void;
+  onEdit(): void;
+  onCancel(): void;
+  onSave(): void;
+}) {
+  if (!props.editable) return <b>{props.player.name}</b>;
+  if (!props.editing) {
+    return (
+      <b>
+        {props.player.name}{" "}
+        <button
+          className="link-command"
+          onClick={props.onEdit}
+          aria-label={`Rename ${props.player.name}`}
+        >
+          Rename
+        </button>
+      </b>
+    );
+  }
+  return (
+    <form
+      className="seat-rename"
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onSave();
+      }}
+    >
+      <input
+        value={props.draft}
+        maxLength={MAX_SEAT_NAME}
+        aria-label={`Name for ${props.player.name}`}
+        onChange={(event) => props.onDraft(event.target.value)}
+      />
+      <button type="submit" className="primary" disabled={props.busy || !props.draft.trim()}>
+        Save
+      </button>
+      <button type="button" onClick={props.onCancel}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 export function Lobby(props: {
   players: ProjectedPlayer[];
   hostPlayerId?: string;
   identity: Identity | null;
-  /** True when this browser holds no playable seat — a host that delegated its own. */
+  /** True when this browser holds no playable seat — a host that delegated or left its own. */
   spectating: boolean;
   name: string;
   busy: boolean;
@@ -56,15 +125,26 @@ export function Lobby(props: {
   onJoin(): void;
   onStart(): void;
   onAddAgent(name: string): void;
+  onRename(playerId: string, name: string): void;
+  onLeave(): void;
   onCopy(): Promise<void>;
 }) {
   const isHost = props.identity?.role === "host";
   const seatCount = RULES.maxPlayers;
   const seated = props.players.length;
   const [agentName, setAgentName] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
   // Only a seat the reader actually plays is annotated "you"; a host spectating its
   // own delegated seat is watching that seat, not holding it.
   const selfPlayerId = props.spectating ? undefined : props.identity?.playerId;
+  // Leaving is giving up a seat, so it needs one: a visitor has nothing to leave,
+  // and neither does a creator whose seat is now an agent's or already given up.
+  const ownSeat = props.identity
+    ? props.players.find((player) => player.id === props.identity!.playerId)
+    : undefined;
+  const canLeave = ownSeat !== undefined && ownSeat.controller === "human";
 
   return (
     <section className="lobby-current">
@@ -75,7 +155,9 @@ export function Lobby(props: {
         <h2>{seated < RULES.minPlayers ? "Waiting for a challenger" : "Ready to deploy"}</h2>
         <p>
           {isHost
-            ? "Share the link or open an agent seat, then start when everyone has arrived."
+            ? ownSeat
+              ? "Name your seat, share the link or invite an agent, then start when everyone has arrived."
+              : "You are watching this one. Invite agents or share the link, then start when the roll is ready."
             : props.identity
               ? "The host will begin when the lobby is ready."
               : "Choose a name and claim a player seat."}
@@ -113,7 +195,23 @@ export function Lobby(props: {
                   <span className="muster-index">{String(index + 1).padStart(2, "0")}</span>
                   <span className="player-color" style={{ background: player.color }} />
                   <div>
-                    <b>{player.name}</b>
+                    <SeatName
+                      player={player}
+                      editable={canRenameSeat({ player, identity: props.identity, isHost })}
+                      editing={renamingId === player.id}
+                      busy={props.busy}
+                      draft={draftName}
+                      onDraft={setDraftName}
+                      onEdit={() => {
+                        setRenamingId(player.id);
+                        setDraftName(player.name);
+                      }}
+                      onCancel={() => setRenamingId(null)}
+                      onSave={() => {
+                        props.onRename(player.id, draftName);
+                        setRenamingId(null);
+                      }}
+                    />
                     <small>
                       {seatAnnotations({
                         player,
@@ -137,7 +235,7 @@ export function Lobby(props: {
                   <span>Your name</span>
                   <input
                     value={props.name}
-                    maxLength={24}
+                    maxLength={MAX_SEAT_NAME}
                     onChange={(event) => props.onName(event.target.value)}
                   />
                 </label>
@@ -154,9 +252,8 @@ export function Lobby(props: {
           )}
 
           {isHost && seated < seatCount && (
-            // Named before the seat is opened, because the name is fixed on join:
-            // the seat's instructions, the muster roll, and the move feed all carry
-            // it, and there is no rename command.
+            // Named before the seat is opened, because the seat's instructions
+            // carry the name; the host can still rename it on the roll afterwards.
             <div className="player-fields compact">
               <label>
                 <span>Agent name</span>
@@ -188,11 +285,34 @@ export function Lobby(props: {
                 }}
                 disabled={props.busy || seated >= seatCount}
               >
-                Open an agent seat
+                Invite an agent
               </button>
             )}
             <button onClick={() => void props.onCopy()}>Copy invite link</button>
+            {canLeave && !confirmingLeave && (
+              <button onClick={() => setConfirmingLeave(true)}>Leave game</button>
+            )}
           </div>
+
+          {canLeave && confirmingLeave && (
+            // Leaving is canonical and cannot be undone from here — a returning
+            // visitor joins as a new seat — so it is confirmed, and the confirmation
+            // says which of the two outcomes applies to this browser.
+            <div className="leave-confirm" role="alertdialog" aria-label="Confirm leaving">
+              <b>Give up your seat?</b>
+              <p>
+                {isHost
+                  ? "You keep hosting this game and will watch it from here."
+                  : "Your seat is released and you go back to the home page."}
+              </p>
+              <div className="lobby-actions">
+                <button className="primary" onClick={props.onLeave} disabled={props.busy}>
+                  Yes, leave
+                </button>
+                <button onClick={() => setConfirmingLeave(false)}>Stay</button>
+              </div>
+            </div>
+          )}
 
           {props.agentSeats.map((seat) => (
             <div className="agent-seat" key={seat.playerId}>

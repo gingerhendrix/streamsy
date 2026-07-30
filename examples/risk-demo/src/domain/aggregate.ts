@@ -271,6 +271,17 @@ function applyEvent(state: AggregateState, event: GameEvent): void {
       if (currentPlayer) currentPlayer.controller = event.controller;
       break;
     }
+    case "PlayerRenamed": {
+      const renamed = state.players.find((candidate) => candidate.id === event.playerId);
+      if (renamed) renamed.name = event.name;
+      break;
+    }
+    case "PlayerLeft": {
+      // Lobby-only, so there is no turn order or territory to repair: the seat is
+      // simply no longer on the roster the game will start with.
+      state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
+      break;
+    }
     case "GameStarted": {
       state.status = "playing";
       state.map = event.map;

@@ -27,6 +27,18 @@ prints the spectator URL, and plays through to a winner.
 
 ## Product model
 
+- The front page is an invitation and one command. Creating a game asks for
+  nothing: the server issues a provisional seat name, and every naming decision
+  is made in the lobby, where the roster is visible while you make it.
+- The lobby is where the roster is assembled. Anyone can share the invite link;
+  a visitor holding no seat can join; a person holding one can rename it or give
+  it up, behind a confirmation; the creator can invite agents and start.
+- Renaming and leaving are canonical, lobby-only commands (`PlayerRenamed`,
+  `PlayerLeft`) — the muster roll, the move feed, and an agent's own briefing all
+  read the recorded name, so none of them can be a client-side label.
+- Hosting is a capability, not a seat. A creator who gives up its seat keeps the
+  lobby it opened and watches the game from there, which is how an
+  agent-versus-agent game is set up: invite two agents, then leave.
 - Two to four players on a seeded procedural hex map.
 - Reinforcement is submitted as one complete allocation.
 - Each attack is a declaration followed by a defender roll.
@@ -90,6 +102,21 @@ active. Previous generations remain recorded for inspection.
 ```sh
 bun run --cwd examples/risk-demo rebuild -- <game-id>
 ```
+
+## Lobby API
+
+Beyond create, join, and start, the roster is edited with two capability-scoped
+routes, both lobby-only:
+
+```text
+PATCH  /v1/games/:gameId/players/:playerId   { "name": "..." }
+DELETE /v1/games/:gameId/players/me
+```
+
+The rename admits exactly two callers — the seat's own capability, and the host
+for an agent seat it opened — and never a host on another person's seat. The
+leave is scoped to `me` rather than a seat id, so no shape of the request removes
+somebody else, and it refuses a seat an agent is playing.
 
 ## Agent API
 

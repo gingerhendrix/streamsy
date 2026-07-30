@@ -791,6 +791,55 @@ summary:focus-visible,
   gap: 0.6rem;
   padding-top: 0.9rem;
 }
+
+/* Renaming happens in place on the roll, so the roster stays the one surface that
+   answers "who is going to war" — including when the answer is being edited. */
+.link-command {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--olive-dark);
+  font-family: var(--mono-face);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-decoration: underline;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.seat-rename {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.seat-rename input {
+  flex: 1 1 9rem;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.78rem;
+}
+.seat-rename button {
+  padding: 0.32rem 0.6rem;
+  font-size: 0.6rem;
+}
+/* A confirmation, set as the signal-bordered block the surface already uses for
+   "this needs an answer", rather than a browser dialog the page cannot style. */
+.leave-confirm {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.85rem;
+  border: 2px solid var(--signal);
+}
+.leave-confirm p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.leave-confirm .lobby-actions {
+  padding-top: 0.2rem;
+}
 /* The briefing is a full-width document; its copy command is still a normal one. */
 .lobby .agent-seat button {
   justify-self: start;

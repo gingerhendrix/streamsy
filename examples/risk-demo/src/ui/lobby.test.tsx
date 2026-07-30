@@ -25,6 +25,8 @@ function player(overrides: Partial<ProjectedPlayer> & { id: string }): Projected
 
 const HOST_IDENTITY: Identity = { gameId: "g1", playerId: "p1", token: "t", role: "host" };
 
+const PLAYER_IDENTITY: Identity = { gameId: "g1", playerId: "p2", token: "t", role: "player" };
+
 function renderLobby(options: {
   players: ProjectedPlayer[];
   identity?: Identity | null;
@@ -45,6 +47,8 @@ function renderLobby(options: {
       onJoin={() => {}}
       onStart={() => {}}
       onAddAgent={() => {}}
+      onRename={() => {}}
+      onLeave={() => {}}
       onCopy={async () => {}}
     />,
   );
@@ -94,15 +98,17 @@ describe("Lobby commands", () => {
     expect(markup).toContain("Your name");
     expect(markup).not.toContain("Colour");
     expect(markup).not.toContain("Start game");
-    expect(markup).not.toContain("Open an agent seat");
+    expect(markup).not.toContain("Invite an agent");
     expect(markup).toContain("Copy invite link");
+    // Nothing to give up, so nothing to confirm giving up.
+    expect(markup).not.toContain("Leave game");
   });
 
   it("holds the host's start command until two seats are filled", () => {
     const markup = renderLobby({ players: [player({ id: "p1" })], identity: HOST_IDENTITY });
     expect(markup).toContain("Waiting for 2 players");
     expect(markup).toContain("disabled");
-    expect(markup).toContain("Open an agent seat");
+    expect(markup).toContain("Invite an agent");
   });
 
   it("offers the host a name for the next agent seat, defaulting to its roll number", () => {
@@ -131,6 +137,80 @@ describe("Lobby commands", () => {
     });
     expect(markup).toContain("Start game");
     expect(markup).not.toContain("Waiting for 2 players");
+  });
+});
+
+describe("Lobby naming", () => {
+  it("offers a rename only on seats this browser may actually rename", () => {
+    const markup = renderLobby({
+      players: [
+        player({ id: "p1", name: "Ada" }),
+        player({ id: "p2", name: "Mina", color: "#3b82f6" }),
+        player({ id: "p3", name: "Turing", color: "#4d7c2f", controller: "external-agent" }),
+      ],
+      identity: HOST_IDENTITY,
+    });
+    // The host's own seat and the agent seat it opened, but never the other
+    // person's seat — the server refuses that, so the UI must not offer it.
+    expect(markup).toContain('aria-label="Rename Ada"');
+    expect(markup).toContain('aria-label="Rename Turing"');
+    expect(markup).not.toContain('aria-label="Rename Mina"');
+  });
+
+  it("offers a player only their own seat, and a visitor none", () => {
+    const seats = [
+      player({ id: "p1", name: "Ada" }),
+      player({ id: "p2", name: "Mina", color: "#3b82f6" }),
+      player({ id: "p3", name: "Turing", color: "#4d7c2f", controller: "external-agent" }),
+    ];
+    const asPlayer = renderLobby({ players: seats, identity: PLAYER_IDENTITY });
+    expect(asPlayer).toContain('aria-label="Rename Mina"');
+    expect(asPlayer).not.toContain('aria-label="Rename Ada"');
+    // A non-host did not open the agent seat, so it is not theirs to name.
+    expect(asPlayer).not.toContain('aria-label="Rename Turing"');
+
+    expect(renderLobby({ players: seats })).not.toContain("Rename");
+  });
+});
+
+describe("Lobby leaving", () => {
+  it("offers leaving to a seated human, host included", () => {
+    const seats = [
+      player({ id: "p1", name: "Ada" }),
+      player({ id: "p2", name: "Mina", color: "#3b82f6" }),
+    ];
+    expect(renderLobby({ players: seats, identity: HOST_IDENTITY })).toContain("Leave game");
+    expect(renderLobby({ players: seats, identity: PLAYER_IDENTITY })).toContain("Leave game");
+  });
+
+  it("withholds leaving from a seat this browser no longer plays", () => {
+    // A host that already delegated its seat holds a capability naming a seat an
+    // agent plays. There is nothing left to give up, and the agent's seat is not
+    // the host's to take back.
+    const delegated = renderLobby({
+      players: [
+        player({ id: "p1", name: "Ada", controller: "external-agent" }),
+        player({ id: "p2", name: "Mina", color: "#3b82f6", controller: "external-agent" }),
+      ],
+      identity: HOST_IDENTITY,
+      spectating: true,
+    });
+    expect(delegated).not.toContain("Leave game");
+
+    // Likewise a host that has already left: it still runs the lobby, but the
+    // roster no longer carries its seat.
+    const left = renderLobby({
+      players: [
+        player({ id: "p2", name: "Mina", color: "#3b82f6" }),
+        player({ id: "p3", name: "Turing", color: "#4d7c2f", controller: "external-agent" }),
+      ],
+      identity: HOST_IDENTITY,
+      spectating: true,
+    });
+    expect(left).not.toContain("Leave game");
+    // ...and it keeps the commands that are the host's, not the seat's.
+    expect(left).toContain("Start game");
+    expect(left).toContain("Invite an agent");
   });
 });
 

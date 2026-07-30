@@ -159,6 +159,8 @@ export interface ProjectedMove {
   commandId: string;
   kind: GameEventType;
   playerId?: string;
+  /** Seat name carried by roster moves, so a departure survives its own row delete. */
+  name?: string;
   sourceOffset: string;
   turnId?: string;
   attackId?: string;
@@ -332,6 +334,17 @@ function applyEvent(state: ProjectionState, event: GameEvent): void {
     case "PlayerControllerChanged": {
       const player = state.players.find((candidate) => candidate.id === event.playerId);
       if (player) player.controller = event.controller;
+      break;
+    }
+    case "PlayerRenamed": {
+      const player = state.players.find((candidate) => candidate.id === event.playerId);
+      if (player) player.name = event.name;
+      break;
+    }
+    case "PlayerLeft": {
+      // Dropping the row from `players` is what makes the adapter emit a delete
+      // for that seat, the same mechanism the zero-or-one turn/combat rows use.
+      state.players = state.players.filter((candidate) => candidate.id !== event.playerId);
       break;
     }
     case "GameStarted": {
@@ -546,8 +559,19 @@ function movePlayerId(event: GameEvent): string | undefined {
   }
 }
 
-function moveDetail(event: GameEvent): Partial<ProjectedMove> {
+/**
+ * `before` is the projection as it stood *prior* to this event, which is the only
+ * place a departing seat's name still exists — `PlayerLeft` deletes the row that
+ * carries it, so the feed has to capture it on the way past.
+ */
+function moveDetail(event: GameEvent, before: ProjectionState): Partial<ProjectedMove> {
   switch (event.type) {
+    case "PlayerRenamed":
+      return { name: event.name };
+    case "PlayerLeft": {
+      const departing = before.players.find((player) => player.id === event.playerId);
+      return departing ? { name: departing.name } : {};
+    }
     case "ArmiesReinforced":
       return { turnId: event.turnId, territoryId: event.territoryId, armies: event.armies };
     case "AttackDeclared":
@@ -606,7 +630,7 @@ export function projectEvent(
     kind: event.type,
     playerId: movePlayerId(event),
     sourceOffset,
-    ...moveDetail(event),
+    ...moveDetail(event, previous),
   });
   if (state.moves.length > MOVE_FEED_LIMIT) {
     state.moves.splice(0, state.moves.length - MOVE_FEED_LIMIT);

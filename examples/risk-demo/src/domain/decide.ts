@@ -25,8 +25,10 @@ import type {
   DeclareAttackCommand,
   FortifyCommand,
   JoinGameCommand,
+  LeaveGameCommand,
   OccupyTerritoryCommand,
   ReinforceCommand,
+  RenamePlayerCommand,
   ResolveDefenseTimeoutCommand,
   RiskErrorCode,
   RollDefenseCommand,
@@ -168,6 +170,60 @@ function decideJoin(state: AggregateState, command: JoinGameCommand): Decision {
       command.color,
     ),
     controller: command.controller,
+    commandId: command.commandId,
+  });
+}
+
+/**
+ * Trim and bound a requested seat name.
+ *
+ * Returned rather than silently applied so the decider can reject a name that is
+ * only whitespace: a blank seat makes both the muster roll and the move feed
+ * ambiguous, and there is no sensible name to substitute for one a player asked
+ * for and did not get.
+ */
+export function normalizePlayerName(input: string): string {
+  return input.trim().slice(0, RULES.maxPlayerNameLength).trim();
+}
+
+function decideRename(state: AggregateState, command: RenamePlayerCommand): Decision {
+  if (!state.gameId) return reject("GAME_NOT_FOUND", "No game to rename a seat in.");
+  if (state.status !== "lobby") {
+    return reject("GAME_ALREADY_STARTED", "Seats can only be renamed before the game starts.");
+  }
+  const seat = findPlayer(state, command.playerId);
+  if (!seat) return reject("UNKNOWN_PLAYER", "That player is not part of this game.");
+  const name = normalizePlayerName(command.name);
+  if (!name) return reject("INVALID_NAME", "A seat name cannot be blank.");
+  return accept({
+    type: "PlayerRenamed",
+    playerId: command.playerId,
+    name,
+    commandId: command.commandId,
+  });
+}
+
+/**
+ * Give up a seat.
+ *
+ * Only a `human` seat may leave, which is what stops the "leave my own seat"
+ * command from doubling as a way to evict an agent: a host that has delegated its
+ * seat holds a capability naming a seat an agent now plays, and that seat is the
+ * agent's to hold until the game is over.
+ */
+function decideLeave(state: AggregateState, command: LeaveGameCommand): Decision {
+  if (!state.gameId) return reject("GAME_NOT_FOUND", "No game to leave.");
+  if (state.status !== "lobby") {
+    return reject("GAME_ALREADY_STARTED", "A seat cannot be given up once the game has started.");
+  }
+  const seat = findPlayer(state, command.playerId);
+  if (!seat) return reject("UNKNOWN_PLAYER", "That player is not part of this game.");
+  if (seat.controller !== "human") {
+    return reject("ILLEGAL_ACTION", "Only a seat played by a person can be given up.");
+  }
+  return accept({
+    type: "PlayerLeft",
+    playerId: command.playerId,
     commandId: command.commandId,
   });
 }
@@ -675,6 +731,10 @@ export function decide(state: AggregateState, command: Command, ctx: DecideConte
     }
     case "join-game":
       return decideJoin(state, command);
+    case "rename-player":
+      return decideRename(state, command);
+    case "leave-game":
+      return decideLeave(state, command);
     case "delegate-agent-seat":
       return decideDelegateAgent(state, command);
     case "start-game":

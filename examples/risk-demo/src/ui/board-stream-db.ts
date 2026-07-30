@@ -129,8 +129,13 @@ const moveSchema = z.object({
   id: z.string(),
   commandId: z.string(),
   kind: z.enum([
+    // Every canonical event type reaches the feed, so this enum must list every
+    // one of them — a missing member fails the whole batch, not just that row.
     "GameCreated",
     "PlayerJoined",
+    "PlayerControllerChanged",
+    "PlayerRenamed",
+    "PlayerLeft",
     "GameStarted",
     "ArmiesReinforced",
     "AttackDeclared",
@@ -142,6 +147,7 @@ const moveSchema = z.object({
     "GameWon",
   ]),
   playerId: z.string().optional(),
+  name: z.string().optional(),
   sourceOffset: z.string(),
   turnId: z.string().optional(),
   attackId: z.string().optional(),

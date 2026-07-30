@@ -8,13 +8,17 @@ import type {
   GameResponse,
   JoinGameRequest,
   JoinGameResponse,
+  LeaveGameResponse,
+  RenamePlayerRequest,
+  RenamePlayerResponse,
 } from "../../src/application/api.ts";
 import { agentPlayInstructions, agentSeatDescriptor } from "../../src/application/agent-play.ts";
 import type { Command, GameAction, PlayCommand } from "../../src/domain/commands.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import { buildDecisionContext } from "../../src/application/decision.ts";
 import { MAP_VERSION, generateMapSeed } from "../../src/domain/map.ts";
-import type { PlayerController } from "../../src/domain/events.ts";
+import type { GameEvent, PlayerController } from "../../src/domain/events.ts";
+import { normalizePlayerName } from "../../src/domain/decide.ts";
 import { projectionBoardView } from "../../src/board/projection.ts";
 import { BOARD_REDUCER_VERSION } from "../../src/board/board-projection.ts";
 import { materializeBoard } from "../game/board.ts";
@@ -119,7 +123,10 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         "Create a human-hosted game, then open agent seats with POST /agent-seats.",
       );
     }
-    const name = body.name ?? "Host";
+    // The landing page asks for no name at all — the creator names themselves in
+    // the lobby — so the provisional default is load-bearing, not a fallback for
+    // a field somebody left blank.
+    const name = normalizePlayerName(body.name ?? "") || "Host";
     const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
@@ -186,7 +193,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         "The host must open agent seats with POST /agent-seats.",
       );
     }
-    const name = body.name ?? "Player";
+    const name = normalizePlayerName(body.name ?? "") || "Player";
     const playerId = randomId("p");
     const commandId = body.commandId ?? randomId("cmd");
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
@@ -211,6 +218,89 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       ack: ackBody(result),
     };
     return json(response, 201);
+  }
+
+  /** The seat roster as canonical history currently has it. */
+  async function seatsOf(gameId: string) {
+    const { events } = await readCanonical(ctx.protocol, eventStreamId(gameId));
+    return foldAggregate(events).players;
+  }
+
+  /**
+   * Rename a seat.
+   *
+   * Two callers are legitimate and no others: a player renaming their own seat,
+   * and the host renaming an agent seat — the host is the only party that can open
+   * one, so it is the only party with a name to give it. A host explicitly cannot
+   * rename another *person's* seat, for the same reason it cannot delegate one.
+   */
+  async function renamePlayer(request: Request, params: Record<string, string>): Promise<Response> {
+    const gameId = params.gameId!;
+    const playerId = params.playerId!;
+    if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
+    const cap = await ctx.requireCapability(request, gameId);
+    if (cap instanceof Response) return cap;
+    if (cap.role === "agent") {
+      return error(403, "FORBIDDEN", "Agent capabilities cannot rename seats.");
+    }
+    const body = (await readJsonBody<RenamePlayerRequest>(request)) ?? ({} as RenamePlayerRequest);
+    if (typeof body.name !== "string") {
+      return error(400, "BAD_REQUEST", "A rename must carry a name.");
+    }
+
+    if (cap.playerId !== playerId) {
+      const target = (await seatsOf(gameId)).find((seat) => seat.id === playerId);
+      if (!target) return error(404, "NOT_FOUND", "That seat is not part of this game.");
+      if (cap.role !== "host" || target.controller !== "external-agent") {
+        return error(403, "FORBIDDEN", "Only the seat itself, or its host for an agent seat.");
+      }
+    }
+
+    const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
+      type: "rename-player",
+      commandId: body.commandId ?? randomId("cmd"),
+      playerId,
+      name: body.name,
+    });
+    if (result.status === "rejected") return rejection(result);
+    await syncBoard(gameId);
+    // The recorded name, not the requested one: `decide` trims and bounds it.
+    const named = result.events.find(
+      (event): event is Extract<GameEvent, { type: "PlayerRenamed" }> =>
+        event.type === "PlayerRenamed",
+    );
+    const response: RenamePlayerResponse = {
+      player: { id: playerId, name: named?.name ?? normalizePlayerName(body.name) },
+      ack: ackBody(result),
+    };
+    return json(response);
+  }
+
+  /**
+   * Give up this capability's own seat.
+   *
+   * Scoped to `me` rather than an arbitrary seat id, so there is no shape of this
+   * request that removes somebody else. A creator that leaves keeps its host
+   * capability — hosting is not a seat — and simply watches the lobby it opened.
+   */
+  async function leaveGame(request: Request, params: Record<string, string>): Promise<Response> {
+    const gameId = params.gameId!;
+    if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
+    const cap = await ctx.requireCapability(request, gameId);
+    if (cap instanceof Response) return cap;
+    if (cap.role === "agent") {
+      return error(403, "FORBIDDEN", "An agent seat is played to the end, not given up.");
+    }
+    const body = (await readJsonBody<{ commandId?: string }>(request)) ?? {};
+    const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
+      type: "leave-game",
+      commandId: body.commandId ?? randomId("cmd"),
+      playerId: cap.playerId,
+    });
+    if (result.status === "rejected") return rejection(result);
+    await syncBoard(gameId);
+    const response: LeaveGameResponse = { playerId: cap.playerId, ack: ackBody(result) };
+    return json(response, 200, { "cache-control": "no-store" });
   }
 
   async function startGame(request: Request, params: Record<string, string>): Promise<Response> {
@@ -242,7 +332,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const body = (await readJsonBody<AgentSeatRequest>(request)) ?? {};
     const commandId = body.commandId ?? randomId("cmd");
     let playerId = body.playerId;
-    let name = body.name ?? "Agent";
+    let name = normalizePlayerName(body.name ?? "") || "Agent";
     let color = body.color ?? "";
 
     if (playerId) {
@@ -487,6 +577,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     },
     { method: "POST", pattern: "/v1/games", handler: createGame },
     { method: "POST", pattern: "/v1/games/:gameId/players", handler: joinGame },
+    { method: "DELETE", pattern: "/v1/games/:gameId/players/me", handler: leaveGame },
+    { method: "PATCH", pattern: "/v1/games/:gameId/players/:playerId", handler: renamePlayer },
     { method: "POST", pattern: "/v1/games/:gameId/agent-seats", handler: createAgentSeat },
     { method: "POST", pattern: "/v1/games/:gameId/start", handler: startGame },
     { method: "GET", pattern: "/v1/games/:gameId", handler: getGame },

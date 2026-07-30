@@ -42,6 +42,25 @@ export interface JoinGameCommand {
   controller: PlayerController;
 }
 
+/**
+ * Rename a seat in the lobby. Authorization — whether the caller may rename *this*
+ * seat — is an HTTP-layer question about capabilities; the decider only enforces
+ * that the seat exists, the game has not started, and the name is usable.
+ */
+export interface RenamePlayerCommand {
+  type: "rename-player";
+  commandId: string;
+  playerId: string;
+  name: string;
+}
+
+/** Give up a seat in the lobby. Only a `human`-controlled seat may be given up. */
+export interface LeaveGameCommand {
+  type: "leave-game";
+  commandId: string;
+  playerId: string;
+}
+
 export interface StartGameCommand {
   type: "start-game";
   commandId: string;
@@ -143,6 +162,8 @@ export type PlayCommandEnvelope =
 export type Command =
   | CreateGameCommand
   | JoinGameCommand
+  | RenamePlayerCommand
+  | LeaveGameCommand
   | DelegateAgentSeatCommand
   | StartGameCommand
   | PlayCommandEnvelope
@@ -174,6 +195,7 @@ export type RiskErrorCode =
   | "TOO_MANY_PLAYERS"
   | "PLAYER_ID_TAKEN"
   | "UNKNOWN_PLAYER"
+  | "INVALID_NAME"
   | "NOT_YOUR_TURN"
   | "STALE_TURN"
   | "INVALID_PHASE"

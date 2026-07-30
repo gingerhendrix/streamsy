@@ -37,8 +37,10 @@ import type {
   DecisionResponse,
   GameResponse,
   JoinGameResponse,
+  LeaveGameResponse,
   PlayAction,
   PlayCommandRequest,
+  RenamePlayerResponse,
 } from "../application/api.ts";
 import type { LegalAction } from "../application/legal-actions.ts";
 import type { ProjectedHex } from "../board/projection.ts";
@@ -116,7 +118,12 @@ export interface GameScreenProps {
   name: string;
   onName(value: string): void;
   onCopyInvite(): Promise<void>;
-  initialAgentSeats?: AgentSeat[];
+  /**
+   * Called after a *non-host* seat is canonically given up. The host is not
+   * routed away: its capability still runs the lobby, so leaving turns it into a
+   * spectator of a game it keeps hosting.
+   */
+  onLeftGame(): void;
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -216,15 +223,9 @@ export function GameScreen(props: GameScreenProps) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   // A lobby may open more than one agent seat — an agent-versus-agent game is how
-  // the demo runs itself to a winner without a human at the keyboard.
-  const [agentSeats, setAgentSeats] = useState<AgentSeat[]>(() => props.initialAgentSeats ?? []);
-  useEffect(() => {
-    if (!props.initialAgentSeats?.length) return;
-    setAgentSeats((current) => {
-      const incoming = new Map(props.initialAgentSeats!.map((seat) => [seat.playerId, seat]));
-      return [...current.filter((seat) => !incoming.has(seat.playerId)), ...incoming.values()];
-    });
-  }, [props.initialAgentSeats]);
+  // the demo runs itself to a winner without a human at the keyboard, and is
+  // reached by inviting agents and then giving up your own seat.
+  const [agentSeats, setAgentSeats] = useState<AgentSeat[]>([]);
   const reducedMotion = usePrefersReducedMotion();
 
   const offset = board?.meta?.sourceThroughOffset ?? null;
@@ -498,6 +499,59 @@ export function GameScreen(props: GameScreenProps) {
     await props.refreshGame();
   };
 
+  /**
+   * Rename a seat on the muster roll. The name shown afterwards is the projected
+   * one, never the typed one: the server trims and bounds it, and the roll must
+   * agree with the history the game will be played under.
+   */
+  const renameSeat = async (playerId: string, requestedName: string) => {
+    if (!identity) return;
+    setBusy(true);
+    const result = await api<RenamePlayerResponse>(
+      "PATCH",
+      `/v1/games/${gameId}/players/${encodeURIComponent(playerId)}`,
+      { token: identity.token, body: { name: requestedName } },
+    );
+    setBusy(false);
+    if (result.status !== 200 || isError(result.body)) {
+      setNotice(errorMessage(result.body, "Could not rename that seat."));
+      return;
+    }
+    const named = result.body.player.name;
+    // An agent's briefing block quotes its name, so the copy on screen would
+    // otherwise disagree with the roll immediately above it.
+    setAgentSeats((seats) =>
+      seats.map((seat) => (seat.playerId === playerId ? { ...seat, name: named } : seat)),
+    );
+    setNotice(`Seat renamed to ${named}.`);
+  };
+
+  /**
+   * Give up this browser's seat.
+   *
+   * The host keeps its capability and stays on the lobby — hosting is not a seat —
+   * so only a non-host is routed home. Either way the seat itself is gone from
+   * canonical history before this returns.
+   */
+  const leaveGame = async () => {
+    if (!identity) return;
+    setBusy(true);
+    const result = await api<LeaveGameResponse>("DELETE", `/v1/games/${gameId}/players/me`, {
+      token: identity.token,
+    });
+    setBusy(false);
+    if (result.status !== 200 || isError(result.body)) {
+      setNotice(errorMessage(result.body, "Could not leave the game."));
+      return;
+    }
+    if (identity.role === "host") {
+      setNotice("Seat given up — you are watching the game you host.");
+      await props.refreshGame();
+      return;
+    }
+    props.onLeftGame();
+  };
+
   /** Open an external-agent seat and hand back its private bootstrap URL. */
   const addAgentSeat = async (requestedName: string) => {
     setBusy(true);
@@ -746,6 +800,8 @@ export function GameScreen(props: GameScreenProps) {
           onJoin={joinGame}
           onStart={startGame}
           onAddAgent={addAgentSeat}
+          onRename={renameSeat}
+          onLeave={leaveGame}
           onCopy={props.onCopyInvite}
         />
         {notice && (
