@@ -7,8 +7,10 @@ import {
 } from "../application/api.ts";
 import { GameScreen, type AgentSeat } from "./game.tsx";
 import {
+  MAX_SEAT_NAME,
   PlayerFields,
   STORAGE_KEY,
+  agentSeatName,
   api,
   errorMessage,
   gameFromUrl,
@@ -30,6 +32,8 @@ export function App() {
   const [joinId, setJoinId] = useState(() => gameFromUrl());
   const [game, setGame] = useState<GameResponse | null>(null);
   const [name, setName] = useState("Player");
+  const [firstAgentName, setFirstAgentName] = useState("Agent 1");
+  const [secondAgentName, setSecondAgentName] = useState("Agent 2");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [initialAgentSeats, setInitialAgentSeats] = useState<AgentSeat[]>([]);
@@ -116,8 +120,11 @@ export function App() {
 
   const createAgentGame = async () => {
     setBusy(true);
+    // The host seat is created under the first agent's name because it is that
+    // agent's seat from the moment the delegation below commits; the server reuses
+    // the existing player's name when a seat is delegated rather than taking one.
     const created = await api<CreateGameResponse>("POST", "/v1/games", {
-      body: { name: "Agent 1" },
+      body: { name: agentSeatName(firstAgentName, 1) },
     });
     if (created.status !== 201 || isError(created.body)) {
       setBusy(false);
@@ -125,12 +132,13 @@ export function App() {
       return;
     }
 
-    persist({
+    const hostIdentity: Identity = {
       gameId: created.body.game.id,
       playerId: created.body.player.id,
       token: created.body.capability,
       role: "host",
-    });
+    };
+    persist(hostIdentity);
     openGame(created.body.game.id);
 
     const first = await api<AgentSeatResponse>(
@@ -146,6 +154,10 @@ export function App() {
       setNotice(errorMessage(first.body, "Could not delegate the first agent seat."));
       return;
     }
+    // Only now is the seat the agent's: the identity keeps its host capability —
+    // starting the game and opening seats still need it — but is marked as a
+    // spectator so the playing surface never offers this browser that seat's moves.
+    persist({ ...hostIdentity, spectator: true });
     const firstSeat: AgentSeat = {
       playerId: first.body.seat.playerId,
       name: first.body.seat.name,
@@ -158,7 +170,7 @@ export function App() {
       `/v1/games/${created.body.game.id}/agent-seats`,
       {
         token: created.body.capability,
-        body: { name: "Agent 2" },
+        body: { name: agentSeatName(secondAgentName, 2) },
       },
     );
     setBusy(false);
@@ -177,7 +189,7 @@ export function App() {
       },
     ]);
     setNotice(
-      "Agent-versus-agent lobby created. Copy each instruction block, then start the game.",
+      "Agent-versus-agent lobby created — you are spectating. Copy each instruction block, then start the game.",
     );
   };
 
@@ -203,9 +215,35 @@ export function App() {
           <button className="primary big" onClick={createGame} disabled={busy}>
             {busy ? "Creating…" : "Create a game"}
           </button>
+          {/* Both agents are named up front: the game runs itself to a winner
+              while you watch, and a match report of "Agent 1 versus Agent 2" is
+              far harder to follow than one between seats you named. */}
+          <div className="player-fields compact">
+            <label>
+              <span>First agent</span>
+              <input
+                value={firstAgentName}
+                maxLength={MAX_SEAT_NAME}
+                placeholder="Agent 1"
+                onChange={(event) => setFirstAgentName(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Second agent</span>
+              <input
+                value={secondAgentName}
+                maxLength={MAX_SEAT_NAME}
+                placeholder="Agent 2"
+                onChange={(event) => setSecondAgentName(event.target.value)}
+              />
+            </label>
+          </div>
           <button onClick={createAgentGame} disabled={busy}>
             {busy ? "Creating…" : "Create agent vs agent game"}
           </button>
+          <p className="muted">
+            You spectate an agent-versus-agent game; both seats play through their own capabilities.
+          </p>
           <div className="join-row">
             <input
               value={joinId}

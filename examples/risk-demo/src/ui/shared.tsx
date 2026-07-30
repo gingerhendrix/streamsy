@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import { friendlyError, type ApiErrorCode, type ApiErrorResponse } from "../application/api.ts";
+import type { PlayerController } from "../domain/events.ts";
 import type { SyncStatus } from "./board-stream-db.ts";
 
 export interface Identity {
@@ -10,6 +11,48 @@ export interface Identity {
   playerId: string;
   token: string;
   role: "host" | "player" | "agent";
+  /**
+   * Set once this capability's own seat has been handed to an agent. The role
+   * stays `host` because the host capability is still what starts the game and
+   * opens further seats; this records that the seat behind it is no longer the
+   * reader's to play, for the window before the projection reports the
+   * delegation.
+   */
+  spectator?: boolean;
+}
+
+/** Seat-name limit, shared by the join field and every agent-seat field. */
+export const MAX_SEAT_NAME = 24;
+
+/**
+ * The name to send when opening or delegating an agent seat.
+ *
+ * A blank name must never reach the server: the muster roll and the move feed are
+ * both read as lists of names, so an unnamed seat makes the history ambiguous.
+ * Falling back to the seat's ordinal keeps the defaults distinct from each other.
+ */
+export function agentSeatName(input: string | undefined, seat: number): string {
+  const trimmed = (input ?? "").trim().slice(0, MAX_SEAT_NAME);
+  return trimmed || `Agent ${seat}`;
+}
+
+/**
+ * Whether this browser watches the game rather than plays it.
+ *
+ * Three ways to be a spectator, and all three matter: no stored identity, an
+ * identity whose seat is not (or not yet) on the board, and an identity whose seat
+ * is driven by something other than a human. The last is why an agent-versus-agent
+ * game reads as a spectator's game — the creator delegates its own seat to an agent
+ * that plays through its own capability, so this UI must never compose that seat's
+ * moves even though the same browser still holds the host capability.
+ */
+export function spectatingSeat(
+  identity: Identity | null,
+  seat: { controller: PlayerController } | undefined,
+): boolean {
+  if (!identity || identity.spectator === true) return true;
+  if (!seat) return true;
+  return seat.controller !== "human";
 }
 
 export interface ApiResult<T> {

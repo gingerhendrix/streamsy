@@ -28,6 +28,7 @@ const HOST_IDENTITY: Identity = { gameId: "g1", playerId: "p1", token: "t", role
 function renderLobby(options: {
   players: ProjectedPlayer[];
   identity?: Identity | null;
+  spectating?: boolean;
   mapSeed?: string;
 }): string {
   return renderToStaticMarkup(
@@ -35,6 +36,7 @@ function renderLobby(options: {
       players={options.players}
       hostPlayerId="p1"
       identity={options.identity ?? null}
+      spectating={options.spectating ?? options.identity === undefined}
       name="Visitor"
       busy={false}
       agentSeats={[]}
@@ -70,6 +72,19 @@ describe("Lobby muster roll", () => {
     expect(markup).toContain("Player · agent");
     expect(markup).toContain(">Ready<");
   });
+
+  it("does not annotate a delegated host seat as the reader's own", () => {
+    const markup = renderLobby({
+      players: [
+        player({ id: "p1", name: "Ada", controller: "external-agent" }),
+        player({ id: "p2", name: "Mina", color: "#3b82f6", controller: "external-agent" }),
+      ],
+      identity: HOST_IDENTITY,
+      spectating: true,
+    });
+    expect(markup).toContain("Host · agent");
+    expect(markup).not.toContain("· you");
+  });
 });
 
 describe("Lobby commands", () => {
@@ -88,6 +103,25 @@ describe("Lobby commands", () => {
     expect(markup).toContain("Waiting for 2 players");
     expect(markup).toContain("disabled");
     expect(markup).toContain("Open an agent seat");
+  });
+
+  it("offers the host a name for the next agent seat, defaulting to its roll number", () => {
+    const markup = renderLobby({ players: [player({ id: "p1" })], identity: HOST_IDENTITY });
+    expect(markup).toContain("Agent name");
+    expect(markup).toContain('placeholder="Agent 2"');
+  });
+
+  it("drops the agent-name field once every seat is filled", () => {
+    const markup = renderLobby({
+      players: [
+        player({ id: "p1" }),
+        player({ id: "p2" }),
+        player({ id: "p3" }),
+        player({ id: "p4" }),
+      ],
+      identity: HOST_IDENTITY,
+    });
+    expect(markup).not.toContain("Agent name");
   });
 
   it("arms the start command once a challenger is seated", () => {

@@ -8,14 +8,17 @@
  * lobby is legible at a glance instead of implied by blank space.
  *
  * Commands are normal-sized rectangles in one row, in Field Manual weight order:
- * start (olive primary), open an agent seat, copy the invite. Nothing here decides
+ * start (olive primary), open an agent seat, copy the invite — preceded, for a host
+ * with a free seat, by the name the next agent seat will carry. Nothing here decides
  * game legality — starting is validated canonically like every other command.
  */
+
+import { useState } from "react";
 
 import type { ProjectedPlayer } from "../board/projection.ts";
 import { RULES } from "../domain/map.ts";
 import { LobbyTerrainPreview } from "./lobby-preview.tsx";
-import { playerRoleLabel, type Identity } from "./shared.tsx";
+import { MAX_SEAT_NAME, playerRoleLabel, type Identity } from "./shared.tsx";
 
 /** A seat opened for a user-supplied coding agent, with its pasteable instructions. */
 export interface AgentSeat {
@@ -43,6 +46,8 @@ export function Lobby(props: {
   players: ProjectedPlayer[];
   hostPlayerId?: string;
   identity: Identity | null;
+  /** True when this browser holds no playable seat — a host that delegated its own. */
+  spectating: boolean;
   name: string;
   busy: boolean;
   agentSeats: AgentSeat[];
@@ -50,12 +55,16 @@ export function Lobby(props: {
   onName(value: string): void;
   onJoin(): void;
   onStart(): void;
-  onAddAgent(): void;
+  onAddAgent(name: string): void;
   onCopy(): Promise<void>;
 }) {
   const isHost = props.identity?.role === "host";
   const seatCount = RULES.maxPlayers;
   const seated = props.players.length;
+  const [agentName, setAgentName] = useState("");
+  // Only a seat the reader actually plays is annotated "you"; a host spectating its
+  // own delegated seat is watching that seat, not holding it.
+  const selfPlayerId = props.spectating ? undefined : props.identity?.playerId;
 
   return (
     <section className="lobby-current">
@@ -109,7 +118,7 @@ export function Lobby(props: {
                       {seatAnnotations({
                         player,
                         hostPlayerId: props.hostPlayerId,
-                        selfPlayerId: props.identity?.playerId,
+                        selfPlayerId,
                       })}
                     </small>
                   </div>
@@ -144,6 +153,23 @@ export function Lobby(props: {
             </div>
           )}
 
+          {isHost && seated < seatCount && (
+            // Named before the seat is opened, because the name is fixed on join:
+            // the seat's instructions, the muster roll, and the move feed all carry
+            // it, and there is no rename command.
+            <div className="player-fields compact">
+              <label>
+                <span>Agent name</span>
+                <input
+                  value={agentName}
+                  maxLength={MAX_SEAT_NAME}
+                  placeholder={`Agent ${seated + 1}`}
+                  onChange={(event) => setAgentName(event.target.value)}
+                />
+              </label>
+            </div>
+          )}
+
           <div className="lobby-actions">
             {isHost && (
               <button
@@ -155,7 +181,13 @@ export function Lobby(props: {
               </button>
             )}
             {isHost && (
-              <button onClick={props.onAddAgent} disabled={props.busy || seated >= seatCount}>
+              <button
+                onClick={() => {
+                  props.onAddAgent(agentName);
+                  setAgentName("");
+                }}
+                disabled={props.busy || seated >= seatCount}
+              >
                 Open an agent seat
               </button>
             )}

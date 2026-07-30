@@ -79,9 +79,11 @@ import {
   SyncPill,
   TopBar,
   acknowledgementNotice,
+  agentSeatName,
   api,
   errorMessage,
   isError,
+  spectatingSeat,
   type Identity,
 } from "./shared.tsx";
 import { StatusColumn } from "./status-column.tsx";
@@ -173,9 +175,20 @@ export function GameScreen(props: GameScreenProps) {
 
   const offset = board?.meta?.sourceThroughOffset ?? null;
 
+  // ---- seat identity --------------------------------------------------------
+  // Derived before the decision fetch because a spectator has no decision to make:
+  // the delegated host of an agent-versus-agent game still holds a capability the
+  // server would happily answer for, and asking would hand this screen legal moves
+  // for a seat the agent is playing.
+  const selfSeat = identity
+    ? (board?.players ?? []).find((player) => player.id === identity.playerId)
+    : undefined;
+  const spectating = spectatingSeat(identity, selfSeat);
+  const selfId = spectating ? undefined : identity?.playerId;
+
   // ---- decision (player-relative: a defender acts out of turn) --------------
   useEffect(() => {
-    if (!identity) {
+    if (!identity || spectating) {
       setDecision(null);
       return;
     }
@@ -187,7 +200,7 @@ export function GameScreen(props: GameScreenProps) {
       if (result.status === 200 && !isError(result.body)) setDecision(result.body);
     });
     return () => controller.abort();
-  }, [gameId, identity, offset, board?.game.status]);
+  }, [gameId, identity, spectating, offset, board?.game.status]);
 
   const legalActions = decision?.legalMoves;
   const reinforceAction = findAction(legalActions, "reinforce");
@@ -410,13 +423,16 @@ export function GameScreen(props: GameScreenProps) {
   };
 
   /** Open an external-agent seat and hand back its private bootstrap URL. */
-  const addAgentSeat = async () => {
+  const addAgentSeat = async (requestedName: string) => {
     setBusy(true);
-    const seat = agentSeats.length + 1;
+    // The ordinal is the seat number on the muster roll, not the number of seats
+    // this browser happens to have opened, so an unnamed agent is called after the
+    // row it will occupy.
+    const seat = (board?.players.length ?? agentSeats.length) + 1;
     // The agent seat's colour is assigned server-side like every other seat.
     const result = await api<AgentSeatResponse>("POST", `/v1/games/${gameId}/agent-seats`, {
       token: identity?.token,
-      body: { name: `Agent ${seat}` },
+      body: { name: agentSeatName(requestedName, seat) },
     });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
@@ -578,7 +594,6 @@ export function GameScreen(props: GameScreenProps) {
   );
 
   // ---- derived view state ---------------------------------------------------
-  const spectating = !identity || !playerById.has(identity.playerId);
   const activePlayer = playerById.get(board?.game.activePlayerId ?? "");
   const winner = playerById.get(board?.game.winnerId ?? "");
   // Choosing a fortification is still canonically legal from `attack`; presenting
@@ -639,6 +654,7 @@ export function GameScreen(props: GameScreenProps) {
           hostPlayerId={board.game.hostPlayerId}
           mapSeed={board.game.mapSeed}
           identity={identity}
+          spectating={spectating}
           name={props.name}
           busy={busy}
           agentSeats={agentSeats}
@@ -659,8 +675,7 @@ export function GameScreen(props: GameScreenProps) {
 
   // Whose turn it is, not whether a decision happens to be open: a pending defence
   // empties the legal actions without handing the turn to anybody else.
-  const yourTurn =
-    !spectating && activePlayer !== undefined && activePlayer.id === identity?.playerId;
+  const yourTurn = activePlayer !== undefined && activePlayer.id === selfId;
   const statusLine = seatStatusLabel({
     spectating,
     mode: decision?.mode ?? null,
@@ -682,7 +697,7 @@ export function GameScreen(props: GameScreenProps) {
         phase={board.game.phase}
         finished={board.game.status === "finished"}
         winnerName={winner?.name}
-        selfId={identity?.playerId}
+        selfId={selfId}
       >
         {spectating && <span className="spectating-badge">Spectating live</span>}
         <SyncPill
@@ -701,7 +716,7 @@ export function GameScreen(props: GameScreenProps) {
           names={names}
           statusLine={statusLine}
           yourTurn={yourTurn}
-          selfId={identity?.playerId}
+          selfId={selfId}
           fortifyAction={
             !spectating && intent === "fortify" ? (
               <button
@@ -724,7 +739,7 @@ export function GameScreen(props: GameScreenProps) {
                 names={names}
                 colorOf={colorOf}
                 controllerOf={controllerOf}
-                selfId={identity?.playerId}
+                selfId={selfId}
                 mode={decision?.mode ?? null}
                 now={now}
                 defenseWindowMs={
@@ -867,18 +882,18 @@ export function GameScreen(props: GameScreenProps) {
           names={names}
           colorOf={colorOf}
           activePlayerId={board.game.activePlayerId}
-          selfId={identity?.playerId}
+          selfId={selfId}
           footer={
             <div className="session-card">
               <button className="ghost" onClick={() => void props.onCopyInvite()}>
                 Copy game link
               </button>
-              {identity ? (
+              {spectating ? (
+                <small>Spectating live</small>
+              ) : (
                 <button className="text-button" onClick={() => props.onIdentity(null)}>
                   Leave player seat
                 </button>
-              ) : (
-                <small>Spectating live</small>
               )}
             </div>
           }

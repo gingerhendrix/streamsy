@@ -274,6 +274,11 @@ summary:focus-visible,
   gap: 0.5rem;
   flex: 1;
 }
+/* Seat-name fields that sit directly above the command they name, rather than
+   opening a form of their own. */
+.player-fields.compact {
+  margin: 1rem 0 0.75rem;
+}
 .swatches {
   display: flex;
   gap: 0.4rem;
