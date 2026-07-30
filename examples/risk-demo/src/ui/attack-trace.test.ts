@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProjectedMove } from "../board/projection.ts";
-import { latestAttackTrace, traceToDraw, type AttackTrace } from "./attack-trace.ts";
+import {
+  historicAttackId,
+  latestAttackTrace,
+  traceToDraw,
+  type AttackTrace,
+} from "./attack-trace.ts";
 
 function resolved(offset: string, detail: Partial<ProjectedMove>): ProjectedMove {
   return {
@@ -98,5 +103,29 @@ describe("suppressing the throw that was already history at mount", () => {
   it("draws the first throw of a game joined before anyone attacked", () => {
     expect(traceToDraw(trace("atk-1"), null)).toEqual(trace("atk-1"));
     expect(traceToDraw(null, null)).toBeNull();
+  });
+
+  it("draws nothing at all until history has been named", () => {
+    // The board is assembled from one live query per collection, so a render can see
+    // a game with no moves yet. Drawing then is how a historic throw flashed in.
+    expect(traceToDraw(trace("atk-1"), undefined)).toBeNull();
+  });
+});
+
+describe("naming history from the projection's own snapshot", () => {
+  it("is not knowable until the meta row carrying the feed has arrived", () => {
+    expect(historicAttackId(null)).toBeUndefined();
+    expect(historicAttackId(undefined)).toBeUndefined();
+  });
+
+  it("names the newest throw in the snapshot, not whatever the collections hold", () => {
+    // The snapshot is written per transaction and holds the whole feed, oldest first.
+    const snapshot = { moves: [resolved("0006", {}), DECLARED, resolved("0011", {})] };
+    expect(historicAttackId({ snapshot })).toBe("atk-0011");
+  });
+
+  it("reports no history for a game where nobody has attacked yet", () => {
+    expect(historicAttackId({ snapshot: { moves: [DECLARED] } })).toBeNull();
+    expect(historicAttackId({ snapshot: { moves: [] } })).toBeNull();
   });
 });

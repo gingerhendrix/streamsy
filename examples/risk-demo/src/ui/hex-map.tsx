@@ -55,6 +55,7 @@ import {
   hexPolygonPoints,
   hexesViewBox,
   insetSegment,
+  lossBadgePlacements,
   regionOutlinePath,
   viewBoxAttribute,
   type Point,
@@ -72,8 +73,27 @@ const ROUTE_TAIL_INSET = BADGE_RADIUS;
  * painted over by a counter that is both larger and drawn later.
  */
 const ROUTE_HEAD_INSET = BADGE_RADIUS + 6;
+/** The roundel one side's losses are written on: smaller than the army counter. */
+const LOSS_BADGE_RADIUS = BADGE_RADIUS * 0.72;
+/** Preferred distance in from each anchor for a loss figure, and off the route. */
+const LOSS_BADGE_INSET = BADGE_RADIUS * 1.9;
+const LOSS_BADGE_LIFT = BADGE_RADIUS * 1.05;
 /** Matches `.country-label` in the stylesheet, so the layout measures what renders. */
 const LABEL_FONT_SIZE = 12;
+
+/**
+ * The two halves of a resolved throw are drawn in separate layers (the capture wash
+ * under the name plates, the arrow and figures over them) and so are *siblings*.
+ * Siblings need distinct keys: keying both with the bare `attackId` is a duplicate
+ * key, which React answers by duplicating and dropping nodes — the observed symptom
+ * was capture washes accumulating in the DOM without bound while the marks group was
+ * remounted, and its fade restarted, on every unrelated board update. The `attackId`
+ * stays in both keys, because remounting the pair when a *new* throw arrives is what
+ * restarts the fade.
+ */
+export function throwLayerKey(attackId: string, layer: "wash" | "marks"): string {
+  return `${attackId}:${layer}`;
+}
 
 /** The four public visual states, ordered by `territoryInteractionState`. */
 export type TerritoryInteractionState = "normal" | "dimmed" | "hover" | "active";
@@ -415,32 +435,28 @@ export function HexMap(props: HexMapProps) {
     return attackArrowPath(ends.from, ends.to);
   }, [props.route, geometry.anchors]);
 
-  // Where the two loss badges sit for the newest resolved throw: along the route,
-  // one step in from each end so neither lands on the army counter it belongs to,
-  // and nudged off the line itself so the arrow does not strike the figures through.
+  // Where the two loss badges sit for the newest resolved throw. `lossBadgePlacements`
+  // owns the reasoning: each figure near its own end, the pair never merged into one
+  // roundel on a short run, and off any army counter whose number it would cover.
   const traceGeometry = useMemo(() => {
     const trace = props.trace;
     if (!trace) return null;
     const from = geometry.anchors.get(trace.from);
     const to = geometry.anchors.get(trace.to);
     if (!from || !to) return null;
-    const span = Math.hypot(to.x - from.x, to.y - from.y);
-    if (span === 0) return null;
-    const along = { x: (to.x - from.x) / span, y: (to.y - from.y) / span };
-    const across = { x: -along.y, y: along.x };
-    const inset = Math.min(BADGE_RADIUS * 1.9, span / 2);
-    const lift = BADGE_RADIUS * 1.05;
+    const badges = lossBadgePlacements(from, to, {
+      badgeRadius: LOSS_BADGE_RADIUS,
+      counterRadius: BADGE_RADIUS,
+      counters: [...geometry.anchors.values()],
+      inset: LOSS_BADGE_INSET,
+      lift: LOSS_BADGE_LIFT,
+    });
+    if (!badges) return null;
     const ends = insetSegment(from, to, ROUTE_TAIL_INSET, ROUTE_HEAD_INSET);
     return {
       path: attackArrowPath(ends.from, ends.to),
-      attacker: {
-        x: from.x + along.x * inset + across.x * lift,
-        y: from.y + along.y * inset + across.y * lift,
-      },
-      defender: {
-        x: to.x - along.x * inset + across.x * lift,
-        y: to.y - along.y * inset + across.y * lift,
-      },
+      attacker: badges.attacker,
+      defender: badges.defender,
     };
   }, [props.trace, geometry.anchors]);
 
@@ -533,11 +549,16 @@ export function HexMap(props: HexMapProps) {
 
           {/* The capture wash is a region fill, so it sits with the other region
               fills — under the name plate and army counter of the country it marks,
-              which stay legible while it changes hands. Keyed by `attackId` so a new
-              throw remounts the group and restarts the fade; the fade is presentation
-              only, and the trace itself is read from recorded losses. */}
+              which stay legible while it changes hands. Keyed per layer (see
+              `throwLayerKey`) so a new throw remounts the group and restarts the fade;
+              the fade is presentation only, and the trace itself is read from
+              recorded losses. */}
           {props.trace?.captured && traceGeometry && (
-            <g className="layer-throw" key={props.trace.attackId} aria-hidden="true">
+            <g
+              className="layer-throw"
+              key={throwLayerKey(props.trace.attackId, "wash")}
+              aria-hidden="true"
+            >
               <path
                 className="capture-flash"
                 d={geometry.outlines.get(props.trace.to) ?? ""}
@@ -610,7 +631,11 @@ export function HexMap(props: HexMapProps) {
               left a `−N` readable only as an outline whenever a plate happened to
               cover it, which is precisely the reading the overlay exists to give. */}
           {props.trace && traceGeometry && (
-            <g className="layer-throw-marks" key={props.trace.attackId} aria-hidden="true">
+            <g
+              className="layer-throw-marks"
+              key={throwLayerKey(props.trace.attackId, "marks")}
+              aria-hidden="true"
+            >
               <path
                 className={`throw-route${props.trace.captured ? " captured" : ""}`}
                 d={traceGeometry.path}
@@ -675,7 +700,7 @@ export function HexMap(props: HexMapProps) {
 function LossBadge(props: { point: Point; losses: number }) {
   return (
     <g className="loss-badge">
-      <circle cx={props.point.x} cy={props.point.y} r={BADGE_RADIUS * 0.72} />
+      <circle cx={props.point.x} cy={props.point.y} r={LOSS_BADGE_RADIUS} />
       <text x={props.point.x} y={props.point.y + BADGE_RADIUS * 0.2} textAnchor="middle">
         {`−${props.losses}`}
       </text>

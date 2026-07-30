@@ -205,6 +205,104 @@ export function insetSegment(
   };
 }
 
+export interface LossBadgeLayoutOptions {
+  /** Radius of the roundel a loss figure is drawn on. */
+  badgeRadius: number;
+  /** Radius of an army counter — the obstacle, same one the labels avoid. */
+  counterRadius: number;
+  /** Every counter centre on the map, the two ends of this route included. */
+  counters: readonly Point[];
+  /** Preferred distance in from each anchor, along the run. */
+  inset: number;
+  /** Preferred distance off the route, so the arrow does not strike the figures. */
+  lift: number;
+}
+
+/**
+ * Where the two loss figures of one throw sit.
+ *
+ * Both readings the overlay exists to give are positional: *which side* lost what.
+ * A fixed inset from each end loses that as soon as the run is short — two adjacent
+ * anchors are close enough that `span / 2` puts both figures on the same point, and a
+ * mutual-loss bounce renders as one smudged roundel. So the inset is capped by what
+ * keeps the two roundels apart rather than by the midpoint: each figure stays as near
+ * its own end as the pair's separation allows.
+ *
+ * The lift is then chosen rather than assumed. Counters are fixed at anchors — unlike
+ * the name plates, which are themselves the output of a de-collision pass — so a
+ * figure can be flipped to the other side of the route, or pushed further off it,
+ * without depending on any layout that moves. Nothing else on the map is avoided: a
+ * plate is a name the viewer can read again in a moment, a counter is a number they
+ * may need now, and the preferred placement is tried first so an unobstructed throw
+ * looks exactly as it did before.
+ */
+export function lossBadgePlacements(
+  from: Point,
+  to: Point,
+  options: LossBadgeLayoutOptions,
+): { attacker: Point; defender: Point } | null {
+  const span = Math.hypot(to.x - from.x, to.y - from.y);
+  if (span === 0) return null;
+  const along = { x: (to.x - from.x) / span, y: (to.y - from.y) / span };
+  const across = { x: -along.y, y: along.x };
+
+  // Two roundels plus a hair of map between them: below this they read as one mark.
+  const minSeparation = options.badgeRadius * 2 + 3;
+  const inset = Math.min(options.inset, Math.max(0, (span - minSeparation) / 2));
+  const clearance = options.counterRadius + options.badgeRadius;
+
+  const at = (base: Point, direction: number, side: number, lift: number): Point => ({
+    x: base.x + along.x * inset * direction + across.x * lift * side,
+    y: base.y + along.y * inset * direction + across.y * lift * side,
+  });
+  /** How deeply this placement eats into the counters it overlaps; 0 is clear. */
+  const covers = (point: Point): number => {
+    let total = 0;
+    for (const counter of options.counters) {
+      const gap = clearance - Math.hypot(point.x - counter.x, point.y - counter.y);
+      if (gap > 0) total += gap;
+    }
+    return total;
+  };
+  // Preference order: the established placement, then its mirror, then the same two
+  // pushed a counter's width further off the route for a genuinely crowded run.
+  const offsets = [
+    { side: 1, lift: options.lift },
+    { side: -1, lift: options.lift },
+    { side: 1, lift: options.lift * 1.6 },
+    { side: -1, lift: options.lift * 1.6 },
+  ] as const;
+  const choose = (base: Point, direction: number): { point: Point; side: number } => {
+    let best = { point: at(base, direction, 1, options.lift), side: 1 };
+    let bestCover = covers(best.point);
+    for (const offset of offsets.slice(1)) {
+      if (bestCover === 0) break;
+      const point = at(base, direction, offset.side, offset.lift);
+      const cover = covers(point);
+      if (cover < bestCover) {
+        best = { point, side: offset.side };
+        bestCover = cover;
+      }
+    }
+    return best;
+  };
+
+  const attacker = choose(from, 1);
+  let defender = choose(to, -1);
+  // A run short enough that the inset alone cannot part them: opposite sides of the
+  // route always can, and each figure is still at its own end of the arrow.
+  if (
+    Math.hypot(attacker.point.x - defender.point.x, attacker.point.y - defender.point.y) <
+    minSeparation
+  ) {
+    defender = {
+      point: at(to, -1, -attacker.side, options.lift),
+      side: -attacker.side,
+    };
+  }
+  return { attacker: attacker.point, defender: defender.point };
+}
+
 /**
  * A gently curved attack route from one country's label anchor to another's, bowed
  * perpendicular to the straight line so source and target stay readable underneath.

@@ -10,8 +10,10 @@ import {
   hexPolygonPoints,
   hexesViewBox,
   insetSegment,
+  lossBadgePlacements,
   regionOutlinePath,
   viewBoxAttribute,
+  type Point,
 } from "./hex-layout.ts";
 
 const RADIUS = 10;
@@ -159,5 +161,74 @@ describe("route insets", () => {
   it("leaves a zero-length run alone rather than dividing by it", () => {
     const point = { x: 4, y: 9 };
     expect(insetSegment(point, point, 5, 5)).toEqual({ from: point, to: point });
+  });
+});
+
+const apart = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+describe("loss badge placement", () => {
+  const FROM = { x: 0, y: 0 };
+  /** The client's real numbers, so these cases are the ones the map actually draws. */
+  const OPTIONS = {
+    badgeRadius: 11.6,
+    counterRadius: 16.1,
+    counters: [FROM, { x: 100, y: 0 }],
+    inset: 30.6,
+    lift: 16.9,
+  };
+  const MIN_SEPARATION = OPTIONS.badgeRadius * 2 + 3;
+
+  it("keeps the preferred placement when nothing is in the way", () => {
+    const badges = lossBadgePlacements(FROM, { x: 100, y: 0 }, OPTIONS);
+    expect(badges).toEqual({
+      attacker: { x: 30.6, y: 16.9 },
+      defender: { x: 69.4, y: 16.9 },
+    });
+  });
+
+  it("parts the two figures on a run too short to inset them both", () => {
+    // Two adjacent anchors: a fixed inset put both figures on the midpoint, so a
+    // mutual-loss bounce read as one smudged roundel instead of two numbers.
+    const to = { x: 45, y: 0 };
+    const badges = lossBadgePlacements(FROM, to, { ...OPTIONS, counters: [FROM, to] })!;
+    expect(apart(badges.attacker, badges.defender)).toBeGreaterThanOrEqual(MIN_SEPARATION);
+    // ...and each figure is still the one at its own end of the arrow.
+    expect(apart(badges.attacker, FROM)).toBeLessThan(apart(badges.attacker, to));
+    expect(apart(badges.defender, to)).toBeLessThan(apart(badges.defender, FROM));
+  });
+
+  it("flips a figure to the other side of the route rather than over a counter", () => {
+    const to = { x: 100, y: 0 };
+    // A third country's counter sitting exactly where the attacker's figure prefers.
+    const counters = [FROM, to, { x: 30.6, y: 16.9 }];
+    const badges = lossBadgePlacements(FROM, to, { ...OPTIONS, counters })!;
+    expect(badges.attacker.y).toBeLessThan(0);
+    for (const counter of counters) {
+      expect(apart(badges.attacker, counter)).toBeGreaterThan(
+        OPTIONS.counterRadius + OPTIONS.badgeRadius - 0.01,
+      );
+    }
+    // The unobstructed figure is left exactly where it was.
+    expect(badges.defender).toEqual({ x: 69.4, y: 16.9 });
+  });
+
+  it("takes the least-covered placement when every side is crowded", () => {
+    const to = { x: 100, y: 0 };
+    const counters = [FROM, to, { x: 30.6, y: 16.9 }, { x: 30.6, y: -16.9 }];
+    const covers = (point: { x: number; y: number }): number =>
+      counters.reduce(
+        (total, counter) =>
+          total + Math.max(0, OPTIONS.counterRadius + OPTIONS.badgeRadius - apart(point, counter)),
+        0,
+      );
+    const badges = lossBadgePlacements(FROM, to, { ...OPTIONS, counters })!;
+    // Both preferred sides are taken and no candidate is clear, so the figure moves
+    // further off the route: it cannot avoid every number, but it covers less of one.
+    expect(Math.abs(badges.attacker.y)).toBeGreaterThan(OPTIONS.lift);
+    expect(covers(badges.attacker)).toBeLessThan(covers({ x: 30.6, y: OPTIONS.lift }));
+  });
+
+  it("has nowhere to place figures on a zero-length run", () => {
+    expect(lossBadgePlacements(FROM, FROM, OPTIONS)).toBeNull();
   });
 });

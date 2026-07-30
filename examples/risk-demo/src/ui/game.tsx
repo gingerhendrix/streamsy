@@ -49,7 +49,7 @@ import {
   fortifyAction as canonicalFortifyAction,
   shouldDismissAttackSummary,
 } from "./attack-phase.ts";
-import { latestAttackTrace, traceToDraw } from "./attack-trace.ts";
+import { historicAttackId, latestAttackTrace, traceToDraw } from "./attack-trace.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
@@ -252,14 +252,16 @@ export function GameScreen(props: GameScreenProps) {
 
   const revealKey = combat ? `${combat.attackId}:${combat.status}` : null;
 
-  // What was already history when this screen opened, named once at mount. Both the
-  // dice reveal and the map trace are animations of something happening *now*, so
-  // each is suppressed for the throw that had already happened — by identity, not by
-  // snapshot offset, which only ever silenced the first update to arrive.
-  const historicTraceId = useRef<string | null | undefined>(undefined);
-  if (board && historicTraceId.current === undefined) {
-    historicTraceId.current = trace?.attackId ?? null;
-    if (revealKey) seenReveals.current.add(revealKey);
+  // What was already history when this screen opened, named once — from the
+  // projection's own snapshot rather than from the live collections. Both the dice
+  // reveal and the map trace are animations of something happening *now*, so each is
+  // suppressed for the throw that had already happened; naming it from the first
+  // render that merely *had a game row* named it before the move feed existed, which
+  // is what left a historic throw able to flash in on roughly one load in sixty.
+  const historicThrowId = useRef<string | null | undefined>(undefined);
+  if (historicThrowId.current === undefined) {
+    historicThrowId.current = historicAttackId(board?.meta);
+    if (historicThrowId.current !== undefined && revealKey) seenReveals.current.add(revealKey);
   }
 
   const [reveal, setReveal] = useState<RevealPlan>({
@@ -268,12 +270,14 @@ export function GameScreen(props: GameScreenProps) {
   });
   useEffect(() => {
     if (!revealKey) return;
+    // Until history has been named, a reveal cannot be told from a replay of one.
+    if (historicThrowId.current === undefined) return;
     const alreadySeen = seenReveals.current.has(revealKey);
     seenReveals.current.add(revealKey);
     setReveal(revealPlan({ reducedMotion, alreadySeen }));
   }, [revealKey, reducedMotion]);
 
-  const visibleTrace = traceToDraw(trace, historicTraceId.current ?? null);
+  const visibleTrace = traceToDraw(trace, historicThrowId.current);
 
   // The countdown only needs to tick while a defence window is actually open.
   const pendingDeadline =

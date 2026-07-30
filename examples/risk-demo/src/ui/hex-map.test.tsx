@@ -14,9 +14,13 @@ import type { AttackTrace } from "./attack-trace.ts";
 import {
   HexMap,
   territoryInteractionState,
+  throwLayerKey,
   type MapTerritory,
   type TerritoryInteractionState,
 } from "./hex-map.tsx";
+
+const near = (point: { x: number; y: number }, other: { x: number; y: number }): number =>
+  Math.hypot(point.x - other.x, point.y - other.y);
 
 /** Two three-hex countries side by side, with long names that would collide. */
 const HEXES: ProjectedHex[] = [
@@ -52,11 +56,12 @@ const TERRITORIES: MapTerritory[] = [
 function render(
   stateOf: (id: string) => TerritoryInteractionState = () => "normal",
   trace: AttackTrace | null = null,
+  territories: MapTerritory[] = TERRITORIES,
 ): string {
   return renderToStaticMarkup(
     <HexMap
       hexes={HEXES}
-      territories={TERRITORIES}
+      territories={territories}
       continents={[
         {
           id: "c1",
@@ -186,6 +191,48 @@ describe("resolved throws on the map", () => {
         expect(Math.hypot(point.x - centre.x, point.y - centre.y)).toBeGreaterThan(radius - 0.01);
       }
     }
+  });
+
+  it("keys its two layers apart so neither leaks nor restarts its own fade", () => {
+    // Both groups are children of the same element, so keying both with the bare
+    // `attackId` is a duplicate key: React answered it by duplicating capture washes
+    // in the DOM without bound and remounting the marks group — restarting the 4.5s
+    // fade — on every unrelated board update, so a trace never cleared.
+    expect(throwLayerKey("atk-1", "wash")).not.toBe(throwLayerKey("atk-1", "marks"));
+    // Each key still changes with the throw, which is what makes a new throw remount
+    // its group and start the fade again.
+    expect(throwLayerKey("atk-2", "marks")).not.toBe(throwLayerKey("atk-1", "marks"));
+
+    const html = render(() => "normal", { ...BOUNCE, defenderLosses: 1, captured: true });
+    // One wash, one marks group — a keyed sibling pair, rendered once each.
+    expect(html.match(/class="layer-throw"/g)).toHaveLength(1);
+    expect(html.match(/class="layer-throw-marks"/g)).toHaveLength(1);
+  });
+
+  it("keeps the two loss figures apart and at their own ends on the shortest run", () => {
+    // Adjacent anchors one hex apart: the fixed inset collapsed both figures onto the
+    // midpoint, so a mutual-loss bounce read as one smudged roundel, not two numbers.
+    const adjacent = TERRITORIES.map((territory) =>
+      territory.id === "t1" ? { ...territory, labelAnchor: { q: 1, r: 0 } } : territory,
+    );
+    const html = render(() => "normal", { ...BOUNCE, defenderLosses: 1 }, adjacent);
+    const badges = [
+      ...html.matchAll(
+        /<g class="loss-badge"><circle cx="([-\d.]+)" cy="([-\d.]+)" r="([-\d.]+)"/g,
+      ),
+    ];
+    expect(badges).toHaveLength(2);
+    const points = badges.map((badge) => ({ x: Number(badge[1]), y: Number(badge[2]) }));
+    const radius = Number(badges[0]![3]);
+    expect(Math.hypot(points[0]!.x - points[1]!.x, points[0]!.y - points[1]!.y)).toBeGreaterThan(
+      radius * 2,
+    );
+    // The attacker's figure belongs to the attacker's end, and stays nearer to it.
+    const anchors = [...html.matchAll(/class="army-marker" cx="([-\d.]+)" cy="([-\d.]+)"/g)].map(
+      (anchor) => ({ x: Number(anchor[1]), y: Number(anchor[2]) }),
+    );
+    expect(near(points[0]!, anchors[0]!)).toBeLessThan(near(points[0]!, anchors[1]!));
+    expect(near(points[1]!, anchors[1]!)).toBeLessThan(near(points[1]!, anchors[0]!));
   });
 });
 

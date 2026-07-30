@@ -51,6 +51,27 @@ export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace 
 }
 
 /**
+ * The throw that was already history when this screen opened, named from a snapshot
+ * that carries the whole move feed.
+ *
+ * The board is assembled from one live query per collection, so a render can see the
+ * game row before the move rows have landed. Naming history from *that* render records
+ * "there was no previous throw", and the historic throw is promoted to news the moment
+ * the feed arrives — which is the residual flash left after the offset comparison was
+ * replaced by identity. The projection's own meta row is written per transaction and
+ * carries the complete state, so it is the one place a coherent feed can be read.
+ *
+ * `undefined` means *not knowable yet*, which is deliberately different from `null`
+ * ("there was no previous throw"): until the snapshot exists, nothing may be drawn.
+ */
+export function historicAttackId(
+  meta: { snapshot: { moves: readonly ProjectedMove[] } } | null | undefined,
+): string | null | undefined {
+  if (!meta) return undefined;
+  return latestAttackTrace(meta.snapshot.moves)?.attackId ?? null;
+}
+
+/**
  * The trace to actually draw, given the throw that was already history when this
  * screen opened.
  *
@@ -63,8 +84,11 @@ export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace 
  */
 export function traceToDraw(
   trace: AttackTrace | null,
-  historicAttackId: string | null,
+  historicId: string | null | undefined,
 ): AttackTrace | null {
   if (!trace) return null;
-  return trace.attackId === historicAttackId ? null : trace;
+  // History not yet named: a throw drawn now might be one that resolved before the
+  // viewer arrived, and a missed flash costs less than a false one.
+  if (historicId === undefined) return null;
+  return trace.attackId === historicId ? null : trace;
 }
