@@ -49,16 +49,18 @@ Alchemy remains the deployment authority.
 ## Deploy with Alchemy
 
 Alchemy uses app `streamsy-risk`, the selected Alchemy stage (the local username by default), a
-SQLite `game` Durable Object namespace, and the `demo` Website/Worker with bundled SPA assets.
+SQLite `game` Durable Object namespace, and the `demo` Website/Worker with bundled SPA assets. The
+published custom domain is <https://hexdomination.gandrew.com>; the generated `workers.dev` URL remains
+enabled as an operational fallback.
 
 ```bash
 bun run --cwd examples/risk-demo deploy:cloudflare
 ```
 
-Then verify the printed URL:
+Then verify the published URL:
 
 ```bash
-BASE_URL=https://<printed-worker-url> \
+BASE_URL=https://hexdomination.gandrew.com \
   bun run --cwd examples/risk-demo smoke:cloudflare
 ```
 
