@@ -49,6 +49,7 @@ import {
   fortifyAction as canonicalFortifyAction,
   shouldDismissAttackSummary,
 } from "./attack-phase.ts";
+import { latestAttackTrace } from "./attack-trace.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
@@ -260,6 +261,13 @@ export function GameScreen(props: GameScreenProps) {
     seenReveals.current.add(revealKey);
     setReveal(revealPlan({ reducedMotion, alreadySeen }));
   }, [revealKey, offset, reducedMotion]);
+
+  // The map's own record of the newest throw: route plus both losses, read from the
+  // move feed. Suppressed in the first snapshot after a load for the same reason the
+  // dice reveal is — a throw that had already resolved before this screen existed is
+  // history, not something that just happened in front of the viewer.
+  const trace = useMemo(() => latestAttackTrace(board?.moves ?? []), [board?.moves]);
+  const visibleTrace = offset === firstOffset.current ? null : trace;
 
   // The countdown only needs to tick while a defence window is actually open.
   const pendingDeadline =
@@ -826,6 +834,7 @@ export function GameScreen(props: GameScreenProps) {
             onFocus={setFocusedId}
             onHover={setHoveredId}
             route={route}
+            trace={visibleTrace}
             zoom={zoom}
             pan={pan}
             onView={(next) => {

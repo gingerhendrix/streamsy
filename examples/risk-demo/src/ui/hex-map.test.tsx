@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ProjectedHex } from "../board/projection.ts";
+import type { AttackTrace } from "./attack-trace.ts";
 import {
   HexMap,
   territoryInteractionState,
@@ -48,7 +49,10 @@ const TERRITORIES: MapTerritory[] = [
   },
 ];
 
-function render(stateOf: (id: string) => TerritoryInteractionState = () => "normal"): string {
+function render(
+  stateOf: (id: string) => TerritoryInteractionState = () => "normal",
+  trace: AttackTrace | null = null,
+): string {
   return renderToStaticMarkup(
     <HexMap
       hexes={HEXES}
@@ -73,6 +77,7 @@ function render(stateOf: (id: string) => TerritoryInteractionState = () => "norm
       onFocus={() => {}}
       onHover={() => {}}
       route={null}
+      trace={trace}
       zoom={1}
       pan={{ x: 0, y: 0 }}
     />,
@@ -109,6 +114,37 @@ describe("hex map", () => {
     expect(html.match(/role="button"/g)).toHaveLength(2);
     // Legality is the decision resource's word: only `t1` is actionable here.
     expect(html).toContain('aria-disabled="true"');
+  });
+});
+
+describe("resolved throws on the map", () => {
+  const BOUNCE: AttackTrace = {
+    attackId: "atk-1",
+    from: "t1",
+    to: "t2",
+    attackerLosses: 2,
+    defenderLosses: 0,
+    captured: false,
+  };
+
+  it("draws nothing until a throw has resolved", () => {
+    expect(render()).not.toContain("layer-throw");
+  });
+
+  it("shows the route and only the losses that were actually taken", () => {
+    const html = render(() => "normal", BOUNCE);
+    expect(html).toContain('class="throw-route"');
+    // Two lost armies for the attacker, none for the defender: one badge, not two.
+    expect(html.match(/class="loss-badge"/g)).toHaveLength(1);
+    expect(html).toContain("−2");
+    expect(html).not.toContain("capture-flash");
+  });
+
+  it("marks a capture on the country that changed hands", () => {
+    const html = render(() => "normal", { ...BOUNCE, defenderLosses: 1, captured: true });
+    expect(html).toContain('class="throw-route captured"');
+    expect(html).toContain('class="capture-flash"');
+    expect(html.match(/class="loss-badge"/g)).toHaveLength(2);
   });
 });
 

@@ -4,7 +4,7 @@
  * Layers, back to front:
  *
  *   terrain → ownership → continent boundary → country boundary → highlight →
- *   attack route → labels → interaction
+ *   attack route → resolved throw → labels → interaction
  *
  * Terrain is never signalled by colour alone: each type has its own SVG pattern, so
  * the map stays readable under a translucent owner wash and for a player who cannot
@@ -29,6 +29,7 @@ import {
 } from "react";
 
 import type { ProjectedContinent, ProjectedHex } from "../board/projection.ts";
+import type { AttackTrace } from "./attack-trace.ts";
 import type { Terrain } from "../domain/map.ts";
 import { TERRAIN_TYPES } from "../domain/map.ts";
 import type { Axial } from "../domain/hex.ts";
@@ -108,6 +109,11 @@ export interface HexMapProps {
   onHover(territoryId: string | null): void;
   /** Source → target of the attack being composed, or the throw being revealed. */
   route: { from: string; to: string } | null;
+  /**
+   * The newest resolved throw, drawn as a route and two loss badges that fade on
+   * their own. Distinct from `route`, which is the attack still being decided.
+   */
+  trace?: AttackTrace | null;
   zoom: number;
   pan: Point;
   /** Drag, wheel, and pinch report through here; the buttons set the same state. */
@@ -192,6 +198,20 @@ export function TerrainDefs() {
           {terrainMarks(terrain)}
         </pattern>
       ))}
+      {/* A resolved throw gets its own head in map ink: the same shape as a live
+          attack, in the colour the surface uses for things that have already
+          happened, so the two arrows are never confused for one another. */}
+      <marker
+        id="throw-arrowhead"
+        viewBox="0 0 10 10"
+        refX="8"
+        refY="5"
+        markerWidth="5"
+        markerHeight="5"
+        orient="auto-start-reverse"
+      >
+        <path d="M0 0 L10 5 L0 10 z" fill="#20221a" />
+      </marker>
       <marker
         id="attack-arrowhead"
         viewBox="0 0 10 10"
@@ -363,6 +383,34 @@ export function HexMap(props: HexMapProps) {
     return from && to ? attackArrowPath(from, to) : null;
   }, [props.route, geometry.anchors]);
 
+  // Where the two loss badges sit for the newest resolved throw: along the route,
+  // one step in from each end so neither lands on the army counter it belongs to,
+  // and nudged off the line itself so the arrow does not strike the figures through.
+  const traceGeometry = useMemo(() => {
+    const trace = props.trace;
+    if (!trace) return null;
+    const from = geometry.anchors.get(trace.from);
+    const to = geometry.anchors.get(trace.to);
+    if (!from || !to) return null;
+    const span = Math.hypot(to.x - from.x, to.y - from.y);
+    if (span === 0) return null;
+    const along = { x: (to.x - from.x) / span, y: (to.y - from.y) / span };
+    const across = { x: -along.y, y: along.x };
+    const inset = Math.min(BADGE_RADIUS * 1.9, span / 2);
+    const lift = BADGE_RADIUS * 1.05;
+    return {
+      path: attackArrowPath(from, to),
+      attacker: {
+        x: from.x + along.x * inset + across.x * lift,
+        y: from.y + along.y * inset + across.y * lift,
+      },
+      defender: {
+        x: to.x - along.x * inset + across.x * lift,
+        y: to.y - along.y * inset + across.y * lift,
+      },
+    };
+  }, [props.trace, geometry.anchors]);
+
   return (
     <div className="hex-map-frame">
       <svg
@@ -447,6 +495,32 @@ export function HexMap(props: HexMapProps) {
           {routePath && (
             <g className="layer-route" aria-hidden="true">
               <path className="attack-route" d={routePath} markerEnd="url(#attack-arrowhead)" />
+            </g>
+          )}
+
+          {/* The throw that just happened. Keyed by `attackId` so a new throw
+              remounts the group and restarts the fade — the fade is presentation
+              only, and the trace itself is read from recorded losses. */}
+          {props.trace && traceGeometry && (
+            <g className="layer-throw" key={props.trace.attackId} aria-hidden="true">
+              {props.trace.captured && (
+                <path
+                  className="capture-flash"
+                  d={geometry.outlines.get(props.trace.to) ?? ""}
+                  fillRule="evenodd"
+                />
+              )}
+              <path
+                className={`throw-route${props.trace.captured ? " captured" : ""}`}
+                d={traceGeometry.path}
+                markerEnd="url(#throw-arrowhead)"
+              />
+              {props.trace.attackerLosses > 0 && (
+                <LossBadge point={traceGeometry.attacker} losses={props.trace.attackerLosses} />
+              )}
+              {props.trace.defenderLosses > 0 && (
+                <LossBadge point={traceGeometry.defender} losses={props.trace.defenderLosses} />
+              )}
             </g>
           )}
 
@@ -551,6 +625,18 @@ export function HexMap(props: HexMapProps) {
       </svg>
       {props.children}
     </div>
+  );
+}
+
+/** Armies lost by one side of a throw, as a signed figure on its own roundel. */
+function LossBadge(props: { point: Point; losses: number }) {
+  return (
+    <g className="loss-badge">
+      <circle cx={props.point.x} cy={props.point.y} r={BADGE_RADIUS * 0.72} />
+      <text x={props.point.x} y={props.point.y + BADGE_RADIUS * 0.2} textAnchor="middle">
+        {`−${props.losses}`}
+      </text>
+    </g>
   );
 }
 

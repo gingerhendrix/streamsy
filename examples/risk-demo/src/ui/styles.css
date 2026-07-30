@@ -1190,6 +1190,58 @@ summary:focus-visible,
   stroke-linecap: round;
   stroke-dasharray: 10 7;
 }
+/* The throw that just resolved. The live attack above is dashed signal red because
+   it is still being decided; this one is solid map ink because it is already history.
+   The whole layer fades itself out after a few seconds so throws never accumulate on
+   the map — the fade is presentation, and every figure it shows is a recorded loss. */
+.hex-map .layer-throw {
+  pointer-events: none;
+  animation: throw-fade 4.5s ease-out forwards;
+}
+.hex-map .throw-route {
+  fill: none;
+  stroke: var(--map-ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+/* A capture is the outcome worth spotting from across the room: red route, and the
+   country that changed hands outlined in cream for as long as the trace lives. */
+.hex-map .throw-route.captured {
+  stroke: var(--signal);
+  stroke-width: 4;
+}
+.hex-map .capture-flash {
+  fill: color-mix(in srgb, var(--signal) 26%, transparent);
+  stroke: var(--cream);
+  stroke-width: 5;
+  stroke-linejoin: round;
+}
+.hex-map .loss-badge circle {
+  fill: var(--map-ink);
+  stroke: var(--cream);
+  stroke-width: 2;
+}
+.hex-map .loss-badge text {
+  fill: var(--cream);
+  font: 800 16px var(--display-face);
+}
+@keyframes throw-fade {
+  0%,
+  62% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+/* Without motion the trace is state rather than an animation: it stays put until the
+   next throw replaces it, which is the same information without the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .hex-map .layer-throw {
+    animation: none;
+  }
+}
+
 /* Utilitarian circular counters: owner fill, map ink outline. */
 .hex-map .army-marker {
   --owner: #5b6a7d;
