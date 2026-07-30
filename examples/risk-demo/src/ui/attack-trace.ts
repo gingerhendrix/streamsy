@@ -87,6 +87,9 @@ export function latestAttackTrace(moves: readonly ProjectedMove[]): AttackTrace 
  * nothing may be drawn, because a missed flash costs less than a false one. The
  * comparison is re-made on every render rather than latched, so a throw that lands
  * during that window is drawn as soon as the watermark proves it is new.
+ *
+ * The *watermark itself* must be fixed at open, though — see `openedThroughWatermark`
+ * for why a watermark that keeps up with the feed suppresses everything forever.
  */
 export function traceToDraw(
   trace: AttackTrace | null,
@@ -97,4 +100,53 @@ export function traceToDraw(
   if (openedThroughOffset === null) return trace;
   // Offsets are fixed-width, so the feed's own ordering rule compares them.
   return trace.sourceOffset.localeCompare(openedThroughOffset) <= 0 ? null : trace;
+}
+
+/** How the authoritative `GET /board` watermark read is getting on. */
+export type WatermarkRead =
+  | { state: "reading" }
+  | { state: "known"; offset: string | null }
+  | { state: "failed" };
+
+/**
+ * Where the fallback watermark is remembered across renders. One per screen open;
+ * `offset` is written at most once.
+ */
+export interface WatermarkLatch {
+  offset?: string;
+}
+
+/**
+ * The watermark to gate on, resolving the authoritative read against the projection's
+ * own watermark when that read fails.
+ *
+ * The fallback has to be **latched**, and this is the whole substance of the function.
+ * `meta.sourceThroughOffset` is not a fixed point: it tracks the newest move in the
+ * feed, render for render. Handing it straight to `traceToDraw` therefore compares
+ * every throw against a watermark that has already moved past it, so *nothing is ever
+ * new* — the overlay stops drawing for the rest of the session, including throws that
+ * resolve minutes later while the viewer is watching. Measured, not theorised: with
+ * the read blocked, 51 s of live play across several resolved throws drew nothing at
+ * all. Silently deleting the feature is worse than the defect it prevents, so the
+ * first value the fallback offers is kept and the later ones ignored.
+ *
+ * Latched, the failed path degrades to the guarantee the identity-based gate gave
+ * before the watermark existed: the newest throw already on screen when the read
+ * failed may still flash once, because the state carrying it can itself be the stale
+ * cached hydration — but every throw after it is correctly news. A once-per-load
+ * false flash on a path that needs `/board` to fail is the accepted trade; silence
+ * is not.
+ *
+ * Returns `undefined` while nothing can be said yet — either the read is in flight,
+ * or it failed before the projection had produced a watermark to fall back on.
+ */
+export function openedThroughWatermark(
+  read: WatermarkRead,
+  fallbackOffset: string | undefined,
+  latch: WatermarkLatch,
+): string | null | undefined {
+  if (read.state === "known") return read.offset;
+  if (read.state === "reading") return undefined;
+  latch.offset ??= fallbackOffset;
+  return latch.offset;
 }

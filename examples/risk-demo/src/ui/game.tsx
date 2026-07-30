@@ -50,7 +50,13 @@ import {
   fortifyAction as canonicalFortifyAction,
   shouldDismissAttackSummary,
 } from "./attack-phase.ts";
-import { latestAttackTrace, traceToDraw } from "./attack-trace.ts";
+import {
+  latestAttackTrace,
+  openedThroughWatermark,
+  traceToDraw,
+  type WatermarkLatch,
+  type WatermarkRead,
+} from "./attack-trace.ts";
 import { useRiskBoardStream } from "./board-stream-db.ts";
 import { CombatCard } from "./combat-card.tsx";
 import { combatView } from "./combat-view.ts";
@@ -142,35 +148,35 @@ function usePrefersReducedMotion(): boolean {
  *
  * `fallbackOffset` keeps the feature alive if that read fails: the projection's own
  * watermark, which is the best the live collections can offer and is exactly as
- * lag-prone as the state carrying it. Degrading to the old, weaker guarantee is the
- * right direction — suppressing every throw for the rest of the session would
- * silently delete the overlay instead.
+ * lag-prone as the state carrying it. It is latched at the first render that can
+ * offer one and never re-read — `openedThroughWatermark` explains why passing it
+ * through live would silently delete the overlay rather than degrade it, which is
+ * what an earlier cut of this hook did.
  */
 function useOpenedThroughOffset(
   gameId: string,
   fallbackOffset: string | undefined,
 ): string | null | undefined {
-  const [watermark, setWatermark] = useState<
-    { state: "known"; offset: string | null } | { state: "failed" } | null
-  >(null);
+  const [read, setRead] = useState<WatermarkRead>({ state: "reading" });
+  // Not state: writing it must not itself schedule a render, and it is written once.
+  const latch = useRef<WatermarkLatch>({});
   useEffect(() => {
-    setWatermark(null);
+    setRead({ state: "reading" });
+    latch.current = {};
     let cancelled = false;
     void fetch(`/v1/games/${gameId}/board`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error("no board"))))
       .then((body: BoardResponse) => {
-        if (!cancelled) setWatermark({ state: "known", offset: body.sourceThroughOffset ?? null });
+        if (!cancelled) setRead({ state: "known", offset: body.sourceThroughOffset ?? null });
       })
       .catch(() => {
-        if (!cancelled) setWatermark({ state: "failed" });
+        if (!cancelled) setRead({ state: "failed" });
       });
     return () => {
       cancelled = true;
     };
   }, [gameId]);
-  if (watermark?.state === "known") return watermark.offset;
-  if (watermark?.state === "failed") return fallbackOffset;
-  return undefined;
+  return openedThroughWatermark(read, fallbackOffset, latch.current);
 }
 
 export function detailTerritoryId(

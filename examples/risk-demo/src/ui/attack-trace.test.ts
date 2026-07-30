@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProjectedMove } from "../board/projection.ts";
-import { latestAttackTrace, traceToDraw, type AttackTrace } from "./attack-trace.ts";
+import {
+  latestAttackTrace,
+  openedThroughWatermark,
+  traceToDraw,
+  type AttackTrace,
+  type WatermarkLatch,
+} from "./attack-trace.ts";
 
 function resolved(offset: string, detail: Partial<ProjectedMove>): ProjectedMove {
   return {
@@ -155,5 +161,70 @@ describe("suppressing throws that were already history when the screen opened", 
     // proves it is above the watermark and draws it.
     expect(drawnDuringLoad(undefined, [CAUGHT_UP])).toEqual([]);
     expect(drawnDuringLoad("0006", [CAUGHT_UP])).toEqual(["atk-0020"]);
+  });
+});
+
+/**
+ * The same page load with the authoritative `/board` read failing, so the gate is on
+ * the projection's own watermark — which, unlike `/board`, moves with the feed.
+ *
+ * `meta.sourceThroughOffset` always equals the newest move's offset (measured over
+ * 102/102 transaction boundaries: the two are never out of step), so each feed's own
+ * newest offset is exactly what the hook has to fall back on at that render.
+ */
+function drawnDuringFailedRead(feeds: readonly ProjectedMove[][]): string[] {
+  const latch: WatermarkLatch = {};
+  const drawn: string[] = [];
+  for (const feed of feeds) {
+    const metaWatermark = feed.at(-1)?.sourceOffset;
+    const opened = openedThroughWatermark({ state: "failed" }, metaWatermark, latch);
+    const visible = traceToDraw(latestAttackTrace(feed), opened);
+    if (visible && drawn.at(-1) !== visible.attackId) drawn.push(visible.attackId);
+  }
+  return drawn;
+}
+
+describe("degrading when the authoritative watermark read fails", () => {
+  const CACHED = [resolved("0006", {})];
+  const CAUGHT_UP = [resolved("0006", {}), resolved("0020", {})];
+  const NEW_THROW = [...CAUGHT_UP, resolved("0031", {})];
+
+  it("still draws a genuinely new throw after the read has failed", () => {
+    // The defect this replaces: the fallback was re-read every render, so the
+    // watermark tracked the newest move and no throw was ever above it. The overlay
+    // stopped drawing for the rest of the session — silently, and for every throw,
+    // not just the historic one. Latched at 0006, atk-0031 is still news.
+    expect(drawnDuringFailedRead([CACHED, CAUGHT_UP, NEW_THROW])).toContain("atk-0031");
+  });
+
+  it("degrades to a single stale flash rather than to silence", () => {
+    // The accepted trade, stated as an assertion so it cannot quietly become either
+    // "nothing draws" or "everything redraws": the throw already on screen when the
+    // read failed may flash once, because the state carrying it can be the stale
+    // cached hydration — and everything after it is correct.
+    expect(drawnDuringFailedRead([CACHED, CAUGHT_UP, NEW_THROW])).toEqual(["atk-0020", "atk-0031"]);
+    // Caught up before the read failed: not even that one flash.
+    expect(drawnDuringFailedRead([CAUGHT_UP, NEW_THROW])).toEqual(["atk-0031"]);
+  });
+
+  it("keeps the first watermark it is offered and ignores later ones", () => {
+    const latch: WatermarkLatch = {};
+    expect(openedThroughWatermark({ state: "failed" }, "0006", latch)).toBe("0006");
+    expect(openedThroughWatermark({ state: "failed" }, "0031", latch)).toBe("0006");
+  });
+
+  it("says nothing until it has a watermark to fall back on", () => {
+    const latch: WatermarkLatch = {};
+    // Read in flight, and read failed before the projection produced a watermark:
+    // both are "not known yet", and neither may latch a value that does not exist.
+    expect(openedThroughWatermark({ state: "reading" }, "0006", latch)).toBeUndefined();
+    expect(openedThroughWatermark({ state: "failed" }, undefined, latch)).toBeUndefined();
+    expect(openedThroughWatermark({ state: "failed" }, "0020", latch)).toBe("0020");
+  });
+
+  it("prefers the authoritative read whenever it has one", () => {
+    const latch: WatermarkLatch = {};
+    expect(openedThroughWatermark({ state: "known", offset: "0031" }, "0006", latch)).toBe("0031");
+    expect(openedThroughWatermark({ state: "known", offset: null }, "0006", latch)).toBeNull();
   });
 });
