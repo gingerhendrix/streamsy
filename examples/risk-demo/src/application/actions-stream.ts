@@ -27,6 +27,19 @@
  */
 export const ACTIONS_STREAM_TIMEOUT_MS = 30_000;
 
+/**
+ * What a *client* arms its own abort timer with.
+ *
+ * A client timer is necessarily armed before the request is issued, so it is
+ * already running through connect, TLS, auth and the server's catch-up work. Set
+ * to the server's bound exactly, it would fire a hair *before* the server closes
+ * — turning every idle connection into a client-side abort, which loses the
+ * closing control frame and the cursor it re-states. The slack makes the server
+ * the party that ends an idle connection, and leaves the client timer as what it
+ * is meant to be: the guard for a server that never closes at all.
+ */
+export const ACTIONS_STREAM_CLIENT_TIMEOUT_MS = ACTIONS_STREAM_TIMEOUT_MS + 5_000;
+
 /** The `control` event's payload: where to resume, and whether this is the end. */
 export interface ActionsControl {
   /** Opaque cursor to send as `?offset=` on the next connection. */

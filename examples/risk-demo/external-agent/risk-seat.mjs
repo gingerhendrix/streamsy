@@ -37,6 +37,17 @@ const DETERMINISTIC_REJECTIONS = new Set([400, 404, 409, 410, 422]);
  */
 const ACTIONS_STREAM_TIMEOUT_MS = 30_000;
 
+/**
+ * The launcher's own abort timer. It starts before the request is issued, so it
+ * runs through connect, TLS, auth and the server's catch-up work; sized at the
+ * server's bound exactly it would fire a hair early on every idle connection and
+ * discard the closing control frame. The slack keeps the server the party that
+ * ends an idle connection, and leaves this timer as the guard for a server that
+ * never closes at all. Mirrors `ACTIONS_STREAM_CLIENT_TIMEOUT_MS` in
+ * `src/application/actions-stream.ts`; this file stays dependency-free by design.
+ */
+const ACTIONS_STREAM_CLIENT_TIMEOUT_MS = ACTIONS_STREAM_TIMEOUT_MS + 5_000;
+
 function fail(message, code = 1) {
   const error = new Error(message);
   error.exitCode = code;
@@ -529,7 +540,7 @@ async function nextActions({ url, headers, signal }) {
   // The server closes first; this only guards a connection that never does.
   const bound = setTimeout(
     () => controller.abort(new Error("actions stream bound")),
-    ACTIONS_STREAM_TIMEOUT_MS + 5_000,
+    ACTIONS_STREAM_CLIENT_TIMEOUT_MS,
   );
   bound.unref?.();
   const abort = () => controller.abort(signal.reason);

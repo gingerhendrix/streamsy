@@ -258,6 +258,13 @@ export function createBot(options: CreateBotOptions): Bot {
    * Block on the SSE stream until something arrives or `waitMs` elapses. The
    * first batch carries the backlog, so this is also a catch-up read: a bot that
    * blocks never needs a separate one.
+   *
+   * `waitMs` is a guard against a server that never closes, not a substitute for
+   * the server's own bound — the timer starts here, before the request is even
+   * issued, so it is already running through connect, auth and catch-up. A
+   * caller passing the server's 30s exactly would abort a hair early on every
+   * idle connection and throw away the closing control frame; pass
+   * `ACTIONS_STREAM_CLIENT_TIMEOUT_MS`, which carries the transport slack.
    */
   async function readStream(
     waitMs: number,

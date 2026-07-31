@@ -51,10 +51,16 @@ frame that follows names the offset those messages were read through. Advance th
 — the one following `GameOver` — adds `"closed": true`.
 
 One connection carries the backlog immediately, then holds open until an action lands. The server
-closes it after **30 seconds** (`ACTIONS_STREAM_TIMEOUT_MS` in `src/application/actions-stream.ts`,
-which is also what the launcher and the first-party bot size themselves against). Reconnect with the
-newest `nextOffset`; a bounded connection plus an exact durable offset is what makes resume
-gap-free and duplicate-free.
+closes it after **30 seconds** (`ACTIONS_STREAM_TIMEOUT_MS` in `src/application/actions-stream.ts`).
+Reconnect with the newest `nextOffset`; a bounded connection plus an exact durable offset is what
+makes resume gap-free and duplicate-free.
+
+A client's own abort timer is a guard against a server that never closes, not a copy of that bound.
+It is armed before the request is issued, so it is already running through connect, auth and the
+server's catch-up work: set to 30 seconds exactly it fires just _before_ the server closes, and the
+closing control frame — and the cursor it re-states — is lost. First-party clients use
+`ACTIONS_STREAM_CLIENT_TIMEOUT_MS` (the bound plus five seconds of transport slack); the launcher
+mirrors the same value, since it stays dependency-free.
 
 `"closed": true` appears **only on the batch that delivers `GameOver`**. Beyond that offset the
 stream is merely silent: it re-states the cursor and holds like any other caught-up connection. So a

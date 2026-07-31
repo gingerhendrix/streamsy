@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { ACTIONS_STREAM_TIMEOUT_MS } from "../src/application/actions-stream.ts";
+import { ACTIONS_STREAM_CLIENT_TIMEOUT_MS } from "../src/application/actions-stream.ts";
 import {
   createBot,
   type BotState,
@@ -100,8 +100,10 @@ async function main(): Promise<void> {
       saveState(state);
     } else {
       // Block on the SSE turn stream until control passes to me. The server
-      // closes the connection on its own bound; this is one such connection.
-      const wake = await bot.awaitTurn(ACTIONS_STREAM_TIMEOUT_MS);
+      // closes the connection on its own bound, so this guard carries the
+      // transport slack that keeps it — not the client's timer — the party that
+      // ends an idle connection.
+      const wake = await bot.awaitTurn(ACTIONS_STREAM_CLIENT_TIMEOUT_MS);
       saveState(state);
       // `Hex Domination` asks this seat to act out of turn too. Defence is attempted
       // whenever canonical state says one is open, not only on a `DefenseAvailable`

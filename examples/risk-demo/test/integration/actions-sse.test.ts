@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTIONS_STREAM_CLIENT_TIMEOUT_MS,
   ACTIONS_STREAM_TIMEOUT_MS,
   readActionsBatches,
   type ActionsBatch,
@@ -322,6 +323,41 @@ describe("actions stream (SSE)", () => {
       { token },
     );
     expect(unknown.status).toBe(400);
+  });
+
+  it("lets the server end an idle connection, not the client's guard timer", async () => {
+    // The client guard must outlast the server bound: a client timer is already
+    // running through connect, auth and catch-up, so one set to the server's
+    // bound exactly fires first and discards the closing control frame.
+    expect(ACTIONS_STREAM_CLIENT_TIMEOUT_MS).toBe(ACTIONS_STREAM_TIMEOUT_MS + 5_000);
+    expect(ACTIONS_STREAM_CLIENT_TIMEOUT_MS).toBeGreaterThan(ACTIONS_STREAM_TIMEOUT_MS);
+
+    const h = riskHarness(11, { actionsStreamTimeoutMs: 80 });
+    const { game, idle } = await twoAgentGame(h);
+    // A seat with no cursor yet and nothing to be told: this connection can only
+    // end by the server closing it or by the client aborting it.
+    const waiting = createBot({
+      call: httpFor(h.app),
+      openStream: streamFor(h.app),
+      gameId: game.gameId,
+      playerId: idle,
+      token: game.tokenByPlayer[idle]!,
+      state: {},
+    });
+    expect(waiting.state.cursor).toBeUndefined();
+
+    const started = performance.now();
+    const wake = await waiting.awaitTurn(5_000);
+    const elapsed = performance.now() - started;
+
+    expect(wake).toBeNull();
+    // It ended at the server's bound, nowhere near the client's guard…
+    expect(elapsed).toBeGreaterThanOrEqual(60);
+    expect(elapsed).toBeLessThan(2_000);
+    // …and it ended by *closing*, so the control frame's cursor was received and
+    // persisted. A client-aborted connection carries no offset at all, and this
+    // seat would have reconnected from the beginning every time instead.
+    expect(waiting.state.cursor).toBeTruthy();
   });
 
   it("lets a scripted bot block on the stream for its turn", async () => {
