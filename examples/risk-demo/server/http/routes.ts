@@ -33,17 +33,8 @@ import { BOARD_GENERATION, boardStreamId, eventStreamId } from "../game/names.ts
 import { openApiDocument } from "./openapi.ts";
 import { catchUpActions, readActions } from "../game/action-notifier.ts";
 import { actionsStreamResponse } from "./actions-sse.ts";
+import { prefersJsonOverEventStream } from "./accept.ts";
 import type { AppContext } from "./app.ts";
-
-/**
- * A client opts into the immediate JSON page by asking for it and nothing else.
- * A wildcard Accept, an absent header, or any `text/event-stream` in the list
- * all mean the streaming representation, which is the resource's contract.
- */
-function wantsImmediateJsonPage(request: Request): boolean {
-  const accept = request.headers.get("accept") ?? "";
-  return accept.includes("application/json") && !accept.includes("text/event-stream");
-}
 
 function randomId(prefix: string): string {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
@@ -588,7 +579,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const read = (cursor: string | undefined, waitMs: number, signal: AbortSignal) =>
       readActions(ctx.protocol, gameId, cap.playerId, { cursor, waitMs, signal });
 
-    if (wantsImmediateJsonPage(request)) {
+    if (prefersJsonOverEventStream(request)) {
       return json(await read(offset, 0, request.signal), 200, seatScoped);
     }
     return actionsStreamResponse({

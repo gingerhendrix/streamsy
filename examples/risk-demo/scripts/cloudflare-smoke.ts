@@ -3,7 +3,7 @@
  * It prints no capabilities and uses only disposable games.
  */
 
-import { readActionsBatches, type ActionsBatch } from "../src/application/actions-stream.ts";
+import { createActionsReader, type ActionsReader } from "../src/application/actions-stream.ts";
 
 const baseUrl = new URL(process.env.BASE_URL ?? "http://127.0.0.1:8791").origin;
 
@@ -32,31 +32,24 @@ async function api(
   return { status: response.status, body };
 }
 
-/** Open the actions resource as what it is: a Server-Sent Events stream. */
-function openActions(gameId: string, token: string, offset?: string): Promise<Response> {
-  const query = offset ? `?offset=${encodeURIComponent(offset)}` : "";
-  return fetch(`${baseUrl}/v1/games/${gameId}/players/me/actions${query}`, {
-    headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
-  });
-}
-
 /**
- * Batch-by-batch reader over one connection. `next` answers `null` when nothing
- * arrives within `timeoutMs` — which is how a held connection is observed.
+ * Open the actions resource as what it is: a Server-Sent Events stream, over a
+ * connection this caller can actually abort. The reader's `close` aborts it and
+ * waits for the read to settle, so a held connection is dropped at the edge
+ * rather than left running behind this smoke.
  */
-function actionsReader(response: Response) {
-  const batches = readActionsBatches(response);
-  return {
-    async next(timeoutMs: number): Promise<ActionsBatch | null> {
-      const timer = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
-      const arrival = batches.next().then((result) => (result.done ? null : result.value));
-      return Promise.race([arrival, timer]);
-    },
-    async close(): Promise<void> {
-      await batches.return(undefined as never).catch(() => {});
-      await response.body?.cancel().catch(() => {});
-    },
-  };
+async function openActions(
+  gameId: string,
+  token: string,
+  offset?: string,
+): Promise<{ response: Response; reader: ActionsReader }> {
+  const query = offset ? `?offset=${encodeURIComponent(offset)}` : "";
+  const connection = new AbortController();
+  const response = await fetch(`${baseUrl}/v1/games/${gameId}/players/me/actions${query}`, {
+    headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+    signal: connection.signal,
+  });
+  return { response, reader: createActionsReader(response, connection) };
 }
 
 async function main(): Promise<void> {
@@ -170,32 +163,40 @@ async function main(): Promise<void> {
   // that is provable from a local harness.
   const seatToken = seat.body.seat.token as string;
   const opened = await openActions(agentGameId, seatToken);
-  assert(opened.status === 200, `actions stream returned ${opened.status}`);
+  assert(opened.response.status === 200, `actions stream returned ${opened.response.status}`);
   assert(
-    (opened.headers.get("content-type") ?? "").includes("text/event-stream"),
-    `actions stream is ${opened.headers.get("content-type")}`,
+    (opened.response.headers.get("content-type") ?? "").includes("text/event-stream"),
+    `actions stream is ${opened.response.headers.get("content-type")}`,
   );
-  assert(opened.headers.get("cache-control") === "no-store", "the actions stream is cacheable");
-  const first = actionsReader(opened);
-  const opening = await first.next(10_000);
-  await first.close();
+  assert(
+    opened.response.headers.get("cache-control") === "no-store",
+    "the actions stream is cacheable",
+  );
+  const opening = await opened.reader.next(10_000);
+  await opened.reader.close();
   assert(opening !== null, "the edge delivered no opening batch");
   assert(typeof opening.nextOffset === "string", "no control frame cursor across the edge");
 
   // Reconnecting from that cursor restates it, delivers nothing twice, and then
   // holds — the streaming equivalent of the bounded wait this replaced.
-  const resumed = actionsReader(await openActions(agentGameId, seatToken, opening.nextOffset));
-  const caughtUp = await resumed.next(10_000);
+  const resumed = await openActions(agentGameId, seatToken, opening.nextOffset);
+  const caughtUp = await resumed.reader.next(10_000);
   assert(
     caughtUp !== null && caughtUp.messages.length === 0,
     "a resumed actions stream replayed or lost messages across the edge",
   );
   assert(caughtUp.nextOffset === opening.nextOffset, "the resumed cursor moved");
   const startedAt = Date.now();
-  const held = await resumed.next(2_000);
-  await resumed.close();
+  const held = await resumed.reader.next(2_000);
   assert(held === null, "the edge cut a held actions stream short");
   assert(Date.now() - startedAt >= 1_500, "the held connection ended early");
+  // Aborting a held connection settles the reader rather than leaving a read
+  // running against the edge.
+  await resumed.reader.close();
+  assert(
+    (await resumed.reader.next(250)) === null,
+    "a closed actions reader kept producing batches",
+  );
 
   // The long poll it replaced is refused rather than quietly reinterpreted.
   const waited = await api("GET", `/v1/games/${agentGameId}/players/me/actions?wait=2000`, {

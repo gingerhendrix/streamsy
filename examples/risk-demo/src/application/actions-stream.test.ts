@@ -5,6 +5,7 @@ import {
   actionsControlFrame,
   actionsDataFrame,
   createActionsDecoder,
+  createActionsReader,
   createSseParser,
 } from "./actions-stream.ts";
 
@@ -62,5 +63,67 @@ describe("actions stream framing", () => {
     );
     expect(frames).toEqual([{ event: "data", data: '[\n{"seq":1}\n]' }]);
     expect(JSON.parse(frames[0]!.data)).toEqual([{ seq: 1 }]);
+  });
+});
+
+/** A response body that says nothing until pushed, and errors when aborted. */
+function slowResponse(signal: AbortSignal): { response: Response; push(chunk: string): void } {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start: (c) => {
+      controller = c;
+      signal.addEventListener(
+        "abort",
+        () => {
+          try {
+            controller.error(new Error("aborted"));
+          } catch {
+            // Already torn down.
+          }
+        },
+        { once: true },
+      );
+    },
+  });
+  return {
+    response: new Response(body),
+    push: (chunk) => controller.enqueue(encoder.encode(chunk)),
+  };
+}
+
+describe("actions reader", () => {
+  it("answers null on a quiet connection without dropping the batch that follows", async () => {
+    const connection = new AbortController();
+    const { response, push } = slowResponse(connection.signal);
+    const reader = createActionsReader(response, connection);
+
+    // Nothing has arrived: that is a hold, not a batch.
+    expect(await reader.next(25)).toBeNull();
+
+    // The read that lost the race is retained, so the batch it eventually
+    // carries reaches the next caller instead of being abandoned mid-flight.
+    push(actionsControlFrame({ nextOffset: "off-1", upToDate: true }));
+    expect(await reader.next(1_000)).toEqual({
+      messages: [],
+      nextOffset: "off-1",
+      upToDate: true,
+      closed: false,
+    });
+    await reader.close();
+  });
+
+  it("settles its in-flight read when closed, and stays closed", async () => {
+    const connection = new AbortController();
+    const { response } = slowResponse(connection.signal);
+    const reader = createActionsReader(response, connection);
+
+    const pending = reader.next(10_000);
+    // `close` aborts the connection and waits for that read: cancelling a body
+    // while a reader holds its lock would silently do nothing instead.
+    await reader.close();
+    expect(connection.signal.aborted).toBe(true);
+    expect(await pending).toBeNull();
+    expect(await reader.next(25)).toBeNull();
   });
 });

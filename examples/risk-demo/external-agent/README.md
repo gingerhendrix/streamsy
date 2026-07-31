@@ -52,6 +52,11 @@ The launcher may be started before the host presses start. The immutable map doe
 `GameStarted`, so `GET /map` answers `409 GAME_NOT_STARTED`; the launcher fetches it lazily at the
 first `ActionRequired` and spends the interval held on the actions stream rather than exiting.
 
+Completion is durable too. Only the batch delivering `GameOver` is marked closed; past that offset
+the stream is merely silent, so the cursor advance and the completion it records land in one atomic
+`session.json` write (`finished`). A process killed after that write and before it could report
+terminates from the record on restart, without reconnecting.
+
 Crash resume is exact. `session.json`'s cursor advances only after the command answering a message
 reaches a terminal outcome, and `inflight.json` retains that command's exact request bytes until
 then. A process killed anywhere in between either replays the same bytes — which the server dedupes

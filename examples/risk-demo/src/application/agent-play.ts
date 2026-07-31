@@ -58,6 +58,8 @@ Control loop:
 
 The ack is a receipt, not the outcome: {"status","commandId","turnId","eventOffset"}. What your move actually did arrives on the actions stream.
 
+If you persist your cursor, record that the game is over in the same durable write that moves the cursor past GameOver. Only the batch delivering GameOver is marked "closed":true; past that offset the stream is simply silent, and a restart holding only the advanced cursor would wait forever on a finished game.
+
 If you persist your cursor, only advance it past an ActionRequired once that message's command has been accepted or duplicated. An ActionRequired is never re-announced, so a cursor saved past an unanswered one waits forever. Keep the exact request body until then so a restart can replay it unchanged.
 
 The map does not exist until the game starts; a 409 there means "not yet", so stay on the actions stream and fetch the map at your first ActionRequired.

@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { readActionsBatches, type ActionsBatch } from "../src/application/actions-stream.ts";
+import { createActionsReader, type ActionsReader } from "../src/application/actions-stream.ts";
 
 const packageDir = new URL("..", import.meta.url).pathname;
 
@@ -79,37 +79,25 @@ async function api(
   };
 }
 
-/** Open the actions resource as what it is: a Server-Sent Events stream. */
-function openActions(
+/**
+ * Open the actions resource as what it is: a Server-Sent Events stream, over a
+ * connection this caller can actually abort. The reader's `close` aborts it and
+ * waits for the read to settle, so a held connection is dropped rather than left
+ * running behind the smoke.
+ */
+async function openActions(
   baseUrl: string,
   gameId: string,
   token: string,
   offset?: string,
-): Promise<Response> {
+): Promise<{ response: Response; reader: ActionsReader }> {
   const query = offset ? `?offset=${encodeURIComponent(offset)}` : "";
-  return fetch(`${baseUrl}/v1/games/${gameId}/players/me/actions${query}`, {
+  const connection = new AbortController();
+  const response = await fetch(`${baseUrl}/v1/games/${gameId}/players/me/actions${query}`, {
     headers: { accept: "text/event-stream", authorization: `Bearer ${token}` },
+    signal: connection.signal,
   });
-}
-
-/**
- * Batch-by-batch reader over one connection. `next` answers `null` when nothing
- * arrives within `timeoutMs`, which is how "the connection is still holding" is
- * observed from the outside.
- */
-function actionsReader(response: Response) {
-  const batches = readActionsBatches(response);
-  return {
-    async next(timeoutMs: number): Promise<ActionsBatch | null> {
-      const timer = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
-      const arrival = batches.next().then((result) => (result.done ? null : result.value));
-      return Promise.race([arrival, timer]);
-    },
-    async close(): Promise<void> {
-      await batches.return(undefined as never).catch(() => {});
-      await response.body?.cancel().catch(() => {});
-    },
-  };
+  return { response, reader: createActionsReader(response, connection) };
 }
 
 async function main(): Promise<void> {
@@ -207,19 +195,18 @@ async function main(): Promise<void> {
     // the offset the control frame named holds open instead of answering.
     const seatToken = agentTokens[0]!;
     const opened = await openActions(server.baseUrl, agentGameId, seatToken);
-    assert(opened.status === 200, `actions stream returned ${opened.status}`);
+    assert(opened.response.status === 200, `actions stream returned ${opened.response.status}`);
     assert(
-      (opened.headers.get("content-type") ?? "").includes("text/event-stream"),
-      `actions stream is ${opened.headers.get("content-type")}`,
+      (opened.response.headers.get("content-type") ?? "").includes("text/event-stream"),
+      `actions stream is ${opened.response.headers.get("content-type")}`,
     );
     assert(
-      opened.headers.get("cache-control") === "no-store" &&
-        opened.headers.get("referrer-policy") === "no-referrer",
+      opened.response.headers.get("cache-control") === "no-store" &&
+        opened.response.headers.get("referrer-policy") === "no-referrer",
       "the actions stream is cacheable or referable",
     );
-    const first = actionsReader(opened);
-    const backlog = await first.next(5_000);
-    await first.close();
+    const backlog = await opened.reader.next(5_000);
+    await opened.reader.close();
     assert(backlog !== null, "the actions stream delivered no opening batch");
     assert(
       backlog.messages.some((message: any) => message.type === "ActionRequired"),
@@ -227,20 +214,24 @@ async function main(): Promise<void> {
     );
     assert(typeof backlog.nextOffset === "string", "no control frame cursor");
 
-    const resumed = actionsReader(
-      await openActions(server.baseUrl, agentGameId, seatToken, backlog.nextOffset),
-    );
+    const resumed = await openActions(server.baseUrl, agentGameId, seatToken, backlog.nextOffset);
     // Reconnecting re-states the cursor immediately and reports nothing new…
-    const caughtUp = await resumed.next(5_000);
+    const caughtUp = await resumed.reader.next(5_000);
     assert(
       caughtUp !== null && caughtUp.messages.length === 0,
       "a resumed actions stream replayed or lost messages",
     );
     assert(caughtUp.nextOffset === backlog.nextOffset, "the resumed cursor moved");
     // …and then holds the connection instead of answering empty and closing.
-    const held = await resumed.next(500);
+    const held = await resumed.reader.next(500);
     assert(held === null, "a caught-up actions stream returned instead of holding");
-    await resumed.close();
+    // Aborting a held connection settles the reader rather than leaving a read
+    // running behind this smoke.
+    await resumed.reader.close();
+    assert(
+      (await resumed.reader.next(250)) === null,
+      "a closed actions reader kept producing batches",
+    );
 
     const waited = await api(
       server.baseUrl,

@@ -56,13 +56,23 @@ which is also what the launcher and the first-party bot size themselves against)
 newest `nextOffset`; a bounded connection plus an exact durable offset is what makes resume
 gap-free and duplicate-free.
 
+`"closed": true` appears **only on the batch that delivers `GameOver`**. Beyond that offset the
+stream is merely silent: it re-states the cursor and holds like any other caught-up connection. So a
+client that persists a cursor must persist its completion **in the same durable write** that moves
+the cursor past `GameOver`. A restart holding only the advanced cursor would wait on a finished
+game — the terminal message is never re-announced, and nothing past it is marked terminal. The
+launcher does exactly this (`session.json`'s `finished`), and terminates from that record without
+reconnecting.
+
 Capabilities travel only in `Authorization: Bearer`, so clients use `fetch` and parse the stream
 themselves — `EventSource` cannot set headers, and the token must never enter a URL. Responses are
 `no-store` and `no-referrer`.
 
 `Accept: application/json` returns one immediate, non-blocking `AgentActionsPage` instead
 (`{messages, nextOffset, upToDate}`). That representation is for bootstrap, recovery and the
-repository's own scripted consumers; it never blocks and is never the default.
+repository's own scripted consumers; it never blocks and is never the default. Negotiation is by
+media range, not substring: media types are matched case-insensitively, `q=0` is a refusal, and the
+stream wins an absent header, a wildcard, and a tie.
 
 ## Control loop
 

@@ -577,6 +577,22 @@ async function nextActions({ url, headers, signal }) {
   }
 }
 
+/**
+ * Report a finished seat. Written from two places — the process that observed
+ * `GameOver` and any later one that finds the recorded completion — so a restart
+ * after the terminal message terminates on the same evidence and the same line
+ * of stdout, without needing the message replayed.
+ */
+async function reportFinished(directory, session, counts, resumed = false) {
+  const winner = session.finished.winner;
+  await appendEvidence(directory, "finished", {
+    ...counts,
+    winner,
+    ...(resumed ? { resumed: true } : {}),
+  });
+  process.stdout.write(`${JSON.stringify({ status: "finished", ...counts, winner })}\n`);
+}
+
 async function initialize(options) {
   const directory = path.resolve(String(options.state ?? ""));
   if ((!options.seat && !options["seat-file"]) || !options.state)
@@ -943,6 +959,15 @@ async function runLoop(options) {
   let decisions = 0;
   let posts = 0;
   try {
+    // A recorded completion is the end of the seat, whatever else is on disk.
+    // Reconnecting would resume past a `GameOver` the server will never repeat,
+    // on a stream that has nothing further to say — so this process reports the
+    // finish it inherited and stops.
+    if (session.finished) {
+      await reportFinished(directory, session, { commands, decisions, posts }, true);
+      return;
+    }
+
     try {
       const inflight = JSON.parse(await readFile(path.join(directory, INFLIGHT_FILE), "utf8"));
       if (typeof inflight.body !== "string" || sha256(inflight.body) !== inflight.bodySha256) {
@@ -1018,25 +1043,26 @@ async function runLoop(options) {
         headers: authorizedHeaders(session),
         signal: controller.signal,
       });
-      if (stream.nextOffset !== undefined) liveCursor = stream.nextOffset;
       const message = stream.messages.at(-1);
-      if (message?.type === "ActionRequired") owedAsk = message.messageId ?? true;
-      // Nothing is owed for an empty page or a terminal one, so the cursor is
-      // safe to persist. An `ActionRequired` is committed only by its command.
-      await commitCursor();
-      if (!message) continue;
-      if (message.type === "GameOver") {
-        await appendEvidence(directory, "finished", {
-          commands,
-          decisions,
-          posts,
-          winner: message.winner,
-        });
-        process.stdout.write(
-          `${JSON.stringify({ status: "finished", commands, decisions, posts, winner: message.winner })}\n`,
-        );
+      if (message?.type === "GameOver") {
+        // The cursor moving past the terminal message and the completion it
+        // records are one fact, so they are persisted in one atomic write.
+        // Advancing first and recording afterwards leaves a crash window whose
+        // restart is unrecoverable: `GameOver` is never re-announced, and the
+        // stream reports `closed` only in the batch that delivered it, so a
+        // seat resuming past it would wait forever on a finished game.
+        session.cursor = stream.nextOffset ?? liveCursor;
+        session.finished = { winner: message.winner };
+        await atomicJson(path.join(directory, SESSION_FILE), session);
+        await reportFinished(directory, session, { commands, decisions, posts });
         return;
       }
+      if (stream.nextOffset !== undefined) liveCursor = stream.nextOffset;
+      if (message?.type === "ActionRequired") owedAsk = message.messageId ?? true;
+      // Nothing is owed for an empty page, so the cursor is safe to persist. An
+      // `ActionRequired` is committed only by its command.
+      await commitCursor();
+      if (!message) continue;
       if (message.type !== "ActionRequired") continue;
       const observed = {
         player: { id: session.playerId },

@@ -25,6 +25,7 @@ import {
   httpFor,
   riskHarness,
   streamFor,
+  type Game,
   type Harness,
 } from "../harness.ts";
 
@@ -58,6 +59,29 @@ async function take(
     if (enough(batch)) break;
   }
   return batches;
+}
+
+/** Drive both seats until the game is over, and answer with its final metadata. */
+async function playToCompletion(h: Harness, game: Game) {
+  const bots = Object.fromEntries(
+    game.players.map((playerId) => [
+      playerId,
+      createBot({
+        call: httpFor(h.app),
+        gameId: game.gameId,
+        playerId,
+        token: game.tokenByPlayer[playerId]!,
+      }),
+    ]),
+  );
+  for (let step = 0; step < 4_000; step += 1) {
+    const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
+    if (meta.status === "finished") return meta;
+    const bot = bots[meta.activePlayerId as string]!;
+    await bot.awaitTurn();
+    await bot.playTurn();
+  }
+  throw new Error("the game never finished");
 }
 
 async function twoAgentGame(h: Harness) {
@@ -225,6 +249,56 @@ describe("actions stream (SSE)", () => {
     );
     expect(page.status).toBe(200);
     expect(page.body.nextOffset).toBe(opening.at(-1)!.nextOffset);
+  });
+
+  it("marks the batch that delivers GameOver closed, and holds silently past it", async () => {
+    const h = riskHarness(4242, { actionsStreamTimeoutMs: 80 });
+    const game = await createGame(h.app, {
+      controllers: ["agent", "agent"],
+      mapSeed: "sse-game-over",
+    });
+    const meta = await playToCompletion(h, game);
+    const token = game.tokenByPlayer[meta.winnerId as string]!;
+
+    // Read the seat's whole stream: the batch carrying `GameOver` says the
+    // server is done, and the connection ends there rather than at its bound.
+    const started = performance.now();
+    const batches = await take(await open(h, game.gameId, token), (batch) => batch.closed);
+    const terminal = batches.at(-1)!;
+    expect(terminal.closed).toBe(true);
+    expect(terminal.messages.at(-1)!.type).toBe("GameOver");
+    expect(performance.now() - started).toBeLessThan(80);
+
+    // Past that offset the server has nothing left to say and no way to say
+    // so: an empty control, no `closed`, and the connection ends on the bound.
+    // A client therefore records its own completion when it takes a
+    // `GameOver`, which is exactly what the launcher persists.
+    const past: ActionsBatch<AgentMessage>[] = [];
+    for await (const batch of readActionsBatches<AgentMessage>(
+      await open(h, game.gameId, token, { offset: terminal.nextOffset }),
+    )) {
+      past.push(batch);
+    }
+    expect(past.length).toBeGreaterThan(0);
+    expect(past.every((batch) => batch.messages.length === 0 && !batch.closed)).toBe(true);
+    expect(past.at(-1)!.nextOffset).toBe(terminal.nextOffset);
+  }, 60_000);
+
+  it("serves the representation the Accept header actually asked for", async () => {
+    const h = riskHarness(11, { actionsStreamTimeoutMs: 50 });
+    const { game, active } = await twoAgentGame(h);
+    const token = game.tokenByPlayer[active]!;
+    const typeOf = async (accept?: string) =>
+      (await open(h, game.gameId, token, { accept })).headers.get("content-type");
+
+    // The stream is the contract: silence, wildcards and ties all mean SSE.
+    expect(await typeOf(undefined)).toBe("text/event-stream");
+    expect(await typeOf("*/*")).toBe("text/event-stream");
+    expect(await typeOf("application/json, text/event-stream")).toBe("text/event-stream");
+    // Asking for the page, in whatever casing, or refusing the stream outright.
+    expect(await typeOf("application/json")).toBe("application/json");
+    expect(await typeOf("Application/JSON")).toBe("application/json");
+    expect(await typeOf("text/event-stream;q=0, application/json")).toBe("application/json");
   });
 
   it("refuses the long poll it replaced, and any other unknown parameter", async () => {

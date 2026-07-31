@@ -137,6 +137,65 @@ export function createActionsDecoder<T = unknown>(): { push(chunk: string): Acti
   };
 }
 
+export interface ActionsReader<T = unknown> {
+  /** The next batch, or `null` if none arrived within `timeoutMs` or the stream ended. */
+  next(timeoutMs: number): Promise<ActionsBatch<T> | null>;
+  /** Drop the connection and wait for the in-flight read to actually settle. */
+  close(): Promise<void>;
+}
+
+const TIMED_OUT = Symbol("timed-out");
+
+/**
+ * A reader for callers that need to observe *holding* — "nothing arrived in this
+ * long" — rather than simply consuming a stream to its end.
+ *
+ * Two things this gets right that a bare `Promise.race` does not. A read that
+ * loses the race is retained rather than abandoned, so the batch it eventually
+ * carries is delivered to the next call instead of being dropped on the floor.
+ * And `close` aborts the underlying connection and then *awaits* that read's
+ * settlement, so a caller that closes has proof the reader finished — cancelling
+ * a body while a reader still holds the lock silently does nothing.
+ */
+export function createActionsReader<T = unknown>(
+  response: Response,
+  connection: AbortController,
+): ActionsReader<T> {
+  const batches = readActionsBatches<T>(response);
+  let pending: Promise<ActionsBatch<T> | null> | null = null;
+  const advance = (): Promise<ActionsBatch<T> | null> => {
+    pending ??= batches
+      .next()
+      .then((result) => (result.done ? null : result.value))
+      // An aborted or ended body is how this reader stops; it is not a failure.
+      .catch(() => null)
+      .finally(() => {
+        pending = null;
+      });
+    return pending;
+  };
+  return {
+    async next(timeoutMs: number): Promise<ActionsBatch<T> | null> {
+      const arrival = advance();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const expiry = new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+      });
+      try {
+        const outcome = await Promise.race([arrival, expiry]);
+        return outcome === TIMED_OUT ? null : outcome;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    async close(): Promise<void> {
+      connection.abort();
+      await pending?.catch(() => {});
+      await batches.return(undefined as never).catch(() => {});
+    },
+  };
+}
+
 /** Read one actions response to its end, yielding each batch as it lands. */
 export async function* readActionsBatches<T = unknown>(
   response: Response,

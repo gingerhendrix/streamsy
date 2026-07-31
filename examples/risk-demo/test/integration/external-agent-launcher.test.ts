@@ -114,6 +114,20 @@ function driftingAsk(seq: number) {
   };
 }
 
+/** The terminal message: it names the winner and is never re-announced. */
+function gameOverMessage(seq: number) {
+  return {
+    type: "GameOver",
+    messageId: `act:game:player:${seq}`,
+    seq,
+    gameId: "game",
+    playerId: "player",
+    winner: { id: "player", name: "Player" },
+    since: { fromEventOffset: null, events: [] },
+    eventOffset: `off-${seq}`,
+  };
+}
+
 interface FixtureState {
   /** Before the host presses start there is no map: `/map` answers 409. */
   started: boolean;
@@ -127,6 +141,8 @@ interface FixtureState {
   mapReads: number;
   /** How long an idle SSE connection is held before the server closes it. */
   holdMs: number;
+  /** Connections opened against the actions resource, to prove a restart made none. */
+  actionsReads: number;
   /** Hold an idle connection open indefinitely, so a cancellation has something to abort. */
   holdOpen: boolean;
 }
@@ -140,6 +156,7 @@ function fixtureState(overrides: Partial<FixtureState> = {}): FixtureState {
     hangCommand: false,
     parked: [],
     mapReads: 0,
+    actionsReads: 0,
     holdMs: 25,
     holdOpen: false,
     ...overrides,
@@ -184,6 +201,7 @@ async function startFixture(state: FixtureState) {
           400,
         );
       }
+      state.actionsReads += 1;
       // Offsets are plain indexes into the fixture's message list.
       const from = Number.parseInt(url.searchParams.get("offset") ?? "0", 10);
       const pending = state.messages.slice(from);
@@ -664,6 +682,63 @@ describe("repository-independent external-seat launcher", () => {
         expect(state.commandBodies).toHaveLength(1);
         expect(JSON.parse(state.commandBodies[0]!).action.type).toBe("occupy-territory");
         expect((await readJson(path.join(session, "session.json"))).cursor).toBe("1");
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    it("terminates on a GameOver and records the completion with the cursor", async () => {
+      const root = await fixtureRoot();
+      const state = fixtureState({ messages: [gameOverMessage(1)] });
+      const fixture = await startFixture(state);
+      try {
+        const session = await initialize(root, fixture.origin);
+        const result = await run(session, "claude", await fakeHarness(root));
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          status: "finished",
+          winner: { id: "player" },
+        });
+        const persisted = await readJson(path.join(session, "session.json"));
+        // Both facts, from one write: the cursor moved past the terminal message
+        // and the completion that justifies it was recorded with it.
+        expect(persisted.cursor).toBe("1");
+        expect(persisted.finished).toEqual({ winner: { id: "player", name: "Player" } });
+      } finally {
+        await fixture.close();
+      }
+    });
+
+    it("finishes after a crash between recording completion and reporting it", async () => {
+      const root = await fixtureRoot();
+      const state = fixtureState({ messages: [gameOverMessage(1)] });
+      const fixture = await startFixture(state);
+      try {
+        const session = await initialize(root, fixture.origin);
+        const binary = await fakeHarness(root);
+
+        // The exact crash window: the terminal state reaches disk, and the
+        // process dies before it can report. An unwritable evidence log makes
+        // that deterministic rather than a race.
+        const evidence = path.join(session, "evidence.jsonl");
+        await chmod(evidence, 0o000);
+        await expect(run(session, "claude", binary)).rejects.toBeTruthy();
+        const crashed = await readJson(path.join(session, "session.json"));
+        expect(crashed.cursor).toBe("1");
+        expect(crashed.finished.winner.id).toBe("player");
+        await chmod(evidence, 0o600);
+
+        // `GameOver` is never re-announced and the stream is not closed at an
+        // offset beyond it, so a restart that had only the cursor would wait
+        // out its wall bound on a finished game. This one terminates from the
+        // record it inherited, without reconnecting at all.
+        const reads = state.actionsReads;
+        const result = await run(session, "claude", binary);
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          status: "finished",
+          winner: { id: "player" },
+        });
+        expect(state.actionsReads).toBe(reads);
+        expect(await evidenceOf(session)).toContain('"resumed":true');
       } finally {
         await fixture.close();
       }

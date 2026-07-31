@@ -64,9 +64,17 @@ export function actionsStreamResponse(options: ActionsStreamOptions): Response {
   const body = new ReadableStream<Uint8Array>({
     start: async (controller) => {
       let inactive = false;
+      /**
+       * The bound is a real timer, not a value recomputed between reads. A read
+       * that never settles — a wedged storage call, a live read that loses its
+       * wakeup — would otherwise hold the connection open indefinitely, since
+       * the loop only re-checks the clock after `read` returns.
+       */
+      const wall = setTimeout(() => stop(), timeoutMs);
       stop = () => {
         if (inactive) return;
         inactive = true;
+        clearTimeout(wall);
         reads.abort();
         try {
           controller.close();
@@ -128,6 +136,7 @@ export function actionsStreamResponse(options: ActionsStreamOptions): Response {
         if (!inactive && !reads.signal.aborted) console.error("actions stream error:", error);
         stop();
       } finally {
+        clearTimeout(wall);
         options.signal.removeEventListener("abort", onClientGone);
       }
     },
