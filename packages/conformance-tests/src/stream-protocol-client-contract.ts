@@ -70,11 +70,17 @@ export function runStreamProtocolClientContract(
     expect(await handle.create({ contentType: "text/plain", initialData: "a" })).toMatchObject({
       status: "created",
     });
-    expect(await handle.append("b", { contentType: "text/plain" })).toEqual({ status: "appended" });
+    expect(await handle.append("b", { contentType: "text/plain" })).toMatchObject({
+      status: "appended",
+      offset: expect.any(String),
+    });
     const first = await firstBatch(await handle.read());
     expect(first).toMatchObject({ kind: "text", text: "ab", upToDate: true });
 
-    expect(await handle.append("c", { contentType: "text/plain" })).toEqual({ status: "appended" });
+    expect(await handle.append("c", { contentType: "text/plain" })).toMatchObject({
+      status: "appended",
+      offset: expect.any(String),
+    });
     const resumed = await firstBatch(await handle.read({ offset: first.offset }));
     expect(resumed).toMatchObject({ kind: "text", text: "c", upToDate: true });
   });
@@ -120,6 +126,103 @@ export function runStreamProtocolClientContract(
       text: "z",
       offset: close.finalOffset,
       streamClosed: true,
+    });
+  });
+
+  it("preserves producer, CAS, and append-conflict outcomes without payload verification", async () => {
+    const handle = harness.client.stream("rich-append");
+    await handle.create({ contentType: "text/plain" });
+    const initial = await handle.head();
+    if (initial.status !== "ok" || initial.offset === undefined) {
+      throw new Error("expected initial offset");
+    }
+    const producer = { producerId: "lane", producerEpoch: 1, producerSeq: 0 };
+
+    const accepted = await handle.append("original", {
+      contentType: "text/plain",
+      producer,
+      expectedOffset: initial.offset,
+    });
+    expect(accepted).toMatchObject({
+      status: "appended",
+      offset: expect.any(String),
+      producerEpoch: 1,
+      producerSeq: 0,
+    });
+    const changedRetry = await handle.append("changed", {
+      contentType: "text/plain",
+      producer,
+      expectedOffset: initial.offset,
+    });
+    expect(changedRetry).toMatchObject({
+      status: "duplicate",
+      offset: expect.any(String),
+      producerEpoch: 1,
+      producerSeq: 0,
+    });
+    expect(changedRetry).not.toHaveProperty("verified");
+    expect(changedRetry).not.toHaveProperty("verifiedDuplicate");
+    expect(
+      await handle.append("gap", {
+        contentType: "text/plain",
+        producer: { ...producer, producerSeq: 2 },
+      }),
+    ).toEqual({ status: "producer-gap", expectedSeq: 1, receivedSeq: 2 });
+    expect(
+      await handle.append("invalid-new-epoch", {
+        contentType: "text/plain",
+        producer: { ...producer, producerEpoch: 2, producerSeq: 1 },
+      }),
+    ).toEqual({ status: "invalid-epoch-seq" });
+    expect(
+      await handle.append("new-epoch", {
+        contentType: "text/plain",
+        producer: { ...producer, producerEpoch: 2, producerSeq: 0 },
+      }),
+    ).toMatchObject({ status: "appended", producerEpoch: 2, producerSeq: 0 });
+    expect(
+      await handle.append("stale", {
+        contentType: "text/plain",
+        producer: { ...producer, producerSeq: 1 },
+      }),
+    ).toEqual({ status: "stale-epoch", currentEpoch: 2 });
+
+    const read = await firstBatch(await handle.read());
+    expect(read).toMatchObject({ kind: "text", text: "originalnew-epoch" });
+
+    const cas = harness.client.stream("cas-conflict");
+    await cas.create({ contentType: "text/plain" });
+    const empty = await cas.head();
+    if (empty.status !== "ok" || empty.offset === undefined) throw new Error("expected offset");
+    await cas.append("racer", { contentType: "text/plain" });
+    const conflict = await cas.append("loser", {
+      contentType: "text/plain",
+      expectedOffset: empty.offset,
+    });
+    expect(conflict).toMatchObject({
+      status: "conflict",
+      conflictReason: "expected-offset",
+      offset: expect.any(String),
+    });
+    if (conflict.status !== "conflict" || conflict.conflictReason !== "expected-offset") {
+      throw new Error("expected offset conflict");
+    }
+    expect(conflict.offset).not.toBe(empty.offset);
+
+    expect(await cas.append("wrong-content", { contentType: "application/octet-stream" })).toEqual({
+      status: "conflict",
+      conflictReason: "content-type",
+    });
+    await cas.append("sequenced", { contentType: "text/plain", seq: "b" });
+    expect(await cas.append("old-sequence", { contentType: "text/plain", seq: "a" })).toEqual({
+      status: "conflict",
+      conflictReason: "sequence",
+    });
+    const closed = await cas.close();
+    if (closed.status !== "closed") throw new Error("expected close");
+    expect(await cas.append("after-close", { contentType: "text/plain" })).toEqual({
+      status: "closed",
+      offset: closed.finalOffset,
     });
   });
 

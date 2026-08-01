@@ -83,6 +83,32 @@ Generators do not parse or update `StreamRecord.counter`; that persisted field r
 backwards-compatible adapter records. Use one offset scheme for the lifetime of persisted streams;
 switching generators over existing data is not an automatic migration.
 
+## Rich append acknowledgements
+
+The fixed `StreamProtocolHandle.append` method accepts ordinary sequence coordination, an optional
+`producer` tuple, and Streamsy's `expectedOffset` precondition. A successful call returns the exact
+`offset` from that append response. Producer retries distinguish a new `appended` batch from
+`duplicate`, and both results preserve the returned producer epoch and sequence.
+
+```ts
+const result = await client.stream("orders").append(serializedBatch, {
+  contentType: "application/json",
+  producer: { producerId: "orders-v1", producerEpoch: 7, producerSeq: 42 },
+  expectedOffset: outputTail,
+});
+```
+
+`duplicate` means only that the producer sequence was already accepted. It does not verify that a
+retry supplied the same bytes. Stale epochs, producer gaps, invalid epoch/sequence transitions, and
+expected-offset conflicts are separate typed results. Missing required success metadata is a
+`parse-error`; the client never follows an append with `HEAD` to manufacture an acknowledgement.
+
+The pinned `@durable-streams/client` append API discards this response data, so `@streamsy/client`
+uses a narrow non-batching POST path for append while retaining the upstream client for reads,
+metadata, and its retry utility. One append call therefore means one POST unless that POST receives
+a retryable transport/server failure. Simple callers that only narrow on `status === "appended"`
+remain source-compatible; producer callers must handle the newly truthful `duplicate` member.
+
 ## Optimistic concurrency: `expectedOffset` (Streamsy extension)
 
 `AppendOptions.expectedOffset` is a compare-and-swap precondition: the append succeeds only if the
