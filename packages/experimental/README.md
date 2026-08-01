@@ -29,3 +29,9 @@ It provides pure catch-up folds and checkpoint storage over the transport-neutra
 Checkpoint snapshots and the checkpoint store's `State` must be JSON-serializable. By default, each view is stored at `__streamsy/views/${encodeURIComponent(viewId)}/checkpoint`; callers may supply a custom stream-id function.
 
 Checkpoint loading is fail-fast when the latest record is malformed and uses last-write-wins, not max-cursor-wins, semantics. Re-appending a stale checkpoint can regress its cursor, but that is safe for level-triggered, idempotent consumers because it only causes batches to be read again. Loading currently reads the full checkpoint stream and costs O(saves); planned stream compaction will bound that cost.
+
+## IVM mesh incubation
+
+`@streamsy/experimental/ivm-mesh` is a framework-private incubation area, not a generic writer or processor API. Its first output generation uses one deterministic, bounded producer lane derived from processor id/version, generation, and canonical source/target identities. The epoch is fixed configuration for that immutable generation and is never claimed or bumped on restart; producer sequence counts append batches.
+
+The reserved State collection is `__streamsy.mesh.lineage.v1`, with canonical row key `checkpoint` and format `streamsy.mesh.lineage.v1`. All `__streamsy.` State types are reserved; fact events using that prefix are rejected. The row records processor/version/generation, canonical identities, producer lane/epoch, incorporated source position, and the next batch sequence.

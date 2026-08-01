@@ -32,13 +32,18 @@
       "types": "./dist/materializer.d.ts",
       "import": "./dist/materializer.js",
       "default": "./dist/materializer.js"
+    },
+    "./ivm-mesh": {
+      "types": "./dist/ivm-mesh.d.ts",
+      "import": "./dist/ivm-mesh.js",
+      "default": "./dist/ivm-mesh.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/binding.ts src/causal.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
+    "build": "tsdown src/binding.ts src/causal.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },
