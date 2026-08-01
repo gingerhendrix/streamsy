@@ -6,6 +6,7 @@ export { ClientReadSession } from "./read-session.ts";
 
 export type {
   AppendStreamOptions,
+  AppendJsonBatchOptions,
   ByteStreamBatch,
   ClientAppendResult,
   ClientCloseResult,

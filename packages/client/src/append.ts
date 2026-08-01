@@ -12,6 +12,7 @@ export async function officialAppend(
   data: Uint8Array | string,
   options: AppendStreamOptions,
   fallbackContentType?: string,
+  jsonBatch = false,
 ): Promise<ClientAppendResult> {
   const headers = await client.appendHeaders();
   const contentType = options.contentType ?? fallbackContentType;
@@ -29,7 +30,7 @@ export async function officialAppend(
   const response = await client.fetchAppend(url, {
     method: "POST",
     headers,
-    body: encodeBody(data, contentType),
+    body: encodeBody(data, contentType, jsonBatch),
     signal: options.signal,
   });
   const offset = response.headers.get(STREAM_OFFSET_HEADER);
@@ -46,10 +47,10 @@ export async function officialAppend(
   return { status: "appended", offset };
 }
 
-function encodeBody(data: Uint8Array | string, contentType?: string): BodyInit {
+function encodeBody(data: Uint8Array | string, contentType?: string, jsonBatch = false): BodyInit {
   if (normalizedContentType(contentType) === "application/json") {
     const json = typeof data === "string" ? data : new TextDecoder().decode(data);
-    return `[${json}]`;
+    return jsonBatch ? json : `[${json}]`;
   }
   if (typeof data === "string") return data;
   return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;

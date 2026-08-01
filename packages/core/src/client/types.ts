@@ -70,6 +70,9 @@ export interface AppendStreamOptions extends ClientRequestOptions {
   expectedOffset?: StreamOffset;
 }
 
+/** Options for one JSON request containing several ordered stored messages. */
+export type AppendJsonBatchOptions = Omit<AppendStreamOptions, "contentType">;
+
 export interface ClientProducerOptions {
   producerId: string;
   producerEpoch: number;
@@ -208,6 +211,14 @@ export interface StreamProtocolHandle {
   create(options?: CreateStreamOptions): Promise<ClientCreateResult>;
   /** `contentType` is required in `options` where the substrate requires it. */
   append(data: Uint8Array | string, options?: AppendStreamOptions): Promise<ClientAppendResult>;
+  /**
+   * Append an ordered, non-empty JSON transaction in one request. Each item
+   * becomes one stored message and the rich acknowledgement covers the batch.
+   */
+  appendJsonBatch(
+    items: readonly JsonValue[],
+    options?: AppendJsonBatchOptions,
+  ): Promise<ClientAppendResult>;
   /** Permanently close the stream, optionally appending finalData atomically. */
   close(options?: CloseStreamOptions): Promise<ClientCloseResult>;
   read<T extends JsonValue = JsonValue>(options?: ReadStreamOptions): Promise<ClientReadResult<T>>;

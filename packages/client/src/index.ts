@@ -4,6 +4,7 @@ export { protocolPathUrl } from "./url.ts";
 
 export type {
   AppendStreamOptions,
+  AppendJsonBatchOptions,
   ByteStreamBatch,
   ClientAppendResult,
   ClientCloseResult,

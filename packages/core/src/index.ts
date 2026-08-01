@@ -10,6 +10,7 @@ export { createReadOnlyHttpHandler, ReadOnlyHttpHandler } from "./read-only-http
 export { directProtocolClient, hasStreamsyProtocol, ClientReadSession } from "./client/index.ts";
 export type {
   AppendStreamOptions,
+  AppendJsonBatchOptions,
   ByteStreamBatch,
   ClientAppendResult,
   ClientCloseResult,

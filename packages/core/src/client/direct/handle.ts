@@ -1,6 +1,7 @@
 import type { MetadataResult, ProtocolStream } from "../../types/protocol.ts";
 import type {
   AppendStreamOptions,
+  AppendJsonBatchOptions,
   ClientAppendResult,
   ClientCloseResult,
   ClientCreateResult,
@@ -81,6 +82,14 @@ export class DirectProtocolHandle implements StreamProtocolHandle {
       });
       return mapAppend(result);
     });
+  }
+
+  async appendJsonBatch(
+    items: readonly JsonValue[],
+    options: AppendJsonBatchOptions = {},
+  ): Promise<ClientAppendResult> {
+    if (items.length === 0) throw new TypeError("appendJsonBatch requires at least one item");
+    return this.append(JSON.stringify(items), { ...options, contentType: "application/json" });
   }
 
   async close(options: CloseStreamOptions = {}): Promise<ClientCloseResult> {

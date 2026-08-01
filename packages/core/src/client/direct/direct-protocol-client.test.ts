@@ -120,6 +120,28 @@ describe("directProtocolClient", () => {
     await client.close();
   });
 
+  it("appends an ordered JSON transaction as one acknowledgement", async () => {
+    const { client } = makeClient();
+    const json = client.stream("json-transaction");
+    await json.create({ contentType: "application/json" });
+    const head = await json.head();
+    if (head.status !== "ok" || head.offset === undefined) throw new Error("expected offset");
+    const result = await json.appendJsonBatch([{ n: 1 }, { n: 2 }], {
+      producer: { producerId: "lane", producerEpoch: 3, producerSeq: 0 },
+      expectedOffset: head.offset,
+    });
+    expect(result).toMatchObject({ status: "appended", producerEpoch: 3, producerSeq: 0 });
+    const read = await json.read<{ n: number }>();
+    if (read.status !== "ok") throw new Error("expected ok");
+    expect((await read.session[Symbol.asyncIterator]().next()).value).toMatchObject({
+      kind: "json",
+      items: [{ n: 1 }, { n: 2 }],
+      offset: result.status === "appended" ? result.offset : undefined,
+    });
+    await expect(json.appendJsonBatch([])).rejects.toThrow(/at least one/);
+    await client.close();
+  });
+
   it("cancels live sessions and reports client-closed after client close", async () => {
     const { client } = makeClient();
     const handle = client.stream("live");

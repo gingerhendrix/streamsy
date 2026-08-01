@@ -158,6 +158,31 @@ describe("officialProtocolClient", () => {
     await client.close();
   });
 
+  it("sends an ordered JSON transaction in one POST without nested framing", async () => {
+    const { client, requests } = makeHarness();
+    const handle = client.stream("json-transaction");
+    await handle.create({ contentType: "application/json" });
+    const head = await handle.head();
+    if (head.status !== "ok" || head.offset === undefined) throw new Error("expected offset");
+    const before = requests.length;
+    const result = await handle.appendJsonBatch([{ n: 1 }, { n: 2 }], {
+      producer: { producerId: "lane", producerEpoch: 3, producerSeq: 0 },
+      expectedOffset: head.offset,
+    });
+    expect(result).toMatchObject({ status: "appended", producerEpoch: 3, producerSeq: 0 });
+    const appended = requests.slice(before);
+    expect(appended.map((request) => request.method)).toEqual(["POST"]);
+    expect(await appended[0]!.text()).toBe('[{"n":1},{"n":2}]');
+    const session = await okSession(await handle.read<{ n: number }>());
+    expect((await session[Symbol.asyncIterator]().next()).value).toMatchObject({
+      kind: "json",
+      items: [{ n: 1 }, { n: 2 }],
+      offset: result.status === "appended" ? result.offset : undefined,
+    });
+    await expect(handle.appendJsonBatch([])).rejects.toThrow(/at least one/);
+    await client.close();
+  });
+
   it("returns a typed parse failure when append success omits Stream-Next-Offset", async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 204 }));
     const client = officialProtocolClient({

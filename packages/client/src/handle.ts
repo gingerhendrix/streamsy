@@ -1,6 +1,7 @@
 import type { DurableStream } from "@durable-streams/client";
 import type {
   AppendStreamOptions,
+  AppendJsonBatchOptions,
   ClientAppendResult,
   ClientCloseResult,
   ClientCreateResult,
@@ -88,6 +89,26 @@ export class OfficialProtocolHandle implements StreamProtocolHandle {
           data,
           { ...options, signal },
           this.handle.contentType,
+        ),
+      appendErrorResult,
+    );
+  }
+
+  async appendJsonBatch(
+    items: readonly JsonValue[],
+    options: AppendJsonBatchOptions = {},
+  ): Promise<ClientAppendResult> {
+    if (items.length === 0) throw new TypeError("appendJsonBatch requires at least one item");
+    return this.client.run<ClientAppendResult>(
+      options.signal,
+      (signal) =>
+        officialAppend(
+          this.client,
+          this.url,
+          JSON.stringify(items),
+          { ...options, contentType: "application/json", signal },
+          undefined,
+          true,
         ),
       appendErrorResult,
     );
