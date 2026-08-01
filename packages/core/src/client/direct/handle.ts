@@ -76,6 +76,8 @@ export class DirectProtocolHandle implements StreamProtocolHandle {
         data: toBytes(data)!,
         contentType: options.contentType,
         seq: options.seq,
+        producer: options.producer,
+        expectedOffset: options.expectedOffset,
       });
       return mapAppend(result);
     });

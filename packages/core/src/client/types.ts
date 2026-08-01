@@ -64,6 +64,16 @@ export interface AppendStreamOptions extends ClientRequestOptions {
   /** Required where the substrate requires it (direct append). */
   contentType?: string;
   seq?: string;
+  /** Idempotent producer lane. All fields are sent as one tuple. */
+  producer?: ClientProducerOptions;
+  /** Append only when the target tail still equals this offset. */
+  expectedOffset?: StreamOffset;
+}
+
+export interface ClientProducerOptions {
+  producerId: string;
+  producerEpoch: number;
+  producerSeq: number;
 }
 
 export interface CloseStreamOptions extends ClientRequestOptions {
@@ -89,11 +99,33 @@ export type ClientCreateResult =
   | ClientFailure;
 
 export type ClientAppendResult =
-  | { status: "appended" }
+  | {
+      status: "appended";
+      /** Exact tail after this append request. */
+      offset: StreamOffset;
+      producerEpoch?: number;
+      producerSeq?: number;
+    }
+  | {
+      /** The producer sequence was already accepted; payload equality is not verified. */
+      status: "duplicate";
+      offset: StreamOffset;
+      producerEpoch: number;
+      producerSeq: number;
+    }
   | { status: "not-found" }
   | { status: "gone" }
-  | { status: "closed" }
-  | { status: "conflict" }
+  | { status: "closed"; offset: StreamOffset }
+  | {
+      status: "conflict";
+      conflictReason: "expected-offset";
+      /** Actual target tail when the precondition failed. */
+      offset: StreamOffset;
+    }
+  | { status: "conflict"; conflictReason: "content-type" | "sequence" }
+  | { status: "stale-epoch"; currentEpoch: number }
+  | { status: "producer-gap"; expectedSeq: number; receivedSeq: number }
+  | { status: "invalid-epoch-seq" }
   | ClientFailure;
 
 export type ClientCloseResult =

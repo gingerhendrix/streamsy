@@ -67,12 +67,34 @@ export function mapCreate(result: CreateResult): ClientCreateResult {
 }
 
 export function mapAppend(result: AppendResult): ClientAppendResult {
-  if (result.status === "appended" || result.status === "duplicate") return { status: "appended" };
+  if (result.status === "appended") {
+    return {
+      status: "appended",
+      offset: result.offset,
+      producerEpoch: result.producerEpoch,
+      producerSeq: result.producerSeq,
+    };
+  }
+  if (result.status === "duplicate") {
+    return {
+      status: "duplicate",
+      offset: result.offset,
+      producerEpoch: result.producerEpoch,
+      producerSeq: result.producerSeq,
+    };
+  }
   if (result.status === "not-found") return { status: "not-found" };
   if (result.status === "gone") return { status: "gone" };
   if (result.status === "conflict") {
-    return result.conflictReason === "closed" ? { status: "closed" } : { status: "conflict" };
+    if (result.conflictReason === "closed") return { status: "closed", offset: result.offset };
+    if (result.conflictReason === "expected-offset") {
+      return { status: "conflict", conflictReason: "expected-offset", offset: result.offset };
+    }
+    return { status: "conflict", conflictReason: result.conflictReason };
   }
+  if (result.status === "stale-epoch") return result;
+  if (result.status === "producer-gap") return result;
+  if (result.status === "invalid-epoch-seq") return result;
   return residualFailure(result);
 }
 

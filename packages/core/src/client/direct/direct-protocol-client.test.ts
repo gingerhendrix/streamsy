@@ -40,7 +40,10 @@ describe("directProtocolClient", () => {
       closed: false,
     });
 
-    expect(await handle.append("b", { contentType: "text/plain" })).toEqual({ status: "appended" });
+    expect(await handle.append("b", { contentType: "text/plain" })).toMatchObject({
+      status: "appended",
+      offset: expect.any(String),
+    });
     const read = await handle.read();
     expect(read.status).toBe("ok");
     if (read.status !== "ok") throw new Error("expected ok read");
@@ -67,7 +70,10 @@ describe("directProtocolClient", () => {
     expect(final.value).toMatchObject({ kind: "text", text: "c", streamClosed: true });
     await expect(closed.session.done).resolves.toEqual({ status: "done" });
 
-    expect(await handle.append("d", { contentType: "text/plain" })).toEqual({ status: "closed" });
+    expect(await handle.append("d", { contentType: "text/plain" })).toEqual({
+      status: "closed",
+      offset: close.finalOffset,
+    });
     // Close-only re-close is idempotent and returns the same final offset.
     expect(await handle.close()).toEqual({ status: "closed", finalOffset: close.finalOffset });
     await client.close();
