@@ -9,12 +9,26 @@
 
 export const CACHE_CONTROL_NO_STORE = "no-store";
 export const CACHE_CONTROL_PUBLIC = "public, max-age=60, stale-while-revalidate=300";
+export const CACHE_CONTROL_PRIVATE = "private, max-age=60, stale-while-revalidate=300";
 export const CACHE_NO_STORE = CACHE_CONTROL_NO_STORE;
-export const CACHE_REVALIDATE = CACHE_CONTROL_PUBLIC;
+
+export function cacheControlForVisibility(visibility: "private" | "public"): string {
+  return visibility === "public" ? CACHE_CONTROL_PUBLIC : CACHE_CONTROL_PRIVATE;
+}
 
 export class HttpResponseFactory {
   secure(response: Response): Response {
     return this.withSecurityHeaders(response);
+  }
+
+  noStore(response: Response): Response {
+    const headers = new Headers(response.headers);
+    headers.set("cache-control", CACHE_CONTROL_NO_STORE);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   }
 
   text(message: string | null, status: number, headers?: HeadersInit): Response {

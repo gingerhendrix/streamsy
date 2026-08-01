@@ -2,7 +2,7 @@ import type { BoundHttpRouteContext } from "../types.ts";
 import { EtagBuilder } from "../etag-builder.ts";
 import { MessageBodyCodec } from "../message-body-codec.ts";
 import { ReadQueryParser } from "../read-query-parser.ts";
-import { CACHE_NO_STORE, CACHE_REVALIDATE, HttpResponseFactory } from "../responses.ts";
+import { CACHE_NO_STORE, HttpResponseFactory } from "../responses.ts";
 import { LongPollHttpService } from "./long-poll-http-service.ts";
 import { SseHttpService } from "./sse-http-service.ts";
 
@@ -15,6 +15,7 @@ export class ReadHttpService {
       etags: EtagBuilder;
       longPoll: LongPollHttpService;
       sse: SseHttpService;
+      cacheControl: string;
     },
   ) {}
 
@@ -32,7 +33,7 @@ export class ReadHttpService {
       if (!effectiveOffset) return this.deps.responses.badRequest("offset required for live modes");
       return query.live === "sse"
         ? this.deps.sse.execute(ctx.stream, effectiveOffset, query.cursor)
-        : this.deps.longPoll.execute(ctx.stream, effectiveOffset, query.cursor);
+        : this.deps.longPoll.execute(ctx, effectiveOffset, query.cursor, query.offset === "now");
     }
     return this.handleCatchUp(ctx, effectiveOffset, query.offset ?? "-1");
   }
@@ -48,16 +49,20 @@ export class ReadHttpService {
     if (meta.status === "gone") return { ok: false, response: this.deps.responses.gone() };
     const offset = meta.nextOffset;
     if (!live) {
+      const read = await ctx.stream.read({ offset: "now" });
+      if (read.status === "not-found")
+        return { ok: false, response: this.deps.responses.notFound() };
+      if (read.status === "gone") return { ok: false, response: this.deps.responses.gone() };
       const contentType = meta.contentType;
       return {
         ok: true,
-        offset,
+        offset: read.nextOffset,
         response: new Response(this.deps.bodyCodec.emptyBodyForContentType(contentType), {
           headers: {
             "content-type": contentType,
-            "stream-next-offset": offset,
+            "stream-next-offset": read.nextOffset,
             "stream-up-to-date": "true",
-            ...(meta.closed ? { "stream-closed": "true" } : {}),
+            ...(read.closed ? { "stream-closed": "true" } : {}),
             "cache-control": CACHE_NO_STORE,
           },
         }),
@@ -81,7 +86,7 @@ export class ReadHttpService {
       result.closed === true,
     );
     if (ctx.request.headers.get("if-none-match") === etag) {
-      return this.deps.responses.empty(304, { etag, "cache-control": CACHE_REVALIDATE });
+      return this.deps.responses.empty(304, { etag, "cache-control": this.deps.cacheControl });
     }
     const metadata = await ctx.stream.metadata();
     if (metadata.status === "not-found") return this.deps.responses.notFound();
@@ -93,7 +98,7 @@ export class ReadHttpService {
         ...(result.upToDate ? { "stream-up-to-date": "true" } : {}),
         ...(result.closed ? { "stream-closed": "true" } : {}),
         etag,
-        "cache-control": CACHE_REVALIDATE,
+        "cache-control": this.deps.cacheControl,
       },
     });
   }

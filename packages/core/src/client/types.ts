@@ -78,8 +78,6 @@ export type ClientHeadResult =
       /** Current tail/read-resume token when supplied by the substrate. */
       offset?: StreamOffset;
       closed: boolean;
-      etag?: string;
-      cacheControl?: string;
     }
   | { status: "not-found" }
   | { status: "gone" }

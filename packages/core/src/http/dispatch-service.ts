@@ -50,7 +50,11 @@ export class HttpDispatchService {
         case "GET":
           return await this.withBoundStream(ctx, (bound) => this.deps.read.execute(bound));
         case "HEAD":
-          return await this.withBoundStream(ctx, (bound) => this.deps.metadata.execute(bound));
+          return this.deps.responses.noStore(
+            await this.withBoundStream(ctx, (bound) => this.deps.metadata.execute(bound)),
+          );
+        case "OPTIONS":
+          return this.preflight();
         case "DELETE":
           return await this.withBoundStream(ctx, (bound) => this.deps.delete.execute(bound));
         default:
@@ -67,6 +71,16 @@ export class HttpDispatchService {
       console.error("Error handling request:", error);
       return this.deps.responses.internalError();
     }
+  }
+
+  private preflight(): Response {
+    return this.deps.responses.empty(204, {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD, PUT, POST, DELETE, OPTIONS",
+      "access-control-allow-headers":
+        "Authorization, Content-Type, If-None-Match, Producer-Id, Producer-Epoch, Producer-Seq, Stream-Closed, Stream-Expected-Offset, Stream-Seq, Stream-TTL, Stream-Expires-At",
+      "access-control-max-age": "86400",
+    });
   }
 
   private async withBoundStream(

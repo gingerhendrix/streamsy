@@ -120,14 +120,16 @@ export class ProtocolStream implements ProtocolStreamApi {
     });
     this.appendService = new AppendService({ clock: deps.clock, offsets: deps.offsets });
     this.readService = new ReadService({
-      readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
+      readChain: (record, afterOffset) =>
+        messageReader.readChain(record, afterOffset, undefined, false),
     });
     this.liveReadService = new LiveReadService({
       store: liveReadStore(deps.storage),
       clock: deps.clock,
       longPollTimeoutMs: deps.longPollTimeoutMs,
       offsets: deps.offsets,
-      readChain: (record, afterOffset) => messageReader.readChain(record, afterOffset),
+      readChain: (record, afterOffset) =>
+        messageReader.readChain(record, afterOffset, undefined, false),
       readOwn: (after) => messageReader.readOwn(after),
     });
     this.createService = new CreateStreamService({
@@ -205,12 +207,18 @@ export class ProtocolStream implements ProtocolStreamApi {
   }
 
   async read(options: ReadOptions): Promise<ReadResult> {
-    const record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
+    let record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
+    if (record && !record.lifecycle.softDeleted) {
+      record = await this.deps.expiryPolicy.touch(this.deps.storage, record, "read");
+    }
     return this.readService.execute(record, options);
   }
 
   async readLive(options: ReadLiveOptions): Promise<ReadLiveResult> {
-    const record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
+    let record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
+    if (record && !record.lifecycle.softDeleted) {
+      record = await this.deps.expiryPolicy.touch(this.deps.storage, record, "live-read");
+    }
     return this.liveReadService.execute(record, options);
   }
 

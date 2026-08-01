@@ -49,8 +49,6 @@ export class OfficialProtocolHandle implements StreamProtocolHandle {
           contentType: result.contentType,
           offset: result.offset,
           closed: result.streamClosed,
-          etag: result.etag,
-          cacheControl: result.cacheControl,
         };
       },
       headErrorResult,

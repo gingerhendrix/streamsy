@@ -21,7 +21,9 @@ export class ReadService {
     if (!record) return { status: "not-found" };
     if (record.lifecycle.softDeleted) return { status: "gone" };
 
-    const messages = await this.deps.readChain(record, normalizeReadOffset(options.offset));
+    const normalizedOffset =
+      options.offset === "now" ? record.currentOffset : normalizeReadOffset(options.offset);
+    const messages = await this.deps.readChain(record, normalizedOffset);
     const lastOffset =
       messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
     const nextOffset =

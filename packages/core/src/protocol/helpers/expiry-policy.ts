@@ -31,10 +31,9 @@ export class ExpiryPolicy {
   async touch(
     stream: BoundStream,
     record: StreamRecord,
-    reason: TouchReason,
+    _reason: TouchReason,
   ): Promise<StreamRecord> {
     if (record.config.ttlSeconds === undefined) return record;
-    if (reason === "live-read") return record;
     const expiresAtMs = this.deps.clock.now() + record.config.ttlSeconds * 1000;
     const out = await stream.append({
       preconditions: { expectedOffset: record.currentOffset },

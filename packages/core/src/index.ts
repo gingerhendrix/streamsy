@@ -70,6 +70,7 @@ export type {
 
 export type { StreamProtocolDeps, StreamProtocolOptions } from "./protocol.ts";
 export type {
+  HttpCacheVisibility,
   HttpHandlerInterface,
   HttpHandlerOptions,
   ReadOnlyHttpHandlerOptions,

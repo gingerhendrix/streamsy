@@ -13,6 +13,7 @@ import { ProducerHeaderParser } from "./http/producer-header-parser.ts";
 import { ReadQueryParser } from "./http/read-query-parser.ts";
 import { RequestBodyReader } from "./http/request-body-reader.ts";
 import { HttpResponseFactory } from "./http/responses.ts";
+import { cacheControlForVisibility } from "./http/responses.ts";
 import { SseEventEncoder } from "./http/sse-event-encoder.ts";
 import { StreamPathService } from "./http/stream-path-service.ts";
 import type { HttpHandlerInterface, HttpHandlerOptions } from "./http/types.ts";
@@ -39,8 +40,9 @@ export class HttpHandler implements HttpHandlerInterface {
     const producerHeaders = new ProducerHeaderParser();
     const readQuery = new ReadQueryParser((offset) => options.protocol.isValidOffset(offset));
     const etags = new EtagBuilder();
+    const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");
     const sseEvents = new SseEventEncoder(bodyCodec);
-    const longPoll = new LongPollHttpService({ responses, bodyCodec });
+    const longPoll = new LongPollHttpService({ responses, bodyCodec, etags, cacheControl });
     const sse = new SseHttpService({
       responses,
       sseEvents,
@@ -65,6 +67,7 @@ export class HttpHandler implements HttpHandlerInterface {
         etags,
         longPoll,
         sse,
+        cacheControl,
       }),
       metadata: new MetadataHttpService({ responses }),
       delete: new DeleteHttpService({ responses }),

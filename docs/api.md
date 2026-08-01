@@ -37,6 +37,17 @@ if (lookup.status === "ok") {
 
 `PUT` uses `protocol.create(...)`. Existing-stream HTTP methods resolve with `protocol.get(...)` first, then call the returned bound protocol stream.
 
+### HTTP read cache visibility
+
+`createHttpHandler` and `createReadOnlyHttpHandler` treat catch-up pages and stable-offset
+long-poll responses as private cache entries by default. A server exposing only shared,
+non-user-specific streams can opt in explicitly with `cacheVisibility: "public"`.
+
+`offset=now`, empty long-poll responses, and every `HEAD` outcome use `Cache-Control: no-store`.
+Stable catch-up and non-empty stable-offset long-poll responses carry closure-sensitive ETags.
+Both built-in HTTP facades answer CORS preflight and allow browser conditional reads using
+`If-None-Match`.
+
 ## Offset generation
 
 Offsets are opaque strings ordered by ordinary lexicographic comparison. The default

@@ -11,6 +11,7 @@ import { MessageBodyCodec } from "./http/message-body-codec.ts";
 import { ReadOnlyHttpDispatchService } from "./http/read-only-dispatch-service.ts";
 import { ReadQueryParser } from "./http/read-query-parser.ts";
 import { HttpResponseFactory } from "./http/responses.ts";
+import { cacheControlForVisibility } from "./http/responses.ts";
 import { SseEventEncoder } from "./http/sse-event-encoder.ts";
 import { StreamPathService } from "./http/stream-path-service.ts";
 import type { HttpHandlerInterface, ReadOnlyHttpHandlerOptions } from "./http/types.ts";
@@ -34,8 +35,9 @@ export class ReadOnlyHttpHandler implements HttpHandlerInterface {
     const bodyCodec = new MessageBodyCodec();
     const readQuery = new ReadQueryParser((offset) => options.protocol.isValidOffset(offset));
     const etags = new EtagBuilder();
+    const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");
     const sseEvents = new SseEventEncoder(bodyCodec);
-    const longPoll = new LongPollHttpService({ responses, bodyCodec });
+    const longPoll = new LongPollHttpService({ responses, bodyCodec, etags, cacheControl });
     const sse = new SseHttpService({
       responses,
       sseEvents,
@@ -53,6 +55,7 @@ export class ReadOnlyHttpHandler implements HttpHandlerInterface {
         etags,
         longPoll,
         sse,
+        cacheControl,
       }),
       metadata: new MetadataHttpService({ responses }),
     });

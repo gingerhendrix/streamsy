@@ -40,7 +40,11 @@ export class ReadOnlyHttpDispatchService {
         case "GET":
           return await this.withBoundStream(ctx, (bound) => this.deps.read.execute(bound));
         case "HEAD":
-          return await this.withBoundStream(ctx, (bound) => this.deps.metadata.execute(bound));
+          return this.deps.responses.noStore(
+            await this.withBoundStream(ctx, (bound) => this.deps.metadata.execute(bound)),
+          );
+        case "OPTIONS":
+          return this.preflight();
         default:
           return this.deps.responses.methodNotAllowed();
       }
@@ -53,6 +57,15 @@ export class ReadOnlyHttpDispatchService {
       console.error("Error handling request:", error);
       return this.deps.responses.internalError();
     }
+  }
+
+  private preflight(): Response {
+    return this.deps.responses.empty(204, {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD, OPTIONS",
+      "access-control-allow-headers": "Authorization, If-None-Match",
+      "access-control-max-age": "86400",
+    });
   }
 
   private async withBoundStream(

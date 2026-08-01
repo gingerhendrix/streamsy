@@ -3,6 +3,7 @@ import { LongPollHttpService } from "./long-poll-http-service.ts";
 import { MessageBodyCodec } from "../message-body-codec.ts";
 import { HttpResponseFactory } from "../responses.ts";
 import type { ProtocolStream } from "../../types/protocol.ts";
+import { EtagBuilder } from "../etag-builder.ts";
 
 describe("LongPollHttpService", () => {
   it("uses the supplied bound protocol stream", async () => {
@@ -23,8 +24,15 @@ describe("LongPollHttpService", () => {
     const service = new LongPollHttpService({
       responses: new HttpResponseFactory(),
       bodyCodec: new MessageBodyCodec(),
+      etags: new EtagBuilder(),
+      cacheControl: "private, max-age=60",
     });
-    const response = await service.execute(stream, "0");
+    const request = new Request("http://x/s?offset=0&live=long-poll");
+    const response = await service.execute(
+      { request, url: new URL(request.url), streamId: "s", stream },
+      "0",
+    );
     expect(response.status).toBe(204);
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 });
