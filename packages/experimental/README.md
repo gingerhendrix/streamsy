@@ -2,6 +2,14 @@
 
 Experimental Streamsy primitives are exposed through explicit subpath exports while they mature. There is no package-root API.
 
+## Causal vocabulary
+
+Import the pure causal API from `@streamsy/experimental/causal`.
+
+`streamIdentity()` constructs a structured, mesh-assigned identity independently of a stream URL or application stream id. `encodeStreamIdentity()` provides its versioned canonical durable-key encoding; the v1 encoding deliberately leaves lifetime/incarnation for a later encoding version.
+
+`sourceAck()` and `sourceWatermark()` accept only real durable-stream positions. The protocol read values `-1` and `now` remain ordinary client read offsets and are rejected as causal positions. `coverage()` returns `proven`, `not-yet`, or `incomparable`; identities must match before positions are compared lexicographically.
+
 ## Materializer
 
 Import the materializer API from `@streamsy/experimental/materializer`.

@@ -18,6 +18,11 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./causal": {
+      "types": "./dist/causal.d.ts",
+      "import": "./dist/causal.js",
+      "default": "./dist/causal.js"
+    },
     "./materializer": {
       "types": "./dist/materializer.d.ts",
       "import": "./dist/materializer.js",
@@ -28,7 +33,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
+    "build": "tsdown src/causal.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },
