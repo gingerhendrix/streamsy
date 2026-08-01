@@ -45,13 +45,15 @@
   "scripts": {
     "build": "tsdown src/binding.ts src/causal.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest --run src"
+    "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
+    "test:sqlite": "bun test src/ivm-mesh/derived-append.bun.test.ts"
   },
   "dependencies": {
     "@streamsy/core": "0.2.1"
   },
   "devDependencies": {
     "@streamsy/client": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
     "typescript": "catalog:",
     "vitest": "^4.0.16"
   }
