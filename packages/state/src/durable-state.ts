@@ -24,7 +24,7 @@ export type DurableStateOperation = "insert" | "update" | "delete";
 export type DurableStateOperationWithExtensions = DurableStateOperation | "upsert";
 
 export interface DurableStateChangeHeaders {
-  operation: DurableStateOperation;
+  operation: DurableStateOperationWithExtensions;
   txid?: string;
   timestamp?: string;
   from?: string;
@@ -57,9 +57,18 @@ export type DeleteMessage<Type extends string, Value> = {
   headers: DurableStateChangeHeaders & { operation: "delete" };
 };
 
+export type UpsertMessage<Type extends string, Value> = {
+  type: Type;
+  key: string;
+  value: Value;
+  old_value?: Value;
+  headers: DurableStateChangeHeaders & { operation: "upsert" };
+};
+
 export type ChangeMessage<Type extends string, Value> =
   | InsertMessage<Type, Value>
   | UpdateMessage<Type, Value>
+  | UpsertMessage<Type, Value>
   | DeleteMessage<Type, Value>;
 
 export type ControlMessage = {
@@ -127,7 +136,7 @@ type CollectionRuntime = {
   primaryKey: DurableStateCollectionDef<unknown>["primaryKey"];
 };
 
-const operations = new Set<string>(["insert", "update", "delete"]);
+const operations = new Set<string>(["insert", "update", "upsert", "delete"]);
 const controls = new Set<string>(["snapshot-start", "snapshot-end", "reset"]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -196,7 +205,7 @@ function validateMessage(runtime: CollectionRuntime[], value: unknown): AnyMessa
   const def = findByWireType(runtime, type);
   if (!def) throw new Error(`Unknown Durable State type: ${type}`);
 
-  if (operation === "insert" || operation === "update") {
+  if (operation === "insert" || operation === "update" || operation === "upsert") {
     if (!hasOwn(value, "value")) throw new Error(`${operation} message requires value`);
     def.codec.decode(value.value);
   } else {
@@ -227,6 +236,11 @@ export interface DurableState<S extends DurableStateSchemaMap> {
     options?: { key?: string; headers?: DurableStateUserHeaders },
   ): Promise<AppendResult>;
   update<K extends keyof S & string>(
+    type: K,
+    value: CollectionValue<S[K]>,
+    options?: { key?: string; oldValue?: CollectionValue<S[K]>; headers?: DurableStateUserHeaders },
+  ): Promise<AppendResult>;
+  upsert<K extends keyof S & string>(
     type: K,
     value: CollectionValue<S[K]>,
     options?: { key?: string; oldValue?: CollectionValue<S[K]>; headers?: DurableStateUserHeaders },
@@ -338,6 +352,7 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
       append: (message) => this.append(message),
       insert: (type, value, options) => this.append(this.change(type, "insert", value, options)),
       update: (type, value, options) => this.append(this.change(type, "update", value, options)),
+      upsert: (type, value, options) => this.append(this.change(type, "upsert", value, options)),
       delete: (type, key, options) => this.append(this.deleteMessage(type, key, options)),
       snapshotStart: (options) => this.control("snapshot-start", options),
       snapshotEnd: (options) => this.control("snapshot-end", options),
@@ -347,7 +362,7 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
 
   private change<K extends keyof S & string>(
     type: K,
-    operation: "insert" | "update",
+    operation: "insert" | "update" | "upsert",
     value: CollectionValue<S[K]>,
     options: {
       key?: string;

@@ -24,6 +24,7 @@ export type {
   DurableStateUserHeaders,
   InsertMessage,
   UpdateMessage,
+  UpsertMessage,
   ValuesByWireType,
 } from "./durable-state.ts";
 export type { JsonCodec, JsonSchema } from "@streamsy/json";

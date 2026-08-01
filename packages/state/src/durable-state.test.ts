@@ -55,6 +55,7 @@ describe("DurableStateProtocol", () => {
       { id: "u1", name: "Alicia" },
       { oldValue: { id: "u1", name: "Alice" } },
     );
+    await created.stream.state.upsert("users", { id: "u2", name: "Bob" });
     await created.stream.state.delete("users", "u1");
     await created.stream.state.snapshotStart({ offset: "2_0" });
     await created.stream.state.snapshotEnd();
@@ -76,6 +77,12 @@ describe("DurableStateProtocol", () => {
         value: { id: "u1", name: "Alicia" },
         old_value: { id: "u1", name: "Alice" },
         headers: { operation: "update" },
+      },
+      {
+        type: "user",
+        key: "u2",
+        value: { id: "u2", name: "Bob" },
+        headers: { operation: "upsert" },
       },
       { type: "user", key: "u1", headers: { operation: "delete" } },
       { headers: { offset: "2_0", control: "snapshot-start" } },
