@@ -109,6 +109,7 @@
         "@streamsy/core": "0.2.0",
       },
       "devDependencies": {
+        "@streamsy/client": "workspace:*",
         "typescript": "catalog:",
         "vitest": "^4.0.16",
       },

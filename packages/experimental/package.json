@@ -18,6 +18,11 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./binding": {
+      "types": "./dist/binding.d.ts",
+      "import": "./dist/binding.js",
+      "default": "./dist/binding.js"
+    },
     "./causal": {
       "types": "./dist/causal.d.ts",
       "import": "./dist/causal.js",
@@ -33,7 +38,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/causal.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
+    "build": "tsdown src/binding.ts src/causal.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },
@@ -41,6 +46,7 @@
     "@streamsy/core": "0.2.1"
   },
   "devDependencies": {
+    "@streamsy/client": "workspace:*",
     "typescript": "catalog:",
     "vitest": "^4.0.16"
   }

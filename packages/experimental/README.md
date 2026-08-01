@@ -10,6 +10,14 @@ Import the pure causal API from `@streamsy/experimental/causal`.
 
 `sourceAck()` and `sourceWatermark()` accept only real durable-stream positions. The protocol read values `-1` and `now` remain ordinary client read offsets and are rejected as causal positions. `coverage()` returns `proven`, `not-yet`, or `incomparable`; identities must match before positions are compared lexicographically.
 
+## Binding
+
+Import the binding API from `@streamsy/experimental/binding`.
+
+`bindStream()` creates an inert `{ identity, client, streamId }` value. `readBoundStream()` and `appendBoundStream()` delegate through the existing fixed `StreamProtocolClient` handle; the binding is not another transport handle, registry, or address resolver. Read offsets, including `-1` and `now`, pass through unchanged.
+
+`appendBoundStream()` adds a `SourceAck` only to a new `appended` result carrying its exact response offset. Producer `duplicate` remains a distinct result without an acknowledgement and does not assert payload equality. The binding never follows an append with `HEAD` or infers identity from the stream id or URL.
+
 ## Materializer
 
 Import the materializer API from `@streamsy/experimental/materializer`.
