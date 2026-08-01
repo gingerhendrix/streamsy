@@ -53,7 +53,10 @@ describe("officialProtocolClient", () => {
     expect(await handle.create({ contentType: "application/octet-stream" })).toEqual({
       status: "conflict",
     });
-    expect(await handle.append("b", { contentType: "text/plain" })).toEqual({ status: "appended" });
+    expect(await handle.append("b", { contentType: "text/plain" })).toMatchObject({
+      status: "appended",
+      offset: expect.any(String),
+    });
 
     expect(await handle.head()).toMatchObject({
       status: "ok",
@@ -83,7 +86,10 @@ describe("officialProtocolClient", () => {
       offset: result.finalOffset,
       streamClosed: true,
     });
-    expect(await handle.append("d", { contentType: "text/plain" })).toEqual({ status: "closed" });
+    expect(await handle.append("d", { contentType: "text/plain" })).toEqual({
+      status: "closed",
+      offset: result.finalOffset,
+    });
     await client.close();
   });
 
@@ -136,6 +142,73 @@ describe("officialProtocolClient", () => {
       "Bearer 2",
       "Bearer 3",
     ]);
+    await client.close();
+  });
+
+  it("uses one POST per acknowledgement and never follows it with HEAD", async () => {
+    const { client, requests } = makeHarness();
+    const handle = client.stream("one-post");
+    await handle.create({ contentType: "text/plain" });
+    const before = requests.length;
+
+    const result = await handle.append("a", { contentType: "text/plain" });
+
+    expect(result).toMatchObject({ status: "appended", offset: expect.any(String) });
+    expect(requests.slice(before).map((request) => request.method)).toEqual(["POST"]);
+    await client.close();
+  });
+
+  it("returns a typed parse failure when append success omits Stream-Next-Offset", async () => {
+    const fetch = vi.fn(async () => new Response(null, { status: 204 }));
+    const client = officialProtocolClient({
+      urlFor: () => "https://stream.test/missing-offset",
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      backoffOptions: noRetry,
+    });
+
+    expect(await client.stream("x").append("a", { contentType: "text/plain" })).toMatchObject({
+      status: "error",
+      code: "parse-error",
+      retryable: false,
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await client.close();
+  });
+
+  it("retries an ambiguous producer response with the same tuple and reports duplicate", async () => {
+    const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
+    const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
+    let posts = 0;
+    const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+      const request = new Request(input, init);
+      const response = await handler.fetch(request);
+      if (request.method === "POST" && posts++ === 0) throw new TypeError("response lost");
+      return response;
+    }) as typeof globalThis.fetch;
+    const client = officialProtocolClient({
+      urlFor: (id) => protocolPathUrl("https://stream.test/streams", id),
+      fetch,
+      backoffOptions: { ...noRetry, maxRetries: 1 },
+    });
+    const handle = client.stream("ambiguous");
+    await handle.create({ contentType: "text/plain" });
+
+    const result = await handle.append("original", {
+      contentType: "text/plain",
+      producer: { producerId: "lane", producerEpoch: 1, producerSeq: 0 },
+    });
+
+    expect(result).toMatchObject({
+      status: "duplicate",
+      offset: expect.any(String),
+      producerEpoch: 1,
+      producerSeq: 0,
+    });
+    expect(posts).toBe(2);
+    const session = await okSession(await handle.read());
+    expect((await session[Symbol.asyncIterator]().next()).value).toMatchObject({
+      text: "original",
+    });
     await client.close();
   });
 

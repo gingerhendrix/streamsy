@@ -1,4 +1,4 @@
-import { DurableStream } from "@durable-streams/client";
+import { BackoffDefaults, createFetchWithBackoff, DurableStream } from "@durable-streams/client";
 import type {
   BackoffOptions,
   HeadersRecord,
@@ -20,6 +20,7 @@ export interface OfficialProtocolClientOptions {
   backoffOptions?: BackoffOptions;
   onError?: StreamErrorHandler;
   sseResilience?: SSEResilienceOptions;
+  /** Retained for upstream handle compatibility; rich append is always one request per call. */
   batching?: boolean;
   warnOnHttp?: boolean;
 }
@@ -32,17 +33,24 @@ export function officialProtocolClient(
 
 /**
  * Adapts the official `@durable-streams/client` to the transport-neutral client
- * seam. Its only real work is constructing official handles/reads and mapping
- * official thrown errors into result members (see `errors.ts`). It implements no
- * HTTP, SSE, retries, or wire decoding of its own.
+ * seam. Reads and metadata delegate to official handles. Append uses a narrow
+ * non-batching request path because the pinned official append API discards the
+ * response offset and producer/CAS outcomes. Retry behavior still comes from
+ * the official client's fetch utility.
  */
 export class OfficialProtocolClient implements StreamProtocolClient {
   private readonly controller = new AbortController();
   private readonly baseSignal: AbortSignal;
+  private readonly appendFetch: typeof globalThis.fetch;
   private disposed = false;
 
   constructor(readonly options: OfficialProtocolClientOptions) {
     this.baseSignal = combineSignals(options.signal, this.controller.signal);
+    const baseFetch =
+      options.fetch ??
+      (((...args: Parameters<typeof globalThis.fetch>) =>
+        globalThis.fetch(...args)) as typeof globalThis.fetch);
+    this.appendFetch = createFetchWithBackoff(baseFetch, options.backoffOptions ?? BackoffDefaults);
   }
 
   stream(streamId: string): StreamProtocolHandle {
@@ -93,6 +101,23 @@ export class OfficialProtocolClient implements StreamProtocolClient {
       batching: this.options.batching ?? false,
       warnOnHttp: this.options.warnOnHttp,
     });
+  }
+
+  async fetchAppend(url: string | URL, init: RequestInit): Promise<Response> {
+    const fetchUrl = new URL(url);
+    for (const [key, value] of Object.entries(this.options.params ?? {})) {
+      if (value === undefined) continue;
+      fetchUrl.searchParams.set(key, typeof value === "function" ? await value() : value);
+    }
+    return this.appendFetch(fetchUrl, init);
+  }
+
+  async appendHeaders(): Promise<Headers> {
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(this.options.headers ?? {})) {
+      headers.set(key, typeof value === "function" ? await value() : value);
+    }
+    return headers;
   }
 }
 

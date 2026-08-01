@@ -20,6 +20,7 @@ import {
   createErrorResult,
   headErrorResult,
 } from "./errors.ts";
+import { officialAppend } from "./append.ts";
 import { officialRead } from "./read.ts";
 
 /** The official handle constructs `DurableStream` operations over one endpoint URL. */
@@ -80,14 +81,14 @@ export class OfficialProtocolHandle implements StreamProtocolHandle {
   ): Promise<ClientAppendResult> {
     return this.client.run<ClientAppendResult>(
       options.signal,
-      async (signal) => {
-        await this.handle.append(data, {
-          contentType: options.contentType,
-          seq: options.seq,
-          signal,
-        });
-        return { status: "appended" };
-      },
+      (signal) =>
+        officialAppend(
+          this.client,
+          this.url,
+          data,
+          { ...options, signal },
+          this.handle.contentType,
+        ),
       appendErrorResult,
     );
   }

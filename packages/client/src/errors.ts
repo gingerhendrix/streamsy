@@ -194,6 +194,10 @@ export function createErrorResult(error: unknown, signal?: AbortSignal): ClientC
 }
 
 export function appendErrorResult(error: unknown, signal?: AbortSignal): ClientAppendResult {
+  if (error instanceof FetchError) {
+    const rich = richAppendError(error);
+    if (rich) return rich;
+  }
   const classified = classifyOfficialError(error, signal);
   switch (classified.kind) {
     case "not-found":
@@ -201,12 +205,71 @@ export function appendErrorResult(error: unknown, signal?: AbortSignal): ClientA
     case "gone":
       return { status: "gone" };
     case "closed":
-      return { status: "closed" };
+      return failure("parse-error", "Closed append response omitted Stream-Next-Offset", {
+        httpStatus: classified.failure.httpStatus,
+        cause: error,
+      });
     case "conflict":
-      return { status: "conflict" };
+      return { status: "conflict", conflictReason: "sequence" };
     default:
       return classified.failure;
   }
+}
+
+function richAppendError(error: FetchError): ClientAppendResult | undefined {
+  const header = (name: string) => error.headers[name.toLowerCase()];
+  if (error.status === 409 && header("stream-closed")?.toLowerCase() === "true") {
+    const offset = header("stream-next-offset");
+    return offset
+      ? { status: "closed", offset }
+      : failure("parse-error", "Closed append response omitted Stream-Next-Offset", {
+          httpStatus: error.status,
+          cause: error,
+        });
+  }
+  if (error.status === 409 && header("producer-expected-seq") !== undefined) {
+    const expectedSeq = safeIntegerHeader(header("producer-expected-seq"));
+    const receivedSeq = safeIntegerHeader(header("producer-received-seq"));
+    if (expectedSeq === undefined || receivedSeq === undefined) {
+      return failure("parse-error", "Producer gap response contained invalid sequence headers", {
+        httpStatus: error.status,
+        cause: error,
+      });
+    }
+    return { status: "producer-gap", expectedSeq, receivedSeq };
+  }
+  if (error.status === 409 && error.text === "Expected offset mismatch") {
+    const offset = header("stream-next-offset");
+    return offset
+      ? { status: "conflict", conflictReason: "expected-offset", offset }
+      : failure("parse-error", "Expected-offset conflict omitted Stream-Next-Offset", {
+          httpStatus: error.status,
+          cause: error,
+        });
+  }
+  if (error.status === 409 && error.text === "Content-Type mismatch") {
+    return { status: "conflict", conflictReason: "content-type" };
+  }
+  if (error.status === 409) return { status: "conflict", conflictReason: "sequence" };
+  if (error.status === 403 && header("producer-epoch") !== undefined) {
+    const currentEpoch = safeIntegerHeader(header("producer-epoch"));
+    return currentEpoch === undefined
+      ? failure("parse-error", "Stale-epoch response contained an invalid Producer-Epoch", {
+          httpStatus: error.status,
+          cause: error,
+        })
+      : { status: "stale-epoch", currentEpoch };
+  }
+  if (error.status === 400 && error.text === "New epoch must start at seq=0") {
+    return { status: "invalid-epoch-seq" };
+  }
+  return undefined;
+}
+
+function safeIntegerHeader(value: string | undefined): number | undefined {
+  if (value === undefined || !/^(0|[1-9]\d*)$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
 export function closeErrorResult(error: unknown, signal?: AbortSignal): ClientCloseResult {

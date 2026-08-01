@@ -12,6 +12,7 @@ export type {
   ClientFailure,
   ClientHeadResult,
   ClientLiveMode,
+  ClientProducerOptions,
   ClientReadResult,
   ClientRequestOptions,
   CloseStreamOptions,
