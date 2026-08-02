@@ -10,6 +10,21 @@
         "tsdown": "^0.9.9",
       },
     },
+    "examples/causal-counter": {
+      "name": "causal-counter",
+      "version": "0.0.1",
+      "dependencies": {
+        "@streamsy/core": "workspace:*",
+        "@streamsy/experimental": "workspace:*",
+      },
+      "devDependencies": {
+        "@streamsy/client": "workspace:*",
+        "@streamsy/storage-sqlite": "workspace:*",
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "examples/hackernews-newest-stream": {
       "name": "hackernews-newest-stream",
       "version": "0.0.1",
@@ -62,10 +77,10 @@
     },
     "packages/client": {
       "name": "@streamsy/client",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@durable-streams/client": "^0.2.6",
-        "@streamsy/core": "0.2.0",
+        "@streamsy/core": "0.2.1",
       },
       "devDependencies": {
         "typescript": "catalog:",
@@ -96,7 +111,7 @@
     },
     "packages/core": {
       "name": "@streamsy/core",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -104,19 +119,20 @@
     },
     "packages/experimental": {
       "name": "@streamsy/experimental",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
-        "@streamsy/core": "0.2.0",
+        "@streamsy/core": "0.2.1",
       },
       "devDependencies": {
         "@streamsy/client": "workspace:*",
+        "@streamsy/storage-sqlite": "workspace:*",
         "typescript": "catalog:",
         "vitest": "^4.0.16",
       },
     },
     "packages/json": {
       "name": "@streamsy/json",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@streamsy/core": "0.2.0",
       },
@@ -127,7 +143,7 @@
     },
     "packages/state": {
       "name": "@streamsy/state",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@streamsy/core": "0.2.0",
         "@streamsy/json": "0.2.0",
@@ -139,7 +155,7 @@
     },
     "packages/storage-durable-object": {
       "name": "@streamsy/storage-durable-object",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@streamsy/core": "0.2.0",
       },
@@ -151,7 +167,7 @@
     },
     "packages/storage-fs": {
       "name": "@streamsy/storage-fs",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
         "@streamsy/core": "0.2.0",
       },
@@ -162,9 +178,9 @@
     },
     "packages/storage-sqlite": {
       "name": "@streamsy/storage-sqlite",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "dependencies": {
-        "@streamsy/core": "0.2.0",
+        "@streamsy/core": "0.2.1",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -799,6 +815,8 @@
     "bundle-name": ["bundle-name@4.1.0", "", { "dependencies": { "run-applescript": "^7.0.0" } }, "sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q=="],
 
     "cac": ["cac@6.7.14", "", {}, "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ=="],
+
+    "causal-counter": ["causal-counter@workspace:examples/causal-counter"],
 
     "chai": ["chai@6.2.2", "", {}, "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg=="],
 

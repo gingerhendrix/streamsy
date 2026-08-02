@@ -1,0 +1,23 @@
+{
+  "name": "causal-counter",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "bun run scripts/smoke.ts",
+    "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
+    "test:sqlite": "bun test src/*.bun.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@streamsy/core": "workspace:*",
+    "@streamsy/experimental": "workspace:*"
+  },
+  "devDependencies": {
+    "@streamsy/client": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}
