@@ -46,7 +46,7 @@
     "build": "tsdown src/binding.ts src/causal.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
-    "test:sqlite": "bun test src/ivm-mesh/derived-append.bun.test.ts"
+    "test:sqlite": "bun test src/ivm-mesh/*.bun.test.ts"
   },
   "dependencies": {
     "@streamsy/core": "0.2.1"
