@@ -5,6 +5,7 @@ import {
   createMemoryStorageAdapter,
   directProtocolClient,
   type JsonValue,
+  type ClientAppendResult,
   type ReadStreamOptions,
   type StorageAdapter,
   type StreamBatch,
@@ -206,6 +207,39 @@ describe("bounded one-source projection — memory", () => {
     await h.targetClient.close();
   });
 
+  test.each([
+    ["maxItems", { ...generous, maxItems: 1 }, [1, 2], 2],
+    ["maxBytes", { ...generous, maxBytes: 2 }, [123], 5],
+  ] as const)(
+    "returns terminal boundary-too-large when one boundary can never fit %s",
+    async (limit, limits, items, actual) => {
+      const h = await harness([{ offset: "00000001", items }]);
+      const result = await catchUp(projectionOptions(h, { limits }));
+      expect(result).toMatchObject({
+        status: "boundary-too-large",
+        limit,
+        source: { position: "00000001" },
+        actual,
+        maximum: limits[limit],
+        batches: 0,
+      });
+      expect(await values(h.adapter)).toEqual([]);
+      await h.targetClient.close();
+    },
+  );
+
+  test("classifies an invalid source boundary offset as malformed input", async () => {
+    const h = await harness([{ offset: "now", items: [1] }]);
+    expect(await catchUp(projectionOptions(h))).toMatchObject({
+      status: "malformed-input",
+      stream: "source",
+      offset: "now",
+      batches: 0,
+    });
+    expect(await values(h.adapter)).toEqual([]);
+    await h.targetClient.close();
+  });
+
   test("decode and reduce poison identify the source boundary without advancing it", async () => {
     for (const phase of ["decode", "reduce"] as const) {
       const h = await harness([
@@ -314,6 +348,56 @@ describe("bounded one-source projection — memory", () => {
     await h3.targetClient.close();
   });
 
+  test("cancellation after an earlier boundary reports committed durable progress", async () => {
+    const controller = new AbortController();
+    const h = await harness([
+      { offset: "00000001", items: [1] },
+      { offset: "00000002", items: [2] },
+    ]);
+    const result = await catchUp(
+      projectionOptions(h, {
+        signal: controller.signal,
+        decode(batch: StreamBatch) {
+          if (batch.offset === "00000002") controller.abort();
+          return batch.kind === "json" ? batch.items : [];
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      status: "cancelled",
+      phase: "decode",
+      durableProgress: "committed",
+      batches: 1,
+      checkpoint: { sourceThrough: "00000001" },
+    });
+    await h.targetClient.close();
+  });
+
+  test("abort during an append reports unknown durability and restart resolves the commit", async () => {
+    const controller = new AbortController();
+    const h = await harness([{ offset: "00000001", items: [1] }]);
+    const ambiguousTarget = bindStream({
+      ...h.target,
+      client: abortWithCommittedAppend(h.targetClient, controller),
+    });
+    expect(
+      await catchUp(projectionOptions(h, { target: ambiguousTarget, signal: controller.signal })),
+    ).toMatchObject({
+      status: "cancelled",
+      phase: "append",
+      durableProgress: "unknown",
+      batches: 0,
+    });
+    expect(await values(h.adapter)).toHaveLength(2);
+    expect(await catchUp(projectionOptions(h))).toMatchObject({
+      status: "caught-up",
+      batches: 0,
+      checkpoint: { sourceThrough: "00000001" },
+    });
+    expect(await values(h.adapter)).toHaveLength(2);
+    await h.targetClient.close();
+  });
+
   test("wrong source identity is programmer misuse and wrong generation halts recovery", async () => {
     const h = await harness([{ offset: "00000001", items: [1] }]);
     const wrongSource = bindStream({
@@ -365,6 +449,28 @@ describe("bounded one-source projection — memory", () => {
     expect(await values(h.adapter)).toEqual([fact("foreign")]);
     await h.targetClient.close();
   });
+
+  test.each([
+    [{ status: "stale-epoch", currentEpoch: 9 }, { currentEpoch: 9 }],
+    [
+      { status: "producer-gap", expectedSeq: 4, receivedSeq: 7 },
+      { expectedSeq: 4, receivedSeq: 7 },
+    ],
+    [{ status: "invalid-epoch-seq" }, {}],
+  ] as const)("preserves the typed %s producer result", async (appendResult, fields) => {
+    const h = await harness([{ offset: "00000001", items: [1] }]);
+    const target = bindStream({
+      ...h.target,
+      client: returnAppendResult(h.targetClient, appendResult),
+    });
+    expect(await catchUp(projectionOptions(h, { target }))).toMatchObject({
+      status: appendResult.status,
+      ...fields,
+      batches: 0,
+    });
+    expect(await values(h.adapter)).toEqual([]);
+    await h.targetClient.close();
+  });
 });
 
 test("direct and fetch sources derive identical rows and lineage", async () => {
@@ -397,6 +503,20 @@ test("direct and fetch sources derive identical rows and lineage", async () => {
     batches: 1,
   });
   expect(await values(remote.adapter)).toEqual(await values(direct.adapter));
+
+  const laterFetch = await fetchSourceClient.stream("source").appendJsonBatch([3]);
+  expect(laterFetch.status).toBe("appended");
+  expect(await catchUp(projectionOptions(remote))).toMatchObject({
+    status: "caught-up",
+    batches: 1,
+    checkpoint: laterFetch.status === "appended" ? { sourceThrough: laterFetch.offset } : undefined,
+  });
+  expect((await values(remote.adapter)).filter(isLineage)).toHaveLength(2);
+  expect((await values(remote.adapter)).filter((value) => !isLineage(value))).toEqual([
+    fact(1),
+    fact(2),
+    fact(3),
+  ]);
   await direct.targetClient.close();
   await remote.targetClient.close();
   await directSourceClient.close();
@@ -485,6 +605,29 @@ function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolCl
       retryable: true,
     };
   });
+}
+
+function abortWithCommittedAppend(
+  client: StreamProtocolClient,
+  controller: AbortController,
+): StreamProtocolClient {
+  return mapAppend(client, async (delegate, items, options) => {
+    await delegate.appendJsonBatch(items, options);
+    controller.abort("append response became ambiguous");
+    return {
+      status: "error",
+      code: "aborted",
+      message: "append was aborted before its acknowledgement was observed",
+      retryable: false,
+    };
+  });
+}
+
+function returnAppendResult(
+  client: StreamProtocolClient,
+  result: ClientAppendResult,
+): StreamProtocolClient {
+  return mapAppend(client, async () => result);
 }
 
 function raceFirstAppend(client: StreamProtocolClient): StreamProtocolClient {

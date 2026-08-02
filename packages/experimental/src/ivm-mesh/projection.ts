@@ -51,6 +51,14 @@ export type CatchUpResult =
       readonly limit: keyof CatchUpLimits;
     } & CatchUpProgress)
   | ({
+      /** This boundary cannot fit even in a fresh invocation with the configured limit. */
+      readonly status: "boundary-too-large";
+      readonly limit: "maxItems" | "maxBytes";
+      readonly source: SourceAck;
+      readonly actual: number;
+      readonly maximum: number;
+    } & CatchUpProgress)
+  | ({
       readonly status: "cancelled";
       readonly phase: "recovery" | "read" | "decode" | "reduce" | "append" | "after-commit";
       readonly durableProgress: "none" | "committed" | "unknown";
@@ -59,6 +67,12 @@ export type CatchUpResult =
       readonly status: "poison";
       readonly phase: "decode" | "reduce";
       readonly source: SourceAck;
+      readonly cause: unknown;
+    } & CatchUpProgress)
+  | ({
+      readonly status: "malformed-input";
+      readonly stream: "source";
+      readonly offset: string;
       readonly cause: unknown;
     } & CatchUpProgress)
   | ({
@@ -81,6 +95,11 @@ export type CatchUpResult =
       readonly reason: string;
       readonly offset?: string;
     } & CatchUpProgress)
+  | (Extract<
+      AppendDerivedStateResult,
+      { readonly status: "stale-epoch" | "producer-gap" | "invalid-epoch-seq" }
+    > &
+      CatchUpProgress)
   | ({
       readonly status: "incompatible-output" | "malformed-output";
       readonly message: string;
@@ -141,6 +160,17 @@ export async function catchUp<Input>(options: CatchUpOptions<Input>): Promise<Ca
       return malformedSourceBoundary(progress, batch.offset, cause);
     }
     const bytes = encodedBatchBytes(batch);
+    if (bytes > options.limits.maxBytes) {
+      read.session.cancel("source boundary exceeds projection byte limit");
+      return {
+        status: "boundary-too-large",
+        limit: "maxBytes",
+        source: ack,
+        actual: bytes,
+        maximum: options.limits.maxBytes,
+        ...progress,
+      };
+    }
     if (progress.bytes + bytes > options.limits.maxBytes) {
       read.session.cancel("projection byte limit reached");
       return { status: "limit-reached", limit: "maxBytes", ...progress };
@@ -157,6 +187,17 @@ export async function catchUp<Input>(options: CatchUpOptions<Input>): Promise<Ca
     if (signal?.aborted) {
       read.session.cancel(signal.reason);
       return cancelled(progress, "decode", "none");
+    }
+    if (items.length > options.limits.maxItems) {
+      read.session.cancel("source boundary exceeds projection item limit");
+      return {
+        status: "boundary-too-large",
+        limit: "maxItems",
+        source: ack,
+        actual: items.length,
+        maximum: options.limits.maxItems,
+        ...progress,
+      };
     }
     if (progress.items + items.length > options.limits.maxItems) {
       read.session.cancel("projection item limit reached");
@@ -238,7 +279,13 @@ function cancelled(
   phase: Extract<CatchUpResult, { status: "cancelled" }>["phase"],
   durableProgress: Extract<CatchUpResult, { status: "cancelled" }>["durableProgress"],
 ): CatchUpResult {
-  return { status: "cancelled", phase, durableProgress, ...progress };
+  return {
+    status: "cancelled",
+    phase,
+    durableProgress:
+      durableProgress === "none" && progress.batches > 0 ? "committed" : durableProgress,
+    ...progress,
+  };
 }
 
 function cancelledWithoutCheckpoint(
@@ -283,6 +330,13 @@ function appendFailure(
   if (result.status === "malformed-output" || result.status === "incompatible-output") {
     return { ...result, ...progress };
   }
+  if (
+    result.status === "stale-epoch" ||
+    result.status === "producer-gap" ||
+    result.status === "invalid-epoch-seq"
+  ) {
+    return { ...result, ...progress };
+  }
   return {
     status: "output-conflict",
     reason: result.status,
@@ -309,8 +363,10 @@ function malformedSourceBoundary(
   cause: unknown,
 ): CatchUpResult {
   return {
-    status: "malformed-output",
-    message: `Source delivery boundary ${offset} is not a real position: ${String(cause)}`,
+    status: "malformed-input",
+    stream: "source",
+    offset,
+    cause,
     ...progress,
   };
 }
