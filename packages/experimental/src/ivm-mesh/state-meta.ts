@@ -32,6 +32,16 @@ export interface LineageCheckpoint {
   readonly nextProducerSeq: number;
 }
 
+export class LineageMetadataError extends Error {
+  constructor(
+    readonly kind: "malformed-output" | "incompatible-output",
+    message: string,
+  ) {
+    super(message);
+    this.name = "LineageMetadataError";
+  }
+}
+
 export function createLineageEvent(
   lane: ProducerLane,
   checkpoint: LineageCheckpoint,
@@ -59,16 +69,16 @@ export function createLineageEvent(
 
 /** Decode and validate durable metadata. Throws only inside recovery's typed-error boundary. */
 export function decodeLineageEvent(value: unknown): MeshLineageEvent {
-  if (!isRecord(value)) throw new TypeError("Lineage event must be an object");
+  if (!isRecord(value)) malformed("Lineage event must be an object");
   if (value.type !== MESH_LINEAGE_TYPE || value.key !== MESH_LINEAGE_KEY) {
-    throw new TypeError("Lineage event has an invalid reserved type or key");
+    malformed("Lineage event has an invalid reserved type or key");
   }
   if (!isRecord(value.headers) || value.headers.operation !== "upsert") {
-    throw new TypeError("Lineage event must be an upsert");
+    malformed("Lineage event must be an upsert");
   }
-  if (!isRecord(value.value)) throw new TypeError("Lineage event value must be an object");
+  if (!isRecord(value.value)) malformed("Lineage event value must be an object");
   const row = value.value;
-  if (row.format !== MESH_LINEAGE_FORMAT) throw new TypeError("Unsupported lineage format");
+  if (row.format !== MESH_LINEAGE_FORMAT) malformed("Unsupported lineage format");
   for (const field of [
     "processorId",
     "processorVersion",
@@ -79,12 +89,16 @@ export function decodeLineageEvent(value: unknown): MeshLineageEvent {
     "producerId",
   ] as const) {
     if (typeof row[field] !== "string" || row[field].length === 0) {
-      throw new TypeError(`Lineage ${field} must be a non-empty string`);
+      malformed(`Lineage ${field} must be a non-empty string`);
     }
   }
-  validateRealPosition(row.sourceThrough);
-  validateSequence(row.producerEpoch, "producerEpoch");
-  validateSequence(row.nextProducerSeq);
+  try {
+    validateRealPosition(row.sourceThrough);
+    validateSequence(row.producerEpoch, "producerEpoch");
+    validateSequence(row.nextProducerSeq);
+  } catch (error) {
+    malformed(error instanceof Error ? error.message : "Invalid lineage value");
+  }
   return value as unknown as MeshLineageEvent;
 }
 
@@ -104,9 +118,16 @@ export function assertLineageCompatible(event: MeshLineageEvent, lane: ProducerL
     "producerEpoch",
   ] as const) {
     if (event.value[field] !== expected[field]) {
-      throw new TypeError(`Lineage ${field} is incompatible with the configured lane`);
+      throw new LineageMetadataError(
+        "incompatible-output",
+        `Lineage ${field} is incompatible with the configured lane`,
+      );
     }
   }
+}
+
+function malformed(message: string): never {
+  throw new LineageMetadataError("malformed-output", message);
 }
 
 export function assertFactTypeAllowed(value: unknown): void {

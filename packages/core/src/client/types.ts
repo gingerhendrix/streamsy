@@ -214,6 +214,10 @@ export interface StreamProtocolHandle {
   /**
    * Append an ordered, non-empty JSON transaction in one request. Each item
    * becomes one stored message and the rich acknowledgement covers the batch.
+   *
+   * Compatibility: this is a required member added in v0.2.1 development.
+   * Third-party StreamProtocolHandle implementations must implement it before
+   * adopting this interface revision.
    */
   appendJsonBatch(
     items: readonly JsonValue[],

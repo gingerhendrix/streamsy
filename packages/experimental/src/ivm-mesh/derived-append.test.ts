@@ -36,7 +36,11 @@ async function harness(): Promise<Harness> {
   const client = directProtocolClient(protocol);
   const source = streamIdentity("orders");
   const targetIdentity = streamIdentity("orders-by-status");
-  const target = bindStream({ identity: targetIdentity, client, streamId: "derived" });
+  const target = bindStream({
+    identity: targetIdentity,
+    client,
+    streamId: "derived",
+  });
   const lane = await deriveProducerLane({
     processorId: "orders-by-status",
     processorVersion: "1.0.0",
@@ -114,7 +118,10 @@ describe("derived State append — memory", () => {
       sourceThrough: "00000002",
       facts: [],
     });
-    expect(second).toMatchObject({ status: "appended", checkpoint: { nextProducerSeq: 2 } });
+    expect(second).toMatchObject({
+      status: "appended",
+      checkpoint: { nextProducerSeq: 2 },
+    });
     expect(await h.adapter.getProducerState("derived", h.lane.producerId)).toEqual({
       epoch: 41,
       lastSeq: 1,
@@ -164,7 +171,10 @@ describe("derived State append — memory", () => {
       sourceThrough: "00000001",
       facts: [fact("open")],
     });
-    expect(result).toMatchObject({ status: "output-conflict", reason: "expected-offset" });
+    expect(result).toMatchObject({
+      status: "output-conflict",
+      reason: "expected-offset",
+    });
     expect(await h.adapter.getProducerState("derived", h.lane.producerId)).toBeUndefined();
     expect(await rawValues(h.adapter)).toEqual([fact("foreign")]);
     await h.close();
@@ -180,7 +190,11 @@ describe("derived State append — memory", () => {
     });
     await h.client.stream("derived").appendJsonBatch([bumpedMeta as unknown as JsonValue], {
       expectedOffset: initial.targetOffset,
-      producer: { producerId: h.lane.producerId, producerEpoch: 42, producerSeq: 0 },
+      producer: {
+        producerId: h.lane.producerId,
+        producerEpoch: 42,
+        producerSeq: 0,
+      },
     });
     const stale = await appendDerivedStateBatch({
       target: h.target,
@@ -213,7 +227,11 @@ describe("derived State append — memory", () => {
       sourceThrough: "00000002",
       facts: [fact("closed")],
     });
-    expect(gap).toEqual({ status: "producer-gap", expectedSeq: 1, receivedSeq: 2 });
+    expect(gap).toEqual({
+      status: "producer-gap",
+      expectedSeq: 1,
+      receivedSeq: 2,
+    });
     expect(await rawValues(gapHarness.adapter)).toHaveLength(2);
     await gapHarness.close();
   });
@@ -271,17 +289,67 @@ describe("derived State append — memory", () => {
     });
     await incompatible.close();
   });
+
+  test("rejects a bare fact tail and an epoch bump after uncertain accepted output", async () => {
+    const bare = await harness();
+    await bare.client.stream("derived").appendJsonBatch([fact("foreign")]);
+    expect(await recoverDerivedState(bare.target, bare.lane)).toMatchObject({
+      status: "incompatible-output",
+      message: expect.stringContaining("lineage transaction boundary"),
+    });
+    await bare.close();
+
+    const uncertain = await harness();
+    const initial = await ready(uncertain);
+    const accepted = await appendDerivedStateBatch({
+      target: uncertain.target,
+      lane: uncertain.lane,
+      previous: initial,
+      sourceThrough: "00000001",
+      facts: [fact("open")],
+    });
+    expect(accepted.status).toBe("appended");
+    const bumpedLane = {
+      ...uncertain.lane,
+      producerEpoch: uncertain.lane.producerEpoch + 1,
+    };
+    expect(await recoverDerivedState(uncertain.target, bumpedLane)).toMatchObject({
+      status: "incompatible-output",
+      message: expect.stringContaining("producerEpoch"),
+    });
+    await uncertain.close();
+  });
+
+  test("treats a missing recovery start offset as a typed invariant failure", async () => {
+    const h = await harness();
+    const target = bindStream({
+      ...h.target,
+      client: withoutReadStartOffset(h.client),
+    });
+    expect(await recoverDerivedState(target, h.lane)).toEqual({
+      status: "malformed-output",
+      message: "Derived State recovery read did not provide a start offset",
+    });
+    await h.close();
+  });
 });
 
 test("direct and fetch store byte-identical ordered State event framing with one POST", async () => {
   const directAdapter = createMemoryStorageAdapter();
-  const directProtocol = new StreamProtocol({ storage: { adapter: directAdapter } });
+  const directProtocol = new StreamProtocol({
+    storage: { adapter: directAdapter },
+  });
   const direct = directProtocolClient(directProtocol);
   await direct.stream("derived").create({ contentType: "application/json" });
 
   const fetchAdapter = createMemoryStorageAdapter();
-  const fetchProtocol = new StreamProtocol({ storage: { adapter: fetchAdapter } });
-  const handler = createHttpHandler({ protocol: fetchProtocol, pathPrefix: "/streams" });
+  const fetchProtocol = new StreamProtocol({
+    storage: { adapter: fetchAdapter },
+  });
+  const handler = createHttpHandler({
+    protocol: fetchProtocol,
+    pathPrefix: "/streams",
+  });
   const requests: Request[] = [];
   const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
     const request = new Request(input, init);
@@ -305,6 +373,69 @@ test("direct and fetch store byte-identical ordered State event framing with one
   expect(fetchBytes).toEqual(directBytes);
   await direct.close();
   await remote.close();
+});
+
+test("fetch lost response reconciles through durable metadata without a second transaction", async () => {
+  const adapter = createMemoryStorageAdapter();
+  const protocol = new StreamProtocol({ storage: { adapter } });
+  const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
+  let loseProducerResponse = true;
+  const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+    const request = new Request(input, init);
+    const response = await handler.fetch(request);
+    if (request.headers.has("producer-id") && loseProducerResponse) {
+      loseProducerResponse = false;
+      throw new TypeError("response lost after durable commit");
+    }
+    return response;
+  }) as typeof globalThis.fetch;
+  const client = officialProtocolClient({
+    urlFor: (id) => protocolPathUrl("https://stream.test/streams", id),
+    fetch,
+    backoffOptions: noRetry,
+    warnOnHttp: false,
+  });
+  const source = streamIdentity("orders");
+  const targetIdentity = streamIdentity("orders-by-status");
+  const target = bindStream({
+    identity: targetIdentity,
+    client,
+    streamId: "derived",
+  });
+  const lane = await deriveProducerLane({
+    processorId: "orders-by-status",
+    processorVersion: "1.0.0",
+    outputGeneration: "generation-1",
+    source,
+    target: targetIdentity,
+    producerEpoch: 41,
+  });
+  await client.stream("derived").create({ contentType: "application/json" });
+  const initial = await recoverDerivedState(target, lane);
+  if (initial.status !== "ready") throw new Error(`expected ready, got ${initial.status}`);
+  expect(
+    await appendDerivedStateBatch({
+      target,
+      lane,
+      previous: initial,
+      sourceThrough: "00000001",
+      facts: [fact("open")],
+    }),
+  ).toMatchObject({ status: "error", code: "transport" });
+  const retry = await appendDerivedStateBatch({
+    target,
+    lane,
+    previous: initial,
+    sourceThrough: "00000001",
+    facts: [fact("changed-retry-bytes")],
+  });
+  expect(retry).toMatchObject({ status: "sequence-already-accepted" });
+  expect(JSON.stringify(retry)).not.toContain("verified");
+  expect(await rawValues(adapter)).toEqual([
+    fact("open"),
+    expect.objectContaining({ type: MESH_LINEAGE_TYPE }),
+  ]);
+  await client.close();
 });
 
 function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolClient {
@@ -335,6 +466,30 @@ function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolCl
           }
           return result;
         },
+      };
+    },
+    close: (reason) => client.close(reason),
+  };
+}
+
+function withoutReadStartOffset(client: StreamProtocolClient): StreamProtocolClient {
+  return {
+    stream(streamId: string): StreamProtocolHandle {
+      const delegate = client.stream(streamId);
+      return {
+        id: delegate.id,
+        head: (options) => delegate.head(options),
+        create: (options) => delegate.create(options),
+        append: (data, options) => delegate.append(data, options),
+        close: (options) => delegate.close(options),
+        async read<T extends JsonValue = JsonValue>(options?: Parameters<typeof delegate.read>[0]) {
+          const result = await delegate.read<T>(options);
+          if (result.status === "ok") {
+            Object.defineProperty(result.session, "startOffset", { value: undefined });
+          }
+          return result;
+        },
+        appendJsonBatch: (items, options) => delegate.appendJsonBatch(items, options),
       };
     },
     close: (reason) => client.close(reason),

@@ -9,6 +9,7 @@ import {
   assertLineageCompatible,
   createLineageEvent,
   decodeLineageEvent,
+  LineageMetadataError,
   type MeshLineageEvent,
 } from "./state-meta.ts";
 
@@ -24,7 +25,10 @@ export interface RecoveredDerivedState {
 export type DerivedRecoveryResult =
   | RecoveredDerivedState
   | { readonly status: "not-found" | "gone" | "cancelled" }
-  | { readonly status: "malformed-output" | "incompatible-output"; readonly message: string }
+  | {
+      readonly status: "malformed-output" | "incompatible-output";
+      readonly message: string;
+    }
   | ClientFailure;
 
 export interface AppendDerivedStateBatchOptions {
@@ -44,8 +48,15 @@ export type AppendDerivedStateResult =
       readonly checkpoint: RecoveredDerivedState;
     }
   | { readonly status: "not-found" | "gone" | "cancelled" }
-  | { readonly status: "output-conflict"; readonly reason: string; readonly offset?: string }
-  | { readonly status: "malformed-output" | "incompatible-output"; readonly message: string }
+  | {
+      readonly status: "output-conflict";
+      readonly reason: string;
+      readonly offset?: string;
+    }
+  | {
+      readonly status: "malformed-output" | "incompatible-output";
+      readonly message: string;
+    }
   | Extract<ClientAppendResult, { status: "stale-epoch" | "producer-gap" | "invalid-epoch-seq" }>
   | ClientFailure;
 
@@ -62,7 +73,14 @@ export async function recoverDerivedState(
   const read = await target.client.stream(target.streamId).read<JsonValue>({ signal });
   if (read.status !== "ok") return read;
 
-  let targetOffset = read.session.startOffset ?? "-1";
+  if (read.session.startOffset === undefined) {
+    read.session.cancel("missing recovery start offset");
+    return {
+      status: "malformed-output",
+      message: "Derived State recovery read did not provide a start offset",
+    };
+  }
+  let targetOffset = read.session.startOffset;
   let lineage: MeshLineageEvent | undefined;
   let lastWasLineage = false;
   let sawItems = false;
@@ -71,7 +89,10 @@ export async function recoverDerivedState(
       targetOffset = batch.offset;
       if (batch.kind !== "json") {
         read.session.cancel("derived State target is not JSON");
-        return { status: "incompatible-output", message: "Derived State target is not JSON" };
+        return {
+          status: "incompatible-output",
+          message: "Derived State target is not JSON",
+        };
       }
       for (const item of batch.items) {
         sawItems = true;
@@ -157,7 +178,11 @@ export async function appendDerivedStateBatch(
     };
   }
   if (result.status === "closed") {
-    return { status: "output-conflict", reason: "closed", offset: result.offset };
+    return {
+      status: "output-conflict",
+      reason: "closed",
+      offset: result.offset,
+    };
   }
   return result;
 }
@@ -188,8 +213,13 @@ async function reconcileDuplicate(
       message: "In-band lineage does not reconcile the accepted producer sequence",
     };
   }
-  // This proves compatible durable progress, not equality with the retried payload.
-  return { status: "sequence-already-accepted", offset: duplicate.offset, checkpoint: recovered };
+  // The matching current boundary excludes trailing output while lineage proves
+  // compatible lane progress. Neither comparison proves retried payload equality.
+  return {
+    status: "sequence-already-accepted",
+    offset: duplicate.offset,
+    checkpoint: recovered,
+  };
 }
 
 function validateAppendInput(options: AppendDerivedStateBatchOptions): void {
@@ -248,11 +278,11 @@ function assertTargetMatchesLane(target: StreamBinding, lane: ProducerLane): voi
 }
 
 function classifiedMetadataFailure(error: unknown): DerivedRecoveryResult {
+  if (error instanceof LineageMetadataError) {
+    return { status: error.kind, message: error.message };
+  }
   const message = error instanceof Error ? error.message : "Invalid lineage metadata";
-  return {
-    status: message.includes("incompatible") ? "incompatible-output" : "malformed-output",
-    message,
-  };
+  return { status: "malformed-output", message };
 }
 
 function failure(
