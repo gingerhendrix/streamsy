@@ -39,6 +39,13 @@ describe("causal counter — SQLite", () => {
     expect(restarted.counterValue("visits")).toBe(2);
     expect(restarted.syncedThrough(appended.ack)).toEqual({ status: "proven" });
     expect(await reopened.adapter.listMessages("target")).toEqual(stored);
+
+    const later = await reopened.append(3);
+    if (later.status !== "appended") throw new Error("expected later append");
+    expect(await reopened.project()).toMatchObject({ status: "caught-up", batches: 1 });
+    await reopened.consume(restarted);
+    expect(restarted.counterValue("visits")).toBe(5);
+    expect(restarted.syncedThrough(later.ack)).toEqual({ status: "proven" });
     await reopened.close();
   });
 });
