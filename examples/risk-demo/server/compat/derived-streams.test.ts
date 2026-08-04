@@ -44,7 +44,7 @@ function raceFirstOutputAppend(
         return stream.append(options);
       },
       read: (options) => stream.read(options),
-      readLive: (options) => stream.readLive(options),
+      readNext: (options) => stream.readNext(options),
       metadata: () => stream.metadata(),
       delete: () => stream.delete(),
     };

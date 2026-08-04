@@ -3,7 +3,7 @@ import {
   JsonStream,
   normalizeJsonCodec,
   type JsonCodec,
-  type JsonReadLiveResult,
+  type JsonReadNextResult,
   type JsonReadResult,
   type JsonSchema,
 } from "@streamsy/json";
@@ -13,7 +13,7 @@ import type {
   DeleteResult,
   MetadataResult,
   ProtocolStream,
-  ReadLiveOptions,
+  ReadNextOptions,
   ReadOptions,
   StreamId,
   StreamProtocolFactory,
@@ -377,10 +377,10 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
     return this.json.read(options);
   }
 
-  readLive(
-    options: ReadLiveOptions,
-  ): Promise<JsonReadLiveResult<DurableStateMessage<ValuesByWireType<S>>>> {
-    return this.json.readLive(options);
+  readNext(
+    options: ReadNextOptions,
+  ): Promise<JsonReadNextResult<DurableStateMessage<ValuesByWireType<S>>>> {
+    return this.json.readNext(options);
   }
 
   metadata(): Promise<MetadataResult> {

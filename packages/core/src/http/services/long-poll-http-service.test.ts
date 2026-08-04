@@ -2,22 +2,26 @@ import { describe, expect, it } from "vitest";
 import { LongPollHttpService } from "./long-poll-http-service.ts";
 import { MessageBodyCodec } from "../message-body-codec.ts";
 import { HttpResponseFactory } from "../responses.ts";
-import type { ProtocolStream } from "../../types/protocol.ts";
+import type { ProtocolStream, ReadNextOptions } from "../../types/protocol.ts";
 import { EtagBuilder } from "../etag-builder.ts";
 
 describe("LongPollHttpService", () => {
-  it("uses the supplied bound protocol stream", async () => {
+  it("uses the transport-neutral readNext operation", async () => {
+    let readNextOptions: ReadNextOptions | undefined;
     const stream: ProtocolStream = {
       id: "s",
       append: async () => ({ status: "appended", offset: "0" }),
       read: async () => ({ status: "ok", messages: [], nextOffset: "0", upToDate: true }),
-      readLive: async () => ({
-        status: "timeout",
-        messages: [],
-        nextOffset: "0",
-        upToDate: true,
-        cursor: "c",
-      }),
+      readNext: async (options) => {
+        readNextOptions = options;
+        return {
+          status: "timeout",
+          messages: [],
+          nextOffset: "0",
+          upToDate: true,
+          cursor: "c",
+        };
+      },
       metadata: async () => ({ status: "ok", contentType: "text/plain", nextOffset: "0" }),
       delete: async () => ({ status: "ok" }),
     };
@@ -34,5 +38,7 @@ describe("LongPollHttpService", () => {
     );
     expect(response.status).toBe(204);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(readNextOptions).toEqual({ offset: "0", cursor: undefined });
+    expect(readNextOptions).not.toHaveProperty("mode");
   });
 });

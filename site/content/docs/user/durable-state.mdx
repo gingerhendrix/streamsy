@@ -109,6 +109,6 @@ if (read.status === "ok") {
 }
 ```
 
-`DurableStateStream<S>` also exposes `readLive(options)`, `metadata()`, `delete()`, and the underlying `json` / `stream` handles for byte- or JSON-level access. Application code can fold these messages into its own collections. Streamsy does not currently ship a generic TanStack DB adapter in `@streamsy/state`.
+`DurableStateStream<S>` also exposes `readNext(options)`, `metadata()`, `delete()`, and the underlying `json` / `stream` handles for byte- or JSON-level access. Application code can fold these messages into its own collections. Streamsy does not currently ship a generic TanStack DB adapter in `@streamsy/state`.
 
 For the design behind that client fold, read [Super Simple Sync with Durable State and TanStack DB](/articles/the-simplest-possible-sync-engine). The repository's [issue-tracker demo](https://github.com/gingerhendrix/streamsy/tree/main/examples/issue-tracker-demo) shows the end-to-end multi-user shape using Streamsy as transport and the official `@durable-streams/state/db` package for its browser StreamDB/TanStack DB adapter.

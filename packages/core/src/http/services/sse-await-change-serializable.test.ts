@@ -2,8 +2,8 @@
  * Regression guard for the original Cloudflare Durable Object failure:
  * `DataCloneError: AbortSignal could not be cloned`.
  *
- * An SSE live read drives the full stack — `SseHttpService` → `ProtocolStream.readLive`
- * → `LiveReadService` → `raceAbortAwaitChange` → `StorageAdapter.awaitChange`. The
+ * An SSE live read drives the full stack — `SseHttpService` → `ProtocolStream.readNext`
+ * → `ReadNextService` → `raceAbortAwaitChange` → `StorageAdapter.awaitChange`. The
  * caller-local `AbortSignal` must stay at the HTTP/SSE edge and NEVER reach the
  * storage seam. The primary assertion is structural — every argument the adapter's
  * `awaitChange` receives is checked to carry no `signal` (and only serializable

@@ -198,7 +198,7 @@ Consistency boundary:
 Protocol-bound streams are distinct from storage-bound streams:
 
 - storage streams persist records/messages through the storage-author seam;
-- protocol streams expose durable-stream operations: `append`, `read`, `readLive`, `metadata`, and `delete`.
+- protocol streams expose durable-stream operations: `append`, `read`, `readNext`, `metadata`, and `delete`.
 
 ## Packages
 
@@ -215,7 +215,7 @@ Protocol-bound streams are distinct from storage-bound streams:
 Core exports include:
 
 - `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`, `defaultOffsetGenerator`, `InvalidGeneratedOffsetError`, and the `OffsetGenerator` type
-- protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadLiveResult`, `MetadataResult`, and `DeleteResult`
+- protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadNextResult`, `MetadataResult`, and `DeleteResult`
 - the flat storage-adapter seam: `StorageAdapter` (with the grouping facets `StreamReader`, `StreamAppender`, `StreamLiveWaiter`, `StreamExpiryScheduler`), plan types `AppendPlan`, `CreatePlan`, `ForkPlan`, `DeletePlan`, adapter result types `StorageAppendResult`, `StorageCreateResult`, `StorageForkResult`, `StorageDeleteResult`, and the live-wait types `StreamChangeSnapshot`, `AwaitChangeOptions`, `AwaitChangeResult`
 - the core-internal per-stream binding for adapter authors and tests: `bindStream` and `BoundStream`
 - the level-triggered `awaitChange` building blocks every adapter uses to implement its live wait (including a polling one): `runAwaitChangeLoop` (with `AwaitChangeLoopDeps`), `buildChangeSnapshot`, `changeSnapshotDiffers`, and `compareOffsets`
@@ -227,7 +227,7 @@ Core exports include:
 JSON exports (`@streamsy/json`):
 
 - `createJsonProtocol`, `JsonProtocol`, `JsonStream`, `JsonValidationError`, `normalizeJsonCodec`, `JSON_CONTENT_TYPE`
-- types including `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readLive result and option types
+- types including `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readNext result and option types
 
 State exports (`@streamsy/state`):
 

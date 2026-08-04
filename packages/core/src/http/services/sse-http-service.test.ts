@@ -3,7 +3,7 @@ import { SseHttpService } from "./sse-http-service.ts";
 import { MessageBodyCodec } from "../message-body-codec.ts";
 import { HttpResponseFactory } from "../responses.ts";
 import { SseEventEncoder } from "../sse-event-encoder.ts";
-import type { ProtocolStream, ReadLiveOptions } from "../../types/protocol.ts";
+import type { ProtocolStream, ReadNextOptions } from "../../types/protocol.ts";
 
 const fixedTime = new Date("2026-06-06T00:00:00.000Z").getTime();
 const clock = {
@@ -14,17 +14,17 @@ const clock = {
 describe("SseHttpService", () => {
   it("treats client cancellation during live reads as a normal disconnect", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    let readLiveSignal: AbortSignal | undefined;
-    let finishLiveRead!: () => void;
-    const liveReadFinished = new Promise<void>((resolve) => {
-      finishLiveRead = resolve;
+    let readNextOptions: ReadNextOptions | undefined;
+    let finishReadNext!: () => void;
+    const readNextFinished = new Promise<void>((resolve) => {
+      finishReadNext = resolve;
     });
     const stream: ProtocolStream = {
       id: "s",
       append: async () => ({ status: "appended", offset: "0" }),
       read: async () => ({ status: "ok", messages: [], nextOffset: "0", upToDate: true }),
-      readLive: async (options: ReadLiveOptions) => {
-        readLiveSignal = options.signal;
+      readNext: async (options: ReadNextOptions) => {
+        readNextOptions = options;
         await new Promise<void>((resolve) => {
           if (options.signal?.aborted) {
             resolve();
@@ -32,7 +32,7 @@ describe("SseHttpService", () => {
           }
           options.signal?.addEventListener("abort", () => resolve(), { once: true });
         });
-        finishLiveRead();
+        finishReadNext();
         return {
           status: "timeout",
           messages: [],
@@ -57,9 +57,10 @@ describe("SseHttpService", () => {
     expect(firstChunk.done).toBe(false);
 
     await reader.cancel();
-    await liveReadFinished;
+    await readNextFinished;
 
-    expect(readLiveSignal?.aborted).toBe(true);
+    expect(readNextOptions?.signal?.aborted).toBe(true);
+    expect(readNextOptions).not.toHaveProperty("mode");
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });

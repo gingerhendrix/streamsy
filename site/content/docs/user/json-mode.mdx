@@ -79,7 +79,7 @@ if (read.status === "ok") {
 
 - `append(value, options?)` / `appendMany(values, options?)` — encode and append typed values.
 - `appendJson(value, options?)` — append an already-JSON value without codec encoding (escape hatch).
-- `read(options?)` / `readLive(options)` — decode stored messages into `{ ...message, value: T }`.
+- `read(options?)` / `readNext(options)` — decode stored messages into `{ ...message, value: T }`.
 - `readRaw(options?)` — the underlying byte-level `read`.
 - `metadata()`, `delete()`.
 
@@ -91,6 +91,6 @@ Typed results extend the underlying protocol's discriminated unions:
 
 - **`create`** → `created` / `exists` (with a typed `stream`), or a passthrough failure (`conflict`, `not-found`, `bad-request`, `not-supported`).
 - **`get`** → `ok` (typed `stream`) or `content-type-conflict` when the stream isn't `application/json`, plus passthrough `not-found` / `gone` / `not-supported`.
-- **`read` / `readLive`** → `ok` with decoded `messages`, or `invalid-json` (`{ error, offset? }`) when a stored value fails the codec/schema, plus the underlying `timeout` / `not-found` / `gone` statuses.
+- **`read` / `readNext`** → `ok` with decoded `messages`, or `invalid-json` (`{ error, offset? }`) when a stored value fails the codec/schema, plus the underlying `timeout` / `not-found` / `gone` statuses.
 
 Because the base protocol's framer parses `application/json` bodies, malformed JSON bytes are rejected at append time; the read-side `invalid-json` status surfaces codec/schema failures or externally corrupted storage. Always narrow on `status` before reading `stream` or `messages`.

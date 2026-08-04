@@ -12,8 +12,8 @@ import type {
   MetadataResult,
   ProtocolGetResult,
   ProtocolStream as ProtocolStreamApi,
-  ReadLiveOptions,
-  ReadLiveResult,
+  ReadNextOptions,
+  ReadNextResult,
   ReadOptions,
   ReadResult,
   StreamProtocolFactory,
@@ -24,7 +24,7 @@ import type { Clock, StoredMessage, StreamRecord } from "./types/storage.ts";
 import { systemClock } from "./protocol/helpers/clock.ts";
 import { AppendService } from "./protocol/append-service.ts";
 import { ReadService } from "./protocol/read-service.ts";
-import { LiveReadService, type LiveReadStore } from "./protocol/live-read-service.ts";
+import { ReadNextService, type ReadNextStore } from "./protocol/read-next-service.ts";
 import { bindStream, type BoundStream } from "./protocol/helpers/bind-stream.ts";
 import { ExpiryPolicy } from "./protocol/helpers/expiry-policy.ts";
 import { CreateStreamService } from "./protocol/create-stream-service.ts";
@@ -84,7 +84,7 @@ function mapDelete(status: DeleteStatus): DeleteResult {
  * `awaitChange` (a backend that cannot wake cheaply polls inside its own
  * implementation), so core wires it straight through with no fallback.
  */
-function liveReadStore(storage: BoundStream): LiveReadStore {
+function readNextStore(storage: BoundStream): ReadNextStore {
   return {
     getRecord: () => storage.getRecord(),
     awaitChange: (options) => storage.awaitChange(options),
@@ -107,7 +107,7 @@ export class ProtocolStream implements ProtocolStreamApi {
   readonly id: string;
   private appendService: AppendService;
   private readService: ReadService;
-  private liveReadService: LiveReadService;
+  private readNextService: ReadNextService;
   private createService: CreateStreamService;
   private forkPlanBuilder: ForkPlanBuilder;
 
@@ -123,8 +123,8 @@ export class ProtocolStream implements ProtocolStreamApi {
       readChain: (record, afterOffset) =>
         messageReader.readChain(record, afterOffset, undefined, false),
     });
-    this.liveReadService = new LiveReadService({
-      store: liveReadStore(deps.storage),
+    this.readNextService = new ReadNextService({
+      store: readNextStore(deps.storage),
       clock: deps.clock,
       longPollTimeoutMs: deps.longPollTimeoutMs,
       offsets: deps.offsets,
@@ -214,12 +214,12 @@ export class ProtocolStream implements ProtocolStreamApi {
     return this.readService.execute(record, options);
   }
 
-  async readLive(options: ReadLiveOptions): Promise<ReadLiveResult> {
+  async readNext(options: ReadNextOptions): Promise<ReadNextResult> {
     let record = await this.deps.expiryPolicy.expireIfNeeded(this.deps.storage);
     if (record && !record.lifecycle.softDeleted) {
       record = await this.deps.expiryPolicy.touch(this.deps.storage, record, "live-read");
     }
-    return this.liveReadService.execute(record, options);
+    return this.readNextService.execute(record, options);
   }
 
   async metadata(): Promise<MetadataResult> {

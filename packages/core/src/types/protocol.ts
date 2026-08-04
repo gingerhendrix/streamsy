@@ -73,9 +73,14 @@ export interface ReadOptions {
   offset?: string;
 }
 
-export interface ReadLiveOptions {
+/**
+ * Options for one transport-neutral read/wait operation. `readNext` returns
+ * available messages immediately or waits once for a stream change, timeout,
+ * or cancellation. HTTP live modes decide whether to invoke it once or repeat
+ * it; they are intentionally not part of this protocol contract.
+ */
+export interface ReadNextOptions {
   offset: string;
-  mode: "long-poll" | "sse";
   cursor?: string;
   signal?: AbortSignal;
 }
@@ -196,7 +201,7 @@ export type ReadResult =
   | { status: "not-found" }
   | { status: "gone" };
 
-export type ReadLiveResult =
+export type ReadNextResult =
   | {
       status: "ok" | "timeout" | "not-found" | "gone";
       messages: StoredMessage[];
@@ -227,7 +232,7 @@ export interface ProtocolStream {
   readonly id: StreamId;
   append(options: AppendOptions): Promise<AppendResult>;
   read(options: ReadOptions): Promise<ReadResult>;
-  readLive(options: ReadLiveOptions): Promise<ReadLiveResult>;
+  readNext(options: ReadNextOptions): Promise<ReadNextResult>;
   metadata(): Promise<MetadataResult>;
   delete(): Promise<DeleteResult>;
 }

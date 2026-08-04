@@ -87,7 +87,7 @@ describe("ReadOnlyHttpHandler", () => {
         nextOffset: "1_0",
         upToDate: true,
       }),
-      readLive: async () => ({
+      readNext: async () => ({
         status: "timeout",
         messages: [],
         nextOffset: "1_0",

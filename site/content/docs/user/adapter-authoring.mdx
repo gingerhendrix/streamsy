@@ -5,7 +5,7 @@ description: Implement Streamsy storage adapters with the flat StorageAdapter in
 
 Streamsy storage packages implement `StorageAdapter` from `@streamsy/core`. The interface is flat and serializable: every per-stream method takes `streamId` as its first argument, while lifecycle plans carry their relevant ids. Adapters may use private per-stream handles internally, but no handle crosses the public storage seam.
 
-This is a storage-author seam, not the public Durable Streams API. Applications wire an adapter into `createStreamProtocol({ storage: { adapter } })`; protocol-bound streams then expose `append`, `read`, `readLive`, `metadata`, and `delete`.
+This is a storage-author seam, not the public Durable Streams API. Applications wire an adapter into `createStreamProtocol({ storage: { adapter } })`; protocol-bound streams then expose `append`, `read`, `readNext`, `metadata`, and `delete`.
 
 ## Responsibilities
 

@@ -102,11 +102,11 @@ describe("sqlite protocol", () => {
     const lookup = await protocol.get("s");
     if (lookup.status !== "ok") throw new Error("lookup failed");
 
-    const timed = await lookup.stream.readLive({ offset: "0", mode: "long-poll" });
+    const timed = await lookup.stream.readNext({ offset: "0" });
     if (timed.status === "not-supported") throw new Error("live read unsupported");
     expect(timed.status).toBe("timeout");
 
-    const live = lookup.stream.readLive({ offset: "0", mode: "long-poll" });
+    const live = lookup.stream.readNext({ offset: "0" });
     await lookup.stream.append({ contentType: "text/plain", data: encode("hello") });
     const result = await live;
     if (result.status === "not-supported") throw new Error("live read unsupported");

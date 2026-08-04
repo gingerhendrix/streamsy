@@ -1,7 +1,7 @@
-export type ReadLiveMode = "long-poll" | "sse";
+export type HttpLiveMode = "long-poll" | "sse";
 
 export type ReadQueryResult =
-  | { ok: true; offset?: string; live?: ReadLiveMode; cursor?: string }
+  | { ok: true; offset?: string; live?: HttpLiveMode; cursor?: string }
   | { ok: false; response: Response };
 
 export class ReadQueryParser {

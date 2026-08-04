@@ -112,9 +112,8 @@ export async function readDerived<T>(
   if (options.waitMs && options.waitMs > 0) {
     const timeout = AbortSignal.timeout(options.waitMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-    const live = await stream.readLive({
+    const live = await stream.readNext({
       offset,
-      mode: "long-poll",
       signal,
     });
     if (live.status === "invalid-json") throw new Error(`cannot decode derived stream ${streamId}`);

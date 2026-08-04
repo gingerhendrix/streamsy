@@ -40,7 +40,7 @@ Values that fail codec or schema validation reject at append with `JsonValidatio
 
 - `createJsonProtocol`, `JsonProtocol`, `JsonStream`
 - `JsonValidationError`, `normalizeJsonCodec`, `JSON_CONTENT_TYPE`
-- types: `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readLive result and option types
+- types: `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readNext result and option types
 
 ## License
 

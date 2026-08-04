@@ -15,7 +15,7 @@
  *   lenient parsing for unexpected cursor strings.
  * - `random` defaults to `Math.random` and may be injected for tests.
  *
- * Used by `LiveReadService` when shaping every live-read response cursor.
+ * Used by `ReadNextService` when shaping every read-next response cursor.
  */
 import type { Clock } from "../../types/storage.ts";
 

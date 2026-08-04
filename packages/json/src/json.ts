@@ -8,8 +8,8 @@ import type {
   NotSupportedResult,
   ProtocolGetResult,
   ProtocolStream,
-  ReadLiveOptions,
-  ReadLiveResult,
+  ReadNextOptions,
+  ReadNextResult,
   ReadOptions,
   ReadResult,
   StoredMessage,
@@ -83,14 +83,14 @@ export type JsonReadResult<T> =
   | Exclude<ReadResult, { status: "ok" }>
   | { status: "invalid-json"; error: unknown; offset?: string };
 
-// ReadLiveResult models all data-carrying statuses ("ok" | "timeout" |
+// ReadNextResult models all data-carrying statuses ("ok" | "timeout" |
 // "not-found" | "gone") as one member, so the typed variant swaps its
 // messages wholesale rather than extracting by status.
-export type JsonReadLiveResult<T> =
-  | (Omit<Extract<ReadLiveResult, { messages: StoredMessage[] }>, "messages"> & {
+export type JsonReadNextResult<T> =
+  | (Omit<Extract<ReadNextResult, { messages: StoredMessage[] }>, "messages"> & {
       messages: JsonStoredMessage<T>[];
     })
-  | Exclude<ReadLiveResult, { messages: StoredMessage[] }>
+  | Exclude<ReadNextResult, { messages: StoredMessage[] }>
   | { status: "invalid-json"; error: unknown; offset?: string };
 
 const encoder = new TextEncoder();
@@ -320,8 +320,8 @@ export class JsonStream<T> {
     };
   }
 
-  async readLive(options: ReadLiveOptions): Promise<JsonReadLiveResult<T>> {
-    const result = await this.stream.readLive(options);
+  async readNext(options: ReadNextOptions): Promise<JsonReadNextResult<T>> {
+    const result = await this.stream.readNext(options);
     if (result.status === "not-supported") return result;
     const decoded = decodeMessages(this.codec, result.messages);
     if (!decoded.ok)

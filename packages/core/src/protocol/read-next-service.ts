@@ -1,6 +1,6 @@
-/** Live-read orchestration for one storage-bound stream. */
+/** One-shot read/wait orchestration for one storage-bound stream. */
 
-import type { ReadLiveOptions, ReadLiveResult } from "../types/protocol.ts";
+import type { ReadNextOptions, ReadNextResult } from "../types/protocol.ts";
 import type {
   AwaitChangeOptions,
   AwaitChangeResult,
@@ -14,37 +14,37 @@ import { compareOffsets, isValidOffset, type OffsetGenerator } from "./helpers/o
 import { generateCursor } from "./helpers/cursor-generator.ts";
 import { raceAbortAwaitChange } from "./helpers/race-abort.ts";
 
-/** Narrow view of the storage stream the live-read service depends on. */
-export interface LiveReadStore {
+/** Narrow view of the storage stream the read-next service depends on. */
+export interface ReadNextStore {
   getRecord(): Promise<StreamRecord | null>;
   awaitChange(options: AwaitChangeOptions): Promise<AwaitChangeResult>;
 }
 
-export type LiveReadChain = (
+export type ReadNextChain = (
   record: StreamRecord,
   afterOffset?: string,
 ) => Promise<StoredMessage[]>;
 
-export type LiveReadOwn = (
+export type ReadNextOwn = (
   after?: Offset,
 ) => Promise<{ messages: StoredMessage[]; nextOffset: string }>;
 
-export interface LiveReadDeps {
-  readChain: LiveReadChain;
-  readOwn: LiveReadOwn;
+export interface ReadNextDeps {
+  readChain: ReadNextChain;
+  readOwn: ReadNextOwn;
 }
 
-export interface LiveReadServiceDeps extends LiveReadDeps {
-  store: LiveReadStore;
+export interface ReadNextServiceDeps extends ReadNextDeps {
+  store: ReadNextStore;
   clock: Clock;
   longPollTimeoutMs: number;
   offsets: OffsetGenerator;
 }
 
-export class LiveReadService {
-  constructor(private deps: LiveReadServiceDeps) {}
+export class ReadNextService {
+  constructor(private deps: ReadNextServiceDeps) {}
 
-  async execute(record: StreamRecord | null, options: ReadLiveOptions): Promise<ReadLiveResult> {
+  async execute(record: StreamRecord | null, options: ReadNextOptions): Promise<ReadNextResult> {
     if (!record)
       return { status: "not-found", messages: [], nextOffset: "", upToDate: false, cursor: "" };
     if (record.lifecycle.softDeleted)

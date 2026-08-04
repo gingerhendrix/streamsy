@@ -60,18 +60,18 @@ export class SseHttpService {
     let cancelActiveRead: (() => void) | undefined;
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
-        const liveReadAbortController = new AbortController();
+        const readNextAbortController = new AbortController();
         let inactive = false;
-        const shouldStop = () => inactive || liveReadAbortController.signal.aborted;
+        const shouldStop = () => inactive || readNextAbortController.signal.aborted;
         const stop = () => {
           inactive = true;
-          liveReadAbortController.abort();
+          readNextAbortController.abort();
         };
         cancelActiveRead = stop;
         const close = () => {
           if (inactive) return;
           inactive = true;
-          liveReadAbortController.abort();
+          readNextAbortController.abort();
           try {
             controller.close();
           } catch {
@@ -148,11 +148,10 @@ export class SseHttpService {
               close();
               return;
             }
-            const result = await stream.readLive({
+            const result = await stream.readNext({
               offset: currentOffset,
-              mode: "sse",
               cursor: currentCursor,
-              signal: liveReadAbortController.signal,
+              signal: readNextAbortController.signal,
             });
             if (shouldStop()) return;
             if (

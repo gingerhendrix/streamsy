@@ -62,7 +62,7 @@ async function pump<T extends JsonValue>(
     if (options.live !== "long-poll" && options.live !== "sse") return finish();
 
     while (!signal.aborted && !session.streamClosed) {
-      const result = await stream.readLive({ offset, mode: options.live, cursor, signal });
+      const result = await stream.readNext({ offset, cursor, signal });
       if (result.status !== "ok" && result.status !== "timeout") {
         return session.end(readFailure(result));
       }

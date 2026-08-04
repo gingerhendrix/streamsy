@@ -148,7 +148,7 @@ describe("JsonProtocol", () => {
     expect(read.error).toEqual({ code: "E_SCHEMA", detail: "not a user" });
   });
 
-  it("reads typed messages through readLive", async () => {
+  it("reads typed messages through readNext", async () => {
     const protocol = createProtocol();
     const json = createJsonProtocol(protocol, userCodec);
 
@@ -156,7 +156,7 @@ describe("JsonProtocol", () => {
     expect(created.status).toBe("created");
     if (created.status !== "created") throw new Error("expected created");
 
-    const live = await created.stream.readLive({ offset: ZERO_OFFSET, mode: "long-poll" });
+    const live = await created.stream.readNext({ offset: ZERO_OFFSET });
     expect(live.status).toBe("ok");
     if (live.status !== "ok") throw new Error("expected ok");
     expect(live.messages.map((message) => message.value)).toEqual([{ id: "u1", name: "Alice" }]);

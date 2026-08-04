@@ -33,7 +33,7 @@ describe("StreamProtocol factory", () => {
     const created = await protocol.create("default-timeout", { contentType: "text/plain" });
     if (created.status !== "created") throw new Error("expected create");
 
-    const result = await created.stream.readLive({ offset: "0", mode: "long-poll" });
+    const result = await created.stream.readNext({ offset: "0" });
 
     expect(result.status).toBe("timeout");
     expect(timeouts).toEqual([30_000]);

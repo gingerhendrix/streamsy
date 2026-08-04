@@ -20,9 +20,8 @@ export class LongPollHttpService {
     cursor?: string,
     literalNow = false,
   ): Promise<Response> {
-    const result = await ctx.stream.readLive({
+    const result = await ctx.stream.readNext({
       offset,
-      mode: "long-poll",
       cursor,
     });
     if (result.status === "not-supported")

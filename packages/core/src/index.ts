@@ -94,8 +94,8 @@ export type {
   ProducerOptions,
   ReadOptions,
   ReadResult,
-  ReadLiveOptions,
-  ReadLiveResult,
+  ReadNextOptions,
+  ReadNextResult,
   MetadataResult,
   DeleteResult,
 } from "./types/protocol.ts";
