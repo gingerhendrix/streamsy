@@ -695,17 +695,25 @@ describe("Live adapter ambiguous append evidence", () => {
     expect(await ready(h)).toMatchObject({ sourceThrough: "00000001", nextProducerSeq: 1 });
   });
 
-  test("fetch rejected response after durable commit is typed and restart reconciles without a second POST", async () => {
+  test("fetch lost response keeps original bytes durable and reconciles a changed-byte same-tuple retry", async () => {
     const adapter = createMemoryStorageAdapter();
     const protocol = new StreamProtocol({ storage: { adapter } });
     const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
     let lose = true;
-    let producerPosts = 0;
+    const producerTuples: Array<{
+      readonly id: string | null;
+      readonly epoch: string | null;
+      readonly seq: string | null;
+    }> = [];
     const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
       const request = new Request(input, init);
       const response = await handler.fetch(request);
       if (request.method === "POST" && request.headers.has("producer-id")) {
-        producerPosts++;
+        producerTuples.push({
+          id: request.headers.get("producer-id"),
+          epoch: request.headers.get("producer-epoch"),
+          seq: request.headers.get("producer-seq"),
+        });
         if (lose) {
           lose = false;
           throw new TypeError("response lost after durable commit");
@@ -732,8 +740,12 @@ describe("Live adapter ambiguous append evidence", () => {
       producerEpoch: 1,
     });
     await client.stream("target").create({ contentType: "application/json" });
+    let commits = 0;
+    protocol.onAfterCommit(() => commits++);
     const previous = await Effect.runPromise(provideLive(recoverDerivedState(target, lane)));
     if (previous.status !== "ready") throw new Error("expected ready");
+    const acceptedFact = fact("accepted");
+    const changedRetryFact = fact("changed-retry-bytes");
     const exit = await Effect.runPromiseExit(
       provideLive(
         appendDerivedStateBatch({
@@ -741,16 +753,62 @@ describe("Live adapter ambiguous append evidence", () => {
           lane,
           previous,
           sourceThrough: "00000001",
-          facts: [fact(1)],
+          facts: [acceptedFact],
         }),
       ),
     );
     expect(typedError(exit)).toBeInstanceOf(StreamAppendError);
     expect(typedError(exit)).toMatchObject({ code: "transport", durability: "unknown" });
-    const recovered = await Effect.runPromise(provideLive(recoverDerivedState(target, lane)));
-    expect(recovered).toMatchObject({ sourceThrough: "00000001", nextProducerSeq: 1 });
-    expect(producerPosts).toBe(1);
-    expect(await adapter.listMessages("target")).toHaveLength(2);
+
+    const retry = await Effect.runPromise(
+      provideLive(
+        appendDerivedStateBatch({
+          target,
+          lane,
+          previous,
+          sourceThrough: "00000001",
+          facts: [changedRetryFact],
+        }),
+      ),
+    );
+    expect(retry).toMatchObject({
+      status: "sequence-already-accepted",
+      checkpoint: {
+        sourceThrough: "00000001",
+        nextProducerSeq: 1,
+        producerId: lane.producerId,
+        producerEpoch: lane.producerEpoch,
+      },
+    });
+    expect(JSON.stringify(retry)).not.toMatch(/payload|verif/i);
+    expect(producerTuples).toEqual([
+      { id: lane.producerId, epoch: String(lane.producerEpoch), seq: "0" },
+      { id: lane.producerId, epoch: String(lane.producerEpoch), seq: "0" },
+    ]);
+    expect(commits).toBe(1);
+    expect(await adapter.getProducerState("target", lane.producerId)).toEqual({
+      epoch: lane.producerEpoch,
+      lastSeq: 0,
+    });
+    const stored = await adapter.listMessages("target");
+    expect(stored).toHaveLength(2);
+    expect(stored[0]?.data).toEqual(new TextEncoder().encode(JSON.stringify(acceptedFact)));
+    expect(stored[0]?.data).not.toEqual(new TextEncoder().encode(JSON.stringify(changedRetryFact)));
+    expect(JSON.parse(new TextDecoder().decode(stored[1]?.data))).toMatchObject({
+      type: MESH_LINEAGE_TYPE,
+      value: {
+        sourceThrough: "00000001",
+        producerId: lane.producerId,
+        producerEpoch: lane.producerEpoch,
+        nextProducerSeq: 1,
+      },
+    });
+    expect(await Effect.runPromise(provideLive(recoverDerivedState(target, lane)))).toMatchObject({
+      sourceThrough: "00000001",
+      nextProducerSeq: 1,
+      producerId: lane.producerId,
+      producerEpoch: lane.producerEpoch,
+    });
   });
 
   test("interrupted Live append after commit stays interrupted and restart observes exactly one transaction", async () => {
