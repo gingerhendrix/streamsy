@@ -1,4 +1,6 @@
+import { Effect, Schema } from "effect";
 import { encodeStreamIdentity } from "../causal.ts";
+import { IncompatibleLineage, MalformedLineage } from "../effect/errors.ts";
 import type { ProducerLane } from "./lane.ts";
 
 export const MESH_RESERVED_TYPE_PREFIX = "__streamsy.";
@@ -6,40 +8,31 @@ export const MESH_LINEAGE_TYPE = "__streamsy.mesh.lineage.v1";
 export const MESH_LINEAGE_KEY = "checkpoint";
 export const MESH_LINEAGE_FORMAT = "streamsy.mesh.lineage.v1";
 
-export interface MeshLineageValue {
-  readonly format: typeof MESH_LINEAGE_FORMAT;
-  readonly processorId: string;
-  readonly processorVersion: string;
-  readonly outputGeneration: string;
-  readonly sourceIdentity: string;
-  readonly targetIdentity: string;
-  readonly sourceThrough: string;
-  readonly producerId: string;
-  readonly producerEpoch: number;
-  /** Sequence to use for the next append batch. */
-  readonly nextProducerSeq: number;
-}
+export const MeshLineageValue = Schema.Struct({
+  format: Schema.Literal(MESH_LINEAGE_FORMAT),
+  processorId: Schema.NonEmptyString,
+  processorVersion: Schema.NonEmptyString,
+  outputGeneration: Schema.NonEmptyString,
+  sourceIdentity: Schema.NonEmptyString,
+  targetIdentity: Schema.NonEmptyString,
+  sourceThrough: Schema.NonEmptyString,
+  producerId: Schema.NonEmptyString,
+  producerEpoch: Schema.Int,
+  nextProducerSeq: Schema.Int,
+});
+export interface MeshLineageValue extends Schema.Schema.Type<typeof MeshLineageValue> {}
 
-export interface MeshLineageEvent {
-  readonly type: typeof MESH_LINEAGE_TYPE;
-  readonly key: typeof MESH_LINEAGE_KEY;
-  readonly value: MeshLineageValue;
-  readonly headers: { readonly operation: "upsert" };
-}
+export const MeshLineageEvent = Schema.Struct({
+  type: Schema.Literal(MESH_LINEAGE_TYPE),
+  key: Schema.Literal(MESH_LINEAGE_KEY),
+  value: MeshLineageValue,
+  headers: Schema.Struct({ operation: Schema.Literal("upsert") }),
+});
+export interface MeshLineageEvent extends Schema.Schema.Type<typeof MeshLineageEvent> {}
 
 export interface LineageCheckpoint {
   readonly sourceThrough: string;
   readonly nextProducerSeq: number;
-}
-
-export class LineageMetadataError extends Error {
-  constructor(
-    readonly kind: "malformed-output" | "incompatible-output",
-    message: string,
-  ) {
-    super(message);
-    this.name = "LineageMetadataError";
-  }
 }
 
 export function createLineageEvent(
@@ -48,7 +41,7 @@ export function createLineageEvent(
 ): MeshLineageEvent {
   validateRealPosition(checkpoint.sourceThrough);
   validateSequence(checkpoint.nextProducerSeq);
-  return {
+  return MeshLineageEvent.make({
     type: MESH_LINEAGE_TYPE,
     key: MESH_LINEAGE_KEY,
     value: {
@@ -64,45 +57,34 @@ export function createLineageEvent(
       nextProducerSeq: checkpoint.nextProducerSeq,
     },
     headers: { operation: "upsert" },
-  };
+  });
 }
 
-/** Decode and validate durable metadata. Throws only inside recovery's typed-error boundary. */
-export function decodeLineageEvent(value: unknown): MeshLineageEvent {
-  if (!isRecord(value)) malformed("Lineage event must be an object");
-  if (value.type !== MESH_LINEAGE_TYPE || value.key !== MESH_LINEAGE_KEY) {
-    malformed("Lineage event has an invalid reserved type or key");
+/** Decode unknown durable lineage and keep all validation failures typed. */
+export const decodeLineageEvent = Effect.fn("MeshLineage.decode")(function* (value: unknown) {
+  const event = yield* Schema.decodeUnknownEffect(MeshLineageEvent)(value).pipe(
+    Effect.mapError(
+      (cause) => new MalformedLineage({ message: "Malformed mesh lineage event", cause }),
+    ),
+  );
+  if (
+    event.value.sourceThrough === "-1" ||
+    event.value.sourceThrough === "now" ||
+    event.value.producerEpoch < 0 ||
+    event.value.nextProducerSeq < 0
+  ) {
+    return yield* new MalformedLineage({
+      message: "Lineage positions and producer sequences must be durable and non-negative",
+      cause: event,
+    });
   }
-  if (!isRecord(value.headers) || value.headers.operation !== "upsert") {
-    malformed("Lineage event must be an upsert");
-  }
-  if (!isRecord(value.value)) malformed("Lineage event value must be an object");
-  const row = value.value;
-  if (row.format !== MESH_LINEAGE_FORMAT) malformed("Unsupported lineage format");
-  for (const field of [
-    "processorId",
-    "processorVersion",
-    "outputGeneration",
-    "sourceIdentity",
-    "targetIdentity",
-    "sourceThrough",
-    "producerId",
-  ] as const) {
-    if (typeof row[field] !== "string" || row[field].length === 0) {
-      malformed(`Lineage ${field} must be a non-empty string`);
-    }
-  }
-  try {
-    validateRealPosition(row.sourceThrough);
-    validateSequence(row.producerEpoch, "producerEpoch");
-    validateSequence(row.nextProducerSeq);
-  } catch (error) {
-    malformed(error instanceof Error ? error.message : "Invalid lineage value");
-  }
-  return value as unknown as MeshLineageEvent;
-}
+  return event;
+});
 
-export function assertLineageCompatible(event: MeshLineageEvent, lane: ProducerLane): void {
+export const ensureLineageCompatible = Effect.fn("MeshLineage.ensureCompatible")(function* (
+  event: MeshLineageEvent,
+  lane: ProducerLane,
+) {
   const expected = createLineageEvent(lane, {
     sourceThrough: event.value.sourceThrough,
     nextProducerSeq: event.value.nextProducerSeq,
@@ -118,17 +100,12 @@ export function assertLineageCompatible(event: MeshLineageEvent, lane: ProducerL
     "producerEpoch",
   ] as const) {
     if (event.value[field] !== expected[field]) {
-      throw new LineageMetadataError(
-        "incompatible-output",
-        `Lineage ${field} is incompatible with the configured lane`,
-      );
+      return yield* new IncompatibleLineage({
+        message: `Lineage ${field} is incompatible with the configured lane`,
+      });
     }
   }
-}
-
-function malformed(message: string): never {
-  throw new LineageMetadataError("malformed-output", message);
-}
+});
 
 export function assertFactTypeAllowed(value: unknown): void {
   if (!isRecord(value) || typeof value.type !== "string" || value.type.length === 0) {
@@ -146,7 +123,7 @@ function validateRealPosition(value: unknown): asserts value is string {
 }
 
 function validateSequence(value: unknown, name = "nextProducerSeq"): asserts value is number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new TypeError(`${name} must be a non-negative safe integer`);
   }
 }
