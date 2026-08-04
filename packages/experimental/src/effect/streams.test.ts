@@ -199,22 +199,23 @@ describe("Effect stream capabilities", () => {
   });
 });
 
+async function unusedClientOperation(): Promise<never> {
+  throw new Error("unused client operation");
+}
+
 function sessionBinding(options: {
   readonly scenario: "early-return" | "typed-failure" | "missing-start-offset" | "blocked";
   readonly onCancel: () => void;
 }) {
-  const unused = async (): Promise<never> => {
-    throw new Error("unused client operation");
-  };
   const client: StreamProtocolClient = {
     stream(streamId: string): StreamProtocolHandle {
       return {
         id: streamId,
-        head: unused,
-        create: unused,
-        append: unused,
-        appendJsonBatch: unused,
-        close: unused,
+        head: unusedClientOperation,
+        create: unusedClientOperation,
+        append: unusedClientOperation,
+        appendJsonBatch: unusedClientOperation,
+        close: unusedClientOperation,
         read: async <T extends JsonValue>() => {
           const session = new ClientReadSession<T>({ startOffset: "-1" });
           const originalCancel = session.cancel.bind(session);

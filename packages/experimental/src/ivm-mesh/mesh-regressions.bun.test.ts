@@ -83,7 +83,7 @@ function fact(value: JsonValue): JsonValue {
   return { type: "order", key: `o-${String(value)}`, value, headers: { operation: "upsert" } };
 }
 
-function options(h: SqliteHarness, target = h.target, lane = h.lane) {
+function projectionOptions(h: SqliteHarness, target = h.target, lane = h.lane) {
   return {
     source: h.source,
     target,
@@ -100,7 +100,7 @@ function options(h: SqliteHarness, target = h.target, lane = h.lane) {
 }
 
 async function run(h: SqliteHarness, target = h.target, lane = h.lane) {
-  return Effect.runPromise(provideLive(catchUp(options(h, target, lane))));
+  return Effect.runPromise(provideLive(catchUp(projectionOptions(h, target, lane))));
 }
 
 async function ready(h: SqliteHarness, target = h.target, lane = h.lane) {
