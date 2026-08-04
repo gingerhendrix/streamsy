@@ -37,19 +37,30 @@
       "types": "./dist/ivm-mesh.d.ts",
       "import": "./dist/ivm-mesh.js",
       "default": "./dist/ivm-mesh.js"
+    },
+    "./effect": {
+      "types": "./dist/effect.d.ts",
+      "import": "./dist/effect.js",
+      "default": "./dist/effect.js"
+    },
+    "./effect/testing": {
+      "types": "./dist/effect-testing.d.ts",
+      "import": "./dist/effect-testing.js",
+      "default": "./dist/effect-testing.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/binding.ts src/causal.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
+    "build": "tsdown src/binding.ts src/causal.ts src/effect.ts src/effect-testing.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external effect",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
     "test:sqlite": "bun test src/ivm-mesh/*.bun.test.ts"
   },
   "dependencies": {
-    "@streamsy/core": "0.2.1"
+    "@streamsy/core": "0.2.1",
+    "effect": "4.0.0-beta.99"
   },
   "devDependencies": {
     "@streamsy/client": "workspace:*",

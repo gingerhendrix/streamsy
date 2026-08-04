@@ -1,0 +1,120 @@
+import type {
+  AppendJsonBatchOptions,
+  AppendStreamOptions,
+  ClientAppendResult,
+  ClientReadResult,
+  JsonValue,
+  ReadEndResult,
+  ReadStreamOptions,
+  StreamBatch,
+} from "@streamsy/core";
+import { Context, Effect, Layer } from "effect";
+import type { StreamBinding } from "../binding.ts";
+import { StreamAppendError, StreamReadError } from "./errors.ts";
+
+export interface EffectReadSession<T extends JsonValue = JsonValue> {
+  readonly contentType?: string;
+  readonly startOffset?: string;
+  readonly next: Effect.Effect<IteratorResult<StreamBatch<T>>, StreamReadError>;
+  readonly done: Effect.Effect<Exclude<ReadEndResult, { status: "error" }>, StreamReadError>;
+  readonly cancel: (reason?: unknown) => Effect.Effect<void>;
+}
+
+export type ReadOpenResult<T extends JsonValue = JsonValue> =
+  | { readonly status: "ok"; readonly session: EffectReadSession<T> }
+  | { readonly status: "not-found" | "gone" };
+export type AppendOutcome = Exclude<ClientAppendResult, { status: "error" }>;
+
+export interface ReadStreamsShape {
+  readonly open: (
+    binding: StreamBinding,
+    options?: ReadStreamOptions,
+  ) => Effect.Effect<ReadOpenResult, StreamReadError>;
+}
+
+export class ReadStreams extends Context.Service<ReadStreams, ReadStreamsShape>()(
+  "@streamsy/experimental/ReadStreams",
+) {}
+
+export interface AppendStreamsShape {
+  readonly append: (
+    binding: StreamBinding,
+    data: Uint8Array | string,
+    options?: AppendStreamOptions,
+  ) => Effect.Effect<AppendOutcome, StreamAppendError>;
+  readonly appendJsonBatch: (
+    binding: StreamBinding,
+    items: readonly JsonValue[],
+    options?: AppendJsonBatchOptions,
+  ) => Effect.Effect<AppendOutcome, StreamAppendError>;
+}
+
+export class AppendStreams extends Context.Service<AppendStreams, AppendStreamsShape>()(
+  "@streamsy/experimental/AppendStreams",
+) {}
+
+function readPromise<A>(operation: string, run: (signal: AbortSignal) => Promise<A>) {
+  return Effect.tryPromise({ try: run, catch: (cause) => StreamReadError.from(operation, cause) });
+}
+
+function appendPromise<A>(operation: string, run: (signal: AbortSignal) => Promise<A>) {
+  return Effect.tryPromise({ try: run, catch: (cause) => StreamAppendError.from(operation, cause) });
+}
+
+export const ReadStreamsLive = Layer.succeed(
+  ReadStreams,
+  ReadStreams.of({
+    open: Effect.fn("ReadStreams.open")(function* (binding, options) {
+      const result: ClientReadResult = yield* readPromise("open", (signal) =>
+        binding.client.stream(binding.streamId).read({ ...options, signal }),
+      );
+      if (result.status === "error") return yield* Effect.fail(StreamReadError.from("open", result));
+      if (result.status !== "ok") return result;
+      const iterator = result.session[Symbol.asyncIterator]();
+      return {
+        status: "ok" as const,
+        session: {
+          contentType: result.session.contentType,
+          startOffset: result.session.startOffset,
+          next: readPromise("next", () => iterator.next()),
+          done: readPromise("done", () => result.session.done).pipe(
+            Effect.flatMap((ended: ReadEndResult) =>
+              ended.status === "error"
+                ? Effect.fail(StreamReadError.from("done", ended))
+                : Effect.succeed(ended),
+            ),
+          ),
+          cancel: (reason?: unknown) => Effect.sync(() => result.session.cancel(reason)),
+        },
+      };
+    }),
+  }),
+);
+
+export const AppendStreamsLive = Layer.succeed(
+  AppendStreams,
+  AppendStreams.of({
+    append: Effect.fn("AppendStreams.append")((binding, data, options) =>
+      appendPromise("append", (signal) =>
+        binding.client.stream(binding.streamId).append(data, { ...options, signal }),
+      ).pipe(
+        Effect.flatMap((result: ClientAppendResult) =>
+          result.status === "error"
+            ? Effect.fail(StreamAppendError.from("append", result))
+            : Effect.succeed(result),
+        ),
+      ),
+    ),
+    appendJsonBatch: Effect.fn("AppendStreams.appendJsonBatch")((binding, items, options) =>
+      appendPromise("appendJsonBatch", (signal) =>
+        binding.client.stream(binding.streamId).appendJsonBatch(items, { ...options, signal }),
+      ).pipe(
+        Effect.flatMap((result: ClientAppendResult) =>
+          result.status === "error"
+            ? Effect.fail(StreamAppendError.from("appendJsonBatch", result))
+            : Effect.succeed(result),
+        ),
+      ),
+    ),
+  }),
+);
