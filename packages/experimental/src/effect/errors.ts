@@ -1,7 +1,7 @@
 import type { ClientFailure } from "@streamsy/core";
 import { Schema } from "effect";
 
-const ClientErrorCode = Schema.Literals([
+const CLIENT_ERROR_CODES = [
   "transport",
   "unauthorized",
   "forbidden",
@@ -13,7 +13,9 @@ const ClientErrorCode = Schema.Literals([
   "aborted",
   "client-closed",
   "unknown",
-]);
+] as const;
+
+const ClientErrorCode = Schema.Literals(CLIENT_ERROR_CODES);
 
 export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()("StreamReadError", {
   operation: Schema.String,
@@ -27,11 +29,7 @@ export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()(
     return new StreamReadError({
       operation,
       failure,
-      message: isClientFailure(failure)
-        ? failure.message
-        : failure instanceof Error
-          ? failure.message
-          : String(failure),
+      message: clientFailureMessage(failure),
       ...classification,
     });
   }
@@ -53,11 +51,7 @@ export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError
     return new StreamAppendError({
       operation,
       failure,
-      message: isClientFailure(failure)
-        ? failure.message
-        : failure instanceof Error
-          ? failure.message
-          : String(failure),
+      message: clientFailureMessage(failure),
       ...classification,
       durability: "unknown",
     });
@@ -103,7 +97,31 @@ function clientFailureClassification(failure: ClientFailure | unknown) {
 }
 
 function isClientFailure(value: unknown): value is ClientFailure {
-  return (
-    typeof value === "object" && value !== null && "status" in value && value.status === "error"
-  );
+  try {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "status" in value &&
+      value.status === "error" &&
+      "code" in value &&
+      typeof value.code === "string" &&
+      CLIENT_ERROR_CODES.some((code) => code === value.code) &&
+      "message" in value &&
+      typeof value.message === "string" &&
+      "retryable" in value &&
+      typeof value.retryable === "boolean"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function clientFailureMessage(failure: unknown): string {
+  if (isClientFailure(failure)) return failure.message;
+  try {
+    if (failure instanceof Error && typeof failure.message === "string") return failure.message;
+    return String(failure);
+  } catch {
+    return "Unknown client failure";
+  }
 }

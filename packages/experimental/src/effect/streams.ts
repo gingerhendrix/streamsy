@@ -8,7 +8,7 @@ import type {
   ReadStreamOptions,
   StreamBatch,
 } from "@streamsy/core";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, type Scope } from "effect";
 import type { StreamBinding } from "../binding.ts";
 import { StreamAppendError, StreamReadError } from "./errors.ts";
 
@@ -26,10 +26,17 @@ export type ReadOpenResult<T extends JsonValue = JsonValue> =
 export type AppendOutcome = Exclude<ClientAppendResult, { status: "error" }>;
 
 export interface ReadStreamsShape {
+  /**
+   * Acquire a finite read session in the current Scope.
+   *
+   * Every successful `ok` acquisition registers exactly one session cancel
+   * finalizer before the result becomes visible to the caller. Callers own the
+   * surrounding workflow with `Effect.scoped`; they never manually cancel.
+   */
   readonly open: (
     binding: StreamBinding,
     options?: ReadStreamOptions,
-  ) => Effect.Effect<ReadOpenResult, StreamReadError>;
+  ) => Effect.Effect<ReadOpenResult, StreamReadError, Scope.Scope>;
 }
 
 export class ReadStreams extends Context.Service<ReadStreams, ReadStreamsShape>()(
@@ -64,34 +71,52 @@ function appendPromise<A>(operation: string, run: (signal: AbortSignal) => Promi
   });
 }
 
+/** Register ownership atomically for every successful session acquisition. */
+function scopedReadOpen(
+  acquire: Effect.Effect<ReadOpenResult, StreamReadError>,
+): Effect.Effect<ReadOpenResult, StreamReadError, Scope.Scope> {
+  return Effect.acquireRelease(
+    acquire,
+    (opened) =>
+      opened.status === "ok"
+        ? opened.session.cancel("read scope closed").pipe(Effect.catchCause(() => Effect.void))
+        : Effect.void,
+    { interruptible: true },
+  );
+}
+
 export const ReadStreamsLive = Layer.succeed(
   ReadStreams,
   ReadStreams.of({
-    open: Effect.fn("ReadStreams.open")(function* (binding, options) {
-      const result: ClientReadResult = yield* readPromise("open", (signal) =>
-        binding.client.stream(binding.streamId).read({ ...options, signal }),
-      );
-      if (result.status === "error")
-        return yield* Effect.fail(StreamReadError.from("open", result));
-      if (result.status !== "ok") return result;
-      const iterator = result.session[Symbol.asyncIterator]();
-      return {
-        status: "ok" as const,
-        session: {
-          contentType: result.session.contentType,
-          startOffset: result.session.startOffset,
-          next: readPromise("next", () => iterator.next()),
-          done: readPromise("done", () => result.session.done).pipe(
-            Effect.flatMap((ended: ReadEndResult) =>
-              ended.status === "error"
-                ? Effect.fail(StreamReadError.from("done", ended))
-                : Effect.succeed(ended),
-            ),
-          ),
-          cancel: (reason?: unknown) => Effect.sync(() => result.session.cancel(reason)),
-        },
-      };
-    }),
+    open: Effect.fn("ReadStreams.open")((binding, options) =>
+      scopedReadOpen(
+        Effect.gen(function* () {
+          const result: ClientReadResult = yield* readPromise("open", (signal) =>
+            binding.client.stream(binding.streamId).read({ ...options, signal }),
+          );
+          if (result.status === "error")
+            return yield* Effect.fail(StreamReadError.from("open", result));
+          if (result.status !== "ok") return result;
+          const iterator = result.session[Symbol.asyncIterator]();
+          return {
+            status: "ok" as const,
+            session: {
+              contentType: result.session.contentType,
+              startOffset: result.session.startOffset,
+              next: readPromise("next", () => iterator.next()),
+              done: readPromise("done", () => result.session.done).pipe(
+                Effect.flatMap((ended: ReadEndResult) =>
+                  ended.status === "error"
+                    ? Effect.fail(StreamReadError.from("done", ended))
+                    : Effect.succeed(ended),
+                ),
+              ),
+              cancel: (reason?: unknown) => Effect.sync(() => result.session.cancel(reason)),
+            },
+          };
+        }),
+      ),
+    ),
   }),
 );
 

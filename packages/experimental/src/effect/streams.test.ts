@@ -1,10 +1,14 @@
 import {
+  ClientReadSession,
   StreamProtocol,
   createMemoryStorageAdapter,
   directProtocolClient,
   type ClientFailure,
+  type JsonValue,
+  type StreamProtocolClient,
+  type StreamProtocolHandle,
 } from "@streamsy/core";
-import { Effect, Exit, Schema } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
@@ -29,6 +33,24 @@ describe("Effect stream capabilities", () => {
     expect(append).toMatchObject({ code: "busy", retryable: true, durability: "unknown" });
   });
 
+  test.each([
+    { status: "error" },
+    { status: "error", code: "busy" },
+    { status: "error", code: "not-real", message: 1, retryable: "yes" },
+  ])("partial unknown failures cannot defect during tagged-error construction", (failure) => {
+    expect(() => StreamReadError.from("open", failure)).not.toThrow();
+    expect(() => StreamAppendError.from("append", failure)).not.toThrow();
+    expect(StreamReadError.from("open", failure)).toMatchObject({
+      code: "unknown",
+      retryable: false,
+    });
+    expect(StreamAppendError.from("append", failure)).toMatchObject({
+      code: "unknown",
+      retryable: false,
+      durability: "unknown",
+    });
+  });
+
   test("Live layers adapt the fixed Promise client while preserving protocol outcomes", async () => {
     const client = directProtocolClient(
       new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } }),
@@ -51,7 +73,7 @@ describe("Effect stream capabilities", () => {
         const second = yield* opened.session.next;
         const ended = yield* opened.session.done;
         return { appended, first, second, ended };
-      }).pipe(Effect.provide(ReadStreamsLive), Effect.provide(AppendStreamsLive)),
+      }).pipe(Effect.scoped, Effect.provide(ReadStreamsLive), Effect.provide(AppendStreamsLive)),
     );
 
     expect(Exit.isSuccess(exit)).toBe(true);
@@ -64,6 +86,63 @@ describe("Effect stream capabilities", () => {
       });
     }
     await client.close();
+  });
+
+  test.each(["early-return", "typed-failure", "missing-start-offset"] as const)(
+    "a successful Live read acquisition releases exactly once on %s",
+    async (scenario) => {
+      let cancelled = 0;
+      const binding = sessionBinding({ scenario, onCancel: () => cancelled++ });
+      const exit = await Effect.runPromiseExit(
+        Effect.gen(function* () {
+          const reads = yield* ReadStreams;
+          const opened = yield* reads.open(binding);
+          if (opened.status !== "ok") return opened;
+          if (scenario === "early-return") return opened.status;
+          if (scenario === "missing-start-offset") {
+            return yield* Effect.fail(
+              new StreamReadError({
+                operation: "invariant",
+                failure: opened,
+                message: "missing start offset",
+                code: "unknown",
+                retryable: false,
+              }),
+            );
+          }
+          yield* opened.session.next;
+          return yield* opened.session.done;
+        }).pipe(Effect.scoped, Effect.provide(ReadStreamsLive)),
+      );
+
+      expect(Exit.isSuccess(exit)).toBe(scenario === "early-return");
+      expect(cancelled).toBe(1);
+      await binding.client.close();
+    },
+  );
+
+  test("interruption of a blocked Live pull releases its session exactly once", async () => {
+    let cancelled = 0;
+    const binding = sessionBinding({ scenario: "blocked", onCancel: () => cancelled++ });
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const acquired = yield* Deferred.make<void>();
+        const fiber = yield* Effect.gen(function* () {
+          const reads = yield* ReadStreams;
+          const opened = yield* reads.open(binding);
+          if (opened.status !== "ok") return opened;
+          yield* Deferred.succeed(acquired, undefined);
+          return yield* opened.session.next;
+        }).pipe(Effect.scoped, Effect.provide(ReadStreamsLive), Effect.forkChild);
+        yield* Deferred.await(acquired);
+        yield* Fiber.interrupt(fiber);
+        return yield* Fiber.await(fiber);
+      }),
+    );
+
+    expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true);
+    expect(cancelled).toBe(1);
+    await binding.client.close();
   });
 
   test("Test layer supplies the same handlers through production and control tags", async () => {
@@ -103,7 +182,7 @@ describe("Effect stream capabilities", () => {
           sameRead: reads === controls.read,
           sameAppend: appends === controls.append,
         };
-      }).pipe(Effect.provide(TestStreamsLayer(handlers))),
+      }).pipe(Effect.scoped, Effect.provide(TestStreamsLayer(handlers))),
     );
     expect(result).toEqual({
       read: { status: "not-found" },
@@ -119,3 +198,46 @@ describe("Effect stream capabilities", () => {
     await client.close();
   });
 });
+
+function sessionBinding(options: {
+  readonly scenario: "early-return" | "typed-failure" | "missing-start-offset" | "blocked";
+  readonly onCancel: () => void;
+}) {
+  const unused = async (): Promise<never> => {
+    throw new Error("unused client operation");
+  };
+  const client: StreamProtocolClient = {
+    stream(streamId: string): StreamProtocolHandle {
+      return {
+        id: streamId,
+        head: unused,
+        create: unused,
+        append: unused,
+        appendJsonBatch: unused,
+        close: unused,
+        read: async <T extends JsonValue>() => {
+          const session = new ClientReadSession<T>({ startOffset: "-1" });
+          const originalCancel = session.cancel.bind(session);
+          session.cancel = (reason?: unknown) => {
+            options.onCancel();
+            originalCancel(reason);
+          };
+          if (options.scenario === "typed-failure") {
+            session.end({
+              status: "error",
+              code: "transport",
+              message: "read failed",
+              retryable: true,
+            });
+          }
+          if (options.scenario === "missing-start-offset") {
+            Object.defineProperty(session, "startOffset", { value: undefined });
+          }
+          return { status: "ok", session };
+        },
+      };
+    },
+    async close() {},
+  };
+  return bindStream({ identity: streamIdentity("session"), client, streamId: "session" });
+}

@@ -78,36 +78,37 @@ export type CatchUpResult =
  * session and is never translated into a routine result. Interruption during a
  * remote append therefore leaves durability unknown until the next recovery.
  */
-export const catchUp = Effect.fn("catchUp")(function* <Input>(options: CatchUpOptions<Input>) {
-  validateOptions(options);
-  const recovery = yield* DerivedRecovery;
-  const reads = yield* ReadStreams;
+export const catchUp = Effect.fn("catchUp")(<Input>(options: CatchUpOptions<Input>) =>
+  Effect.gen(function* () {
+    validateOptions(options);
+    const recovery = yield* DerivedRecovery;
+    const reads = yield* ReadStreams;
 
-  const recovered = yield* recovery.recover(options.target, options.lane);
-  if (recovered.status !== "ready") {
-    return { status: recovered.status, stream: "target" as const };
-  }
-  const initial: CatchUpProgress = {
-    checkpoint: recovered,
-    pages: 0,
-    batches: 0,
-    items: 0,
-    bytes: 0,
-  };
-  const opened = yield* reads.open(options.source, {
-    ...(recovered.sourceThrough === undefined ? {} : { offset: recovered.sourceThrough }),
-    live: false,
-  });
-  if (opened.status !== "ok")
-    return {
-      status: opened.status === "not-found" ? ("missing" as const) : ("gone" as const),
-      stream: "source" as const,
-      ...initial,
+    const recovered = yield* recovery.recover(options.target, options.lane);
+    if (recovered.status !== "ready") {
+      return { status: recovered.status, stream: "target" as const };
+    }
+    const initial: CatchUpProgress = {
+      checkpoint: recovered,
+      pages: 0,
+      batches: 0,
+      items: 0,
+      bytes: 0,
     };
+    const opened = yield* reads.open(options.source, {
+      ...(recovered.sourceThrough === undefined ? {} : { offset: recovered.sourceThrough }),
+      live: false,
+    });
+    if (opened.status !== "ok")
+      return {
+        status: opened.status === "not-found" ? ("missing" as const) : ("gone" as const),
+        stream: "source" as const,
+        ...initial,
+      };
 
-  const run = pullBoundary(options, opened.session, initial);
-  return yield* run.pipe(Effect.ensuring(opened.session.cancel("projection complete")));
-});
+    return yield* pullBoundary(options, opened.session, initial);
+  }).pipe(Effect.scoped),
+);
 
 const pullBoundary = <Input>(
   options: CatchUpOptions<Input>,

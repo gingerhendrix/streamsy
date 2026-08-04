@@ -76,67 +76,69 @@ export const DerivedRecoveryTest = (recover: DerivedRecoveryShape["recover"]) =>
   Layer.succeed(DerivedRecovery, DerivedRecovery.of({ recover }));
 
 const makeRecover = (reads: ReadStreamsShape) =>
-  Effect.fn("DerivedRecovery.recover")(function* (target: StreamBinding, lane: ProducerLane) {
-    assertTargetMatchesLane(target, lane);
-    const opened = yield* reads.open(target);
-    if (opened.status !== "ok") return opened;
-    const session = opened.session;
-    if (session.startOffset === undefined) {
-      return yield* new MalformedLineage({
-        message: "Derived State recovery read did not provide a start offset",
-        cause: opened,
-      });
-    }
-    let targetOffset = session.startOffset;
-    let lineage: MeshLineageEvent | undefined;
-    let lastWasLineage = false;
-    let sawItems = false;
-
-    const pull = Effect.gen(function* () {
-      while (true) {
-        const next = yield* session.next;
-        if (next.done) break;
-        const batch = next.value;
-        targetOffset = batch.offset;
-        if (batch.kind !== "json") {
-          return yield* new IncompatibleLineage({
-            message: "Derived State target is not JSON",
-          });
-        }
-        for (const item of batch.items) {
-          sawItems = true;
-          lastWasLineage = false;
-          if (!isRecord(item) || typeof item.type !== "string") continue;
-          if (item.type === MESH_LINEAGE_TYPE) {
-            const decoded = yield* decodeLineageEvent(item);
-            yield* ensureLineageCompatible(decoded, lane);
-            lineage = decoded;
-            lastWasLineage = true;
-          } else if (item.type.startsWith(MESH_RESERVED_TYPE_PREFIX)) {
-            return yield* new IncompatibleLineage({
-              message: `Unknown reserved State type ${item.type}`,
-            });
-          }
-        }
-      }
-      const ended = yield* session.done;
-      if (ended.status === "cancelled") return yield* Effect.interrupt;
-      if (sawItems && (!lineage || !lastWasLineage)) {
-        return yield* new IncompatibleLineage({
-          message: "Derived State history does not end at a lineage transaction boundary",
+  Effect.fn("DerivedRecovery.recover")((target: StreamBinding, lane: ProducerLane) =>
+    Effect.gen(function* () {
+      assertTargetMatchesLane(target, lane);
+      const opened = yield* reads.open(target);
+      if (opened.status !== "ok") return opened;
+      const session = opened.session;
+      if (session.startOffset === undefined) {
+        return yield* new MalformedLineage({
+          message: "Derived State recovery read did not provide a start offset",
+          cause: opened,
         });
       }
-      return {
-        status: "ready" as const,
-        targetOffset,
-        sourceThrough: lineage?.value.sourceThrough,
-        nextProducerSeq: lineage?.value.nextProducerSeq ?? 0,
-        producerId: lane.producerId,
-        producerEpoch: lane.producerEpoch,
-      };
-    });
-    return yield* pull.pipe(Effect.ensuring(session.cancel("recovery complete")));
-  });
+      let targetOffset = session.startOffset;
+      let lineage: MeshLineageEvent | undefined;
+      let lastWasLineage = false;
+      let sawItems = false;
+
+      const pull = Effect.gen(function* () {
+        while (true) {
+          const next = yield* session.next;
+          if (next.done) break;
+          const batch = next.value;
+          targetOffset = batch.offset;
+          if (batch.kind !== "json") {
+            return yield* new IncompatibleLineage({
+              message: "Derived State target is not JSON",
+            });
+          }
+          for (const item of batch.items) {
+            sawItems = true;
+            lastWasLineage = false;
+            if (!isRecord(item) || typeof item.type !== "string") continue;
+            if (item.type === MESH_LINEAGE_TYPE) {
+              const decoded = yield* decodeLineageEvent(item);
+              yield* ensureLineageCompatible(decoded, lane);
+              lineage = decoded;
+              lastWasLineage = true;
+            } else if (item.type.startsWith(MESH_RESERVED_TYPE_PREFIX)) {
+              return yield* new IncompatibleLineage({
+                message: `Unknown reserved State type ${item.type}`,
+              });
+            }
+          }
+        }
+        const ended = yield* session.done;
+        if (ended.status === "cancelled") return yield* Effect.interrupt;
+        if (sawItems && (!lineage || !lastWasLineage)) {
+          return yield* new IncompatibleLineage({
+            message: "Derived State history does not end at a lineage transaction boundary",
+          });
+        }
+        return {
+          status: "ready" as const,
+          targetOffset,
+          sourceThrough: lineage?.value.sourceThrough,
+          nextProducerSeq: lineage?.value.nextProducerSeq ?? 0,
+          producerId: lane.producerId,
+          producerEpoch: lane.producerEpoch,
+        };
+      });
+      return yield* pull;
+    }).pipe(Effect.scoped),
+  );
 
 export const recoverDerivedState = Effect.fn("recoverDerivedState")(function* (
   target: StreamBinding,
