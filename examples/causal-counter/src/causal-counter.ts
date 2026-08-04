@@ -18,7 +18,7 @@ import {
   type ProducerLane,
   type ProjectionBoundary,
 } from "@streamsy/experimental/ivm-mesh";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 
 export const COUNTER_COLLECTION = "counter-contribution";
 
@@ -27,11 +27,36 @@ export interface CounterIncrement {
   readonly delta: number;
 }
 
-export interface CounterContribution {
-  readonly counterId: string;
-  readonly delta: number;
-  readonly sourcePosition: string;
-}
+export const CounterContribution = Schema.Struct({
+  counterId: Schema.NonEmptyString,
+  delta: Schema.Int,
+  sourcePosition: Schema.NonEmptyString,
+});
+export interface CounterContribution extends Schema.Schema.Type<typeof CounterContribution> {}
+
+export const CounterContributionEvent = Schema.Struct({
+  type: Schema.Literal(COUNTER_COLLECTION),
+  key: Schema.NonEmptyString,
+  value: CounterContribution,
+  headers: Schema.Struct({ operation: Schema.Literal("upsert") }),
+});
+export interface CounterContributionEvent extends Schema.Schema.Type<
+  typeof CounterContributionEvent
+> {}
+
+export class MalformedCounterState extends Schema.TaggedErrorClass<MalformedCounterState>()(
+  "MalformedCounterState",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}
+
+export class UnregisteredCounterStateCollection extends Schema.TaggedErrorClass<UnregisteredCounterStateCollection>()(
+  "UnregisteredCounterStateCollection",
+  { collection: Schema.String },
+) {}
+
+export type CounterConsumerResult =
+  | { readonly status: "caught-up" }
+  | { readonly status: "not-found" | "gone" };
 
 export interface CounterConsumerSnapshot {
   readonly contributions: readonly (readonly [string, CounterContribution])[];
@@ -130,19 +155,24 @@ export class EagerCounterConsumer {
   }
 
   private static readonly catchUpEffect = Effect.fn("CausalCounter.EagerConsumer.catchUp")(
-    function* (consumer: EagerCounterConsumer, target: StreamBinding, observer?: CounterObserver) {
-      const reads = yield* ReadStreams;
-      const opened = yield* reads.open(target, {
-        ...(consumer.targetResume === undefined ? {} : { offset: consumer.targetResume }),
-        live: false,
-      });
-      if (opened.status !== "ok") throw new Error(`Counter target read failed: ${opened.status}`);
-      yield* Effect.gen(function* () {
+    (consumer: EagerCounterConsumer, target: StreamBinding, observer?: CounterObserver) =>
+      Effect.gen(function* () {
+        const reads = yield* ReadStreams;
+        const opened = yield* reads.open(target, {
+          ...(consumer.targetResume === undefined ? {} : { offset: consumer.targetResume }),
+          live: false,
+        });
+        if (opened.status !== "ok") return opened;
         while (true) {
           const next = yield* opened.session.next;
           if (next.done) break;
           const batch = next.value;
-          if (batch.kind !== "json") throw new TypeError("Counter target must be JSON State");
+          if (batch.kind !== "json") {
+            return yield* new MalformedCounterState({
+              message: "Counter target must be JSON State",
+              cause: batch,
+            });
+          }
           if (batch.items.length === 0) continue;
           yield* EagerCounterConsumer.applyTransactionEffect(
             consumer,
@@ -153,8 +183,8 @@ export class EagerCounterConsumer {
         }
         const ended = yield* opened.session.done;
         if (ended.status !== "done") return yield* Effect.interrupt;
-      }).pipe(Effect.ensuring(opened.session.cancel("counter consumer complete")));
-    },
+        return { status: "caught-up" as const };
+      }).pipe(Effect.scoped),
   );
 
   counterValue(counterId: string): number | undefined {
@@ -212,15 +242,23 @@ export class EagerCounterConsumer {
     let lineage = consumer.lineage;
     for (const event of events) {
       if (!isRecord(event) || typeof event.type !== "string") {
-        throw new TypeError("State event must have a type");
+        return yield* new MalformedCounterState({
+          message: "State event must have a type",
+          cause: event,
+        });
       }
       if (event.type === COUNTER_COLLECTION) {
-        const decoded = decodeContribution(event);
+        const decoded = yield* Schema.decodeUnknownEffect(CounterContributionEvent)(event).pipe(
+          Effect.mapError(
+            (cause) =>
+              new MalformedCounterState({ message: "Malformed counter contribution", cause }),
+          ),
+        );
         contributions.set(decoded.key, decoded.value);
       } else if (event.type === MESH_LINEAGE_TYPE) {
         lineage = yield* decodeLineageEvent(event);
       } else {
-        throw new TypeError(`Unregistered State collection: ${event.type}`);
+        return yield* new UnregisteredCounterStateCollection({ collection: event.type });
       }
     }
     consumer.contributions = contributions;
@@ -238,28 +276,6 @@ function validateIncrement(value: unknown): CounterIncrement {
     throw new TypeError("Counter increment delta must be a safe integer");
   }
   return { counterId: value.counterId, delta: value.delta };
-}
-
-function decodeContribution(event: Record<string, unknown>): {
-  readonly key: string;
-  readonly value: CounterContribution;
-} {
-  if (typeof event.key !== "string" || event.key.length === 0) {
-    throw new TypeError("Counter contribution requires a key");
-  }
-  if (!isRecord(event.headers) || event.headers.operation !== "upsert") {
-    throw new TypeError("Counter contribution must be an upsert");
-  }
-  const value = validateContribution(event.value);
-  return { key: event.key, value };
-}
-
-function validateContribution(value: unknown): CounterContribution {
-  const increment = validateIncrement(value);
-  if (!isRecord(value) || typeof value.sourcePosition !== "string") {
-    throw new TypeError("Counter contribution requires a source position");
-  }
-  return { ...increment, sourcePosition: value.sourcePosition };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

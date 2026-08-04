@@ -13,18 +13,21 @@ import {
   type StreamBinding,
 } from "@streamsy/experimental/binding";
 import { sourceAck, streamIdentity } from "@streamsy/experimental/causal";
-import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effect";
+import { AppendStreamsLive, ReadStreams, ReadStreamsLive } from "@streamsy/experimental/effect";
 import {
   DerivedRecoveryLive,
   deriveProducerLane,
   type ProducerLane,
 } from "@streamsy/experimental/ivm-mesh";
-import { Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   EagerCounterConsumer,
+  MalformedCounterState,
+  UnregisteredCounterStateCollection,
   appendCounterIncrement,
   projectCounterIncrements,
+  type CounterConsumerResult,
 } from "./causal-counter.ts";
 
 interface Harness {
@@ -35,7 +38,7 @@ interface Harness {
   readonly lane: ProducerLane;
   append(delta: number): Promise<BoundAppendResult>;
   project(): Promise<unknown>;
-  consume(consumer: EagerCounterConsumer): Promise<void>;
+  consume(consumer: EagerCounterConsumer): Promise<CounterConsumerResult>;
   close(): Promise<void>;
 }
 
@@ -79,7 +82,77 @@ describe("causal counter — Effect runtime edge", () => {
     expect(restarted.syncedThrough(appended.ack)).toEqual({ status: "proven" });
     expect(await h.adapter.listMessages(h.target.streamId)).toEqual(before);
   });
+
+  test.each(["not-found", "gone"] as const)(
+    "consumer returns the expected %s protocol outcome as a value",
+    async (status) => {
+      const h = await harness("direct");
+      const outcome = await Effect.runPromise(
+        new EagerCounterConsumer()
+          .catchUp(h.target)
+          .pipe(
+            Effect.provide(
+              Layer.succeed(
+                ReadStreams,
+                ReadStreams.of({ open: () => Effect.succeed({ status }) }),
+              ),
+            ),
+          ),
+      );
+      expect(outcome).toEqual({ status });
+    },
+  );
+
+  test("non-JSON target data fails with a typed persisted-state error", async () => {
+    const h = await harness("direct");
+    await h.client.stream("text-state").create({ contentType: "text/plain" });
+    await h.client.stream("text-state").append("not json", { contentType: "text/plain" });
+    const textTarget = bindStream({ ...h.target, streamId: "text-state" });
+    const exit = await Effect.runPromiseExit(
+      new EagerCounterConsumer().catchUp(textTarget).pipe(Effect.provide(ReadStreamsLive)),
+    );
+    expect(typedError(exit)).toBeInstanceOf(MalformedCounterState);
+  });
+
+  test("malformed and unregistered persisted rows are typed and do not partially advance", async () => {
+    for (const [event, ErrorClass] of [
+      [
+        {
+          type: "counter-contribution",
+          key: "bad",
+          value: { counterId: "visits", delta: 1.5, sourcePosition: "00000001" },
+          headers: { operation: "upsert" },
+        },
+        MalformedCounterState,
+      ],
+      [
+        {
+          type: "other-state",
+          key: "bad",
+          value: {},
+          headers: { operation: "upsert" },
+        },
+        UnregisteredCounterStateCollection,
+      ],
+    ] as const) {
+      const h = await harness("direct");
+      await h.client.stream(h.target.streamId).appendJsonBatch([event]);
+      const consumer = new EagerCounterConsumer();
+      const exit = await Effect.runPromiseExit(
+        consumer.catchUp(h.target).pipe(Effect.provide(ReadStreamsLive)),
+      );
+      expect(typedError(exit)).toBeInstanceOf(ErrorClass);
+      expect(consumer.snapshot()).toEqual({ contributions: [] });
+    }
+  });
 });
+
+function typedError<A, E>(exit: Exit.Exit<A, E>): E {
+  if (!Exit.isFailure(exit)) throw new Error("expected failure Exit");
+  const error = Cause.findErrorOption(exit.cause);
+  if (Option.isNone(error)) throw new Error("expected typed error");
+  return error.value;
+}
 
 async function harness(transport: "direct" | "fetch"): Promise<Harness> {
   const adapter = createMemoryStorageAdapter();
