@@ -235,6 +235,7 @@ describe("Effect-first mesh", () => {
     const exit = await Effect.runPromise(
       Effect.gen(function* () {
         const appendStarted = yield* Deferred.make<void>();
+        const appendCommitted = yield* Ref.make(false);
         const nextCount = yield* Ref.make(0);
         const layer = TestStreamsLayer({
           read: {
@@ -267,7 +268,10 @@ describe("Effect-first mesh", () => {
           append: {
             append: () => Effect.die("unused"),
             appendJsonBatch: () =>
-              Deferred.succeed(appendStarted, undefined).pipe(Effect.andThen(Effect.never)),
+              Ref.set(appendCommitted, true).pipe(
+                Effect.andThen(Deferred.succeed(appendStarted, undefined)),
+                Effect.andThen(Effect.never),
+              ),
           },
         });
         const program = projection(h).pipe(
@@ -277,9 +281,10 @@ describe("Effect-first mesh", () => {
         const fiber = yield* Effect.forkChild(program);
         yield* Deferred.await(appendStarted);
         yield* Fiber.interrupt(fiber);
-        return yield* Fiber.await(fiber);
+        return { exit: yield* Fiber.await(fiber), committed: yield* Ref.get(appendCommitted) };
       }),
     );
-    expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true);
+    expect(exit.committed).toBe(true);
+    expect(Exit.isFailure(exit.exit) && Cause.hasInterrupts(exit.exit.cause)).toBe(true);
   });
 });
