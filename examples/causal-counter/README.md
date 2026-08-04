@@ -4,7 +4,9 @@ This headless example proves one claim:
 
 > A source counter increment acknowledged at token `S` is visible in an eagerly materialized derived counter only when that consumer's lineage row proves coverage through `S`.
 
-The source and target use distinct mesh identities and application stream ids. `appendCounterIncrement()` appends `{ counterId, delta }` through the fixed source binding and returns the exact source acknowledgement. One bounded projection writes deterministic counter-contribution `upsert` rows and the reserved lineage `upsert` in the same State append. The eager consumer explicitly registers those two collections, applies each delivered batch transactionally, and advances its target resume position only with the visible rows. Counter values are the sum of idempotently keyed contribution rows.
+The source and target use distinct mesh identities and application stream ids. `appendCounterIncrement()`, `projectCounterIncrements()`, and the eager consumer's `catchUp()` return Effects. They compose through fixed bindings plus the finite read/append/recovery capabilities. One bounded projection writes deterministic counter-contribution `upsert` rows and the reserved lineage `upsert` in the same State append. The eager consumer explicitly registers those two collections, applies each delivered batch transactionally, and advances its target resume position only with the visible rows. Counter values are the sum of idempotently keyed contribution rows.
+
+The executable and test hosts each construct one `ManagedRuntime`, reuse it for the host lifetime, and dispose it at the edge. No example domain operation creates a runtime or converts itself to a Promise.
 
 `syncedThrough(ack)` reads the materialized lineage row and calls the pure causal coverage function. It never compares a target offset with a source offset. Before lineage exists it returns `not-yet`; a different source identity is `incomparable`; an acknowledgement beyond the watermark is `not-yet`.
 

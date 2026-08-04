@@ -1,22 +1,24 @@
 import type { JsonValue, StreamBatch } from "@streamsy/core";
-import { appendBoundStream, type StreamBinding } from "@streamsy/experimental/binding";
+import type { StreamBinding } from "@streamsy/experimental/binding";
 import {
   coverage,
   decodeStreamIdentity,
+  sourceAck,
   sourceWatermark,
   type Coverage,
   type SourceAck,
 } from "@streamsy/experimental/causal";
+import { AppendStreams, ReadStreams } from "@streamsy/experimental/effect";
 import {
   MESH_LINEAGE_TYPE,
   catchUp,
   decodeLineageEvent,
   type CatchUpLimits,
-  type CatchUpResult,
   type MeshLineageEvent,
   type ProducerLane,
   type ProjectionBoundary,
 } from "@streamsy/experimental/ivm-mesh";
+import { Effect } from "effect";
 
 export const COUNTER_COLLECTION = "counter-contribution";
 
@@ -53,12 +55,19 @@ const defaultLimits: CatchUpLimits = {
 };
 
 /** Append one source fact through the fixed binding and return its exact acknowledgement. */
-export async function appendCounterIncrement(source: StreamBinding, increment: CounterIncrement) {
+export const appendCounterIncrement = Effect.fn("CausalCounter.appendIncrement")(function* (
+  source: StreamBinding,
+  increment: CounterIncrement,
+) {
   const validated = validateIncrement(increment);
-  return appendBoundStream(source, JSON.stringify(validated), {
+  const appends = yield* AppendStreams;
+  const result = yield* appends.append(source, JSON.stringify(validated), {
     contentType: "application/json",
   });
-}
+  return result.status === "appended"
+    ? { ...result, ack: sourceAck(source.identity, result.offset) }
+    : result;
+});
 
 /** Run the example's bounded one-source projection once. */
 export function projectCounterIncrements(options: {
@@ -66,14 +75,12 @@ export function projectCounterIncrements(options: {
   readonly target: StreamBinding;
   readonly lane: ProducerLane;
   readonly limits?: CatchUpLimits;
-  readonly signal?: AbortSignal;
-}): Promise<CatchUpResult> {
+}) {
   return catchUp({
     source: options.source,
     target: options.target,
     lane: options.lane,
     limits: options.limits ?? defaultLimits,
-    signal: options.signal,
     decode: decodeIncrements,
     reduce: contributionEvents,
   });
@@ -118,19 +125,28 @@ export class EagerCounterConsumer {
     this.targetResume = snapshot?.targetResume;
   }
 
-  async catchUp(target: StreamBinding, observer?: CounterObserver): Promise<void> {
-    const read = await target.client.stream(target.streamId).read<JsonValue>({
-      ...(this.targetResume === undefined ? {} : { offset: this.targetResume }),
-      live: false,
-    });
-    if (read.status !== "ok") throw new Error(`Counter target read failed: ${read.status}`);
-    for await (const batch of read.session) {
-      if (batch.kind !== "json") throw new TypeError("Counter target must be JSON State");
-      if (batch.items.length === 0) continue;
-      this.applyTransaction(batch.items, batch.offset, observer);
-    }
-    const ended = await read.session.done;
-    if (ended.status !== "done") throw new Error(`Counter target read ended: ${ended.status}`);
+  catchUp(target: StreamBinding, observer?: CounterObserver) {
+    const self = this;
+    return Effect.fn("CausalCounter.EagerConsumer.catchUp")(function* () {
+      const reads = yield* ReadStreams;
+      const opened = yield* reads.open(target, {
+        ...(self.targetResume === undefined ? {} : { offset: self.targetResume }),
+        live: false,
+      });
+      if (opened.status !== "ok") throw new Error(`Counter target read failed: ${opened.status}`);
+      yield* Effect.gen(function* () {
+        while (true) {
+          const next = yield* opened.session.next;
+          if (next.done) break;
+          const batch = next.value;
+          if (batch.kind !== "json") throw new TypeError("Counter target must be JSON State");
+          if (batch.items.length === 0) continue;
+          yield* self.applyTransaction(batch.items, batch.offset, observer);
+        }
+        const ended = yield* opened.session.done;
+        if (ended.status !== "done") return yield* Effect.interrupt;
+      }).pipe(Effect.ensuring(opened.session.cancel("counter consumer complete")));
+    })();
   }
 
   counterValue(counterId: string): number | undefined {
@@ -180,26 +196,29 @@ export class EagerCounterConsumer {
     events: readonly JsonValue[],
     targetResume: string,
     observer?: CounterObserver,
-  ): void {
-    const contributions = new Map(this.contributions);
-    let lineage = this.lineage;
-    for (const event of events) {
-      if (!isRecord(event) || typeof event.type !== "string") {
-        throw new TypeError("State event must have a type");
+  ) {
+    const self = this;
+    return Effect.fn("CausalCounter.EagerConsumer.applyTransaction")(function* () {
+      const contributions = new Map(self.contributions);
+      let lineage = self.lineage;
+      for (const event of events) {
+        if (!isRecord(event) || typeof event.type !== "string") {
+          throw new TypeError("State event must have a type");
+        }
+        if (event.type === COUNTER_COLLECTION) {
+          const decoded = decodeContribution(event);
+          contributions.set(decoded.key, decoded.value);
+        } else if (event.type === MESH_LINEAGE_TYPE) {
+          lineage = yield* decodeLineageEvent(event);
+        } else {
+          throw new TypeError(`Unregistered State collection: ${event.type}`);
+        }
       }
-      if (event.type === COUNTER_COLLECTION) {
-        const decoded = decodeContribution(event);
-        contributions.set(decoded.key, decoded.value);
-      } else if (event.type === MESH_LINEAGE_TYPE) {
-        lineage = decodeLineageEvent(event);
-      } else {
-        throw new TypeError(`Unregistered State collection: ${event.type}`);
-      }
-    }
-    this.contributions = contributions;
-    this.lineage = lineage;
-    this.targetResume = targetResume;
-    observer?.(this.view());
+      self.contributions = contributions;
+      self.lineage = lineage;
+      self.targetResume = targetResume;
+      observer?.(self.view());
+    })();
   }
 }
 

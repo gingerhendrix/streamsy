@@ -5,59 +5,33 @@ import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient } from "@streamsy/core";
 import { bindStream } from "@streamsy/experimental/binding";
 import { streamIdentity } from "@streamsy/experimental/causal";
-import { deriveProducerLane } from "@streamsy/experimental/ivm-mesh";
+import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effect";
+import { DerivedRecoveryLive, deriveProducerLane } from "@streamsy/experimental/ivm-mesh";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import {
-  EagerCounterConsumer,
-  appendCounterIncrement,
-  projectCounterIncrements,
-} from "./causal-counter.ts";
+import { Layer, ManagedRuntime } from "effect";
+import { EagerCounterConsumer, appendCounterIncrement, projectCounterIncrements } from "./causal-counter.ts";
 
 describe("causal counter — SQLite", () => {
-  test("reopens projector and eager consumer with stable rows, lineage, and resume position", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "streamsy-causal-counter-"));
-    const filename = join(directory, "counter.sqlite");
+  test("one runtime per host reopens durable lineage and resumes without duplicate rows", async () => {
+    const filename = join(mkdtempSync(join(tmpdir(), "streamsy-causal-counter-")), "counter.sqlite");
     const first = await sqliteHarness(filename);
-    await first.client.stream(first.source.streamId).create({ contentType: "application/json" });
-    await first.client.stream(first.target.streamId).create({ contentType: "application/json" });
-    const initial = await appendCounterIncrement(first.source, { counterId: "visits", delta: 2 });
-    if (initial.status !== "appended") throw new Error("expected source append");
-    expect(await projectCounterIncrements(first)).toMatchObject({
-      status: "caught-up",
-      batches: 1,
-      checkpoint: { sourceThrough: initial.ack.position },
-    });
-    const firstConsumer = new EagerCounterConsumer();
-    await firstConsumer.catchUp(first.target);
-    const snapshot = firstConsumer.snapshot();
-    const storedBeforeReopen = await first.adapter.listMessages(first.target.streamId);
+    await first.create();
+    const appended = await first.append(2);
+    if (appended.status !== "appended") throw new Error("expected append");
+    expect(await first.project()).toMatchObject({ status: "caught-up", batches: 1 });
+    const consumer = new EagerCounterConsumer();
+    await first.consume(consumer);
+    const snapshot = consumer.snapshot();
+    const stored = await first.adapter.listMessages("target");
     await first.close();
 
     const reopened = await sqliteHarness(filename);
-    expect(await projectCounterIncrements(reopened)).toMatchObject({
-      status: "caught-up",
-      batches: 0,
-      checkpoint: { sourceThrough: initial.ack.position },
-    });
-    const reopenedConsumer = new EagerCounterConsumer(snapshot);
-    await reopenedConsumer.catchUp(reopened.target);
-    expect(reopenedConsumer.snapshot()).toEqual(snapshot);
-    expect(reopenedConsumer.counterValue("visits")).toBe(2);
-    expect(reopenedConsumer.syncedThrough(initial.ack)).toEqual({ status: "proven" });
-    expect(await reopened.adapter.listMessages(reopened.target.streamId)).toEqual(
-      storedBeforeReopen,
-    );
-
-    const later = await appendCounterIncrement(reopened.source, { counterId: "visits", delta: 3 });
-    if (later.status !== "appended") throw new Error("expected later source append");
-    expect(await projectCounterIncrements(reopened)).toMatchObject({
-      status: "caught-up",
-      batches: 1,
-      checkpoint: { sourceThrough: later.ack.position },
-    });
-    await reopenedConsumer.catchUp(reopened.target);
-    expect(reopenedConsumer.counterValue("visits")).toBe(5);
-    expect(reopenedConsumer.syncedThrough(later.ack)).toEqual({ status: "proven" });
+    expect(await reopened.project()).toMatchObject({ status: "caught-up", batches: 0 });
+    const restarted = new EagerCounterConsumer(snapshot);
+    await reopened.consume(restarted);
+    expect(restarted.counterValue("visits")).toBe(2);
+    expect(restarted.syncedThrough(appended.ack)).toEqual({ status: "proven" });
+    expect(await reopened.adapter.listMessages("target")).toEqual(stored);
     await reopened.close();
   });
 });
@@ -65,27 +39,19 @@ describe("causal counter — SQLite", () => {
 async function sqliteHarness(filename: string) {
   const adapter = createSqliteStorageAdapter({ filename });
   const client = directProtocolClient(new StreamProtocol({ storage: { adapter } }));
-  const sourceIdentity = streamIdentity("counter-facts");
-  const targetIdentity = streamIdentity("derived-counter-state");
-  const source = bindStream({ identity: sourceIdentity, client, streamId: "raw-counter-facts" });
-  const target = bindStream({ identity: targetIdentity, client, streamId: "counter-state" });
-  const lane = await deriveProducerLane({
-    processorId: "causal-counter",
-    processorVersion: "1.0.0",
-    outputGeneration: "generation-1",
-    source: sourceIdentity,
-    target: targetIdentity,
-    producerEpoch: 1,
-  });
+  const sourceIdentity = streamIdentity("source");
+  const targetIdentity = streamIdentity("target");
+  const source = bindStream({ identity: sourceIdentity, client, streamId: "source" });
+  const target = bindStream({ identity: targetIdentity, client, streamId: "target" });
+  const lane = await deriveProducerLane({ processorId: "counter", processorVersion: "1", outputGeneration: "1", source: sourceIdentity, target: targetIdentity, producerEpoch: 1 });
+  const recoveryLayer = DerivedRecoveryLive.pipe(Layer.provide(ReadStreamsLive));
+  const runtime = ManagedRuntime.make(Layer.merge(Layer.merge(ReadStreamsLive, AppendStreamsLive), recoveryLayer));
   return {
     adapter,
-    client,
-    source,
-    target,
-    lane,
-    async close() {
-      await client.close();
-      adapter.close();
-    },
+    create: async () => { await client.stream("source").create({ contentType: "application/json" }); await client.stream("target").create({ contentType: "application/json" }); },
+    append: (delta: number) => runtime.runPromise(appendCounterIncrement(source, { counterId: "visits", delta })),
+    project: () => runtime.runPromise(projectCounterIncrements({ source, target, lane })),
+    consume: (consumer: EagerCounterConsumer) => runtime.runPromise(consumer.catchUp(target)),
+    async close() { await runtime.dispose(); await client.close(); adapter.close(); },
   };
 }

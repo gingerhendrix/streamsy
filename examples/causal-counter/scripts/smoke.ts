@@ -1,7 +1,9 @@
 import { StreamProtocol, createMemoryStorageAdapter, directProtocolClient } from "@streamsy/core";
 import { bindStream } from "@streamsy/experimental/binding";
 import { streamIdentity } from "@streamsy/experimental/causal";
-import { deriveProducerLane } from "@streamsy/experimental/ivm-mesh";
+import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effect";
+import { DerivedRecoveryLive, deriveProducerLane } from "@streamsy/experimental/ivm-mesh";
+import { Layer, ManagedRuntime } from "effect";
 import {
   EagerCounterConsumer,
   appendCounterIncrement,
@@ -23,19 +25,31 @@ const lane = await deriveProducerLane({
   producerEpoch: 1,
 });
 
-await client.stream(source.streamId).create({ contentType: "application/json" });
-await client.stream(target.streamId).create({ contentType: "application/json" });
-const appended = await appendCounterIncrement(source, { counterId: "visits", delta: 1 });
-assert(appended.status === "appended", "source increment must append");
-const projected = await projectCounterIncrements({ source, target, lane });
-assert(projected.status === "caught-up", "projection must catch up");
-const consumer = new EagerCounterConsumer();
-await consumer.catchUp(target);
-assert(consumer.counterValue("visits") === 1, "counter row must be visible");
-assert(consumer.syncedThrough(appended.ack).status === "proven", "lineage must prove the ack");
-await client.close();
+const recoveryLayer = DerivedRecoveryLive.pipe(Layer.provide(ReadStreamsLive));
+const streamLayer = Layer.merge(ReadStreamsLive, AppendStreamsLive);
+const runtime = ManagedRuntime.make(Layer.merge(streamLayer, recoveryLayer));
 
-console.log(`causal-counter smoke passed at source token ${appended.ack.position}`);
+let sourceToken = "";
+try {
+  await client.stream(source.streamId).create({ contentType: "application/json" });
+  await client.stream(target.streamId).create({ contentType: "application/json" });
+  const appended = await runtime.runPromise(
+    appendCounterIncrement(source, { counterId: "visits", delta: 1 }),
+  );
+  assert(appended.status === "appended", "source increment must append");
+  sourceToken = appended.ack.position;
+  const projected = await runtime.runPromise(projectCounterIncrements({ source, target, lane }));
+  assert(projected.status === "caught-up", "projection must catch up");
+  const consumer = new EagerCounterConsumer();
+  await runtime.runPromise(consumer.catchUp(target));
+  assert(consumer.counterValue("visits") === 1, "counter row must be visible");
+  assert(consumer.syncedThrough(appended.ack).status === "proven", "lineage must prove the ack");
+} finally {
+  await runtime.dispose();
+  await client.close();
+}
+
+console.log(`causal-counter smoke passed at source token ${sourceToken}`);
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
