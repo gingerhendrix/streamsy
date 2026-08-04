@@ -126,11 +126,14 @@ export class EagerCounterConsumer {
   }
 
   catchUp(target: StreamBinding, observer?: CounterObserver) {
-    const self = this;
-    return Effect.fn("CausalCounter.EagerConsumer.catchUp")(function* () {
+    return EagerCounterConsumer.catchUpEffect(this, target, observer);
+  }
+
+  private static readonly catchUpEffect = Effect.fn("CausalCounter.EagerConsumer.catchUp")(
+    function* (consumer: EagerCounterConsumer, target: StreamBinding, observer?: CounterObserver) {
       const reads = yield* ReadStreams;
       const opened = yield* reads.open(target, {
-        ...(self.targetResume === undefined ? {} : { offset: self.targetResume }),
+        ...(consumer.targetResume === undefined ? {} : { offset: consumer.targetResume }),
         live: false,
       });
       if (opened.status !== "ok") throw new Error(`Counter target read failed: ${opened.status}`);
@@ -141,13 +144,18 @@ export class EagerCounterConsumer {
           const batch = next.value;
           if (batch.kind !== "json") throw new TypeError("Counter target must be JSON State");
           if (batch.items.length === 0) continue;
-          yield* self.applyTransaction(batch.items, batch.offset, observer);
+          yield* EagerCounterConsumer.applyTransactionEffect(
+            consumer,
+            batch.items,
+            batch.offset,
+            observer,
+          );
         }
         const ended = yield* opened.session.done;
         if (ended.status !== "done") return yield* Effect.interrupt;
       }).pipe(Effect.ensuring(opened.session.cancel("counter consumer complete")));
-    })();
-  }
+    },
+  );
 
   counterValue(counterId: string): number | undefined {
     let total = 0;
@@ -192,34 +200,34 @@ export class EagerCounterConsumer {
     };
   }
 
-  private applyTransaction(
+  private static readonly applyTransactionEffect = Effect.fn(
+    "CausalCounter.EagerConsumer.applyTransaction",
+  )(function* (
+    consumer: EagerCounterConsumer,
     events: readonly JsonValue[],
     targetResume: string,
     observer?: CounterObserver,
   ) {
-    const self = this;
-    return Effect.fn("CausalCounter.EagerConsumer.applyTransaction")(function* () {
-      const contributions = new Map(self.contributions);
-      let lineage = self.lineage;
-      for (const event of events) {
-        if (!isRecord(event) || typeof event.type !== "string") {
-          throw new TypeError("State event must have a type");
-        }
-        if (event.type === COUNTER_COLLECTION) {
-          const decoded = decodeContribution(event);
-          contributions.set(decoded.key, decoded.value);
-        } else if (event.type === MESH_LINEAGE_TYPE) {
-          lineage = yield* decodeLineageEvent(event);
-        } else {
-          throw new TypeError(`Unregistered State collection: ${event.type}`);
-        }
+    const contributions = new Map(consumer.contributions);
+    let lineage = consumer.lineage;
+    for (const event of events) {
+      if (!isRecord(event) || typeof event.type !== "string") {
+        throw new TypeError("State event must have a type");
       }
-      self.contributions = contributions;
-      self.lineage = lineage;
-      self.targetResume = targetResume;
-      observer?.(self.view());
-    })();
-  }
+      if (event.type === COUNTER_COLLECTION) {
+        const decoded = decodeContribution(event);
+        contributions.set(decoded.key, decoded.value);
+      } else if (event.type === MESH_LINEAGE_TYPE) {
+        lineage = yield* decodeLineageEvent(event);
+      } else {
+        throw new TypeError(`Unregistered State collection: ${event.type}`);
+      }
+    }
+    consumer.contributions = contributions;
+    consumer.lineage = lineage;
+    consumer.targetResume = targetResume;
+    observer?.(consumer.view());
+  });
 }
 
 function validateIncrement(value: unknown): CounterIncrement {

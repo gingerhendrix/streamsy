@@ -1,5 +1,10 @@
 import { Context, Effect, Layer } from "effect";
-import { AppendStreams, ReadStreams, type AppendStreamsShape, type ReadStreamsShape } from "./streams.ts";
+import {
+  AppendStreams,
+  ReadStreams,
+  type AppendStreamsShape,
+  type ReadStreamsShape,
+} from "./streams.ts";
 
 export interface TestStreamsShape {
   readonly read: ReadStreamsShape;

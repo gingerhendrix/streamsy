@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { ProjectionPoison } from "../effect/errors.ts";
 import { TestStreamsLayer } from "../effect/testing.ts";
 import {
   appendDerivedStateBatch,
@@ -54,14 +55,15 @@ async function harness(transport: "direct" | "fetch" = "direct"): Promise<Harnes
       createHttpHandler({ protocol, pathPrefix: "/streams" }).fetch(new Request(input, init)),
     { preconnect: globalThis.fetch.preconnect },
   );
-  const client = transport === "direct"
-    ? directProtocolClient(protocol)
-    : officialProtocolClient({
-        urlFor: (id) => protocolPathUrl("https://mesh.test/streams", id),
-        fetch: routedFetch,
-        backoffOptions: { initialDelay: 1, maxDelay: 1, multiplier: 1, maxRetries: 0 },
-        warnOnHttp: false,
-      });
+  const client =
+    transport === "direct"
+      ? directProtocolClient(protocol)
+      : officialProtocolClient({
+          urlFor: (id) => protocolPathUrl("https://mesh.test/streams", id),
+          fetch: routedFetch,
+          backoffOptions: { initialDelay: 1, maxDelay: 1, multiplier: 1, maxRetries: 0 },
+          warnOnHttp: false,
+        });
   clients.add(client);
   const sourceIdentity = streamIdentity("orders");
   const targetIdentity = streamIdentity("orders-state");
@@ -111,7 +113,9 @@ describe("Effect-first mesh", () => {
   test("Schema decodes lineage and typed compatibility failures", async () => {
     const h = await harness();
     const event = createLineageEvent(h.lane, { sourceThrough: "00000001", nextProducerSeq: 1 });
-    expect(await Effect.runPromise(decodeLineageEvent(JSON.parse(JSON.stringify(event))))).toEqual(event);
+    expect(await Effect.runPromise(decodeLineageEvent(JSON.parse(JSON.stringify(event))))).toEqual(
+      event,
+    );
     const malformed = await Effect.runPromiseExit(decodeLineageEvent({ type: MESH_LINEAGE_TYPE }));
     expect(Exit.isFailure(malformed)).toBe(true);
     const other = await deriveProducerLane({ ...h.lane, outputGeneration: "generation-2" });
@@ -119,23 +123,55 @@ describe("Effect-first mesh", () => {
     expect(Exit.isFailure(incompatible)).toBe(true);
   });
 
-  test.each(["direct", "fetch"] as const)("recovers and projects explicit boundaries over %s", async (transport) => {
-    const h = await harness(transport);
-    const sourceAppend = await h.client.stream(h.source.streamId).appendJsonBatch([1, 2]);
-    if (sourceAppend.status !== "appended") throw new Error("expected append");
-    const result = await Effect.runPromise(provideLive(projection(h)));
-    expect(result).toMatchObject({ status: "caught-up", batches: 1, items: 2, checkpoint: { sourceThrough: sourceAppend.offset } });
-    const recovered = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
-    expect(recovered).toMatchObject({ status: "ready", sourceThrough: sourceAppend.offset, nextProducerSeq: 1 });
-  });
+  test.each(["direct", "fetch"] as const)(
+    "recovers and projects explicit boundaries over %s",
+    async (transport) => {
+      const h = await harness(transport);
+      const sourceAppend = await h.client.stream(h.source.streamId).appendJsonBatch([1, 2]);
+      if (sourceAppend.status !== "appended") throw new Error("expected append");
+      const result = await Effect.runPromise(provideLive(projection(h)));
+      expect(result).toMatchObject({
+        status: "caught-up",
+        batches: 1,
+        items: 2,
+        checkpoint: { sourceThrough: sourceAppend.offset },
+      });
+      const recovered = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
+      expect(recovered).toMatchObject({
+        status: "ready",
+        sourceThrough: sourceAppend.offset,
+        nextProducerSeq: 1,
+      });
+    },
+  );
 
   test("duplicate reconciliation is an outcome and does not claim payload verification", async () => {
     const h = await harness();
     const previous = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
     if (previous.status !== "ready") throw new Error("expected ready");
-    const accepted = await Effect.runPromise(provideLive(appendDerivedStateBatch({ target: h.target, lane: h.lane, previous, sourceThrough: "00000001", facts: [fact(1)] })));
+    const accepted = await Effect.runPromise(
+      provideLive(
+        appendDerivedStateBatch({
+          target: h.target,
+          lane: h.lane,
+          previous,
+          sourceThrough: "00000001",
+          facts: [fact(1)],
+        }),
+      ),
+    );
     expect(accepted.status).toBe("appended");
-    const duplicate = await Effect.runPromise(provideLive(appendDerivedStateBatch({ target: h.target, lane: h.lane, previous, sourceThrough: "00000001", facts: [fact(999)] })));
+    const duplicate = await Effect.runPromise(
+      provideLive(
+        appendDerivedStateBatch({
+          target: h.target,
+          lane: h.lane,
+          previous,
+          sourceThrough: "00000001",
+          facts: [fact(999)],
+        }),
+      ),
+    );
     expect(duplicate.status).toBe("sequence-already-accepted");
     expect(JSON.stringify(duplicate)).not.toContain("verified");
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(2);
@@ -146,48 +182,92 @@ describe("Effect-first mesh", () => {
     const previous = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
     if (previous.status !== "ready") throw new Error("expected ready");
     await h.client.stream(h.target.streamId).appendJsonBatch([fact("foreign")]);
-    const result = await Effect.runPromise(provideLive(appendDerivedStateBatch({ target: h.target, lane: h.lane, previous, sourceThrough: "00000001", facts: [fact(1)] })));
+    const result = await Effect.runPromise(
+      provideLive(
+        appendDerivedStateBatch({
+          target: h.target,
+          lane: h.lane,
+          previous,
+          sourceThrough: "00000001",
+          facts: [fact(1)],
+        }),
+      ),
+    );
     expect(result).toMatchObject({ status: "output-conflict", reason: "expected-offset" });
   });
 
   test("decode poison is a typed failure and leaves lineage unadvanced", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([1]);
-    const exit = await Effect.runPromiseExit(provideLive(catchUp({
-      source: h.source,
-      target: h.target,
-      lane: h.lane,
-      limits,
-      decode() { throw new Error("poison"); },
-      reduce() { return []; },
-    })));
+    const exit = await Effect.runPromiseExit(
+      provideLive(
+        catchUp({
+          source: h.source,
+          target: h.target,
+          lane: h.lane,
+          limits,
+          decode() {
+            throw new Error("poison");
+          },
+          reduce() {
+            return [];
+          },
+        }),
+      ),
+    );
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value._tag === "ProjectionPoison").toBe(true);
+      expect(Option.isSome(error) && error.value instanceof ProjectionPoison).toBe(true);
     }
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
   });
 
   test("interruption stays interruption while an in-flight append has unknown durability", async () => {
     const h = await harness();
-    const previous: RecoveredDerivedState = { status: "ready", targetOffset: "-1", nextProducerSeq: 0, producerId: h.lane.producerId, producerEpoch: h.lane.producerEpoch };
+    const previous: RecoveredDerivedState = {
+      status: "ready",
+      targetOffset: "-1",
+      nextProducerSeq: 0,
+      producerId: h.lane.producerId,
+      producerEpoch: h.lane.producerEpoch,
+    };
     const exit = await Effect.runPromise(
       Effect.gen(function* () {
         const appendStarted = yield* Deferred.make<void>();
         const nextCount = yield* Ref.make(0);
         const layer = TestStreamsLayer({
           read: {
-            open: () => Effect.succeed({ status: "ok" as const, session: {
-              startOffset: "-1",
-              next: Ref.getAndUpdate(nextCount, (n) => n + 1).pipe(Effect.map((n) => n === 0 ? { done: false as const, value: { kind: "json" as const, items: [1], offset: "00000001", upToDate: false, streamClosed: false } } : { done: true as const, value: undefined })),
-              done: Effect.succeed({ status: "done" as const }),
-              cancel: () => Effect.void,
-            } }),
+            open: () =>
+              Effect.succeed({
+                status: "ok" as const,
+                session: {
+                  startOffset: "-1",
+                  next: Ref.getAndUpdate(nextCount, (n) => n + 1).pipe(
+                    Effect.map((n) =>
+                      n === 0
+                        ? {
+                            done: false as const,
+                            value: {
+                              kind: "json" as const,
+                              items: [1],
+                              offset: "00000001",
+                              upToDate: false,
+                              streamClosed: false,
+                            },
+                          }
+                        : { done: true as const, value: undefined },
+                    ),
+                  ),
+                  done: Effect.succeed({ status: "done" as const }),
+                  cancel: () => Effect.void,
+                },
+              }),
           },
           append: {
             append: () => Effect.die("unused"),
-            appendJsonBatch: () => Deferred.succeed(appendStarted, undefined).pipe(Effect.andThen(Effect.never)),
+            appendJsonBatch: () =>
+              Deferred.succeed(appendStarted, undefined).pipe(Effect.andThen(Effect.never)),
           },
         });
         const program = projection(h).pipe(

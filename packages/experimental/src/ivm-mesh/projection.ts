@@ -2,7 +2,11 @@ import type { JsonValue, StreamBatch } from "@streamsy/core";
 import { Effect } from "effect";
 import type { StreamBinding } from "../binding.ts";
 import { sourceAck, streamIdentityEquals, type SourceAck } from "../causal.ts";
-import { MalformedSourceBoundary, ProjectionPoison, type MeshOperationalError } from "../effect/errors.ts";
+import {
+  MalformedSourceBoundary,
+  ProjectionPoison,
+  type MeshOperationalError,
+} from "../effect/errors.ts";
 import { AppendStreams, ReadStreams, type EffectReadSession } from "../effect/streams.ts";
 import {
   appendDerivedStateBatch,
@@ -52,9 +56,20 @@ export type CatchUpResult =
       readonly actual: number;
       readonly maximum: number;
     } & CatchUpProgress)
-  | ({ readonly status: "missing" | "gone"; readonly stream: "source" | "target" } & Partial<CatchUpProgress>)
-  | ({ readonly status: "output-conflict"; readonly reason: string; readonly offset?: string } & CatchUpProgress)
-  | (Extract<AppendDerivedStateResult, { readonly status: "stale-epoch" | "producer-gap" | "invalid-epoch-seq" }> & CatchUpProgress);
+  | ({
+      readonly status: "missing" | "gone";
+      readonly stream: "source" | "target";
+    } & Partial<CatchUpProgress>)
+  | ({
+      readonly status: "output-conflict";
+      readonly reason: string;
+      readonly offset?: string;
+    } & CatchUpProgress)
+  | (Extract<
+      AppendDerivedStateResult,
+      { readonly status: "stale-epoch" | "producer-gap" | "invalid-epoch-seq" }
+    > &
+      CatchUpProgress);
 
 /**
  * Bounded recover → pull → pure step → commit workflow.
@@ -83,7 +98,12 @@ export const catchUp = Effect.fn("catchUp")(function* <Input>(options: CatchUpOp
     ...(recovered.sourceThrough === undefined ? {} : { offset: recovered.sourceThrough }),
     live: false,
   });
-  if (opened.status !== "ok") return { status: opened.status === "not-found" ? "missing" as const : "gone" as const, stream: "source" as const, ...initial };
+  if (opened.status !== "ok")
+    return {
+      status: opened.status === "not-found" ? ("missing" as const) : ("gone" as const),
+      stream: "source" as const,
+      ...initial,
+    };
 
   const run = pullBoundary(options, opened.session, initial);
   return yield* run.pipe(Effect.ensuring(opened.session.cancel("projection complete")));
@@ -103,27 +123,49 @@ const pullBoundary = <Input>(
     }
     const batch = next.value;
     if (!hasSourcePayload(batch)) return yield* pullBoundary(options, session, progress);
-    if (progress.pages >= options.limits.maxPages) return { status: "limit-reached" as const, limit: "maxPages" as const, ...progress };
-    if (progress.batches >= options.limits.maxBatches) return { status: "limit-reached" as const, limit: "maxBatches" as const, ...progress };
+    if (progress.pages >= options.limits.maxPages)
+      return { status: "limit-reached" as const, limit: "maxPages" as const, ...progress };
+    if (progress.batches >= options.limits.maxBatches)
+      return { status: "limit-reached" as const, limit: "maxBatches" as const, ...progress };
 
     const ack = yield* Effect.try({
       try: () => sourceAck(options.source.identity, batch.offset),
       catch: (cause) => new MalformedSourceBoundary({ offset: batch.offset, cause }),
     });
     const bytes = encodedBatchBytes(batch);
-    if (bytes > options.limits.maxBytes) return { status: "boundary-too-large" as const, limit: "maxBytes" as const, source: ack, actual: bytes, maximum: options.limits.maxBytes, ...progress };
-    if (progress.bytes + bytes > options.limits.maxBytes) return { status: "limit-reached" as const, limit: "maxBytes" as const, ...progress };
+    if (bytes > options.limits.maxBytes)
+      return {
+        status: "boundary-too-large" as const,
+        limit: "maxBytes" as const,
+        source: ack,
+        actual: bytes,
+        maximum: options.limits.maxBytes,
+        ...progress,
+      };
+    if (progress.bytes + bytes > options.limits.maxBytes)
+      return { status: "limit-reached" as const, limit: "maxBytes" as const, ...progress };
     const boundary: ProjectionBoundary = { source: ack, page: progress.pages + 1, bytes };
 
     const items = yield* Effect.try({
       try: () => Array.from(options.decode(batch, boundary)),
-      catch: (cause) => new ProjectionPoison({ phase: "decode", sourcePosition: ack.position, cause }),
+      catch: (cause) =>
+        new ProjectionPoison({ phase: "decode", sourcePosition: ack.position, cause }),
     });
-    if (items.length > options.limits.maxItems) return { status: "boundary-too-large" as const, limit: "maxItems" as const, source: ack, actual: items.length, maximum: options.limits.maxItems, ...progress };
-    if (progress.items + items.length > options.limits.maxItems) return { status: "limit-reached" as const, limit: "maxItems" as const, ...progress };
+    if (items.length > options.limits.maxItems)
+      return {
+        status: "boundary-too-large" as const,
+        limit: "maxItems" as const,
+        source: ack,
+        actual: items.length,
+        maximum: options.limits.maxItems,
+        ...progress,
+      };
+    if (progress.items + items.length > options.limits.maxItems)
+      return { status: "limit-reached" as const, limit: "maxItems" as const, ...progress };
     const facts = yield* Effect.try({
       try: () => Array.from(options.reduce(items, boundary)),
-      catch: (cause) => new ProjectionPoison({ phase: "reduce", sourcePosition: ack.position, cause }),
+      catch: (cause) =>
+        new ProjectionPoison({ phase: "reduce", sourcePosition: ack.position, cause }),
     });
 
     const appended = yield* appendDerivedStateBatch({
@@ -154,10 +196,13 @@ const pullBoundary = <Input>(
   });
 
 function validateOptions<Input>(options: CatchUpOptions<Input>): void {
-  if (!streamIdentityEquals(options.source.identity, options.lane.source)) throw new TypeError("Source binding identity does not match the producer lane");
-  if (!streamIdentityEquals(options.target.identity, options.lane.target)) throw new TypeError("Target binding identity does not match the producer lane");
+  if (!streamIdentityEquals(options.source.identity, options.lane.source))
+    throw new TypeError("Source binding identity does not match the producer lane");
+  if (!streamIdentityEquals(options.target.identity, options.lane.target))
+    throw new TypeError("Target binding identity does not match the producer lane");
   for (const [name, value] of Object.entries(options.limits)) {
-    if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError(`${name} must be a positive safe integer`);
+    if (!Number.isSafeInteger(value) || value <= 0)
+      throw new TypeError(`${name} must be a positive safe integer`);
   }
 }
 
@@ -168,7 +213,8 @@ function hasSourcePayload(batch: StreamBatch): boolean {
 }
 
 function encodedBatchBytes(batch: StreamBatch): number {
-  if (batch.kind === "json") return new TextEncoder().encode(JSON.stringify(batch.items)).byteLength;
+  if (batch.kind === "json")
+    return new TextEncoder().encode(JSON.stringify(batch.items)).byteLength;
   if (batch.kind === "text") return new TextEncoder().encode(batch.text).byteLength;
   return batch.data.byteLength;
 }

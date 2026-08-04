@@ -8,11 +8,7 @@ import {
   ReadStreams,
   type ReadStreamsShape,
 } from "../effect/streams.ts";
-import {
-  IncompatibleLineage,
-  MalformedLineage,
-  type StreamReadError,
-} from "../effect/errors.ts";
+import { IncompatibleLineage, MalformedLineage, type StreamReadError } from "../effect/errors.ts";
 import type { ProducerLane } from "./lane.ts";
 import {
   MESH_LINEAGE_TYPE,
@@ -162,18 +158,14 @@ export const appendDerivedStateBatch = Effect.fn("appendDerivedStateBatch")(func
     sourceThrough: options.sourceThrough,
     nextProducerSeq,
   });
-  const result = yield* appends.appendJsonBatch(
-    options.target,
-    [...options.facts, metadata],
-    {
-      expectedOffset: options.previous.targetOffset,
-      producer: {
-        producerId: options.lane.producerId,
-        producerEpoch: options.lane.producerEpoch,
-        producerSeq: options.previous.nextProducerSeq,
-      },
+  const result = yield* appends.appendJsonBatch(options.target, [...options.facts, metadata], {
+    expectedOffset: options.previous.targetOffset,
+    producer: {
+      producerId: options.lane.producerId,
+      producerEpoch: options.lane.producerEpoch,
+      producerSeq: options.previous.nextProducerSeq,
     },
-  );
+  });
   if (result.status === "appended") {
     return {
       status: "appended" as const,
@@ -213,24 +205,41 @@ function reconcileDuplicate(
         message: "In-band lineage does not reconcile the accepted producer sequence",
       });
     }
-    return { status: "sequence-already-accepted" as const, offset: duplicate.offset, checkpoint: recovered };
+    return {
+      status: "sequence-already-accepted" as const,
+      offset: duplicate.offset,
+      checkpoint: recovered,
+    };
   });
 }
 
-function classifyAppendOutcome(result: Exclude<AppendOutcome, { status: "appended" | "duplicate" }>): AppendDerivedStateResult {
+function classifyAppendOutcome(
+  result: Exclude<AppendOutcome, { status: "appended" | "duplicate" }>,
+): AppendDerivedStateResult {
   if (result.status === "conflict") {
-    return { status: "output-conflict", reason: result.conflictReason, ...("offset" in result ? { offset: result.offset } : {}) };
+    return {
+      status: "output-conflict",
+      reason: result.conflictReason,
+      ...("offset" in result ? { offset: result.offset } : {}),
+    };
   }
-  if (result.status === "closed") return { status: "output-conflict", reason: "closed", offset: result.offset };
+  if (result.status === "closed")
+    return { status: "output-conflict", reason: "closed", offset: result.offset };
   return result;
 }
 
 function validateAppendInput(options: AppendDerivedStateBatchOptions): void {
   assertTargetMatchesLane(options.target, options.lane);
-  if (options.previous.producerId !== options.lane.producerId || options.previous.producerEpoch !== options.lane.producerEpoch) {
+  if (
+    options.previous.producerId !== options.lane.producerId ||
+    options.previous.producerEpoch !== options.lane.producerEpoch
+  ) {
     throw new TypeError("Recovered state does not belong to the configured producer lane");
   }
-  if (options.previous.sourceThrough !== undefined && options.sourceThrough <= options.previous.sourceThrough) {
+  if (
+    options.previous.sourceThrough !== undefined &&
+    options.sourceThrough <= options.previous.sourceThrough
+  ) {
     throw new TypeError("sourceThrough must advance beyond the recovered checkpoint");
   }
   for (const fact of options.facts) {
@@ -240,19 +249,34 @@ function validateAppendInput(options: AppendDerivedStateBatchOptions): void {
 }
 
 function validateStateFact(value: JsonValue): void {
-  if (!isRecord(value) || typeof value.key !== "string" || value.key.length === 0) throw new TypeError("State fact event requires a non-empty key");
+  if (!isRecord(value) || typeof value.key !== "string" || value.key.length === 0)
+    throw new TypeError("State fact event requires a non-empty key");
   if (!isRecord(value.headers)) throw new TypeError("State fact event requires headers");
   const operation = value.headers.operation;
-  if (!["insert", "update", "upsert", "delete"].includes(String(operation))) throw new TypeError("State fact event has an invalid operation");
-  if (operation !== "delete" && !("value" in value)) throw new TypeError(`${String(operation)} State fact event requires value`);
+  if (!["insert", "update", "upsert", "delete"].includes(String(operation)))
+    throw new TypeError("State fact event has an invalid operation");
+  if (operation !== "delete" && !("value" in value))
+    throw new TypeError(`${String(operation)} State fact event requires value`);
 }
 
-function checkpoint(options: AppendDerivedStateBatchOptions, targetOffset: string, nextProducerSeq: number): RecoveredDerivedState {
-  return { status: "ready", targetOffset, sourceThrough: options.sourceThrough, nextProducerSeq, producerId: options.lane.producerId, producerEpoch: options.lane.producerEpoch };
+function checkpoint(
+  options: AppendDerivedStateBatchOptions,
+  targetOffset: string,
+  nextProducerSeq: number,
+): RecoveredDerivedState {
+  return {
+    status: "ready",
+    targetOffset,
+    sourceThrough: options.sourceThrough,
+    nextProducerSeq,
+    producerId: options.lane.producerId,
+    producerEpoch: options.lane.producerEpoch,
+  };
 }
 
 function assertTargetMatchesLane(target: StreamBinding, lane: ProducerLane): void {
-  if (!streamIdentityEquals(target.identity, lane.target)) throw new TypeError("Target binding identity does not match the producer lane");
+  if (!streamIdentityEquals(target.identity, lane.target))
+    throw new TypeError("Target binding identity does not match the producer lane");
 }
 
 function isRecord(value: unknown): value is Record<string, JsonValue> {

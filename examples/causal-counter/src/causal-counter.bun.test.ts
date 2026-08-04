@@ -9,11 +9,18 @@ import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effec
 import { DerivedRecoveryLive, deriveProducerLane } from "@streamsy/experimental/ivm-mesh";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import { Layer, ManagedRuntime } from "effect";
-import { EagerCounterConsumer, appendCounterIncrement, projectCounterIncrements } from "./causal-counter.ts";
+import {
+  EagerCounterConsumer,
+  appendCounterIncrement,
+  projectCounterIncrements,
+} from "./causal-counter.ts";
 
 describe("causal counter — SQLite", () => {
   test("one runtime per host reopens durable lineage and resumes without duplicate rows", async () => {
-    const filename = join(mkdtempSync(join(tmpdir(), "streamsy-causal-counter-")), "counter.sqlite");
+    const filename = join(
+      mkdtempSync(join(tmpdir(), "streamsy-causal-counter-")),
+      "counter.sqlite",
+    );
     const first = await sqliteHarness(filename);
     await first.create();
     const appended = await first.append(2);
@@ -43,15 +50,32 @@ async function sqliteHarness(filename: string) {
   const targetIdentity = streamIdentity("target");
   const source = bindStream({ identity: sourceIdentity, client, streamId: "source" });
   const target = bindStream({ identity: targetIdentity, client, streamId: "target" });
-  const lane = await deriveProducerLane({ processorId: "counter", processorVersion: "1", outputGeneration: "1", source: sourceIdentity, target: targetIdentity, producerEpoch: 1 });
+  const lane = await deriveProducerLane({
+    processorId: "counter",
+    processorVersion: "1",
+    outputGeneration: "1",
+    source: sourceIdentity,
+    target: targetIdentity,
+    producerEpoch: 1,
+  });
   const recoveryLayer = DerivedRecoveryLive.pipe(Layer.provide(ReadStreamsLive));
-  const runtime = ManagedRuntime.make(Layer.merge(Layer.merge(ReadStreamsLive, AppendStreamsLive), recoveryLayer));
+  const runtime = ManagedRuntime.make(
+    Layer.merge(Layer.merge(ReadStreamsLive, AppendStreamsLive), recoveryLayer),
+  );
   return {
     adapter,
-    create: async () => { await client.stream("source").create({ contentType: "application/json" }); await client.stream("target").create({ contentType: "application/json" }); },
-    append: (delta: number) => runtime.runPromise(appendCounterIncrement(source, { counterId: "visits", delta })),
+    create: async () => {
+      await client.stream("source").create({ contentType: "application/json" });
+      await client.stream("target").create({ contentType: "application/json" });
+    },
+    append: (delta: number) =>
+      runtime.runPromise(appendCounterIncrement(source, { counterId: "visits", delta })),
     project: () => runtime.runPromise(projectCounterIncrements({ source, target, lane })),
     consume: (consumer: EagerCounterConsumer) => runtime.runPromise(consumer.catchUp(target)),
-    async close() { await runtime.dispose(); await client.close(); adapter.close(); },
+    async close() {
+      await runtime.dispose();
+      await client.close();
+      adapter.close();
+    },
   };
 }

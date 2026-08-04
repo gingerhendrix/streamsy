@@ -20,12 +20,20 @@ describe("Effect-first mesh — SQLite", () => {
     await first.client.stream("target").create({ contentType: "application/json" });
     const appended = await first.client.stream("source").appendJsonBatch([1, 2]);
     if (appended.status !== "appended") throw new Error("expected append");
-    expect(await first.run()).toMatchObject({ status: "caught-up", batches: 1, checkpoint: { sourceThrough: appended.offset } });
+    expect(await first.run()).toMatchObject({
+      status: "caught-up",
+      batches: 1,
+      checkpoint: { sourceThrough: appended.offset },
+    });
     const stored = await first.adapter.listMessages("target");
     await first.close();
 
     const reopened = await makeHarness(filename);
-    expect(await reopened.run()).toMatchObject({ status: "caught-up", batches: 0, checkpoint: { sourceThrough: appended.offset } });
+    expect(await reopened.run()).toMatchObject({
+      status: "caught-up",
+      batches: 0,
+      checkpoint: { sourceThrough: appended.offset },
+    });
     expect(await reopened.adapter.listMessages("target")).toEqual(stored);
     await reopened.close();
   });
@@ -38,18 +46,45 @@ async function makeHarness(filename: string) {
   const targetIdentity = streamIdentity("target");
   const source = bindStream({ identity: sourceIdentity, client, streamId: "source" });
   const target = bindStream({ identity: targetIdentity, client, streamId: "target" });
-  const lane = await deriveProducerLane({ processorId: "sqlite", processorVersion: "1", outputGeneration: "1", source: sourceIdentity, target: targetIdentity, producerEpoch: 1 });
+  const lane = await deriveProducerLane({
+    processorId: "sqlite",
+    processorVersion: "1",
+    outputGeneration: "1",
+    source: sourceIdentity,
+    target: targetIdentity,
+    producerEpoch: 1,
+  });
   return {
     adapter,
     client,
-    run: () => Effect.runPromise(catchUp({
-      source,
-      target,
-      lane,
-      limits: { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 },
-      decode(batch) { if (batch.kind !== "json") throw new Error("expected JSON"); return batch.items; },
-      reduce(items) { return items.map((item) => ({ type: "value", key: String(item), value: item, headers: { operation: "upsert" } })); },
-    }).pipe(Effect.provide(DerivedRecoveryLive), Effect.provide(ReadStreamsLive), Effect.provide(AppendStreamsLive))),
-    async close() { await client.close(); adapter.close(); },
+    run: () =>
+      Effect.runPromise(
+        catchUp({
+          source,
+          target,
+          lane,
+          limits: { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 },
+          decode(batch) {
+            if (batch.kind !== "json") throw new Error("expected JSON");
+            return batch.items;
+          },
+          reduce(items) {
+            return items.map((item) => ({
+              type: "value",
+              key: String(item),
+              value: item,
+              headers: { operation: "upsert" },
+            }));
+          },
+        }).pipe(
+          Effect.provide(DerivedRecoveryLive),
+          Effect.provide(ReadStreamsLive),
+          Effect.provide(AppendStreamsLive),
+        ),
+      ),
+    async close() {
+      await client.close();
+      adapter.close();
+    },
   };
 }

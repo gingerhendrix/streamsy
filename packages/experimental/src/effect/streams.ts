@@ -58,7 +58,10 @@ function readPromise<A>(operation: string, run: (signal: AbortSignal) => Promise
 }
 
 function appendPromise<A>(operation: string, run: (signal: AbortSignal) => Promise<A>) {
-  return Effect.tryPromise({ try: run, catch: (cause) => StreamAppendError.from(operation, cause) });
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) => StreamAppendError.from(operation, cause),
+  });
 }
 
 export const ReadStreamsLive = Layer.succeed(
@@ -68,7 +71,8 @@ export const ReadStreamsLive = Layer.succeed(
       const result: ClientReadResult = yield* readPromise("open", (signal) =>
         binding.client.stream(binding.streamId).read({ ...options, signal }),
       );
-      if (result.status === "error") return yield* Effect.fail(StreamReadError.from("open", result));
+      if (result.status === "error")
+        return yield* Effect.fail(StreamReadError.from("open", result));
       if (result.status !== "ok") return result;
       const iterator = result.session[Symbol.asyncIterator]();
       return {

@@ -1,20 +1,20 @@
 import type { ClientFailure } from "@streamsy/core";
 import { Schema } from "effect";
 
-export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()(
-  "StreamReadError",
-  {
-    operation: Schema.String,
-    failure: Schema.Defect(),
-    message: Schema.String,
-  },
-) {
+export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()("StreamReadError", {
+  operation: Schema.String,
+  failure: Schema.Defect(),
+  message: Schema.String,
+}) {
   static from(operation: string, failure: ClientFailure | unknown): StreamReadError {
     return new StreamReadError({
       operation,
       failure,
-      message:
-        isClientFailure(failure) ? failure.message : failure instanceof Error ? failure.message : String(failure),
+      message: isClientFailure(failure)
+        ? failure.message
+        : failure instanceof Error
+          ? failure.message
+          : String(failure),
     });
   }
 }
@@ -32,8 +32,11 @@ export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError
     return new StreamAppendError({
       operation,
       failure,
-      message:
-        isClientFailure(failure) ? failure.message : failure instanceof Error ? failure.message : String(failure),
+      message: isClientFailure(failure)
+        ? failure.message
+        : failure instanceof Error
+          ? failure.message
+          : String(failure),
       durability: "unknown",
     });
   }
@@ -72,5 +75,7 @@ export type MeshOperationalError =
   | ProjectionPoison;
 
 function isClientFailure(value: unknown): value is ClientFailure {
-  return typeof value === "object" && value !== null && "status" in value && value.status === "error";
+  return (
+    typeof value === "object" && value !== null && "status" in value && value.status === "error"
+  );
 }
