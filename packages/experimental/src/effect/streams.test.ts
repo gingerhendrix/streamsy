@@ -1,12 +1,34 @@
-import { StreamProtocol, createMemoryStorageAdapter, directProtocolClient } from "@streamsy/core";
-import { Effect, Exit } from "effect";
+import {
+  StreamProtocol,
+  createMemoryStorageAdapter,
+  directProtocolClient,
+  type ClientFailure,
+} from "@streamsy/core";
+import { Effect, Exit, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
+import { StreamAppendError, StreamReadError } from "./errors.ts";
 import { TestStreams, TestStreamsLayer } from "./testing.ts";
 import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive } from "./streams.ts";
 
 describe("Effect stream capabilities", () => {
+  test("schema-backed faults preserve client classification and unknown append durability", () => {
+    const failure: ClientFailure = {
+      status: "error",
+      code: "busy",
+      message: "temporarily unavailable",
+      retryable: true,
+    };
+    const read = Schema.decodeUnknownSync(StreamReadError)(StreamReadError.from("open", failure));
+    const append = Schema.decodeUnknownSync(StreamAppendError)(
+      StreamAppendError.from("appendJsonBatch", failure),
+    );
+
+    expect(read).toMatchObject({ code: "busy", retryable: true });
+    expect(append).toMatchObject({ code: "busy", retryable: true, durability: "unknown" });
+  });
+
   test("Live layers adapt the fixed Promise client while preserving protocol outcomes", async () => {
     const client = directProtocolClient(
       new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } }),

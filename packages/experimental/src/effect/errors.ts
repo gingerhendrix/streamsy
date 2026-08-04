@@ -1,12 +1,29 @@
 import type { ClientFailure } from "@streamsy/core";
 import { Schema } from "effect";
 
+const ClientErrorCode = Schema.Literals([
+  "transport",
+  "unauthorized",
+  "forbidden",
+  "rate-limited",
+  "bad-request",
+  "busy",
+  "parse-error",
+  "not-supported",
+  "aborted",
+  "client-closed",
+  "unknown",
+]);
+
 export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()("StreamReadError", {
   operation: Schema.String,
   failure: Schema.Defect(),
   message: Schema.String,
+  code: ClientErrorCode,
+  retryable: Schema.Boolean,
 }) {
   static from(operation: string, failure: ClientFailure | unknown): StreamReadError {
+    const classification = clientFailureClassification(failure);
     return new StreamReadError({
       operation,
       failure,
@@ -15,6 +32,7 @@ export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()(
         : failure instanceof Error
           ? failure.message
           : String(failure),
+      ...classification,
     });
   }
 }
@@ -25,10 +43,13 @@ export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError
     operation: Schema.String,
     failure: Schema.Defect(),
     message: Schema.String,
+    code: ClientErrorCode,
+    retryable: Schema.Boolean,
     durability: Schema.Literal("unknown"),
   },
 ) {
   static from(operation: string, failure: ClientFailure | unknown): StreamAppendError {
+    const classification = clientFailureClassification(failure);
     return new StreamAppendError({
       operation,
       failure,
@@ -37,6 +58,7 @@ export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError
         : failure instanceof Error
           ? failure.message
           : String(failure),
+      ...classification,
       durability: "unknown",
     });
   }
@@ -73,6 +95,12 @@ export type MeshOperationalError =
   | IncompatibleLineage
   | MalformedSourceBoundary
   | ProjectionPoison;
+
+function clientFailureClassification(failure: ClientFailure | unknown) {
+  return isClientFailure(failure)
+    ? { code: failure.code, retryable: failure.retryable }
+    : { code: "unknown" as const, retryable: false };
+}
 
 function isClientFailure(value: unknown): value is ClientFailure {
   return (
