@@ -76,10 +76,16 @@ export class MalformedSourceBoundary extends Schema.TaggedErrorClass<MalformedSo
 export class ProjectionPoison extends Schema.TaggedErrorClass<ProjectionPoison>()(
   "ProjectionPoison",
   {
-    phase: Schema.Literals(["decode", "reduce"]),
+    phase: Schema.Literals(["decode", "reduce", "step", "membership", "member", "remove"]),
     sourcePosition: Schema.String,
     cause: Schema.Defect(),
   },
+) {}
+
+/** Durable target State could not be restored into typed application state. */
+export class StateRestorePoison extends Schema.TaggedErrorClass<StateRestorePoison>()(
+  "StateRestorePoison",
+  { targetOffset: Schema.String, cause: Schema.Defect() },
 ) {}
 
 export type MeshOperationalError =
@@ -88,7 +94,8 @@ export type MeshOperationalError =
   | MalformedLineage
   | IncompatibleLineage
   | MalformedSourceBoundary
-  | ProjectionPoison;
+  | ProjectionPoison
+  | StateRestorePoison;
 
 function clientFailureClassification(failure: ClientFailure | unknown) {
   return isClientFailure(failure)

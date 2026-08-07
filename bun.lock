@@ -65,6 +65,25 @@
         "bun-types": "^1.3.14",
       },
     },
+    "examples/issue-tracker-projections": {
+      "name": "issue-tracker-projections",
+      "version": "0.0.1",
+      "dependencies": {
+        "@streamsy/client": "workspace:*",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/experimental": "workspace:*",
+        "@streamsy/storage-durable-object": "workspace:*",
+        "effect": "4.0.0-beta.99",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "catalog:",
+        "@streamsy/storage-sqlite": "workspace:*",
+        "@types/bun": "^1.2.0",
+        "alchemy": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "examples/memory-server": {
       "name": "memory-server",
       "version": "0.0.1",
@@ -159,7 +178,7 @@
       "name": "@streamsy/storage-durable-object",
       "version": "0.2.1",
       "dependencies": {
-        "@streamsy/core": "0.2.0",
+        "@streamsy/core": "0.2.1",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
@@ -969,6 +988,8 @@
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
 
     "issue-tracker-demo": ["issue-tracker-demo@workspace:examples/issue-tracker-demo"],
+
+    "issue-tracker-projections": ["issue-tracker-projections@workspace:examples/issue-tracker-projections"],
 
     "jackspeak": ["jackspeak@3.4.3", "", { "dependencies": { "@isaacs/cliui": "^8.0.2" }, "optionalDependencies": { "@pkgjs/parseargs": "^0.11.0" } }, "sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw=="],
 

@@ -1,0 +1,190 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { StreamProtocol, directProtocolClient, type JsonValue } from "@streamsy/core";
+import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { Effect } from "effect";
+import { bindStream } from "../binding.ts";
+import { streamIdentity } from "../causal.ts";
+import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
+import { catchUpDynamicFanInState, FanInRecoveryLive } from "./fan-in-state.ts";
+import { deriveProducerLane } from "./lane.ts";
+import { catchUpState } from "./state-projection.ts";
+
+const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
+
+describe("recovered State and dynamic fan-in — SQLite", () => {
+  test("restores application state and member cursors after reopening the database", async () => {
+    const filename = joinPath(mkdtempSync(joinPath(tmpdir(), "streamsy-fan-in-")), "state.sqlite");
+
+    const first = await makeHarness(filename);
+    await first.client.stream("events").create({ contentType: "application/json" });
+    await first.client.stream("detail").create({ contentType: "application/json" });
+    await first.client.stream("membership").create({ contentType: "application/json" });
+    await first.client.stream("board").create({ contentType: "application/json" });
+    await first.client.stream("events").appendJsonBatch([{ v: 3 }]);
+    await first.client.stream("membership").appendJsonBatch([{ type: "join", member: "detail" }]);
+
+    expect(await first.detail()).toMatchObject({ status: "caught-up", state: { total: 3 } });
+    expect(await first.board()).toMatchObject({ status: "caught-up", state: { detail: 3 } });
+    await first.close();
+
+    const reopened = await makeHarness(filename);
+    await reopened.client.stream("events").appendJsonBatch([{ v: 4 }]);
+    const detail = await reopened.detail();
+    expect(detail).toMatchObject({ status: "caught-up", batches: 1, state: { total: 7 } });
+    const board = await reopened.board();
+    expect(board).toMatchObject({ status: "caught-up", batches: 1, state: { detail: 7 } });
+    await reopened.close();
+  });
+});
+
+async function makeHarness(filename: string) {
+  const adapter = createSqliteStorageAdapter({ filename });
+  const client = directProtocolClient(new StreamProtocol({ storage: { adapter } }));
+  const eventsIdentity = streamIdentity("events");
+  const detailIdentity = streamIdentity("detail");
+  const membershipIdentity = streamIdentity("membership");
+  const boardIdentity = streamIdentity("board");
+  const events = bindStream({ identity: eventsIdentity, client, streamId: "events" });
+  const detailBinding = bindStream({ identity: detailIdentity, client, streamId: "detail" });
+  const membership = bindStream({ identity: membershipIdentity, client, streamId: "membership" });
+  const board = bindStream({ identity: boardIdentity, client, streamId: "board" });
+  const detailLane = await deriveProducerLane({
+    processorId: "detail",
+    processorVersion: "1",
+    outputGeneration: "1",
+    source: eventsIdentity,
+    target: detailIdentity,
+    producerEpoch: 1,
+  });
+  const boardLane = await deriveProducerLane({
+    processorId: "board",
+    processorVersion: "1",
+    outputGeneration: "1",
+    source: membershipIdentity,
+    target: boardIdentity,
+    producerEpoch: 1,
+  });
+
+  return {
+    adapter,
+    client,
+    detail: () =>
+      Effect.runPromise(
+        catchUpState<{ total: number }, number>({
+          source: events,
+          target: detailBinding,
+          lane: detailLane,
+          limits,
+          initial: { total: 0 },
+          restore: (initial, facts) =>
+            facts.reduce<{ total: number }>(
+              (state, fact) =>
+                isRecord(fact) && isRecord(fact.value) && typeof fact.value.total === "number"
+                  ? { total: fact.value.total }
+                  : state,
+              initial,
+            ),
+          decode: (batch) => {
+            if (batch.kind !== "json") throw new Error("expected JSON");
+            return batch.items.map((item) => {
+              if (!isRecord(item) || typeof item.v !== "number") throw new Error("bad item");
+              return item.v;
+            });
+          },
+          step: (state, values) => {
+            const total = state.total + values.reduce((sum, value) => sum + value, 0);
+            return {
+              state: { total },
+              facts: [
+                { type: "total", key: "total", value: { total }, headers: { operation: "upsert" } },
+              ],
+            };
+          },
+        }).pipe(
+          Effect.provide(DerivedStateHistoryLive),
+          Effect.provide(DerivedRecoveryLive),
+          Effect.provide(ReadStreamsLive),
+          Effect.provide(AppendStreamsLive),
+        ),
+      ),
+    board: () =>
+      Effect.runPromise(
+        catchUpDynamicFanInState<Record<string, number>, number>({
+          membership,
+          target: board,
+          lane: boardLane,
+          limits,
+          initial: {},
+          restore: (initial, facts) =>
+            facts.reduce<Record<string, number>>((state, fact) => {
+              if (!isRecord(fact) || typeof fact.key !== "string") return state;
+              if (isRecord(fact.headers) && fact.headers.operation === "delete") {
+                const { [fact.key]: _removed, ...rest } = state;
+                return rest;
+              }
+              if (!isRecord(fact.value) || typeof fact.value.last !== "number") return state;
+              return { ...state, [fact.key]: fact.value.last };
+            }, initial),
+          decodeMembership: (batch) => {
+            if (batch.kind !== "json") throw new Error("expected JSON membership");
+            return batch.items.map((item) => {
+              if (!isRecord(item) || typeof item.member !== "string") throw new Error("bad fact");
+              return item.type === "leave"
+                ? ({ type: "leave", member: streamIdentity(item.member) } as const)
+                : ({ type: "join", member: streamIdentity(item.member) } as const);
+            });
+          },
+          resolveMember: (identity) => (identity.name === "detail" ? detailBinding : undefined),
+          decodeMember: (batch) => {
+            if (batch.kind !== "json") throw new Error("expected JSON member");
+            return batch.items.flatMap((item) =>
+              isRecord(item) &&
+              item.type === "total" &&
+              isRecord(item.value) &&
+              typeof item.value.total === "number"
+                ? [item.value.total]
+                : [],
+            );
+          },
+          onRecord: (state, member, values) => {
+            const last = values.at(-1);
+            if (last === undefined) return { state, facts: [] };
+            return {
+              state: { ...state, [member.identity.name]: last },
+              facts: [
+                {
+                  type: "row",
+                  key: member.identity.name,
+                  value: { last },
+                  headers: { operation: "upsert" },
+                },
+              ],
+            };
+          },
+          onRemove: (state, member) => {
+            const { [member.identity.name]: _removed, ...rest } = state;
+            return {
+              state: rest,
+              facts: [{ type: "row", key: member.identity.name, headers: { operation: "delete" } }],
+            };
+          },
+        }).pipe(
+          Effect.provide(FanInRecoveryLive),
+          Effect.provide(ReadStreamsLive),
+          Effect.provide(AppendStreamsLive),
+        ),
+      ),
+    async close() {
+      await client.close();
+      adapter.close();
+    },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, JsonValue> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

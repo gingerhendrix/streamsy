@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": ["@cloudflare/workers-types", "bun"]
+  },
+  "include": [
+    "server/**/*",
+    "shared/**/*",
+    "scripts/**/*",
+    "test/**/*",
+    "src/**/*",
+    "alchemy.run.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

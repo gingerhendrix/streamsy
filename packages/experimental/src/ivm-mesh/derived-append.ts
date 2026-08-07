@@ -45,6 +45,35 @@ export class DerivedRecovery extends Context.Service<DerivedRecovery, DerivedRec
   "@streamsy/experimental/DerivedRecovery",
 ) {}
 
+/**
+ * Recovered lineage plus the durable application facts that produced the
+ * current target State.
+ *
+ * Recovery scans complete target history, so restoration cost is O(history).
+ * Snapshots are deliberately deferred.
+ */
+export interface RecoveredDerivedHistory {
+  readonly status: "ready";
+  readonly checkpoint: RecoveredDerivedState;
+  readonly facts: readonly JsonValue[];
+}
+
+export type DerivedHistoryResult =
+  | RecoveredDerivedHistory
+  | { readonly status: "not-found" | "gone" };
+
+export interface DerivedStateHistoryShape {
+  readonly recoverHistory: (
+    target: StreamBinding,
+    lane: ProducerLane,
+  ) => Effect.Effect<DerivedHistoryResult, DerivedRecoveryError>;
+}
+
+export class DerivedStateHistory extends Context.Service<
+  DerivedStateHistory,
+  DerivedStateHistoryShape
+>()("@streamsy/experimental/DerivedStateHistory") {}
+
 export interface AppendDerivedStateBatchOptions {
   readonly target: StreamBinding;
   readonly lane: ProducerLane;
@@ -67,7 +96,22 @@ export const DerivedRecoveryLive = Layer.effect(
   DerivedRecovery,
   Effect.gen(function* () {
     const reads = yield* ReadStreams;
-    return DerivedRecovery.of({ recover: makeRecover(reads) });
+    const scan = makeScan(reads);
+    return DerivedRecovery.of({
+      recover: Effect.fn("DerivedRecovery.recover")((target, lane) =>
+        scan(target, lane).pipe(
+          Effect.map((result) => (result.status === "ready" ? result.checkpoint : result)),
+        ),
+      ),
+    });
+  }),
+);
+
+export const DerivedStateHistoryLive = Layer.effect(
+  DerivedStateHistory,
+  Effect.gen(function* () {
+    const reads = yield* ReadStreams;
+    return DerivedStateHistory.of({ recoverHistory: makeScan(reads) });
   }),
 );
 
@@ -75,8 +119,12 @@ export const DerivedRecoveryLive = Layer.effect(
 export const DerivedRecoveryTest = (recover: DerivedRecoveryShape["recover"]) =>
   Layer.succeed(DerivedRecovery, DerivedRecovery.of({ recover }));
 
-const makeRecover = (reads: ReadStreamsShape) =>
-  Effect.fn("DerivedRecovery.recover")((target: StreamBinding, lane: ProducerLane) =>
+export const DerivedStateHistoryTest = (
+  recoverHistory: DerivedStateHistoryShape["recoverHistory"],
+) => Layer.succeed(DerivedStateHistory, DerivedStateHistory.of({ recoverHistory }));
+
+const makeScan = (reads: ReadStreamsShape) =>
+  Effect.fn("DerivedStateHistory.recoverHistory")((target: StreamBinding, lane: ProducerLane) =>
     Effect.gen(function* () {
       assertTargetMatchesLane(target, lane);
       const opened = yield* reads.open(target);
@@ -92,6 +140,7 @@ const makeRecover = (reads: ReadStreamsShape) =>
       let lineage: MeshLineageEvent | undefined;
       let lastWasLineage = false;
       let sawItems = false;
+      const facts: JsonValue[] = [];
 
       const pull = Effect.gen(function* () {
         while (true) {
@@ -107,7 +156,10 @@ const makeRecover = (reads: ReadStreamsShape) =>
           for (const item of batch.items) {
             sawItems = true;
             lastWasLineage = false;
-            if (!isRecord(item) || typeof item.type !== "string") continue;
+            if (!isRecord(item) || typeof item.type !== "string") {
+              facts.push(item);
+              continue;
+            }
             if (item.type === MESH_LINEAGE_TYPE) {
               const decoded = yield* decodeLineageEvent(item);
               yield* ensureLineageCompatible(decoded, lane);
@@ -117,6 +169,8 @@ const makeRecover = (reads: ReadStreamsShape) =>
               return yield* new IncompatibleLineage({
                 message: `Unknown reserved State type ${item.type}`,
               });
+            } else {
+              facts.push(item);
             }
           }
         }
@@ -129,11 +183,15 @@ const makeRecover = (reads: ReadStreamsShape) =>
         }
         return {
           status: "ready" as const,
-          targetOffset,
-          sourceThrough: lineage?.value.sourceThrough,
-          nextProducerSeq: lineage?.value.nextProducerSeq ?? 0,
-          producerId: lane.producerId,
-          producerEpoch: lane.producerEpoch,
+          checkpoint: {
+            status: "ready" as const,
+            targetOffset,
+            ...(lineage === undefined ? {} : { sourceThrough: lineage.value.sourceThrough }),
+            nextProducerSeq: lineage?.value.nextProducerSeq ?? 0,
+            producerId: lane.producerId,
+            producerEpoch: lane.producerEpoch,
+          },
+          facts: facts as readonly JsonValue[],
         };
       });
       return yield* pull;
@@ -146,6 +204,14 @@ export const recoverDerivedState = Effect.fn("recoverDerivedState")(function* (
 ) {
   const recovery = yield* DerivedRecovery;
   return yield* recovery.recover(target, lane);
+});
+
+export const recoverDerivedStateHistory = Effect.fn("recoverDerivedStateHistory")(function* (
+  target: StreamBinding,
+  lane: ProducerLane,
+) {
+  const history = yield* DerivedStateHistory;
+  return yield* history.recoverHistory(target, lane);
 });
 
 export const appendDerivedStateBatch = Effect.fn("appendDerivedStateBatch")(function* (
@@ -246,11 +312,12 @@ function validateAppendInput(options: AppendDerivedStateBatchOptions): void {
   }
   for (const fact of options.facts) {
     assertFactTypeAllowed(fact);
-    validateStateFact(fact);
+    assertStateFactShape(fact);
   }
 }
 
-function validateStateFact(value: JsonValue): void {
+/** Validate one application State fact event before any durable append. */
+export function assertStateFactShape(value: JsonValue): void {
   if (!isRecord(value) || typeof value.key !== "string" || value.key.length === 0)
     throw new TypeError("State fact event requires a non-empty key");
   if (!isRecord(value.headers)) throw new TypeError("State fact event requires headers");
