@@ -16,6 +16,7 @@ import {
   type SourceAck,
   type StreamIdentity,
 } from "@streamsy/experimental/causal";
+import { StateRestorePoison } from "@streamsy/experimental/effect";
 import {
   catchUpDynamicFanInState,
   catchUpState,
@@ -28,9 +29,12 @@ import {
   type MembershipChange,
 } from "@streamsy/experimental/ivm-mesh";
 import { Effect, Schema } from "effect";
+import type { ProjectionPassReport } from "../shared/api.ts";
 import {
   BOARD_ROW_COLLECTION,
   boardRow,
+  decodeBoardRow,
+  decodeIssueDetail,
   evolveIssue,
   ISSUE_DETAIL_COLLECTION,
   IssueEvent,
@@ -84,8 +88,14 @@ function boardRemoval(issueId: string): JsonValue {
   return { type: BOARD_ROW_COLLECTION, key: issueId, headers: { operation: "delete" } };
 }
 
-/** Restore issue detail from durable target State alone. */
-function restoreDetail(initial: DetailState, facts: readonly JsonValue[]): DetailState {
+/**
+ * Restore issue detail from durable target State alone.
+ *
+ * Both the collection tag and the application value are checked. A correctly
+ * tagged row carrying a malformed value throws here, and the kernel turns that
+ * throw into a typed `StateRestorePoison` rather than accepting the value.
+ */
+export function restoreDetail(initial: DetailState, facts: readonly JsonValue[]): DetailState {
   let state = initial;
   for (const fact of facts) {
     if (!isRecord(fact) || fact.type !== ISSUE_DETAIL_COLLECTION) {
@@ -95,12 +105,12 @@ function restoreDetail(initial: DetailState, facts: readonly JsonValue[]): Detai
       state = undefined;
       continue;
     }
-    state = fact.value as unknown as IssueDetail;
+    state = decodeIssueDetail(fact.value);
   }
   return state;
 }
 
-function restoreBoard(initial: BoardState, facts: readonly JsonValue[]): BoardState {
+export function restoreBoard(initial: BoardState, facts: readonly JsonValue[]): BoardState {
   let board = initial;
   for (const fact of facts) {
     if (!isRecord(fact) || fact.type !== BOARD_ROW_COLLECTION || typeof fact.key !== "string") {
@@ -111,7 +121,7 @@ function restoreBoard(initial: BoardState, facts: readonly JsonValue[]): BoardSt
       board = rest;
       continue;
     }
-    board = { ...board, [fact.key]: fact.value as unknown as BoardRow };
+    board = { ...board, [fact.key]: decodeBoardRow(fact.value) };
   }
   return board;
 }
@@ -172,7 +182,7 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
       if (batch.kind !== "json") throw new TypeError("Issue detail State must be JSON");
       return batch.items.flatMap((item) =>
         isRecord(item) && item.type === ISSUE_DETAIL_COLLECTION && isRecord(item.value)
-          ? [item.value as unknown as IssueDetail]
+          ? [decodeIssueDetail(item.value)]
           : [],
       );
     },
@@ -217,6 +227,69 @@ function resolveDetailMember(
   return issueId === undefined
     ? undefined
     : context.bindings.issueDetail(context.workspaceId, issueId);
+}
+
+/** A projection pass result, as the two kernels report it. */
+type PassResult = CatchUpStateResult<DetailState> | CatchUpFanInResult<BoardState>;
+
+/**
+ * Classify one bounded pass.
+ *
+ * Only `caught-up` may ever support a `Synced` claim. A bounded stop that
+ * repair can resume is `deferred`; anything that cannot progress on its own —
+ * an output conflict, a producer fault, an unknown member, an oversized
+ * boundary, or a target that is gone — is `faulted` and stays visible.
+ */
+export function classifyPass(
+  label: ProjectionPassReport["label"],
+  result: PassResult,
+): ProjectionPassReport {
+  const report = (
+    outcome: ProjectionPassReport["outcome"],
+    detail?: string,
+  ): ProjectionPassReport => ({
+    label,
+    status: result.status,
+    outcome,
+    ...(detail === undefined ? {} : { detail }),
+  });
+  switch (result.status) {
+    case "caught-up":
+      return report("caught-up");
+    case "limit-reached":
+      return report("deferred", `bounded stop at ${result.limit}`);
+    case "missing":
+      return report("deferred", `${result.stream} stream does not exist yet`);
+    case "boundary-too-large":
+      return report("faulted", `${result.limit} ${result.actual} exceeds ${result.maximum}`);
+    case "gone":
+      return report("faulted", `${result.stream} stream is gone`);
+    case "unknown-member":
+      return report("faulted", `unresolvable member ${result.member}`);
+    case "output-conflict":
+      return report("faulted", result.reason);
+    default:
+      return report("faulted", "durable producer lineage rejected the commit");
+  }
+}
+
+const MESH_ERROR_DETAIL: Readonly<Record<string, string>> = {
+  StateRestorePoison: "durable target State could not be restored into typed application state",
+  ProjectionPoison: "the projection could not process a boundary",
+};
+
+/** A typed mesh error — poison included — is a fault, never a silent success. */
+export function faultedPass(
+  label: ProjectionPassReport["label"],
+  error: { readonly _tag: string },
+): ProjectionPassReport {
+  const tag = error._tag;
+  return {
+    label,
+    status: tag,
+    outcome: "faulted",
+    detail: MESH_ERROR_DETAIL[tag] ?? "the projection pass failed",
+  };
 }
 
 export interface ChainProbe {
@@ -312,9 +385,16 @@ export const readBoard = Effect.fn("Projections.readBoard")(function* (
     lane,
   );
   if (recovered.status !== "ready") return { status: recovered.status } as const;
+  // Serving durable rows uses the same schema-backed restore the kernel uses,
+  // so a malformed row is typed poison here too instead of a served lie.
+  const board = yield* Effect.try({
+    try: () => restoreBoard({}, recovered.facts),
+    catch: (cause) =>
+      new StateRestorePoison({ targetOffset: recovered.checkpoint.targetOffset, cause }),
+  });
   return {
     status: "ready" as const,
-    rows: Object.values(restoreBoard({}, recovered.facts)),
+    rows: Object.values(board),
     boardStream: streamNames.board(context.workspaceId, projectId),
   };
 });

@@ -6,10 +6,15 @@
  * after a bounded hold if the projection has not landed yet. Nothing here is
  * ever treated as accepted state.
  */
-import type { CoverageReport } from "../../shared/api.ts";
+import type { CoverageReport, ProjectionPassReport } from "../../shared/api.ts";
 import type { BoardRow, IssuePriority, IssueStatus } from "../../shared/model.ts";
 
-export type MutationPhase = "syncing" | "synced" | "failed";
+/**
+ * `pending` is the accepted-but-unproven phase: the command is durable, and the
+ * project board does not cover it yet. It exists so `synced` can keep its one
+ * meaning.
+ */
+export type MutationPhase = "syncing" | "pending" | "synced" | "failed";
 
 export interface PendingPatch {
   readonly title?: string;
@@ -33,8 +38,51 @@ export interface Mutation {
   readonly startedAt: number;
   readonly settledAt?: number;
   readonly error?: string;
+  /** Non-failing explanation for a pending mutation, shown beside the chip. */
+  readonly note?: string;
   readonly ack?: { readonly stream: string; readonly position: string };
   readonly coverage?: CoverageReport;
+  readonly projections?: readonly ProjectionPassReport[];
+}
+
+/** What the server reported about one accepted command. */
+export interface SettlementInput {
+  readonly coverage: CoverageReport;
+  readonly projections: readonly ProjectionPassReport[];
+}
+
+export interface Settlement {
+  readonly phase: "pending" | "synced" | "failed";
+  readonly message: string;
+}
+
+/**
+ * The core product law.
+ *
+ * `Synced` means the accepted source acknowledgement is durably covered by the
+ * project board: proven chained coverage, and no projection pass that reported
+ * a fault. A conflict, poison, unknown member, oversized boundary, or exhausted
+ * limit is never `Synced`; `not-yet` and `incomparable` stay pending until a
+ * later lineage probe proves them.
+ */
+export function classifySettlement(label: string, result: SettlementInput): Settlement {
+  const faulted = result.projections.find((pass) => pass.outcome === "faulted");
+  if (faulted !== undefined) {
+    const because = faulted.detail === undefined ? "" : ` — ${faulted.detail}`;
+    return {
+      phase: "failed",
+      message: `${label} failed: the ${faulted.label} projection reported ${faulted.status}${because}.`,
+    };
+  }
+  if (result.coverage.status === "proven") {
+    return { phase: "synced", message: `${label}: synced and proven through both projections.` };
+  }
+  return {
+    phase: "pending",
+    message: `${label}: accepted at ${result.coverage.ack.position}; the ${
+      result.coverage.blockedAt ?? "next"
+    } hop does not cover it yet (${result.coverage.status}).`,
+  };
 }
 
 /** How long a settled overlay is held while waiting for the durable row. */
@@ -63,7 +111,15 @@ export function activeOverlays(
   now: number,
 ): readonly Mutation[] {
   return mutations.filter((mutation) => {
-    if (mutation.phase === "syncing" || mutation.phase === "failed") return true;
+    // A pending mutation is unproven, so its overlay is never retired on a
+    // timer: it stays until a probe proves or fails it.
+    if (
+      mutation.phase === "syncing" ||
+      mutation.phase === "pending" ||
+      mutation.phase === "failed"
+    ) {
+      return true;
+    }
     const elapsed = now - (mutation.settledAt ?? mutation.startedAt);
     if (elapsed < SETTLED_DISPLAY_MS) return true;
     if (matchesPatch(rows.get(mutation.issueId), mutation.patch)) return false;
@@ -94,15 +150,24 @@ export function overlayRows(
   return Array.from(merged.values());
 }
 
-export type CardSync = "idle" | "syncing" | "failed" | "synced";
+export type CardSync = "idle" | "synced" | "pending" | "syncing" | "failed";
+
+/** Strongest state first: nothing weaker may hide a failure or an unproven hop. */
+const SYNC_RANK: Readonly<Record<CardSync, number>> = {
+  idle: 0,
+  synced: 1,
+  pending: 2,
+  syncing: 3,
+  failed: 4,
+};
 
 /** The strongest sync state to show on one card. Failure wins over progress. */
 export function cardSync(issueId: string, overlays: readonly Mutation[]): CardSync {
   let state: CardSync = "idle";
   for (const mutation of overlays) {
     if (mutation.issueId !== issueId) continue;
-    if (mutation.phase === "failed") return "failed";
-    state = mutation.phase === "syncing" ? "syncing" : state === "idle" ? "synced" : state;
+    const candidate: CardSync = mutation.phase;
+    if (SYNC_RANK[candidate] > SYNC_RANK[state]) state = candidate;
   }
   return state;
 }
@@ -112,9 +177,33 @@ export function syncSummary(overlays: readonly Mutation[]): {
   readonly state: CardSync;
   readonly count: number;
 } {
-  const failed = overlays.filter((mutation) => mutation.phase === "failed").length;
-  if (failed > 0) return { state: "failed", count: failed };
-  const syncing = overlays.filter((mutation) => mutation.phase === "syncing").length;
-  if (syncing > 0) return { state: "syncing", count: syncing };
+  for (const phase of ["failed", "syncing", "pending"] as const) {
+    const count = overlays.filter((mutation) => mutation.phase === phase).length;
+    if (count > 0) return { state: phase, count };
+  }
   return { state: overlays.length > 0 ? "synced" : "idle", count: overlays.length };
+}
+
+export interface CardFailure {
+  readonly commandId: string;
+  readonly message: string;
+}
+
+/**
+ * The newest failed mutation for one issue.
+ *
+ * Retry must replay the exact command that failed. `overlays` is newest-first,
+ * so the first match is the newest failure; retrying an older command for the
+ * same issue would leave the visible failure untouched.
+ */
+export function latestFailure(
+  issueId: string,
+  overlays: readonly Mutation[],
+): CardFailure | undefined {
+  const failed = overlays.find(
+    (mutation) => mutation.issueId === issueId && mutation.phase === "failed",
+  );
+  return failed === undefined
+    ? undefined
+    : { commandId: failed.commandId, message: failed.error ?? "Sync failed" };
 }

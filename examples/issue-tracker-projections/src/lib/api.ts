@@ -2,6 +2,7 @@
 import type {
   ApiError,
   BoardResponse,
+  CoverageResponse,
   CreateIssueRequest,
   CreateProjectRequest,
   HealthResponse,
@@ -51,6 +52,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const workspacePath = (workspaceId: string): string =>
   `/api/workspaces/${encodeURIComponent(workspaceId)}`;
 
+/**
+ * Ask the server to skip the immediate projection passes. Durability and the
+ * acknowledgement are unchanged; the command simply has to converge through
+ * repair, which is how the `Pending` path is exercised for real.
+ */
+export interface CommandOptions {
+  readonly deferProjections?: boolean;
+}
+
+const deferQuery = (options: CommandOptions): string =>
+  options.deferProjections === true ? "?projections=deferred" : "";
+
 export const api = {
   health: (): Promise<HealthResponse> => request<HealthResponse>("/health"),
 
@@ -78,8 +91,12 @@ export const api = {
       method: "POST",
     }),
 
-  createIssue: (workspaceId: string, body: CreateIssueRequest): Promise<MutationResponse> =>
-    request<MutationResponse>(`${workspacePath(workspaceId)}/issues`, {
+  createIssue: (
+    workspaceId: string,
+    body: CreateIssueRequest,
+    options: CommandOptions = {},
+  ): Promise<MutationResponse> =>
+    request<MutationResponse>(`${workspacePath(workspaceId)}/issues${deferQuery(options)}`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -88,14 +105,25 @@ export const api = {
     workspaceId: string,
     issueId: string,
     body: IssueCommandRequest,
+    options: CommandOptions = {},
   ): Promise<MutationResponse> =>
     request<MutationResponse>(
-      `${workspacePath(workspaceId)}/issues/${encodeURIComponent(issueId)}/commands`,
+      `${workspacePath(workspaceId)}/issues/${encodeURIComponent(issueId)}/commands${deferQuery(
+        options,
+      )}`,
       { method: "POST", body: JSON.stringify(body) },
     ),
 
   issueDetail: (workspaceId: string, issueId: string): Promise<IssueDetail> =>
     request<IssueDetail>(`${workspacePath(workspaceId)}/issues/${encodeURIComponent(issueId)}`),
+
+  /** Read-only lineage probe for one accepted acknowledgement. */
+  coverage: (workspaceId: string, issueId: string, position: string): Promise<CoverageResponse> =>
+    request<CoverageResponse>(
+      `${workspacePath(workspaceId)}/issues/${encodeURIComponent(
+        issueId,
+      )}/coverage?position=${encodeURIComponent(position)}`,
+    ),
 };
 
 /** Identifiers must satisfy the server's stream-segment rule. */

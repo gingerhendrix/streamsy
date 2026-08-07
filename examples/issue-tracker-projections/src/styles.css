@@ -546,6 +546,11 @@ button.link {
   color: var(--bad);
 }
 
+/* Accepted but not yet covered by the board. */
+.card-state.warn {
+  color: var(--warn);
+}
+
 .spinner {
   width: 10px;
   height: 10px;
@@ -703,6 +708,42 @@ button.link {
 .chip.bad {
   color: var(--bad);
   border-color: rgb(242 119 122 / 45%);
+}
+
+.chip.warn {
+  color: var(--warn);
+  border-color: rgb(231 192 105 / 45%);
+}
+
+.banner.warn {
+  color: var(--warn);
+}
+
+.pass-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+}
+
+.pass {
+  display: flex;
+  flex-direction: column;
+  font-size: 11.5px;
+}
+
+.pass-caught-up {
+  color: var(--ok);
+}
+
+.pass-deferred {
+  color: var(--warn);
+}
+
+.pass-faulted {
+  color: var(--bad);
 }
 
 .comments h3 {
@@ -901,18 +942,27 @@ button.link {
 }
 
 @media (width <= 760px) {
+  /* Every header control must stay inside the viewport at 390px: the brand
+     gives up its space and the workspace chip truncates, so the trailing
+     Projections button is never clipped. */
   .app-header {
     gap: 6px;
     padding: 0 10px;
+    /* Scrolling stays as the fallback: content is never lost, only reached. */
     overflow-x: auto;
   }
 
+  .brand,
   .switch {
     display: none;
   }
 
   .workspace {
     display: inline-block;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .workspace-body {
@@ -952,5 +1002,29 @@ button.link {
     inset: 0;
     width: 100vw;
     padding: 12px;
+  }
+}
+
+/* Narrow phones: shrink the header controls so the whole bar, including the
+   trailing Projections button, fits inside a 390px viewport. */
+@media (width <= 480px) {
+  .app-header {
+    gap: 4px;
+    padding: 0 8px;
+  }
+
+  .app-header .state {
+    padding: 3px 7px;
+    font-size: 11px;
+  }
+
+  .app-header button.ghost {
+    padding: 5px 7px;
+    font-size: 12px;
+  }
+
+  .workspace {
+    max-width: 84px;
+    padding: 3px 6px;
   }
 }

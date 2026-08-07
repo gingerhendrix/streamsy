@@ -9,7 +9,7 @@ import {
   relativeTime,
   STATUS_LABELS,
 } from "../lib/format.ts";
-import type { CardSync } from "../lib/pending.ts";
+import type { CardFailure, CardSync } from "../lib/pending.ts";
 
 export interface BoardProps {
   readonly rows: readonly BoardRow[];
@@ -17,10 +17,12 @@ export interface BoardProps {
   readonly now: number;
   readonly selectedIssueId: string | null;
   readonly syncOf: (issueId: string) => CardSync;
-  readonly errorOf: (issueId: string) => string | undefined;
+  /** The newest failure on this issue, carrying the command a retry replays. */
+  readonly failureOf: (issueId: string) => CardFailure | undefined;
+  readonly noteOf: (issueId: string) => string | undefined;
   readonly onOpen: (issueId: string) => void;
   readonly onStatusChange: (row: BoardRow, status: IssueStatus) => void;
-  readonly onRetry: (issueId: string) => void;
+  readonly onRetry: (commandId: string) => void;
   readonly onCreate: (title: string, status: IssueStatus) => void;
 }
 
@@ -70,7 +72,8 @@ export function Board(props: BoardProps) {
                     now={props.now}
                     selected={props.selectedIssueId === row.issueId}
                     sync={props.syncOf(row.issueId)}
-                    error={props.errorOf(row.issueId)}
+                    failure={props.failureOf(row.issueId)}
+                    note={props.noteOf(row.issueId)}
                     onOpen={props.onOpen}
                     onStatusChange={props.onStatusChange}
                     onRetry={props.onRetry}
@@ -111,10 +114,11 @@ interface IssueCardProps {
   readonly now: number;
   readonly selected: boolean;
   readonly sync: CardSync;
-  readonly error: string | undefined;
+  readonly failure: CardFailure | undefined;
+  readonly note: string | undefined;
   readonly onOpen: (issueId: string) => void;
   readonly onStatusChange: (row: BoardRow, status: IssueStatus) => void;
-  readonly onRetry: (issueId: string) => void;
+  readonly onRetry: (commandId: string) => void;
 }
 
 function IssueCard(props: IssueCardProps) {
@@ -181,11 +185,22 @@ function IssueCard(props: IssueCardProps) {
           <span className="spinner" aria-hidden="true" /> Syncing
         </p>
       )}
+      {/* Accepted, but the board does not cover it yet. Never `Synced`. */}
+      {props.sync === "pending" && (
+        <p className="card-state warn">
+          <span className="spinner" aria-hidden="true" /> Pending projections
+          {props.note !== undefined && <span className="meta">{props.note}</span>}
+        </p>
+      )}
       {props.sync === "synced" && <p className="card-state ok">Synced</p>}
-      {props.sync === "failed" && (
+      {props.sync === "failed" && props.failure !== undefined && (
         <p className="card-state bad">
-          <span>{props.error ?? "Sync failed"}</span>
-          <button type="button" className="link" onClick={() => props.onRetry(row.issueId)}>
+          <span>{props.failure.message}</span>
+          <button
+            type="button"
+            className="link"
+            onClick={() => props.onRetry(props.failure!.commandId)}
+          >
             Retry sync
           </button>
         </p>

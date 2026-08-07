@@ -25,6 +25,8 @@ import { useNow, useStateFeed, useWorkspaceLocation } from "./lib/hooks.ts";
 import {
   activeOverlays,
   cardSync,
+  classifySettlement,
+  latestFailure,
   overlayRows,
   syncSummary,
   type Mutation,
@@ -33,6 +35,16 @@ import {
 import { sortBoardRows } from "./lib/state.ts";
 
 const MUTATION_HISTORY = 12;
+
+/**
+ * Bounded convergence for an accepted-but-unproven command: repair, then probe
+ * durable lineage. It stops at the bound and reports what it saw. It never
+ * upgrades a mutation to `Synced` on elapsed time.
+ */
+const CONVERGE_ATTEMPTS = 6;
+const CONVERGE_STEP_MS = 600;
+
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A detail load, tagged with the issue it belongs to. */
 interface DetailResult {
@@ -56,6 +68,17 @@ export function App() {
   const { workspaceId, projectId, issueId } = location;
   const now = useNow();
 
+  // `?defer=1` asks the server to skip the immediate projection passes, so the
+  // accepted-but-unproven path is drivable in a real browser. It changes no
+  // durability: the command still has to converge, and still has to be proven
+  // from lineage before anything says `Synced`.
+  const commandOptions = useMemo(
+    () => ({
+      deferProjections: new URLSearchParams(globalThis.location.search).get("defer") === "1",
+    }),
+    [],
+  );
+
   const [health, setHealth] = useState<HealthResponse | undefined>(undefined);
   const [mutations, setMutations] = useState<readonly Mutation[]>([]);
   const [announcement, setAnnouncement] = useState("");
@@ -65,6 +88,7 @@ export function App() {
   const [counts, setCounts] = useState<Readonly<Record<string, number>>>({});
   const [detailResult, setDetailResult] = useState<DetailResult | undefined>(undefined);
   const commands = useRef(new Map<string, CommandSpec>());
+  const inspectorButton = useRef<HTMLButtonElement>(null);
 
   // A result only counts for the issue it was loaded for, so switching issues
   // never shows the previous body or a stale "not found".
@@ -112,6 +136,50 @@ export function App() {
 
   const summary = syncSummary(overlays);
 
+  const patchMutation = useCallback((commandId: string, patch: Partial<Mutation>) => {
+    setMutations((current) =>
+      current.map((mutation) =>
+        mutation.commandId === commandId ? { ...mutation, ...patch } : mutation,
+      ),
+    );
+  }, []);
+
+  /**
+   * Carry one accepted-but-unproven command forward: bounded repair passes and
+   * read-only lineage probes. Only a probe that reports proven coverage may
+   * turn the mutation into `Synced`.
+   */
+  const converge = useCallback(
+    async (spec: CommandSpec, position: string) => {
+      for (let attempt = 1; attempt <= CONVERGE_ATTEMPTS; attempt++) {
+        await api.repair(workspaceId, spec.projectId).catch(() => undefined);
+        const probe = await api
+          .coverage(workspaceId, spec.issueId, position)
+          .catch(() => undefined);
+        if (probe !== undefined) {
+          const settled = classifySettlement(spec.label, probe);
+          patchMutation(spec.commandId, {
+            phase: settled.phase,
+            settledAt: Date.now(),
+            coverage: probe.coverage,
+            projections: probe.projections,
+            note: undefined,
+            ...(settled.phase === "failed" ? { error: settled.message } : {}),
+          });
+          if (settled.phase !== "pending") {
+            setAnnouncement(settled.message);
+            return;
+          }
+        }
+        await wait(CONVERGE_STEP_MS * attempt);
+      }
+      const note = `Accepted and durable, but not proven after ${CONVERGE_ATTEMPTS} repair passes.`;
+      patchMutation(spec.commandId, { note });
+      setAnnouncement(`${spec.label}: ${note} Open Projections to repair or inspect the hops.`);
+    },
+    [patchMutation, workspaceId],
+  );
+
   /** Run one command. The command id is stable, so a retry reconciles. */
   const run = useCallback(
     async (spec: CommandSpec) => {
@@ -135,54 +203,56 @@ export function App() {
 
       try {
         const response = await spec.send();
-        setMutations((current) =>
-          current.map((mutation) =>
-            mutation.commandId === spec.commandId
-              ? {
-                  ...mutation,
-                  phase: "synced" as const,
-                  settledAt: Date.now(),
-                  ack: response.ack,
-                  coverage: response.coverage,
-                  error: undefined,
-                }
-              : mutation,
-          ),
-        );
+        // The HTTP result only says the append was accepted. `Synced` needs
+        // proven chained coverage with no faulted projection pass.
+        const settled = classifySettlement(spec.label, response);
+        patchMutation(spec.commandId, {
+          phase: settled.phase,
+          settledAt: Date.now(),
+          ack: response.ack,
+          coverage: response.coverage,
+          projections: response.projections,
+          note: undefined,
+          error: settled.phase === "failed" ? settled.message : undefined,
+        });
         if (response.detail !== null && response.detail.issueId === issueId) {
           setDetailResult({ issueId, detail: response.detail });
         }
-        if (response.coverage.status === "proven") {
-          setAnnouncement(`${spec.label}: synced and proven through both projections.`);
-        } else {
-          setAnnouncement(`${spec.label}: accepted, projection catch-up in progress.`);
-          // Convergence must not depend on this request; ask for a bounded repair.
-          void api.repair(workspaceId, spec.projectId).catch(() => undefined);
-        }
+        setAnnouncement(settled.message);
+        if (settled.phase === "failed") setBanner(settled.message);
+        if (settled.phase === "pending") void converge(spec, response.ack.position);
       } catch (error) {
         const message = error instanceof ApiFailure ? error.message : String(error);
-        setMutations((current) =>
-          current.map((mutation) =>
-            mutation.commandId === spec.commandId
-              ? { ...mutation, phase: "failed" as const, settledAt: Date.now(), error: message }
-              : mutation,
-          ),
-        );
+        patchMutation(spec.commandId, {
+          phase: "failed",
+          settledAt: Date.now(),
+          error: message,
+        });
         setBanner(`${spec.label} failed: ${message}`);
         setAnnouncement(`${spec.label} failed: ${message}`);
       }
     },
-    [issueId, workspaceId],
+    [converge, issueId, patchMutation],
   );
 
+  /** Retry replays the exact command that failed, by its own command id. */
   const retry = useCallback(
-    (target: string) => {
-      const spec = [...commands.current.values()].find(
-        (candidate) => candidate.commandId === target || candidate.issueId === target,
-      );
+    (commandId: string) => {
+      const spec = commands.current.get(commandId);
       if (spec !== undefined) void run(spec);
     },
     [run],
+  );
+
+  const failureOf = useCallback((target: string) => latestFailure(target, overlays), [overlays]);
+
+  /** Retry the newest failed command on one issue, never an older one. */
+  const retryIssue = useCallback(
+    (target: string) => {
+      const failure = latestFailure(target, overlays);
+      if (failure !== undefined) retry(failure.commandId);
+    },
+    [overlays, retry],
   );
 
   const changeStatus = useCallback(
@@ -196,10 +266,15 @@ export function App() {
         label: `Move ${row.issueKey} to ${STATUS_LABELS[status]}`,
         patch: { status },
         send: () =>
-          api.issueCommand(workspaceId, row.issueId, { commandId, type: "status", status }),
+          api.issueCommand(
+            workspaceId,
+            row.issueId,
+            { commandId, type: "status", status },
+            commandOptions,
+          ),
       });
     },
-    [activeProjectId, run, workspaceId],
+    [activeProjectId, commandOptions, run, workspaceId],
   );
 
   const createIssue = useCallback(
@@ -225,19 +300,23 @@ export function App() {
           updatedAt: at,
         },
         send: async () => {
-          const created = await api.createIssue(workspaceId, {
-            commandId,
-            issueId: targetIssueId,
-            projectId: activeProjectId,
-            title,
-            priority: "medium",
-            status,
-          });
+          const created = await api.createIssue(
+            workspaceId,
+            {
+              commandId,
+              issueId: targetIssueId,
+              projectId: activeProjectId,
+              title,
+              priority: "medium",
+              status,
+            },
+            commandOptions,
+          );
           return created;
         },
       });
     },
-    [activeProjectId, run, workspaceId],
+    [activeProjectId, commandOptions, run, workspaceId],
   );
 
   const detailCommand = useCallback(
@@ -251,10 +330,10 @@ export function App() {
         projectId: activeProjectId,
         label,
         patch,
-        send: () => api.issueCommand(workspaceId, detail.issueId, request),
+        send: () => api.issueCommand(workspaceId, detail.issueId, request, commandOptions),
       });
     },
-    [activeProjectId, detail, run, workspaceId],
+    [activeProjectId, commandOptions, detail, run, workspaceId],
   );
 
   // Durable detail for the drawer, refreshed when its board row moves.
@@ -304,6 +383,13 @@ export function App() {
       clearInterval(timer);
     };
   }, [workspaceId, projectIds]);
+
+  // Closing the inspector returns focus to the control that opened it, the same
+  // way the drawer returns focus to its card.
+  const closeInspector = useCallback(() => {
+    setInspectorOpen(false);
+    inspectorButton.current?.focus();
+  }, []);
 
   const closeDrawer = useCallback(() => {
     const previous = issueId;
@@ -378,6 +464,7 @@ export function App() {
         <button
           type="button"
           className="ghost"
+          ref={inspectorButton}
           aria-expanded={inspectorOpen}
           data-testid="open-inspector"
           onClick={() => setInspectorOpen((open) => !open)}
@@ -463,9 +550,10 @@ export function App() {
               now={now}
               selectedIssueId={issueId}
               syncOf={(id) => cardSync(id, overlays)}
-              errorOf={(id) =>
-                overlays.find((mutation) => mutation.issueId === id && mutation.phase === "failed")
-                  ?.error
+              failureOf={failureOf}
+              noteOf={(id) =>
+                overlays.find((mutation) => mutation.issueId === id && mutation.phase === "pending")
+                  ?.note
               }
               onOpen={(id) => navigate({ issueId: id })}
               onStatusChange={changeStatus}
@@ -479,15 +567,16 @@ export function App() {
           <IssueDrawer
             detail={detail}
             loading={!detailMissing}
-            error={
+            error={failureOf(issueId)?.message}
+            note={
               overlays.find(
-                (mutation) => mutation.issueId === issueId && mutation.phase === "failed",
-              )?.error
+                (mutation) => mutation.issueId === issueId && mutation.phase === "pending",
+              )?.note
             }
             sync={cardSync(issueId, overlays)}
             now={now}
             onClose={closeDrawer}
-            onRetry={() => retry(issueId)}
+            onRetry={() => retryIssue(issueId)}
             onRename={(title) =>
               detailCommand(`Rename ${detail?.issueKey ?? "issue"}`, { title }, (commandId) => ({
                 commandId,
@@ -536,7 +625,7 @@ export function App() {
           <Inspector
             mutations={mutations}
             boardStream={boardStream ?? "—"}
-            onClose={() => setInspectorOpen(false)}
+            onClose={closeInspector}
             onRepair={() => {
               if (activeProjectId === null) return;
               void api
@@ -565,6 +654,7 @@ function connectionLabel(status: string): string {
 function syncLabel(summary: ReturnType<typeof syncSummary>): string {
   if (summary.state === "failed") return `${summary.count} failed`;
   if (summary.state === "syncing") return `Syncing ${summary.count}`;
+  if (summary.state === "pending") return `Pending ${summary.count}`;
   if (summary.state === "synced") return "Synced";
   return "Idle";
 }

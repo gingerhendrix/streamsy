@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "vitest";
-import type { BoardResponse, MutationResponse } from "../shared/api.ts";
+import type {
+  BoardResponse,
+  CoverageResponse,
+  MutationResponse,
+  ProjectsResponse,
+  RepairResponse,
+} from "../shared/api.ts";
 import { createLocalHost } from "../server/local.ts";
 
 type Host = ReturnType<typeof createLocalHost>;
@@ -176,6 +182,147 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
         })
       ).status,
     ).toBe(404);
+  });
+
+  test("a repeated project create reconciles to the durable row, not the new payload", async () => {
+    const host = newHost();
+    const created = await call(host, "POST", "/api/workspaces/w6/projects", {
+      projectId: "launch",
+      projectKey: "SHIP",
+      name: "Launch",
+    });
+    expect(created.status).toBe(201);
+
+    // Same project id, changed payload. The producer sequence was already
+    // accepted, so the durable row answers and payload equality is not claimed.
+    const again = await call(host, "POST", "/api/workspaces/w6/projects", {
+      projectId: "launch",
+      projectKey: "MOVE",
+      name: "Renamed after the fact",
+    });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({
+      projectId: "launch",
+      projectKey: "SHIP",
+      name: "Launch",
+    });
+
+    const listed = await json<ProjectsResponse>(
+      await call(host, "GET", "/api/workspaces/w6/projects"),
+    );
+    expect(listed.projects).toEqual([{ projectId: "launch", projectKey: "SHIP", name: "Launch" }]);
+  });
+
+  test("an invalid project request is a 400, not a silent 201", async () => {
+    const host = newHost();
+    expect(
+      (
+        await call(host, "POST", "/api/workspaces/w7/projects", {
+          projectId: "bad/id",
+          projectKey: "SHIP",
+          name: "Launch",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await call(host, "POST", "/api/workspaces/w7/projects", {
+          projectId: "launch",
+          projectKey: "SHIP",
+          name: "   ",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  test("a deferred command is accepted unproven and converges through repair", async () => {
+    const host = newHost();
+    await workspace(host, "w8");
+    await call(host, "POST", "/api/workspaces/w8/issues", {
+      commandId: "cmd-1",
+      issueId: "issue-1",
+      projectId: "launch",
+      title: "Prove the path",
+    });
+
+    // No immediate pass runs, so the response must not claim proven coverage.
+    const deferred = await json<MutationResponse>(
+      await call(host, "POST", "/api/workspaces/w8/issues/issue-1/commands?projections=deferred", {
+        commandId: "cmd-2",
+        type: "status",
+        status: "done",
+      }),
+    );
+    expect(deferred.coverage.status).not.toBe("proven");
+    expect(deferred.projections.map((pass) => pass.outcome)).toEqual(["deferred", "deferred"]);
+    expect(deferred.ack.position.length).toBeGreaterThan(0);
+
+    // The read-only probe agrees before any catch-up work has been done.
+    const before = await json<CoverageResponse>(
+      await call(
+        host,
+        "GET",
+        `/api/workspaces/w8/issues/issue-1/coverage?position=${encodeURIComponent(
+          deferred.ack.position,
+        )}`,
+      ),
+    );
+    expect(before.coverage.status).not.toBe("proven");
+
+    const repaired = await json<RepairResponse>(
+      await call(host, "POST", "/api/workspaces/w8/projects/launch/repair"),
+    );
+    expect(repaired.projections.every((pass) => pass.outcome === "caught-up")).toBe(true);
+
+    const after = await json<CoverageResponse>(
+      await call(
+        host,
+        "GET",
+        `/api/workspaces/w8/issues/issue-1/coverage?position=${encodeURIComponent(
+          deferred.ack.position,
+        )}`,
+      ),
+    );
+    expect(after.coverage.status).toBe("proven");
+
+    const board = await json<BoardResponse>(
+      await call(host, "GET", "/api/workspaces/w8/projects/launch/board"),
+    );
+    expect(board.rows[0]).toMatchObject({ issueId: "issue-1", status: "done" });
+  });
+
+  test("a coverage probe needs a position and a known issue", async () => {
+    const host = newHost();
+    await workspace(host, "w9");
+    await call(host, "POST", "/api/workspaces/w9/issues", {
+      commandId: "cmd-1",
+      issueId: "issue-1",
+      projectId: "launch",
+      title: "Prove the path",
+    });
+    expect((await call(host, "GET", "/api/workspaces/w9/issues/issue-1/coverage")).status).toBe(
+      400,
+    );
+    expect(
+      (await call(host, "GET", "/api/workspaces/w9/issues/missing/coverage?position=0_0")).status,
+    ).toBe(404);
+  });
+
+  test("every settled command reports a classified pass for both projections", async () => {
+    const host = newHost();
+    await workspace(host, "w10");
+    const created = await json<MutationResponse>(
+      await call(host, "POST", "/api/workspaces/w10/issues", {
+        commandId: "cmd-1",
+        issueId: "issue-1",
+        projectId: "launch",
+        title: "Prove the path",
+      }),
+    );
+    expect(created.projections).toEqual([
+      { label: "issue-detail", status: "caught-up", outcome: "caught-up" },
+      { label: "project-board", status: "caught-up", outcome: "caught-up" },
+    ]);
   });
 
   test("the seeded workspace is complete and idempotent", async () => {

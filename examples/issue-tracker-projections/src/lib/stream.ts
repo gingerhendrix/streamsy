@@ -18,6 +18,31 @@ export interface FeedHandlers {
 const MISSING_RETRY_MS = 1_500;
 const MAX_BACKOFF_MS = 8_000;
 
+/**
+ * A long poll in flight when the page navigates away rejects with a generic
+ * network error. That is expected teardown, not a failing stream, so it must
+ * not be logged like one — while a real mid-session failure still must be.
+ */
+let navigating = false;
+if (typeof globalThis.addEventListener === "function") {
+  for (const event of ["pagehide", "beforeunload"] as const) {
+    globalThis.addEventListener(event, () => {
+      navigating = true;
+    });
+  }
+}
+
+export interface TeardownState {
+  readonly aborted: boolean;
+  readonly navigating: boolean;
+}
+
+/** True when a failed read is expected teardown rather than a retryable fault. */
+export function isExpectedTeardown(error: unknown, state: TeardownState): boolean {
+  if (state.aborted || state.navigating) return true;
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export function streamUrl(streamName: string, query: Record<string, string>): string {
   const path = streamName
     .split("/")
@@ -81,7 +106,7 @@ async function run(streamName: string, handlers: FeedHandlers, signal: AbortSign
         handlers.onReady?.();
       }
     } catch (error) {
-      if (signal.aborted) return;
+      if (isExpectedTeardown(error, { aborted: signal.aborted, navigating })) return;
       console.warn(`stream tail ${streamName} retrying`, error);
       handlers.onStatus("reconnecting");
       await delay(backoff, signal);

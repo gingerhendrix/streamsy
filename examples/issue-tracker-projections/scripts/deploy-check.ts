@@ -7,7 +7,8 @@
  *   1. typecheck, which compiles `alchemy.run.ts` against the pinned Alchemy
  *      declarations and therefore validates every resource spelling;
  *   2. build the Worker bundle and the browser assets;
- *   3. report whether deploy credentials are present, without using them.
+ *   3. audit any local Alchemy state for runtime identifiers;
+ *   4. report whether deploy credentials are present, without using them.
  *
  * It never applies infrastructure. `deploy:demo` is the separate explicit step.
  */
@@ -22,6 +23,7 @@ await step("typecheck (validates the Alchemy program and resource spelling)", "b
   "typecheck",
 ]);
 await step("build worker bundle and assets", "bun", ["run", "build"]);
+await step("audit Alchemy state for runtime identifiers", "bun", ["run", "audit:state"]);
 
 const credentials =
   (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CLOUDFLARE_API_KEY ?? "").length > 0;

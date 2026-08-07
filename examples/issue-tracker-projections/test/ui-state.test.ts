@@ -15,6 +15,8 @@ import {
 import {
   activeOverlays,
   cardSync,
+  classifySettlement,
+  latestFailure,
   matchesPatch,
   overlayRows,
   syncSummary,
@@ -23,7 +25,8 @@ import {
   type Mutation,
 } from "../src/lib/pending.ts";
 import { foldBoardRows, foldProjects, sortBoardRows } from "../src/lib/state.ts";
-import { streamUrl } from "../src/lib/stream.ts";
+import { isExpectedTeardown, streamUrl } from "../src/lib/stream.ts";
+import type { CoverageReport, ProjectionPassReport } from "../shared/api.ts";
 import type { BoardRow } from "../shared/model.ts";
 
 const row = (overrides: Partial<BoardRow> = {}): BoardRow => ({
@@ -152,11 +155,132 @@ describe("optimistic overlays", () => {
     expect(cardSync("other", overlays)).toBe("idle");
   });
 
+  it("never lets a settled overlay hide an unproven one on the same card", () => {
+    const overlays = [
+      mutation({ phase: "synced" }),
+      mutation({ commandId: "b", phase: "pending" }),
+    ];
+    expect(cardSync("issue-1", overlays)).toBe("pending");
+  });
+
+  it("holds a pending overlay indefinitely: it is accepted but unproven", () => {
+    const durable = new Map([["issue-1", row({ status: "done" })]]);
+    const pending = mutation({ phase: "pending", settledAt: 2_000 });
+    expect(activeOverlays([pending], durable, 9_999_999)).toHaveLength(1);
+  });
+
   it("summarises the workspace sync state", () => {
     expect(syncSummary([]).state).toBe("idle");
     expect(syncSummary([mutation()])).toEqual({ state: "syncing", count: 1 });
     expect(syncSummary([mutation({ phase: "synced" })]).state).toBe("synced");
+    expect(syncSummary([mutation({ phase: "pending" })])).toEqual({ state: "pending", count: 1 });
     expect(syncSummary([mutation({ phase: "failed" })]).state).toBe("failed");
+    expect(
+      syncSummary([mutation({ phase: "synced" }), mutation({ commandId: "b", phase: "pending" })])
+        .state,
+    ).toBe("pending");
+  });
+});
+
+const coverage = (overrides: Partial<CoverageReport> = {}): CoverageReport => ({
+  status: "proven",
+  ack: { stream: "workspaces/main/issues/issue-1/events", position: "8_0" },
+  hops: [],
+  ...overrides,
+});
+
+const pass = (overrides: Partial<ProjectionPassReport> = {}): ProjectionPassReport => ({
+  label: "issue-detail",
+  status: "caught-up",
+  outcome: "caught-up",
+  ...overrides,
+});
+
+describe("the Synced law", () => {
+  it("only calls a command synced when coverage is proven and no pass faulted", () => {
+    const settled = classifySettlement("Move SHIP-100 to Done", {
+      coverage: coverage(),
+      projections: [pass(), pass({ label: "project-board" })],
+    });
+    expect(settled.phase).toBe("synced");
+  });
+
+  it("keeps not-yet and incomparable coverage pending, never synced", () => {
+    for (const status of ["not-yet", "incomparable"] as const) {
+      const settled = classifySettlement("Move SHIP-100 to Done", {
+        coverage: coverage({ status, blockedAt: "project-board" }),
+        projections: [pass(), pass({ label: "project-board" })],
+      });
+      expect(settled.phase).toBe("pending");
+      expect(settled.message).toContain(status);
+    }
+  });
+
+  it("fails a command whose projection faulted, even when coverage reads proven", () => {
+    for (const faulted of [
+      pass({ label: "project-board", status: "output-conflict", outcome: "faulted" }),
+      pass({ label: "project-board", status: "unknown-member", outcome: "faulted" }),
+      pass({ label: "issue-detail", status: "StateRestorePoison", outcome: "faulted" }),
+    ]) {
+      const settled = classifySettlement("Move SHIP-100 to Done", {
+        coverage: coverage(),
+        projections: [faulted],
+      });
+      expect(settled.phase).toBe("failed");
+      expect(settled.message).toContain(faulted.status);
+    }
+  });
+
+  it("keeps an exhausted bounded limit pending rather than synced", () => {
+    const settled = classifySettlement("Move SHIP-100 to Done", {
+      coverage: coverage({ status: "not-yet", blockedAt: "project-board" }),
+      projections: [pass({ status: "limit-reached", outcome: "deferred" })],
+    });
+    expect(settled.phase).toBe("pending");
+  });
+});
+
+describe("retrying a failed command", () => {
+  it("returns the newest failure for the issue, not the oldest command", () => {
+    // `activeOverlays` preserves the newest-first mutation order.
+    const overlays = [
+      mutation({ commandId: "cmd-new", phase: "failed", error: "newest" }),
+      mutation({ commandId: "cmd-old", phase: "failed", error: "oldest" }),
+    ];
+    expect(latestFailure("issue-1", overlays)).toEqual({
+      commandId: "cmd-new",
+      message: "newest",
+    });
+  });
+
+  it("ignores non-failed and other-issue mutations", () => {
+    const overlays = [
+      mutation({ commandId: "cmd-other", issueId: "issue-2", phase: "failed" }),
+      mutation({ commandId: "cmd-pending", phase: "pending" }),
+      mutation({ commandId: "cmd-failed", phase: "failed", error: "boom" }),
+    ];
+    expect(latestFailure("issue-1", overlays)?.commandId).toBe("cmd-failed");
+    expect(latestFailure("issue-3", overlays)).toBeUndefined();
+  });
+});
+
+describe("stream tail retry noise", () => {
+  it("stays silent for an aborted subscription or a page navigation", () => {
+    const failure = new TypeError("Failed to fetch");
+    expect(isExpectedTeardown(failure, { aborted: true, navigating: false })).toBe(true);
+    expect(isExpectedTeardown(failure, { aborted: false, navigating: true })).toBe(true);
+    const aborted = new Error("aborted");
+    aborted.name = "AbortError";
+    expect(isExpectedTeardown(aborted, { aborted: false, navigating: false })).toBe(true);
+  });
+
+  it("still reports a real mid-session read failure", () => {
+    expect(
+      isExpectedTeardown(new TypeError("Failed to fetch"), {
+        aborted: false,
+        navigating: false,
+      }),
+    ).toBe(false);
   });
 });
 

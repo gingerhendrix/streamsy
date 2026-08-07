@@ -15,6 +15,7 @@
     "smoke:ui": "bun run scripts/ui-smoke.ts",
     "seed:check": "bun run scripts/seed-check.ts",
     "deploy:check": "bun run scripts/deploy-check.ts",
+    "audit:state": "bun run scripts/alchemy-state-audit.ts",
     "deploy:demo": "alchemy deploy",
     "destroy:demo": "alchemy destroy",
     "smoke:deployment": "bun run scripts/deployment-smoke.ts"

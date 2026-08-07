@@ -114,6 +114,12 @@ try {
   // The inspector reports proven chained coverage for the latest command.
   await page.click("[data-testid=open-inspector]");
   await page.waitForSelector("[data-testid=inspector]");
+  // Opening moves focus into the dialog; closing returns it to the opener.
+  assert(
+    (await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "")) ===
+      "close-inspector",
+    "opening the inspector must move focus into the dialog",
+  );
   const badge = await page.locator(".mutation-list .badge").first().textContent();
   assert(badge === "Proven", `the latest command must be proven, got ${String(badge)}`);
   const hops = await page.locator(".hop h3").allTextContents();
@@ -121,7 +127,13 @@ try {
     hops.length === 3,
     `the inspector must label three durable identities, got ${hops.length}`,
   );
-  await page.click("[data-testid=close-inspector]");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("[data-testid=inspector]", { state: "detached" });
+  assert(
+    (await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? "")) ===
+      "open-inspector",
+    "closing the inspector must return focus to the Projections button",
+  );
 
   // A reload must rebuild from the durable board State stream.
   await page.reload();
@@ -146,10 +158,57 @@ try {
   await page.keyboard.press("Enter");
   await second.waitForSelector('.card:has-text("Second window issue")', { timeout: 25_000 });
 
+  // The core law, driven end to end: with the immediate passes deferred, the
+  // card must show Pending — never Synced — and may only reach Synced once the
+  // bounded repair-and-probe loop has proven the chain from durable lineage.
+  const deferred = await open(1280, 900);
+  await deferred.goto(`${base}/?workspace=${workspaceId}&project=launch&defer=1`);
+  await deferred.waitForSelector("[data-testid=board]");
+  await deferred.waitForFunction(() => document.querySelectorAll(".card").length >= 3);
+  const target = deferred.locator('.card:has-text("Write the board empty state")');
+  const targetId = await target.getAttribute("data-testid");
+  assert(targetId !== null, "the deferred target card must be identifiable");
+  await target.locator(".status-select").selectOption("in-progress");
+
+  await deferred.waitForFunction(
+    (id) =>
+      document.querySelector(`[data-testid="${id}"]`)?.getAttribute("data-sync") === "pending",
+    targetId,
+    { timeout: 15_000 },
+  );
+  await deferred.waitForFunction(
+    (id) => document.querySelector(`[data-testid="${id}"]`)?.getAttribute("data-sync") === "synced",
+    targetId,
+    { timeout: 30_000 },
+  );
+  await deferred.click("[data-testid=open-inspector]");
+  const deferredBadge = await deferred.locator(".mutation-list .badge").first().textContent();
+  assert(
+    deferredBadge === "Proven",
+    `a deferred command may only reach Synced once proven, got ${String(deferredBadge)}`,
+  );
+
   // Mobile keeps the sheet and the status control usable.
   const mobile = await open(390, 844);
   await mobile.goto(`${base}/?workspace=${workspaceId}&project=launch`);
   await mobile.waitForSelector("[data-testid=board]");
+  // Every header control must fit inside the viewport, not just be scrollable.
+  const overflow = await mobile.evaluate(() => {
+    const width = document.documentElement.clientWidth;
+    return [...document.querySelectorAll<HTMLElement>(".app-header > *")]
+      .filter((node) => node.getBoundingClientRect().width > 0)
+      .map((node) => ({
+        label: node.getAttribute("data-testid") ?? (node.className || node.tagName),
+        right: Math.round(node.getBoundingClientRect().right),
+        width,
+      }))
+      .filter((entry) => entry.right > entry.width);
+  });
+  assert(
+    overflow.length === 0,
+    `header controls must fit the 390px viewport: ${JSON.stringify(overflow)}`,
+  );
+
   await mobile.locator(".card .card-open").first().click();
   await mobile.waitForSelector("[data-testid=issue-title]", { timeout: 15_000 });
   await mobile.waitForSelector("[data-testid=issue-status]");

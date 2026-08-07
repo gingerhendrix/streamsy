@@ -15,6 +15,32 @@ export interface CoverageReport {
   readonly hops: readonly HopReport[];
 }
 
+/**
+ * What one bounded projection pass did.
+ *
+ * `caught-up` is the only outcome that permits a `Synced` claim. `deferred`
+ * means more bounded work remains and repair or the wake consumer will carry
+ * it; `faulted` means this pass cannot make progress without intervention.
+ */
+export type ProjectionOutcome = "caught-up" | "deferred" | "faulted";
+
+export interface ProjectionPassReport {
+  readonly label: "issue-detail" | "project-board";
+  /** The exact kernel status, or the tag of a typed mesh error. */
+  readonly status: string;
+  readonly outcome: ProjectionOutcome;
+  readonly detail?: string;
+}
+
+/** A read-only lineage probe for one accepted acknowledgement. */
+export interface CoverageResponse {
+  readonly issueId: string;
+  readonly projectId: string;
+  readonly coverage: CoverageReport;
+  /** Always empty: a probe reads lineage and runs no projection work. */
+  readonly projections: readonly ProjectionPassReport[];
+}
+
 export interface MutationResponse {
   readonly commandId: string;
   readonly issueId: string;
@@ -23,7 +49,15 @@ export interface MutationResponse {
   readonly ack: { readonly stream: string; readonly position: string };
   readonly reconciled: boolean;
   readonly coverage: CoverageReport;
+  /** Classified result of every projection pass this request attempted. */
+  readonly projections: readonly ProjectionPassReport[];
   readonly detail: IssueDetail | null;
+}
+
+export interface RepairResponse {
+  readonly repaired: readonly string[];
+  readonly board: string;
+  readonly projections: readonly ProjectionPassReport[];
 }
 
 export interface CreateIssueRequest {

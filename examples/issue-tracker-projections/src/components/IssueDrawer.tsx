@@ -9,6 +9,7 @@ export interface IssueDrawerProps {
   readonly detail: IssueDetail | undefined;
   readonly loading: boolean;
   readonly error: string | undefined;
+  readonly note: string | undefined;
   readonly sync: CardSync;
   readonly now: number;
   readonly onClose: () => void;
@@ -61,6 +62,11 @@ export function IssueDrawer(props: IssueDrawerProps) {
             <span className="spinner" aria-hidden="true" /> Syncing
           </span>
         )}
+        {props.sync === "pending" && (
+          <span className="chip warn" title={props.note}>
+            <span className="spinner" aria-hidden="true" /> Pending
+          </span>
+        )}
         {props.sync === "synced" && <span className="chip ok">Synced</span>}
         {props.sync === "failed" && (
           <span className="chip bad">
@@ -84,6 +90,12 @@ export function IssueDrawer(props: IssueDrawerProps) {
       {props.error !== undefined && (
         <p className="banner bad" role="alert">
           {props.error}
+        </p>
+      )}
+
+      {props.sync === "pending" && props.note !== undefined && (
+        <p className="banner warn" data-testid="pending-note">
+          {props.note}
         </p>
       )}
 

@@ -5,8 +5,13 @@
  */
 import type { JsonValue, StreamProtocolClient } from "@streamsy/core";
 import type { StreamBinding } from "@streamsy/experimental/binding";
-import type { SourceAck } from "@streamsy/experimental/causal";
-import { AppendStreamsLive, ReadStreams, ReadStreamsLive } from "@streamsy/experimental/effect";
+import { sourceAck, type SourceAck } from "@streamsy/experimental/causal";
+import {
+  AppendStreams,
+  AppendStreamsLive,
+  ReadStreams,
+  ReadStreamsLive,
+} from "@streamsy/experimental/effect";
 import {
   DerivedRecoveryLive,
   DerivedStateHistoryLive,
@@ -16,15 +21,20 @@ import { Effect, Layer } from "effect";
 import type {
   BoardResponse,
   CoverageReport,
+  CoverageResponse,
   CreateIssueRequest,
   CreateProjectRequest,
   HealthResponse,
   IssueCommandRequest,
   MutationResponse,
+  ProjectionPassReport,
   ProjectsResponse,
+  RepairResponse,
 } from "../shared/api.ts";
 import {
   assertIdentifier,
+  decodeIssueDetail,
+  decodeProject,
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   isKnownMember,
@@ -45,6 +55,8 @@ import {
   membershipCommandId,
 } from "./commands.ts";
 import {
+  classifyPass,
+  faultedPass,
   projectionContext,
   proveChain,
   readBoard,
@@ -118,17 +130,26 @@ export const listProjects = Effect.fn("Application.listProjects")(function* (
       projects.delete(item.key);
       continue;
     }
-    projects.set(item.key, item.value as unknown as Project);
+    projects.set(item.key, decodeProject(item.value));
   }
   return Array.from(projects.values());
 });
+
+/**
+ * Creating a project is an append, so its outcome must be classified like any
+ * other. A producer duplicate is reconciled against the durable project row;
+ * the request payload is never echoed back as if it had been accepted.
+ */
+export type CreateProjectResult =
+  | { readonly status: "created" | "reconciled"; readonly project: Project }
+  | { readonly status: "conflict" | "rejected"; readonly detail: string };
 
 export const createProject = Effect.fn("Application.createProject")(function* (
   options: ApplicationOptions,
   workspaceId: string,
   request: CreateProjectRequest,
 ) {
-  assertIdentifier(workspaceId, "workspaceId");
+  const ctx = context(options, workspaceId);
   assertIdentifier(request.projectId, "projectId");
   assertIdentifier(request.projectKey, "projectKey");
   if (request.name.trim().length === 0) throw new TypeError("Project name is required");
@@ -146,20 +167,35 @@ export const createProject = Effect.fn("Application.createProject")(function* (
   const producer = yield* Effect.promise(() =>
     commandProducer(`project:${workspaceId}:${request.projectId}`),
   );
-  yield* Effect.promise(() =>
-    options.client.stream(streamNames.projects(workspaceId)).appendJsonBatch(
-      [
-        {
-          type: PROJECT_COLLECTION,
-          key: project.projectId,
-          value: project as unknown as JsonValue,
-          headers: { operation: "upsert" },
-        },
-      ],
-      { producer },
-    ),
+  const appends = yield* AppendStreams;
+  const outcome = yield* appends.appendJsonBatch(
+    ctx.bindings.projects(workspaceId),
+    [
+      {
+        type: PROJECT_COLLECTION,
+        key: project.projectId,
+        value: project as unknown as JsonValue,
+        headers: { operation: "upsert" },
+      },
+    ],
+    { producer },
   );
-  return project;
+
+  if (outcome.status === "appended") return { status: "created" as const, project };
+  if (outcome.status === "duplicate") {
+    // The producer sequence was already accepted. Payload equality is not
+    // verified, so the durable row is the answer — not this request's body.
+    const durable = (yield* listProjects(options, workspaceId)).find(
+      (candidate) => candidate.projectId === request.projectId,
+    );
+    return durable === undefined
+      ? {
+          status: "conflict" as const,
+          detail: "the producer sequence was accepted but no durable project row exists",
+        }
+      : { status: "reconciled" as const, project: durable };
+  }
+  return { status: "rejected" as const, detail: outcome.status };
 });
 
 /**
@@ -180,10 +216,23 @@ const nextIssueKey = Effect.fn("Application.nextIssueKey")(function* (
   return `${projectKey}-${100 + joins}`;
 });
 
+/**
+ * Per-request command options.
+ *
+ * `deferProjections` skips the immediate projection passes so convergence has
+ * to come from repair or the wake consumer. It changes no durability: the
+ * command is appended and acknowledged exactly as usual. It exists so a smoke
+ * can exercise the queue/repair path that a lost immediate pass depends on.
+ */
+export interface CommandOptions {
+  readonly deferProjections?: boolean;
+}
+
 export const createIssue = Effect.fn("Application.createIssue")(function* (
   options: ApplicationOptions,
   workspaceId: string,
   request: CreateIssueRequest,
+  command: CommandOptions = {},
 ) {
   const ctx = context(options, workspaceId);
   assertIdentifier(request.issueId, "issueId");
@@ -241,6 +290,7 @@ export const createIssue = Effect.fn("Application.createIssue")(function* (
     commandId: request.commandId,
     ack: appended.ack,
     reconciled: appended.status === "reconciled",
+    deferProjections: command.deferProjections === true,
   });
 });
 
@@ -249,6 +299,7 @@ export const issueCommand = Effect.fn("Application.issueCommand")(function* (
   workspaceId: string,
   issueId: string,
   request: IssueCommandRequest,
+  command: CommandOptions = {},
 ) {
   const ctx = context(options, workspaceId);
   assertIdentifier(issueId, "issueId");
@@ -271,6 +322,7 @@ export const issueCommand = Effect.fn("Application.issueCommand")(function* (
     commandId: request.commandId,
     ack: appended.ack,
     reconciled: appended.status === "reconciled",
+    deferProjections: command.deferProjections === true,
   });
 });
 
@@ -278,6 +330,10 @@ export const issueCommand = Effect.fn("Application.issueCommand")(function* (
  * Run the affected projections immediately for low latency, then prove the
  * chain. Immediate work is an optimisation: a lost pass converges through the
  * wake consumer or the explicit repair endpoint.
+ *
+ * Every pass result is classified into the response. A caller may never read a
+ * successful HTTP status as evidence that the board covers this command; only
+ * `coverage.status === "proven"` with no faulted pass carries that meaning.
  */
 const settle = Effect.fn("Application.settle")(function* (
   options: ApplicationOptions,
@@ -288,10 +344,20 @@ const settle = Effect.fn("Application.settle")(function* (
     readonly commandId: string;
     readonly ack: SourceAck;
     readonly reconciled: boolean;
+    /** Skip the immediate passes and let repair or the wake consumer converge. */
+    readonly deferProjections: boolean;
   },
 ) {
-  yield* runIssueDetail(ctx, input.issueId);
-  yield* runProjectBoard(ctx, input.projectId);
+  const projections = input.deferProjections
+    ? ([
+        deferredPass("issue-detail"),
+        deferredPass("project-board"),
+      ] as readonly ProjectionPassReport[])
+    : [
+        yield* runPass("issue-detail", runIssueDetail(ctx, input.issueId)),
+        yield* runPass("project-board", runProjectBoard(ctx, input.projectId)),
+      ];
+
   const probe = yield* proveChain(ctx, {
     issueId: input.issueId,
     projectId: input.projectId,
@@ -299,7 +365,9 @@ const settle = Effect.fn("Application.settle")(function* (
   });
   const detail = yield* loadDetail(ctx, input.issueId);
 
-  if (options.wake && probe.coverage.status !== "proven") {
+  const settled =
+    probe.coverage.status === "proven" && projections.every((pass) => pass.outcome === "caught-up");
+  if (options.wake && !settled) {
     yield* Effect.promise(() =>
       options.wake!({
         workspaceId: ctx.workspaceId,
@@ -316,7 +384,61 @@ const settle = Effect.fn("Application.settle")(function* (
     ack: { stream: input.ack.identity.name, position: input.ack.position },
     reconciled: input.reconciled,
     coverage: coverageReport(ctx, input, probe),
+    projections,
     detail: detail ?? null,
+  };
+  return { status: "ok" as const, response };
+});
+
+function deferredPass(label: ProjectionPassReport["label"]): ProjectionPassReport {
+  return {
+    label,
+    status: "deferred",
+    outcome: "deferred",
+    detail: "the immediate pass was skipped by request",
+  };
+}
+
+/**
+ * Run one bounded pass and keep its verdict. A typed mesh error — restore
+ * poison included — becomes a faulted pass rather than a lost status.
+ * Interruption stays interruption.
+ */
+const runPass = <
+  A extends Parameters<typeof classifyPass>[1],
+  E extends { readonly _tag: string },
+  R,
+>(
+  label: ProjectionPassReport["label"],
+  pass: Effect.Effect<A, E, R>,
+): Effect.Effect<ProjectionPassReport, never, R> =>
+  pass.pipe(
+    Effect.map((result) => classifyPass(label, result)),
+    Effect.catch((error) => Effect.succeed(faultedPass(label, error))),
+  );
+
+/**
+ * Read-only lineage probe for one accepted acknowledgement. It runs no
+ * projection work, so it can only ever report what durable lineage already
+ * shows.
+ */
+export const probeCoverage = Effect.fn("Application.probeCoverage")(function* (
+  options: ApplicationOptions,
+  workspaceId: string,
+  issueId: string,
+  position: string,
+) {
+  const ctx = context(options, workspaceId);
+  assertIdentifier(issueId, "issueId");
+  const detail = yield* loadDetail(ctx, issueId);
+  if (detail === undefined) return { status: "unknown-issue" as const };
+  const ack = sourceAck(ctx.bindings.issueEvents(workspaceId, issueId).identity, position);
+  const probe = yield* proveChain(ctx, { issueId, projectId: detail.projectId, ack });
+  const response: CoverageResponse = {
+    issueId,
+    projectId: detail.projectId,
+    coverage: coverageReport(ctx, { issueId, projectId: detail.projectId, ack }, probe),
+    projections: [],
   };
   return { status: "ok" as const, response };
 });
@@ -360,7 +482,7 @@ export const loadDetail = Effect.fn("Application.loadDetail")(function* (
       detail = undefined;
       continue;
     }
-    detail = item.value as unknown as IssueDetail;
+    detail = decodeIssueDetail(item.value);
   }
   return detail;
 });
@@ -383,11 +505,17 @@ export const repairProject = Effect.fn("Application.repairProject")(function* (
     }
   }
   const members = Array.from(active).toSorted();
+  const passes: ProjectionPassReport[] = [];
   for (const issueId of members) {
-    yield* runIssueDetail(ctx, issueId);
+    passes.push(yield* runPass("issue-detail", runIssueDetail(ctx, issueId)));
   }
-  const board = yield* runProjectBoard(ctx, projectId);
-  return { repaired: members, board: board.status };
+  const board = yield* runPass("project-board", runProjectBoard(ctx, projectId));
+  const response: RepairResponse = {
+    repaired: members,
+    board: board.status,
+    projections: [...passes, board],
+  };
+  return response;
 });
 
 function buildEvent(request: IssueCommandRequest, at: string): IssueEvent {

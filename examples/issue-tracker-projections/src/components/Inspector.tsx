@@ -5,7 +5,7 @@
  * server proved from lineage. A wake receipt or an elapsed delay can never make
  * this panel say `Proven`.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CoverageReport } from "../../shared/api.ts";
 import { shortPosition, shortStream } from "../lib/format.ts";
 import type { Mutation } from "../lib/pending.ts";
@@ -30,6 +30,13 @@ export interface InspectorProps {
 
 export function Inspector(props: InspectorProps) {
   const [expanded, setExpanded] = useState<string | null>(props.mutations[0]?.commandId ?? null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  // Opening moves focus into the dialog, so Escape and the controls are
+  // reachable immediately. The opener restores focus when this closes.
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
 
   return (
     <aside
@@ -50,6 +57,7 @@ export function Inspector(props: InspectorProps) {
         <button
           type="button"
           className="ghost close"
+          ref={closeRef}
           onClick={props.onClose}
           data-testid="close-inspector"
         >
@@ -94,14 +102,34 @@ export function Inspector(props: InspectorProps) {
 function CoverageBadge({ mutation }: { readonly mutation: Mutation }) {
   if (mutation.phase === "failed") return <span className="badge bad">Failed</span>;
   if (mutation.coverage === undefined) return <span className="badge">In flight</span>;
+  // The badge tracks the mutation phase, so an unproven command is never shown
+  // as anything stronger than the coverage the server actually proved.
   const status = mutation.coverage.status;
   return (
     <span
-      className={`badge ${status === "proven" ? "ok" : "warn"}`}
+      className={`badge ${mutation.phase === "synced" ? "ok" : "warn"}`}
       data-testid={`coverage-${mutation.commandId}`}
     >
       {COVERAGE_LABELS[status]}
     </span>
+  );
+}
+
+function PassList({ mutation }: { readonly mutation: Mutation }) {
+  const passes = mutation.projections ?? [];
+  if (passes.length === 0) return null;
+  return (
+    <ul className="pass-list" data-testid={`passes-${mutation.commandId}`}>
+      {passes.map((pass) => (
+        <li key={`${pass.label}:${pass.status}`} className={`pass pass-${pass.outcome}`}>
+          <span>{HOP_LABELS[pass.label] ?? pass.label}</span>
+          <span className="meta">
+            {pass.outcome} · {pass.status}
+            {pass.detail === undefined ? "" : ` · ${pass.detail}`}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -135,12 +163,14 @@ function HopList({ mutation }: { readonly mutation: Mutation }) {
           ]}
         />
       ))}
+      <PassList mutation={mutation} />
       {coverage.status !== "proven" && (
         <p className="meta">
           Blocked at <strong>{coverage.blockedAt ?? "an earlier hop"}</strong>. Repair or the wake
           consumer carries it forward.
         </p>
       )}
+      {mutation.note !== undefined && <p className="meta">{mutation.note}</p>}
       <details>
         <summary>Raw coverage</summary>
         <pre>{JSON.stringify(coverage, null, 2)}</pre>

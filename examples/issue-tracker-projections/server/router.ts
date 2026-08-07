@@ -12,6 +12,7 @@ import {
   issueCommand,
   listProjects,
   loadDetail,
+  probeCoverage,
   projectsResponse,
   repairProject,
   type ApplicationOptions,
@@ -39,6 +40,15 @@ const readJson = (request: Request): Effect.Effect<unknown> =>
     try: () => request.json() as Promise<unknown>,
     catch: () => BAD_REQUEST,
   }).pipe(Effect.catchCause(() => Effect.succeed(BAD_REQUEST as unknown)));
+
+/**
+ * `?projections=deferred` skips the immediate projection passes. Durability and
+ * the acknowledgement are unchanged; only the latency optimisation is dropped,
+ * so a caller can exercise queue or repair convergence deliberately.
+ */
+function commandOptions(url: URL): { readonly deferProjections: boolean } {
+  return { deferProjections: url.searchParams.get("projections") === "deferred" };
+}
 
 function apiSegments(url: URL): readonly string[] | undefined {
   if (!url.pathname.startsWith("/api/")) return undefined;
@@ -76,7 +86,13 @@ export const handleApi = (
       if (request.method !== "POST") return fail(405, "method-not-allowed");
       const body = yield* readJson(request);
       if (body === BAD_REQUEST) return fail(400, "invalid-json");
-      return json(yield* createProject(options, workspaceId, body as never), 201);
+      const project = yield* createProject(options, workspaceId, body as never);
+      // A producer duplicate returns the durable row with 200; only a genuinely
+      // new append reports 201. Neither ever echoes an unaccepted payload.
+      if (project.status === "created") return json(project.project, 201);
+      if (project.status === "reconciled") return json(project.project, 200);
+      if (project.status === "conflict") return fail(409, "project-conflict", project.detail);
+      return fail(409, "append-rejected", project.detail);
     }
 
     if (rest[0] === "projects" && rest[1] !== undefined) {
@@ -95,7 +111,7 @@ export const handleApi = (
       if (request.method !== "POST") return fail(405, "method-not-allowed");
       const body = yield* readJson(request);
       if (body === BAD_REQUEST) return fail(400, "invalid-json");
-      const created = yield* createIssue(options, workspaceId, body as never);
+      const created = yield* createIssue(options, workspaceId, body as never, commandOptions(url));
       if (created.status === "unknown-project") return fail(404, "unknown-project");
       if (created.status === "rejected") {
         return fail(409, "append-rejected", created.appended.outcome.status);
@@ -113,12 +129,26 @@ export const handleApi = (
       if (rest[2] === "commands" && request.method === "POST") {
         const body = yield* readJson(request);
         if (body === BAD_REQUEST) return fail(400, "invalid-json");
-        const result = yield* issueCommand(options, workspaceId, issueId, body as never);
+        const result = yield* issueCommand(
+          options,
+          workspaceId,
+          issueId,
+          body as never,
+          commandOptions(url),
+        );
         if (result.status === "unknown-issue") return fail(404, "unknown-issue");
         if (result.status === "rejected") {
           return fail(409, "append-rejected", result.appended.outcome.status);
         }
         return json(result.response);
+      }
+      if (rest[2] === "coverage" && request.method === "GET") {
+        const position = url.searchParams.get("position");
+        if (position === null || position.length === 0) {
+          return fail(400, "invalid-request", "position is required");
+        }
+        const probed = yield* probeCoverage(options, workspaceId, issueId, position);
+        return probed.status === "ok" ? json(probed.response) : fail(404, probed.status);
       }
       if (rest[2] === "sync" && request.method === "POST") {
         const detail = yield* loadDetail(context, issueId);
@@ -133,16 +163,28 @@ export const handleApi = (
     return fail(404, "not-found");
   }).pipe(Effect.catchCause((cause) => Effect.succeed(errorResponse(cause))));
 
-/** Domain validation throws TypeError; everything else stays an opaque 500. */
+/**
+ * Domain validation throws TypeError; a malformed durable value is named
+ * explicitly so it is never mistaken for an ordinary internal error; everything
+ * else stays an opaque 500.
+ */
 function errorResponse(cause: Cause.Cause<unknown>): Response {
   if (Cause.hasInterrupts(cause)) return fail(499, "interrupted");
   const pretty = Cause.pretty(cause);
   const invalid = cause.reasons.some(
     (reason) => Cause.isDieReason(reason) && reason.defect instanceof TypeError,
   );
-  return invalid
-    ? fail(400, "invalid-request", firstLine(pretty))
+  if (invalid) return fail(400, "invalid-request", firstLine(pretty));
+  const poisoned = cause.reasons.some(
+    (reason) => Cause.isFailReason(reason) && taggedAs(reason.error, "StateRestorePoison"),
+  );
+  return poisoned
+    ? fail(500, "state-restore-poison", firstLine(pretty))
     : fail(500, "internal-error", pretty.slice(0, 2_000));
+}
+
+function taggedAs(value: unknown, tag: string): boolean {
+  return typeof value === "object" && value !== null && "_tag" in value && value._tag === tag;
 }
 
 function firstLine(value: string): string {

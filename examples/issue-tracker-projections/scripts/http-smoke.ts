@@ -11,7 +11,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import type { BoardResponse, MutationResponse } from "../shared/api.ts";
+import type {
+  BoardResponse,
+  CoverageResponse,
+  MutationResponse,
+  RepairResponse,
+} from "../shared/api.ts";
 import { createLocalHost } from "../server/local.ts";
 
 const filename = join(mkdtempSync(join(tmpdir(), "issue-tracker-projections-")), "state.sqlite");
@@ -128,12 +133,51 @@ try {
     "repair must cover active membership",
   );
 
-  // Convergence without the mutation request: append through the stream API and
-  // let the explicit repair endpoint carry the change into the board.
   const detailAfterRepair = await json(
     await call("GET", `/api/workspaces/${workspaceId}/issues/${issueId}`),
   );
   assert(detailAfterRepair.issueId === issueId, "recovered detail must survive restart");
+
+  // Convergence without the mutation request. `?projections=deferred` skips the
+  // immediate passes, so this is exactly the shape of a lost immediate pass:
+  // the command is durable and unproven, and only repair can prove it.
+  const deferred: MutationResponse = await json(
+    await call(
+      "POST",
+      `/api/workspaces/${workspaceId}/issues/${issueId}/commands?projections=deferred`,
+      { commandId: "smoke-deferred", type: "priority", priority: "low" },
+    ),
+  );
+  assert(
+    deferred.coverage.status !== "proven",
+    "a deferred command must not report proven coverage",
+  );
+  assert(
+    deferred.projections.every((pass) => pass.outcome === "deferred"),
+    "a deferred command must classify both passes as deferred",
+  );
+
+  const coveragePath = `/api/workspaces/${workspaceId}/issues/${issueId}/coverage?position=${encodeURIComponent(
+    deferred.ack.position,
+  )}`;
+  const beforeRepair: CoverageResponse = await json(await call("GET", coveragePath));
+  assert(
+    beforeRepair.coverage.status !== "proven",
+    "a read-only probe must not prove an uncaught-up chain",
+  );
+
+  const converged: RepairResponse = await json(
+    await call("POST", `/api/workspaces/${workspaceId}/projects/${projectId}/repair`),
+  );
+  assert(
+    converged.projections.every((pass) => pass.outcome === "caught-up"),
+    `repair must catch every pass up, got ${JSON.stringify(converged.projections)}`,
+  );
+  const afterRepair: CoverageResponse = await json(await call("GET", coveragePath));
+  assert(
+    afterRepair.coverage.status === "proven",
+    `coverage.status must be proven after repair, got ${afterRepair.coverage.status}`,
+  );
 
   console.log(`issue-tracker-projections http smoke passed at ${created.ack.position}`);
 } finally {

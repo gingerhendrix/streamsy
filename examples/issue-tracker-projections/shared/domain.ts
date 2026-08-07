@@ -9,12 +9,76 @@
  * experimental mesh kernels.
  */
 import { Schema } from "effect";
-import { ISSUE_PRIORITIES, ISSUE_STATUSES, type IssueDetail } from "./model.ts";
+import {
+  ISSUE_PRIORITIES,
+  ISSUE_STATUSES,
+  type BoardRow,
+  type IssueDetail,
+  type Project,
+} from "./model.ts";
 
 export * from "./model.ts";
 
 export const IssueStatusSchema = Schema.Literals(ISSUE_STATUSES);
 export const IssuePrioritySchema = Schema.Literals(ISSUE_PRIORITIES);
+
+/**
+ * Application values that are written into durable State streams.
+ *
+ * Every restored or served value is decoded through these schemas. A row that
+ * carries the right collection tag but a malformed application value is a
+ * fault, not something to accept quietly: in a projection restore the throw
+ * becomes the kernel's typed `StateRestorePoison`.
+ */
+export const CommentSchema = Schema.Struct({
+  commentId: Schema.NonEmptyString,
+  authorId: Schema.NonEmptyString,
+  body: Schema.NonEmptyString,
+  at: Schema.NonEmptyString,
+});
+
+export const IssueDetailSchema = Schema.Struct({
+  issueId: Schema.NonEmptyString,
+  issueKey: Schema.NonEmptyString,
+  projectId: Schema.NonEmptyString,
+  title: Schema.NonEmptyString,
+  status: IssueStatusSchema,
+  priority: IssuePrioritySchema,
+  assigneeId: Schema.NullOr(Schema.NonEmptyString),
+  comments: Schema.Array(CommentSchema),
+  createdAt: Schema.NonEmptyString,
+  updatedAt: Schema.NonEmptyString,
+});
+
+export const BoardRowSchema = Schema.Struct({
+  issueId: Schema.NonEmptyString,
+  issueKey: Schema.NonEmptyString,
+  title: Schema.NonEmptyString,
+  status: IssueStatusSchema,
+  priority: IssuePrioritySchema,
+  assigneeId: Schema.NullOr(Schema.NonEmptyString),
+  commentCount: Schema.Int,
+  updatedAt: Schema.NonEmptyString,
+});
+
+export const ProjectSchema = Schema.Struct({
+  projectId: Schema.NonEmptyString,
+  projectKey: Schema.NonEmptyString,
+  name: Schema.NonEmptyString,
+});
+
+const decodeDetailValue = Schema.decodeUnknownSync(IssueDetailSchema);
+const decodeBoardRowValue = Schema.decodeUnknownSync(BoardRowSchema);
+const decodeProjectValue = Schema.decodeUnknownSync(ProjectSchema);
+
+/** Decode one durable issue-detail value. Throws on a malformed value. */
+export const decodeIssueDetail = (value: unknown): IssueDetail => decodeDetailValue(value);
+
+/** Decode one durable board-row value. Throws on a malformed value. */
+export const decodeBoardRow = (value: unknown): BoardRow => decodeBoardRowValue(value);
+
+/** Decode one durable project row. Throws on a malformed value. */
+export const decodeProject = (value: unknown): Project => decodeProjectValue(value);
 
 const Base = {
   commandId: Schema.NonEmptyString,

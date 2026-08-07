@@ -5,7 +5,12 @@
  * disposable workspace, never resets shared state, and reports the workspace id
  * so the evidence can be traced.
  */
-import type { BoardResponse, MutationResponse } from "../shared/api.ts";
+import type {
+  BoardResponse,
+  CoverageResponse,
+  MutationResponse,
+  RepairResponse,
+} from "../shared/api.ts";
 
 const base = (process.env.DEMO_URL ?? "").replace(/\/$/, "");
 if (base.length === 0) throw new Error("DEMO_URL is required");
@@ -48,42 +53,89 @@ const created: MutationResponse = await json(
 );
 assert(created.ack.position.length > 0, "create must return an exact acknowledgement");
 
+// The command that matters: `?projections=deferred` skips both immediate
+// passes, so this exercises exactly the case a lost immediate pass produces.
+// Durability and the acknowledgement are unchanged.
 const updated: MutationResponse = await json(
-  await call("POST", `/api/workspaces/${workspaceId}/issues/${issueId}/commands`, {
-    commandId: `${suffix}-done`,
-    type: "status",
-    status: "done",
-  }),
+  await call(
+    "POST",
+    `/api/workspaces/${workspaceId}/issues/${issueId}/commands?projections=deferred`,
+    { commandId: `${suffix}-done`, type: "status", status: "done" },
+  ),
 );
 assert(updated.coverage.hops.length === 2, "coverage must report both hops");
+assert(updated.ack.position.length > 0, "a deferred command must still be acknowledged exactly");
+assert(
+  updated.projections.every((pass) => pass.outcome === "deferred"),
+  `both passes must be deferred, got ${JSON.stringify(updated.projections)}`,
+);
 
-// Convergence must not depend on the mutation request: wait for the durable
-// board through repair/queue catch-up instead.
+// Convergence must not depend on the mutation request: it has to come from the
+// queue consumer or the explicit repair endpoint doing the same bounded work.
 let converged: BoardResponse | undefined;
+let proven: CoverageResponse | undefined;
+const coveragePath = `/api/workspaces/${workspaceId}/issues/${issueId}/coverage?position=${encodeURIComponent(
+  updated.ack.position,
+)}`;
 for (let attempt = 0; attempt < 10; attempt++) {
-  await call("POST", `/api/workspaces/${workspaceId}/projects/${projectId}/repair`);
+  const repaired: RepairResponse = await json(
+    await call("POST", `/api/workspaces/${workspaceId}/projects/${projectId}/repair`),
+  );
+  const faulted = repaired.projections.filter((pass) => pass.outcome === "faulted");
+  assert(faulted.length === 0, `repair reported faulted passes: ${JSON.stringify(faulted)}`);
+
+  const probe: CoverageResponse = await json(await call("GET", coveragePath));
   const board: BoardResponse = await json(
     await call("GET", `/api/workspaces/${workspaceId}/projects/${projectId}/board`),
   );
-  if (board.rows.some((row) => row.issueId === issueId && row.status === "done")) {
+  if (
+    probe.coverage.status === "proven" &&
+    board.rows.some((row) => row.issueId === issueId && row.status === "done")
+  ) {
+    proven = probe;
     converged = board;
     break;
   }
   await new Promise((resolve) => setTimeout(resolve, 1_000));
 }
 assert(converged !== undefined, "the board must converge on the durable status");
+assert(proven !== undefined, "chained coverage must reach proven after repair");
+// The whole point of the run: durable lineage, not elapsed time, says proven.
+assert(
+  proven.coverage.status === "proven",
+  `coverage.status must be proven, got ${proven.coverage.status}`,
+);
 
 const streamed = await call("GET", `/streams/${converged.boardStream}`);
 assert(streamed.status === 200, `public board stream read must succeed, got ${streamed.status}`);
 
-// A fresh request after the durable write must still see the same state.
+// Evidence limit, stated precisely: this is a *second HTTP request* observing
+// the same durable rows. It does not force a new Worker isolate or a Durable
+// Object eviction, so it is not evidence of cold re-entry. Deploying a new
+// version, or waiting out an isolate, is the only way to test that here.
 const reread: BoardResponse = await json(
   await call("GET", `/api/workspaces/${workspaceId}/projects/${projectId}/board`),
 );
-assert(reread.rows.length === converged.rows.length, "durable state must survive re-entry");
+assert(
+  reread.rows.length === converged.rows.length,
+  "a second request must observe the same durable rows",
+);
 
 console.log(
-  JSON.stringify({ url: base, workspaceId, projectId, issueId, ack: created.ack }, null, 2),
+  JSON.stringify(
+    {
+      url: base,
+      workspaceId,
+      projectId,
+      issueId,
+      ack: created.ack,
+      deferredAck: updated.ack,
+      coverage: proven.coverage.status,
+      reEntryEvidence: "second-request-same-durable-rows (not a cold isolate)",
+    },
+    null,
+    2,
+  ),
 );
 
 function call(method: string, path: string, body?: unknown): Promise<Response> {
