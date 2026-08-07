@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot server/local.ts",
+    "dev": "bun run build && bun --hot server/local.ts",
     "start": "bun server/local.ts",
     "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
@@ -12,6 +12,7 @@
     "test:vertical": "vitest --run test/vertical-path.test.ts",
     "test:recovery": "bun test test/*.bun.test.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
+    "smoke:ui": "bun run scripts/ui-smoke.ts",
     "seed:check": "bun run scripts/seed-check.ts",
     "deploy:check": "bun run scripts/deploy-check.ts",
     "deploy:demo": "alchemy deploy",
@@ -23,12 +24,16 @@
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
-    "effect": "4.0.0-beta.99"
+    "effect": "4.0.0-beta.99",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
     "@streamsy/storage-sqlite": "workspace:*",
     "@types/bun": "^1.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "alchemy": "catalog:",
     "typescript": "catalog:",
     "vitest": "^4.0.16"

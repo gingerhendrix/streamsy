@@ -21,7 +21,15 @@ console.log(`deployment ${health.deployment} schema ${health.schemaVersion}`);
 
 const shell = await call("GET", "/");
 assert(shell.status === 200, `SPA shell must load, got ${shell.status}`);
-assert((await call("GET", "/styles.css")).status === 200, "stylesheet must load");
+const html = await shell.text();
+assert(html.includes('id="root"'), "the SPA shell must carry the app mount point");
+// Every asset the shell references must be reachable, hashed names included.
+const referenced = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map((match) => match[1]!);
+assert(referenced.length > 0, "the shell must reference bundled assets");
+for (const asset of referenced) {
+  const response = await call("GET", asset.startsWith("/") ? asset : `/${asset}`);
+  assert(response.status === 200, `asset ${asset} must load, got ${response.status}`);
+}
 
 await call("POST", `/api/workspaces/${workspaceId}/projects`, {
   projectId,

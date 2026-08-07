@@ -1,9 +1,12 @@
 /**
- * Build the browser assets and prove the Worker entry bundles for the
+ * Build the browser bundle and prove the Worker entry bundles for the
  * Cloudflare runtime. Alchemy bundles the Worker again at deploy time; this
  * step keeps bundling failures inside the normal check loop.
+ *
+ * Browser assets land in `dist/assets`, which is what both the local host and
+ * the Alchemy `Assets` resource serve.
  */
-import { cp, mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,8 +14,22 @@ const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(packageDir, "dist");
 
 await rm(outDir, { recursive: true, force: true });
-await mkdir(outDir, { recursive: true });
-await cp(join(packageDir, "public"), join(outDir, "assets"), { recursive: true });
+
+const app = await Bun.build({
+  entrypoints: [join(packageDir, "src/index.html")],
+  outdir: join(outDir, "assets"),
+  target: "browser",
+  format: "esm",
+  minify: true,
+  sourcemap: "linked",
+  naming: { entry: "[name].[ext]", chunk: "[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" },
+  define: { "process.env.NODE_ENV": JSON.stringify("production") },
+});
+
+if (!app.success) {
+  for (const log of app.logs) console.error(log);
+  throw new Error("Browser bundle failed");
+}
 
 const worker = await Bun.build({
   entrypoints: [join(packageDir, "server/worker.ts")],
@@ -27,5 +44,8 @@ if (!worker.success) {
   throw new Error("Worker bundle failed");
 }
 
-const bytes = worker.outputs.reduce((total, output) => total + output.size, 0);
-console.log(`assets → dist/assets, worker bundle → dist/worker (${bytes} bytes)`);
+const appBytes = app.outputs.reduce((total, output) => total + output.size, 0);
+const workerBytes = worker.outputs.reduce((total, output) => total + output.size, 0);
+console.log(
+  `assets → dist/assets (${appBytes} bytes, ${app.outputs.length} files), worker bundle → dist/worker (${workerBytes} bytes)`,
+);

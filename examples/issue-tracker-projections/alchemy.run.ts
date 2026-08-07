@@ -24,7 +24,8 @@ const wakes = await Queue<{
   issueId?: string;
 }>("projection-wakes");
 
-const assets = await Assets({ path: "./public" });
+// `bun run build` emits the browser bundle here; deploy after a build.
+const assets = await Assets({ path: "./dist/assets" });
 
 const worker = await Worker("api", {
   entrypoint: "./server/worker.ts",

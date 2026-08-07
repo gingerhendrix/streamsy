@@ -13,12 +13,28 @@ IssueEvents(issueId)
 `examples/issue-tracker-demo` remains the simple baseline. This example is the
 projection demo and is deliberately separate.
 
-## What this batch contains
+## The workspace UI
 
-This is the **backend vertical slice**: domain, commands, projections, coverage,
-seeded data, the local host, the Cloudflare Worker, and the Alchemy program.
-`public/` is a static shell only. The board UI, detail drawer, and projection
-inspector arrive in the next batch.
+`src/` is a React workspace served as a static bundle from `dist/assets`:
+
+- a project rail with durable counts and inline project creation;
+- a three-column board with drag-and-drop **and** a per-card status select, so
+  every movement is completable from the keyboard;
+- an issue drawer (a full-screen sheet on mobile) for title, status, priority,
+  assignee, and comments;
+- optimistic patches that are display overlays only — they expire against the
+  durable row, or after a bounded hold, and never become accepted state;
+- a projection inspector that labels the three durable identities of the latest
+  command and reports `Proven` / `Not yet` / `Incomparable` from server lineage;
+- visible failures with a `Retry sync` action that replays the _same_
+  `commandId`, so a retry reconciles instead of duplicating.
+
+The browser reads durable **State streams** directly over the Durable Streams
+HTTP endpoint (catch-up read, then long-poll live reads). Nothing on screen is
+reconstructed from command responses, so a reload — or a second window — is
+rebuilt from the board State stream alone.
+
+The URL (`?workspace=…&project=…&issue=…`) is the shareable source of truth.
 
 ## Streams
 
@@ -59,8 +75,13 @@ active issue-detail streams.
 bun install
 bun run --cwd examples/issue-tracker-projections dev      # http://localhost:8787
 curl -X POST http://localhost:8787/api/workspaces/main/seed
-curl http://localhost:8787/api/workspaces/main/projects/launch/board
+open 'http://localhost:8787/?workspace=main&project=launch'
 ```
+
+`dev` builds the browser bundle into `dist/assets` first; the local host serves
+that directory, so re-run `build` after changing anything under `src/`. Seeding
+is idempotent — the "Seed demo workspace" button in an empty workspace runs the
+same command path.
 
 The local host also serves the Durable Streams HTTP routes under `/streams/`, so
 the board State stream is readable directly at
@@ -74,6 +95,19 @@ bun run --cwd examples/issue-tracker-projections test       # vitest + bun sqlit
 bun run --cwd examples/issue-tracker-projections build
 bun run --cwd examples/issue-tracker-projections smoke:http
 bun run --cwd examples/issue-tracker-projections seed:check
+```
+
+`smoke:ui` drives a production build in a real browser: keyboard issue creation,
+drawer edits, comments, the accessible status control, inspector coverage, a
+reload rebuilt from durable State, second-window convergence, and the mobile
+sheet. It fails on any console error or failed application request. Playwright
+is not a repository dependency, so the script skips when it is unavailable and
+`scripts/ui-smoke.ts` is excluded from `typecheck`:
+
+```bash
+bun add -g playwright-core && bunx playwright install chromium
+bun run --cwd examples/issue-tracker-projections build
+PLAYWRIGHT_EXECUTABLE=<chrome binary> bun run --cwd examples/issue-tracker-projections smoke:ui
 ```
 
 ## Deployment

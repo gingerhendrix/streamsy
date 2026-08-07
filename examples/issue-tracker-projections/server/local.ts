@@ -21,7 +21,8 @@ import { MeshLayer, type ApplicationOptions } from "./application.ts";
 import { handleApi } from "./router.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const publicDir = join(here, "..", "public");
+/** `bun run build` emits the browser bundle here. */
+const assetDir = join(here, "..", "dist", "assets");
 
 export interface LocalHostOptions {
   readonly port?: number;
@@ -66,20 +67,30 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".map": "application/json",
   ".json": "application/json",
   ".svg": "image/svg+xml",
 };
+
+const MISSING_BUILD = `<!doctype html><meta charset="utf-8"><title>Build required</title>
+<body style="font:14px system-ui;padding:24px;background:#0f1115;color:#e6e9ef">
+<h1>Browser bundle missing</h1><p>Run <code>bun run --cwd examples/issue-tracker-projections build</code>.</p>`;
 
 async function serveAsset(pathname: string): Promise<Response> {
   const relative = normalize(pathname === "/" ? "/index.html" : pathname).replace(
     /^(\.\.[/\\])+/,
     "",
   );
-  const file = join(publicDir, relative);
-  if (!file.startsWith(publicDir) || !existsSync(file)) {
+  const file = join(assetDir, relative);
+  if (!file.startsWith(assetDir) || !existsSync(file)) {
     // Single-page shell fallback keeps deep links usable.
-    const shell = join(publicDir, "index.html");
-    if (!existsSync(shell)) return new Response("Not found", { status: 404 });
+    const shell = join(assetDir, "index.html");
+    if (!existsSync(shell)) {
+      return new Response(MISSING_BUILD, {
+        status: 200,
+        headers: { "content-type": CONTENT_TYPES[".html"]! },
+      });
+    }
     return new Response(await readFile(shell), {
       headers: { "content-type": CONTENT_TYPES[".html"]! },
     });
