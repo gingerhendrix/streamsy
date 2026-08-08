@@ -13,6 +13,56 @@ IssueEvents(issueId)
 `examples/issue-tracker-demo` remains the simple baseline. This example is the
 projection demo and is deliberately separate.
 
+Two architectural commitments run through the whole example:
+
+- **Effect-first.** The server is a set of Effect descriptions with declared
+  services and typed errors. `server/local.ts` and `server/worker.ts` are the
+  only executable edges.
+- **Alchemy v2.** The deployment program is an `Alchemy.Stack` Effect, not a v1
+  script of top-level `await`s.
+
+Both are covered by tests: `test/architecture.test.ts` and
+`test/alchemy-stack.test.ts`.
+
+## Server architecture
+
+Every application operation is an `Effect` that declares what it needs and how
+it can fail. Nothing takes an options record, resolves a client, converts a
+Promise, or throws to signal an expected failure.
+
+```text
+server/errors.ts       typed failures (Schema.TaggedErrorClass)
+server/config.ts       AppConfig service, read through Effect Config
+server/streams.ts      Streams service — the only protocol-client boundary
+server/lanes.ts        ProjectionLanes service — Cache-backed producer lanes
+server/commands.ts     CommandProducers service + append classification
+server/wake.ts         Wake service — disabled locally, queue-backed on Workers
+server/runtime.ts      the application Layer, assembled once
+server/application.ts  command and query workflows
+server/router.ts       the trust boundary: decode, call, translate by _tag
+```
+
+- **Services and layers.** `server/runtime.ts` is the single place the
+  dependency graph is written down. A host picks storage, a configuration
+  source, and a wake lane; a test picks whatever it wants to observe.
+- **Typed errors.** `InvalidRequest`, `MalformedBody`, `UnknownProject`,
+  `UnknownIssue`, `AppendRejected`, `StreamUnavailable` — plus the mesh's own
+  `StateRestorePoison`. The router maps them by `_tag`. A defect reaching the
+  edge is a bug, and is reported as an opaque `500`.
+- **Schema at the boundary.** Request bodies are decoded by the schemas in
+  `shared/requests.ts` before any workflow sees them, so an unknown status, an
+  unknown team member, or a wrong-typed field is a `400` and never durable
+  state. Downstream code has nothing left to validate.
+- **Scoped runtime ownership.** Each host owns exactly one `ManagedRuntime` for
+  its lifetime; read sessions are released by `Effect.scoped` at their own
+  boundary.
+- **Adapter boundaries only.** The three async platform APIs this example
+  depends on — stream creation, `crypto.subtle.digest`, and `deriveProducerLane`
+  — are wrapped once inside their service, not at call sites.
+
+`src/` stays ordinary React and ordinary TypeScript. The Effect runtime is not
+in the browser bundle.
+
 ## The workspace UI
 
 `src/` is a React workspace served as a static bundle from `dist/assets`:
@@ -169,7 +219,16 @@ bun run --cwd examples/issue-tracker-projections build
 bun run --cwd examples/issue-tracker-projections smoke:http
 bun run --cwd examples/issue-tracker-projections seed:check
 bun run --cwd examples/issue-tracker-projections audit:state
+bun run --cwd examples/issue-tracker-projections deploy:check
 ```
+
+`test/architecture.test.ts` is the architecture's own regression suite. It runs
+application operations on runtimes built from ad-hoc layers, asserts that an
+unknown project surfaces as a typed `UnknownProject` in the error channel,
+proves malformed bodies are rejected before any durable write, swaps the `Wake`
+layer to observe that only an _unproven_ command wakes anything, and drives
+`AppConfig` from a `ConfigProvider`. None of those pass against a Promise-first
+implementation with Effect wrappers.
 
 `smoke:http` also runs the deferred-projection path end to end: a command with
 `?projections=deferred`, a read-only probe that must _not_ report proven, a
@@ -190,18 +249,55 @@ bun run --cwd examples/issue-tracker-projections build
 PLAYWRIGHT_EXECUTABLE=<chrome binary> bun run --cwd examples/issue-tracker-projections smoke:ui
 ```
 
-## Deployment
+## Deployment: Alchemy v2
+
+`alchemy.run.ts` is an Alchemy **v2** program. A v2 stack is an Effect, not a
+script:
+
+```ts
+export default Alchemy.Stack(
+  "streamsy-issue-tracker",
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const wakes = yield* ProjectionWakes;
+    const api = yield* Api;
+    yield* Cloudflare.Queues.Consumer("WakeConsumer", {
+      queueId: wakes.queueId,
+      scriptName: api.workerName,
+    });
+    return { url: api.url, worker: api.workerName, queue: wakes.queueName };
+  }),
+);
+```
+
+What that buys, concretely:
+
+- **Importing the program applies nothing**, because it is a description. That is
+  why `test/alchemy-stack.test.ts` can import the real program and assert its
+  shape rather than a copy of it.
+- **`alchemy plan` is a real read-only operation.** v1 had none, so the old
+  `deploy:check` could only typecheck and build. `deploy:check` now evaluates
+  the stack and prints the resources a deploy would create.
+- **The Worker's `env` type is derived, not restated.**
+  `server/worker.ts` types its bindings as `Cloudflare.InferEnv<typeof Api>`, so
+  a renamed or removed binding is a `typecheck` failure.
+- **The Durable Object is declared inline** as
+  `Cloudflare.DurableObject<DurableObjectStreamStorage>("StreamDO", { className: "StreamStorage" })`.
+  SQLite storage is the v2 default for a class the Worker hosts itself, so v1's
+  `sqlite: true` flag is gone.
 
 | Script             | Contract                                                                                         |
 | ------------------ | ------------------------------------------------------------------------------------------------ |
 | `build`            | produce browser assets and the Worker bundle                                                     |
-| `deploy:check`     | typecheck the Alchemy program, build, audit state, report credentials — changes nothing          |
-| `audit:state`      | fail if any local Alchemy state carries a runtime identifier                                     |
+| `deploy:check`     | typecheck, build, stack-shape tests, `alchemy plan`, state audit — changes nothing               |
+| `plan:demo`        | `alchemy plan` on its own                                                                        |
+| `audit:state`      | fail if any applied Alchemy state carries a runtime identifier                                   |
 | `deploy:demo`      | deploy an isolated named stage (`STAGE=...`) and print the URL                                   |
 | `smoke:deployment` | health, a deferred mutation, repair to proven coverage, and a durable re-read against `DEMO_URL` |
 | `destroy:demo`     | destroy only that stage                                                                          |
 
 ```bash
+STAGE=demo bun run --cwd examples/issue-tracker-projections plan:demo
 STAGE=demo bun run --cwd examples/issue-tracker-projections deploy:demo
 DEMO_URL=https://... bun run --cwd examples/issue-tracker-projections smoke:deployment
 STAGE=demo bun run --cwd examples/issue-tracker-projections destroy:demo
@@ -212,16 +308,29 @@ namespace, one wake queue with its consumer, and the static assets. It owns no
 workspace, project, issue, cursor, membership, or lineage value; all of those are
 Streamsy runtime state inside the Durable Objects.
 
+### Dependency note
+
+Alchemy v2 is itself built on Effect v4 beta. Some of its transitive
+`@distilled.cloud/*` packages declare a looser `effect` peer range than they can
+actually run against, so the repository root pins `effect` (and
+`@effect/platform-node`) in `overrides`. Without that pin the CLI loads two
+copies of Effect and fails at start-up. `packages/conformance-tests` still uses
+the catalog's Alchemy 0.x; only this example is on v2.
+
 ### Evidence limits, stated precisely
 
 - `deploy:demo` and `smoke:deployment` have **not** been run against a live
   account: no Cloudflare credentials were available. `deploy:check` passes, which
-  proves the Alchemy program typechecks against the pinned declarations and that
-  the bundle builds — not that a topology applies.
-- `audit:state` reports **skipped**, not passed, in this environment. `.alchemy/`
-  only exists after a real deploy, so there is no applied state to scan. The
-  claim that deployment state holds no runtime identity currently rests on the
-  topology in `alchemy.run.ts`; the audit verifies it the moment a stage exists.
+  proves the v2 program typechecks against the installed declarations, that the
+  bundle builds, and that `alchemy plan` resolves the stack to exactly the
+  Worker, its four bindings, the queue, and the consumer — not that the topology
+  applies to Cloudflare.
+- `audit:state` reports **skipped**, not passed, in this environment.
+  `.alchemy/state` only exists after a real deploy, so there is no applied state
+  to scan. The claim that deployment state holds no runtime identity currently
+  rests on the topology in `alchemy.run.ts` — which `test/alchemy-stack.test.ts`
+  checks with the same patterns — and the audit verifies it against applied
+  state the moment a stage exists.
 - `smoke:deployment`'s re-entry check is a **second HTTP request observing the
   same durable rows**. It does not force a new Worker isolate or a Durable Object
   eviction, and the script says so in its output rather than claiming cold

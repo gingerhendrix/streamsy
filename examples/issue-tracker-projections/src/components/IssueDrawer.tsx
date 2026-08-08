@@ -1,7 +1,7 @@
 /** Right-side detail drawer on desktop, full-screen sheet on mobile. */
 import { useEffect, useRef, useState } from "react";
-import type { IssueDetail, IssuePriority, IssueStatus } from "../../shared/model.ts";
-import { ISSUE_PRIORITIES, ISSUE_STATUSES, TEAM } from "../../shared/model.ts";
+import type { IssueDetail, IssuePriority, IssueStatus, TeamMemberId } from "../../shared/model.ts";
+import { ISSUE_PRIORITIES, ISSUE_STATUSES, isKnownMember, TEAM } from "../../shared/model.ts";
 import { memberName, PRIORITY_LABELS, relativeTime, STATUS_LABELS } from "../lib/format.ts";
 import type { CardSync } from "../lib/pending.ts";
 
@@ -16,7 +16,7 @@ export interface IssueDrawerProps {
   readonly onRename: (title: string) => void;
   readonly onStatus: (status: IssueStatus) => void;
   readonly onPriority: (priority: IssuePriority) => void;
-  readonly onAssign: (assigneeId: string | null) => void;
+  readonly onAssign: (assigneeId: TeamMemberId | null) => void;
   readonly onComment: (body: string) => void;
   readonly onRetry: () => void;
 }
@@ -169,7 +169,7 @@ export function IssueDrawer(props: IssueDrawerProps) {
                 data-testid="issue-assignee"
                 value={detail.assigneeId ?? ""}
                 onChange={(event) =>
-                  props.onAssign(event.target.value === "" ? null : event.target.value)
+                  props.onAssign(isKnownMember(event.target.value) ? event.target.value : null)
                 }
               >
                 <option value="">Unassigned</option>

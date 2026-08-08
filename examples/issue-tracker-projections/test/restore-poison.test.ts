@@ -6,6 +6,9 @@
  * into a typed `StateRestorePoison`, which is what these tests assert — first
  * directly on the restore functions, then through the real projection passes
  * against a fabricated but lineage-valid durable history.
+ *
+ * The projection passes are plain Effect descriptions, so the tests run them on
+ * the host's runtime and read their typed error channel with `Effect.flip`.
  */
 import type { JsonValue } from "@streamsy/core";
 import { AppendStreams } from "@streamsy/experimental/effect";
@@ -17,15 +20,15 @@ import {
 } from "@streamsy/experimental/ivm-mesh";
 import { Effect } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
-import { LaneRegistry } from "../server/bindings.ts";
+import { ProjectionLanes } from "../server/lanes.ts";
 import { createLocalHost } from "../server/local.ts";
 import {
-  projectionContext,
   restoreBoard,
   restoreDetail,
   runIssueDetail,
   runProjectBoard,
 } from "../server/projections.ts";
+import { Streams } from "../server/streams.ts";
 
 type Host = ReturnType<typeof createLocalHost>;
 
@@ -140,15 +143,15 @@ describe("typed restore poison from durable history", () => {
   test("a malformed issue-detail row poisons the next detail pass", async () => {
     const host = newHost();
     await seeded(host);
-    const lanes = new LaneRegistry();
-    const ctx = projectionContext(host.client, WORKSPACE, lanes);
-    const target = ctx.bindings.issueDetail(WORKSPACE, ISSUE);
 
     // Commit a malformed but correctly tagged row at a real lineage boundary,
     // so recovery succeeds and only the restore can reject it.
     await host.runtime.runPromise(
       Effect.gen(function* () {
-        const lane = yield* Effect.promise(() => lanes.issueDetail(WORKSPACE, ISSUE));
+        const streams = yield* Streams;
+        const lanes = yield* ProjectionLanes;
+        const target = streams.bindings.issueDetail(WORKSPACE, ISSUE);
+        const lane = yield* lanes.issueDetail(WORKSPACE, ISSUE);
         const recovered = yield* recoverDerivedStateHistory(target, lane);
         if (recovered.status !== "ready") throw new Error("target history must recover");
         const lineage = createLineageEvent(lane, {
@@ -174,20 +177,20 @@ describe("typed restore poison from durable history", () => {
       }),
     );
 
-    const failure = await host.runtime.runPromise(Effect.flip(runIssueDetail(ctx, ISSUE)));
+    const failure = await host.runtime.runPromise(Effect.flip(runIssueDetail(WORKSPACE, ISSUE)));
     expect(failure._tag).toBe("StateRestorePoison");
   });
 
   test("a malformed board row poisons the next fan-in pass", async () => {
     const host = newHost();
     await seeded(host);
-    const lanes = new LaneRegistry();
-    const ctx = projectionContext(host.client, WORKSPACE, lanes);
-    const target = ctx.bindings.board(WORKSPACE, PROJECT);
 
     await host.runtime.runPromise(
       Effect.gen(function* () {
-        const lane = yield* Effect.promise(() => lanes.projectBoard(WORKSPACE, PROJECT));
+        const streams = yield* Streams;
+        const lanes = yield* ProjectionLanes;
+        const target = streams.bindings.board(WORKSPACE, PROJECT);
+        const lane = yield* lanes.projectBoard(WORKSPACE, PROJECT);
         const recovery = yield* FanInRecovery;
         const recovered = yield* recovery.recoverFanIn(target, lane);
         if (recovered.status !== "ready") throw new Error("board must recover");
@@ -214,20 +217,20 @@ describe("typed restore poison from durable history", () => {
       }),
     );
 
-    const failure = await host.runtime.runPromise(Effect.flip(runProjectBoard(ctx, PROJECT)));
+    const failure = await host.runtime.runPromise(Effect.flip(runProjectBoard(WORKSPACE, PROJECT)));
     expect(failure._tag).toBe("StateRestorePoison");
   });
 
   test("the board endpoint names a malformed durable row instead of serving it", async () => {
     const host = newHost();
     await seeded(host);
-    const lanes = new LaneRegistry();
-    const ctx = projectionContext(host.client, WORKSPACE, lanes);
-    const target = ctx.bindings.board(WORKSPACE, PROJECT);
 
     await host.runtime.runPromise(
       Effect.gen(function* () {
-        const lane = yield* Effect.promise(() => lanes.projectBoard(WORKSPACE, PROJECT));
+        const streams = yield* Streams;
+        const lanes = yield* ProjectionLanes;
+        const target = streams.bindings.board(WORKSPACE, PROJECT);
+        const lane = yield* lanes.projectBoard(WORKSPACE, PROJECT);
         const recovery = yield* FanInRecovery;
         const recovered = yield* recovery.recoverFanIn(target, lane);
         if (recovered.status !== "ready") throw new Error("board must recover");

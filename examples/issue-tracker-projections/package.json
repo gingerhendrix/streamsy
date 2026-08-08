@@ -16,8 +16,9 @@
     "seed:check": "bun run scripts/seed-check.ts",
     "deploy:check": "bun run scripts/deploy-check.ts",
     "audit:state": "bun run scripts/alchemy-state-audit.ts",
+    "plan:demo": "alchemy plan",
     "deploy:demo": "alchemy deploy",
-    "destroy:demo": "alchemy destroy",
+    "destroy:demo": "alchemy destroy --yes",
     "smoke:deployment": "bun run scripts/deployment-smoke.ts"
   },
   "dependencies": {
@@ -31,11 +32,12 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-node": "4.0.0-beta.99",
     "@streamsy/storage-sqlite": "workspace:*",
     "@types/bun": "^1.2.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "alchemy": "catalog:",
+    "alchemy": "2.0.0-beta.70",
     "typescript": "catalog:",
     "vitest": "^4.0.16"
   }

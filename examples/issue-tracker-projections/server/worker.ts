@@ -1,6 +1,11 @@
 /**
  * Cloudflare Worker host.
  *
+ * A thin executable edge, exactly like `server/local.ts`. Its `env` type is
+ * `Cloudflare.InferEnv<typeof Api>` from `alchemy.run.ts`, so the bindings this
+ * file reads and the bindings the Alchemy v2 stack declares cannot drift: a
+ * renamed or removed binding is a typecheck failure.
+ *
  * One `ManagedRuntime` lives for the isolate lifetime and is reused by `fetch`
  * and the queue consumer. Concrete streams route to SQLite-backed Durable
  * Object instances through the storage adapter; no runtime key ever reaches
@@ -11,46 +16,58 @@ import {
   createDurableObjectStorageAdapter,
   DurableObjectStreamStorage as StreamStorage,
 } from "@streamsy/storage-durable-object";
-import { ManagedRuntime } from "effect";
-import {
-  MeshLayer,
-  repairProject,
-  type ApplicationOptions,
-  type MeshServices,
-  type WakeMessage,
-} from "./application.ts";
+import { ConfigProvider, Layer, ManagedRuntime } from "effect";
+import type { IssueTrackerEnv } from "../alchemy.run.ts";
+import { repairProject, type ApplicationServices } from "./application.ts";
+import * as AppConfigModule from "./config.ts";
 import { handleApi } from "./router.ts";
+import { applicationLayer } from "./runtime.ts";
+import * as WakeModule from "./wake.ts";
+import type { WakeMessage } from "./wake.ts";
 
+/** The Durable Object class `alchemy.run.ts` binds by name. */
 export { StreamStorage };
 
-export interface Env {
-  readonly STREAM_DO: DurableObjectNamespace<StreamStorage>;
-  readonly ASSETS?: { readonly fetch: (request: Request) => Promise<Response> };
-  readonly PROJECTION_WAKES?: { readonly send: (message: WakeMessage) => Promise<void> };
-  readonly DEPLOYMENT?: string;
-}
+export type Env = IssueTrackerEnv;
 
 interface IsolateState {
-  readonly runtime: ManagedRuntime.ManagedRuntime<MeshServices, never>;
-  readonly application: ApplicationOptions;
+  readonly runtime: ManagedRuntime.ManagedRuntime<ApplicationServices, never>;
+  readonly protocol: StreamProtocol;
 }
 
 let isolate: IsolateState | undefined;
 
+/**
+ * Build the isolate's runtime once and reuse it. Workers have no shutdown hook,
+ * so the runtime deliberately lives as long as the isolate does; every scoped
+ * resource inside a request is still released by `Effect.scoped` at its own
+ * boundary.
+ */
 function state(env: Env): IsolateState {
   if (isolate !== undefined) return isolate;
   const adapter = createDurableObjectStorageAdapter({ namespace: env.STREAM_DO });
   const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 1_500 });
-  isolate = {
-    runtime: ManagedRuntime.make(MeshLayer),
-    application: {
-      client: directProtocolClient(protocol),
-      host: "cloudflare",
-      deployment: env.DEPLOYMENT ?? "cloudflare",
-      ...(env.PROJECTION_WAKES === undefined
-        ? {}
-        : { wake: (message: WakeMessage) => env.PROJECTION_WAKES!.send(message) }),
+
+  // Worker bindings are the isolate's configuration source, so they are exposed
+  // to the application as an Effect `ConfigProvider` rather than read directly.
+  const configProvider = ConfigProvider.fromEnv({
+    env: {
+      ISSUE_TRACKER_HOST: env.ISSUE_TRACKER_HOST,
+      ISSUE_TRACKER_DEPLOYMENT: env.ISSUE_TRACKER_DEPLOYMENT,
     },
+  });
+
+  isolate = {
+    protocol,
+    runtime: ManagedRuntime.make(
+      applicationLayer({
+        client: directProtocolClient(protocol),
+        config: AppConfigModule.layerFromEnv.pipe(
+          Layer.provide(ConfigProvider.layer(configProvider)),
+        ),
+        wake: WakeModule.layerQueue((message) => env.PROJECTION_WAKES.send(message)),
+      }),
+    ),
   };
   return isolate;
 }
@@ -58,17 +75,14 @@ function state(env: Env): IsolateState {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const { runtime, application } = state(env);
+    const { runtime, protocol } = state(env);
 
     if (url.pathname.startsWith("/streams/")) {
-      const adapter = createDurableObjectStorageAdapter({ namespace: env.STREAM_DO });
-      const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 1_500 });
       return new HttpHandler({ protocol, pathPrefix: "/streams" }).fetch(request);
     }
     if (url.pathname === "/health" || url.pathname.startsWith("/api/")) {
-      return runtime.runPromise(handleApi(application, request));
+      return runtime.runPromise(handleApi(request));
     }
-    if (env.ASSETS !== undefined) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
   },
 
@@ -77,7 +91,7 @@ export default {
    * repair the explicit endpoint runs, so a lost or duplicated wake converges.
    */
   async queue(batch: MessageBatch<WakeMessage>, env: Env): Promise<void> {
-    const { runtime, application } = state(env);
+    const { runtime } = state(env);
     const seen = new Set<string>();
     for (const message of batch.messages) {
       const key = `${message.body.workspaceId}/${message.body.projectId}`;
@@ -87,9 +101,7 @@ export default {
       }
       seen.add(key);
       try {
-        await runtime.runPromise(
-          repairProject(application, message.body.workspaceId, message.body.projectId),
-        );
+        await runtime.runPromise(repairProject(message.body.workspaceId, message.body.projectId));
         message.ack();
       } catch {
         message.retry();

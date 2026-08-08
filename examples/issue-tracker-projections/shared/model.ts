@@ -100,6 +100,8 @@ export function isIdentifier(value: string): boolean {
   return SEGMENT.test(value);
 }
 
-export function isKnownMember(userId: string): boolean {
+export type TeamMemberId = (typeof TEAM)[number]["id"];
+
+export function isKnownMember(userId: string): userId is TeamMemberId {
   return TEAM.some((member) => member.id === userId);
 }

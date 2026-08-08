@@ -7,8 +7,12 @@
  * a deterministic dynamic fan-in over the project's active issue details. Both
  * are bounded; a wake only affects latency, and durable lineage remains the
  * authority.
+ *
+ * Every operation here is an Effect description that reads its bindings from
+ * `Streams` and its producer lanes from `ProjectionLanes`. No context object is
+ * threaded through call sites, and nothing converts a Promise inline.
  */
-import type { JsonValue, StreamProtocolClient } from "@streamsy/core";
+import type { JsonValue } from "@streamsy/core";
 import type { StreamBinding } from "@streamsy/experimental/binding";
 import {
   sourceAck,
@@ -43,22 +47,8 @@ import {
   type BoardRow,
   type IssueDetail,
 } from "../shared/domain.ts";
-import { LaneRegistry, PROJECTION_LIMITS, workspaceBindings } from "./bindings.ts";
-
-export interface ProjectionContext {
-  readonly client: StreamProtocolClient;
-  readonly workspaceId: string;
-  readonly bindings: ReturnType<typeof workspaceBindings>;
-  readonly lanes: LaneRegistry;
-}
-
-export function projectionContext(
-  client: StreamProtocolClient,
-  workspaceId: string,
-  lanes: LaneRegistry,
-): ProjectionContext {
-  return { client, workspaceId, bindings: workspaceBindings(client), lanes };
-}
+import { ProjectionLanes } from "./lanes.ts";
+import { PROJECTION_LIMITS, Streams } from "./streams.ts";
 
 export type DetailState = IssueDetail | undefined;
 export type BoardState = Readonly<Record<string, BoardRow>>;
@@ -128,13 +118,15 @@ export function restoreBoard(initial: BoardState, facts: readonly JsonValue[]): 
 
 /** Run one bounded `IssueEvents -> IssueDetail` pass. */
 export const runIssueDetail = Effect.fn("Projections.issueDetail")(function* (
-  context: ProjectionContext,
+  workspaceId: string,
   issueId: string,
 ) {
-  const lane = yield* Effect.promise(() => context.lanes.issueDetail(context.workspaceId, issueId));
+  const streams = yield* Streams;
+  const lanes = yield* ProjectionLanes;
+  const lane = yield* lanes.issueDetail(workspaceId, issueId);
   return (yield* catchUpState<DetailState, IssueEvent>({
-    source: context.bindings.issueEvents(context.workspaceId, issueId),
-    target: context.bindings.issueDetail(context.workspaceId, issueId),
+    source: streams.bindings.issueEvents(workspaceId, issueId),
+    target: streams.bindings.issueDetail(workspaceId, issueId),
     lane,
     limits: PROJECTION_LIMITS,
     initial: undefined,
@@ -154,15 +146,15 @@ export const runIssueDetail = Effect.fn("Projections.issueDetail")(function* (
 
 /** Run one bounded `ProjectMembership + IssueDetail* -> ProjectBoard` pass. */
 export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
-  context: ProjectionContext,
+  workspaceId: string,
   projectId: string,
 ) {
-  const lane = yield* Effect.promise(() =>
-    context.lanes.projectBoard(context.workspaceId, projectId),
-  );
+  const streams = yield* Streams;
+  const lanes = yield* ProjectionLanes;
+  const lane = yield* lanes.projectBoard(workspaceId, projectId);
   return (yield* catchUpDynamicFanInState<BoardState, IssueDetail>({
-    membership: context.bindings.membership(context.workspaceId, projectId),
-    target: context.bindings.board(context.workspaceId, projectId),
+    membership: streams.bindings.membership(workspaceId, projectId),
+    target: streams.bindings.board(workspaceId, projectId),
     lane,
     limits: PROJECTION_LIMITS,
     initial: {},
@@ -171,13 +163,13 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
       if (batch.kind !== "json") throw new TypeError("Membership facts must be JSON");
       return batch.items.map((item): MembershipChange => {
         const fact = decodeMembershipFact(item);
-        const member = context.bindings.issueDetail(context.workspaceId, fact.issueId).identity;
+        const member = streams.bindings.issueDetail(workspaceId, fact.issueId).identity;
         return fact.type === "IssueJoined"
           ? { type: "join", member, ...(fact.from === null ? {} : { from: fact.from }) }
           : { type: "leave", member };
       });
     },
-    resolveMember: (identity) => resolveDetailMember(context, identity),
+    resolveMember: (identity) => resolveDetailMember(streams, workspaceId, identity),
     decodeMember(batch) {
       if (batch.kind !== "json") throw new TypeError("Issue detail State must be JSON");
       return batch.items.flatMap((item) =>
@@ -193,7 +185,7 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
       return { state: { ...state, [row.issueId]: row }, facts: [boardFact(row)] };
     },
     onRemove(state, member) {
-      const issueId = issueIdFromDetailIdentity(context, member.identity);
+      const issueId = issueIdFromDetailIdentity(workspaceId, member.identity);
       if (issueId === undefined) return { state, facts: [] };
       const { [issueId]: _removed, ...rest } = state;
       return { state: rest, facts: [boardRemoval(issueId)] };
@@ -201,15 +193,15 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
   })) as CatchUpFanInResult<BoardState>;
 });
 
-function detailPrefix(context: ProjectionContext): string {
-  return `workspaces/${context.workspaceId}/issues/`;
+function detailPrefix(workspaceId: string): string {
+  return `workspaces/${workspaceId}/issues/`;
 }
 
 function issueIdFromDetailIdentity(
-  context: ProjectionContext,
+  workspaceId: string,
   identity: StreamIdentity,
 ): string | undefined {
-  const prefix = detailPrefix(context);
+  const prefix = detailPrefix(workspaceId);
   if (!identity.name.startsWith(prefix) || !identity.name.endsWith("/detail")) return undefined;
   const issueId = identity.name.slice(prefix.length, -"/detail".length);
   return issueId.includes("/") || issueId.length === 0 ? undefined : issueId;
@@ -220,13 +212,12 @@ function issueIdFromDetailIdentity(
  * Anything else becomes an explicit `unknown-member` status.
  */
 function resolveDetailMember(
-  context: ProjectionContext,
+  streams: Streams["Service"],
+  workspaceId: string,
   identity: StreamIdentity,
 ): StreamBinding | undefined {
-  const issueId = issueIdFromDetailIdentity(context, identity);
-  return issueId === undefined
-    ? undefined
-    : context.bindings.issueDetail(context.workspaceId, issueId);
+  const issueId = issueIdFromDetailIdentity(workspaceId, identity);
+  return issueId === undefined ? undefined : streams.bindings.issueDetail(workspaceId, issueId);
 }
 
 /** A projection pass result, as the two kernels report it. */
@@ -302,21 +293,21 @@ export interface ChainProbe {
  * Prove the fixed two-hop path by reading direct-source lineage at each output.
  * A wake receipt or elapsed delay can never produce `proven`.
  */
-export const proveChain = Effect.fn("Projections.proveChain")(function* (
-  context: ProjectionContext,
-  options: { readonly issueId: string; readonly projectId: string; readonly ack: SourceAck },
-) {
-  const { workspaceId } = context;
-  const detailLane = yield* Effect.promise(() =>
-    context.lanes.issueDetail(workspaceId, options.issueId),
-  );
-  const boardLane = yield* Effect.promise(() =>
-    context.lanes.projectBoard(workspaceId, options.projectId),
-  );
-  const detailIdentity = context.bindings.issueDetail(workspaceId, options.issueId).identity;
+export const proveChain = Effect.fn("Projections.proveChain")(function* (options: {
+  readonly workspaceId: string;
+  readonly issueId: string;
+  readonly projectId: string;
+  readonly ack: SourceAck;
+}) {
+  const { workspaceId } = options;
+  const streams = yield* Streams;
+  const lanes = yield* ProjectionLanes;
+  const detailLane = yield* lanes.issueDetail(workspaceId, options.issueId);
+  const boardLane = yield* lanes.projectBoard(workspaceId, options.projectId);
+  const detailIdentity = streams.bindings.issueDetail(workspaceId, options.issueId).identity;
 
   const detailRecovered = yield* recoverDerivedState(
-    context.bindings.issueDetail(workspaceId, options.issueId),
+    streams.bindings.issueDetail(workspaceId, options.issueId),
     detailLane,
   );
   const detailThrough =
@@ -328,7 +319,7 @@ export const proveChain = Effect.fn("Projections.proveChain")(function* (
 
   const fanIn = yield* FanInRecovery;
   const boardRecovered = yield* fanIn.recoverFanIn(
-    context.bindings.board(workspaceId, options.projectId),
+    streams.bindings.board(workspaceId, options.projectId),
     boardLane,
   );
   const memberRow =
@@ -341,8 +332,8 @@ export const proveChain = Effect.fn("Projections.proveChain")(function* (
       ? boardRecovered.checkpoint.targetOffset
       : null;
 
-  const eventsIdentity = context.bindings.issueEvents(workspaceId, options.issueId).identity;
-  const boardIdentity = context.bindings.board(workspaceId, options.projectId).identity;
+  const eventsIdentity = streams.bindings.issueEvents(workspaceId, options.issueId).identity;
+  const boardIdentity = streams.bindings.board(workspaceId, options.projectId).identity;
 
   const coverage = chainedCoverage(options.ack, [
     {
@@ -373,17 +364,14 @@ export const proveChain = Effect.fn("Projections.proveChain")(function* (
 });
 
 export const readBoard = Effect.fn("Projections.readBoard")(function* (
-  context: ProjectionContext,
+  workspaceId: string,
   projectId: string,
 ) {
-  const lane = yield* Effect.promise(() =>
-    context.lanes.projectBoard(context.workspaceId, projectId),
-  );
+  const streams = yield* Streams;
+  const lanes = yield* ProjectionLanes;
+  const lane = yield* lanes.projectBoard(workspaceId, projectId);
   const fanIn = yield* FanInRecovery;
-  const recovered = yield* fanIn.recoverFanIn(
-    context.bindings.board(context.workspaceId, projectId),
-    lane,
-  );
+  const recovered = yield* fanIn.recoverFanIn(streams.bindings.board(workspaceId, projectId), lane);
   if (recovered.status !== "ready") return { status: recovered.status } as const;
   // Serving durable rows uses the same schema-backed restore the kernel uses,
   // so a malformed row is typed poison here too instead of a served lie.
@@ -395,7 +383,7 @@ export const readBoard = Effect.fn("Projections.readBoard")(function* (
   return {
     status: "ready" as const,
     rows: Object.values(board),
-    boardStream: streamNames.board(context.workspaceId, projectId),
+    boardStream: streamNames.board(workspaceId, projectId),
   };
 });
 

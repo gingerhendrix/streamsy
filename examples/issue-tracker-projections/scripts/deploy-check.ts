@@ -1,16 +1,22 @@
 /**
  * Validate a deployable topology without touching production.
  *
- * alchemy@0.82.1 has no read-only plan operation, so this check does the three
- * things that can be verified offline:
+ * Alchemy v2 replaces v1's "no read-only operation" gap with a real
+ * `alchemy plan`, so this check is meaningfully stronger than its v1 version:
  *
- *   1. typecheck, which compiles `alchemy.run.ts` against the pinned Alchemy
- *      declarations and therefore validates every resource spelling;
+ *   1. typecheck, which compiles `alchemy.run.ts` against the installed
+ *      alchemy@2 declarations and therefore validates every resource spelling;
  *   2. build the Worker bundle and the browser assets;
- *   3. audit any local Alchemy state for runtime identifiers;
- *   4. report whether deploy credentials are present, without using them.
+ *   3. run the stack-shape tests, which import the v2 program and assert it is
+ *      a description with the expected resources;
+ *   4. `alchemy plan`, which evaluates the stack for real and prints the
+ *      resources a deploy would create;
+ *   5. audit any applied Alchemy state for runtime identifiers.
  *
- * It never applies infrastructure. `deploy:demo` is the separate explicit step.
+ * It then reports whether deploy credentials are present, without using them.
+ *
+ * It never applies infrastructure — `plan` is read-only, and `deploy:demo` is
+ * the separate explicit step.
  */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -18,12 +24,23 @@ import { fileURLToPath } from "node:url";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-await step("typecheck (validates the Alchemy program and resource spelling)", "bun", [
+await step("typecheck (validates the Alchemy v2 program and resource spelling)", "bun", [
   "run",
   "typecheck",
 ]);
 await step("build worker bundle and assets", "bun", ["run", "build"]);
-await step("audit Alchemy state for runtime identifiers", "bun", ["run", "audit:state"]);
+await step("assert the Alchemy v2 stack shape", "bunx", [
+  "vitest",
+  "--run",
+  "test/alchemy-stack.test.ts",
+]);
+await step("plan the stack (read-only)", "bunx", [
+  "alchemy",
+  "plan",
+  "--stage",
+  process.env.STAGE ?? "check",
+]);
+await step("audit applied Alchemy state for runtime identifiers", "bun", ["run", "audit:state"]);
 
 const credentials =
   (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CLOUDFLARE_API_KEY ?? "").length > 0;

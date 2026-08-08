@@ -12,6 +12,10 @@
  * real `alchemy deploy`, so with no Cloudflare credentials there is nothing
  * local to inspect. It says so explicitly rather than reporting a pass it did
  * not earn.
+ *
+ * The stack uses Alchemy v2's `Alchemy.localState()`, which writes its state
+ * tree to `.alchemy/state` under the process working directory — so both the
+ * example directory and the repository root are scanned.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -31,19 +35,28 @@ const FORBIDDEN: readonly { readonly label: string; readonly pattern: RegExp }[]
   { label: "seeded issue id", pattern: /issue-(ship|plat)-\d/ },
 ];
 
-const stateDirs = [join(packageDir, ".alchemy"), join(repoRoot, ".alchemy")].filter(exists);
+/**
+ * Only the applied-state tree counts. `alchemy plan` also writes a version
+ * check and a log under `.alchemy/`; scanning those would let the audit report
+ * a pass it has not earned.
+ */
+const stateDirs = [
+  join(packageDir, ".alchemy", "state"),
+  join(repoRoot, ".alchemy", "state"),
+].filter(exists);
 
 if (stateDirs.length === 0) {
   console.log(
     [
       "alchemy-state audit skipped — no local Alchemy state to inspect.",
       "",
-      "`.alchemy/` is written by `alchemy deploy`. This environment has no",
+      "`.alchemy/state` is written by `alchemy deploy`. This environment has no",
       "Cloudflare credentials, so no stage has ever been applied and there is no",
       "state file on disk. The claim that deployment state holds no runtime",
       "identity therefore rests on the topology in `alchemy.run.ts` (which names",
       "only a Worker, a Durable Object namespace, a queue, and the assets) and",
-      "remains unverified against applied state.",
+      "remains unverified against applied state. `test/alchemy-stack.test.ts`",
+      "checks the same patterns against the program itself.",
       "",
       "Run `STAGE=... bun run deploy:demo` and then this script to verify it.",
     ].join("\n"),

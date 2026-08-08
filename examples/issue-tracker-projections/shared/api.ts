@@ -1,5 +1,13 @@
-/** Wire contract shared by the local host, the Worker, and the browser. */
-import type { BoardRow, IssueDetail, IssuePriority, IssueStatus, Project } from "./domain.ts";
+/**
+ * Wire contract shared by the local host, the Worker, and the browser.
+ *
+ * Request bodies are defined once as Effect Schemas in `./requests.ts` and
+ * re-exported here as types. The re-export is type-only, so the browser bundle
+ * still contains no Effect runtime.
+ */
+import type { BoardRow, IssueDetail, Project } from "./domain.ts";
+
+export type { CreateIssueRequest, CreateProjectRequest, IssueCommandRequest } from "./requests.ts";
 
 export interface HopReport {
   readonly label: "issue-detail" | "project-board";
@@ -58,35 +66,6 @@ export interface RepairResponse {
   readonly repaired: readonly string[];
   readonly board: string;
   readonly projections: readonly ProjectionPassReport[];
-}
-
-export interface CreateIssueRequest {
-  readonly commandId: string;
-  readonly issueId: string;
-  readonly projectId: string;
-  readonly title: string;
-  readonly priority?: IssuePriority;
-  readonly status?: IssueStatus;
-  readonly creatorId?: string;
-}
-
-export type IssueCommandRequest =
-  | { readonly commandId: string; readonly type: "rename"; readonly title: string }
-  | { readonly commandId: string; readonly type: "status"; readonly status: IssueStatus }
-  | { readonly commandId: string; readonly type: "priority"; readonly priority: IssuePriority }
-  | { readonly commandId: string; readonly type: "assign"; readonly assigneeId: string | null }
-  | {
-      readonly commandId: string;
-      readonly type: "comment";
-      readonly commentId: string;
-      readonly authorId: string;
-      readonly body: string;
-    };
-
-export interface CreateProjectRequest {
-  readonly projectId: string;
-  readonly projectKey: string;
-  readonly name: string;
 }
 
 export interface BoardResponse {

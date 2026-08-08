@@ -1,9 +1,10 @@
 /**
  * Local Bun host.
  *
- * The host owns exactly one `ManagedRuntime`, resolves storage into a fixed
- * protocol client, and translates Effects into HTTP responses. No library code
- * calls `Effect.runPromise`.
+ * A thin executable edge: resolve storage into a protocol client, own exactly
+ * one `ManagedRuntime` for the host's lifetime, dispose it on close, and serve
+ * static files. It contains no application logic and no `Effect.runPromise`
+ * anywhere but the request boundary.
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -17,8 +18,11 @@ import {
   type StorageAdapter,
 } from "@streamsy/core";
 import { ManagedRuntime } from "effect";
-import { MeshLayer, type ApplicationOptions } from "./application.ts";
+import type { ApplicationServices } from "./application.ts";
+import * as AppConfigModule from "./config.ts";
 import { handleApi } from "./router.ts";
+import { applicationLayer } from "./runtime.ts";
+import * as WakeModule from "./wake.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** `bun run build` emits the browser bundle here. */
@@ -35,18 +39,22 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 5_000 });
   const client = directProtocolClient(protocol);
   const streams = createHttpHandler({ protocol, pathPrefix: "/streams" });
-  const runtime = ManagedRuntime.make(MeshLayer);
-  const application: ApplicationOptions = {
-    client,
-    host: "local",
-    deployment: options.deployment ?? "local",
-  };
+
+  const runtime: ManagedRuntime.ManagedRuntime<ApplicationServices, never> = ManagedRuntime.make(
+    applicationLayer({
+      client,
+      config: AppConfigModule.layer({ host: "local", deployment: options.deployment ?? "local" }),
+      // The local host has no queue, so repair and the next request are the
+      // only convergence. That is a host capability, not an application flag.
+      wake: WakeModule.layerDisabled,
+    }),
+  );
 
   async function fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/streams/")) return streams.fetch(request);
     if (url.pathname === "/health" || url.pathname.startsWith("/api/")) {
-      return runtime.runPromise(handleApi(application, request));
+      return runtime.runPromise(handleApi(request));
     }
     return serveAsset(url.pathname);
   }
@@ -83,7 +91,6 @@ async function serveAsset(pathname: string): Promise<Response> {
   );
   const file = join(assetDir, relative);
   if (!file.startsWith(assetDir) || !existsSync(file)) {
-    // Single-page shell fallback keeps deep links usable.
     const shell = join(assetDir, "index.html");
     if (!existsSync(shell)) {
       return new Response(MISSING_BUILD, {

@@ -6,24 +6,24 @@
  */
 import { Effect } from "effect";
 import type { IssuePriority, IssueStatus } from "../shared/domain.ts";
-import {
-  createIssue,
-  createProject,
-  issueCommand,
-  listProjects,
-  type ApplicationOptions,
-} from "./application.ts";
+import type { MemberId } from "../shared/requests.ts";
+import { createIssue, createProject, issueCommand, listProjects } from "./application.ts";
 
+/**
+ * Seed values are typed against the decoded request shapes rather than against
+ * `string`, so a seed that the HTTP boundary would reject fails to compile
+ * instead of failing at run time.
+ */
 interface SeedIssue {
   readonly issueId: string;
   readonly projectId: string;
   readonly title: string;
   readonly status: IssueStatus;
   readonly priority: IssuePriority;
-  readonly assigneeId: string | null;
+  readonly assigneeId: MemberId | null;
   readonly comments: readonly {
     readonly commentId: string;
-    readonly authorId: string;
+    readonly authorId: MemberId;
     readonly body: string;
   }[];
 }
@@ -97,15 +97,12 @@ const ISSUES: readonly SeedIssue[] = [
   },
 ];
 
-export const seedWorkspace = Effect.fn("Seed.workspace")(function* (
-  options: ApplicationOptions,
-  workspaceId: string,
-) {
+export const seedWorkspace = Effect.fn("Seed.workspace")(function* (workspaceId: string) {
   for (const project of PROJECTS) {
-    yield* createProject(options, workspaceId, project);
+    yield* createProject(workspaceId, project);
   }
   for (const issue of ISSUES) {
-    yield* createIssue(options, workspaceId, {
+    yield* createIssue(workspaceId, {
       commandId: `seed:create:${issue.issueId}`,
       issueId: issue.issueId,
       projectId: issue.projectId,
@@ -114,21 +111,21 @@ export const seedWorkspace = Effect.fn("Seed.workspace")(function* (
       creatorId: "ada",
     });
     if (issue.assigneeId !== null) {
-      yield* issueCommand(options, workspaceId, issue.issueId, {
+      yield* issueCommand(workspaceId, issue.issueId, {
         commandId: `seed:assign:${issue.issueId}`,
         type: "assign",
         assigneeId: issue.assigneeId,
       });
     }
     if (issue.status !== "backlog") {
-      yield* issueCommand(options, workspaceId, issue.issueId, {
+      yield* issueCommand(workspaceId, issue.issueId, {
         commandId: `seed:status:${issue.issueId}`,
         type: "status",
         status: issue.status,
       });
     }
     for (const comment of issue.comments) {
-      yield* issueCommand(options, workspaceId, issue.issueId, {
+      yield* issueCommand(workspaceId, issue.issueId, {
         commandId: `seed:comment:${comment.commentId}`,
         type: "comment",
         commentId: comment.commentId,
@@ -137,7 +134,7 @@ export const seedWorkspace = Effect.fn("Seed.workspace")(function* (
       });
     }
   }
-  const projects = yield* listProjects(options, workspaceId);
+  const projects = yield* listProjects(workspaceId);
   return {
     workspaceId,
     projects: projects.map((project) => project.projectId),
