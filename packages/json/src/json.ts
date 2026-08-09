@@ -16,6 +16,7 @@ import type {
   StreamId,
   StreamProtocolFactory,
 } from "@streamsy/core";
+import { ZERO_OFFSET } from "@streamsy/core";
 
 export const JSON_CONTENT_TYPE = "application/json";
 
@@ -59,6 +60,13 @@ export type JsonCreateOptions<T> = Omit<CreateOptions, "contentType" | "initialD
  * appends run concurrently — a shared `expectedOffset` would fail all but one.
  */
 export type JsonAppendOptions = Omit<AppendOptions, "data" | "contentType">;
+
+export interface JsonReadAllResult<T> {
+  messages: JsonStoredMessage<T>[];
+  values: T[];
+  head: string;
+  upToDate: boolean;
+}
 
 export type JsonCreateResult<T> =
   | (Omit<Extract<CreateResult, { status: "created" }>, "stream"> & { stream: JsonStream<T> })
@@ -118,6 +126,10 @@ function isJsonContentType(contentType: string): boolean {
 
 function encodeJson<T>(codec: JsonCodec<T>, value: T): Uint8Array {
   return encoder.encode(JSON.stringify(codec.encode(value)));
+}
+
+function encodeJsonBatch<T>(codec: JsonCodec<T>, values: readonly T[]): Uint8Array {
+  return encoder.encode(JSON.stringify(values.map((value) => codec.encode(value))));
 }
 
 function decodeJsonMessage<T>(codec: JsonCodec<T>, message: StoredMessage): JsonStoredMessage<T> {
@@ -202,6 +214,18 @@ export class JsonProtocol<T> {
     return { status: "ok", stream: this.wrap(result.stream) };
   }
 
+  /** Open a JSON stream, creating it when it does not exist. */
+  async getOrCreate(streamId: string, options: JsonCreateOptions<T> = {}): Promise<JsonStream<T>> {
+    const existing = await this.get(streamId);
+    if (existing.status === "ok") return existing.stream;
+    if (existing.status !== "not-found") {
+      throw new Error(`cannot open JSON stream ${streamId}: ${existing.status}`);
+    }
+    const created = await this.create(streamId, options);
+    if (created.status === "created" || created.status === "exists") return created.stream;
+    throw new Error(`cannot create JSON stream ${streamId}: ${created.status}`);
+  }
+
   wrap(stream: ProtocolStream): JsonStream<T> {
     return new JsonStream(stream, this.codec, { contentType: this.contentType });
   }
@@ -247,6 +271,15 @@ export class JsonStream<T> {
     return Promise.all(messages.map((message) => this.append(message, options)));
   }
 
+  /** Append a JSON array as one atomic Streamsy batch. */
+  appendBatch(messages: readonly T[], options: JsonAppendOptions = {}): Promise<AppendResult> {
+    return this.stream.append({
+      ...options,
+      data: encodeJsonBatch(this.codec, messages),
+      contentType: this.contentType,
+    });
+  }
+
   appendJson(value: unknown, options: JsonAppendOptions = {}): Promise<AppendResult> {
     return this.stream.append({
       ...options,
@@ -262,6 +295,29 @@ export class JsonStream<T> {
     if (!decoded.ok)
       return { status: "invalid-json", error: decoded.error, offset: decoded.offset };
     return { ...result, messages: decoded.messages };
+  }
+
+  /** Read decoded messages until the stream reports that it is up to date. */
+  async readAll(options: ReadOptions = {}): Promise<JsonReadAllResult<T>> {
+    const messages: JsonStoredMessage<T>[] = [];
+    let offset = options.offset;
+    let upToDate = false;
+    for (;;) {
+      const result = await this.read({ ...options, offset });
+      if (result.status !== "ok") {
+        throw new Error(`cannot read JSON stream ${this.id}: ${result.status}`);
+      }
+      messages.push(...result.messages);
+      upToDate = result.upToDate;
+      if (result.upToDate || result.messages.length === 0) break;
+      offset = result.nextOffset;
+    }
+    return {
+      messages,
+      values: messages.map((message) => message.value),
+      head: messages.at(-1)?.offset ?? options.offset ?? ZERO_OFFSET,
+      upToDate,
+    };
   }
 
   async readLive(options: ReadLiveOptions): Promise<JsonReadLiveResult<T>> {

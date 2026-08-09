@@ -134,4 +134,34 @@ describe("JsonProtocol", () => {
     if (live.status !== "ok") throw new Error("expected ok");
     expect(live.messages.map((message) => message.value)).toEqual([{ id: "u1", name: "Alice" }]);
   });
+
+  it("gets or creates streams and reads their complete typed history", async () => {
+    const json = createJsonProtocol(createProtocol(), userCodec);
+    const stream = await json.getOrCreate("users");
+    await stream.append({ id: "u1", name: "Alice" });
+    await stream.append({ id: "u2", name: "Bob" });
+
+    const reopened = await json.getOrCreate("users");
+    const all = await reopened.readAll();
+
+    expect(all.values).toEqual([
+      { id: "u1", name: "Alice" },
+      { id: "u2", name: "Bob" },
+    ]);
+    expect(all.messages.map((message) => message.value.id)).toEqual(["u1", "u2"]);
+    expect(all.head).toBe(all.messages[1]!.offset);
+    expect(all.upToDate).toBe(true);
+  });
+
+  it("appends a typed JSON batch atomically", async () => {
+    const json = createJsonProtocol(createProtocol(), userCodec);
+    const stream = await json.getOrCreate("users");
+    const result = await stream.appendBatch([
+      { id: "u1", name: "Alice" },
+      { id: "u2", name: "Bob" },
+    ]);
+
+    expect(result.status).toBe("appended");
+    expect((await stream.readAll()).values.map((user) => user.id)).toEqual(["u1", "u2"]);
+  });
 });
