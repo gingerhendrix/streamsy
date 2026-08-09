@@ -24,7 +24,8 @@ query.
 
 1. **Source collection** (`server-db.ts`, `server-collection.ts`) — a server-owned TanStack DB
    collection of raw HN stories. The poller writes rows through a sync writer (`begin`, `write`,
-   `commit`); an index on `[time, id]` keeps the ordered query efficient.
+   `commit`); an index on the query's first ordering field (`time`) keeps the bounded query from
+   loading the full collection, while `id` remains the deterministic tie-breaker.
 2. **Materializer** (`stream-projection.ts`) — `createEffect` runs a live query over the source
    collection (`where type = story`, `orderBy [time, id] desc`, `limit 50`, `select` the view
    columns). TanStack DB re-runs it incrementally and hands `onBatch` the _delta_ for each change.
@@ -52,8 +53,12 @@ From the repository root:
 
 ```bash
 bun install
+bun run build
 bun --cwd examples/hackernews-newest-stream run dev
 ```
+
+The root build produces the workspace package entry points consumed by this example. Re-run it
+after changing a workspace package under `packages/`.
 
 Open the Bun server URL (default `http://localhost:1339`). The same Bun process serves the API,
 Streamsy stream, and built React client; no separate Vite dev server or proxy is needed.

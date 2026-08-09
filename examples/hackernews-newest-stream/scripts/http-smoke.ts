@@ -165,6 +165,7 @@ const server = Bun.spawn(["bun", "src/server/index.ts"], {
   stderr: "pipe",
 });
 
+let serverStderr = "";
 try {
   await waitForServer();
 
@@ -202,11 +203,16 @@ try {
   fixture.stop(true);
 
   const stdout = await new Response(server.stdout).text();
-  const stderr = await new Response(server.stderr).text();
+  serverStderr = await new Response(server.stderr).text();
   if (stdout.trim()) {
     console.log(stdout.trim());
   }
-  if (stderr.trim()) {
-    console.error(stderr.trim());
+  if (serverStderr.trim()) {
+    console.error(serverStderr.trim());
   }
 }
+
+assert(
+  !serverStderr.includes("orderBy with limit requires an index"),
+  "newest-story query should use its time index instead of loading the full collection",
+);

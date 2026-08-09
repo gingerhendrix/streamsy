@@ -26,8 +26,12 @@ From the repository root:
 
 ```bash
 bun install
+bun run build
 PORT=1337 bun run --cwd examples/memory-server start
 ```
+
+The root build produces the `@streamsy/core` workspace entry point consumed by this example.
+Re-run it after changing the core package.
 
 The server listens on `http://localhost:${PORT:-1337}` and mounts Streamsy at `/`, so each path after the leading slash is treated as the stream id.
 

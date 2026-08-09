@@ -196,10 +196,15 @@ its own change.
 
 ```bash
 bun install
+bun run build
 bun run --cwd examples/issue-tracker-projections dev      # http://localhost:8787
 curl -X POST http://localhost:8787/api/workspaces/main/seed
 open 'http://localhost:8787/?workspace=main&project=launch'
 ```
+
+The root build produces the workspace package entry points consumed by this example. Re-run it
+after changing a workspace package under `packages/`; the example's own `build` script separately
+produces its browser assets and Worker bundle.
 
 `dev` builds the browser bundle into `dist/assets` first; the local host serves
 that directory, so re-run `build` after changing anything under `src/`. Seeding

@@ -153,8 +153,12 @@ From the repository root:
 
 ```bash
 bun install
+bun run build
 bun --cwd examples/issue-tracker-demo run dev
 ```
+
+The root build produces the workspace package entry points consumed by this example. Re-run it
+after changing a workspace package under `packages/`.
 
 Open `http://localhost:1338`. One Bun process serves everything: the React app (bundled on the
 fly from `public/index.html`, with HMR in development), the `/api` mutation endpoints, and the

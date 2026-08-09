@@ -16,10 +16,10 @@ export function createHnServerDb(): HnServerDb {
     getKey: (story) => story.id,
   });
 
-  // The server projection orders and limits by HN creation time with id as a
-  // deterministic tie-breaker. An explicit index keeps TanStack DB from falling
-  // back to a full lazy load path.
-  storiesCollection.createIndex((story) => [story.time, story.id], { indexType: BasicIndex });
+  // TanStack DB's orderBy/limit optimization looks up an index for the first
+  // ordering field. The query still uses id as its deterministic tie-breaker,
+  // while this scalar time index avoids loading the entire collection.
+  storiesCollection.createIndex((story) => story.time, { indexType: BasicIndex });
 
   return { storiesCollection, storiesWriter };
 }

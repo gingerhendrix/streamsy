@@ -12,9 +12,12 @@ The executable and test hosts each construct one `ManagedRuntime`, reuse it for 
 
 The example uses a small example-local eager materializer because the existing StreamDB integration is browser/TanStack-oriented. This slice does not claim a reusable StreamDB adapter or generic sync engine.
 
-Run the deterministic smoke and evidence suites with:
+From the repository root, install dependencies and build the workspace packages before running the
+deterministic smoke and evidence suites:
 
 ```sh
+bun install
+bun run build
 bun run smoke:causal-counter
 bun run --cwd examples/causal-counter test:unit
 bun run --cwd examples/causal-counter test:sqlite
