@@ -30,12 +30,7 @@
  * {@link boardProjectionTxId}.
  */
 
-import {
-  directProtocolClient,
-  type JsonValue,
-  type StreamProtocolClient,
-  type StreamProtocolFactory,
-} from "@streamsy/core";
+import { type JsonValue, type StreamProtocolClient } from "@streamsy/core";
 import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
 import { streamIdentity, type StreamIdentity } from "@streamsy/experimental/causal";
 import {
@@ -81,9 +76,8 @@ export interface BoardMaterialized {
 
 export interface BoardMeshOptions {
   gameId: string;
-  client?: StreamProtocolClient;
-  /** Test/compatibility input; executable hosts pass their runtime-owned client. */
-  protocol?: StreamProtocolFactory;
+  /** Caller-owned client. The caller must close it when its host or test ends. */
+  client: StreamProtocolClient;
   sourceStreamId: string;
   outputStreamId: string;
   processorId?: string;
@@ -238,9 +232,7 @@ function diffRows(
 
 /** Compose every piece `catchUp` needs to maintain one board generation. */
 export async function createBoardMesh(options: BoardMeshOptions): Promise<BoardMesh> {
-  const client =
-    options.client ?? (options.protocol ? directProtocolClient(options.protocol) : null);
-  if (client === null) throw new TypeError("Board mesh requires a protocol client");
+  const client = options.client;
   const sourceIdentity = boardSourceIdentity(options.gameId);
   const targetIdentity = boardTargetIdentity(options.gameId, options.generation);
   const lane = await deriveProducerLane({

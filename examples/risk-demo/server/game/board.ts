@@ -3,8 +3,9 @@
  * watermark.
  *
  * Each call runs one bounded `ivm-mesh` catch-up and returns the state that
- * catch-up recovered from the durable board stream. There is no cached runtime
- * and no in-process board: the mesh recovers `{ rows, lineage, next sequence }`
+ * catch-up recovered from the durable board stream. There is no cached board
+ * state: the host reuses one runtime, while the mesh recovers
+ * `{ rows, lineage, next sequence }`
  * from the target on every invocation, so two servers — or one server either
  * side of a restart — cannot disagree about the board because one of them
  * happens to be holding a warmer copy.

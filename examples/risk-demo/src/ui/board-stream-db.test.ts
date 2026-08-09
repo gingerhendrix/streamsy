@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
+import {
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+  directProtocolClient,
+} from "@streamsy/core";
 import { catchUp } from "../board/mesh-test-harness.ts";
 import { MESH_LINEAGE_TYPE, MESH_RESERVED_TYPE_PREFIX } from "@streamsy/experimental/ivm-mesh";
 
@@ -171,9 +175,10 @@ describe("reserved mesh lineage and the browser mirror", () => {
     const output = "games/game/projections/board/board1";
     await writeCanonicalEvents(protocol, source, events);
     await protocol.create(output, { contentType: "application/json" });
+    const client = directProtocolClient(protocol);
     const mesh = await createBoardMesh({
       gameId: "game",
-      protocol,
+      client,
       sourceStreamId: source,
       outputStreamId: output,
       generation: "board1",
@@ -186,7 +191,7 @@ describe("reserved mesh lineage and the browser mirror", () => {
       fold: mesh.fold,
       decode: (batch) => mesh.decode(batch),
       reduce: (items, boundary, prior) => mesh.reduce(items, boundary, prior),
-    });
+    }).finally(() => client.close());
     expect(result.status).toBe("caught-up");
 
     const stream = await protocol.get(output);

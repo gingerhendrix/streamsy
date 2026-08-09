@@ -162,6 +162,27 @@ describe("JsonProtocol", () => {
     ]);
 
     expect(result.status).toBe("appended");
+    if (result.status !== "appended") throw new Error("expected appended");
+    const committed = await stream.readAll();
+    expect(committed.values.map((user) => user.id)).toEqual(["u1", "u2"]);
+    // One append acknowledgement covers the whole typed batch. Its offset is
+    // the durable head after both framed items, rather than one acknowledgement
+    // per item as a sequential implementation would return.
+    expect(committed.head).toBe(result.offset);
+    expect(committed.messages.at(-1)?.offset).toBe(result.offset);
+
+    const rejected = await stream.appendBatch(
+      [
+        { id: "u3", name: "Cara" },
+        { id: "u4", name: "Dan" },
+      ],
+      { expectedOffset: ZERO_OFFSET },
+    );
+    expect(rejected).toMatchObject({
+      status: "conflict",
+      conflictReason: "expected-offset",
+      offset: result.offset,
+    });
     expect((await stream.readAll()).values.map((user) => user.id)).toEqual(["u1", "u2"]);
   });
 });

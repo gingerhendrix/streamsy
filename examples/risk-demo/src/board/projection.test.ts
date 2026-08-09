@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
+import {
+  createMemoryStorageAdapter,
+  createStreamProtocol,
+  directProtocolClient,
+} from "@streamsy/core";
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { catchUp } from "./mesh-test-harness.ts";
 
@@ -49,9 +53,10 @@ async function runBoard(
 ) {
   const outputStreamId = `games/game/projections/board/${generation}`;
   await protocol.create(outputStreamId, { contentType: "application/json" });
+  const client = directProtocolClient(protocol);
   const mesh = await createBoardMesh({
     gameId: "game",
-    protocol,
+    client,
     sourceStreamId: SOURCE,
     outputStreamId,
     generation,
@@ -65,7 +70,7 @@ async function runBoard(
     fold: mesh.fold,
     decode: (batch) => mesh.decode(batch),
     reduce: (events, boundary, prior) => mesh.reduce(events, boundary, prior),
-  });
+  }).finally(() => client.close());
   if (result.status !== "caught-up" && result.status !== "limit-reached") {
     throw new Error(`board catch-up: ${result.status}`);
   }
@@ -648,9 +653,10 @@ describe("bounded catch-up", () => {
 
     const outputStreamId = "games/game/projections/board/board1";
     await protocol.create(outputStreamId, { contentType: "application/json" });
+    const client = directProtocolClient(protocol);
     const mesh = await createBoardMesh({
       gameId: "game",
-      protocol,
+      client,
       sourceStreamId: SOURCE,
       outputStreamId,
       generation: "board1",
@@ -664,7 +670,7 @@ describe("bounded catch-up", () => {
       fold: mesh.fold,
       decode: (batch) => mesh.decode(batch),
       reduce: (items, boundary, prior) => mesh.reduce(items, boundary, prior),
-    });
+    }).finally(() => client.close());
 
     // Terminal, not a partial success — repeating the same configuration could
     // not make progress, so saying so is the only honest answer.
@@ -727,9 +733,10 @@ describe("snapshot and lineage agreement", () => {
   }
 
   async function runRaw(protocol: StreamProtocolFactory) {
+    const client = directProtocolClient(protocol);
     const mesh = await createBoardMesh({
       gameId: "game",
-      protocol,
+      client,
       sourceStreamId: SOURCE,
       outputStreamId: OUTPUT,
       generation: "board1",
@@ -744,7 +751,7 @@ describe("snapshot and lineage agreement", () => {
         mesh.validateRecovered({ ...checkpoint, state: checkpoint.materialized }),
       decode: (batch) => mesh.decode(batch),
       reduce: (items, boundary, prior) => mesh.reduce(items, boundary, prior),
-    });
+    }).finally(() => client.close());
   }
 
   it("refuses a snapshot ahead of its lineage when there is no unread source", async () => {
