@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createMemoryStorageAdapter,
   createStreamProtocol,
@@ -156,18 +156,19 @@ describe("JsonProtocol", () => {
   it("appends a typed JSON batch atomically", async () => {
     const json = createJsonProtocol(createProtocol(), userCodec);
     const stream = await json.getOrCreate("users");
-    const result = await stream.appendBatch([
+    const append = vi.spyOn(stream.stream, "append");
+    const batch = [
       { id: "u1", name: "Alice" },
       { id: "u2", name: "Bob" },
-    ]);
+    ];
+    const result = await stream.appendBatch(batch);
 
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(decoder.decode(append.mock.calls[0]![0].data))).toEqual(batch);
     expect(result.status).toBe("appended");
     if (result.status !== "appended") throw new Error("expected appended");
     const committed = await stream.readAll();
     expect(committed.values.map((user) => user.id)).toEqual(["u1", "u2"]);
-    // One append acknowledgement covers the whole typed batch. Its offset is
-    // the durable head after both framed items, rather than one acknowledgement
-    // per item as a sequential implementation would return.
     expect(committed.head).toBe(result.offset);
     expect(committed.messages.at(-1)?.offset).toBe(result.offset);
 
