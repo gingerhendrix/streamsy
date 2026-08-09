@@ -131,6 +131,7 @@ export const runIssueDetail = Effect.fn("Projections.issueDetail")(function* (
     limits: PROJECTION_LIMITS,
     initial: undefined,
     restore: restoreDetail,
+    validateRecovered: () => {},
     decode(batch) {
       if (batch.kind !== "json") throw new TypeError("Issue events must be JSON");
       return batch.items.map((item) => decodeIssueEvent(item));
@@ -138,8 +139,8 @@ export const runIssueDetail = Effect.fn("Projections.issueDetail")(function* (
     step(state, events) {
       let next = state;
       for (const event of events) next = evolveIssue(next, event);
-      if (next === undefined) return { state: next, facts: [] };
-      return { state: next, facts: [detailFact(next)] };
+      if (next === undefined) return { facts: [] };
+      return { facts: [detailFact(next)] };
     },
   })) as CatchUpStateResult<DetailState>;
 });

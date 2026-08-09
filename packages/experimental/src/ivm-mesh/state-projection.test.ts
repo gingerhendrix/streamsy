@@ -60,10 +60,18 @@ async function harness(adapter = createMemoryStorageAdapter()): Promise<Harness>
   return { adapter, client, source, target, lane };
 }
 
-function program(h: Harness, options: { readonly poisonStep?: boolean } = {}) {
+interface ProgramOptions {
+  readonly poisonStep?: boolean;
+  readonly target?: StreamBinding;
+  readonly onDecode?: () => void;
+  readonly validateRecovered?: (recovered: { readonly state: Total }) => void | Promise<void>;
+  readonly rejectFactTotal?: number;
+}
+
+function program(h: Harness, options: ProgramOptions = {}) {
   return catchUpState({
     source: h.source,
-    target: h.target,
+    target: options.target ?? h.target,
     lane: h.lane,
     limits,
     initial,
@@ -77,11 +85,14 @@ function program(h: Harness, options: { readonly poisonStep?: boolean } = {}) {
         if (!isRecord(value) || typeof value.total !== "number") {
           throw new TypeError("malformed total row");
         }
+        if (value.total === options.rejectFactTotal) throw new Error("rejected proposed total");
         state = { total: value.total, applied: Number(value.applied) };
       }
       return state;
     },
+    validateRecovered: options.validateRecovered ?? (() => {}),
     decode(batch) {
+      options.onDecode?.();
       if (batch.kind !== "json") throw new TypeError("expected JSON");
       return batch.items.map((item) => {
         if (!isRecord(item) || typeof item.v !== "number") throw new TypeError("bad item");
@@ -95,7 +106,6 @@ function program(h: Harness, options: { readonly poisonStep?: boolean } = {}) {
         applied: state.applied + values.length,
       };
       return {
-        state: next,
         facts: [
           {
             type: "total",
@@ -114,10 +124,7 @@ function program(h: Harness, options: { readonly poisonStep?: boolean } = {}) {
   );
 }
 
-function run(
-  h: Harness,
-  options: { readonly poisonStep?: boolean } = {},
-): Promise<CatchUpStateResult<Total>> {
+function run(h: Harness, options: ProgramOptions = {}): Promise<CatchUpStateResult<Total>> {
   return Effect.runPromise(program(h, options));
 }
 
@@ -194,6 +201,88 @@ describe("catchUpState — recovered single-source State", () => {
       }
     }
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
+  });
+
+  test("a rejected proposed fact is materialized before append and writes nothing", async () => {
+    const h = await harness();
+    await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 9 }]);
+    const exit = await Effect.runPromiseExit(program(h, { rejectFactTotal: 9 }));
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error) && error.value instanceof StateRestorePoison).toBe(true);
+    }
+    expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
+  });
+
+  test("recovered state validation finishes before any source boundary is decoded", async () => {
+    const h = await harness();
+    await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 2 }]);
+    await run(h);
+    await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 3 }]);
+    let decoded = 0;
+    const exit = await Effect.runPromiseExit(
+      program(h, {
+        onDecode: () => decoded++,
+        validateRecovered: () => {
+          throw new Error("state and lineage disagree");
+        },
+      }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(decoded).toBe(0);
+  });
+
+  test("duplicate reconciliation installs and asynchronously validates durable state", async () => {
+    const h = await harness();
+    await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);
+    const underlying = h.target.client;
+    let staged = false;
+    const racingClient = new Proxy(underlying, {
+      get(target, property, receiver) {
+        if (property !== "stream") return Reflect.get(target, property, receiver);
+        return (streamId: string) => {
+          const handle = target.stream(streamId);
+          return new Proxy(handle, {
+            get(handleTarget, handleProperty, handleReceiver) {
+              if (handleProperty !== "appendJsonBatch") {
+                const value = Reflect.get(handleTarget, handleProperty, handleReceiver);
+                return typeof value === "function" ? value.bind(handleTarget) : value;
+              }
+              return async (items: readonly JsonValue[], appendOptions: object) => {
+                if (!staged) {
+                  staged = true;
+                  const interloper = items.map((item, index) =>
+                    index === 0 && isRecord(item) && isRecord(item.value)
+                      ? { ...item, value: { ...item.value, total: 999 } }
+                      : item,
+                  );
+                  await handleTarget.appendJsonBatch(interloper, appendOptions);
+                }
+                return handleTarget.appendJsonBatch(items, appendOptions);
+              };
+            },
+          });
+        };
+      },
+    });
+    const target = { ...h.target, client: racingClient };
+    const exit = await Effect.runPromiseExit(
+      program(h, {
+        target,
+        validateRecovered: async ({ state }) => {
+          await Promise.resolve();
+          if (state.total === 999) throw new Error("reconciled durable state is invalid");
+        },
+      }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error) && error.value instanceof StateRestorePoison).toBe(true);
+    }
+    const written = await h.adapter.listMessages(h.target.streamId);
+    expect(written).toHaveLength(2);
   });
 
   test("a competing target writer cannot silently advance lineage", async () => {
