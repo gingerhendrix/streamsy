@@ -8,4 +8,6 @@ export type {
   InstanceOptions as StateProjectionInstanceOptions,
   Limits as StateProjectionLimits,
   MakeOptions as StateProjectionMakeOptions,
+  StreamResource as StateProjectionStreamResource,
+  StreamResourceOptions as StateProjectionStreamResourceOptions,
 } from "./effect/state-projection.ts";

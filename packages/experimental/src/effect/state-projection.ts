@@ -1,7 +1,8 @@
-import type { JsonValue, StreamBatch } from "@streamsy/core";
-import { Effect, Schema } from "effect";
-import type { StreamBinding } from "../binding.ts";
-import type { SourceAck } from "../causal.ts";
+import type { JsonValue, StreamBatch, StreamProtocolClient } from "@streamsy/core";
+import { Context, Effect, Layer, Schema } from "effect";
+import { bindStream } from "../binding.ts";
+import { streamIdentity, type SourceAck, type StreamIdentity } from "../causal.ts";
+import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
 import { DerivedRecoveryLive } from "../ivm-mesh/derived-append.ts";
 import { canonicalLaneInput, deriveProducerLane } from "../ivm-mesh/lane.ts";
 import {
@@ -24,17 +25,25 @@ export interface Definition<Input> {
 
 export interface MakeOptions<Input> extends Definition<Input> {}
 
+/** Transport-free identity and application id for one durable stream. */
+export interface StreamResource {
+  readonly identity: StreamIdentity;
+  readonly streamId: string;
+}
+
+export interface StreamResourceOptions extends StreamResource {}
+
 export interface Instance<Input> {
   readonly definition: Definition<Input>;
-  readonly source: StreamBinding;
-  readonly target: StreamBinding;
+  readonly source: StreamResource;
+  readonly target: StreamResource;
   readonly generation: string;
   readonly producerEpoch: number;
 }
 
 export interface InstanceOptions {
-  readonly source: StreamBinding;
-  readonly target: StreamBinding;
+  readonly source: StreamResource;
+  readonly target: StreamResource;
   readonly generation: string;
   readonly producerEpoch: number;
 }
@@ -90,6 +99,14 @@ export type CatchUpOutcome =
       readonly progress: CatchUpProgress;
     };
 
+interface ClientShape {
+  readonly client: StreamProtocolClient;
+}
+
+class Client extends Context.Service<Client, ClientShape>()(
+  "@streamsy/experimental/StateProjection/Client",
+) {}
+
 /** Declare stable projection identity and pure JSON-item-to-State logic. */
 export function make<Input>(options: MakeOptions<Input>): Definition<Input> {
   const definition = {
@@ -100,11 +117,26 @@ export function make<Input>(options: MakeOptions<Input>): Definition<Input> {
   return Object.freeze(definition);
 }
 
+/** Construct an inert stream resource without capturing transport authority. */
+export function resource(options: StreamResourceOptions): StreamResource {
+  return Object.freeze({
+    identity: streamIdentity(options.identity.name),
+    streamId: requiredText(options.streamId, "streamId"),
+  });
+}
+
+/** Supply the fixed client authority used to resolve resources during a run. */
+export function layerClient(client: StreamProtocolClient): Layer.Layer<Client> {
+  return Layer.succeed(Client, Client.of({ client }));
+}
+
 /** Bind a declaration to one immutable source, target, and output generation. */
 export function instance<Input>(
   definition: Definition<Input>,
   options: InstanceOptions,
 ): Instance<Input> {
+  const source = resource(options.source);
+  const target = resource(options.target);
   const generation = requiredText(options.generation, "generation");
   const producerEpoch = nonNegativeSafeInteger(options.producerEpoch, "producerEpoch");
 
@@ -114,12 +146,12 @@ export function instance<Input>(
     processorId: definition.id,
     processorVersion: String(definition.version),
     outputGeneration: generation,
-    source: options.source.identity,
-    target: options.target.identity,
+    source: source.identity,
+    target: target.identity,
     producerEpoch,
   });
 
-  return Object.freeze({ ...options, definition, generation, producerEpoch });
+  return Object.freeze({ definition, source, target, generation, producerEpoch });
 }
 
 /**
@@ -132,20 +164,23 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(
   <Input>(projection: Instance<Input>, options: CatchUpOptions) =>
     Effect.gen(function* () {
       validateLimits(options.limits);
+      const { client } = yield* Client;
+      const source = bindStream({ ...projection.source, client });
+      const target = bindStream({ ...projection.target, client });
       const lane = yield* Effect.promise(() =>
         deriveProducerLane({
           processorId: projection.definition.id,
           processorVersion: String(projection.definition.version),
           outputGeneration: projection.generation,
-          source: projection.source.identity,
-          target: projection.target.identity,
+          source: source.identity,
+          target: target.identity,
           producerEpoch: projection.producerEpoch,
         }),
       );
 
       const outcome = yield* catchUpInternal({
-        source: projection.source,
-        target: projection.target,
+        source,
+        target,
         lane,
         limits: {
           maxPages: options.limits.pages,
@@ -158,7 +193,11 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(
       });
 
       return toPublicOutcome(outcome);
-    }).pipe(Effect.provide(DerivedRecoveryLive)),
+    }).pipe(
+      Effect.provide(DerivedRecoveryLive),
+      Effect.provide(ReadStreamsLive),
+      Effect.provide(AppendStreamsLive),
+    ),
 );
 
 function decodeJsonItems<Input>(

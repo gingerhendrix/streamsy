@@ -5,9 +5,7 @@ import {
   type JsonValue,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { bindStream } from "@streamsy/experimental/binding";
 import { streamIdentity } from "@streamsy/experimental/causal";
-import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effect";
 import {
   StateProjection,
   type StateProjectionInstance,
@@ -28,14 +26,12 @@ async function harness() {
   const adapter = createMemoryStorageAdapter();
   const client = directProtocolClient(new StreamProtocol({ storage: { adapter } }));
   clients.add(client);
-  const source = bindStream({
+  const source = StateProjection.resource({
     identity: streamIdentity("hn-newest-source"),
-    client,
     streamId: "hn-newest-source",
   });
-  const target = bindStream({
+  const target = StateProjection.resource({
     identity: streamIdentity("hn-story-index"),
-    client,
     streamId: "hn-story-index/v1",
   });
   await client.stream(source.streamId).create({ contentType: "application/json" });
@@ -46,6 +42,7 @@ async function harness() {
     client,
     source,
     target,
+    clientLayer: StateProjection.layerClient(client),
     projection: StateProjection.instance(hackerNewsStoryIndex, {
       source,
       target,
@@ -55,10 +52,14 @@ async function harness() {
   };
 }
 
-function catchUp<Input>(projection: StateProjectionInstance<Input>, itemLimit = 50) {
+function catchUp<Input>(
+  projection: StateProjectionInstance<Input>,
+  clientLayer: ReturnType<typeof StateProjection.layerClient>,
+  itemLimit = 50,
+) {
   return StateProjection.catchUp(projection, {
     limits: { ...limits, items: itemLimit },
-  }).pipe(Effect.provide(ReadStreamsLive), Effect.provide(AppendStreamsLive));
+  }).pipe(Effect.provide(clientLayer));
 }
 
 describe("Hacker News StateProjection story index", () => {
@@ -71,7 +72,7 @@ describe("Hacker News StateProjection story index", () => {
         story(102, 1_700_000_020, "Second title"),
       ]);
 
-    const first = await Effect.runPromise(catchUp(h.projection));
+    const first = await Effect.runPromise(catchUp(h.projection, h.clientLayer));
     expect(first).toMatchObject({
       status: "caught-up",
       progress: { batches: 1, items: 2 },
@@ -83,7 +84,7 @@ describe("Hacker News StateProjection story index", () => {
     await h.client
       .stream(h.source.streamId)
       .appendJsonBatch([story(101, 1_700_000_030, "Updated title")]);
-    const resumed = await Effect.runPromise(catchUp(h.projection));
+    const resumed = await Effect.runPromise(catchUp(h.projection, h.clientLayer));
     expect(resumed).toMatchObject({
       status: "caught-up",
       progress: { batches: 1, items: 1 },
@@ -108,7 +109,7 @@ describe("Hacker News StateProjection story index", () => {
         story(103, 1_700_000_010, "Third"),
       ]);
 
-    const outcome = await Effect.runPromise(catchUp(h.projection, 2));
+    const outcome = await Effect.runPromise(catchUp(h.projection, h.clientLayer, 2));
     expect(outcome).toMatchObject({
       status: "boundary-too-large",
       limit: "items",
@@ -116,6 +117,31 @@ describe("Hacker News StateProjection story index", () => {
       maximum: 2,
     });
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
+  });
+
+  test("runs the same declaration under isolated client layers", async () => {
+    const first = await harness();
+    const second = await harness();
+    expect("client" in first.projection).toBe(false);
+    expect("client" in first.projection.source).toBe(false);
+    expect("client" in first.projection.target).toBe(false);
+
+    await first.client
+      .stream(first.source.streamId)
+      .appendJsonBatch([story(201, 1_700_000_020, "First client")]);
+    await second.client
+      .stream(second.source.streamId)
+      .appendJsonBatch([story(202, 1_700_000_010, "Second client")]);
+
+    await Effect.runPromise(catchUp(first.projection, first.clientLayer));
+    await Effect.runPromise(catchUp(second.projection, second.clientLayer));
+
+    const firstFacts = (await readAllJson(first.client, first.target.streamId)).filter(isStoryFact);
+    const secondFacts = (await readAllJson(second.client, second.target.streamId)).filter(
+      isStoryFact,
+    );
+    expect(firstFacts.map((fact) => fact.key)).toEqual(["201"]);
+    expect(secondFacts.map((fact) => fact.key)).toEqual(["202"]);
   });
 });
 
