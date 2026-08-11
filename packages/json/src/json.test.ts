@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createMemoryStorageAdapter,
   createStreamProtocol,
@@ -133,5 +133,57 @@ describe("JsonProtocol", () => {
     expect(live.status).toBe("ok");
     if (live.status !== "ok") throw new Error("expected ok");
     expect(live.messages.map((message) => message.value)).toEqual([{ id: "u1", name: "Alice" }]);
+  });
+
+  it("gets or creates streams and reads their complete typed history", async () => {
+    const json = createJsonProtocol(createProtocol(), userCodec);
+    const stream = await json.getOrCreate("users");
+    await stream.append({ id: "u1", name: "Alice" });
+    await stream.append({ id: "u2", name: "Bob" });
+
+    const reopened = await json.getOrCreate("users");
+    const all = await reopened.readAll();
+
+    expect(all.values).toEqual([
+      { id: "u1", name: "Alice" },
+      { id: "u2", name: "Bob" },
+    ]);
+    expect(all.messages.map((message) => message.value.id)).toEqual(["u1", "u2"]);
+    expect(all.head).toBe(all.messages[1]!.offset);
+    expect(all.upToDate).toBe(true);
+  });
+
+  it("appends a typed JSON batch atomically", async () => {
+    const json = createJsonProtocol(createProtocol(), userCodec);
+    const stream = await json.getOrCreate("users");
+    const append = vi.spyOn(stream.stream, "append");
+    const batch = [
+      { id: "u1", name: "Alice" },
+      { id: "u2", name: "Bob" },
+    ];
+    const result = await stream.appendBatch(batch);
+
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(decoder.decode(append.mock.calls[0]![0].data))).toEqual(batch);
+    expect(result.status).toBe("appended");
+    if (result.status !== "appended") throw new Error("expected appended");
+    const committed = await stream.readAll();
+    expect(committed.values.map((user) => user.id)).toEqual(["u1", "u2"]);
+    expect(committed.head).toBe(result.offset);
+    expect(committed.messages.at(-1)?.offset).toBe(result.offset);
+
+    const rejected = await stream.appendBatch(
+      [
+        { id: "u3", name: "Cara" },
+        { id: "u4", name: "Dan" },
+      ],
+      { expectedOffset: ZERO_OFFSET },
+    );
+    expect(rejected).toMatchObject({
+      status: "conflict",
+      conflictReason: "expected-offset",
+      offset: result.offset,
+    });
+    expect((await stream.readAll()).values.map((user) => user.id)).toEqual(["u1", "u2"]);
   });
 });

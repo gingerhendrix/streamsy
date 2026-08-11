@@ -88,6 +88,7 @@ async function makeHarness(filename: string) {
                   : state,
               initial,
             ),
+          validateRecovered: () => {},
           decode: (batch) => {
             if (batch.kind !== "json") throw new Error("expected JSON");
             return batch.items.map((item) => {
@@ -98,7 +99,6 @@ async function makeHarness(filename: string) {
           step: (state, values) => {
             const total = state.total + values.reduce((sum, value) => sum + value, 0);
             return {
-              state: { total },
               facts: [
                 { type: "total", key: "total", value: { total }, headers: { operation: "upsert" } },
               ],

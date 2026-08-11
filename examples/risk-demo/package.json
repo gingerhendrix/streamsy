@@ -1,0 +1,50 @@
+{
+  "name": "risk-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Deterministic, headless event-sourced Streamsy Risk demo: kernel, projection materializer, and durable command API.",
+  "type": "module",
+  "scripts": {
+    "demo": "bash scripts/run-demo.sh",
+    "dev": "bun --hot server/index.ts",
+    "start": "NODE_ENV=production bun server/index.ts",
+    "build:cloudflare": "bun build public/index.html --outdir dist --production",
+    "deploy:cloudflare": "node --experimental-strip-types alchemy.run.ts",
+    "dev:cloudflare": "node --experimental-strip-types alchemy.run.ts --dev",
+    "dev:cloudflare:local": "bun run build:cloudflare && wrangler dev",
+    "destroy:cloudflare": "node --experimental-strip-types alchemy.run.ts --destroy",
+    "bot": "bun run scripts/bot.ts",
+    "smoke:http": "bun run scripts/http-smoke.ts",
+    "smoke:cloudflare": "bun run scripts/cloudflare-smoke.ts",
+    "smoke:cloudflare:alarm:prepare": "bun run scripts/cloudflare-alarm-prepare.ts",
+    "rebuild": "bun run scripts/rebuild.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run src server test/integration",
+    "test:unit": "vitest --run src server",
+    "test:sqlite": "bun test test/persistence"
+  },
+  "dependencies": {
+    "@durable-streams/state": "^0.3.1",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/experimental": "workspace:*",
+    "@streamsy/json": "workspace:*",
+    "@streamsy/state": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
+    "@tanstack/db": "0.6.8",
+    "@tanstack/react-db": "^0.1.83",
+    "effect": "4.0.0-beta.99",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "^4.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "alchemy": "catalog:",
+    "bun-types": "^1.3.14",
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import type { StreamBinding } from "../binding.ts";
 import { sourceAck, streamIdentityEquals } from "../causal.ts";
 import {
+  IncompatibleLineage,
   MalformedSourceBoundary,
   ProjectionPoison,
   StateRestorePoison,
@@ -22,10 +23,13 @@ import type { CatchUpLimits, ProjectionBoundary } from "./projection.ts";
 /** Versioned recovery law implemented by {@link catchUpState}. */
 export const SINGLE_SOURCE_STATE_KIND = "single-source-state/v1";
 
-export interface StateStepResult<State> {
-  readonly state: State;
+export interface StateStepResult {
   readonly facts: readonly JsonValue[];
 }
+
+export type RecoveredApplicationState<State> = RecoveredDerivedState & {
+  readonly state: State;
+};
 
 export interface CatchUpStateOptions<State, Input> {
   readonly source: StreamBinding;
@@ -36,13 +40,15 @@ export interface CatchUpStateOptions<State, Input> {
   readonly initial: State;
   /** Fold complete durable target facts back into typed application state. */
   readonly restore: (initial: State, events: readonly JsonValue[]) => State;
+  /** Validate application state against the lineage it claims to represent. */
+  readonly validateRecovered: (recovered: RecoveredApplicationState<State>) => void | Promise<void>;
   readonly decode: (batch: StreamBatch, boundary: ProjectionBoundary) => Iterable<Input>;
   /** One complete source delivery boundary becomes one target transaction. */
   readonly step: (
     state: State,
     input: readonly Input[],
     boundary: ProjectionBoundary,
-  ) => StateStepResult<State>;
+  ) => StateStepResult;
 }
 
 export interface CatchUpStateProgress<State> {
@@ -104,11 +110,12 @@ export const catchUpState = Effect.fn("catchUpState")(
           stream: "target" as const,
         };
       }
-      const state = yield* Effect.try({
-        try: () => options.restore(options.initial, recovered.facts),
-        catch: (cause) =>
-          new StateRestorePoison({ targetOffset: recovered.checkpoint.targetOffset, cause }),
-      });
+      const state = yield* restoreAndValidate(
+        options,
+        options.initial,
+        recovered.facts,
+        recovered.checkpoint,
+      );
       const initial: CatchUpStateProgress<State> = {
         checkpoint: recovered.checkpoint,
         state,
@@ -140,7 +147,7 @@ const pullStateBoundary = <State, Input>(
 ): Effect.Effect<
   CatchUpStateResult<State>,
   MeshOperationalError,
-  AppendStreams | DerivedRecovery
+  AppendStreams | DerivedRecovery | DerivedStateHistory
 > =>
   Effect.gen(function* () {
     const next = yield* session.next;
@@ -195,6 +202,20 @@ const pullStateBoundary = <State, Input>(
         new ProjectionPoison({ phase: "step", sourcePosition: ack.position, cause }),
     });
 
+    // Fold and validate proposed facts before append. Carried state is derived
+    // from the transaction facts rather than trusted as a separate proposal.
+    const proposedCheckpoint: RecoveredDerivedState = {
+      ...progress.checkpoint,
+      sourceThrough: ack.position,
+      nextProducerSeq: progress.checkpoint.nextProducerSeq + 1,
+    };
+    const proposedState = yield* restoreAndValidate(
+      options,
+      progress.state,
+      stepped.facts,
+      proposedCheckpoint,
+    );
+
     const appended = yield* appendDerivedStateBatch({
       target: options.target,
       lane: options.lane,
@@ -213,14 +234,66 @@ const pullStateBoundary = <State, Input>(
       case "invalid-epoch-seq":
         return { ...appended, ...progress };
     }
+    const acceptedState =
+      appended.status === "sequence-already-accepted"
+        ? yield* recoverAcceptedState(options, appended.checkpoint)
+        : proposedState;
     return yield* pullStateBoundary(options, session, {
       checkpoint: appended.checkpoint,
-      state: stepped.state,
+      state: acceptedState,
       pages: progress.pages + 1,
       batches: progress.batches + 1,
       items: progress.items + items.length,
       bytes: progress.bytes + bytes,
     });
+  });
+
+const recoverAcceptedState = <State, Input>(
+  options: CatchUpStateOptions<State, Input>,
+  checkpoint: RecoveredDerivedState,
+): Effect.Effect<State, MeshOperationalError, DerivedStateHistory> =>
+  Effect.gen(function* () {
+    const history = yield* DerivedStateHistory;
+    const recovered = yield* history.recoverHistory(options.target, options.lane);
+    if (recovered.status !== "ready") {
+      return yield* new StateRestorePoison({
+        targetOffset: checkpoint.targetOffset,
+        cause: new Error(`Duplicate reconciliation target became ${recovered.status}`),
+      });
+    }
+    if (
+      recovered.checkpoint.targetOffset !== checkpoint.targetOffset ||
+      recovered.checkpoint.sourceThrough !== checkpoint.sourceThrough ||
+      recovered.checkpoint.nextProducerSeq !== checkpoint.nextProducerSeq
+    ) {
+      return yield* new IncompatibleLineage({
+        message: "Durable State advanced during duplicate application-state reconciliation",
+      });
+    }
+    return yield* restoreAndValidate(
+      options,
+      options.initial,
+      recovered.facts,
+      recovered.checkpoint,
+    );
+  });
+
+const restoreAndValidate = <State, Input>(
+  options: CatchUpStateOptions<State, Input>,
+  initial: State,
+  facts: readonly JsonValue[],
+  checkpoint: RecoveredDerivedState,
+): Effect.Effect<State, StateRestorePoison> =>
+  Effect.gen(function* () {
+    const state = yield* Effect.try({
+      try: () => options.restore(initial, facts),
+      catch: (cause) => new StateRestorePoison({ targetOffset: checkpoint.targetOffset, cause }),
+    });
+    yield* Effect.tryPromise({
+      try: () => Promise.resolve(options.validateRecovered({ ...checkpoint, state })),
+      catch: (cause) => new StateRestorePoison({ targetOffset: checkpoint.targetOffset, cause }),
+    });
+    return state;
   });
 
 function validateStateOptions<State, Input>(options: CatchUpStateOptions<State, Input>): void {

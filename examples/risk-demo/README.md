@@ -1,0 +1,217 @@
+# Streamsy Hex Domination demo
+
+An event-sourced territory game built to demonstrate Streamsy’s durable command,
+projection, and per-player action-stream patterns. A seeded generator creates a
+connected hex map for two to four players; the canonical `GameStarted` event
+records the complete generated map so replay never depends on running the
+generator again.
+
+## Run it
+
+From the repository root:
+
+```sh
+bun install
+bun run build
+bun run --cwd examples/risk-demo demo
+```
+
+For local development:
+
+```sh
+bun run --cwd examples/risk-demo dev
+```
+
+The one-command demo starts the server, creates a seeded bot-versus-bot game,
+prints the spectator URL, and plays through to a winner.
+
+## Product model
+
+- The front page is an invitation and one command. Creating a game asks for
+  nothing: the server issues a provisional seat name, and every naming decision
+  is made in the lobby, where the roster is visible while you make it.
+- The lobby is where the roster is assembled. Anyone can share the invite link;
+  a visitor holding no seat can join; a person holding one can rename it or give
+  it up, behind a confirmation; the creator can invite agents and start.
+- Renaming and leaving are canonical, lobby-only commands (`PlayerRenamed`,
+  `PlayerLeft`) — the muster roll, the move feed, and an agent's own briefing all
+  read the recorded name, so none of them can be a client-side label.
+- Hosting is a capability, not a seat. A creator who gives up its seat keeps the
+  lobby it opened and watches the game from there, which is how an
+  agent-versus-agent game is set up: invite two agents, then leave.
+- Two to four players on a seeded procedural hex map.
+- Reinforcement is submitted as one complete allocation.
+- Each attack is a declaration followed by a defender roll.
+- Human and bot defenders receive a timed action; external-agent defence is
+  resolved by the server so an agent never has to make a dice-only decision.
+- A capture opens a mandatory occupation before play can continue.
+- Fortification can move through any connected path of owned countries.
+- Terrain is visual character only; it does not affect the rules.
+
+`procedural-hex-v1` and `hex-generator-v2` are replay provenance identifiers,
+not alternate game modes. Changing the generator in a way that changes
+output requires a new generator identifier because generated maps are durable
+facts. `hex-generator-v1` remains a valid identifier for games generated
+before continent sizing was skewed; those games replay against their own
+recorded snapshot and keep the bonuses they were dealt.
+
+## Architecture
+
+The canonical stream is `games/<gameId>/events`. Commands fold that history,
+validate against the resulting aggregate, and append accepted events with an
+expected-head precondition. Stable `commandId` values make retries idempotent.
+Canonical events are the game truth; board rows, action messages, cursors, and
+generation records are derived or operational state and can be repaired from
+that truth.
+
+The browser reads an independent board projection at:
+
+```text
+games/<gameId>/projections/board/<generation>
+```
+
+The initial generation is `board1`. Every projection transaction embeds its
+canonical `sourceThroughOffset`, so the UI and decision resource can name the
+exact history prefix they represent.
+
+The board runs through the current Effect-native recovered State path. A host
+creates one `ManagedRuntime` and protocol client for its lifetime. Reusable
+board code returns Effect descriptions; the host-owned runtime executes them.
+Recovery restores application state from durable board facts and validates the
+snapshot watermark against structured mesh lineage before opening the canonical
+source. Proposed facts are materialized before append, and a producer duplicate
+re-reads, materializes, and validates the accepted durable checkpoint. A
+duplicate proves only that a producer sequence was accepted; it does not prove
+payload equality.
+
+Per-player action-required messages are derived into private streams at:
+
+```text
+games/<gameId>/players/<playerId>/actions
+```
+
+They are exposed only through the bearer-authenticated actions endpoint. The
+public stream facade exposes the active board generation, never canonical events,
+command logs, retired generations, or private action streams.
+
+Command idempotency and private action derivation are deliberately app-scoped
+adapters over the current JSON protocol. The port does not restore the removed
+`@streamsy/experimental/command` or `@streamsy/experimental/derived` exports.
+
+The main source areas are:
+
+- `src/domain`: commands, events, aggregate, map generation, and decision rules.
+- `src/board`: independent board projection and causal transaction identifiers.
+- `src/application`: player-relative decisions and API types.
+- `server/game`: command service, projection materialization, action derivation,
+  defence timers, and rebuild verification.
+- `server/http`: capability-scoped routes and the OpenAPI contract.
+- `src/ui`: the lobby and live Hex Domination board.
+
+## Projection rebuilds
+
+Projection generations are an intentional durability feature. The rebuild
+command replays canonical history into a fresh generation, verifies both logical
+board equality and the canonical watermark, and only then atomically changes the
+active generation pointer. A failed verification leaves the current generation
+active. Previous generations remain recorded for inspection.
+
+```sh
+bun run --cwd examples/risk-demo rebuild -- <game-id>
+```
+
+A _generation_ names one game's output stream; `BOARD_REDUCER_VERSION` names the
+code that filled it, and every generation row records the version it was built
+under. Any change to what the reducer emits — new event types handled, new or
+changed row fields — must bump that constant, for the same reason an
+output-changing generator change must mint a new generator id: a projection
+stream is a durable artefact, and a resumed runtime appends to rows an older
+version already wrote. `hex-domination:board-3` is the current version. It is the
+Effect-native mesh cutover: projection metadata carries the durable snapshot and
+source event ordinal, and move rows use stable zero-padded canonical event
+ordinals rather than source offsets. Existing board-3 generations resume in
+place; older reducer generations require the verified rebuild below.
+
+Bumping the version does not migrate anything on its own — nothing gates on it at
+runtime. The rebuild above is the migration: it replays canonical history into a
+fresh generation built entirely by the current reducer, verifies it, and only
+then cuts over, reporting `fromReducerVersion → toReducerVersion` when the two
+differ. A pinned-output test (`src/board/reducer-version.test.ts`) fails if the
+reducer's output changes without the version changing with it.
+
+Wakeups and reads improve latency; they are not proof of convergence. Repair and
+rebuild reread durable truth. Current State restoration scans the complete board
+output history, so recovery is O(output history). A bounded recovery anchor is
+intentionally left for a later library iteration.
+
+## Lobby API
+
+Beyond create, join, and start, the roster is edited with two capability-scoped
+routes, both lobby-only:
+
+```text
+PATCH  /v1/games/:gameId/players/:playerId   { "name": "..." }
+DELETE /v1/games/:gameId/players/me
+```
+
+The rename admits exactly two callers — the seat's own capability, and the host
+for an agent seat it opened — and never a host on another person's seat. The
+leave is scoped to `me` rather than a seat id, so no shape of the request removes
+somebody else, and it refuses a seat an agent is playing.
+
+Seat names are normalized and bounded by the _decider_, not by the transport:
+create, join, and rename all trim to `RULES.maxPlayerNameLength` and reject a
+name with nothing visible in it, so the limit holds for the browser, the scripted
+bot, and an external agent alike. Choosing a provisional default for a caller
+that supplied no name at all — which is how the front page creates a game — stays
+at the HTTP boundary, where that product decision belongs.
+
+## Agent API
+
+The host opens an agent seat with:
+
+```text
+POST /v1/games/:gameId/agent-seats
+```
+
+The public request vocabulary uses `controller: "agent"`; canonical events use
+`controller: "external-agent"`. This is the deliberate API-to-domain boundary.
+The returned one-time bootstrap includes the four playing resources:
+
+- `GET /v1/games/:gameId/map`
+- `GET /v1/games/:gameId/players/me/actions?offset=` — a `text/event-stream` the
+  server holds for 30 seconds per connection; the client reconnects from the
+  latest `nextOffset`. `Accept: application/json` asks for one immediate page
+  instead.
+- `GET /v1/games/:gameId/decision`
+- `POST /v1/games/:gameId/commands`
+
+See [docs/agent-api.md](docs/agent-api.md) and
+[external-agent/README.md](external-agent/README.md).
+
+## Checks
+
+```sh
+bun run --cwd examples/risk-demo typecheck
+bun run --cwd examples/risk-demo test
+bun run --cwd examples/risk-demo test:sqlite
+bun run --cwd examples/risk-demo build:cloudflare
+bun run --cwd examples/risk-demo smoke:http
+```
+
+When driving the UI from a browser automation harness, run it against
+`bun run --cwd examples/risk-demo start` rather than `dev`: Bun's dev-mode
+`<bun-hmr>` overlay is a full-viewport fixed element at the top of the stacking
+order, so `elementFromPoint` returns it everywhere and synthesized clicks land on
+it silently. Against the dev server, remove that element from the DOM first.
+
+The Vitest suite covers the kernel, generated-map invariants, projection
+equivalence, HTTP contract, action streams, defence timing, scripted bots,
+external-agent launcher, UI presentation, and rebuild cutover. The Bun SQLite
+suite proves command, capability, projection, action cursor, and generation
+durability across process restarts.
+
+The Cloudflare Worker, one-game-per-Durable-Object storage adapter, and browser
+bundle are compile-tested locally. This branch does not claim a live deployment:
+deployment and deployed parity require Cloudflare credentials and separate smoke
+evidence.
