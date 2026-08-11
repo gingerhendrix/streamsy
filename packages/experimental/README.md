@@ -28,6 +28,12 @@ These are finite capabilities; a binding remains a method argument rather than b
 
 The package pins `effect@4.0.0-beta.99` exactly. Libraries return Effect descriptions and never create a runtime or call `runPromise` internally.
 
+## State projection facade
+
+Import `StateProjection` from `@streamsy/experimental/effect/state-projection` for the first application-facing bounded projection seam. `make()` declares stable identity, a service-free Effect `Schema` decoder, and pure JSON-item-to-State logic. `instance()` binds that declaration to one source, target, generation, and fixed producer epoch. `catchUp()` derives the producer lane internally and returns progress without exposing recovered checkpoints or producer sequence.
+
+This first tracer deliberately retains `StreamBinding` and the existing `ReadStreams` / `AppendStreams` Layers. It supports one ordered JSON source and one Durable State target, runs a finite catch-up pass, and scans complete target history during recovery. Resource-only bindings, Layer-owned client authority, State change constructors, snapshots, and long-lived supervision remain later API batches. Existing `@streamsy/experimental/ivm-mesh` exports remain available for regression compatibility.
+
 ## Materializer
 
 Import the materializer API from `@streamsy/experimental/materializer`.

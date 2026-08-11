@@ -86,7 +86,10 @@ export const catchUp = Effect.fn("catchUp")(<Input>(options: CatchUpOptions<Inpu
 
     const recovered = yield* recovery.recover(options.target, options.lane);
     if (recovered.status !== "ready") {
-      return { status: recovered.status, stream: "target" as const };
+      return {
+        status: recovered.status === "not-found" ? ("missing" as const) : ("gone" as const),
+        stream: "target" as const,
+      };
     }
     const initial: CatchUpProgress = {
       checkpoint: recovered,

@@ -39,6 +39,17 @@ query.
 The durable stream is the seam: the server decides _what the view is_, the stream makes it
 _durable and resumable_, and every client is a thin replay of the same change log.
 
+## Experimental StateProjection tracer
+
+`src/server/story-index-projection.ts` declares the same `hn-story` row need through
+`@streamsy/experimental/effect/state-projection`. It keeps the stable story id as the State key and
+the scalar `time` field used by the bounded newest-story index. Its focused memory-backed test
+proves durable resume and oversized-boundary refusal through the public facade.
+
+This is intentionally a declaration-and-test tracer. The running demo continues to use the
+TanStack DB materializer below; replacing the server, browser, or live polling topology is outside
+this slice.
+
 ### Package layout note (`@durable-streams/state` 0.3.x)
 
 `@durable-streams/state` 0.3 splits its entry points: the framework-agnostic state core
