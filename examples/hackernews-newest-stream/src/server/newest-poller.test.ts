@@ -1,9 +1,13 @@
 import { createMemoryStorageAdapter } from "@streamsy/core";
 import { StateProjection } from "@streamsy/experimental/effect/state-projection";
-import { ManagedRuntime } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
 import type { HnStory } from "../state-schema.ts";
-import { NewestStoriesPoller, type HackerNewsApi } from "./newest-poller.ts";
+import {
+  appendSourceBatchFromPromise,
+  makeNewestStoriesPoller,
+  type HackerNewsApi,
+} from "./newest-poller.ts";
 import { createStoryProjection } from "./projection.ts";
 import { DemoStreams, hackerNewsSource, hackerNewsTarget } from "./streams.ts";
 
@@ -12,7 +16,7 @@ describe("NewestStoriesPoller", () => {
     const adapter = createMemoryStorageAdapter();
     const streams = new DemoStreams(adapter);
     await streams.start();
-    const projectionRuntime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
+    const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
     const projection = createStoryProjection({
       pages: 10,
       batches: 10,
@@ -24,32 +28,38 @@ describe("NewestStoriesPoller", () => {
       [102, story(102, 1_700_000_020, "Second")],
     ]);
     const api: HackerNewsApi = {
-      fetchNewestStoryIds: async () => [101, 102],
-      fetchStoriesById: async (ids) =>
-        ids.flatMap((id) => {
-          const found = stories.get(id);
-          return found ? [found] : [];
-        }),
+      fetchNewestStoryIds: () => Effect.succeed([101, 102]),
+      fetchStoriesById: (ids) =>
+        Effect.sync(() =>
+          ids.flatMap((id) => {
+            const found = stories.get(id);
+            return found ? [found] : [];
+          }),
+        ),
     };
-    const poller = new NewestStoriesPoller({
-      limit: 2,
-      intervalMs: 60_000,
-      api,
-      sink: {
-        appendSourceBatch: (changes) => streams.appendSourceBatch(changes),
-        catchUpProjection: () => projectionRuntime.runPromise(projection.catchUp()),
-      },
-    });
+    const poller = await runtime.runPromise(
+      makeNewestStoriesPoller({
+        limit: 2,
+        intervalMs: 60_000,
+        api,
+        sink: {
+          appendSourceBatch: appendSourceBatchFromPromise((changes) =>
+            streams.appendSourceBatch(changes),
+          ),
+          catchUpProjection: projection.catchUp(),
+        },
+      }),
+    );
 
     try {
-      await poller.pollNow();
+      await runtime.runPromise(poller.pollNow);
       const sourceAfterFirst = await adapter.listMessages(hackerNewsSource.streamId);
       const targetAfterFirst = await adapter.listMessages(hackerNewsTarget.streamId);
 
-      await poller.pollNow();
+      await runtime.runPromise(poller.pollNow);
       expect(await adapter.listMessages(hackerNewsSource.streamId)).toEqual(sourceAfterFirst);
       expect(await adapter.listMessages(hackerNewsTarget.streamId)).toEqual(targetAfterFirst);
-      expect(poller.stats()).toMatchObject({
+      expect(await runtime.runPromise(poller.stats)).toMatchObject({
         lastStoryCount: 2,
         lastFetchedNewStories: 0,
         lastRefreshedStories: 2,
@@ -62,8 +72,8 @@ describe("NewestStoriesPoller", () => {
         lastOutcome: { status: "caught-up", progress: { batches: 0, items: 0 } },
       });
     } finally {
-      await poller.close();
-      await projectionRuntime.dispose();
+      await runtime.runPromise(poller.stop);
+      await runtime.dispose();
       await streams.close();
     }
   });

@@ -10,7 +10,7 @@ import {
   streamPath,
 } from "./config.ts";
 import { json } from "./http.ts";
-import { NewestStoriesPoller } from "./newest-poller.ts";
+import { appendSourceBatchFromPromise, makeNewestStoriesPoller } from "./newest-poller.ts";
 import { createStoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
 import { DemoStreams } from "./streams.ts";
@@ -18,16 +18,20 @@ import { DemoStreams } from "./streams.ts";
 const streams = new DemoStreams();
 await streams.start();
 
-const projectionRuntime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
+const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
 const projection = createStoryProjection(projectionLimits);
-const poller = new NewestStoriesPoller({
-  limit: newestLimit,
-  intervalMs: pollIntervalMs,
-  sink: {
-    appendSourceBatch: (changes) => streams.appendSourceBatch(changes),
-    catchUpProjection: () => projectionRuntime.runPromise(projection.catchUp()),
-  },
-});
+const poller = await runtime.runPromise(
+  makeNewestStoriesPoller({
+    limit: newestLimit,
+    intervalMs: pollIntervalMs,
+    sink: {
+      appendSourceBatch: appendSourceBatchFromPromise((changes) =>
+        streams.appendSourceBatch(changes),
+      ),
+      catchUpProjection: projection.catchUp(),
+    },
+  }),
+);
 
 const server = Bun.serve({
   port,
@@ -46,12 +50,16 @@ const server = Bun.serve({
           pollIntervalMs,
           projectionLimits,
           projection: projection.status(),
-          ...poller.stats(),
+          ...runtime.runSync(poller.stats),
         });
       }
       if (url.pathname === "/api/poll" && request.method === "POST") {
-        await poller.pollNow();
-        return json({ ok: true, projection: projection.status(), ...poller.stats() });
+        await runtime.runPromise(poller.pollNow);
+        return json({
+          ok: true,
+          projection: projection.status(),
+          ...runtime.runSync(poller.stats),
+        });
       }
       if (url.pathname.startsWith("/api/")) {
         return json({ error: "Not found" }, { status: 404 });
@@ -64,15 +72,15 @@ const server = Bun.serve({
   },
 });
 
-poller.start();
+await runtime.runPromise(poller.start);
 
 let shuttingDown: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (shuttingDown) return shuttingDown;
   shuttingDown = (async () => {
     server.stop(true);
-    await poller.close();
-    await projectionRuntime.dispose();
+    await runtime.runPromise(poller.stop);
+    await runtime.dispose();
     await streams.close();
   })();
   return shuttingDown;

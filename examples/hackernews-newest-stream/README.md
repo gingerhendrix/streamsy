@@ -17,14 +17,17 @@ flowchart LR
 ```
 
 TanStack DB is browser-only in this demo. Server modules use one fixed Streamsy protocol client
-for the source and target streams and one edge-owned Effect `ManagedRuntime` for projection work.
+for the source and target streams and one edge-owned Effect `ManagedRuntime` for poller and
+projection work.
 
 ## Data flow
 
-1. `src/server/newest-poller.ts` fetches new ids first and refreshes known ids so mutable fields
-   such as score and descendants stay current. It compares complete story values, suppresses
-   unchanged writes, and sorts changes deterministically. Stories that leave the bounded newest
-   set become source deletes.
+1. `src/server/newest-poller.ts` describes polling with Effect primitives: `Ref`-held state, a
+   coalesced poll pass, and an interval loop built from `Effect.repeat` with `Schedule.spaced`.
+   Each pass fetches new ids first and refreshes known ids so mutable fields such as score and
+   descendants stay current. It compares complete story values, suppresses unchanged writes, and
+   sorts changes deterministically. Stories that leave the bounded newest set become source
+   deletes.
 2. `src/server/streams.ts` owns distinct `session/main/source` and `session/main` JSON streams
    through one direct protocol client. The public target remains `/streams/session/main`.
 3. `src/server/story-index-projection.ts` validates source upsert/delete commands and maps them to
