@@ -9,7 +9,7 @@
     "build": "bun run src/server/build-client.ts",
     "start": "bun run build && bun run src/server/index.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
-    "test": "vitest --run src/server/story-index-projection.test.ts",
+    "test": "vitest --run src/server",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

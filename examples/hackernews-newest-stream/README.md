@@ -1,126 +1,85 @@
-# Hacker News newest stream demo
+# Hacker News newest StateProjection demo
 
-This example demonstrates **TanStack DB running on the server as a reactive materializer** that
-projects a query result onto a **Streamsy Durable State stream**. A single Bun process polls
-Hacker News, maintains a server-side collection, materializes the "newest 50" view with a
-`createEffect` live query, and appends each change to a durable stream that the browser mirrors
-with `createStreamDB`.
+This example is a complete local Streamsy projection path. A Bun server polls Hacker News,
+reconciles the configured newest set, appends only deterministic changes to a JSON source stream,
+and runs a bounded `StateProjection.catchUp()` pass. The derived target is a Durable State stream
+with lineage. The browser replays that target into its own TanStack DB with `createStreamDB` and
+renders it through React `useLiveQuery`.
 
 ```mermaid
 flowchart LR
-  HN[HN Firebase API] --> Poller[server poller]
-  Poller --> ServerDB[TanStack DB server collection]
-  ServerDB --> Effect[createEffect newest 50 query]
-  Effect --> Streamsy[Streamsy durable stream]
-  Streamsy --> ClientDB[createStreamDB in browser]
+  HN[HN Firebase API] --> Poller[deterministic newest-set poller]
+  Poller --> Source[Streamsy JSON source stream]
+  Source --> Projection[bounded StateProjection catch-up]
+  Projection --> Target[Durable State target + lineage]
+  Target --> ClientDB[createStreamDB in browser]
   ClientDB --> React[React useLiveQuery]
 ```
 
-## The materializer / projection pattern
+TanStack DB is browser-only in this demo. Server modules use one fixed Streamsy protocol client
+for the source and target streams and one edge-owned Effect `ManagedRuntime` for projection work.
 
-The heart of the demo is a server-side **materializer**: a reactive query whose output is appended
-to a durable stream as change events, so any number of clients can replay it without re-running the
-query.
+## Data flow
 
-1. **Source collection** (`server-db.ts`, `server-collection.ts`) — a server-owned TanStack DB
-   collection of raw HN stories. The poller writes rows through a sync writer (`begin`, `write`,
-   `commit`); an index on the query's first ordering field (`time`) keeps the bounded query from
-   loading the full collection, while `id` remains the deterministic tie-breaker.
-2. **Materializer** (`stream-projection.ts`) — `createEffect` runs a live query over the source
-   collection (`where type = story`, `orderBy [time, id] desc`, `limit 50`, `select` the view
-   columns). TanStack DB re-runs it incrementally and hands `onBatch` the _delta_ for each change.
-3. **Projection to durable state** — each delta becomes a Durable State change event appended to
-   the Streamsy stream: `enter`/`update` deltas become `upsert` events, `exit` deltas become
-   `delete` events. The query result — not the raw poll — is what lands on the stream.
-4. **Client mirror** (`client/main.tsx`) — the browser opens the same stream with `createStreamDB`
-   and renders it via `useLiveQuery`. It never talks to HN directly; it only replays the projected
-   view.
+1. `src/server/newest-poller.ts` fetches new ids first and refreshes known ids so mutable fields
+   such as score and descendants stay current. It compares complete story values, suppresses
+   unchanged writes, and sorts changes deterministically. Stories that leave the bounded newest
+   set become source deletes.
+2. `src/server/streams.ts` owns distinct `session/main/source` and `session/main` JSON streams
+   through one direct protocol client. The public target remains `/streams/session/main`.
+3. `src/server/story-index-projection.ts` validates source upsert/delete commands and maps them to
+   the public Durable State event vocabulary. Story id is the stable row key. `time`, then `id`, is
+   the browser ordering rule.
+4. `src/server/projection-runtime.ts` runs one bounded catch-up pass after each poll. Target lineage
+   makes retries and orchestration restarts resume without duplicate output.
+5. `src/client/main.tsx` consumes only the target stream. Reserved Streamsy lineage events are
+   ignored by StreamDB because they do not match a browser collection type.
 
-The durable stream is the seam: the server decides _what the view is_, the stream makes it
-_durable and resumable_, and every client is a thin replay of the same change log.
+`/api/status` reports poll/source counters, the configured catch-up bounds, the last projection
+outcome and progress, and separate poll/projection failures. `POST /api/poll` waits for one poll and
+catch-up attempt before returning the same status fields.
 
-## Experimental StateProjection tracer
-
-`src/server/story-index-projection.ts` declares the same `hn-story` row need through
-`@streamsy/experimental/effect/state-projection`. It keeps the stable story id as the State key and
-the scalar `time` field used by the bounded newest-story index. Its focused memory-backed test
-proves durable resume, oversized-boundary refusal, and isolated execution under two fixed-client
-Layers. Projection instances contain only inert stream resources; client authority is supplied at
-the `catchUp()` boundary.
-
-This is intentionally a declaration-and-test tracer. The running demo continues to use the
-TanStack DB materializer below; replacing the server, browser, or live polling topology is outside
-this slice.
-
-### Package layout note (`@durable-streams/state` 0.3.x)
-
-`@durable-streams/state` 0.3 splits its entry points: the framework-agnostic state core
-(`createStateSchema`, `ChangeEvent`) stays at the root and is used by `state-schema.ts`, while the
-TanStack-DB-coupled StreamDB client (`createStreamDB`, `StreamDB`) lives at
-`@durable-streams/state/db` and is used by `client/main.tsx`. `@tanstack/db` is a peer dependency
-and is declared directly here.
-
-## Run
+## Run locally
 
 From the repository root:
 
 ```bash
 bun install
-bun run build
-bun --cwd examples/hackernews-newest-stream run dev
+bun run --cwd examples/hackernews-newest-stream dev
 ```
 
-The root build produces the workspace package entry points consumed by this example. Re-run it
-after changing a workspace package under `packages/`.
-
-Open the Bun server URL (default `http://localhost:1339`). The same Bun process serves the API,
-Streamsy stream, and built React client; no separate Vite dev server or proxy is needed.
-
-To run on a different port:
-
-```bash
-PORT=1349 bun --cwd examples/hackernews-newest-stream run dev
-```
-
-For API-only work, you can skip the client build:
-
-```bash
-bun --cwd examples/hackernews-newest-stream run dev:api
-```
-
-## Smoke test
-
-The smoke test runs **offline**: it stands up a tiny local fixture that mimics the HN Firebase API,
-points the poller at it via `HN_API_BASE`, and then asserts that the server collection →
-`createEffect` projection emits client-readable Durable State events onto the Streamsy stream
-(one `hn-story` upsert per fixture story, each a well-formed change event).
-
-From the repository root:
-
-```bash
-bun run smoke:hackernews
-```
-
-or from this package:
-
-```bash
-bun run --cwd examples/hackernews-newest-stream smoke:http
-```
-
-## What to look for
-
-- `src/server/hnews.ts` polls Hacker News `newstories` and fetches item details. The API base URL
-  is overridable with `HN_API_BASE` (used by the smoke test).
-- `src/server/server-collection.ts` creates a server-owned TanStack DB collection and writes source
-  data through the sync writer (`begin`, `write`, `commit`).
-- `src/server/stream-projection.ts` uses `createEffect` over the server collection. `enter` and
-  `update` deltas become Durable State upserts; `exit` deltas become deletes.
-- `src/client/main.tsx` consumes `/streams/session/main` with `createStreamDB` and renders stories
-  from the client-side TanStack DB collection.
+Open <http://localhost:1339>. Use `PORT` to select another port. For API-only work, run
+`bun run --cwd examples/hackernews-newest-stream dev:api`.
 
 Useful environment variables:
 
 - `PORT` (default `1339`)
+- `HN_API_BASE` (default `https://hacker-news.firebaseio.com/v0`)
 - `HN_POLL_INTERVAL_MS` (default `60000`)
 - `HN_NEWEST_LIMIT` (default `50`)
-- `HN_API_BASE` (default `https://hacker-news.firebaseio.com/v0`) — point the poller at a fixture.
+- `HN_PROJECTION_MAX_PAGES` and `HN_PROJECTION_MAX_BATCHES` (default `10`)
+- `HN_PROJECTION_MAX_ITEMS` (default twice the newest limit)
+- `HN_PROJECTION_MAX_BYTES` (default `1000000`)
+
+## Verify
+
+```bash
+bun run --cwd examples/hackernews-newest-stream test
+bun run --cwd examples/hackernews-newest-stream typecheck
+bun run --cwd examples/hackernews-newest-stream build
+bun run --cwd examples/hackernews-newest-stream smoke:http
+```
+
+The HTTP smoke is offline. It starts a local HN fixture, verifies initial upserts, then verifies an
+update, an entering story, a leaving-story delete, projection lineage progress, and unchanged-poll
+suppression through the public HTTP target.
+
+## Current constraints
+
+- Projection recovery scans complete target history, so recovery cost is O(target history).
+- Source and target resources are resolved through one client for one server run.
+- The default local server uses in-memory storage. The streams are durable protocol logs for the
+  process lifetime; a persistent adapter is required for durability across server-process restarts.
+- Catch-up is deliberately bounded. A `limit-reached` status means later poll/repair passes must
+  continue convergence; a `boundary-too-large` status requires a larger item or byte bound.
+- This example makes no live Cloudflare deployment claim.
