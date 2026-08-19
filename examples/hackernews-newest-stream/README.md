@@ -30,8 +30,9 @@ for the source and target streams and one edge-owned Effect `ManagedRuntime` for
 3. `src/server/story-index-projection.ts` validates source upsert/delete commands and maps them to
    the public Durable State event vocabulary. Story id is the stable row key. `time`, then `id`, is
    the browser ordering rule.
-4. `src/server/projection-runtime.ts` runs one bounded catch-up pass after each poll. Target lineage
-   makes retries and orchestration restarts resume without duplicate output.
+4. `src/server/projection.ts` describes one bounded catch-up pass as an Effect. The server entry
+   runs it through the edge-owned runtime after each poll. Target lineage makes retries and
+   orchestration restarts resume without duplicate output.
 5. `src/client/main.tsx` consumes only the target stream. Reserved Streamsy lineage events are
    ignored by StreamDB because they do not match a browser collection type.
 

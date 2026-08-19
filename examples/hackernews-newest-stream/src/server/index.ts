@@ -1,3 +1,5 @@
+import { StateProjection } from "@streamsy/experimental/effect/state-projection";
+import { ManagedRuntime } from "effect";
 import {
   newestLimit,
   pollIntervalMs,
@@ -9,20 +11,21 @@ import {
 } from "./config.ts";
 import { json } from "./http.ts";
 import { NewestStoriesPoller } from "./newest-poller.ts";
-import { createStoryProjectionRuntime } from "./projection-runtime.ts";
+import { createStoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
 import { DemoStreams } from "./streams.ts";
 
 const streams = new DemoStreams();
 await streams.start();
 
-const projection = createStoryProjectionRuntime(streams.client, projectionLimits);
+const projectionRuntime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
+const projection = createStoryProjection(projectionLimits);
 const poller = new NewestStoriesPoller({
   limit: newestLimit,
   intervalMs: pollIntervalMs,
   sink: {
     appendSourceBatch: (changes) => streams.appendSourceBatch(changes),
-    catchUpProjection: projection.catchUp,
+    catchUpProjection: () => projectionRuntime.runPromise(projection.catchUp()),
   },
 });
 
@@ -69,7 +72,7 @@ function shutdown(): Promise<void> {
   shuttingDown = (async () => {
     server.stop(true);
     await poller.close();
-    await projection.dispose();
+    await projectionRuntime.dispose();
     await streams.close();
   })();
   return shuttingDown;

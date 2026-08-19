@@ -1,10 +1,9 @@
-import type { StreamProtocolClient } from "@streamsy/core";
 import {
   StateProjection,
   type CatchUpOutcome,
   type StateProjectionLimits,
 } from "@streamsy/experimental/effect/state-projection";
-import { ManagedRuntime } from "effect";
+import { Cause, Effect } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./streams.ts";
 
@@ -16,11 +15,7 @@ export type ProjectionStatus = {
   lastOutcome?: CatchUpOutcome;
 };
 
-export function createStoryProjectionRuntime(
-  client: StreamProtocolClient,
-  limits: StateProjectionLimits,
-) {
-  const runtime = ManagedRuntime.make(StateProjection.layerClient(client));
+export function createStoryProjection(limits: StateProjectionLimits) {
   const projection = StateProjection.instance(hackerNewsStoryIndex, {
     source: hackerNewsSource,
     target: hackerNewsTarget,
@@ -33,20 +28,32 @@ export function createStoryProjectionRuntime(
   let lastError: string | undefined;
   let lastOutcome: CatchUpOutcome | undefined;
 
-  async function catchUp(): Promise<CatchUpOutcome | undefined> {
-    running = true;
-    lastAttemptStartedAt = new Date().toISOString();
-    lastError = undefined;
-    try {
-      lastOutcome = await runtime.runPromise(StateProjection.catchUp(projection, { limits }));
-      return lastOutcome;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-      return undefined;
-    } finally {
-      running = false;
-      lastAttemptCompletedAt = new Date().toISOString();
-    }
+  function catchUp() {
+    return Effect.sync(() => {
+      running = true;
+      lastAttemptStartedAt = new Date().toISOString();
+      lastError = undefined;
+    }).pipe(
+      Effect.flatMap(() => StateProjection.catchUp(projection, { limits })),
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          lastOutcome = outcome;
+        }),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.sync(() => {
+          const error = Cause.squash(cause);
+          lastError = error instanceof Error ? error.message : String(error);
+          return undefined;
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          running = false;
+          lastAttemptCompletedAt = new Date().toISOString();
+        }),
+      ),
+    );
   }
 
   function status(): ProjectionStatus {
@@ -59,9 +66,5 @@ export function createStoryProjectionRuntime(
     };
   }
 
-  return {
-    catchUp,
-    status,
-    dispose: () => runtime.dispose(),
-  };
+  return { catchUp, status };
 }

@@ -1,8 +1,10 @@
 import { createMemoryStorageAdapter } from "@streamsy/core";
+import { StateProjection } from "@streamsy/experimental/effect/state-projection";
+import { ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
 import type { HnStory } from "../state-schema.ts";
 import { NewestStoriesPoller, type HackerNewsApi } from "./newest-poller.ts";
-import { createStoryProjectionRuntime } from "./projection-runtime.ts";
+import { createStoryProjection } from "./projection.ts";
 import { DemoStreams, hackerNewsSource, hackerNewsTarget } from "./streams.ts";
 
 describe("NewestStoriesPoller", () => {
@@ -10,7 +12,8 @@ describe("NewestStoriesPoller", () => {
     const adapter = createMemoryStorageAdapter();
     const streams = new DemoStreams(adapter);
     await streams.start();
-    const projection = createStoryProjectionRuntime(streams.client, {
+    const projectionRuntime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
+    const projection = createStoryProjection({
       pages: 10,
       batches: 10,
       items: 10,
@@ -34,7 +37,7 @@ describe("NewestStoriesPoller", () => {
       api,
       sink: {
         appendSourceBatch: (changes) => streams.appendSourceBatch(changes),
-        catchUpProjection: projection.catchUp,
+        catchUpProjection: () => projectionRuntime.runPromise(projection.catchUp()),
       },
     });
 
@@ -60,7 +63,7 @@ describe("NewestStoriesPoller", () => {
       });
     } finally {
       await poller.close();
-      await projection.dispose();
+      await projectionRuntime.dispose();
       await streams.close();
     }
   });
