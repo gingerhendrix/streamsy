@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun run build && bun run src/server/index.ts",
     "dev:api": "bun run src/server/index.ts",
-    "build": "bun run src/server/build-client.ts",
+    "build": "bun run scripts/build-client.ts",
     "start": "bun run build && bun run src/server/index.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
     "test": "vitest --run src/server",

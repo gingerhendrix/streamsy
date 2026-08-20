@@ -1,19 +1,14 @@
-import {
-  StreamProtocol,
-  createMemoryStorageAdapter,
-  directProtocolClient,
-  type JsonValue,
-  type StorageAdapter,
-  type StreamProtocolClient,
-} from "@streamsy/core";
+import { type JsonValue, type StreamProtocolClient } from "@streamsy/core";
 import {
   StateProjection,
   type StateProjectionInstance,
 } from "@streamsy/experimental/effect/state-projection";
 import { Effect } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
-import { hackerNewsStoryIndex, sourceDelete, sourceUpsert } from "./story-index-projection.ts";
-import { hackerNewsSource, hackerNewsTarget } from "./streams.ts";
+import { makeStoryProjectionInstance } from "./projection.ts";
+import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
+import { sourceDelete, sourceUpsert } from "./story-index-projection.ts";
+import { demoHarness, story } from "./test-support.ts";
 
 const clients = new Set<StreamProtocolClient>();
 const limits = { pages: 10, batches: 10, items: 50, bytes: 100_000 };
@@ -24,27 +19,9 @@ afterEach(async () => {
 });
 
 async function harness() {
-  const adapter: StorageAdapter = createMemoryStorageAdapter();
-  const client = directProtocolClient(new StreamProtocol({ storage: { adapter } }));
-  clients.add(client);
-  await client.stream(hackerNewsSource.streamId).create({ contentType: "application/json" });
-  await client.stream(hackerNewsTarget.streamId).create({ contentType: "application/json" });
-
-  return {
-    adapter,
-    client,
-    clientLayer: StateProjection.layerClient(client),
-    projection: makeProjection(),
-  };
-}
-
-function makeProjection() {
-  return StateProjection.instance(hackerNewsStoryIndex, {
-    source: hackerNewsSource,
-    target: hackerNewsTarget,
-    generation: "v1",
-    producerEpoch: 0,
-  });
+  const h = await demoHarness();
+  clients.add(h.client);
+  return h;
 }
 
 function catchUp<Input>(
@@ -118,7 +95,7 @@ describe("Hacker News StateProjection story index", () => {
     await Effect.runPromise(catchUp(h.projection, h.clientLayer));
     const before = await h.adapter.listMessages(hackerNewsTarget.streamId);
 
-    const restarted = makeProjection();
+    const restarted = makeStoryProjectionInstance();
     const result = await Effect.runPromise(catchUp(restarted, h.clientLayer));
     const after = await h.adapter.listMessages(hackerNewsTarget.streamId);
 
@@ -149,10 +126,6 @@ describe("Hacker News StateProjection story index", () => {
     expect(await h.adapter.listMessages(hackerNewsTarget.streamId)).toHaveLength(0);
   });
 });
-
-function story(id: number, time: number, title: string) {
-  return { id, time, title, type: "story" as const };
-}
 
 async function readAllJson(client: StreamProtocolClient, streamId: string): Promise<JsonValue[]> {
   const opened = await client.stream(streamId).read({ offset: "-1" });

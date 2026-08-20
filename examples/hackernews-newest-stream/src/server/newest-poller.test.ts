@@ -1,28 +1,25 @@
-import { createMemoryStorageAdapter } from "@streamsy/core";
 import { StateProjection } from "@streamsy/experimental/effect/state-projection";
 import { Effect, ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
 import type { HnStory } from "../state-schema.ts";
-import {
-  appendSourceBatchFromPromise,
-  makeNewestStoriesPoller,
-  type HackerNewsApi,
-} from "./newest-poller.ts";
-import { createStoryProjection } from "./projection.ts";
-import { DemoStreams, hackerNewsSource, hackerNewsTarget } from "./streams.ts";
+import { makeNewestStoriesPoller, type HackerNewsApi } from "./newest-poller.ts";
+import { makeStoryProjection } from "./projection.ts";
+import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
+import { appendSourceBatchFromPromise } from "./streams.ts";
+import { demoHarness, story } from "./test-support.ts";
 
 describe("NewestStoriesPoller", () => {
   test("an unchanged second poll appends no source or projection output", async () => {
-    const adapter = createMemoryStorageAdapter();
-    const streams = new DemoStreams(adapter);
-    await streams.start();
-    const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
-    const projection = createStoryProjection({
-      pages: 10,
-      batches: 10,
-      items: 10,
-      bytes: 100_000,
-    });
+    const h = await demoHarness();
+    const runtime = ManagedRuntime.make(StateProjection.layerClient(h.streams.client));
+    const projection = await runtime.runPromise(
+      makeStoryProjection({
+        pages: 10,
+        batches: 10,
+        items: 10,
+        bytes: 100_000,
+      }),
+    );
     const stories = new Map<number, HnStory>([
       [101, story(101, 1_700_000_030, "First")],
       [102, story(102, 1_700_000_020, "Second")],
@@ -44,21 +41,21 @@ describe("NewestStoriesPoller", () => {
         api,
         sink: {
           appendSourceBatch: appendSourceBatchFromPromise((changes) =>
-            streams.appendSourceBatch(changes),
+            h.streams.appendSourceBatch(changes),
           ),
-          catchUpProjection: projection.catchUp(),
+          catchUpProjection: projection.catchUp,
         },
       }),
     );
 
     try {
       await runtime.runPromise(poller.pollNow);
-      const sourceAfterFirst = await adapter.listMessages(hackerNewsSource.streamId);
-      const targetAfterFirst = await adapter.listMessages(hackerNewsTarget.streamId);
+      const sourceAfterFirst = await h.adapter.listMessages(hackerNewsSource.streamId);
+      const targetAfterFirst = await h.adapter.listMessages(hackerNewsTarget.streamId);
 
       await runtime.runPromise(poller.pollNow);
-      expect(await adapter.listMessages(hackerNewsSource.streamId)).toEqual(sourceAfterFirst);
-      expect(await adapter.listMessages(hackerNewsTarget.streamId)).toEqual(targetAfterFirst);
+      expect(await h.adapter.listMessages(hackerNewsSource.streamId)).toEqual(sourceAfterFirst);
+      expect(await h.adapter.listMessages(hackerNewsTarget.streamId)).toEqual(targetAfterFirst);
       expect(await runtime.runPromise(poller.stats)).toMatchObject({
         lastStoryCount: 2,
         lastFetchedNewStories: 0,
@@ -68,17 +65,13 @@ describe("NewestStoriesPoller", () => {
         sourceBatches: 1,
         sourceChanges: 2,
       });
-      expect(projection.status()).toMatchObject({
+      expect(await runtime.runPromise(projection.status)).toMatchObject({
         lastOutcome: { status: "caught-up", progress: { batches: 0, items: 0 } },
       });
     } finally {
       await runtime.runPromise(poller.stop);
       await runtime.dispose();
-      await streams.close();
+      await h.streams.close();
     }
   });
 });
-
-function story(id: number, time: number, title: string): HnStory {
-  return { id, time, title, type: "story" };
-}

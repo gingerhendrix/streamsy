@@ -7,22 +7,13 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { streamIdentity } from "@streamsy/experimental/causal";
-import { StateProjection } from "@streamsy/experimental/effect/state-projection";
-import { contentType, sourceStreamPath, streamPath } from "./config.ts";
+import { Effect } from "effect";
+import { streamContentType, streamPrefix } from "./config.ts";
+import { pollFailure, type PollFailure } from "./poller/contract.ts";
+import { hackerNewsResources, hackerNewsSource } from "./stream-resources.ts";
+import type { HackerNewsSourceChange } from "./story-index-projection.ts";
 
-const streamPrefix = "/streams";
-const streamIdFromPath = (path: string) => path.replace(/^\/streams\/?/, "");
-
-export const hackerNewsSource = StateProjection.resource({
-  identity: streamIdentity("hacker-news-newest-source"),
-  streamId: streamIdFromPath(sourceStreamPath),
-});
-
-export const hackerNewsTarget = StateProjection.resource({
-  identity: streamIdentity("hacker-news-newest-state"),
-  streamId: streamIdFromPath(streamPath),
-});
+export { hackerNewsResources, hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 
 export class DemoStreams {
   private readonly protocol: StreamProtocol;
@@ -38,8 +29,10 @@ export class DemoStreams {
   }
 
   async start(): Promise<void> {
-    for (const resource of [hackerNewsSource, hackerNewsTarget]) {
-      const result = await this.client.stream(resource.streamId).create({ contentType });
+    for (const resource of hackerNewsResources) {
+      const result = await this.client
+        .stream(resource.streamId)
+        .create({ contentType: streamContentType });
       if (result.status !== "created" && result.status !== "conflict") {
         throw new Error(
           `Unable to create Streamsy demo stream ${resource.streamId}: ${result.status}`,
@@ -64,3 +57,12 @@ export class DemoStreams {
     await this.client.close();
   }
 }
+
+/** Adapt a Promise-based source append (such as DemoStreams) to the sink contract. */
+export const appendSourceBatchFromPromise =
+  (append: (changes: readonly HackerNewsSourceChange[]) => Promise<string>) =>
+  (changes: readonly HackerNewsSourceChange[]): Effect.Effect<string, PollFailure> =>
+    Effect.tryPromise({
+      try: () => append(changes),
+      catch: pollFailure("appendSourceBatch"),
+    });

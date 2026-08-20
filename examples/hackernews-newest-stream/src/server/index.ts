@@ -8,18 +8,19 @@ import {
   serverIdleTimeoutSeconds,
   sourceStreamPath,
   streamPath,
+  streamPrefix,
 } from "./config.ts";
 import { json } from "./http.ts";
-import { appendSourceBatchFromPromise, makeNewestStoriesPoller } from "./newest-poller.ts";
-import { createStoryProjection } from "./projection.ts";
+import { makeNewestStoriesPoller } from "./newest-poller.ts";
+import { makeStoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
-import { DemoStreams } from "./streams.ts";
+import { appendSourceBatchFromPromise, DemoStreams } from "./streams.ts";
 
 const streams = new DemoStreams();
 await streams.start();
 
 const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
-const projection = createStoryProjection(projectionLimits);
+const projection = await runtime.runPromise(makeStoryProjection(projectionLimits));
 const poller = await runtime.runPromise(
   makeNewestStoriesPoller({
     limit: newestLimit,
@@ -28,10 +29,15 @@ const poller = await runtime.runPromise(
       appendSourceBatch: appendSourceBatchFromPromise((changes) =>
         streams.appendSourceBatch(changes),
       ),
-      catchUpProjection: projection.catchUp(),
+      catchUpProjection: projection.catchUp,
     },
   }),
 );
+
+const currentStats = () => ({
+  projection: runtime.runSync(projection.status),
+  ...runtime.runSync(poller.stats),
+});
 
 const server = Bun.serve({
   port,
@@ -39,7 +45,7 @@ const server = Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
     try {
-      if (url.pathname.startsWith("/streams/")) {
+      if (url.pathname.startsWith(`${streamPrefix}/`)) {
         return streams.fetch(request);
       }
       if (url.pathname === "/api/status") {
@@ -49,17 +55,12 @@ const server = Bun.serve({
           newestLimit,
           pollIntervalMs,
           projectionLimits,
-          projection: projection.status(),
-          ...runtime.runSync(poller.stats),
+          ...currentStats(),
         });
       }
       if (url.pathname === "/api/poll" && request.method === "POST") {
         await runtime.runPromise(poller.pollNow);
-        return json({
-          ok: true,
-          projection: projection.status(),
-          ...runtime.runSync(poller.stats),
-        });
+        return json({ ok: true, ...currentStats() });
       }
       if (url.pathname.startsWith("/api/")) {
         return json({ error: "Not found" }, { status: 404 });

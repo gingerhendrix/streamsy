@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-const projectRoot = join(import.meta.dir, "../..");
+const projectRoot = join(import.meta.dir, "..");
 const distDir = join(projectRoot, "dist");
 const assetsDir = join(distDir, "assets");
 const entrypoint = join(projectRoot, "src/client/main.tsx");

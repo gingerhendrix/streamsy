@@ -15,6 +15,14 @@ export const HackerNewsStory = Schema.Struct({
   text: Schema.optionalKey(Schema.String),
 });
 
+type EffectStory = Schema.Schema.Type<typeof HackerNewsStory>;
+
+// Keep this Effect Schema aligned with the zod schema in state-schema.ts.
+const _zodAcceptsEffectStory: HnStory = {} as EffectStory;
+const _effectAcceptsZodStory: EffectStory = {} as HnStory;
+void _zodAcceptsEffectStory;
+void _effectAcceptsZodStory;
+
 export const HackerNewsSourceChange = Schema.Union([
   Schema.Struct({ operation: Schema.Literal("upsert"), story: HackerNewsStory }),
   Schema.Struct({

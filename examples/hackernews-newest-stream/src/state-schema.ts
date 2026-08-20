@@ -23,3 +23,7 @@ export const hackerNewsState = createStateSchema({
 
 export type HnStory = z.infer<typeof hnStorySchema>;
 export type HnStateEvent = ChangeEvent<HnStory>;
+
+export function newestStorySort(a: HnStory, b: HnStory): number {
+  return b.time - a.time || b.id - a.id;
+}

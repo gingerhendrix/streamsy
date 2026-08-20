@@ -1,44 +1,51 @@
-import type { HnStory } from "../state-schema.ts";
+import { Effect } from "effect";
+import { z } from "zod";
+import { hnStorySchema, newestStorySort, type HnStory } from "../state-schema.ts";
+import { hnApiBase } from "./config.ts";
+import { pollFailure, type HackerNewsApi } from "./poller/contract.ts";
 
 // Defaults to the public HN Firebase API. Override with HN_API_BASE to point the
 // poller at a local fixture (used by the offline smoke test).
-const hnBase = (process.env.HN_API_BASE ?? "https://hacker-news.firebaseio.com/v0").replace(
-  /\/$/,
-  "",
-);
+const defaultHnBase = hnApiBase;
 
-type HnItem = {
-  id: number;
-  deleted?: boolean;
-  dead?: boolean;
-  type?: string;
-  by?: string;
-  time?: number;
-  text?: string;
-  kids?: number[];
-  descendants?: number;
-  score?: number;
-  title?: string;
-  url?: string;
-};
+const newestStoryIdsSchema = z.array(z.number());
+const hnItemSchema = z
+  .object({
+    id: z.number(),
+    deleted: z.boolean().optional(),
+    dead: z.boolean().optional(),
+    type: z.string().optional(),
+    by: z.string().optional(),
+    time: z.number().optional(),
+    text: z.string().optional(),
+    kids: z.array(z.number()).optional(),
+    descendants: z.number().optional(),
+    score: z.number().optional(),
+    title: z.string().optional(),
+    url: z.string().optional(),
+  })
+  .nullable();
 
-export async function fetchNewestStoryIds(limit: number): Promise<number[]> {
-  const response = await fetch(`${hnBase}/newstories.json`);
+export async function fetchNewestStoryIds(
+  limit: number,
+  apiBase = defaultHnBase,
+): Promise<number[]> {
+  const response = await fetch(`${apiBase}/newstories.json`);
   if (!response.ok)
     throw new Error(`HN newstories failed: ${response.status} ${response.statusText}`);
-  const ids = (await response.json()) as number[];
+  const ids = newestStoryIdsSchema.parse(await response.json());
   return ids.slice(0, limit);
 }
 
-export async function fetchStory(id: number): Promise<HnStory | null> {
-  const response = await fetch(`${hnBase}/item/${id}.json`);
+export async function fetchStory(id: number, apiBase = defaultHnBase): Promise<HnStory | null> {
+  const response = await fetch(`${apiBase}/item/${id}.json`);
   if (!response.ok)
     throw new Error(`HN item ${id} failed: ${response.status} ${response.statusText}`);
-  const item = (await response.json()) as HnItem | null;
+  const item = hnItemSchema.parse(await response.json());
   if (!item || item.deleted || item.dead || item.type !== "story" || !item.title || !item.time)
     return null;
 
-  return {
+  return hnStorySchema.parse({
     id: item.id,
     by: item.by,
     descendants: item.descendants,
@@ -48,11 +55,18 @@ export async function fetchStory(id: number): Promise<HnStory | null> {
     type: "story",
     url: item.url,
     text: item.text,
-  };
+  });
 }
 
-export async function fetchStoriesById(ids: readonly number[]): Promise<HnStory[]> {
-  const settled = await Promise.allSettled(ids.map((id) => fetchStory(id)));
+/**
+ * Fetch story ids independently. Rejected or skipped items are logged and do not
+ * stall the batch, so later polls can observe them again.
+ */
+export async function fetchStoriesById(
+  ids: readonly number[],
+  apiBase = defaultHnBase,
+): Promise<HnStory[]> {
+  const settled = await Promise.allSettled(ids.map((id) => fetchStory(id, apiBase)));
   const stories: HnStory[] = [];
 
   for (const result of settled) {
@@ -63,6 +77,18 @@ export async function fetchStoriesById(ids: readonly number[]): Promise<HnStory[
   return stories.toSorted(newestStorySort);
 }
 
-export function newestStorySort(a: HnStory, b: HnStory): number {
-  return b.time - a.time || b.id - a.id;
-}
+/** Named Effect adapters over the Promise-based HN Firebase fetch helpers. */
+export const liveHackerNewsApi: HackerNewsApi = {
+  fetchNewestStoryIds: Effect.fn("HackerNewsApi.fetchNewestStoryIds")(function* (limit: number) {
+    return yield* Effect.tryPromise({
+      try: () => fetchNewestStoryIds(limit),
+      catch: pollFailure("fetchNewestStoryIds"),
+    });
+  }),
+  fetchStoriesById: Effect.fn("HackerNewsApi.fetchStoriesById")(function* (ids: readonly number[]) {
+    return yield* Effect.tryPromise({
+      try: () => fetchStoriesById(ids),
+      catch: pollFailure("fetchStoriesById"),
+    });
+  }),
+};
