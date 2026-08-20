@@ -22,8 +22,10 @@ projection work.
 
 ## Data flow
 
-1. `src/server/newest-poller.ts` describes polling with Effect primitives: `Ref`-held state, a
+1. `src/server/poller/poller.ts` describes polling with Effect primitives: `Ref`-held state, a
    coalesced poll pass, and an interval loop built from `Effect.repeat` with `Schedule.spaced`.
+   `src/server/poller/contract.ts` owns the contracts and `src/server/poller/reconcile.ts` owns
+   pure newest-set reconciliation.
    Each pass fetches new ids first and refreshes known ids so mutable fields such as score and
    descendants stay current. It compares complete story values, suppresses unchanged writes, and
    sorts changes deterministically. Stories that leave the bounded newest set become source

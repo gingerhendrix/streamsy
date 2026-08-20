@@ -1,5 +1,5 @@
 import { createMemoryStorageAdapter, type StorageAdapter } from "@streamsy/core";
-import { StateProjection } from "@streamsy/experimental/effect/state-projection";
+import * as StateProjection from "@streamsy/experimental/state-projection";
 import type { HnStory } from "../state-schema.ts";
 import { makeStoryProjectionInstance } from "./projection.ts";
 import { DemoStreams } from "./streams.ts";

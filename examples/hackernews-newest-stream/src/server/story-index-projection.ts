@@ -1,5 +1,5 @@
 import type { JsonValue } from "@streamsy/core";
-import { StateProjection } from "@streamsy/experimental/effect/state-projection";
+import * as StateProjection from "@streamsy/experimental/state-projection";
 import { Schema } from "effect";
 import { hackerNewsState, type HnStory } from "../state-schema.ts";
 

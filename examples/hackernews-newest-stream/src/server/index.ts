@@ -1,4 +1,4 @@
-import { StateProjection } from "@streamsy/experimental/effect/state-projection";
+import * as StateProjection from "@streamsy/experimental/state-projection";
 import { ManagedRuntime } from "effect";
 import {
   newestLimit,
@@ -11,7 +11,7 @@ import {
   streamPrefix,
 } from "./config.ts";
 import { json } from "./http.ts";
-import { makeNewestStoriesPoller } from "./newest-poller.ts";
+import { makeNewestStoriesPoller } from "./poller/poller.ts";
 import { makeStoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
 import { appendSourceBatchFromPromise, DemoStreams } from "./streams.ts";

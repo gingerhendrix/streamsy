@@ -4,7 +4,7 @@ Experimental Streamsy primitives are exposed through explicit subpath exports wh
 
 ## Causal vocabulary
 
-Import the pure causal API from `@streamsy/experimental/causal`.
+Import stream identity helpers from `@streamsy/experimental/stream-identity`. The broader pure causal API remains available from `@streamsy/experimental/causal`.
 
 `streamIdentity()` constructs a structured, mesh-assigned identity independently of a stream URL or application stream id. `encodeStreamIdentity()` provides its versioned canonical durable-key encoding; the v1 encoding deliberately leaves lifetime/incarnation for a later encoding version.
 
@@ -30,7 +30,7 @@ The package pins `effect@4.0.0-beta.99` exactly. Libraries return Effect descrip
 
 ## State projection facade
 
-Import `StateProjection` from `@streamsy/experimental/effect/state-projection` for the first application-facing bounded projection seam. `make()` declares stable identity, a service-free Effect `Schema` decoder, and pure JSON-item-to-State logic. `resource()` creates inert stream identity/id values, and `instance()` binds two resources to a declaration, generation, and fixed producer epoch without capturing a client. Provide `layerClient(client)` when running `catchUp()`; the facade resolves resources to compatibility bindings and derives the producer lane internally. Public progress omits recovered checkpoints and producer sequence.
+Import `StateProjection` from `@streamsy/experimental/state-projection` for the first application-facing bounded projection seam. `make()` declares stable identity, a service-free Effect `Schema` decoder, and pure JSON-item-to-State logic. `resource()` creates inert stream identity/id values, and `instance()` binds two resources to a declaration, generation, and fixed producer epoch without capturing a client. Provide `layerClient(client)` when running `catchUp()`; the facade resolves resources to compatibility bindings and derives the producer lane internally. Public progress omits recovered checkpoints and producer sequence.
 
 This tracer supports one ordered JSON source and one Durable State target, runs a finite catch-up pass, and scans complete target history during recovery. The facade owns its fixed-client Effect Layer while the existing Promise `StreamBinding` API and `ReadStreams` / `AppendStreams` mesh capabilities remain compatible. State change constructors, snapshots, resource address resolution, and long-lived supervision remain later API batches. Existing `@streamsy/experimental/ivm-mesh` exports remain available for regression compatibility.
 

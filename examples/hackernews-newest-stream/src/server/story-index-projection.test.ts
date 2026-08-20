@@ -1,8 +1,8 @@
 import { type JsonValue, type StreamProtocolClient } from "@streamsy/core";
-import {
-  StateProjection,
-  type StateProjectionInstance,
-} from "@streamsy/experimental/effect/state-projection";
+import * as StateProjection from "@streamsy/experimental/state-projection";
+import type {
+  Instance as StateProjectionInstance,
+} from "@streamsy/experimental/state-projection";
 import { Effect } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { makeStoryProjectionInstance } from "./projection.ts";

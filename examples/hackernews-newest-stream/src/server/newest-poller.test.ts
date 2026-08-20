@@ -1,8 +1,9 @@
-import { StateProjection } from "@streamsy/experimental/effect/state-projection";
+import * as StateProjection from "@streamsy/experimental/state-projection";
 import { Effect, ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
 import type { HnStory } from "../state-schema.ts";
-import { makeNewestStoriesPoller, type HackerNewsApi } from "./newest-poller.ts";
+import { type HackerNewsApi } from "./poller/contract.ts";
+import { makeNewestStoriesPoller } from "./poller/poller.ts";
 import { makeStoryProjection } from "./projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 import { appendSourceBatchFromPromise } from "./streams.ts";

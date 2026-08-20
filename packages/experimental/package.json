@@ -23,6 +23,11 @@
       "import": "./dist/binding.js",
       "default": "./dist/binding.js"
     },
+    "./stream-identity": {
+      "types": "./dist/causal/identity.d.ts",
+      "import": "./dist/causal/identity.js",
+      "default": "./dist/causal/identity.js"
+    },
     "./causal": {
       "types": "./dist/causal.d.ts",
       "import": "./dist/causal.js",
@@ -43,10 +48,10 @@
       "import": "./dist/effect.js",
       "default": "./dist/effect.js"
     },
-    "./effect/state-projection": {
-      "types": "./dist/effect-state-projection.d.ts",
-      "import": "./dist/effect-state-projection.js",
-      "default": "./dist/effect-state-projection.js"
+    "./state-projection": {
+      "types": "./dist/effect/state-projection.d.ts",
+      "import": "./dist/effect/state-projection.js",
+      "default": "./dist/effect/state-projection.js"
     },
     "./effect/testing": {
       "types": "./dist/effect-testing.d.ts",
@@ -58,7 +63,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/binding.ts src/causal.ts src/effect.ts src/effect-state-projection.ts src/effect-testing.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external effect",
+    "build": "tsdown src/binding.ts src/causal.ts src/causal/identity.ts src/effect.ts src/effect/state-projection.ts src/effect-testing.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external effect",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
     "test:sqlite": "bun test src/ivm-mesh/*.bun.test.ts"
