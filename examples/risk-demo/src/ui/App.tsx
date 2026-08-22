@@ -175,9 +175,9 @@ export function Landing(props: {
   busy: boolean;
   joinId: string;
   notice: string;
-  onJoinId(value: string): void;
-  onCreate(): void;
-  onOpen(): void;
+  onJoinId: (value: string) => void;
+  onCreate: () => void;
+  onOpen: () => void;
 }) {
   return (
     <main className="landing-shell">

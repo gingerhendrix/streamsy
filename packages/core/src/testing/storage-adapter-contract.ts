@@ -99,9 +99,9 @@ function withSerializedSeam(adapter: StorageAdapter): StorageAdapter {
     delete: async (plan) => clone(await adapter.delete(clone(plan))),
   };
   // Capability-by-presence: only expose `fork` when the underlying adapter has it.
-  const fork = adapter.fork;
+  const fork = adapter.fork?.bind(adapter);
   if (fork) {
-    wrapped.fork = async (plan) => clone(await fork.call(adapter, clone(plan)));
+    wrapped.fork = async (plan) => clone(await fork(clone(plan)));
   }
   return wrapped;
 }

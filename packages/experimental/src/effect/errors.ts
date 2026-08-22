@@ -24,7 +24,7 @@ export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()(
   code: ClientErrorCode,
   retryable: Schema.Boolean,
 }) {
-  static from(operation: string, failure: ClientFailure | unknown): StreamReadError {
+  static from(operation: string, failure: unknown): StreamReadError {
     const classification = clientFailureClassification(failure);
     return new StreamReadError({
       operation,
@@ -46,7 +46,7 @@ export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError
     durability: Schema.Literal("unknown"),
   },
 ) {
-  static from(operation: string, failure: ClientFailure | unknown): StreamAppendError {
+  static from(operation: string, failure: unknown): StreamAppendError {
     const classification = clientFailureClassification(failure);
     return new StreamAppendError({
       operation,
@@ -97,7 +97,7 @@ export type MeshOperationalError =
   | ProjectionPoison
   | StateRestorePoison;
 
-function clientFailureClassification(failure: ClientFailure | unknown) {
+function clientFailureClassification(failure: unknown) {
   return isClientFailure(failure)
     ? { code: failure.code, retryable: failure.retryable }
     : { code: "unknown" as const, retryable: false };

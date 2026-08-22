@@ -29,7 +29,10 @@ const loadArticles = createServerFn({ method: "GET" }).handler(() =>
       date:
         page.data.date instanceof Date ? page.data.date.toISOString().slice(0, 10) : page.data.date,
     }))
-    .filter((article): article is typeof article & { slug: string } => article.slug !== undefined)
+    .filter(
+      (article): article is { slug: string; title: string; description: string; date: string } =>
+        article.slug !== undefined,
+    )
     .sort((a, b) => b.date.localeCompare(a.date)),
 );
 

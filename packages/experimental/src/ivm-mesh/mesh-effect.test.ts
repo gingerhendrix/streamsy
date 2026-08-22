@@ -102,7 +102,8 @@ const provideLive = <A, E, R>(program: Effect.Effect<A, E, R>) =>
   );
 
 function fact(value: JsonValue): JsonValue {
-  return { type: "order", key: `o-${String(value)}`, value, headers: { operation: "upsert" } };
+  const key = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 
 async function targetValues(h: Harness): Promise<unknown[]> {

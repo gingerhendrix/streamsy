@@ -11,7 +11,7 @@ import {
 
 /** Feed a whole document one byte at a time — the worst chunking a client sees. */
 function pushByBytes<T>(decoder: { push(chunk: string): T[] }, document: string): T[] {
-  return [...document].flatMap((character) => decoder.push(character));
+  return Array.from(document).flatMap((character) => decoder.push(character));
 }
 
 describe("actions stream framing", () => {
@@ -95,6 +95,7 @@ function slowResponse(signal: AbortSignal): { response: Response; push(chunk: st
 describe("actions reader", () => {
   it("answers null on a quiet connection without dropping the batch that follows", async () => {
     const connection = new AbortController();
+    // oxlint-disable-next-line typescript/unbound-method -- Reading the AbortSignal getter does not detach a method.
     const { response, push } = slowResponse(connection.signal);
     const reader = createActionsReader(response, connection);
 

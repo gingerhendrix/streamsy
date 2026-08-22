@@ -93,7 +93,7 @@ async function waitForServer(): Promise<void> {
     await Bun.sleep(100);
   }
 
-  throw new SmokeError(`Issue tracker server did not become ready: ${lastError}`);
+  throw new SmokeError(`Issue tracker server did not become ready: ${String(lastError)}`);
 }
 
 async function readStream(streamUrl: string): Promise<{ events: ChangeEvent[]; head: string }> {

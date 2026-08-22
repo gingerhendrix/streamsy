@@ -40,8 +40,8 @@ interface ReinforcementPlacementProps {
   names: NameLookup;
   pending: PendingReinforcements;
   busy: boolean;
-  onAdjust(territoryId: string, delta: 1 | -1): void;
-  onFinish(): void;
+  onAdjust: (territoryId: string, delta: 1 | -1) => void;
+  onFinish: () => void;
 }
 
 /** A reviewable local allocation that is committed as one canonical command. */

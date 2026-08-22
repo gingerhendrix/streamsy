@@ -79,7 +79,7 @@ let shuttingDown: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (shuttingDown) return shuttingDown;
   shuttingDown = (async () => {
-    server.stop(true);
+    await server.stop(true);
     await runtime.runPromise(poller.stop);
     await runtime.dispose();
     await streams.close();

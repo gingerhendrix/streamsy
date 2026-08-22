@@ -34,10 +34,10 @@ export interface Harness {
   scheduler: ManualScheduler;
   clock: { now: number };
   /** Force the next dice to specific faces (1..6), then fall back to the seed. */
-  rig(faces: readonly number[]): void;
+  rig: (faces: readonly number[]) => void;
 }
 
-export function riggableRng(seed: number): Rng & { rig(faces: readonly number[]): void } {
+export function riggableRng(seed: number): Rng & { rig: (faces: readonly number[]) => void } {
   let queue: number[] = [];
   const fallback = createSeededRng(seed);
   return {

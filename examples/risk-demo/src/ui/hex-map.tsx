@@ -129,19 +129,19 @@ export interface HexMapProps {
   hexes: ProjectedHex[];
   territories: MapTerritory[];
   continents: ProjectedContinent[];
-  colorOf(playerId: string | undefined): string;
-  ownerNameOf(playerId: string | undefined): string;
-  stateOf(territoryId: string): TerritoryInteractionState;
+  colorOf: (playerId: string | undefined) => string;
+  ownerNameOf: (playerId: string | undefined) => string;
+  stateOf: (territoryId: string) => TerritoryInteractionState;
   /** Countries a player may act on now; everything else is focusable but inert. */
   actionable: ReadonlySet<string>;
   focusedId: string | null;
-  onSelect(territoryId: string): void;
+  onSelect: (territoryId: string) => void;
   /** Secondary selection is used to remove one pending reinforcement. */
-  onDecrement?(territoryId: string): void;
+  onDecrement?: (territoryId: string) => void;
   pendingReinforcements?: ReadonlyMap<string, number>;
-  onFocus(territoryId: string): void;
+  onFocus: (territoryId: string) => void;
   /** Pointer hover only supplements detail/visual state; it never changes legality. */
-  onHover(territoryId: string | null): void;
+  onHover: (territoryId: string | null) => void;
   /** Source → target of the attack being composed, or the throw being revealed. */
   route: { from: string; to: string } | null;
   /**
@@ -152,7 +152,7 @@ export interface HexMapProps {
   zoom: number;
   pan: Point;
   /** Drag, wheel, and pinch report through here; the buttons set the same state. */
-  onView?(next: ViewTransform): void;
+  onView?: (next: ViewTransform) => void;
   children?: ReactNode;
 }
 

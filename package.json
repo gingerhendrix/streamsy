@@ -25,6 +25,7 @@
   },
   "type": "module",
   "scripts": {
+    "prepare": "effect-tsgo patch --no-typescript --oxlint",
     "deploy": "bun run --cwd packages/conformance-tests deploy",
     "dev": "bun run --cwd packages/conformance-tests dev",
     "destroy": "bun run --cwd packages/conformance-tests destroy",
@@ -54,8 +55,10 @@
     "pack:dry-run": "for dir in packages/core packages/client packages/json packages/experimental packages/state packages/storage-sqlite packages/storage-fs packages/storage-durable-object; do (cd \"$dir\" && bun pm pack --dry-run); done"
   },
   "devDependencies": {
+    "@effect/tsgo": "0.36.5",
     "oxfmt": "^0.48.0",
-    "oxlint": "^1.63.0",
+    "oxlint": "1.78.0",
+    "oxlint-tsgolint": "7.0.2001",
     "tsdown": "^0.9.9"
   },
   "overrides": {

@@ -31,9 +31,9 @@ import type { Terrain } from "../domain/map.ts";
 
 /** Names the presentation layer needs but the projection rows only reference by id. */
 export interface NameLookup {
-  territory(id: string): string;
-  player(id: string | undefined): string;
-  continent(id: string): string;
+  territory: (id: string) => string;
+  player: (id: string | undefined) => string;
+  continent: (id: string) => string;
 }
 
 // ---------------------------------------------------------------------------

@@ -104,7 +104,7 @@ export class GameDurableObject {
       },
     });
     if (this.gameId) {
-      ctx.blockConcurrencyWhile(() => this.app.defenseTimers.recover());
+      void ctx.blockConcurrencyWhile(() => this.app.defenseTimers.recover());
     }
   }
 

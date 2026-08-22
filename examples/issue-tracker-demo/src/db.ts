@@ -102,10 +102,12 @@ export function createIssueDb(workspaceId: string): IssueDb {
 }
 
 async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetch(url, {
     ...init,
     method: init.method ?? "POST",
-    headers: { "content-type": "application/json", ...init.headers },
+    headers,
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await response.text());

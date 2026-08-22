@@ -1,11 +1,11 @@
 interface MapControlsProps {
-  onZoomIn(): void;
-  onZoomOut(): void;
-  onReset(): void;
-  onPanUp(): void;
-  onPanLeft(): void;
-  onPanRight(): void;
-  onPanDown(): void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onReset: () => void;
+  onPanUp: () => void;
+  onPanLeft: () => void;
+  onPanRight: () => void;
+  onPanDown: () => void;
 }
 
 /** A compact, spatial control cluster for the map's existing pan/zoom actions. */

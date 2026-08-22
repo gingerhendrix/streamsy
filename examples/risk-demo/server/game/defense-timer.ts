@@ -75,7 +75,7 @@ export function createTimeoutScheduler(): TimerScheduler {
       const handle = setTimeout(
         () => {
           timers.delete(timerId);
-          run();
+          void run();
         },
         Math.max(0, delayMs),
       );
