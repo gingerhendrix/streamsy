@@ -57,7 +57,7 @@ const server = Bun.serve({
 });
 
 const shutdown = async (): Promise<void> => {
-  server.stop(true);
+  await server.stop(true);
   await app.close();
   adapter.close();
   if (deleteDbOnExit && dbPath !== ":memory:") {

@@ -25,12 +25,13 @@ export class ApiFailure extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
+    const headers = new Headers(init?.headers);
+    if (init?.body !== undefined && !headers.has("content-type"))
+      headers.set("content-type", "application/json");
     response = await fetch(path, {
       ...init,
       cache: "no-store",
-      ...(init?.body === undefined
-        ? {}
-        : { headers: { "content-type": "application/json", ...init.headers } }),
+      headers,
     });
   } catch (error) {
     throw new ApiFailure(error instanceof Error ? error.message : "Network error", 0);

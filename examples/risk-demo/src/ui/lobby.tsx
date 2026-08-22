@@ -67,10 +67,10 @@ function SeatName(props: {
   editable: boolean;
   busy: boolean;
   draft: string;
-  onDraft(value: string): void;
-  onEdit(): void;
-  onCancel(): void;
-  onSave(): void;
+  onDraft: (value: string) => void;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: () => void;
 }) {
   if (!props.editable) return <b>{props.player.name}</b>;
   if (!props.editing) {
@@ -121,13 +121,13 @@ export function Lobby(props: {
   busy: boolean;
   agentSeats: AgentSeat[];
   mapSeed?: string;
-  onName(value: string): void;
-  onJoin(): void;
-  onStart(): void;
-  onAddAgent(name: string): void;
-  onRename(playerId: string, name: string): void;
-  onLeave(): void;
-  onCopy(): Promise<void>;
+  onName: (value: string) => void;
+  onJoin: () => void;
+  onStart: () => void;
+  onAddAgent: (name: string) => void;
+  onRename: (playerId: string, name: string) => void;
+  onLeave: () => void;
+  onCopy: () => Promise<void>;
 }) {
   const isHost = props.identity?.role === "host";
   const seatCount = RULES.maxPlayers;

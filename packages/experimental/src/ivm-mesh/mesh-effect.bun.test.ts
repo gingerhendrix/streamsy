@@ -71,7 +71,7 @@ async function makeHarness(filename: string) {
           reduce(items) {
             return items.map((item) => ({
               type: "value",
-              key: String(item),
+              key: typeof item === "object" ? JSON.stringify(item) : String(item),
               value: item,
               headers: { operation: "upsert" },
             }));

@@ -1,26 +1,10 @@
 {
   "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
-  "extends": [
-    "./node_modules/@effect/tsgo/oxlint-presets/recommended.json"
-  ],
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "oxc",
-    "effecttsgo"
-  ],
+  "extends": ["./node_modules/@effect/tsgo/oxlint-presets/recommended.json"],
+  "plugins": ["typescript", "unicorn", "oxc", "effecttsgo"],
   "categories": {
     "correctness": "error",
     "suspicious": "warn"
-  },
-  "rules": {
-    "typescript/no-base-to-string": "off",
-    "typescript/no-floating-promises": "off",
-    "typescript/no-meaningless-void-operator": "off",
-    "typescript/no-misused-spread": "off",
-    "typescript/no-redundant-type-constituents": "off",
-    "typescript/restrict-template-expressions": "off",
-    "typescript/unbound-method": "off"
   },
   "env": {
     "builtin": true

@@ -268,7 +268,7 @@ export class ProtocolStream implements ProtocolStreamApi {
   }
 
   private async createFork(options: CreateOptions): Promise<CreateOutcome> {
-    const fork = this.deps.adapter.fork;
+    const fork = this.deps.adapter.fork?.bind(this.deps.adapter);
     if (!fork) return notSupported("fork");
 
     const sourceId = options.forkedFrom!;
@@ -278,7 +278,7 @@ export class ProtocolStream implements ProtocolStreamApi {
     const decision = this.forkPlanBuilder.build(this.id, sourceId, source, options, sourceTail);
     if (decision.kind === "terminal") return decision.result;
 
-    const commit = await fork.call(this.deps.adapter, decision.plan);
+    const commit = await fork(decision.plan);
     if (commit.status === "exists") {
       // Same idempotency as create: a racing byte-identical fork resolves as
       // `exists` success; a genuinely different child is a config conflict.

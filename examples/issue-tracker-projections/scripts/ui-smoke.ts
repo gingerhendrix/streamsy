@@ -217,7 +217,7 @@ try {
   console.log("issue-tracker-projections ui smoke passed");
 } finally {
   await browser.close();
-  server.stop(true);
+  await server.stop(true);
   await host.close();
 }
 

@@ -64,7 +64,7 @@ const server = Bun.serve({
 process.on("SIGINT", async () => {
   poller.stop();
   await projection.dispose();
-  server.stop();
+  await server.stop();
   process.exit(0);
 });
 

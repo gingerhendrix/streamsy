@@ -4,12 +4,11 @@ export type TxId = `${string}-${string}-${string}-${string}-${string}`;
 export type MutationBody<T> = Partial<T> & { txid?: TxId };
 
 export function json(data: unknown, init: ResponseInit = {}): Response {
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
   return new Response(JSON.stringify(data, null, 2), {
     ...init,
-    headers: {
-      "content-type": "application/json",
-      ...init.headers,
-    },
+    headers,
   });
 }
 

@@ -113,7 +113,7 @@ async function waitForServer(): Promise<void> {
     }
     await Bun.sleep(100);
   }
-  throw new SmokeError(`HN demo server did not become ready: ${lastError}`);
+  throw new SmokeError(`HN demo server did not become ready: ${String(lastError)}`);
 }
 
 async function waitForPoll(): Promise<ApiStatus> {
@@ -200,7 +200,7 @@ try {
 } finally {
   server.kill();
   await server.exited.catch(() => undefined);
-  fixture.stop(true);
+  await fixture.stop(true);
 
   const stdout = await new Response(server.stdout).text();
   serverStderr = await new Response(server.stderr).text();

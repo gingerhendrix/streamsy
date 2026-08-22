@@ -51,7 +51,7 @@ async function waitForServer(): Promise<void> {
     await Bun.sleep(100);
   }
 
-  throw new SmokeError(`Memory server did not become ready: ${lastError}`);
+  throw new SmokeError(`Memory server did not become ready: ${String(lastError)}`);
 }
 
 async function readSseUntilControl(response: Response): Promise<string> {

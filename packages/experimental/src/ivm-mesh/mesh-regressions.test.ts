@@ -108,7 +108,8 @@ async function harness(): Promise<Harness> {
 }
 
 function fact(value: JsonValue): JsonValue {
-  return { type: "order", key: `o-${String(value)}`, value, headers: { operation: "upsert" } };
+  const key = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 
 async function values(h: Harness): Promise<unknown[]> {

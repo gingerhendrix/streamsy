@@ -322,10 +322,13 @@ export function assertStateFactShape(value: JsonValue): void {
     throw new TypeError("State fact event requires a non-empty key");
   if (!isRecord(value.headers)) throw new TypeError("State fact event requires headers");
   const operation = value.headers.operation;
-  if (!["insert", "update", "upsert", "delete"].includes(String(operation)))
+  if (
+    typeof operation !== "string" ||
+    !["insert", "update", "upsert", "delete"].includes(operation)
+  )
     throw new TypeError("State fact event has an invalid operation");
   if (operation !== "delete" && !("value" in value))
-    throw new TypeError(`${String(operation)} State fact event requires value`);
+    throw new TypeError(`${operation} State fact event requires value`);
 }
 
 function checkpoint(

@@ -118,18 +118,18 @@ function Countdown(props: { deadlineAt: number; now: number; windowMs: number })
 export interface CombatCardProps {
   combat: CombatView;
   names: NameLookup;
-  colorOf(playerId: string | undefined): string;
-  controllerOf(playerId: string | undefined): PlayerController | undefined;
+  colorOf: (playerId: string | undefined) => string;
+  controllerOf: (playerId: string | undefined) => PlayerController | undefined;
   selfId?: string;
   mode: SeatMode | null;
   now: number;
   defenseWindowMs: number;
   reveal: RevealPlan;
   busy: boolean;
-  onRollDefense(): void;
+  onRollDefense: () => void;
   attackAgain?: {
     maxAttackerDice: number;
-    onSubmit(attackerDice: number): void;
+    onSubmit: (attackerDice: number) => void;
   };
 }
 

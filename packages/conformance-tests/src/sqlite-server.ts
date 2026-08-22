@@ -25,10 +25,10 @@ const server = Bun.serve({
 
 console.log(`LISTENING ${server.port}`);
 
-const shutdown = () => {
-  server.stop(true);
+const shutdown = async () => {
+  await server.stop(true);
   adapter.close();
   process.exit(0);
 };
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown());

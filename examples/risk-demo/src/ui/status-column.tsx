@@ -89,7 +89,7 @@ function ContinentStandings(props: {
   continents: ProjectedContinent[];
   territories: ProjectedTerritory[];
   names: NameLookup;
-  colorOf(playerId: string | undefined): string;
+  colorOf: (playerId: string | undefined) => string;
 }) {
   const standings = continentStandings(props.continents, props.territories);
   return (
@@ -169,7 +169,7 @@ export interface StatusColumnProps {
   territories: ProjectedTerritory[];
   moves: ProjectedMove[];
   names: NameLookup;
-  colorOf(playerId: string | undefined): string;
+  colorOf: (playerId: string | undefined) => string;
   activePlayerId?: string;
   selfId?: string;
   footer?: ReactNode;

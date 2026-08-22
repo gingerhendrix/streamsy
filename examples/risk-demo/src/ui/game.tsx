@@ -113,17 +113,17 @@ export interface GameScreenProps {
   gameId: string;
   game: GameResponse;
   identity: Identity | null;
-  onIdentity(next: Identity | null): void;
-  refreshGame(): Promise<GameResponse | null>;
+  onIdentity: (next: Identity | null) => void;
+  refreshGame: () => Promise<GameResponse | null>;
   name: string;
-  onName(value: string): void;
-  onCopyInvite(): Promise<void>;
+  onName: (value: string) => void;
+  onCopyInvite: () => Promise<void>;
   /**
    * Called after a *non-host* seat is canonically given up. The host is not
    * routed away: its capability still runs the lobby, so leaving turns it into a
    * spectator of a game it keeps hosting.
    */
-  onLeftGame(): void;
+  onLeftGame: () => void;
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -1056,7 +1056,7 @@ function Stepper(props: {
   value: number;
   min: number;
   max: number;
-  onChange(value: number): void;
+  onChange: (value: number) => void;
 }) {
   return (
     <div className="stepper" role="group" aria-label={props.label}>
@@ -1087,23 +1087,23 @@ interface PhaseControlsProps {
   busy: boolean;
   selection: Selection;
   attackPhase: boolean;
-  setSelection(next: Selection): void;
+  setSelection: (next: Selection) => void;
   intent: Intent;
-  setIntent(next: Intent): void;
+  setIntent: (next: Intent) => void;
   reinforceAction?: Extract<LegalAction, { type: "reinforce" }>;
   pendingReinforcements: PendingReinforcements;
-  adjustReinforcement(territoryId: string, delta: 1 | -1): void;
-  finishReinforcements(): void;
+  adjustReinforcement: (territoryId: string, delta: 1 | -1) => void;
+  finishReinforcements: () => void;
   attackAction?: Extract<LegalAction, { type: "declare-attack" }>;
   fortifyAction?: Extract<LegalAction, { type: "fortify" }>;
   skipFortificationsAction?: Extract<LegalAction, { type: "skip-fortifications" }>;
   occupyAction?: Extract<LegalAction, { type: "occupy-territory" }>;
   occupyArmies: number | null;
-  setOccupyArmies(value: number): void;
-  submit(action: PlayAction): Promise<boolean>;
-  fortifyChoiceFrom(
+  setOccupyArmies: (value: number) => void;
+  submit: (action: PlayAction) => Promise<boolean>;
+  fortifyChoiceFrom: (
     from: string,
-  ): { reachable: Array<{ to: string; maxArmies: number }> } | undefined;
+  ) => { reachable: Array<{ to: string; maxArmies: number }> } | undefined;
 }
 
 /**
