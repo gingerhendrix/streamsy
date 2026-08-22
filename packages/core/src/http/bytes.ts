@@ -31,9 +31,11 @@ export function toArrayBuffer(view: Uint8Array): ArrayBuffer {
  * one, or returns `undefined` so the caller can fall back to `btoa`.
  *
  * `Buffer` is an optional host global: absent in browsers and workers, present
- * in Node and Bun. Every step is checked at runtime — the global exists, it is
- * callable, its `from` is callable, and the encoded result is a string — so a
- * foreign `Buffer` global cannot produce a non-string body.
+ * in Node and Bun. Every step is checked at runtime before it is used — the
+ * global exists and is callable, its `from` is callable, the value `from`
+ * returns can carry a method, that method is callable, and the encoded result
+ * is a string. A `Buffer` global that fails any of these returns `undefined`
+ * rather than throwing, so the caller always reaches its `btoa` fallback.
  */
 export function nodeBufferBase64(bytes: Uint8Array): string | undefined {
   if (!("Buffer" in globalThis)) return undefined;
@@ -41,8 +43,23 @@ export function nodeBufferBase64(bytes: Uint8Array): string | undefined {
   if (typeof bufferGlobal !== "function" || !("from" in bufferGlobal)) return undefined;
   const from: unknown = bufferGlobal.from;
   if (typeof from !== "function") return undefined;
-  const encoded: unknown = from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
-    "base64",
-  );
+
+  // `Buffer` stays the receiver: `Buffer.from` is a static method and a host
+  // implementation may rely on `this`.
+  const view: unknown = Reflect.apply(from, bufferGlobal, [
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.byteLength,
+  ]);
+  if (view === null || (typeof view !== "object" && typeof view !== "function")) return undefined;
+
+  // `Reflect.get` rather than `view.toString`: reading the method off the value
+  // would be an unbound method reference, and a missing key yields `undefined`
+  // here instead of needing a separate `in` check.
+  const encode: unknown = Reflect.get(view, "toString");
+  if (typeof encode !== "function") return undefined;
+
+  // The produced value stays the receiver, so `toString` sees its own bytes.
+  const encoded: unknown = Reflect.apply(encode, view, ["base64"]);
   return typeof encoded === "string" ? encoded : undefined;
 }

@@ -30,6 +30,22 @@ describe("toArrayBuffer", () => {
   });
 });
 
+/** Installs a stand-in `Buffer` global for one call, then restores the original. */
+function withBufferGlobal<T>(replacement: unknown, run: () => T): T {
+  const original = Reflect.get(globalThis, "Buffer");
+  Reflect.set(globalThis, "Buffer", replacement);
+  try {
+    return run();
+  } finally {
+    Reflect.set(globalThis, "Buffer", original);
+  }
+}
+
+/** A `Buffer`-shaped global whose `from` returns whatever the test supplies. */
+function foreignBuffer(from: () => unknown): unknown {
+  return Object.assign(function foreign() {}, { from });
+}
+
 describe("nodeBufferBase64", () => {
   it("encodes only the bytes the view covers", () => {
     const backing = new Uint8Array([255, 1, 2, 3, 255]);
@@ -49,18 +65,43 @@ describe("nodeBufferBase64", () => {
     }
   });
 
-  it("returns undefined when a foreign Buffer global cannot produce a string", () => {
-    const original = Reflect.get(globalThis, "Buffer");
-    Reflect.set(
-      globalThis,
-      "Buffer",
-      Object.assign(function foreign() {}, { from: () => ({ toString: () => 42 }) }),
-    );
-    try {
-      expect(nodeBufferBase64(new Uint8Array([1, 2, 3]))).toBeUndefined();
-    } finally {
-      Reflect.set(globalThis, "Buffer", original);
-    }
+  // Each case is a shape a foreign `Buffer` global can return that the encoder
+  // must reject by returning `undefined` rather than by throwing. `toBeUndefined`
+  // fails on a thrown error, so these pin both halves of that contract.
+  const unusable: [string, () => unknown][] = [
+    ["null", () => null],
+    ["undefined", () => undefined],
+    ["a primitive", () => 7],
+    ["an object with no toString", () => Object.create(null) as unknown],
+    ["an object with a non-callable toString", () => ({ toString: "not-callable" })],
+    ["an object whose toString returns a non-string", () => ({ toString: () => 42 })],
+  ];
+
+  for (const [shape, from] of unusable) {
+    it(`returns undefined when a foreign Buffer.from returns ${shape}`, () => {
+      expect(
+        withBufferGlobal(foreignBuffer(from), () => nodeBufferBase64(new Uint8Array([1, 2, 3]))),
+      ).toBeUndefined();
+    });
+  }
+
+  it("calls from and toString with their own receivers", () => {
+    const receivers: unknown[] = [];
+    const produced = {
+      toString(this: unknown) {
+        receivers.push(this);
+        return "AQID";
+      },
+    };
+    const global = foreignBuffer(function from(this: unknown) {
+      receivers.push(this);
+      return produced;
+    });
+
+    const encoded = withBufferGlobal(global, () => nodeBufferBase64(new Uint8Array([1, 2, 3])));
+
+    expect(encoded).toBe("AQID");
+    expect(receivers).toEqual([global, produced]);
   });
 });
 
@@ -83,5 +124,15 @@ describe("MessageBodyCodec base64 fallback", () => {
 
     expect(withBuffer).toBe(withoutBuffer);
     expect(withBuffer).toBe(btoa(String.fromCharCode(1, 2, 3)));
+  });
+
+  it("falls back to btoa when a foreign Buffer global returns an unusable value", () => {
+    const codec = new MessageBodyCodec();
+    const encoded = withBufferGlobal(
+      foreignBuffer(() => null),
+      () => codec.bytesToBase64(new Uint8Array([1, 2, 3])),
+    );
+
+    expect(encoded).toBe(btoa(String.fromCharCode(1, 2, 3)));
   });
 });
