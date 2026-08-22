@@ -5,8 +5,9 @@
  * error value itself instead of wrapping it in `Effect.fail`, so these tests
  * pin the observable contract that change must not move: the failure reaches
  * the caller through the typed error channel, carries its `_tag`, and carries
- * its payload. They also pin the two boundaries the batch re-expressed through
- * Schema and `Data.TaggedError`.
+ * its payload. They also pin the append boundary the batch re-expressed through
+ * Schema, and the browser client's failure contract, which this batch
+ * deliberately leaves as Promise-native code with no Effect import.
  *
  * The bodies return promises rather than declaring `async` functions, which
  * keeps this file from adding to the example's outstanding async-function
@@ -148,11 +149,9 @@ describe("append payloads are produced by the Schema JSON codec", () => {
   });
 });
 
-describe("the browser client reports failures as a tagged error", () => {
-  test("ApiFailure carries its tag, name, message, status, and class identity", () => {
-    const failure = new ApiFailure({ message: "not found: issue-1", status: 404 });
-    const { _tag: tag } = failure;
-    expect(tag).toBe("ApiFailure");
+describe("the browser client reports failures as a native error", () => {
+  test("ApiFailure carries its name, message, status, and class identity", () => {
+    const failure = new ApiFailure("not found: issue-1", 404);
     expect(failure.name).toBe("ApiFailure");
     expect(failure.message).toBe("not found: issue-1");
     expect(failure.status).toBe(404);
