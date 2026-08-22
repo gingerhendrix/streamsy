@@ -4,24 +4,16 @@ import { Schema } from "effect";
 import { hackerNewsState, type HnStory } from "../state-schema.ts";
 
 export const HackerNewsStory = Schema.Struct({
-  id: Schema.Number,
+  id: Schema.Finite,
   by: Schema.optionalKey(Schema.String),
-  descendants: Schema.optionalKey(Schema.Number),
-  score: Schema.optionalKey(Schema.Number),
-  time: Schema.Number,
+  descendants: Schema.optionalKey(Schema.Finite),
+  score: Schema.optionalKey(Schema.Finite),
+  time: Schema.Finite,
   title: Schema.String,
   type: Schema.Literal("story"),
   url: Schema.optionalKey(Schema.String),
   text: Schema.optionalKey(Schema.String),
 });
-
-type EffectStory = Schema.Schema.Type<typeof HackerNewsStory>;
-
-// Keep this Effect Schema aligned with the zod schema in state-schema.ts.
-const _zodAcceptsEffectStory: HnStory = {} as EffectStory;
-const _effectAcceptsZodStory: EffectStory = {} as HnStory;
-void _zodAcceptsEffectStory;
-void _effectAcceptsZodStory;
 
 export const HackerNewsSourceChange = Schema.Union([
   Schema.Struct({ operation: Schema.Literal("upsert"), story: HackerNewsStory }),

@@ -1,4 +1,7 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP fixtures through their native Promise APIs. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun smoke resolves the demo child-process working directory with the Node-compatible path API.
 import { resolve } from "node:path";
+import { z } from "zod";
 
 // Offline vertical smoke: local HN fixture -> deterministic source batch ->
 // bounded StateProjection -> public target stream consumed by the browser.
@@ -40,25 +43,33 @@ const fixtureStories: FixtureStory[] = [
 const fixtureById = new Map(fixtureStories.map((value) => [value.id, value]));
 let newestIds = [101, 102];
 
-interface ChangeEvent {
-  type: string;
-  key: string;
-  value?: Record<string, unknown>;
-  old_value?: Record<string, unknown>;
-  headers: { operation: string };
-}
+const changeEventSchema = z.object({
+  type: z.string(),
+  key: z.string(),
+  value: z.record(z.string(), z.unknown()).optional(),
+  old_value: z.record(z.string(), z.unknown()).optional(),
+  headers: z.object({ operation: z.string() }),
+});
+const changeEventsSchema = z.array(changeEventSchema);
+type ChangeEvent = z.infer<typeof changeEventSchema>;
 
-interface ApiStatus {
-  lastPollCompletedAt?: string;
-  lastPollError?: string;
-  lastStoryCount: number;
-  sourceBatches: number;
-  sourceChanges: number;
-  projection: {
-    lastError?: string;
-    lastOutcome?: { status: string; progress?: { sourceThrough?: string } };
-  };
-}
+const apiStatusSchema = z.object({
+  lastPollCompletedAt: z.string().optional(),
+  lastPollError: z.string().optional(),
+  lastStoryCount: z.number(),
+  sourceBatches: z.number(),
+  sourceChanges: z.number(),
+  projection: z.object({
+    lastError: z.string().optional(),
+    lastOutcome: z
+      .object({
+        status: z.string(),
+        progress: z.object({ sourceThrough: z.string().optional() }).optional(),
+      })
+      .optional(),
+  }),
+});
+type ApiStatus = z.infer<typeof apiStatusSchema>;
 
 const fixture = Bun.serve({
   port: fixturePort,
@@ -92,7 +103,7 @@ async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
   while (Date.now() < deadline) {
     const response = await fetch(`${baseUrl}/api/status`);
     if (response.ok) {
-      last = (await response.json()) as ApiStatus;
+      last = apiStatusSchema.parse(await response.json());
       assert(!last.lastPollError, `poll reported an error: ${last.lastPollError}`);
       assert(!last.projection.lastError, `projection failed: ${last.projection.lastError}`);
       if (
@@ -110,8 +121,7 @@ async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
 async function readStoryEvents(): Promise<ChangeEvent[]> {
   const response = await fetch(`${streamUrl}?offset=-1`);
   assert(response.status === 200, `target stream read failed: ${response.status}`);
-  const values = (await response.json()) as ChangeEvent[];
-  assert(Array.isArray(values), "stream read body should be a JSON array");
+  const values = changeEventsSchema.parse(await response.json());
   return values.filter((event) => event.type === "hn-story");
 }
 

@@ -8,6 +8,7 @@ export function story(id: number, time: number, title: string): HnStory {
   return { id, time, title, type: "story" };
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This test helper assembles the Promise-native protocol harness consumed by Vitest.
 export async function demoHarness(adapter: StorageAdapter = createMemoryStorageAdapter()) {
   const streams = new DemoStreams(adapter);
   await streams.start();

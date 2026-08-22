@@ -28,6 +28,7 @@ export class DemoStreams {
     this.client = directProtocolClient(this.protocol);
   }
 
+  // oxlint-disable-next-line effecttsgo/async-function -- This method preserves the public Promise adapter lifecycle used by the Bun and test edges.
   async start(): Promise<void> {
     for (const resource of hackerNewsResources) {
       const result = await this.client
@@ -41,6 +42,7 @@ export class DemoStreams {
     }
   }
 
+  // oxlint-disable-next-line effecttsgo/async-function -- This method preserves the public Promise protocol adapter API consumed by appendSourceBatchFromPromise.
   async appendSourceBatch(items: readonly JsonValue[]): Promise<string> {
     const result = await this.client.stream(hackerNewsSource.streamId).appendJsonBatch(items);
     if (result.status !== "appended" && result.status !== "duplicate") {
@@ -49,10 +51,12 @@ export class DemoStreams {
     return result.offset;
   }
 
+  // oxlint-disable-next-line effecttsgo/async-function -- createHttpHandler exposes a Promise-native Web fetch contract.
   async fetch(request: Request): Promise<Response> {
     return this.handler.fetch(request);
   }
 
+  // oxlint-disable-next-line effecttsgo/async-function -- This method preserves the public Promise adapter lifecycle used by the Bun and test edges.
   async close(): Promise<void> {
     await this.client.close();
   }

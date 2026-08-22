@@ -1,4 +1,7 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This one-shot Bun build executable reads its process mode and reports directly to the invoking terminal. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Bun's build executable uses Node-compatible filesystem paths at its platform edge.
 import { mkdir, rm, writeFile } from "node:fs/promises";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Bun's build executable uses Node-compatible path helpers at its platform edge.
 import { join, relative } from "node:path";
 
 const projectRoot = join(import.meta.dir, "..");

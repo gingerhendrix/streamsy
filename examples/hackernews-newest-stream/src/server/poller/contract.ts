@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import type * as StateProjection from "@streamsy/experimental/state-projection";
 import type { HnStory } from "../../state-schema.ts";
 import type { HackerNewsSourceChange } from "../story-index-projection.ts";
 import { errorMessage } from "../util.ts";
@@ -11,6 +12,8 @@ export class PollFailure extends Schema.TaggedErrorClass<PollFailure>()(
 
 export const pollFailure = (operation: string) => (error: unknown) =>
   new PollFailure({ operation, reason: errorMessage(error) });
+
+export type ProjectionServices = Effect.Services<ReturnType<typeof StateProjection.catchUp>>;
 
 export type PollCounters = {
   readonly lastPollStartedAt?: string;
@@ -31,11 +34,11 @@ export type PollStats = PollCounters & {
   readonly lastStoryCount: number;
 };
 
-export type PollerSink<R> = {
+export type PollerSink = {
   readonly appendSourceBatch: (
     changes: readonly HackerNewsSourceChange[],
-  ) => Effect.Effect<string, PollFailure, R>;
-  readonly catchUpProjection: Effect.Effect<unknown, never, R>;
+  ) => Effect.Effect<string, PollFailure>;
+  readonly catchUpProjection: Effect.Effect<unknown, never, ProjectionServices>;
 };
 
 export type HackerNewsApi = {
@@ -43,18 +46,18 @@ export type HackerNewsApi = {
   readonly fetchStoriesById: (ids: readonly number[]) => Effect.Effect<HnStory[], PollFailure>;
 };
 
-export type PollerConfig<R> = {
+export type PollerConfig = {
   readonly limit: number;
   readonly intervalMs: number;
-  readonly sink: PollerSink<R>;
+  readonly sink: PollerSink;
   readonly api?: HackerNewsApi;
 };
 
-export interface NewestStoriesPoller<R> {
+export interface NewestStoriesPoller {
   /** One coalesced poll pass. Joins the in-flight pass instead of queueing another. */
-  readonly pollNow: Effect.Effect<void, never, R>;
+  readonly pollNow: Effect.Effect<void, never, ProjectionServices>;
   /** Fork the interval polling loop. The first pass runs immediately. */
-  readonly start: Effect.Effect<void, never, R>;
+  readonly start: Effect.Effect<void, never, ProjectionServices>;
   /** Stop the loop and wait for any in-flight pass to complete. */
   readonly stop: Effect.Effect<void>;
   readonly stats: Effect.Effect<PollStats>;

@@ -1,33 +1,37 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-timers -- React owns this browser lifecycle edge; Web fetch, wall-clock rendering, and interval cleanup are the platform contract here. */
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
 import { useLiveQuery } from "@tanstack/react-db";
+import { z } from "zod";
 import { hackerNewsState, type HnStory } from "../state-schema.ts";
 import "./styles.css";
 
 type HnDb = StreamDB<typeof hackerNewsState>;
-type ApiStatus = {
-  streamPath: string;
-  sourceStreamPath: string;
-  newestLimit: number;
-  pollIntervalMs: number;
-  polling: boolean;
-  projection: {
-    running: boolean;
-    lastError?: string;
-    lastOutcome?: { status: string };
-  };
-  lastPollStartedAt?: string;
-  lastPollCompletedAt?: string;
-  lastPollError?: string;
-  lastStoryCount: number;
-  lastFetchedNewStories: number;
-  lastRefreshedStories: number;
-  lastChangedStories: number;
-  lastRemovedStories: number;
-  sourceBatches: number;
-  sourceChanges: number;
-};
+const apiStatusSchema = z.object({
+  streamPath: z.string(),
+  sourceStreamPath: z.string(),
+  newestLimit: z.number(),
+  pollIntervalMs: z.number(),
+  polling: z.boolean(),
+  projection: z.object({
+    running: z.boolean(),
+    lastError: z.string().optional(),
+    lastOutcome: z.object({ status: z.string() }).optional(),
+  }),
+  lastPollStartedAt: z.string().optional(),
+  lastPollCompletedAt: z.string().optional(),
+  lastPollError: z.string().optional(),
+  lastStoryCount: z.number(),
+  lastFetchedNewStories: z.number(),
+  lastRefreshedStories: z.number(),
+  lastChangedStories: z.number(),
+  lastRemovedStories: z.number(),
+  sourceBatches: z.number(),
+  sourceChanges: z.number(),
+});
+
+type ApiStatus = z.infer<typeof apiStatusSchema>;
 
 function streamUrl(): string {
   return new URL("/streams/session/main", window.location.origin).toString();
@@ -121,8 +125,8 @@ function HnApp({ db }: { db: HnDb }) {
     async function refresh() {
       const response = await fetch("/api/status");
       if (!response.ok) return;
-      const next = (await response.json()) as ApiStatus;
-      if (!cancelled) setStatus(next);
+      const next = apiStatusSchema.safeParse(await response.json());
+      if (!cancelled && next.success) setStatus(next.data);
     }
     void refresh();
     const interval = setInterval(() => void refresh(), 5000);

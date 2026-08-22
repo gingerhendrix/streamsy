@@ -16,6 +16,13 @@ export type ProjectionStatus = {
   readonly lastOutcome?: CatchUpOutcome;
 };
 
+type ProjectionServices = Effect.Services<ReturnType<typeof StateProjection.catchUp>>;
+
+export interface StoryProjection {
+  readonly catchUp: Effect.Effect<void, never, ProjectionServices>;
+  readonly status: Effect.Effect<ProjectionStatus>;
+}
+
 const initialStatus: ProjectionStatus = { running: false };
 
 export function makeStoryProjectionInstance() {
@@ -27,7 +34,7 @@ export function makeStoryProjectionInstance() {
   });
 }
 
-export function makeStoryProjection(limits: StateProjectionLimits) {
+export function makeStoryProjection(limits: StateProjectionLimits): Effect.Effect<StoryProjection> {
   return Effect.gen(function* () {
     const projection = makeStoryProjectionInstance();
     const statusRef = yield* Ref.make(initialStatus);

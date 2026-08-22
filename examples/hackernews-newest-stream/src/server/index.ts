@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This Bun executable is the Promise-native HTTP/process edge; Effect-owned poller and projection work runs through the single ManagedRuntime below. */
 import * as StateProjection from "@streamsy/experimental/state-projection";
 import { ManagedRuntime } from "effect";
 import {

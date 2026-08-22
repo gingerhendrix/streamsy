@@ -8,6 +8,7 @@ import {
   type PollCounters,
   type PollerConfig,
   type PollStats,
+  type ProjectionServices,
 } from "./contract.ts";
 import { reconcileNewest } from "./reconcile.ts";
 
@@ -16,9 +17,7 @@ type PollClaim = {
   readonly gate: Deferred.Deferred<void>;
 };
 
-export function makeNewestStoriesPoller<R = never>(
-  config: PollerConfig<R>,
-): Effect.Effect<NewestStoriesPoller<R>> {
+export function makeNewestStoriesPoller(config: PollerConfig): Effect.Effect<NewestStoriesPoller> {
   return Effect.gen(function* () {
     const api = config.api ?? liveHackerNewsApi;
     const storiesRef = yield* Ref.make<ReadonlyMap<number, HnStory>>(new Map());
@@ -79,23 +78,21 @@ export function makeNewestStoriesPoller<R = never>(
           lastRemovedStories: outcome.removed.length,
           lastPollCompletedAt: yield* nowIso,
         });
-        yield* Effect.sync(() =>
-          console.log(
-            `HN poll fetched ${newStories.length} new, refreshed ${refreshedStories.length}, upserted ${outcome.changed.length}, removed ${outcome.removed.length}`,
-          ),
+        yield* Effect.log(
+          `HN poll fetched ${newStories.length} new, refreshed ${refreshedStories.length}, upserted ${outcome.changed.length}, removed ${outcome.removed.length}`,
         );
       });
 
       yield* pass.pipe(
         Effect.catch((failure) =>
           patchCounters({ lastPollError: failure.reason }).pipe(
-            Effect.andThen(Effect.sync(() => console.error("HN poll failed", failure))),
+            Effect.andThen(Effect.logError("HN poll failed", failure)),
           ),
         ),
       );
     });
 
-    const pollNow: Effect.Effect<void, never, R> = Effect.gen(function* () {
+    const pollNow: Effect.Effect<void, never, ProjectionServices> = Effect.gen(function* () {
       if (yield* Ref.get(stoppedRef)) return;
       const gate = yield* Deferred.make<void>();
       const claim = yield* Ref.modify(
@@ -123,7 +120,7 @@ export function makeNewestStoriesPoller<R = never>(
 
     const loop = pollNow.pipe(Effect.repeat(Schedule.spaced(config.intervalMs)));
 
-    const start: Effect.Effect<void, never, R> = Effect.gen(function* () {
+    const start: Effect.Effect<void, never, ProjectionServices> = Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       const existing = yield* Ref.get(loopFiberRef);
       if (stopped || Option.isSome(existing)) return;

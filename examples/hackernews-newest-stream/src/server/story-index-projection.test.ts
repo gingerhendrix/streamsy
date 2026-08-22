@@ -1,4 +1,5 @@
-import { type JsonValue, type StreamProtocolClient } from "@streamsy/core";
+/* oxlint-disable effecttsgo/async-function -- This Vitest integration suite drives Promise protocol adapters and executes Effect descriptions at the test boundary. */
+import { type StreamProtocolClient } from "@streamsy/core";
 import * as StateProjection from "@streamsy/experimental/state-projection";
 import type { Instance as StateProjectionInstance } from "@streamsy/experimental/state-projection";
 import { Effect } from "effect";
@@ -27,9 +28,11 @@ function catchUp<Input>(
   clientLayer: ReturnType<typeof StateProjection.layerClient>,
   limitOverrides: Partial<typeof limits> = {},
 ) {
-  return StateProjection.catchUp(projection, {
+  const program = StateProjection.catchUp(projection, {
     limits: { ...limits, ...limitOverrides },
-  }).pipe(Effect.provide(clientLayer));
+  });
+  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This helper is the Vitest execution boundary for the fixed-client projection layer.
+  return program.pipe(Effect.provide(clientLayer));
 }
 
 describe("Hacker News StateProjection story index", () => {
@@ -125,10 +128,10 @@ describe("Hacker News StateProjection story index", () => {
   });
 });
 
-async function readAllJson(client: StreamProtocolClient, streamId: string): Promise<JsonValue[]> {
+async function readAllJson(client: StreamProtocolClient, streamId: string): Promise<unknown[]> {
   const opened = await client.stream(streamId).read({ offset: "-1" });
   if (opened.status !== "ok") throw new Error(`expected target read, got ${opened.status}`);
-  const items: JsonValue[] = [];
+  const items: unknown[] = [];
   for await (const batch of opened.session) {
     if (batch.kind !== "json") throw new Error("expected JSON target");
     items.push(...batch.items);
@@ -136,7 +139,7 @@ async function readAllJson(client: StreamProtocolClient, streamId: string): Prom
   return items;
 }
 
-function isStoryFact(value: JsonValue): value is StoryFact {
+function isStoryFact(value: unknown): value is StoryFact {
   if (!isJsonObject(value) || value.type !== "hn-story" || typeof value.key !== "string") {
     return false;
   }
@@ -144,24 +147,26 @@ function isStoryFact(value: JsonValue): value is StoryFact {
   return value.value === undefined || isStoryValue(value.value);
 }
 
-function isStoryValue(value: JsonValue): value is StoryValue {
+function isStoryValue(value: unknown): value is StoryValue {
   return isJsonObject(value) && typeof value.title === "string";
 }
 
-function storyTitle(value: JsonValue | undefined): string | undefined {
+function storyTitle(value: unknown): string | undefined {
   return value !== undefined && isStoryValue(value) ? value.title : undefined;
 }
 
-function isJsonObject(value: JsonValue): value is Readonly<Record<string, JsonValue>> {
+function isJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface StoryFact extends Readonly<Record<string, JsonValue>> {
+interface StoryFact {
   readonly type: "hn-story";
   readonly key: string;
-  readonly headers: Readonly<Record<string, JsonValue>> & { readonly operation: string };
+  readonly headers: Readonly<Record<string, unknown>> & { readonly operation: string };
+  readonly value?: unknown;
+  readonly old_value?: unknown;
 }
 
-interface StoryValue extends Readonly<Record<string, JsonValue>> {
+interface StoryValue {
   readonly title: string;
 }

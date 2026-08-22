@@ -12,6 +12,7 @@ function contentType(pathname: string): string | undefined {
   return extension ? contentTypes[extension] : undefined;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- Bun.file exposes Promise-native existence checks at this HTTP framework edge.
 async function fileResponse(pathname: string, candidate: string): Promise<Response | null> {
   const file = Bun.file(candidate);
   if (!(await file.exists())) return null;
@@ -19,6 +20,7 @@ async function fileResponse(pathname: string, candidate: string): Promise<Respon
   return new Response(file, type ? { headers: { "content-type": type } } : undefined);
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- Bun's fetch handler consumes a Promise<Response> at this static-file framework edge.
 export async function serveStatic(url: URL): Promise<Response> {
   const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
   const direct = await fileResponse(pathname, `${import.meta.dir}/../../dist${pathname}`);
