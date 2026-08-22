@@ -5,14 +5,11 @@ import {
   createHttpHandler,
   createMemoryStorageAdapter,
   directProtocolClient,
+  type ClientAppendResult,
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import {
-  bindStream,
-  type BoundAppendResult,
-  type StreamBinding,
-} from "@streamsy/experimental/binding";
+import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
 import { sourceAck, streamIdentity } from "@streamsy/experimental/causal";
 import { AppendStreamsLive, ReadStreams, ReadStreamsLive } from "@streamsy/experimental/effect";
 import {
@@ -20,10 +17,11 @@ import {
   deriveProducerLane,
   type ProducerLane,
 } from "@streamsy/experimental/ivm-mesh";
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Option } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   EagerCounterConsumer,
+  CounterIncrement,
   MalformedCounterState,
   UnregisteredCounterStateCollection,
   appendCounterIncrement,
@@ -37,11 +35,16 @@ interface Harness {
   readonly source: StreamBinding;
   readonly target: StreamBinding;
   readonly lane: ProducerLane;
-  append(delta: number): Promise<BoundAppendResult>;
+  append(delta: number): Promise<AppendWithAck>;
   project(): Promise<unknown>;
   consume(consumer: EagerCounterConsumer): Promise<CounterConsumerResult>;
   close(): Promise<void>;
 }
+
+type Appended = Extract<ClientAppendResult, { status: "appended" }>;
+type AppendWithAck =
+  | (Appended & { readonly ack: ReturnType<typeof sourceAck> })
+  | Exclude<ClientAppendResult, Appended>;
 
 const active: Harness[] = [];
 afterEach(async () => {
@@ -49,6 +52,14 @@ afterEach(async () => {
 });
 
 describe("causal counter — Effect runtime edge", () => {
+  test("the canonical increment schema rejects empty ids and non-safe integers", () => {
+    const decode = Schema.decodeUnknownSync(CounterIncrement);
+    expect(() => decode({ counterId: "", delta: 1 })).toThrow();
+    expect(() => decode({ counterId: "visits", delta: 1.5 })).toThrow();
+    expect(() => decode({ counterId: "visits", delta: Number.MAX_SAFE_INTEGER + 1 })).toThrow();
+    const valid = { counterId: "visits", delta: -3 };
+    expect(decode(JSON.parse(JSON.stringify(valid)))).toEqual(valid);
+  });
   test.each(["direct", "fetch"] as const)(
     "proves an acknowledgement with visible state and lineage over %s",
     async (transport) => {

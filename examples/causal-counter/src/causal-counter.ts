@@ -22,14 +22,16 @@ import { Effect, Schema } from "effect";
 
 export const COUNTER_COLLECTION = "counter-contribution";
 
-export interface CounterIncrement {
-  readonly counterId: string;
-  readonly delta: number;
-}
-
-export const CounterContribution = Schema.Struct({
+const CounterValueFields = {
   counterId: Schema.NonEmptyString,
   delta: Schema.Int,
+};
+
+export const CounterIncrement = Schema.Struct(CounterValueFields);
+export interface CounterIncrement extends Schema.Schema.Type<typeof CounterIncrement> {}
+
+export const CounterContribution = Schema.Struct({
+  ...CounterValueFields,
   sourcePosition: Schema.NonEmptyString,
 });
 export interface CounterContribution extends Schema.Schema.Type<typeof CounterContribution> {}
@@ -82,20 +84,19 @@ const defaultLimits: CatchUpLimits = {
 /**
  * Wire form of one source fact.
  *
- * `validateIncrement` has already proven the shape, so this codec only encodes
- * the exact JSON body appended to the source stream.
+ * The same schema decodes source batches and encodes the exact appended JSON.
  */
-const CounterIncrementJson = Schema.fromJsonString(
-  Schema.Struct({ counterId: Schema.NonEmptyString, delta: Schema.Int }),
-);
+const CounterIncrementJson = Schema.fromJsonString(CounterIncrement);
 const encodeIncrement = Schema.encodeSync(CounterIncrementJson);
+const decodeIncrement = Schema.decodeUnknownSync(CounterIncrement);
+const StateEventEnvelope = Schema.Struct({ type: Schema.String });
 
 /** Append one source fact through the fixed binding and return its exact acknowledgement. */
 export const appendCounterIncrement = Effect.fn("CausalCounter.appendIncrement")(function* (
   source: StreamBinding,
   increment: CounterIncrement,
 ) {
-  const validated = validateIncrement(increment);
+  const validated = decodeIncrement(increment);
   const appends = yield* AppendStreams;
   const result = yield* appends.append(source, encodeIncrement(validated), {
     contentType: "application/json",
@@ -124,7 +125,7 @@ export function projectCounterIncrements(options: {
 
 function decodeIncrements(batch: StreamBatch): readonly CounterIncrement[] {
   if (batch.kind !== "json") throw new TypeError("Counter source must be JSON");
-  return batch.items.map((item) => validateIncrement(item));
+  return batch.items.map((item) => decodeIncrement(item));
 }
 
 function contributionEvents(
@@ -252,13 +253,12 @@ export class EagerCounterConsumer {
     const contributions = new Map(consumer.contributions);
     let lineage = consumer.lineage;
     for (const event of events) {
-      if (!isRecord(event) || typeof event.type !== "string") {
-        return yield* new MalformedCounterState({
-          message: "State event must have a type",
-          cause: event,
-        });
-      }
-      if (event.type === COUNTER_COLLECTION) {
+      const envelope = yield* Schema.decodeUnknownEffect(StateEventEnvelope)(event).pipe(
+        Effect.mapError(
+          (cause) => new MalformedCounterState({ message: "State event must have a type", cause }),
+        ),
+      );
+      if (envelope.type === COUNTER_COLLECTION) {
         const decoded = yield* Schema.decodeUnknownEffect(CounterContributionEvent)(event).pipe(
           Effect.mapError(
             (cause) =>
@@ -266,10 +266,10 @@ export class EagerCounterConsumer {
           ),
         );
         contributions.set(decoded.key, decoded.value);
-      } else if (event.type === MESH_LINEAGE_TYPE) {
+      } else if (envelope.type === MESH_LINEAGE_TYPE) {
         lineage = yield* decodeLineageEvent(event);
       } else {
-        return yield* new UnregisteredCounterStateCollection({ collection: event.type });
+        return yield* new UnregisteredCounterStateCollection({ collection: envelope.type });
       }
     }
     consumer.contributions = contributions;
@@ -278,18 +278,4 @@ export class EagerCounterConsumer {
     observer?.(consumer.view());
     return undefined;
   });
-}
-
-function validateIncrement(value: unknown): CounterIncrement {
-  if (!isRecord(value) || typeof value.counterId !== "string" || value.counterId.length === 0) {
-    throw new TypeError("Counter increment requires a non-empty counterId");
-  }
-  if (typeof value.delta !== "number" || !Number.isSafeInteger(value.delta)) {
-    throw new TypeError("Counter increment delta must be a safe integer");
-  }
-  return { counterId: value.counterId, delta: value.delta };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
