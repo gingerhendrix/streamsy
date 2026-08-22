@@ -15,6 +15,7 @@
  * which is exactly the multi-writer model here.
  */
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { isErrnoException, isJsonObject } from "./guards.ts";
 
 export interface LockOptions {
   /** Max time to wait for the lock before giving up. Default 5000ms. */
@@ -44,8 +45,32 @@ function pidIsAlive(pid: number): boolean {
     return true;
   } catch (error) {
     // ESRCH: no such process ⇒ dead. EPERM: exists but not ours ⇒ alive.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    return isErrnoException(error) && error.code === "EPERM";
   }
+}
+
+function isLockFileContents(value: unknown): value is LockFileContents {
+  if (!isJsonObject(value)) return false;
+  if (typeof value.pid !== "number" || typeof value.ts !== "number") return false;
+  return value.host === undefined || typeof value.host === "string";
+}
+
+/**
+ * Parse a sentinel's contents, or `null` when they are unusable.
+ *
+ * The staleness decision reads `ts` and `pid`, so the parsed value is validated
+ * before those fields are trusted: a sentinel holding well-formed JSON of the
+ * wrong shape would otherwise compare as `NaN`/`undefined`, be judged neither
+ * aged-out nor dead-owned, and pin the lock forever.
+ */
+function parseLockFile(raw: string): LockFileContents | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return isLockFileContents(parsed) ? parsed : null;
 }
 
 /** Whether the lock at `lockPath` looks abandoned and may be reclaimed. */
@@ -58,13 +83,9 @@ function lockIsStale(lockPath: string, staleMs: number): boolean {
     // O_EXCL create will resolve the race deterministically.
     return true;
   }
-  let parsed: LockFileContents;
-  try {
-    parsed = JSON.parse(raw) as LockFileContents;
-  } catch {
-    // Corrupt sentinel: reclaim it.
-    return true;
-  }
+  // Corrupt or unrecognizable sentinel: reclaim it.
+  const parsed = parseLockFile(raw);
+  if (parsed === null) return true;
   if (Date.now() - parsed.ts > staleMs) return true;
   if (parsed.host === undefined || parsed.host === hostId()) {
     return !pidIsAlive(parsed.pid);
@@ -97,7 +118,7 @@ export async function acquireLock(lockPath: string, options: LockOptions = {}): 
       }
       return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
       if (lockIsStale(lockPath, staleMs)) {
         try {
           unlinkSync(lockPath);

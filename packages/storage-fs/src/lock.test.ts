@@ -54,6 +54,17 @@ describe("acquireLock / releaseLock", () => {
     releaseLock(lockPath);
   });
 
+  it("reclaims a sentinel whose JSON is not lock contents", async () => {
+    // Well-formed JSON of the wrong shape: `ts`/`pid` would compare as
+    // `undefined`, judging the lock neither aged-out nor dead-owned.
+    for (const contents of ["null", "[]", '{"pid":"1","ts":0}', '{"ts":0}', '{"pid":1}']) {
+      const lockPath = freshLockPath();
+      writeFileSync(lockPath, contents);
+      expect(await acquireLock(lockPath, { timeoutMs: 200 })).toBe(true);
+      releaseLock(lockPath);
+    }
+  });
+
   it("reclaims a corrupt sentinel", async () => {
     const lockPath = freshLockPath();
     writeFileSync(lockPath, "not json");

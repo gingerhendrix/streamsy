@@ -118,7 +118,34 @@ describe("JsonProtocol", () => {
     const read = await created.stream.read();
     expect(read.status).toBe("invalid-json");
     if (read.status !== "invalid-json") throw new Error("expected invalid-json");
-    expect((read.error as Error).message).toBe("invalid user");
+    // `error` is `unknown`: a codec may reject with any value, so narrow before
+    // reading `message` rather than asserting the shape.
+    expect(read.error).toBeInstanceOf(Error);
+    if (!(read.error instanceof Error)) throw new Error("expected an Error");
+    expect(read.error.message).toBe("invalid user");
+  });
+
+  it("surfaces a non-Error rejection from the codec unchanged", async () => {
+    const protocol = createProtocol();
+    // A codec is user code and may reject with any value; `error` is `unknown`
+    // precisely so the thrown value reaches the caller as-is.
+    const throwingCodec: JsonCodec<User> = {
+      encode: (value) => value,
+      decode() {
+        throw { code: "E_SCHEMA", detail: "not a user" };
+      },
+    };
+    const json = createJsonProtocol(protocol, throwingCodec);
+
+    const created = await json.create("users", { initialMessage: { id: "u1", name: "Alice" } });
+    expect(created.status).toBe("created");
+    if (created.status !== "created") throw new Error("expected created");
+
+    const read = await created.stream.read();
+    expect(read.status).toBe("invalid-json");
+    if (read.status !== "invalid-json") throw new Error("expected invalid-json");
+    expect(read.error).not.toBeInstanceOf(Error);
+    expect(read.error).toEqual({ code: "E_SCHEMA", detail: "not a user" });
   });
 
   it("reads typed messages through readLive", async () => {

@@ -23,7 +23,8 @@
  */
 import { Buffer } from "node:buffer";
 import path from "node:path";
-import type { Offset, StoredMessage, StreamRecord } from "@streamsy/core";
+import type { Offset, ProducerState, StoredMessage, StreamRecord } from "@streamsy/core";
+import { isJsonObject } from "./guards.ts";
 
 export const JSON_CONTENT_TYPE = "application/json";
 
@@ -63,8 +64,65 @@ export function serializeRecord(record: StreamRecord): string {
   return JSON.stringify(record);
 }
 
+/**
+ * Whether `value` carries every field `StreamRecord` requires.
+ *
+ * Only required fields are checked. Optional `config`/`lifecycle` members are
+ * left to the reader, exactly as they were before validation existed: a record
+ * written by an older version that simply omits them stays readable.
+ */
+function isStreamRecord(value: unknown): value is StreamRecord {
+  if (!isJsonObject(value)) return false;
+  if (typeof value.id !== "string") return false;
+  if (typeof value.currentOffset !== "string") return false;
+  if (typeof value.counter !== "number") return false;
+  if (!isJsonObject(value.config)) return false;
+  if (typeof value.config.contentType !== "string") return false;
+  if (typeof value.config.createdAt !== "number") return false;
+  return isJsonObject(value.lifecycle);
+}
+
+/**
+ * Parse `record.json` into the authoritative tail.
+ *
+ * Corruption is distinct from absence: a missing file is an `ENOENT` the caller
+ * handles before reaching here, whereas a file whose bytes are not valid JSON
+ * propagates the underlying `SyntaxError` and a file whose JSON is not a stream
+ * record throws. Neither is silently reinterpreted as an empty or missing
+ * stream, which would present a corrupt stream as a fresh one.
+ */
 export function parseRecord(text: string): StreamRecord {
-  return JSON.parse(text) as StreamRecord;
+  const parsed: unknown = JSON.parse(text);
+  if (!isStreamRecord(parsed)) {
+    throw new Error("storage-fs: corrupt record.json: not a stream record");
+  }
+  return parsed;
+}
+
+/** Per-producer idempotency state, keyed by producer id (`producers.json`). */
+export type ProducerMap = Record<string, ProducerState>;
+
+function isProducerState(value: unknown): value is ProducerState {
+  return (
+    isJsonObject(value) && typeof value.epoch === "number" && typeof value.lastSeq === "number"
+  );
+}
+
+function isProducerMap(value: unknown): value is ProducerMap {
+  return isJsonObject(value) && Object.values(value).every(isProducerState);
+}
+
+/**
+ * Parse `producers.json`. Same corruption/absence split as {@link parseRecord}:
+ * a producer map that cannot be trusted must not be mistaken for "this producer
+ * has never written", which would let a duplicate append through.
+ */
+export function parseProducers(text: string): ProducerMap {
+  const parsed: unknown = JSON.parse(text);
+  if (!isProducerMap(parsed)) {
+    throw new Error("storage-fs: corrupt producers.json: not a producer map");
+  }
+  return parsed;
 }
 
 interface MessageEnvelope {
@@ -98,17 +156,29 @@ export function encodeEnvelope(message: StoredMessage, contentType: string): str
   return JSON.stringify(envelope);
 }
 
+/**
+ * Whether a parsed JSONL line carries the envelope fields every line needs.
+ * A line that is valid JSON but not an object (`null`, `123`, `[]`) fails here
+ * rather than being indexed as one.
+ */
+function isMessageEnvelope(value: unknown): value is MessageEnvelope {
+  return (
+    isJsonObject(value) && typeof value.offset === "string" && typeof value.timestamp === "number"
+  );
+}
+
 /** Decode one JSONL line back to a stored message, or `null` for a malformed line. */
 export function decodeEnvelope(line: string): StoredMessage | null {
   const trimmed = line.trim();
   if (trimmed.length === 0) return null;
-  let envelope: MessageEnvelope;
+  let parsed: unknown;
   try {
-    envelope = JSON.parse(trimmed) as MessageEnvelope;
+    parsed = JSON.parse(trimmed);
   } catch {
     return null;
   }
-  if (typeof envelope.offset !== "string" || typeof envelope.timestamp !== "number") return null;
+  if (!isMessageEnvelope(parsed)) return null;
+  const envelope: MessageEnvelope = parsed;
 
   let data: Uint8Array;
   if (typeof envelope.b64 === "string") {

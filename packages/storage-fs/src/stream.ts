@@ -52,10 +52,13 @@ import { runAwaitChangeLoop } from "@streamsy/core";
 import {
   decodeEnvelope,
   encodeEnvelope,
+  type ProducerMap,
+  parseProducers,
   parseRecord,
   serializeRecord,
   streamDir,
 } from "./codec.ts";
+import { isErrnoException } from "./guards.ts";
 import { acquireLock, type LockOptions, releaseLock } from "./lock.ts";
 import { Notifier } from "./notifier.ts";
 import { TimeoutScheduler } from "./timeout-scheduler.ts";
@@ -74,8 +77,6 @@ export interface WritePlan {
 export type WriteResult =
   | { status: "committed"; record: StreamRecord }
   | { status: "precondition-failed"; record: StreamRecord | null; reason?: FailureReason };
-
-type ProducerMap = Record<string, ProducerState>;
 
 export interface FsStreamOptions {
   lock?: LockOptions;
@@ -129,7 +130,7 @@ export class FsStream {
     try {
       return parseRecord(readFileSync(this.recordPath, "utf8"));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (isErrnoException(error) && error.code === "ENOENT") return null;
       throw error;
     }
   }
@@ -140,9 +141,9 @@ export class FsStream {
 
   private readProducers(): ProducerMap {
     try {
-      return JSON.parse(readFileSync(this.producersPath, "utf8")) as ProducerMap;
+      return parseProducers(readFileSync(this.producersPath, "utf8"));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      if (isErrnoException(error) && error.code === "ENOENT") return {};
       throw error;
     }
   }
@@ -156,7 +157,7 @@ export class FsStream {
     try {
       raw = readFileSync(this.messagesPath, "utf8");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return Promise.resolve([]);
+      if (isErrnoException(error) && error.code === "ENOENT") return Promise.resolve([]);
       throw error;
     }
 

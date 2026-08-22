@@ -1,6 +1,8 @@
 /**
- * Envelope encoding: JSON-inline for `application/json`, base64 for everything
- * else, with a base64 fallback when a nominally-JSON line is not valid JSON.
+ * On-disk (de)serialization: envelope encoding (JSON-inline for
+ * `application/json`, base64 otherwise, with a base64 fallback when a
+ * nominally-JSON line is not valid JSON), and validation of the persisted
+ * `record.json` / `producers.json` shapes.
  */
 import { describe, expect, it } from "bun:test";
 import {
@@ -8,9 +10,12 @@ import {
   encodeEnvelope,
   encodeStreamId,
   isJsonContentType,
+  parseProducers,
+  parseRecord,
+  serializeRecord,
   streamDir,
 } from "./codec.ts";
-import type { StoredMessage } from "@streamsy/core";
+import type { StoredMessage, StreamRecord } from "@streamsy/core";
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const dec = (u: Uint8Array): string => new TextDecoder().decode(u);
@@ -84,6 +89,74 @@ describe("encodeEnvelope / decodeEnvelope", () => {
     expect(decodeEnvelope("   ")).toBeNull();
     expect(decodeEnvelope("{not json")).toBeNull();
     expect(decodeEnvelope('{"offset":1}')).toBeNull();
+  });
+
+  it("ignores lines that are valid JSON but not an envelope object", () => {
+    // `null` and primitives parse successfully; they must not be indexed as
+    // envelopes on the way to reading `offset`.
+    expect(decodeEnvelope("null")).toBeNull();
+    expect(decodeEnvelope("123")).toBeNull();
+    expect(decodeEnvelope('"a string"')).toBeNull();
+    expect(decodeEnvelope("[]")).toBeNull();
+    // An object with the right fields but no payload discriminant, and one
+    // whose `b64` is not a string.
+    expect(decodeEnvelope('{"offset":"o","timestamp":1}')).toBeNull();
+    expect(decodeEnvelope('{"offset":"o","timestamp":1,"b64":5}')).toBeNull();
+  });
+});
+
+describe("parseRecord", () => {
+  const record: StreamRecord = {
+    id: "s",
+    config: { contentType: "text/plain", createdAt: 7 },
+    lifecycle: { closed: true },
+    currentOffset: "0000000000000001_0000000000000000",
+    counter: 1,
+  };
+
+  it("round-trips a serialized record", () => {
+    expect(parseRecord(serializeRecord(record))).toEqual(record);
+  });
+
+  it("propagates a syntax error for bytes that are not JSON", () => {
+    expect(() => parseRecord("{ truncated")).toThrow(SyntaxError);
+  });
+
+  it("rejects valid JSON that is not a stream record", () => {
+    for (const value of [
+      "null",
+      "[]",
+      "42",
+      JSON.stringify({ ...record, id: 1 }),
+      JSON.stringify({ ...record, currentOffset: undefined }),
+      JSON.stringify({ ...record, counter: "1" }),
+      JSON.stringify({ ...record, config: { contentType: "text/plain" } }),
+      JSON.stringify({ ...record, lifecycle: [] }),
+    ]) {
+      expect(() => parseRecord(value)).toThrow(/corrupt record\.json/);
+    }
+  });
+});
+
+describe("parseProducers", () => {
+  it("accepts an empty map and well-formed producer state", () => {
+    expect(parseProducers("{}")).toEqual({});
+    expect(parseProducers('{"p1":{"epoch":2,"lastSeq":9}}')).toEqual({
+      p1: { epoch: 2, lastSeq: 9 },
+    });
+  });
+
+  it("rejects a map holding anything that is not producer state", () => {
+    for (const value of [
+      "null",
+      "[]",
+      '{"p1":null}',
+      '{"p1":"state"}',
+      '{"p1":{"epoch":2}}',
+      '{"p1":{"epoch":2,"lastSeq":null}}',
+    ]) {
+      expect(() => parseProducers(value)).toThrow(/corrupt producers\.json/);
+    }
   });
 });
 
