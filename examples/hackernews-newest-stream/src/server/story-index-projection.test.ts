@@ -2,12 +2,13 @@
 import { type StreamProtocolClient } from "@streamsy/core";
 import * as StateProjection from "@streamsy/experimental/state-projection";
 import type { Instance as StateProjectionInstance } from "@streamsy/experimental/state-projection";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { makeStoryProjectionInstance } from "./projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 import { sourceDelete, sourceUpsert } from "./story-index-projection.ts";
 import { demoHarness, story } from "./test-support.ts";
+import { HackerNewsStateChange, HackerNewsStory } from "../state-schema.ts";
 
 const clients = new Set<StreamProtocolClient>();
 const limits = { pages: 10, batches: 10, items: 50, bytes: 100_000 };
@@ -62,8 +63,12 @@ describe("Hacker News StateProjection story index", () => {
       ["101", "upsert"],
       ["102", "delete"],
     ]);
-    expect(storyTitle(facts[2]?.value)).toBe("Updated title");
-    expect(storyTitle(facts[3]?.old_value)).toBe("Second title");
+    expect(storyTitle(facts[2] && "value" in facts[2] ? facts[2].value : undefined)).toBe(
+      "Updated title",
+    );
+    expect(storyTitle(facts[3] && "old_value" in facts[3] ? facts[3].old_value : undefined)).toBe(
+      "Second title",
+    );
   });
 
   test("resumes bounded catch-up at the next durable source boundary", async () => {
@@ -139,34 +144,9 @@ async function readAllJson(client: StreamProtocolClient, streamId: string): Prom
   return items;
 }
 
-function isStoryFact(value: unknown): value is StoryFact {
-  if (!isJsonObject(value) || value.type !== "hn-story" || typeof value.key !== "string") {
-    return false;
-  }
-  if (!isJsonObject(value.headers) || typeof value.headers.operation !== "string") return false;
-  return value.value === undefined || isStoryValue(value.value);
-}
-
-function isStoryValue(value: unknown): value is StoryValue {
-  return isJsonObject(value) && typeof value.title === "string";
-}
+const isStoryFact = Schema.is(HackerNewsStateChange);
+const isStoryValue = Schema.is(HackerNewsStory);
 
 function storyTitle(value: unknown): string | undefined {
   return value !== undefined && isStoryValue(value) ? value.title : undefined;
-}
-
-function isJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-interface StoryFact {
-  readonly type: "hn-story";
-  readonly key: string;
-  readonly headers: Readonly<Record<string, unknown>> & { readonly operation: string };
-  readonly value?: unknown;
-  readonly old_value?: unknown;
-}
-
-interface StoryValue {
-  readonly title: string;
 }

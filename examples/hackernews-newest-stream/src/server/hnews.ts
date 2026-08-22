@@ -1,6 +1,5 @@
-import { Effect } from "effect";
-import { z } from "zod";
-import { hnStorySchema, newestStorySort, type HnStory } from "../state-schema.ts";
+import { Effect, Schema } from "effect";
+import { HackerNewsItem, HackerNewsStory, newestStorySort, type HnStory } from "../state-schema.ts";
 import { hnApiBase } from "./config.ts";
 import { pollFailure, type HackerNewsApi } from "./poller/contract.ts";
 
@@ -8,23 +7,7 @@ import { pollFailure, type HackerNewsApi } from "./poller/contract.ts";
 // poller at a local fixture (used by the offline smoke test).
 const defaultHnBase = hnApiBase;
 
-const newestStoryIdsSchema = z.array(z.number());
-const hnItemSchema = z
-  .object({
-    id: z.number(),
-    deleted: z.boolean().optional(),
-    dead: z.boolean().optional(),
-    type: z.string().optional(),
-    by: z.string().optional(),
-    time: z.number().optional(),
-    text: z.string().optional(),
-    kids: z.array(z.number()).optional(),
-    descendants: z.number().optional(),
-    score: z.number().optional(),
-    title: z.string().optional(),
-    url: z.string().optional(),
-  })
-  .nullable();
+const NewestStoryIds = Schema.Array(Schema.Finite);
 
 // oxlint-disable-next-line effecttsgo/async-function -- This exported Promise helper is the documented HN compatibility adapter used at non-Effect edges.
 export async function fetchNewestStoryIds(
@@ -35,7 +18,7 @@ export async function fetchNewestStoryIds(
   const response = await fetch(`${apiBase}/newstories.json`);
   if (!response.ok)
     throw new Error(`HN newstories failed: ${response.status} ${response.statusText}`);
-  const ids = newestStoryIdsSchema.parse(await response.json());
+  const ids = Schema.decodeUnknownSync(NewestStoryIds)(await response.json());
   return ids.slice(0, limit);
 }
 
@@ -45,20 +28,20 @@ export async function fetchStory(id: number, apiBase = defaultHnBase): Promise<H
   const response = await fetch(`${apiBase}/item/${id}.json`);
   if (!response.ok)
     throw new Error(`HN item ${id} failed: ${response.status} ${response.statusText}`);
-  const item = hnItemSchema.parse(await response.json());
+  const item = Schema.decodeUnknownSync(HackerNewsItem)(await response.json());
   if (!item || item.deleted || item.dead || item.type !== "story" || !item.title || !item.time)
     return null;
 
-  return hnStorySchema.parse({
+  return Schema.decodeUnknownSync(HackerNewsStory)({
     id: item.id,
-    by: item.by,
-    descendants: item.descendants,
-    score: item.score,
+    ...(item.by === undefined ? {} : { by: item.by }),
+    ...(item.descendants === undefined ? {} : { descendants: item.descendants }),
+    ...(item.score === undefined ? {} : { score: item.score }),
     time: item.time,
     title: item.title,
     type: "story",
-    url: item.url,
-    text: item.text,
+    ...(item.url === undefined ? {} : { url: item.url }),
+    ...(item.text === undefined ? {} : { text: item.text }),
   });
 }
 

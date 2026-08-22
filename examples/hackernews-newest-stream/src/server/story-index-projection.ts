@@ -1,19 +1,11 @@
-import type { JsonValue } from "@streamsy/core";
 import * as StateProjection from "@streamsy/experimental/state-projection";
 import { Schema } from "effect";
-import { hackerNewsState, type HnStory } from "../state-schema.ts";
-
-export const HackerNewsStory = Schema.Struct({
-  id: Schema.Finite,
-  by: Schema.optionalKey(Schema.String),
-  descendants: Schema.optionalKey(Schema.Finite),
-  score: Schema.optionalKey(Schema.Finite),
-  time: Schema.Finite,
-  title: Schema.String,
-  type: Schema.Literal("story"),
-  url: Schema.optionalKey(Schema.String),
-  text: Schema.optionalKey(Schema.String),
-});
+import {
+  HackerNewsStateChange,
+  HackerNewsStory,
+  hackerNewsState,
+  type HnStory,
+} from "../state-schema.ts";
 
 export const HackerNewsSourceChange = Schema.Union([
   Schema.Struct({ operation: Schema.Literal("upsert"), story: HackerNewsStory }),
@@ -25,6 +17,7 @@ export const HackerNewsSourceChange = Schema.Union([
 ]);
 
 export type HackerNewsSourceChange = Schema.Schema.Type<typeof HackerNewsSourceChange>;
+const encodeStateChange = Schema.encodeUnknownSync(HackerNewsStateChange);
 
 export function sourceUpsert(story: HnStory): HackerNewsSourceChange {
   return { operation: "upsert", story };
@@ -50,7 +43,7 @@ export const hackerNewsStoryIndex = StateProjection.make({
 
     if (value.operation === "delete") {
       return [
-        toJson(
+        encodeStateChange(
           hackerNewsState.stories.delete({
             key: value.key,
             oldValue: value.oldValue,
@@ -60,26 +53,6 @@ export const hackerNewsStoryIndex = StateProjection.make({
       ];
     }
 
-    return [toJson(hackerNewsState.stories.upsert({ value: value.story, headers }))];
+    return [encodeStateChange(hackerNewsState.stories.upsert({ value: value.story, headers }))];
   },
 });
-
-function toJson(value: unknown): JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(toJson);
-  if (typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter((entry) => entry[1] !== undefined)
-        .map(([key, entryValue]) => [key, toJson(entryValue)]),
-    );
-  }
-  throw new TypeError(`Durable State values must be JSON; received ${typeof value}`);
-}

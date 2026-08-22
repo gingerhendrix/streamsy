@@ -3,35 +3,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { z } from "zod";
-import { hackerNewsState, type HnStory } from "../state-schema.ts";
+import { Option, Schema } from "effect";
+import { ApiStatus, hackerNewsState, type HnStory } from "../state-schema.ts";
 import "./styles.css";
 
 type HnDb = StreamDB<typeof hackerNewsState>;
-const apiStatusSchema = z.object({
-  streamPath: z.string(),
-  sourceStreamPath: z.string(),
-  newestLimit: z.number(),
-  pollIntervalMs: z.number(),
-  polling: z.boolean(),
-  projection: z.object({
-    running: z.boolean(),
-    lastError: z.string().optional(),
-    lastOutcome: z.object({ status: z.string() }).optional(),
-  }),
-  lastPollStartedAt: z.string().optional(),
-  lastPollCompletedAt: z.string().optional(),
-  lastPollError: z.string().optional(),
-  lastStoryCount: z.number(),
-  lastFetchedNewStories: z.number(),
-  lastRefreshedStories: z.number(),
-  lastChangedStories: z.number(),
-  lastRemovedStories: z.number(),
-  sourceBatches: z.number(),
-  sourceChanges: z.number(),
-});
-
-type ApiStatus = z.infer<typeof apiStatusSchema>;
 
 function streamUrl(): string {
   return new URL("/streams/session/main", window.location.origin).toString();
@@ -125,8 +101,8 @@ function HnApp({ db }: { db: HnDb }) {
     async function refresh() {
       const response = await fetch("/api/status");
       if (!response.ok) return;
-      const next = apiStatusSchema.safeParse(await response.json());
-      if (!cancelled && next.success) setStatus(next.data);
+      const next = Schema.decodeUnknownOption(ApiStatus)(await response.json());
+      if (!cancelled && Option.isSome(next)) setStatus(next.value);
     }
     void refresh();
     const interval = setInterval(() => void refresh(), 5000);
