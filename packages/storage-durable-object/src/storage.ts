@@ -133,7 +133,7 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
    */
   async applyMutation(streamId: StreamId, plan: WritePlan): Promise<WriteResult> {
     this.ensureInit(streamId);
-    let record = (this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null) as StreamRecord | null;
+    let record = this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null;
 
     if (plan.createRecord) {
       if (plan.createRecord.id !== streamId) {
@@ -230,8 +230,7 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     this.ensureInit(streamId);
     return runAwaitChangeLoop(
       {
-        readRecord: () =>
-          (this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null) as StreamRecord | null,
+        readRecord: () => this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) ?? null,
         waitForWake: (timeoutMs) => this.notifier.waitForWake(timeoutMs),
         totalCapMs: this.notifier.longPollTimeoutMs,
       },

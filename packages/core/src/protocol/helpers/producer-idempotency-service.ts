@@ -57,4 +57,9 @@ export function rejectionToAppendResult(
     case "invalid-epoch-seq":
       return { status: "invalid-epoch-seq" as const };
   }
+  return exhaustive(rejection);
+}
+
+function exhaustive(value: never): never {
+  throw new TypeError(`Unexpected producer rejection: ${String(value)}`);
 }

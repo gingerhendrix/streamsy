@@ -4,6 +4,21 @@ import { createMemoryStorageAdapter } from "../storage/memory/adapter.ts";
 import { unsupported } from "../types/storage-adapter.ts";
 import type { StorageAdapter } from "../types/storage-adapter.ts";
 
+function makeHandler() {
+  const base = createMemoryStorageAdapter();
+  const adapter: StorageAdapter = {
+    ...base,
+    append: (streamId, plan) => {
+      if (plan.preconditions.producer) {
+        throw unsupported("producers", "this backend cannot store producer state");
+      }
+      return base.append(streamId, plan);
+    },
+  };
+  const protocol = new StreamProtocol({ storage: { adapter } });
+  return new HttpHandler({ protocol });
+}
+
 /**
  * A thrown storage-level `NotSupportedError` must surface as the public
  * structured `not-supported` response (400 + `stream-not-supported` header),
@@ -12,21 +27,6 @@ import type { StorageAdapter } from "../types/storage-adapter.ts";
  * `AppendPlan` with no method to omit.
  */
 describe("NotSupportedError → structured not-supported mapping", () => {
-  function makeHandler() {
-    const base = createMemoryStorageAdapter();
-    const adapter: StorageAdapter = {
-      ...base,
-      append: (streamId, plan) => {
-        if (plan.preconditions.producer) {
-          throw unsupported("producers", "this backend cannot store producer state");
-        }
-        return base.append(streamId, plan);
-      },
-    };
-    const protocol = new StreamProtocol({ storage: { adapter } });
-    return new HttpHandler({ protocol });
-  }
-
   it("maps a thrown NotSupportedError to 400 with the stream-not-supported header", async () => {
     const handler = makeHandler();
     const put = await handler.fetch(

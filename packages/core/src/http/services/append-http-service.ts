@@ -149,5 +149,10 @@ export class AppendHttpService {
         );
       }
     }
+    return exhaustive(result);
   }
+}
+
+function exhaustive(value: never): never {
+  throw new TypeError(`Unexpected append result: ${String(value)}`);
 }

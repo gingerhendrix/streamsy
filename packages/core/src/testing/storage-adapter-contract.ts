@@ -456,7 +456,7 @@ function runAwaitChangeContract(
       timeoutMs: 80,
     });
     assertStatus(result, "timeout", "timeout");
-    assert(result.snapshot.present === true, "snapshot present");
+    assert(result.snapshot.present, "snapshot present");
     assert(result.snapshot.currentOffset === ZERO_OFFSET, "snapshot at the parked tail");
   });
 
@@ -502,7 +502,7 @@ function runAwaitChangeContract(
 
     const result = await pending;
     assertStatus(result, "changed", "wake on close");
-    assert(result.snapshot.closed === true, "snapshot reports closed");
+    assert(result.snapshot.closed, "snapshot reports closed");
   });
 
   harness.it("awaitChange wakes a parked waiter on a soft-delete transition", async () => {
@@ -534,7 +534,7 @@ function runAwaitChangeContract(
 
     const result = await pending;
     assertStatus(result, "changed", "wake on soft-delete");
-    assert(result.snapshot.softDeleted === true, "snapshot reports soft-deleted");
+    assert(result.snapshot.softDeleted, "snapshot reports soft-deleted");
   });
 
   harness.it("awaitChange wakes a parked waiter on a purge", async () => {
@@ -555,7 +555,7 @@ function runAwaitChangeContract(
 
     const result = await pending;
     assertStatus(result, "changed", "wake on purge");
-    assert(result.snapshot.present === false, "snapshot reports the record gone");
+    assert(!result.snapshot.present, "snapshot reports the record gone");
   });
 
   harness.it(

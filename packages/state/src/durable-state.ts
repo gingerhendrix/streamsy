@@ -405,6 +405,6 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
   ): Promise<AppendResult> {
     return this.append({
       headers: { ...options.headers, offset: options.offset, control },
-    } as DurableStateMessage<ValuesByWireType<S>>);
+    });
   }
 }

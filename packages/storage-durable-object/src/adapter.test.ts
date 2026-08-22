@@ -336,7 +336,7 @@ describe("createDurableObjectStorageAdapter", () => {
 
     // awaitChange routes to the stub and wakes on a later append. Its options are
     // plain, serializable data (no AbortSignal).
-    const waiting = adapter.awaitChange!("alpha", { fromOffset: "1_0", timeoutMs: 1_000 });
+    const waiting = adapter.awaitChange("alpha", { fromOffset: "1_0", timeoutMs: 1_000 });
     await new Promise((resolve) => setTimeout(resolve, 0));
     const advanced = await adapter.append("alpha", {
       preconditions: { expectedOffset: "1_0" },
@@ -368,10 +368,10 @@ describe("createDurableObjectStorageAdapter", () => {
       recordPatch: { currentOffset: "1_0", counter: 1 },
     });
 
-    const immediate = await adapter.awaitChange!("alpha", { fromOffset: "0_0", timeoutMs: 1_000 });
+    const immediate = await adapter.awaitChange("alpha", { fromOffset: "0_0", timeoutMs: 1_000 });
     expect(immediate.status).toBe("changed");
 
-    const timed = await adapter.awaitChange!("alpha", { fromOffset: "1_0", timeoutMs: 10 });
+    const timed = await adapter.awaitChange("alpha", { fromOffset: "1_0", timeoutMs: 10 });
     expect(timed.status).toBe("timeout");
     if (timed.status !== "timeout") throw new Error("expected timeout");
     expect(timed.snapshot).toMatchObject({ present: true, currentOffset: "1_0" });

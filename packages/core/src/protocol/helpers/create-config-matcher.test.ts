@@ -9,7 +9,6 @@ import { describe, it, expect } from "vitest";
 import { configMatches } from "../../protocol/helpers/create-config-matcher.ts";
 import { ZERO_OFFSET } from "../../protocol/helpers/offset-generator.ts";
 import type { StreamRecord } from "../../types/storage.ts";
-import type { CreateOptions } from "../../types/protocol.ts";
 
 function makeRecord(
   overrides: {
@@ -44,7 +43,7 @@ function makeRecord(
 describe("configMatches — content type", () => {
   it("defaults options.contentType to application/octet-stream when both sides omit it", () => {
     const existing = makeRecord({ contentType: "application/octet-stream" });
-    expect(configMatches(existing, {} as CreateOptions)).toBe(true);
+    expect(configMatches(existing, {})).toBe(true);
   });
 
   it("returns false when content types differ", () => {

@@ -76,8 +76,8 @@ describe("frameMessages — JSON array input", () => {
 describe("frameMessages — content-type matching semantics", () => {
   it("matches case-insensitively on the application/json prefix", () => {
     const data = enc.encode('{"a":1}');
-    expect(dec.decode(frameMessages(data, "Application/JSON")[0]!)).toBe('{"a":1}');
-    expect(dec.decode(frameMessages(data, "APPLICATION/JSON")[0]!)).toBe('{"a":1}');
+    expect(dec.decode(frameMessages(data, "Application/JSON")[0])).toBe('{"a":1}');
+    expect(dec.decode(frameMessages(data, "APPLICATION/JSON")[0])).toBe('{"a":1}');
   });
 
   it("treats application/json with parameters as JSON via prefix match", () => {

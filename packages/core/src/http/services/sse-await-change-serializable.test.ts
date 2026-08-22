@@ -47,7 +47,7 @@ describe("SSE boundary — awaitChange receives only serializable arguments", ()
           // `DataCloneError` on an AbortSignal / function / any non-cloneable value.
           structuredClone({ streamId, options });
           seen.push(options);
-          return base.awaitChange!(streamId, options);
+          return base.awaitChange(streamId, options);
         },
       };
 

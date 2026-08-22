@@ -22,8 +22,8 @@ export function notSupportedResponse(
  * circuit on a `not-supported` result before pattern-matching the rest of a
  * union.
  */
-export function maybeNotSupportedResponse<T>(
-  result: T | NotSupportedResult,
+export function maybeNotSupportedResponse(
+  result: unknown,
   responses: HttpResponseFactory,
 ): Response | null {
   return isNotSupported(result) ? notSupportedResponse(result, responses) : null;
