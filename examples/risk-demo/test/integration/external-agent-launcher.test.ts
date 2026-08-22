@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
+/* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/process-env -- This launcher integration suite owns child processes, temporary filesystem state, environment isolation, and bounded Promise timing. */
 /**
  * The repository-independent launcher, exercised as a process against a fixture
  * server that speaks the four-endpoint agent contract.

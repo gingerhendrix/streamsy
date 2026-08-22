@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
+/* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- These Vitest cases directly coordinate the Web ReadableStream Promise/timer contract under test. */
 /**
  * The connection bound, isolated from the game.
  *

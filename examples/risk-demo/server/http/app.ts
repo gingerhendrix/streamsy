@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Web-standard fetch handlers are Promise-native framework adapters; they delegate game and projection work to the existing application services and runtime. */
+/* oxlint-disable effecttsgo/global-date -- The Web request adapter supplies the current command timestamp to the domain contract. */
 /** Web-standard Risk API and narrowly scoped read-only Streamsy facade. */
 import { createReadOnlyHttpHandler, type StreamProtocolFactory } from "@streamsy/core";
 

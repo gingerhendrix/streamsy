@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 
 import { compareAxial, hexId, hexesWithinRadius, neighborsOf, parseHexId } from "./hex.ts";
 import { SUBSTREAMS, createIntRng, createSubstream, createSubstreams } from "./generator-rng.ts";
@@ -359,7 +360,7 @@ function reverseKeyOrder(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(reverseKeyOrder);
   if (value === null || typeof value !== "object") return value;
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).toReversed()) {
+  for (const key of Object.keys(value).toReversed()) {
     out[key] = reverseKeyOrder((value as Record<string, unknown>)[key]);
   }
   return out;

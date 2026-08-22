@@ -1,3 +1,6 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
+/* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- These integration tests directly coordinate abortable Web SSE timing at the Promise-facing HTTP contract. */
 /**
  * The agent-facing actions resource is a bounded `text/event-stream`.
  *

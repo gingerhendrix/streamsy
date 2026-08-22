@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This Bun rebuild executable directly owns terminal reporting and process configuration around the reusable rebuild service. */
 /**
  * Host/admin CLI: rebuild a game's board projection into a fresh generation and
  * cut the durable active pointer over to it after verification.

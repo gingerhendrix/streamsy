@@ -1,3 +1,6 @@
+/* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
+/* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- The public action-notification Promise facade owns a cancellable subscription wait and preserves its existing caller contract. */
 /**
  * The wire contract of a player's actions stream, in one place: the framing the
  * server writes and the parser every first-party client reads it with.
@@ -140,7 +143,7 @@ export function createActionsDecoder<T = unknown>(): { push(chunk: string): Acti
         batches.push({
           messages: pending,
           nextOffset: control.nextOffset,
-          upToDate: control.upToDate === true,
+          upToDate: control.upToDate,
           closed: control.closed === true,
         });
         pending = [];

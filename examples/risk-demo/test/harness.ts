@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- This test harness intentionally exposes Promise helpers to Vitest while delegating application work to the existing runtime-owned APIs. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * HTTP-level fixtures for `Hex Domination` integration tests.
  *

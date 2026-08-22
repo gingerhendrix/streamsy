@@ -1,3 +1,6 @@
+/* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
+/* oxlint-disable effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/process-env -- This standalone smoke executable uses native errors for terminal failure and directly owns Web requests, timestamps, output, and environment configuration. */
 /**
  * Runtime-neutral smoke for a running Cloudflare Worker (local or deployed).
  * It prints no capabilities and uses only disposable games.

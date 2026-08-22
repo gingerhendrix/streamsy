@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
+/* oxlint-disable effecttsgo/node-builtin-import -- This Bun SQLite integration suite owns isolated temporary filesystem fixtures. */
 /**
  * SQLite durability + restart proof. Runs under Bun's test runner (`bun test`)
  * because it uses `bun:sqlite`; the vitest suite stays storage-agnostic.
@@ -100,7 +102,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
   expect(boardBefore.body.sourceThroughOffset).toBe(committedOffset);
 
   // No raw token material is present anywhere in the database.
-  const dump = JSON.stringify(first.db.query("select * from risk_capabilities").all() as unknown[]);
+  const dump = JSON.stringify(first.db.query("select * from risk_capabilities").all());
   expect(dump.includes(secret)).toBe(false);
   expect(dump.includes(hostToken)).toBe(false);
 

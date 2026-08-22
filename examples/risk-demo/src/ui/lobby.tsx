@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- React and the browser own these Promise-native event and lifecycle callbacks; reusable data orchestration remains behind the existing application facade. */
 /**
  * The `Hex Domination` lobby, set as a pre-deployment briefing page.
  *

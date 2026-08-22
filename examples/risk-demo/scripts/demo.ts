@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
+/* oxlint-disable effecttsgo/crypto-random-uuid, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/new-promise, effecttsgo/node-builtin-import -- This Bun demo executable directly owns random command ids, HTTP/timing, subprocess lifecycle, terminal output, and Node filesystem/process adapters. */
 /**
  * One-command, watchable Risk demo.
  *

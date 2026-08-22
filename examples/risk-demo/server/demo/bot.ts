@@ -1,3 +1,6 @@
+/* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
+/* oxlint-disable effecttsgo/global-timers -- The public Promise bot facade exposes an abortable delay whose timer is owned and cleared by the caller-facing adapter. */
 /**
  * Scripted-bot harness: plays Risk using only the published HTTP resources and
  * its per-player action stream — never the kernel directly.

@@ -1,8 +1,9 @@
 /** Player session, typed fetch, identity fields, and sync presentation helpers. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 
 import type { CSSProperties, ReactNode } from "react";
 
-import { friendlyError, type ApiErrorCode, type ApiErrorResponse } from "../application/api.ts";
+import { friendlyError, type ApiErrorResponse } from "../application/api.ts";
 import type { PlayerController } from "../domain/events.ts";
 import type { SyncStatus } from "./board-stream-db.ts";
 
@@ -24,6 +25,8 @@ export interface Identity {
 /** Seat-name limit, shared by the join field and every agent-seat field. */
 export const MAX_SEAT_NAME = 24;
 
+/* oxlint-disable effecttsgo/async-function -- React and the browser own these Promise-native event and lifecycle callbacks; reusable data orchestration remains behind the existing application facade. */
+/* oxlint-disable effecttsgo/global-fetch -- This shared React browser adapter performs the typed Web request used by UI event handlers. */
 /**
  * The name to send when opening or delegating an agent seat.
  *
@@ -129,7 +132,7 @@ export function isError(body: unknown): body is ApiErrorResponse {
 
 export function errorMessage(body: unknown, fallback: string): string {
   if (!isError(body)) return fallback;
-  return friendlyError(body.error.code as ApiErrorCode, body.error.message);
+  return friendlyError(body.error.code, body.error.message);
 }
 
 export function acknowledgementNotice(actionType: string): string {

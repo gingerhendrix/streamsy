@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
+/* oxlint-disable effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random, effecttsgo/node-builtin-import -- This standalone smoke executable uses native errors for terminal failure and directly owns HTTP, nondeterministic probe ids, timestamps, output, and Node process adapters. */
 /**
  * End-to-end HTTP smoke for the durable Risk API.
  *

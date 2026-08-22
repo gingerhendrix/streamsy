@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- This test harness intentionally exposes Promise helpers to Vitest while delegating application work to the existing runtime-owned APIs. */
 /** Test-only Promise facade over the Effect-native recovered State path. */
 import type { JsonValue, StreamBatch } from "@streamsy/core";
 import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effect";

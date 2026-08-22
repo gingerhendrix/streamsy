@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Cloudflare Durable Object storage and fetch handlers are Promise-native platform adapters over the shared game services. */
+/* oxlint-disable effecttsgo/global-date -- Cloudflare Durable Object alarms expose millisecond timestamps at this platform adapter boundary. */
 import { createStreamProtocol } from "@streamsy/core";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 

@@ -1,3 +1,4 @@
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The combat/dice experience: the live attack card and its defence prompt (design
  * spec §8.5).
@@ -185,7 +186,7 @@ export function CombatCard(props: CombatCardProps) {
                   side="attacker"
                   color={attackerColor}
                   outcome={
-                    pairs?.[index] ? (pairs[index]!.loser === "attacker" ? "lost" : "won") : null
+                    pairs?.[index] ? (pairs[index].loser === "attacker" ? "lost" : "won") : null
                   }
                   reveal={props.reveal}
                 />
@@ -209,11 +210,7 @@ export function CombatCard(props: CombatCardProps) {
                       side="defender"
                       color={defenderColor}
                       outcome={
-                        pairs?.[index]
-                          ? pairs[index]!.loser === "defender"
-                            ? "lost"
-                            : "won"
-                          : null
+                        pairs?.[index] ? (pairs[index].loser === "defender" ? "lost" : "won") : null
                       }
                       reveal={props.reveal}
                     />

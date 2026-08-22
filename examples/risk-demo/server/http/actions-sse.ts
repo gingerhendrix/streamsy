@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Web-standard fetch handlers are Promise-native framework adapters; they delegate game and projection work to the existing application services and runtime. */
+/* oxlint-disable effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-timers -- The Web ReadableStream adapter owns connection deadlines, elapsed-time accounting, and best-effort terminal logging outside reusable Effect orchestration. */
 /**
  * The server half of the actions stream: a bounded `text/event-stream` response
  * over a player's durable action-required stream.

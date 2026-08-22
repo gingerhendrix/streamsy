@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
 import { describe, expect, it } from "vitest";
 
 import {

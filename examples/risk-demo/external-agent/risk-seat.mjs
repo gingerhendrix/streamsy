@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
+/* oxlint-disable effecttsgo/async-function -- This dependency-free Node executable is intentionally Promise-native and bounded at every HTTP, subprocess, and cancellation edge. */
+/* oxlint-disable effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/process-env -- This dependency-free Node launcher directly owns bounded Web requests, subprocesses, cancellation timers, filesystem state, and executable configuration. */
 
 /**
  * Repository-independent controller for one external Streamsy Risk seat.

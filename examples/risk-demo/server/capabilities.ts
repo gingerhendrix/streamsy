@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
 /**
  * Capability tokens (bearer) with constant-time verification.
  *

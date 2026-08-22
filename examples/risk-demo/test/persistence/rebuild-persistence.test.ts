@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
+/* oxlint-disable effecttsgo/node-builtin-import -- This Bun SQLite rebuild suite owns isolated temporary filesystem fixtures. */
 /**
  * SQLite durability of a board-generation cutover across restart.
  *

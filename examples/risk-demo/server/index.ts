@@ -1,3 +1,5 @@
+/* oxlint-disable effecttsgo/async-function -- This Bun executable is the Promise-native HTTP/process edge; reusable game and projection work remains owned by the host runtime. */
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import, effecttsgo/process-env -- This Bun executable directly owns terminal output, static-file loading, and process configuration around the host runtime. */
 /**
  * Bun HTTP entry for the durable Risk API.
  *

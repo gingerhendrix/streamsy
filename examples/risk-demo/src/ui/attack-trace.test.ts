@@ -277,10 +277,10 @@ describe("ordering throws that share a source offset", () => {
       combat: [],
       moves: [earlier, later],
       projectionMeta: [],
-    } as never);
+    });
     // Newest first, so the higher ordinal at the shared offset leads — which is
     // the same move `latestAttackTrace` names.
     expect(rows?.moves.map((move) => move.id)).toEqual([later.id, earlier.id]);
-    expect(latestAttackTrace(rows!.moves as ProjectedMove[])?.attackId).toBe("atk-later");
+    expect(latestAttackTrace(rows!.moves)?.attackId).toBe("atk-later");
   });
 });

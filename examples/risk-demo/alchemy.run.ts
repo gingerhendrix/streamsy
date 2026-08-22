@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console -- This Alchemy deployment executable reports the selected Cloudflare resource URL at its terminal boundary. */
 import alchemy from "alchemy";
 import { DurableObjectNamespace, Website } from "alchemy/cloudflare";
 

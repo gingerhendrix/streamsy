@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
 /**
  * The lobby rendered for real: the muster roll always shows all four
  * seats, annotations carry role/controller/self without colour, and the host's

@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
 import { ZERO_OFFSET, type StreamProtocolFactory } from "@streamsy/core";
 import {
   createJsonProtocol,
