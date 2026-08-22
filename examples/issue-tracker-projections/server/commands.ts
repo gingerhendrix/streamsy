@@ -61,9 +61,7 @@ export const layer: Layer.Layer<CommandProducers> = Layer.effect(
     return CommandProducers.of({
       forCommand: Effect.fn("CommandProducers.forCommand")(function* (commandId: string) {
         if (commandId.length === 0 || commandId.length > 128) {
-          return yield* Effect.fail(
-            InvalidRequest.of("commandId", "must be 1 to 128 characters long"),
-          );
+          return yield* InvalidRequest.of("commandId", "must be 1 to 128 characters long");
         }
         return yield* Cache.get(cache, commandId);
       }),
@@ -71,8 +69,18 @@ export const layer: Layer.Layer<CommandProducers> = Layer.effect(
   }),
 );
 
-const encodeIssueEvent = Schema.encodeUnknownSync(IssueEvent);
-const encodeMembershipFact = Schema.encodeUnknownSync(ProjectMembershipFact);
+/**
+ * Wire codecs for the two append payloads.
+ *
+ * `Schema.fromJsonString` composes the domain schema with the JSON string
+ * boundary, so encoding validates the value and serialises it in one step
+ * instead of pairing a schema encode with a bare `JSON.stringify`. The emitted
+ * bytes and the thrown `SchemaError` are the same as before.
+ */
+const encodeIssueEventJson = Schema.encodeUnknownSync(Schema.fromJsonString(IssueEvent));
+const encodeMembershipFactJson = Schema.encodeUnknownSync(
+  Schema.fromJsonString(ProjectMembershipFact),
+);
 
 export const appendIssueEvent = Effect.fn("Commands.appendIssueEvent")(function* (
   source: StreamBinding,
@@ -80,7 +88,7 @@ export const appendIssueEvent = Effect.fn("Commands.appendIssueEvent")(function*
   producer: ClientProducerOptions,
 ) {
   const appends = yield* AppendStreams;
-  const payload = yield* Effect.sync(() => JSON.stringify(encodeIssueEvent(event)));
+  const payload = yield* Effect.sync(() => encodeIssueEventJson(event));
   const result = yield* appends.append(source, payload, {
     contentType: "application/json",
     producer,
@@ -94,7 +102,7 @@ export const appendMembershipFact = Effect.fn("Commands.appendMembershipFact")(f
   producer: ClientProducerOptions,
 ) {
   const appends = yield* AppendStreams;
-  const payload = yield* Effect.sync(() => JSON.stringify(encodeMembershipFact(fact)));
+  const payload = yield* Effect.sync(() => encodeMembershipFactJson(fact));
   const result = yield* appends.append(membership, payload, {
     contentType: "application/json",
     producer,

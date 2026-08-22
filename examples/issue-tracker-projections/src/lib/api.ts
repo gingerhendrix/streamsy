@@ -11,16 +11,21 @@ import type {
   ProjectsResponse,
 } from "../../shared/api.ts";
 import type { IssueDetail, Project } from "../../shared/model.ts";
+import { Data } from "effect";
 
-export class ApiFailure extends Error {
-  constructor(
-    override readonly message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "ApiFailure";
-  }
-}
+/**
+ * A failed API call.
+ *
+ * The browser client is ordinary Promise code, so this is thrown and caught
+ * with `instanceof` rather than carried in an Effect failure channel. It is a
+ * tagged error so the failure is distinguishable by `_tag` instead of by class
+ * identity alone; `name`, `message`, `status`, and `instanceof` behaviour are
+ * unchanged.
+ */
+export class ApiFailure extends Data.TaggedError("ApiFailure")<{
+  readonly message: string;
+  readonly status: number;
+}> {}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -34,10 +39,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers,
     });
   } catch (error) {
-    throw new ApiFailure(error instanceof Error ? error.message : "Network error", 0);
+    throw new ApiFailure({
+      message: error instanceof Error ? error.message : "Network error",
+      status: 0,
+    });
   }
   const text = await response.text();
-  if (!response.ok) throw new ApiFailure(errorDetail(text), response.status);
+  if (!response.ok) throw new ApiFailure({ message: errorDetail(text), status: response.status });
   return parseBody(text);
 }
 

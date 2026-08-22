@@ -82,7 +82,7 @@ export const layer = (client: StreamProtocolClient): Layer.Layer<Streams> =>
             new StreamUnavailable({ streamId, status: `transport: ${String(cause)}` }),
         });
         if (created.status === "created" || created.status === "conflict") return undefined;
-        return yield* Effect.fail(new StreamUnavailable({ streamId, status: created.status }));
+        return yield* new StreamUnavailable({ streamId, status: created.status });
       }),
     }),
   );

@@ -240,7 +240,7 @@ export const createIssue = Effect.fn("Application.createIssue")(function* (
   const projects = yield* listProjects(workspaceId);
   const project = projects.find((candidate) => candidate.projectId === request.projectId);
   if (project === undefined) {
-    return yield* Effect.fail(new UnknownProject({ projectId: request.projectId }));
+    return yield* new UnknownProject({ projectId: request.projectId });
   }
 
   yield* ensureAll([
@@ -306,7 +306,7 @@ export const issueCommand = Effect.fn("Application.issueCommand")(function* (
   const producers = yield* CommandProducers;
 
   const detail = yield* loadDetail(workspaceId, issueId);
-  if (detail === undefined) return yield* Effect.fail(new UnknownIssue({ issueId }));
+  if (detail === undefined) return yield* new UnknownIssue({ issueId });
 
   const at = yield* now;
   const event = buildEvent(request, at);
@@ -430,11 +430,11 @@ export const probeCoverage = Effect.fn("Application.probeCoverage")(function* (
   yield* identifier("workspaceId", workspaceId);
   yield* identifier("issueId", issueId);
   if (position.length === 0) {
-    return yield* Effect.fail(InvalidRequest.of("position", "is required"));
+    return yield* InvalidRequest.of("position", "is required");
   }
   const streams = yield* Streams;
   const detail = yield* loadDetail(workspaceId, issueId);
-  if (detail === undefined) return yield* Effect.fail(new UnknownIssue({ issueId }));
+  if (detail === undefined) return yield* new UnknownIssue({ issueId });
 
   const ack = sourceAck(streams.bindings.issueEvents(workspaceId, issueId).identity, position);
   const probe = yield* proveChain({ workspaceId, issueId, projectId: detail.projectId, ack });
@@ -500,7 +500,7 @@ export const requireDetail = Effect.fn("Application.requireDetail")(function* (
   yield* identifier("workspaceId", workspaceId);
   yield* identifier("issueId", issueId);
   const detail = yield* loadDetail(workspaceId, issueId);
-  if (detail === undefined) return yield* Effect.fail(new UnknownIssue({ issueId }));
+  if (detail === undefined) return yield* new UnknownIssue({ issueId });
   return detail;
 });
 
