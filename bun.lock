@@ -41,7 +41,6 @@
         "react": "latest",
         "react-dom": "latest",
         "typescript": "catalog:",
-        "zod": "^4.4.1",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -121,7 +120,6 @@
         "effect": "4.0.0-beta.99",
         "react": "19.2.8",
         "react-dom": "19.2.8",
-        "zod": "^4.4.1",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
@@ -177,7 +175,7 @@
     },
     "packages/experimental": {
       "name": "@streamsy/experimental",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
         "@streamsy/core": "0.2.1",
         "effect": "4.0.0-beta.99",
