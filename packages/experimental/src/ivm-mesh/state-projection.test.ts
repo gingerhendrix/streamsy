@@ -21,10 +21,9 @@ import { createLineageEvent } from "./state-meta.ts";
 const clients = new Set<StreamProtocolClient>();
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
 
-afterEach(async () => {
-  await Promise.all(Array.from(clients, (client) => client.close()));
-  clients.clear();
-});
+afterEach(() =>
+  Promise.all(Array.from(clients, (client) => client.close())).then(() => clients.clear()),
+);
 
 interface Total {
   readonly total: number;
@@ -48,6 +47,7 @@ interface Harness {
   readonly lane: ProducerLane;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper builds the protocol-client harness used by the Vitest runner.
 async function harness(adapter = createMemoryStorageAdapter()): Promise<Harness> {
   const client = directProtocolClient(new StreamProtocol({ storage: { adapter } }));
   clients.add(client);
@@ -132,6 +132,7 @@ function run(h: Harness, options: ProgramOptions = {}): Promise<CatchUpStateResu
 }
 
 describe("catchUpState — recovered single-source State", () => {
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("projects a fresh source and restores typed state on the next pass", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 2 }, { v: 3 }]);
@@ -153,6 +154,7 @@ describe("catchUpState — recovered single-source State", () => {
     });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a restarted host restores state from durable target history alone", async () => {
     const adapter = createMemoryStorageAdapter();
     const first = await harness(adapter);
@@ -170,6 +172,7 @@ describe("catchUpState — recovered single-source State", () => {
     });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("malformed durable target State is a typed restore poison", async () => {
     const h = await harness();
     const appended = await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);
@@ -191,6 +194,7 @@ describe("catchUpState — recovered single-source State", () => {
     }
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("step poison is typed and leaves lineage unadvanced", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);
@@ -206,6 +210,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a rejected proposed fact is materialized before append and writes nothing", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 9 }]);
@@ -218,6 +223,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("recovered state validation finishes before any source boundary is decoded", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 2 }]);
@@ -236,6 +242,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(decoded).toBe(0);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("duplicate reconciliation installs and asynchronously validates durable state", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);
@@ -252,6 +259,7 @@ describe("catchUpState — recovered single-source State", () => {
                 const value = Reflect.get(handleTarget, handleProperty, handleReceiver);
                 return typeof value === "function" ? value.bind(handleTarget) : value;
               }
+              // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native append test adapter.
               return async (items: readonly JsonValue[], appendOptions: object) => {
                 if (!staged) {
                   staged = true;
@@ -273,6 +281,7 @@ describe("catchUpState — recovered single-source State", () => {
     const exit = await Effect.runPromiseExit(
       program(h, {
         target,
+        // oxlint-disable-next-line effecttsgo/async-function -- This Promise callback exercises asynchronous recovered-state validation compatibility.
         validateRecovered: async ({ state }) => {
           await Promise.resolve();
           if (state.total === 999) throw new Error("reconciled durable state is invalid");
@@ -288,6 +297,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(written).toHaveLength(2);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a competing target writer cannot silently advance lineage", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);
@@ -304,6 +314,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("running twice without new source data is a no-op", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);

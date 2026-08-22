@@ -18,6 +18,7 @@ export interface ProducerLane extends ProducerLaneConfig {
 }
 
 /** Derive one bounded producer id for the complete processor/generation/source/target lane. */
+// oxlint-disable-next-line effecttsgo/async-function -- Web Crypto exposes digest as a Promise, and this exported lane helper preserves its public Promise contract.
 export async function deriveProducerLane(config: ProducerLaneConfig): Promise<ProducerLane> {
   const canonical = canonicalLaneInput(config);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));

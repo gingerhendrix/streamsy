@@ -80,14 +80,14 @@ interface ScriptedPage {
   readonly items: readonly JsonValue[];
 }
 
-afterEach(async () => {
-  await Promise.all(Array.from(clients, (client) => client.close()));
-  clients.clear();
-});
+afterEach(() =>
+  Promise.all(Array.from(clients, (client) => client.close())).then(() => clients.clear()),
+);
 
 const provideLive = <A, E, R>(program: Effect.Effect<A, E, R>) =>
   provideTestLayers(program, MeshTestLive);
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper builds the protocol-client harness used by the Vitest runner.
 async function harness(): Promise<Harness> {
   const adapter = createMemoryStorageAdapter();
   const protocol = new StreamProtocol({ storage: { adapter } });
@@ -115,6 +115,7 @@ function fact(value: JsonValue): JsonValue {
   return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper reads the storage adapter fixture for Vitest assertions.
 async function values(h: Harness): Promise<unknown[]> {
   const decoder = new TextDecoder();
   return (await h.adapter.listMessages(h.target.streamId)).map((message) =>
@@ -122,6 +123,7 @@ async function values(h: Harness): Promise<unknown[]> {
   );
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This helper is the Vitest boundary that runs recovery as a Promise.
 async function ready(h: Harness): Promise<RecoveredDerivedState> {
   const recovered = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
   if (recovered.status !== "ready") throw new Error(`expected ready, got ${recovered.status}`);
@@ -185,6 +187,7 @@ function scriptedReadLayer(pages: readonly ScriptedPage[], onCancel: () => void 
   );
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This helper is the Vitest boundary that runs a scripted Effect scenario as a Promise.
 async function runScripted(
   h: Harness,
   pages: readonly ScriptedPage[],
@@ -230,6 +233,7 @@ const laneConfig: ProducerLaneConfig = {
 };
 
 describe("producer lane regressions", () => {
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning compatibility scenario at the test boundary.
   test("canonical identity is deterministic, bounded, and sensitive to every semantic input", async () => {
     const first = await deriveProducerLane(laneConfig);
     expect(await deriveProducerLane(laneConfig)).toEqual(first);
@@ -248,6 +252,7 @@ describe("producer lane regressions", () => {
     }
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning compatibility scenario at the test boundary.
   test("epoch is validated configuration but invariant in producer-id derivation", async () => {
     const first = await deriveProducerLane(laneConfig);
     const bumped = await deriveProducerLane({ ...laneConfig, producerEpoch: 8 });
@@ -257,6 +262,7 @@ describe("producer lane regressions", () => {
 });
 
 describe("recovery and producer regressions", () => {
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("sequential fact and lineage transactions advance one durable producer row", async () => {
     const h = await harness();
     const initial = await ready(h);
@@ -274,6 +280,7 @@ describe("recovery and producer regressions", () => {
     expect((await values(h)).filter(isLineage)).toHaveLength(2);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("real storage returns stale epoch, producer gap, and invalid epoch/sequence without attempt writes", async () => {
     const stale = await harness();
     const staleInitial = await ready(stale);
@@ -327,6 +334,7 @@ describe("recovery and producer regressions", () => {
     expect(await values(invalid)).toEqual(invalidBefore);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("bare tails and fixed-epoch mismatches fail typed recovery without writes", async () => {
     const bare = await harness();
     await bare.client.stream(bare.target.streamId).appendJsonBatch([fact("foreign")]);
@@ -354,6 +362,7 @@ describe("recovery and producer regressions", () => {
     expect(await values(mismatch)).toEqual(before);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("the missing-startOffset recovery reproduction fails typed and releases exactly once", async () => {
     const h = await harness();
     let cancelled = 0;
@@ -361,6 +370,7 @@ describe("recovery and producer regressions", () => {
       ...h.target,
       client: mapReads(
         h.client,
+        // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native read-session test adapter.
         async <T extends JsonValue>(
           delegate: StreamProtocolHandle,
           options: ReadStreamOptions | undefined,
@@ -391,6 +401,7 @@ describe("projection semantic regressions", () => {
     ["maxBytes", { ...generous, maxBytes: 3 }],
   ] as const)(
     "enforces cumulative %s at complete boundaries and later continues",
+    // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
     async (limit, limits) => {
       const h = await harness();
       const pages = [
@@ -412,6 +423,7 @@ describe("projection semantic regressions", () => {
     },
   );
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("oversized byte boundaries are terminal and leave durable progress unchanged", async () => {
     const h = await harness();
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -430,6 +442,7 @@ describe("projection semantic regressions", () => {
     expect(await values(h)).toEqual([]);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("malformed source boundaries and reduce poison are distinct typed failures", async () => {
     const malformed = await harness();
     const malformedExit = await Effect.runPromiseExit(
@@ -455,6 +468,7 @@ describe("projection semantic regressions", () => {
     expect(await values(poison)).toEqual([]);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("wrong source identity defects before reads and wrong generation fails recovery typed", async () => {
     const h = await harness();
     const wrongSource = bindStream({ ...h.source, identity: streamIdentity("wrong") });
@@ -490,6 +504,7 @@ describe("projection semantic regressions", () => {
     expect(typedError(exit)).toBeInstanceOf(IncompatibleLineage);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect interruption scenario at the test boundary.
   test("interruption during recovery and blocked source reads releases each Live session once", async () => {
     const recoveryHarness = await harness();
     let recoveryCancelled = 0;
@@ -536,6 +551,7 @@ describe("projection semantic regressions", () => {
     expect(sourceCancelled).toBe(1);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect interruption scenario at the test boundary.
   test("interruption before storage append writes nothing; interruption after an earlier commit restarts from it", async () => {
     const before = await harness();
     const beforePrevious = await ready(before);
@@ -677,6 +693,7 @@ function runScriptedEffect(
 }
 
 describe("Live adapter ambiguous append evidence", () => {
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning durability scenario at the test boundary.
   test("direct resolved failure after commit is typed, changed retry bytes reconcile, and restart trusts one transaction", async () => {
     const h = await harness();
     let commits = 0;
@@ -721,6 +738,7 @@ describe("Live adapter ambiguous append evidence", () => {
     expect(await ready(h)).toMatchObject({ sourceThrough: "00000001", nextProducerSeq: 1 });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning fetch durability scenario at the test boundary.
   test("fetch lost response keeps original bytes durable and reconciles a changed-byte same-tuple retry", async () => {
     const adapter = createMemoryStorageAdapter();
     const protocol = new StreamProtocol({ storage: { adapter } });
@@ -732,6 +750,7 @@ describe("Live adapter ambiguous append evidence", () => {
       readonly seq: string | null;
     }> = [];
     const fetch: typeof globalThis.fetch = Object.assign(
+      // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native fetch test adapter.
       async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
         const request = new Request(input, init);
         const response = await handler.fetch(request);
@@ -840,6 +859,7 @@ describe("Live adapter ambiguous append evidence", () => {
     });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect interruption scenario at the test boundary.
   test("interrupted Live append after commit stays interrupted and restart observes exactly one transaction", async () => {
     const h = await harness();
     let commits = 0;
@@ -870,6 +890,7 @@ describe("Live adapter ambiguous append evidence", () => {
     expect(await ready(h)).toMatchObject({ sourceThrough: "00000001", nextProducerSeq: 1 });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning transport compatibility scenario at the test boundary.
   test("direct and fetch Live append framing is byte-identical and fetch uses one producer POST", async () => {
     const direct = await transportAppendHarness("direct");
     const remote = await transportAppendHarness("fetch");
@@ -884,12 +905,14 @@ describe("Live adapter ambiguous append evidence", () => {
   });
 });
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper builds the direct or fetch protocol-client harness used by Vitest.
 async function transportAppendHarness(transport: "direct" | "fetch") {
   const adapter = createMemoryStorageAdapter();
   const protocol = new StreamProtocol({ storage: { adapter } });
   let posts = 0;
   const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
   const fetch: typeof globalThis.fetch = Object.assign(
+    // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native fetch test adapter.
     async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
       const request = new Request(input, init);
       if (request.method === "POST" && request.headers.has("producer-id")) posts++;
@@ -922,6 +945,7 @@ async function transportAppendHarness(transport: "direct" | "fetch") {
   return {
     adapter,
     producerPosts: () => posts,
+    // oxlint-disable-next-line effecttsgo/async-function -- This method is the Vitest boundary that runs recovery as a Promise.
     ready: async () => {
       const result = await Effect.runPromise(provideLive(recoverDerivedState(target, lane)));
       if (result.status !== "ready") throw new Error("expected ready");
@@ -956,6 +980,7 @@ function jsonItems(batch: StreamBatch): readonly JsonValue[] {
   return batch.items;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This helper is the Vitest boundary that runs and interrupts the Effect as a Promise.
 async function interruptAfterOpen<A, E>(
   program: Effect.Effect<A, E>,
   opened: Deferred.Deferred<void>,
@@ -970,8 +995,8 @@ async function interruptAfterOpen<A, E>(
   );
 }
 
-async function unusedClientOperation(): Promise<never> {
-  throw new Error("unused client operation");
+function unusedClientOperation(): Promise<never> {
+  return Promise.reject(new Error("unused client operation"));
 }
 
 function blockedReadClient(onCancel: () => void): Effect.Effect<{
@@ -989,7 +1014,7 @@ function blockedReadClient(onCancel: () => void): Effect.Effect<{
           append: unusedClientOperation,
           appendJsonBatch: unusedClientOperation,
           close: unusedClientOperation,
-          read: async <T extends JsonValue>() => {
+          read: <T extends JsonValue>() => {
             const session = new ClientReadSession<T>({ startOffset: "-1" });
             const originalCancel = session.cancel.bind(session);
             session.cancel = (reason?: unknown) => {
@@ -1001,11 +1026,11 @@ function blockedReadClient(onCancel: () => void): Effect.Effect<{
               Deferred.doneUnsafe(opened, Effect.void);
               return originalNext();
             };
-            return { status: "ok", session };
+            return Promise.resolve<ClientReadResult<T>>({ status: "ok", session });
           },
         };
       },
-      async close() {},
+      close: () => Promise.resolve(),
     };
     return { client, opened };
   });
@@ -1013,6 +1038,7 @@ function blockedReadClient(onCancel: () => void): Effect.Effect<{
 
 function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolClient {
   let lose = true;
+  // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native append test adapter.
   return mapAppend(client, async (delegate, items, options) => {
     const result = await delegate.appendJsonBatch(items, options);
     if (!lose) return result;
@@ -1030,6 +1056,7 @@ function blockResponseAfterCommit(
   client: StreamProtocolClient,
   committed: Deferred.Deferred<void>,
 ): StreamProtocolClient {
+  // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native append test adapter.
   return mapAppend(client, async (delegate, items, options) => {
     const result = await delegate.appendJsonBatch(items, options);
     if (result.status !== "appended") return result;

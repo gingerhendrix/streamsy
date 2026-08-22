@@ -30,10 +30,9 @@ const FanInTestLive = FanInRecoveryLive.pipe(
 );
 const isProjectionPoison = Schema.is(ProjectionPoison);
 
-afterEach(async () => {
-  await Promise.all(Array.from(clients, (client) => client.close()));
-  clients.clear();
-});
+afterEach(() =>
+  Promise.all(Array.from(clients, (client) => client.close())).then(() => clients.clear()),
+);
 
 /** Board state keyed by member name; the value is the last observed number. */
 type Board = Readonly<Record<string, number>>;
@@ -48,6 +47,7 @@ interface Harness {
   readonly createMember: (name: string) => Promise<void>;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper builds the protocol-client harness used by the Vitest runner.
 async function harness(
   adapter: StorageAdapter = createMemoryStorageAdapter(),
   options: { readonly missingMemberStreams?: boolean } = {},
@@ -80,6 +80,7 @@ async function harness(
     target,
     lane,
     member: (name) => bindStream({ identity: streamIdentity(name), client, streamId: name }),
+    // oxlint-disable-next-line effecttsgo/async-function -- This method implements the Promise-native protocol-client test harness.
     async createMember(name) {
       if (options.missingMemberStreams || known.has(name)) return;
       known.add(name);
@@ -181,6 +182,7 @@ function run(
   return Effect.runPromise(program(h, options));
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper drives the protocol-client membership fixture for Vitest.
 async function join(h: Harness, name: string, from?: string): Promise<void> {
   await h.createMember(name);
   await h.client
@@ -188,10 +190,12 @@ async function join(h: Harness, name: string, from?: string): Promise<void> {
     .appendJsonBatch([{ type: "join", member: name, ...(from === undefined ? {} : { from }) }]);
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper drives the protocol-client membership fixture for Vitest.
 async function leave(h: Harness, name: string): Promise<void> {
   await h.client.stream(h.membership.streamId).appendJsonBatch([{ type: "leave", member: name }]);
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper drives the protocol-client member fixture for Vitest.
 async function emit(h: Harness, name: string, value: number): Promise<string> {
   await h.createMember(name);
   const result = await h.client.stream(name).appendJsonBatch([{ v: value }]);
@@ -200,6 +204,7 @@ async function emit(h: Harness, name: string, value: number): Promise<string> {
 }
 
 describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a joined member is incorporated and its cursor survives restart", async () => {
     const adapter = createMemoryStorageAdapter();
     const h = await harness(adapter);
@@ -221,6 +226,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(second.members).toHaveLength(1);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a join starts at the position declared by the membership fact", async () => {
     const h = await harness();
     const skipped = await emit(h, "alpha", 10);
@@ -231,6 +237,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(result).toMatchObject({ status: "caught-up", state: { alpha: 20 } });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("leaving removes the row, the durable membership, and stays converged", async () => {
     const h = await harness();
     await join(h, "alpha");
@@ -246,6 +253,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(await run(h)).toMatchObject({ status: "caught-up", state: {} });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("two ready members are selected in canonical order after restart", async () => {
     const adapter = createMemoryStorageAdapter();
     const h = await harness(adapter);
@@ -269,6 +277,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(firstOrder).toEqual(["alpha", "zulu"]);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a repeated pass is idempotent and a lost wake converges through repair", async () => {
     const h = await harness();
     await join(h, "alpha");
@@ -283,6 +292,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(await run(h)).toMatchObject({ status: "caught-up", state: { alpha: 42 } });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("an unresolvable member binding is an explicit status, not a silent skip", async () => {
     const h = await harness();
     await join(h, "alpha");
@@ -291,6 +301,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(result).toMatchObject({ status: "unknown-member", member: "alpha" });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a member decode fault is typed poison and does not advance the cursor", async () => {
     const h = await harness();
     await join(h, "alpha");
@@ -309,6 +320,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(await run(h)).toMatchObject({ status: "caught-up", state: { alpha: 2 } });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("bounded limits stop the pass without losing durable progress", async () => {
     const h = await harness();
     await join(h, "alpha");
@@ -320,6 +332,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(await run(h)).toMatchObject({ status: "caught-up", state: { alpha: 2 } });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a missing membership source is an explicit status", async () => {
     const h = await harness();
     const orphan = bindStream({
@@ -333,6 +346,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(result).toMatchObject({ status: "missing", stream: "membership" });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a competing target writer cannot silently advance the fan-in checkpoint", async () => {
     const h = await harness();
     await join(h, "alpha");
@@ -349,6 +363,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
   });
 });
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper reads the protocol adapter fixture for Vitest assertions.
 async function boardFactOrder(h: Harness): Promise<string[]> {
   const decoder = new TextDecoder();
   const keys: string[] = [];

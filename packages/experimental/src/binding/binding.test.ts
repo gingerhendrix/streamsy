@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- This Vitest suite exclusively exercises the Promise-native binding compatibility API and client adapters. */
 import { officialProtocolClient, protocolPathUrl } from "@streamsy/client";
 import {
   createHttpHandler,

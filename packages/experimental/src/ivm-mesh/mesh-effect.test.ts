@@ -53,10 +53,9 @@ const MeshTestLive = DerivedRecoveryLive.pipe(
 );
 const isProjectionPoison = Schema.is(ProjectionPoison);
 
-afterEach(async () => {
-  await Promise.all(Array.from(clients, (client) => client.close()));
-  clients.clear();
-});
+afterEach(() =>
+  Promise.all(Array.from(clients, (client) => client.close())).then(() => clients.clear()),
+);
 
 interface Harness {
   readonly adapter: StorageAdapter;
@@ -66,6 +65,7 @@ interface Harness {
   readonly lane: ProducerLane;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper builds the protocol-client harness used by the Vitest runner.
 async function harness(transport: "direct" | "fetch" = "direct"): Promise<Harness> {
   const adapter = createMemoryStorageAdapter();
   const protocol = new StreamProtocol({ storage: { adapter } });
@@ -109,6 +109,7 @@ function fact(value: JsonValue): JsonValue {
   return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This Promise helper reads the storage adapter fixture for Vitest assertions.
 async function targetValues(h: Harness): Promise<unknown[]> {
   const decoder = new TextDecoder();
   return (await h.adapter.listMessages(h.target.streamId)).map((message) =>
@@ -184,12 +185,14 @@ function scriptedReadLayer(pages: readonly ScriptedPage[]) {
   );
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This helper is the Vitest boundary that runs recovery as a Promise.
 async function ready(h: Harness): Promise<RecoveredDerivedState> {
   const recovered = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
   if (recovered.status !== "ready") throw new Error(`expected ready, got ${recovered.status}`);
   return recovered;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This helper is the Vitest boundary that runs a scripted Effect scenario as a Promise.
 async function runScriptedProjection(
   h: Harness,
   pages: readonly ScriptedPage[],
@@ -272,6 +275,7 @@ function appendOutcomeLayer(outcome: AppendOutcome) {
 }
 
 describe("Effect-first mesh", () => {
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("Schema decodes lineage and typed compatibility failures", async () => {
     const h = await harness();
     const event = createLineageEvent(h.lane, { sourceThrough: "00000001", nextProducerSeq: 1 });
@@ -287,6 +291,7 @@ describe("Effect-first mesh", () => {
 
   test.each(["direct", "fetch"] as const)(
     "recovers and projects explicit boundaries over %s",
+    // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
     async (transport) => {
       const h = await harness(transport);
       const sourceAppend = await h.client.stream(h.source.streamId).appendJsonBatch([1, 2]);
@@ -307,6 +312,7 @@ describe("Effect-first mesh", () => {
     },
   );
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("duplicate reconciliation is an outcome and does not claim payload verification", async () => {
     const h = await harness();
     const previous = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
@@ -319,6 +325,7 @@ describe("Effect-first mesh", () => {
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(2);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("expected-offset contention remains an explicit output-conflict", async () => {
     const h = await harness();
     const previous = await Effect.runPromise(provideLive(recoverDerivedState(h.target, h.lane)));
@@ -328,6 +335,7 @@ describe("Effect-first mesh", () => {
     expect(result).toMatchObject({ status: "output-conflict", reason: "expected-offset" });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("decode poison is a typed failure and leaves lineage unadvanced", async () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([1]);
@@ -355,6 +363,7 @@ describe("Effect-first mesh", () => {
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("a filtered source boundary commits exactly one lineage-only transaction", async () => {
     const h = await harness();
     const result = await runScriptedProjection(h, [{ offset: "00000001", items: [1] }], {
@@ -374,6 +383,7 @@ describe("Effect-first mesh", () => {
     ]);
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("limits preserve complete boundaries and oversized boundaries remain terminal", async () => {
     const limited = await harness();
     const pages = [
@@ -420,6 +430,7 @@ describe("Effect-first mesh", () => {
     ["incompatible", IncompatibleLineage],
   ] as const)(
     "%s lineage fails recovery with its tagged error without advancing",
+    // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
     async (kind, ErrorClass) => {
       const h = await harness();
       const value =
@@ -446,29 +457,34 @@ describe("Effect-first mesh", () => {
   test.each([
     { status: "stale-epoch", currentEpoch: 8 },
     { status: "producer-gap", expectedSeq: 1, receivedSeq: 2 },
-  ] as const)("$status remains an explicit append outcome", async (outcome) => {
-    const h = await harness();
-    const previous = await ready(h);
-    const result = await Effect.runPromise(
-      appendDerivedStateBatch({
-        target: h.target,
-        lane: h.lane,
-        previous,
-        sourceThrough: "00000001",
-        facts: [fact(1)],
-      }).pipe((effect) =>
-        provideTestLayers(
-          effect,
-          Layer.merge(
-            DerivedRecoveryTest(() => Effect.succeed(previous)),
-            appendOutcomeLayer(outcome),
+  ] as const)(
+    "$status remains an explicit append outcome",
+    // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
+    async (outcome) => {
+      const h = await harness();
+      const previous = await ready(h);
+      const result = await Effect.runPromise(
+        appendDerivedStateBatch({
+          target: h.target,
+          lane: h.lane,
+          previous,
+          sourceThrough: "00000001",
+          facts: [fact(1)],
+        }).pipe((effect) =>
+          provideTestLayers(
+            effect,
+            Layer.merge(
+              DerivedRecoveryTest(() => Effect.succeed(previous)),
+              appendOutcomeLayer(outcome),
+            ),
           ),
         ),
-      ),
-    );
-    expect(result).toEqual(outcome);
-  });
+      );
+      expect(result).toEqual(outcome);
+    },
+  );
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("reserved Streamsy facts fail before any append", async () => {
     const h = await harness();
     const previous = await ready(h);
@@ -488,6 +504,7 @@ describe("Effect-first mesh", () => {
     expect(await h.adapter.getProducerState(h.target.streamId, h.lane.producerId)).toBeUndefined();
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
   test("interruption stays interruption while an in-flight append has unknown durability", async () => {
     const h = await harness();
     const previous = await ready(h);

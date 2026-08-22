@@ -55,6 +55,7 @@ export interface MaterializeResult<State> {
  * fold rejects on source/read/session, decode, or evolve failure and commits
  * nothing, so callers can safely resume from the last persisted batch cursor.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This exported materializer is the transport-neutral Promise API for lightweight callers.
 export async function materialize<State, Event, Json extends JsonValue = JsonValue>(
   options: MaterializeOptions<State, Event, Json>,
 ): Promise<MaterializeResult<State>> {

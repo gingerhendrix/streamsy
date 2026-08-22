@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- This Vitest suite exclusively exercises the Promise-native materializer API and protocol client. */
 import {
   createMemoryStorageAdapter,
   createStreamProtocol,

@@ -48,6 +48,7 @@ export function readBoundStream<T extends JsonValue = JsonValue>(
  * Delegate one append and mint an acknowledgement only for a newly appended
  * response carrying its exact offset. Producer duplicates remain explicit.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- This exported Promise helper is the documented lightweight binding compatibility API.
 export async function appendBoundStream(
   binding: StreamBinding,
   data: Uint8Array | string,

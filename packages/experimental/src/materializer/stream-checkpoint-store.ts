@@ -38,6 +38,7 @@ export function streamCheckpointStore<State>(
   const idFor = options.streamId ?? defaultStreamId;
 
   return {
+    // oxlint-disable-next-line effecttsgo/async-function -- CheckpointStore.load implements the public Promise-based persistence interface.
     async load(viewId) {
       const handle = options.client.stream(idFor(viewId));
       const read = await handle.read({ live: false });
@@ -70,6 +71,7 @@ export function streamCheckpointStore<State>(
       return latest;
     },
 
+    // oxlint-disable-next-line effecttsgo/async-function -- CheckpointStore.save implements the public Promise-based persistence interface.
     async save(viewId, checkpoint) {
       const handle = options.client.stream(idFor(viewId));
       const created = await handle.create({ contentType: CONTENT_TYPE });

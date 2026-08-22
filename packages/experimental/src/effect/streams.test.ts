@@ -4,6 +4,7 @@ import {
   createMemoryStorageAdapter,
   directProtocolClient,
   type ClientFailure,
+  type ClientReadResult,
   type JsonValue,
   type StreamProtocolClient,
   type StreamProtocolHandle,
@@ -54,6 +55,7 @@ describe("Effect stream capabilities", () => {
     });
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect runner callback at the test boundary.
   test("Live layers adapt the fixed Promise client while preserving protocol outcomes", async () => {
     const client = directProtocolClient(
       new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } }),
@@ -93,6 +95,7 @@ describe("Effect stream capabilities", () => {
 
   test.each(["early-return", "typed-failure", "missing-start-offset"] as const)(
     "a successful Live read acquisition releases exactly once on %s",
+    // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect runner callback at the test boundary.
     async (scenario) => {
       let cancelled = 0;
       const binding = sessionBinding({ scenario, onCancel: () => cancelled++ });
@@ -122,6 +125,7 @@ describe("Effect stream capabilities", () => {
     },
   );
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect runner callback at the test boundary.
   test("interruption of a blocked Live pull releases its session exactly once", async () => {
     let cancelled = 0;
     const binding = sessionBinding({ scenario: "blocked", onCancel: () => cancelled++ });
@@ -150,6 +154,7 @@ describe("Effect stream capabilities", () => {
     await binding.client.close();
   });
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect runner callback at the test boundary.
   test("Test layer supplies the same handlers through production and control tags", async () => {
     const client = directProtocolClient(
       new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } }),
@@ -204,8 +209,8 @@ describe("Effect stream capabilities", () => {
   });
 });
 
-async function unusedClientOperation(): Promise<never> {
-  throw new Error("unused client operation");
+function unusedClientOperation(): Promise<never> {
+  return Promise.reject(new Error("unused client operation"));
 }
 
 function sessionBinding(options: {
@@ -221,7 +226,7 @@ function sessionBinding(options: {
         append: unusedClientOperation,
         appendJsonBatch: unusedClientOperation,
         close: unusedClientOperation,
-        read: async <T extends JsonValue>() => {
+        read: <T extends JsonValue>() => {
           const session = new ClientReadSession<T>({ startOffset: "-1" });
           const originalCancel = session.cancel.bind(session);
           session.cancel = (reason?: unknown) => {
@@ -239,11 +244,11 @@ function sessionBinding(options: {
           if (options.scenario === "missing-start-offset") {
             Object.defineProperty(session, "startOffset", { value: undefined });
           }
-          return { status: "ok", session };
+          return Promise.resolve<ClientReadResult<T>>({ status: "ok", session });
         },
       };
     },
-    async close() {},
+    close: () => Promise.resolve(),
   };
   return bindStream({ identity: streamIdentity("session"), client, streamId: "session" });
 }

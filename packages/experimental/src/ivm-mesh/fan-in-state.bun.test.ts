@@ -1,5 +1,8 @@
+/* oxlint-disable effecttsgo/async-function -- This Bun SQLite integration suite has one Promise-returning runner and adapter execution model. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun SQLite adapter creates its isolated temporary database directory through Node fs.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun SQLite adapter constructs its temporary database filename through Node path.
 import { join as joinPath } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient, type JsonValue } from "@streamsy/core";
