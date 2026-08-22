@@ -1,8 +1,9 @@
 /** Player session, typed fetch, identity fields, and sync presentation helpers. */
 
 import type { CSSProperties, ReactNode } from "react";
+import { Schema } from "effect";
 
-import { friendlyError, type ApiErrorResponse } from "../application/api.ts";
+import { ApiErrorResponse, friendlyError, isApiErrorResponse } from "../application/api.ts";
 import type { PlayerController } from "../domain/events.ts";
 import type { SyncStatus } from "./board-stream-db.ts";
 
@@ -20,6 +21,13 @@ export interface Identity {
    */
   spectator?: boolean;
 }
+export const IdentitySchema = Schema.Struct({
+  gameId: Schema.String,
+  playerId: Schema.String,
+  token: Schema.String,
+  role: Schema.Literals(["host", "player", "agent"]),
+  spectator: Schema.optionalKey(Schema.Boolean),
+});
 
 /** Seat-name limit, shared by the join field and every agent-seat field. */
 export const MAX_SEAT_NAME = 24;
@@ -73,8 +81,7 @@ export const STORAGE_KEY = "risk-demo-identity";
 export function loadIdentity(): Identity | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-    return raw ? (JSON.parse(raw) as Identity) : null;
+    return raw ? Schema.decodeUnknownSync(IdentitySchema)(JSON.parse(raw)) : null;
   } catch {
     return null;
   }
@@ -100,6 +107,7 @@ export function gamePath(gameId: string): string {
 
 // oxlint-disable-next-line effecttsgo/async-function -- React event handlers consume this Promise-native browser fetch facade directly.
 export async function api<T>(
+  schema: Schema.Decoder<T>,
   method: string,
   path: string,
   options: { token?: string; body?: unknown } = {},
@@ -111,24 +119,18 @@ export async function api<T>(
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
+  const body: unknown = await response.json().catch(() => ({
+    status: "rejected",
+    error: { code: "INTERNAL", message: "Invalid server response." },
+  }));
   return {
     status: response.status,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-    body: (await response.json().catch(() => ({
-      status: "rejected",
-      error: { code: "INTERNAL", message: "Invalid server response." },
-    }))) as T | ApiErrorResponse,
+    body: isApiErrorResponse(body) ? body : Schema.decodeUnknownSync(schema)(body),
   };
 }
 
 export function isError(body: unknown): body is ApiErrorResponse {
-  return Boolean(
-    body &&
-    typeof body === "object" &&
-    "status" in body &&
-    body.status === "rejected" &&
-    "error" in body,
-  );
+  return isApiErrorResponse(body);
 }
 
 export function errorMessage(body: unknown, fallback: string): string {

@@ -247,7 +247,8 @@ function refreshDerivedTotals(state: ProjectionState): void {
       continent.territoryIds.map((id) => state.territories.find((t) => t.id === id)?.ownerId),
     );
     const [only] = [...owners];
-    continent.controllerId = owners.size === 1 && only ? only : undefined;
+    if (owners.size === 1 && only) continent.controllerId = only;
+    else delete continent.controllerId;
   }
 }
 
@@ -477,11 +478,11 @@ function applyEvent(state: ProjectionState, event: GameEvent): void {
     case "GameWon": {
       state.game.status = "finished";
       state.game.winnerId = event.playerId;
-      state.game.activePlayerId = undefined;
-      state.game.phase = undefined;
+      delete state.game.activePlayerId;
+      delete state.game.phase;
       state.combat = null;
       if (state.turn) {
-        state.turn.phase = undefined;
+        delete state.turn.phase;
         state.turn.reinforcement = { base: 0, continents: [], total: 0, remaining: 0 };
       }
       break;
@@ -637,11 +638,12 @@ export function projectEvent(
   const state = structuredClone(previous);
   applyEvent(state, event);
 
+  const playerId = movePlayerId(event);
   state.moves.push({
     id: moveId(ordinal),
     commandId: event.commandId,
     kind: event.type,
-    playerId: movePlayerId(event),
+    ...(playerId === undefined ? {} : { playerId }),
     sourceOffset,
     ...moveDetail(event, previous),
   });

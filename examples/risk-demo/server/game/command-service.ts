@@ -17,16 +17,16 @@ import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import type { Command } from "../../src/domain/commands.ts";
 import { decide, type DecisionError } from "../../src/domain/decide.ts";
-import type { GameEvent } from "../../src/domain/events.ts";
+import { GameEvent, type GameEvent as GameEventType } from "../../src/domain/events.ts";
+import { Schema } from "effect";
 import type { Rng } from "../../src/domain/rng.ts";
 import { boardProjectionTxId } from "../../src/board/transaction.ts";
 import type { CommandStore } from "../persistence/stores.ts";
 import { ZERO_OFFSET, compareOffsets, type StreamProtocolFactory } from "@streamsy/core";
 
-const eventSchema: JsonCodec<GameEvent> = {
+const eventSchema: JsonCodec<GameEventType> = {
   encode: (event) => event,
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
-  decode: (value) => value as GameEvent,
+  decode: Schema.decodeUnknownSync(GameEvent),
 };
 
 export type SubmitResult =
@@ -36,7 +36,7 @@ export type SubmitResult =
       sourceStreamId: string;
       sourceOffset: string;
       txid: string;
-      events: GameEvent[];
+      events: GameEventType[];
     }
   | { status: "rejected"; commandId: string; error: DecisionError };
 
@@ -65,7 +65,7 @@ function commandLog(deps: CommandServiceDeps, sourceStreamId: string, gameId: st
         defenseTimeoutMs: deps.defenseTimeoutMs,
       }),
     commandIdOf: (command: Command) => command.commandId,
-    eventCommandIdOf: (event: GameEvent) => event.commandId,
+    eventCommandIdOf: (event: GameEventType) => event.commandId,
     payloadOf: ({ commandId: _commandId, ...payload }: Command) => payload,
     store: {
       get: (commandId) => {
@@ -74,8 +74,7 @@ function commandLog(deps: CommandServiceDeps, sourceStreamId: string, gameId: st
           ? {
               ...row,
               events: row.events,
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
-              error: row.error as DecisionError,
+              error: row.error,
             }
           : null;
       },
@@ -93,8 +92,7 @@ export async function submitCommand(
   sourceStreamId: string,
   command: Command,
 ): Promise<SubmitResult> {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
-  const gameId = gameIdFor(sourceStreamId, command as { gameId?: string });
+  const gameId = gameIdFor(sourceStreamId, "gameId" in command ? command : {});
   try {
     const result = await commandLog(deps, sourceStreamId, gameId).submit(command);
     if (result.status === "rejected") return result;
@@ -116,7 +114,7 @@ export async function readCanonical(protocol: StreamProtocolFactory, sourceStrea
     protocol,
     streamId: sourceStreamId,
     eventSchema,
-    eventCommandIdOf: (event: GameEvent) => event.commandId,
+    eventCommandIdOf: (event: GameEventType) => event.commandId,
   });
 }
 
@@ -133,7 +131,7 @@ export async function readCanonicalThrough(
   protocol: StreamProtocolFactory,
   sourceStreamId: string,
   throughOffset: string | null,
-): Promise<{ events: GameEvent[]; head: string }> {
+): Promise<{ events: GameEventType[]; head: string }> {
   const got = await createJsonProtocol(protocol, eventSchema).get(sourceStreamId);
   if (got.status === "not-found") return { events: [], head: ZERO_OFFSET };
   if (got.status !== "ok") throw new Error(`cannot read command stream: ${got.status}`);

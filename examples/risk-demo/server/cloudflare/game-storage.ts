@@ -14,6 +14,32 @@ import {
   type StreamRecord,
 } from "@streamsy/core";
 import type { DurableObjectStorage, SqlStorageValue } from "@cloudflare/workers-types";
+import { Schema } from "effect";
+
+const StreamRecordSchema = Schema.Struct({
+  id: Schema.String,
+  config: Schema.Struct({
+    contentType: Schema.String,
+    ttlSeconds: Schema.optionalKey(Schema.Number),
+    expiresAt: Schema.optionalKey(Schema.String),
+    createdAt: Schema.Number,
+  }),
+  lifecycle: Schema.Struct({
+    lastSeq: Schema.optionalKey(Schema.String),
+    closed: Schema.optionalKey(Schema.Boolean),
+    closedAt: Schema.optionalKey(Schema.Number),
+    forkedFrom: Schema.optionalKey(Schema.String),
+    forkOffset: Schema.optionalKey(Schema.String),
+    forkSubOffset: Schema.optionalKey(Schema.Number),
+    softDeleted: Schema.optionalKey(Schema.Boolean),
+    expiresAtMs: Schema.optionalKey(Schema.Number),
+  }),
+  currentOffset: Schema.String,
+  counter: Schema.Number,
+});
+type StreamRecordSchemaType = typeof StreamRecordSchema.Type;
+const streamRecordSchemaInput = (record: StreamRecord): StreamRecordSchemaType => record;
+const decodeStreamRecord = Schema.decodeUnknownSync(Schema.fromJsonString(StreamRecordSchema));
 
 const SCHEMA = [
   `create table if not exists risk_streams (
@@ -77,8 +103,7 @@ export function createGameStorageAdapter(
     const row = [
       ...sql.exec<RecordRow>("select record_json from risk_streams where stream_id = ?", streamId),
     ][0];
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Cloudflare's typed SQL/storage callback returns the same game-local adapter value supplied by this boundary.
-    return row ? (JSON.parse(row.record_json) as StreamRecord) : null;
+    return row ? streamRecordSchemaInput(decodeStreamRecord(row.record_json)) : null;
   };
 
   const putRecord = (record: StreamRecord): void => {

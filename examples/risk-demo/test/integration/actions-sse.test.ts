@@ -19,7 +19,7 @@ import {
   readActionsBatches,
   type ActionsBatch,
 } from "../../src/application/actions-stream.ts";
-import type { AgentMessage } from "../../server/game/action-notifier.ts";
+import { AgentMessageSchema, type AgentMessage } from "../../server/game/action-notifier.ts";
 import { createBot } from "../../server/demo/bot.ts";
 import {
   BASE,
@@ -58,7 +58,7 @@ async function take(
   enough: (batch: ActionsBatch<AgentMessage>) => boolean,
 ): Promise<ActionsBatch<AgentMessage>[]> {
   const batches: ActionsBatch<AgentMessage>[] = [];
-  for await (const batch of readActionsBatches<AgentMessage>(response)) {
+  for await (const batch of readActionsBatches(response, AgentMessageSchema)) {
     batches.push(batch);
     if (enough(batch)) break;
   }
@@ -183,7 +183,7 @@ describe("actions stream (SSE)", () => {
       offset: opening.at(-1)!.nextOffset,
     });
     const batches: ActionsBatch<AgentMessage>[] = [];
-    for await (const batch of readActionsBatches<AgentMessage>(response)) batches.push(batch);
+    for await (const batch of readActionsBatches(response, AgentMessageSchema)) batches.push(batch);
     const elapsed = performance.now() - started;
 
     // The stream ended by itself with nothing to report, and it held for the
@@ -234,7 +234,8 @@ describe("actions stream (SSE)", () => {
     const consumed = (async () => {
       const batches: ActionsBatch<AgentMessage>[] = [];
       try {
-        for await (const batch of readActionsBatches<AgentMessage>(response)) batches.push(batch);
+        for await (const batch of readActionsBatches(response, AgentMessageSchema))
+          batches.push(batch);
       } catch {
         // An aborted body is the ordinary shape of a client disconnect.
       }
@@ -278,8 +279,9 @@ describe("actions stream (SSE)", () => {
     // A client therefore records its own completion when it takes a
     // `GameOver`, which is exactly what the launcher persists.
     const past: ActionsBatch<AgentMessage>[] = [];
-    for await (const batch of readActionsBatches<AgentMessage>(
+    for await (const batch of readActionsBatches(
       await open(h, game.gameId, token, { offset: terminal.nextOffset }),
+      AgentMessageSchema,
     )) {
       past.push(batch);
     }

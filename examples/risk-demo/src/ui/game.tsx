@@ -31,8 +31,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Schema } from "effect";
 
-import type {
+import {
   AgentSeatResponse,
   BoardResponse,
   CommandAck,
@@ -40,8 +41,8 @@ import type {
   GameResponse,
   JoinGameResponse,
   LeaveGameResponse,
-  PlayAction,
-  PlayCommandRequest,
+  type PlayAction,
+  type PlayCommandRequest,
   RenamePlayerResponse,
 } from "../application/api.ts";
 import type { LegalAction } from "../application/legal-actions.ts";
@@ -175,7 +176,8 @@ function useOpenedThroughOffset(
     let cancelled = false;
     void fetch(`/v1/games/${gameId}/board`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error("no board"))))
-      .then((body: BoardResponse) => {
+      .then(Schema.decodeUnknownSync(BoardResponse))
+      .then((body) => {
         if (!cancelled) setRead({ state: "known", offset: body.sourceThroughOffset ?? null });
       })
       .catch(() => {
@@ -250,7 +252,7 @@ export function GameScreen(props: GameScreenProps) {
       return undefined;
     }
     const controller = new AbortController();
-    void api<DecisionResponse>("GET", `/v1/games/${gameId}/decision`, {
+    void api(DecisionResponse, "GET", `/v1/games/${gameId}/decision`, {
       token: identity.token,
     }).then((result) => {
       if (controller.signal.aborted) return;
@@ -400,16 +402,15 @@ export function GameScreen(props: GameScreenProps) {
         turnId,
         action,
       };
-      const result = await api<CommandAck>("POST", `/v1/games/${gameId}/commands`, {
+      const result = await api(CommandAck, "POST", `/v1/games/${gameId}/commands`, {
         token: identity.token,
         body,
       });
       const accepted = result.status === 200 && !isError(result.body);
-      if (accepted) {
+      if (result.status === 200 && !isError(result.body)) {
         try {
           if (!live.session) throw new Error("Board session is not connected.");
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The shared typed browser API facade pairs this call with the declared response contract and handles rejected bodies separately.
-          await live.session.awaitTxId(ackTxId(result.body as CommandAck));
+          await live.session.awaitTxId(ackTxId(result.body));
           setNotice(acknowledgementNotice(action.type));
         } catch {
           setNotice(`${acknowledgementNotice(action.type)} Live board still catching up.`);
@@ -462,7 +463,7 @@ export function GameScreen(props: GameScreenProps) {
   const startGame = async () => {
     if (!identity) return;
     setBusy(true);
-    const result = await api<CommandAck>("POST", `/v1/games/${gameId}/start`, {
+    const result = await api(CommandAck, "POST", `/v1/games/${gameId}/start`, {
       token: identity.token,
       body: {},
     });
@@ -485,7 +486,7 @@ export function GameScreen(props: GameScreenProps) {
     setBusy(true);
     // No colour is requested: the server assigns a free palette colour
     // canonically, so simultaneous joins cannot collide on a swatch.
-    const result = await api<JoinGameResponse>("POST", `/v1/games/${gameId}/players`, {
+    const result = await api(JoinGameResponse, "POST", `/v1/games/${gameId}/players`, {
       body: { name: props.name },
     });
     setBusy(false);
@@ -510,7 +511,8 @@ export function GameScreen(props: GameScreenProps) {
   const renameSeat = async (playerId: string, requestedName: string) => {
     if (!identity) return;
     setBusy(true);
-    const result = await api<RenamePlayerResponse>(
+    const result = await api(
+      RenamePlayerResponse,
       "PATCH",
       `/v1/games/${gameId}/players/${encodeURIComponent(playerId)}`,
       { token: identity.token, body: { name: requestedName } },
@@ -539,7 +541,7 @@ export function GameScreen(props: GameScreenProps) {
   const leaveGame = async () => {
     if (!identity) return;
     setBusy(true);
-    const result = await api<LeaveGameResponse>("DELETE", `/v1/games/${gameId}/players/me`, {
+    const result = await api(LeaveGameResponse, "DELETE", `/v1/games/${gameId}/players/me`, {
       token: identity.token,
     });
     setBusy(false);
@@ -563,7 +565,7 @@ export function GameScreen(props: GameScreenProps) {
     // row it will occupy.
     const seat = (board?.players.length ?? agentSeats.length) + 1;
     // The agent seat's colour is assigned server-side like every other seat.
-    const result = await api<AgentSeatResponse>("POST", `/v1/games/${gameId}/agent-seats`, {
+    const result = await api(AgentSeatResponse, "POST", `/v1/games/${gameId}/agent-seats`, {
       token: identity?.token,
       body: { name: agentSeatName(requestedName, seat) },
     });

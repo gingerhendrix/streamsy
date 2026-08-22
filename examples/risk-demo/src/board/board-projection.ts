@@ -8,7 +8,8 @@
 import type { StreamId, StreamProtocolFactory } from "@streamsy/core";
 import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
 
-import type { GameEvent } from "../domain/events.ts";
+import { GameEvent, type GameEvent as GameEventType } from "../domain/events.ts";
+import { Schema } from "effect";
 import { COMBAT_ROW_KEY, TURN_ROW_KEY, type ProjectionState } from "./projection.ts";
 
 /** One Durable State row emitted by the board projection. */
@@ -72,10 +73,9 @@ export const BOARD_META_KEY = "board";
  */
 export const BOARD_REDUCER_VERSION = "hex-domination:board-3";
 
-const eventSchema: JsonCodec<GameEvent> = {
+const eventSchema: JsonCodec<GameEventType> = {
   encode: (event) => event,
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
-  decode: (value) => value as GameEvent,
+  decode: Schema.decodeUnknownSync(GameEvent),
 };
 
 /**
@@ -109,7 +109,7 @@ export function boardRows(
 export async function writeCanonicalEvents(
   protocol: StreamProtocolFactory,
   streamId: StreamId,
-  events: readonly GameEvent[],
+  events: readonly GameEventType[],
 ): Promise<string[]> {
   const stream = await createJsonProtocol(protocol, eventSchema).getOrCreate(streamId);
   const offsets: string[] = [];

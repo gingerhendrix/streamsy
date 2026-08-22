@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- The public action-notification Promise facade owns a cancellable subscription wait and preserves its existing caller contract. */
+import { Schema } from "effect";
 /**
  * The wire contract of a player's actions stream, in one place: the framing the
  * server writes and the parser every first-party client reads it with.
@@ -49,6 +50,12 @@ export interface ActionsControl {
   /** Present only on the terminal `GameOver` control: nothing more will arrive. */
   closed?: boolean;
 }
+
+export const ActionsControlSchema = Schema.Struct({
+  nextOffset: Schema.String,
+  upToDate: Schema.Boolean,
+  closed: Schema.optionalKey(Schema.Boolean),
+});
 
 /** One `data` event and the `control` event that closes it. */
 export interface ActionsBatch<T = unknown> {
@@ -125,21 +132,27 @@ export function createSseParser(): { push(chunk: string): SseFrame[] } {
  * `control` event that names the offset they read through: a client must never
  * advance its cursor past messages it has not also received.
  */
-export function createActionsDecoder<T = unknown>(): { push(chunk: string): ActionsBatch<T>[] } {
+export function createActionsDecoder(): { push(chunk: string): ActionsBatch<unknown>[] };
+export function createActionsDecoder<T>(schema: Schema.Decoder<T>): {
+  push(chunk: string): ActionsBatch<T>[];
+};
+export function createActionsDecoder(schema: Schema.Decoder<unknown> = Schema.Unknown): {
+  push(chunk: string): ActionsBatch<unknown>[];
+} {
   const parser = createSseParser();
-  let pending: T[] = [];
+  let pending: unknown[] = [];
+  const decodeMessages = Schema.decodeUnknownSync(Schema.Array(schema));
+  const decodeControl = Schema.decodeUnknownSync(ActionsControlSchema);
   return {
-    push(chunk: string): ActionsBatch<T>[] {
-      const batches: ActionsBatch<T>[] = [];
+    push(chunk: string): ActionsBatch<unknown>[] {
+      const batches: ActionsBatch<unknown>[] = [];
       for (const frame of parser.push(chunk)) {
         if (frame.event === "data") {
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic SSE facade preserves the caller-selected message type; callers that consume domain messages own the matching decoder contract.
-          pending = pending.concat(JSON.parse(frame.data) as T[]);
+          pending = pending.concat(decodeMessages(JSON.parse(frame.data)));
           continue;
         }
         if (frame.event !== "control") continue;
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic SSE facade preserves the caller-selected message type; callers that consume domain messages own the matching decoder contract.
-        const control = JSON.parse(frame.data) as ActionsControl;
+        const control = decodeControl(JSON.parse(frame.data));
         batches.push({
           messages: pending,
           nextOffset: control.nextOffset,
@@ -173,13 +186,23 @@ const TIMED_OUT = Symbol("timed-out");
  * settlement, so a caller that closes has proof the reader finished — cancelling
  * a body while a reader still holds the lock silently does nothing.
  */
-export function createActionsReader<T = unknown>(
+export function createActionsReader(
   response: Response,
   connection: AbortController,
-): ActionsReader<T> {
-  const batches = readActionsBatches<T>(response);
-  let pending: Promise<ActionsBatch<T> | null> | null = null;
-  const advance = (): Promise<ActionsBatch<T> | null> => {
+): ActionsReader<unknown>;
+export function createActionsReader<T>(
+  response: Response,
+  connection: AbortController,
+  schema: Schema.Decoder<T>,
+): ActionsReader<T>;
+export function createActionsReader(
+  response: Response,
+  connection: AbortController,
+  schema: Schema.Decoder<unknown> = Schema.Unknown,
+): ActionsReader<unknown> {
+  const batches = readActionsBatches(response, schema);
+  let pending: Promise<ActionsBatch<unknown> | null> | null = null;
+  const advance = (): Promise<ActionsBatch<unknown> | null> => {
     pending ??= batches
       .next()
       .then((result) => (result.done ? null : result.value))
@@ -192,7 +215,7 @@ export function createActionsReader<T = unknown>(
   };
   return {
     // oxlint-disable-next-line effecttsgo/async-function -- AsyncIterator compatibility requires a Promise-returning next method at this public SSE facade.
-    async next(timeoutMs: number): Promise<ActionsBatch<T> | null> {
+    async next(timeoutMs: number): Promise<ActionsBatch<unknown> | null> {
       const arrival = advance();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const expiry = new Promise<typeof TIMED_OUT>((resolve) => {
@@ -210,21 +233,27 @@ export function createActionsReader<T = unknown>(
       connection.abort();
       await pending?.catch(() => {});
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic SSE facade preserves the caller-selected message type; callers that consume domain messages own the matching decoder contract.
-      await batches.return(undefined as never).catch(() => {});
+      await batches.return(undefined).catch(() => {});
     },
   };
 }
 
 /** Read one actions response to its end, yielding each batch as it lands. */
 // oxlint-disable-next-line effecttsgo/async-function -- AsyncGenerator is the public Web-stream compatibility contract consumed by browser and agent clients.
-export async function* readActionsBatches<T = unknown>(
+export function readActionsBatches(response: Response): AsyncGenerator<ActionsBatch<unknown>>;
+export function readActionsBatches<T>(
   response: Response,
-): AsyncGenerator<ActionsBatch<T>> {
+  schema: Schema.Decoder<T>,
+): AsyncGenerator<ActionsBatch<T>>;
+export async function* readActionsBatches(
+  response: Response,
+  schema: Schema.Decoder<unknown> = Schema.Unknown,
+): AsyncGenerator<ActionsBatch<unknown>, void, unknown> {
   const body = response.body;
   if (!body) return;
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  const actions = createActionsDecoder<T>();
+  const actions = createActionsDecoder(schema);
   try {
     for (;;) {
       const { done, value } = await reader.read();

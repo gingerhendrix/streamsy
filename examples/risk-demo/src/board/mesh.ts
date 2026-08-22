@@ -40,7 +40,8 @@ import {
   type ProjectionBoundary,
 } from "@streamsy/experimental/ivm-mesh";
 
-import type { GameEvent } from "../domain/events.ts";
+import { GameEvent, type GameEvent as GameEventType } from "../domain/events.ts";
+import { Schema } from "effect";
 import { boardProjectionTxId } from "./transaction.ts";
 import {
   BOARD_META_KEY,
@@ -51,6 +52,19 @@ import {
   type DurableStateProjectionRow,
 } from "./board-projection.ts";
 import { initialProjection, projectEvent, type ProjectionState } from "./projection.ts";
+import {
+  BoardMetaFactSchema,
+  BoardProjectionMetaSchema,
+  DurableBoardFactSchema,
+  ProjectedCombatSchema,
+  ProjectedContinentSchema,
+  ProjectedGameSchema,
+  ProjectedHexSchema,
+  ProjectedMoveSchema,
+  ProjectedPlayerSchema,
+  ProjectedTerritorySchema,
+  ProjectedTurnSchema,
+} from "./schemas.ts";
 
 /**
  * The epoch is fixed configuration for a board generation, never claimed and
@@ -100,9 +114,9 @@ export interface BoardMesh {
   };
   restore(initial: BoardMaterialized, facts: readonly JsonValue[]): BoardMaterialized;
   validateRecovered(checkpoint: { sourceThrough?: string; state: BoardMaterialized }): void;
-  decode(batch: { kind: string; items?: readonly JsonValue[] }): readonly GameEvent[];
+  decode(batch: { kind: string; items?: readonly JsonValue[] }): readonly GameEventType[];
   reduce(
-    events: readonly GameEvent[],
+    events: readonly GameEventType[],
     boundary: ProjectionBoundary,
     prior: BoardMaterialized,
   ): JsonValue[];
@@ -139,14 +153,17 @@ function restoreBoard(
 ): BoardMaterialized {
   const { generation, sourceStreamId } = options;
   let prior = initial;
+  const decodeMetaFact = Schema.decodeUnknownOption(BoardMetaFactSchema);
   for (const fact of facts) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
-    const row = fact as { type?: string; key?: string; value?: BoardProjectionMetaRow };
-    if (row.type !== BOARD_META_TYPE || row.key !== BOARD_META_KEY) continue;
-    const value = row.value;
-    if (!value || typeof value !== "object") {
-      throw new Error("board projectionMeta row has no value");
-    }
+    if (typeof fact !== "object" || fact === null || Array.isArray(fact)) continue;
+    if (
+      Reflect.get(fact, "type") !== BOARD_META_TYPE ||
+      Reflect.get(fact, "key") !== BOARD_META_KEY
+    )
+      continue;
+    const decoded = decodeMetaFact(fact);
+    if (decoded._tag === "None") throw new Error("board projectionMeta row is malformed");
+    const value = decoded.value.value;
     // The checkpoint row is the only thing standing between durable output and
     // this reducer's state, so check that it actually belongs here rather than
     // trusting the collection name. A row from another generation, reducer, or
@@ -167,10 +184,7 @@ function restoreBoard(
         `board projectionMeta projects "${value.sourceStreamId}", not "${sourceStreamId}"`,
       );
     }
-    if (!value.snapshot || typeof value.snapshot !== "object") {
-      throw new Error("board projectionMeta row is missing its state snapshot");
-    }
-    if (!Number.isSafeInteger(value.sourceSeq) || value.sourceSeq < 0) {
+    if (value.sourceSeq < 0) {
       throw new Error("board projectionMeta has no applied-event ordinal");
     }
     // Ordinals count canonical events, so they only ever move forwards.
@@ -195,6 +209,21 @@ function equal(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function encodeRowValue(type: string, value: unknown): JsonValue {
+  const schema = {
+    game: ProjectedGameSchema,
+    player: ProjectedPlayerSchema,
+    hex: ProjectedHexSchema,
+    territory: ProjectedTerritorySchema,
+    continent: ProjectedContinentSchema,
+    turn: ProjectedTurnSchema,
+    combat: ProjectedCombatSchema,
+    move: ProjectedMoveSchema,
+  }[type];
+  if (!schema) throw new Error(`unknown board row type ${type}`);
+  return Schema.encodeUnknownSync(schema)(value);
+}
+
 /**
  * The row difference between two projection states.
  *
@@ -209,27 +238,28 @@ function diffRows(
 ): JsonValue[] {
   const before = new Map(boardRows(previous).map((row) => [rowKey(row), row]));
   const changes: JsonValue[] = [];
+  const encodeFact = Schema.encodeUnknownSync(DurableBoardFactSchema);
   for (const row of boardRows(next)) {
     const key = rowKey(row);
     const prior = before.get(key);
+    const value = encodeRowValue(row.type, row.value);
     if (!prior) {
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
-      changes.push({ ...row, headers: { operation: "insert", offset, txid } } as JsonValue);
+      changes.push(encodeFact({ ...row, value, headers: { operation: "insert", offset, txid } }));
     } else if (!equal(prior.value, row.value)) {
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
-      changes.push({ ...row, headers: { operation: "update", offset, txid } } as JsonValue);
+      changes.push(encodeFact({ ...row, value, headers: { operation: "update", offset, txid } }));
     }
     before.delete(key);
   }
   for (const removed of before.values()) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
-    changes.push({
-      type: removed.type,
-      key: removed.key,
-      value: null,
-      old_value: removed.value,
-      headers: { operation: "delete", offset, txid },
-    } as JsonValue);
+    changes.push(
+      encodeFact({
+        type: removed.type,
+        key: removed.key,
+        value: null,
+        old_value: encodeRowValue(removed.type, removed.value),
+        headers: { operation: "delete", offset, txid },
+      }),
+    );
   }
   return changes;
 }
@@ -296,8 +326,7 @@ export async function createBoardMesh(options: BoardMeshOptions): Promise<BoardM
       if (batch.kind !== "json" || !batch.items) {
         throw new Error("canonical game stream must be JSON");
       }
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
-      return batch.items as readonly unknown[] as readonly GameEvent[];
+      return Schema.decodeUnknownSync(Schema.Array(GameEvent))(batch.items);
     },
 
     reduce(events, boundary, prior) {
@@ -319,11 +348,11 @@ export async function createBoardMesh(options: BoardMeshOptions): Promise<BoardM
         reducerVersion: BOARD_REDUCER_VERSION,
         snapshot: state,
       };
+      const encodedMeta = Schema.encodeUnknownSync(BoardProjectionMetaSchema)(meta);
       facts.push({
         type: BOARD_META_TYPE,
         key: BOARD_META_KEY,
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
-        value: meta as unknown as JsonValue,
+        value: encodedMeta,
         // Upsert: the first transition of a generation creates this row.
         headers: {
           operation: "upsert",

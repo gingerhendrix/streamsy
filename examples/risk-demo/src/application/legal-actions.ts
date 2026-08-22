@@ -15,61 +15,84 @@ import type { AggregateState, PendingInteraction } from "../domain/aggregate.ts"
 import { friendlyReachable, ownedBy } from "../domain/aggregate.ts";
 import { maxAttackerDice } from "../domain/dice.ts";
 import { adjacentTo } from "../domain/map.ts";
+import { Schema } from "effect";
 
-export type LegalAction =
-  | {
-      type: "reinforce";
-      territoryIds: string[];
-      pool: number;
-      submit: {
-        type: "reinforce";
-        placements: Array<{ territoryId: "<one of territoryIds>"; armies: "<1..pool>" }>;
-      };
-    }
-  | {
-      type: "declare-attack";
-      choices: Array<{ from: string; to: string; maxAttackerDice: number }>;
-      submit: {
-        type: "declare-attack";
-        from: "<choice.from>";
-        to: "<choice.to>";
-        attackerDice: "<1..choice.maxAttackerDice>";
-      };
-    }
-  | {
-      type: "roll-defense";
-      attackId: string;
-      dice: number;
-      deadlineAt: number;
-      submit: { type: "roll-defense"; attackId: "<attackId>" };
-    }
-  | {
-      type: "occupy-territory";
-      attackId: string;
-      from: string;
-      to: string;
-      minArmies: number;
-      maxArmies: number;
-      submit: {
-        type: "occupy-territory";
-        attackId: "<attackId>";
-        armies: "<minArmies..maxArmies>";
-      };
-    }
-  | {
-      type: "fortify";
-      choices: Array<{ from: string; reachable: Array<{ to: string; maxArmies: number }> }>;
-      submit: {
-        type: "fortify";
-        from: "<choice.from>";
-        to: "<choice.reachable.to>";
-        armies: "<1..choice.reachable.maxArmies>";
-      };
-    }
-  | { type: "skip-fortifications"; submit: { type: "skip-fortifications" } };
+const MutableArray = <S extends Schema.Top>(schema: S) => Schema.mutable(Schema.Array(schema));
+export const LegalAction = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("reinforce"),
+    territoryIds: MutableArray(Schema.String),
+    pool: Schema.Int,
+    submit: Schema.Struct({
+      type: Schema.Literal("reinforce"),
+      placements: MutableArray(
+        Schema.Struct({
+          territoryId: Schema.Literal("<one of territoryIds>"),
+          armies: Schema.Literal("<1..pool>"),
+        }),
+      ),
+    }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("declare-attack"),
+    choices: MutableArray(
+      Schema.Struct({ from: Schema.String, to: Schema.String, maxAttackerDice: Schema.Int }),
+    ),
+    submit: Schema.Struct({
+      type: Schema.Literal("declare-attack"),
+      from: Schema.Literal("<choice.from>"),
+      to: Schema.Literal("<choice.to>"),
+      attackerDice: Schema.Literal("<1..choice.maxAttackerDice>"),
+    }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("roll-defense"),
+    attackId: Schema.String,
+    dice: Schema.Int,
+    deadlineAt: Schema.Finite,
+    submit: Schema.Struct({
+      type: Schema.Literal("roll-defense"),
+      attackId: Schema.Literal("<attackId>"),
+    }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("occupy-territory"),
+    attackId: Schema.String,
+    from: Schema.String,
+    to: Schema.String,
+    minArmies: Schema.Int,
+    maxArmies: Schema.Int,
+    submit: Schema.Struct({
+      type: Schema.Literal("occupy-territory"),
+      attackId: Schema.Literal("<attackId>"),
+      armies: Schema.Literal("<minArmies..maxArmies>"),
+    }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("fortify"),
+    choices: MutableArray(
+      Schema.Struct({
+        from: Schema.String,
+        reachable: MutableArray(Schema.Struct({ to: Schema.String, maxArmies: Schema.Int })),
+      }),
+    ),
+    submit: Schema.Struct({
+      type: Schema.Literal("fortify"),
+      from: Schema.Literal("<choice.from>"),
+      to: Schema.Literal("<choice.reachable.to>"),
+      armies: Schema.Literal("<1..choice.reachable.maxArmies>"),
+    }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("skip-fortifications"),
+    submit: Schema.Struct({ type: Schema.Literal("skip-fortifications") }),
+  }),
+]);
+export type LegalAction = typeof LegalAction.Type;
 
 /** How the decision resource labels this player's relationship to the moment. */
-export type DecisionMode = "active-turn" | "defense" | "waiting" | "finished";
+export const DecisionMode = Schema.Literals(["active-turn", "defense", "waiting", "finished"]);
+export type DecisionMode = typeof DecisionMode.Type;
 
 export function decisionMode(state: AggregateState, playerId: string): DecisionMode {
   if (state.status === "finished") return "finished";

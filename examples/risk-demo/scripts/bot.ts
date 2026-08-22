@@ -13,8 +13,10 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { Schema } from "effect";
 
 import { ACTIONS_STREAM_CLIENT_TIMEOUT_MS } from "../src/application/actions-stream.ts";
+import { GameResponse } from "../src/application/api.ts";
 import {
   createBot,
   type BotState,
@@ -27,6 +29,12 @@ const gameId = process.env.GAME_ID ?? "";
 const playerId = process.env.PLAYER_ID ?? "";
 const token = process.env.PLAYER_TOKEN ?? "";
 const cursorFile = process.env.CURSOR_FILE ?? "";
+const BotStateSchema = Schema.Struct({
+  cursor: Schema.optionalKey(Schema.String),
+  inflight: Schema.optionalKey(
+    Schema.Struct({ body: Schema.String, cursorAfter: Schema.optionalKey(Schema.String) }),
+  ),
+});
 
 if (!gameId || !playerId || !token) {
   console.error("Set GAME_ID, PLAYER_ID, and PLAYER_TOKEN.");
@@ -55,8 +63,7 @@ const openStream: OpenActionsStream = (path, opts) =>
 function loadState(): BotState {
   if (cursorFile && existsSync(cursorFile)) {
     try {
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
-      return JSON.parse(readFileSync(cursorFile, "utf8")) as BotState;
+      return Schema.decodeUnknownSync(BotStateSchema)(JSON.parse(readFileSync(cursorFile, "utf8")));
     } catch {
       // ignore malformed cursor file
     }
@@ -89,16 +96,17 @@ async function main(): Promise<void> {
       console.error(`game unavailable: ${meta.status}`);
       return;
     }
-    if (meta.body.status === "finished") {
-      const won = meta.body.winnerId === playerId;
-      console.log(`game over — ${won ? "I won" : `winner ${meta.body.winnerId}`}`);
+    const game = Schema.decodeUnknownSync(GameResponse)(meta.body);
+    if (game.status === "finished") {
+      const won = game.winnerId === playerId;
+      console.log(`game over — ${won ? "I won" : `winner ${game.winnerId}`}`);
       return;
     }
 
-    if (meta.body.activePlayerId === playerId) {
+    if (game.activePlayerId === playerId) {
       await bot.awaitTurn(0); // consume my wake
       saveState(state);
-      console.log(`playing turn (round ${meta.body.round})`);
+      console.log(`playing turn (round ${game.round})`);
       await bot.playTurn();
       saveState(state);
     } else {
@@ -114,7 +122,7 @@ async function main(): Promise<void> {
       // watching the full 15-second timeout.
       if (
         (wake?.type === "ActionRequired" && wake.reason === "defense-required") ||
-        meta.body.pendingInteraction?.type === "defense"
+        game.pendingInteraction?.type === "defense"
       ) {
         if (await bot.defend()) console.log("rolled defence");
       }

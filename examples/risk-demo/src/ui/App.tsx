@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- React and the browser own these Promise-native event and lifecycle callbacks; reusable data orchestration remains behind the existing application facade. */
 import { useCallback, useEffect, useState } from "react";
 
-import { type CreateGameResponse, type GameResponse } from "../application/api.ts";
+import { CreateGameResponse, GameResponse } from "../application/api.ts";
 import { GameScreen } from "./game.tsx";
 import {
   STORAGE_KEY,
@@ -58,7 +58,7 @@ export function App() {
       setGame(null);
       return null;
     }
-    const result = await api<GameResponse>("GET", `/v1/games/${gameId}`);
+    const result = await api(GameResponse, "GET", `/v1/games/${gameId}`);
     if (result.status === 200 && !isError(result.body)) {
       setGame(result.body);
       return result.body;
@@ -93,7 +93,7 @@ export function App() {
     setBusy(true);
     // Deliberately nameless: the server issues a provisional seat name and the
     // creator sets the one they want on the muster roll.
-    const result = await api<CreateGameResponse>("POST", "/v1/games", { body: {} });
+    const result = await api(CreateGameResponse, "POST", "/v1/games", { body: {} });
     setBusy(false);
     if (result.status !== 201 || isError(result.body)) {
       setNotice(errorMessage(result.body, "Could not create the game."));

@@ -16,7 +16,8 @@
  * endpoint.
  */
 
-import type { PlayerController } from "./events.ts";
+import { Schema } from "effect";
+import { PlayerControllerSchema, type PlayerController } from "./events.ts";
 import type { GameStartPlan } from "./setup.ts";
 
 export interface CreateGameCommand {
@@ -83,7 +84,7 @@ export interface ReinforceCommand {
   turnId: string;
   playerId: string;
   /** The complete turn allocation, committed atomically. */
-  placements: ReinforcementPlacement[];
+  placements: readonly ReinforcementPlacement[];
 }
 
 export interface DeclareAttackCommand {
@@ -159,60 +160,169 @@ export type PlayCommandEnvelope =
   | FortifyCommand
   | SkipFortificationsCommand;
 
-export type Command =
-  | CreateGameCommand
-  | JoinGameCommand
-  | RenamePlayerCommand
-  | LeaveGameCommand
-  | DelegateAgentSeatCommand
-  | StartGameCommand
-  | PlayCommandEnvelope
-  | ResolveDefenseTimeoutCommand;
-
 /** The player-facing action payload carried by `POST /commands`. */
-export type GameAction =
-  | { type: "reinforce"; placements: ReinforcementPlacement[] }
-  | { type: "declare-attack"; from: string; to: string; attackerDice: number }
-  | { type: "roll-defense"; attackId: string }
-  | { type: "occupy-territory"; attackId: string; armies: number }
-  | { type: "fortify"; from: string; to: string; armies: number }
-  | { type: "skip-fortifications" };
+const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const ReinforcementPlacementSchema = Schema.Struct({
+  territoryId: Schema.String,
+  armies: PositiveInt,
+});
+export const GameAction = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("reinforce"),
+    placements: Schema.Array(ReinforcementPlacementSchema),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("declare-attack"),
+    from: Schema.String,
+    to: Schema.String,
+    attackerDice: PositiveInt,
+  }),
+  Schema.Struct({ type: Schema.Literal("roll-defense"), attackId: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("occupy-territory"),
+    attackId: Schema.String,
+    armies: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("fortify"),
+    from: Schema.String,
+    to: Schema.String,
+    armies: PositiveInt,
+  }),
+  Schema.Struct({ type: Schema.Literal("skip-fortifications") }),
+]);
+export type GameAction = typeof GameAction.Type;
 
-export interface PlayCommand {
-  commandId: string;
-  turnId: string;
-  action: GameAction;
-}
+export const PlayCommand = Schema.Struct({
+  commandId: Schema.String,
+  turnId: Schema.String,
+  action: GameAction,
+});
+export type PlayCommand = typeof PlayCommand.Type;
 
 /** Stable command rejection codes. */
-export type RiskErrorCode =
-  | "GAME_NOT_FOUND"
-  | "GAME_ALREADY_EXISTS"
-  | "GAME_ALREADY_STARTED"
-  | "GAME_NOT_STARTED"
-  | "GAME_FINISHED"
-  | "NOT_ENOUGH_PLAYERS"
-  | "TOO_MANY_PLAYERS"
-  | "PLAYER_ID_TAKEN"
-  | "UNKNOWN_PLAYER"
-  | "INVALID_NAME"
-  | "NOT_YOUR_TURN"
-  | "STALE_TURN"
-  | "INVALID_PHASE"
-  | "ILLEGAL_ACTION"
-  | "UNKNOWN_TERRITORY"
-  | "NOT_ADJACENT"
-  | "INSUFFICIENT_ARMIES"
-  | "COMMAND_ID_REUSED"
-  | "MAP_GENERATION_FAILED"
-  | "PENDING_DEFENSE"
-  | "PENDING_OCCUPATION"
-  | "NOT_DEFENDING_PLAYER"
-  | "ATTACK_ID_MISMATCH"
-  | "ATTACK_ALREADY_RESOLVED"
-  | "DEFENSE_DEADLINE_EXPIRED"
-  | "INVALID_OCCUPATION"
-  | "NO_FRIENDLY_PATH";
+export const RISK_ERROR_CODES = [
+  "GAME_NOT_FOUND",
+  "GAME_ALREADY_EXISTS",
+  "GAME_ALREADY_STARTED",
+  "GAME_NOT_STARTED",
+  "GAME_FINISHED",
+  "NOT_ENOUGH_PLAYERS",
+  "TOO_MANY_PLAYERS",
+  "PLAYER_ID_TAKEN",
+  "UNKNOWN_PLAYER",
+  "INVALID_NAME",
+  "NOT_YOUR_TURN",
+  "STALE_TURN",
+  "INVALID_PHASE",
+  "ILLEGAL_ACTION",
+  "UNKNOWN_TERRITORY",
+  "NOT_ADJACENT",
+  "INSUFFICIENT_ARMIES",
+  "COMMAND_ID_REUSED",
+  "MAP_GENERATION_FAILED",
+  "PENDING_DEFENSE",
+  "PENDING_OCCUPATION",
+  "NOT_DEFENDING_PLAYER",
+  "ATTACK_ID_MISMATCH",
+  "ATTACK_ALREADY_RESOLVED",
+  "DEFENSE_DEADLINE_EXPIRED",
+  "INVALID_OCCUPATION",
+  "NO_FRIENDLY_PATH",
+] as const;
+export const RiskErrorCode = Schema.Literals(RISK_ERROR_CODES);
+export type RiskErrorCode = typeof RiskErrorCode.Type;
+
+export const Command = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("create-game"),
+    commandId: Schema.String,
+    gameId: Schema.String,
+    hostPlayerId: Schema.String,
+    hostName: Schema.String,
+    hostColor: Schema.optionalKey(Schema.String),
+    hostController: PlayerControllerSchema,
+    mapSeed: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("join-game"),
+    commandId: Schema.String,
+    playerId: Schema.String,
+    name: Schema.String,
+    color: Schema.optionalKey(Schema.String),
+    controller: PlayerControllerSchema,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("rename-player"),
+    commandId: Schema.String,
+    playerId: Schema.String,
+    name: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("leave-game"),
+    commandId: Schema.String,
+    playerId: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("delegate-agent-seat"),
+    commandId: Schema.String,
+    playerId: Schema.String,
+  }),
+  Schema.Struct({ type: Schema.Literal("start-game"), commandId: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("reinforce"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+    placements: Schema.Array(ReinforcementPlacementSchema),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("declare-attack"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+    from: Schema.String,
+    to: Schema.String,
+    attackerDice: Schema.Int,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("roll-defense"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+    attackId: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("occupy-territory"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+    attackId: Schema.String,
+    armies: Schema.Int,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("fortify"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+    from: Schema.String,
+    to: Schema.String,
+    armies: Schema.Int,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("skip-fortifications"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("resolve-defense-timeout"),
+    commandId: Schema.String,
+    turnId: Schema.String,
+    attackId: Schema.String,
+  }),
+]);
+export type Command = typeof Command.Type;
 
 /** Re-exported so the command service can name the plan it injects. */
 export type { GameStartPlan };

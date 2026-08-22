@@ -11,7 +11,8 @@ import { catchUp } from "./mesh-test-harness.ts";
 import { createJsonProtocol } from "@streamsy/json";
 
 import { foldAggregate } from "../domain/aggregate.ts";
-import type { GameEvent } from "../domain/events.ts";
+import { GameEvent } from "../domain/events.ts";
+import { Schema } from "effect";
 import {
   ProjectionIntegrityError,
   aggregateBoardView,
@@ -570,8 +571,7 @@ function groupByCommand(events: readonly GameEvent[]): Map<string, GameEvent[]> 
 function canonicalStream(protocol: StreamProtocolFactory) {
   return createJsonProtocol(protocol, {
     encode: (event: GameEvent) => event,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This caller-owned JSON codec returns only events appended by canonicalStream in the same in-process test protocol.
-    decode: (value) => value as GameEvent,
+    decode: Schema.decodeUnknownSync(GameEvent),
   }).getOrCreate(SOURCE);
 }
 

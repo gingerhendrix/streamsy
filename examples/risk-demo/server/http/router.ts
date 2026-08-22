@@ -86,12 +86,9 @@ export function createRouter(routes: Route[]): (request: Request) => Promise<Res
   };
 }
 
-export async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+export async function readJsonBody(request: Request): Promise<unknown> {
   try {
-    const value: unknown = await request.json();
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? Object.fromEntries(Object.entries(value))
-      : null;
+    return await request.json();
   } catch {
     return null;
   }

@@ -16,8 +16,14 @@
  * Replay never rolls and never asks the current clock what should have happened.
  */
 
-import type { GeneratedMap, GeneratorVersion, MapVersion } from "./map.ts";
-import type { InitialTerritory } from "./setup.ts";
+import { Schema } from "effect";
+import {
+  GeneratedMapSchema,
+  type GeneratedMap,
+  type GeneratorVersion,
+  type MapVersion,
+} from "./map.ts";
+import { InitialTerritorySchema, type InitialTerritory } from "./setup.ts";
 
 /** Canonical controller vocabulary recorded in game events. */
 export type PlayerController = "human" | "bot" | "external-agent";
@@ -207,20 +213,129 @@ export interface GameWon {
   commandId: string;
 }
 
-export type GameEvent =
-  | GameCreated
-  | PlayerJoined
-  | PlayerControllerChanged
-  | PlayerRenamed
-  | PlayerLeft
-  | GameStarted
-  | ArmiesReinforced
-  | AttackDeclared
-  | AttackResolved
-  | TerritoryOccupied
-  | ArmiesFortified
-  | PlayerEliminated
-  | TurnEnded
-  | GameWon;
+export const PlayerControllerSchema = Schema.Literals(["human", "bot", "external-agent"]);
+export const DefenseResolutionSourceSchema = Schema.Literals(["human", "bot", "agent", "timeout"]);
+const Text = Schema.String;
+const Int = Schema.Int;
+const CommandId = { commandId: Text };
+
+export const GameEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("GameCreated"),
+    gameId: Text,
+    hostPlayerId: Text,
+    hostName: Text,
+    hostColor: Text,
+    hostController: PlayerControllerSchema,
+    mapVersion: Schema.Literal("procedural-hex-v1"),
+    generatorVersion: Schema.Literal("hex-generator-v2"),
+    mapSeed: Text,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("PlayerJoined"),
+    playerId: Text,
+    name: Text,
+    color: Text,
+    controller: PlayerControllerSchema,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("PlayerControllerChanged"),
+    playerId: Text,
+    controller: PlayerControllerSchema,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("PlayerRenamed"),
+    playerId: Text,
+    name: Text,
+    ...CommandId,
+  }),
+  Schema.Struct({ type: Schema.Literal("PlayerLeft"), playerId: Text, ...CommandId }),
+  Schema.Struct({
+    type: Schema.Literal("GameStarted"),
+    map: GeneratedMapSchema,
+    turnOrder: Schema.Array(Text),
+    initialTerritories: Schema.Array(InitialTerritorySchema),
+    round: Schema.Literal(1),
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("ArmiesReinforced"),
+    turnId: Text,
+    playerId: Text,
+    territoryId: Text,
+    armies: Int,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("AttackDeclared"),
+    attackId: Text,
+    turnId: Text,
+    attackerId: Text,
+    defenderId: Text,
+    from: Text,
+    to: Text,
+    attackerDice: Int,
+    attackerRolls: Schema.Array(Int),
+    defenderDice: Int,
+    declaredAt: Schema.Finite,
+    defenseDeadlineAt: Schema.Finite,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("AttackResolved"),
+    attackId: Text,
+    turnId: Text,
+    attackerId: Text,
+    defenderId: Text,
+    from: Text,
+    to: Text,
+    attackerRolls: Schema.Array(Int),
+    defenderRolls: Schema.Array(Int),
+    attackerLosses: Int,
+    defenderLosses: Int,
+    territoryCaptured: Schema.Boolean,
+    resolutionSource: DefenseResolutionSourceSchema,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("TerritoryOccupied"),
+    attackId: Text,
+    turnId: Text,
+    playerId: Text,
+    from: Text,
+    to: Text,
+    armies: Int,
+    previousOwnerId: Text,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("ArmiesFortified"),
+    turnId: Text,
+    playerId: Text,
+    from: Text,
+    to: Text,
+    armies: Int,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("PlayerEliminated"),
+    playerId: Text,
+    byPlayerId: Text,
+    ...CommandId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("TurnEnded"),
+    turnId: Text,
+    playerId: Text,
+    nextPlayerId: Text,
+    round: Int,
+    ...CommandId,
+  }),
+  Schema.Struct({ type: Schema.Literal("GameWon"), playerId: Text, ...CommandId }),
+]);
+export type GameEvent = typeof GameEvent.Type;
 
 export type GameEventType = GameEvent["type"];

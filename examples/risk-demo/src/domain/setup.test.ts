@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { GameCreated, GameStarted } from "./events.ts";
+import { GameEvent, type GameCreated, type GameStarted } from "./events.ts";
+import { Schema } from "effect";
 import { canonicalJson, generateHexMap, hashGeneratedMap } from "./hex-generator.ts";
 import {
   GENERATOR_VERSION,
@@ -173,8 +174,8 @@ describe("current canonical recording", () => {
     };
 
     // A replaying consumer only ever sees the serialized event.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON.stringify receives the complete typed GameStarted fixture immediately above; this round-trip test intentionally reconstructs that caller-owned value without an external boundary.
-    const replayed = JSON.parse(JSON.stringify(started)) as GameStarted;
+    const replayed = Schema.decodeUnknownSync(GameEvent)(JSON.parse(JSON.stringify(started)));
+    if (replayed.type !== "GameStarted") throw new Error("expected GameStarted round trip");
     expect(hashGeneratedMap(replayed.map)).toBe(hashGeneratedMap(plan.map));
     expect(replayed.map.tiles).toHaveLength(mapProfileFor(4).hexes);
     expect(replayed.initialTerritories).toHaveLength(mapProfileFor(4).territories);

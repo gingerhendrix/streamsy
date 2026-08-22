@@ -1,6 +1,8 @@
 import type { GamePhase, GameStatus } from "../domain/aggregate.ts";
-import type { RiskErrorCode } from "../domain/commands.ts";
-import type { DecisionContext } from "./decision.ts";
+import { RiskErrorCode } from "../domain/commands.ts";
+import { DecisionContext, PendingInteractionSchema } from "./decision.ts";
+import { PlayerControllerSchema } from "../domain/events.ts";
+import { Schema } from "effect";
 import type {
   BoardView,
   ProjectedCombat,
@@ -14,6 +16,17 @@ import type {
   ProjectionState,
 } from "../board/projection.ts";
 import type { GameAction, PlayCommand } from "../domain/commands.ts";
+import {
+  ProjectedCombatSchema,
+  ProjectedContinentSchema,
+  ProjectedGameSchema,
+  ProjectedHexSchema,
+  ProjectedMoveSchema,
+  ProjectedPlayerSchema,
+  ProjectedTerritorySchema,
+  ProjectedTurnSchema,
+  ProjectionStateSchema,
+} from "../board/schemas.ts";
 
 export type ApiErrorCode =
   | RiskErrorCode
@@ -293,3 +306,196 @@ export interface BoardRows {
   moves: ProjectedMove[];
   meta: BoardProjectionMeta | null;
 }
+
+const MutableArray = <S extends Schema.Top>(schema: S) => Schema.mutable(Schema.Array(schema));
+const OptionalText = Schema.optionalKey(Schema.String);
+const PublicController = Schema.Literals(["human", "bot", "agent", "external-agent"]);
+const ReinforcementStateSchema = Schema.Struct({
+  base: Schema.Int,
+  continents: MutableArray(Schema.Struct({ continentId: Schema.String, bonus: Schema.Int })),
+  total: Schema.Int,
+  remaining: Schema.Int,
+});
+
+export const ApiErrorCode = Schema.Union([
+  RiskErrorCode,
+  Schema.Literals([
+    "UNAUTHORIZED",
+    "FORBIDDEN",
+    "WRONG_GAME",
+    "NOT_FOUND",
+    "BAD_REQUEST",
+    "INVALID_ACTION",
+    "AGENT_SEAT_REQUIRES_HOST",
+    "PROJECTION_UNAVAILABLE",
+    "INTERNAL",
+  ]),
+]);
+export const ApiErrorResponse = Schema.Struct({
+  status: Schema.Literal("rejected"),
+  error: Schema.Struct({
+    code: ApiErrorCode,
+    message: Schema.String,
+    currentTurnId: OptionalText,
+    details: Schema.optionalKey(
+      MutableArray(
+        Schema.Struct({
+          path: Schema.String,
+          expected: Schema.String,
+          received: Schema.Unknown,
+        }),
+      ),
+    ),
+  }),
+});
+export const PlayerIdentity = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  color: Schema.String,
+  role: Schema.Literals(["host", "player", "agent"]),
+});
+export const CommandAck = Schema.Struct({
+  status: Schema.Literals(["accepted", "duplicate"]),
+  commandId: Schema.String,
+  turnId: OptionalText,
+  eventOffset: Schema.String,
+});
+export const CreateGameRequestSchema = Schema.Struct({
+  name: OptionalText,
+  color: OptionalText,
+  commandId: OptionalText,
+  controller: Schema.optionalKey(PublicController),
+  mapSeed: OptionalText,
+});
+export const JoinGameRequestSchema = Schema.Struct({
+  name: OptionalText,
+  color: OptionalText,
+  commandId: OptionalText,
+  controller: Schema.optionalKey(PublicController),
+});
+export const RenamePlayerRequestSchema = Schema.Struct({
+  name: Schema.String,
+  commandId: OptionalText,
+});
+export const OptionalCommandRequestSchema = Schema.Struct({ commandId: OptionalText });
+export const AgentSeatRequestSchema = Schema.Struct({
+  name: OptionalText,
+  color: OptionalText,
+  playerId: OptionalText,
+  commandId: OptionalText,
+});
+export const CreateGameResponse = Schema.Struct({
+  game: Schema.Struct({ id: Schema.String, mapVersion: Schema.String }),
+  player: PlayerIdentity,
+  capability: Schema.String,
+  ack: CommandAck,
+});
+export const JoinGameResponse = Schema.Struct({
+  player: PlayerIdentity,
+  capability: Schema.String,
+  ack: CommandAck,
+});
+export const RenamePlayerResponse = Schema.Struct({
+  player: Schema.Struct({ id: Schema.String, name: Schema.String }),
+  ack: CommandAck,
+});
+export const LeaveGameResponse = Schema.Struct({ playerId: Schema.String, ack: CommandAck });
+export const AgentSeatResponse = Schema.Struct({
+  seat: Schema.Struct({
+    origin: Schema.String,
+    gameId: Schema.String,
+    playerId: Schema.String,
+    name: Schema.String,
+    color: Schema.String,
+    token: Schema.String,
+    urls: Schema.Struct({
+      map: Schema.String,
+      actions: Schema.String,
+      decision: Schema.String,
+      commands: Schema.String,
+    }),
+  }),
+  instructions: Schema.String,
+});
+export const GameResponse = Schema.Struct({
+  gameId: Schema.String,
+  status: Schema.Literals(["lobby", "playing", "finished"]),
+  mapVersion: Schema.String,
+  round: Schema.Int,
+  activePlayerId: OptionalText,
+  phase: Schema.optionalKey(Schema.Literals(["reinforce", "attack", "fortify"])),
+  winnerId: OptionalText,
+  generation: Schema.String,
+  boardStreamId: Schema.String,
+  players: MutableArray(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      color: Schema.String,
+      eliminated: Schema.Boolean,
+    }),
+  ),
+  pendingInteraction: Schema.optionalKey(PendingInteractionSchema),
+});
+const BoardViewSchema = Schema.Struct({
+  status: Schema.Literals(["lobby", "playing", "finished"]),
+  phase: Schema.optionalKey(Schema.Literals(["reinforce", "attack", "fortify"])),
+  activePlayerId: OptionalText,
+  turnId: OptionalText,
+  round: Schema.Int,
+  winnerId: OptionalText,
+  players: MutableArray(
+    Schema.Struct({
+      id: Schema.String,
+      controller: PlayerControllerSchema,
+      eliminated: Schema.Boolean,
+    }),
+  ),
+  territories: MutableArray(
+    Schema.Struct({
+      id: Schema.String,
+      ownerId: OptionalText,
+      armies: Schema.Int,
+      continentId: Schema.String,
+      adjacentTerritoryIds: MutableArray(Schema.String),
+    }),
+  ),
+  continents: MutableArray(
+    Schema.Struct({
+      id: Schema.String,
+      territoryIds: MutableArray(Schema.String),
+      reinforcementBonus: Schema.Int,
+      controllerId: OptionalText,
+    }),
+  ),
+  reinforcement: ReinforcementStateSchema,
+  pending: Schema.optionalKey(PendingInteractionSchema),
+});
+export const BoardResponse = Schema.Struct({
+  gameId: Schema.String,
+  sourceStreamId: Schema.String,
+  sourceThroughOffset: Schema.NullOr(Schema.String),
+  generation: Schema.String,
+  boardStreamId: Schema.String,
+  reducerVersion: Schema.String,
+  game: ProjectedGameSchema,
+  players: MutableArray(ProjectedPlayerSchema),
+  hexes: MutableArray(ProjectedHexSchema),
+  territories: MutableArray(ProjectedTerritorySchema),
+  continents: MutableArray(ProjectedContinentSchema),
+  turn: Schema.NullOr(ProjectedTurnSchema),
+  combat: Schema.NullOr(ProjectedCombatSchema),
+  moves: MutableArray(ProjectedMoveSchema),
+  view: BoardViewSchema,
+});
+export const DecisionResponse = DecisionContext;
+export const BoardProjectionMeta = Schema.Struct({
+  sourceStreamId: Schema.String,
+  sourceThroughOffset: Schema.String,
+  sourceSeq: Schema.Int,
+  generation: Schema.String,
+  reducerVersion: Schema.String,
+  snapshot: ProjectionStateSchema,
+});
+
+export const isApiErrorResponse = Schema.is(ApiErrorResponse);

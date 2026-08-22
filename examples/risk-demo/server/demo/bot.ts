@@ -31,7 +31,13 @@
  */
 
 import { readActionsBatches } from "../../src/application/actions-stream.ts";
-import type { ActionRequired, AgentMessage } from "../game/action-notifier.ts";
+import {
+  AgentMessageSchema,
+  type ActionRequired,
+  type AgentMessage,
+} from "../game/action-notifier.ts";
+import { PlayCommand } from "../../src/domain/commands.ts";
+import { Schema } from "effect";
 import {
   chooseAttack,
   chooseFortify,
@@ -45,7 +51,7 @@ export type HttpCall = (
   method: string,
   path: string,
   opts?: { token?: string; body?: unknown; accept?: string },
-) => Promise<{ status: number; body: any }>;
+) => Promise<{ status: number; body: unknown }>;
 
 /**
  * Open the actions SSE stream. Optional: a bot given one blocks on the stream,
@@ -115,7 +121,7 @@ function fingerprint(input: string): string {
 
 interface TerritoryView {
   id: string;
-  ownerId?: string;
+  ownerId?: string | null;
   armies: number;
   adjacentTerritoryIds?: string[];
 }
@@ -140,10 +146,10 @@ interface Decision {
   pendingInteraction?: { type: string; attackId: string };
   board: {
     map?: { mapVersion?: string; boardStreamId?: string };
-    territories: TerritoryView[];
-    players: Array<{ id: string; remainingArmies?: number; eliminated: boolean }>;
+    territories: readonly TerritoryView[];
+    players: readonly { id: string; remainingArmies?: number; eliminated: boolean }[];
   };
-  legalMoves: any[];
+  legalMoves: readonly any[];
 }
 
 function boardFingerprint(playerId: string, decision: Decision): string {
@@ -169,7 +175,14 @@ async function chooseAction(
 
   const map = await loadMap();
   if (!map) return null;
-  const ctx = strategyContext(playerId, decision.board.territories, map);
+  const ctx = strategyContext(
+    playerId,
+    decision.board.territories.map((territory) => ({
+      ...territory,
+      ownerId: territory.ownerId ?? undefined,
+    })),
+    map,
+  );
 
   const occupy = decision.legalMoves.find((a) => a.type === "occupy-territory");
   if (occupy) return chooseOccupy(ctx, occupy);
@@ -220,8 +233,11 @@ export function createBot(options: CreateBotOptions): Bot {
    * by `JSON.stringify`, and a parse/stringify round trip preserves both key
    * order and number formatting for such a value.
    */
-  async function postCommand(body: string): Promise<{ status: number; body: any }> {
-    return call("POST", `/v1/games/${gameId}/commands`, { token, body: JSON.parse(body) });
+  async function postCommand(body: string): Promise<{ status: number; body: unknown }> {
+    return call("POST", `/v1/games/${gameId}/commands`, {
+      token,
+      body: Schema.decodeUnknownSync(PlayCommand)(JSON.parse(body)),
+    });
   }
 
   /**
@@ -253,7 +269,12 @@ export function createBot(options: CreateBotOptions): Bot {
   async function readPage(): Promise<{ messages: AgentMessage[]; nextOffset?: string } | null> {
     const res = await call("GET", actionsPath(), { token, accept: "application/json" });
     if (res.status !== 200) return null;
-    return { messages: res.body.messages ?? [], nextOffset: res.body.nextOffset };
+    return Schema.decodeUnknownSync(
+      Schema.Struct({
+        messages: Schema.mutable(Schema.Array(AgentMessageSchema)),
+        nextOffset: Schema.optionalKey(Schema.String),
+      }),
+    )(res.body);
   }
 
   /**
@@ -278,7 +299,7 @@ export function createBot(options: CreateBotOptions): Bot {
       if (response.status !== 200) return null;
       const collected: AgentMessage[] = [];
       let nextOffset: string | undefined;
-      for await (const batch of readActionsBatches<AgentMessage>(response)) {
+      for await (const batch of readActionsBatches(response, AgentMessageSchema)) {
         nextOffset = batch.nextOffset;
         collected.push(...batch.messages);
         // The opening batch is the backlog and may legitimately be empty; keep
@@ -315,12 +336,29 @@ export function createBot(options: CreateBotOptions): Bot {
     if (cachedMap) return cachedMap;
     const res = await call("GET", `/v1/games/${gameId}/map`);
     if (res.status !== 200) return null;
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The bot consumes the demo's own authenticated API and rejects non-success responses before narrowing the documented response contract.
-    const territories = (res.body.territories ?? []) as Array<{
-      id: string;
-      continentId: string;
-      neighbours: string[];
-    }>;
+    const map = Schema.decodeUnknownSync(
+      Schema.Struct({
+        territories: Schema.mutable(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              continentId: Schema.String,
+              neighbours: Schema.mutable(Schema.Array(Schema.String)),
+            }),
+          ),
+        ),
+        continents: Schema.mutable(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              territoryIds: Schema.mutable(Schema.Array(Schema.String)),
+              reinforcementBonus: Schema.Int,
+            }),
+          ),
+        ),
+      }),
+    )(res.body);
+    const territories = map.territories;
     // Before `GameStarted` there is no map yet; do not cache an empty one.
     if (territories.length === 0) return null;
     cachedMap = {
@@ -329,8 +367,7 @@ export function createBot(options: CreateBotOptions): Bot {
         continentId: t.continentId,
         adjacentTerritoryIds: t.neighbours,
       })),
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The bot consumes the demo's own authenticated API and rejects non-success responses before narrowing the documented response contract.
-      continents: (res.body.continents ?? []) as MapView["continents"],
+      continents: map.continents,
     };
     return cachedMap;
   }
@@ -348,15 +385,14 @@ export function createBot(options: CreateBotOptions): Bot {
   async function step(): Promise<Record<string, unknown> | null> {
     await resumeInflight();
     if (!pendingMessage) await awaitTurn();
-    const decision = pendingMessage
-      ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The bot consumes the demo's own authenticated API and rejects non-success responses before narrowing the documented response contract.
-        ({
+    const decision: Decision | null = pendingMessage
+      ? {
           mode: pendingMessage.mode,
           turn: pendingMessage.turn,
           pendingInteraction: pendingMessage.pendingInteraction ?? undefined,
           board: pendingMessage.board,
           legalMoves: pendingMessage.legalMoves,
-        } as Decision)
+        }
       : null;
     if (!decision || decision.legalMoves.length === 0) return null;
 

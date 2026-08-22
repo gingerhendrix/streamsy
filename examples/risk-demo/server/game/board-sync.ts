@@ -25,7 +25,9 @@ import {
 } from "@streamsy/experimental/causal";
 
 import { boardSourceIdentity } from "../../src/board/mesh.ts";
+import { BoardResponse } from "../../src/application/api.ts";
 import type { HttpCall } from "../demo/bot.ts";
+import { Schema } from "effect";
 
 /** The board projection's causal watermark (from `GET /board`). */
 export interface BoardWatermark {
@@ -158,9 +160,10 @@ export function boardWatermarkReader(
 ): () => Promise<BoardWatermark> {
   return async () => {
     const res = await call("GET", `/v1/games/${gameId}/board`);
+    const body = Schema.decodeUnknownSync(BoardResponse)(res.body);
     return {
-      sourceStreamId: res.body.sourceStreamId,
-      sourceThroughOffset: res.body.sourceThroughOffset ?? null,
+      sourceStreamId: body.sourceStreamId,
+      sourceThroughOffset: body.sourceThroughOffset ?? null,
       gameId,
     };
   };

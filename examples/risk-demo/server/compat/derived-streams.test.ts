@@ -8,6 +8,7 @@ import {
   type StreamProtocolFactory,
 } from "@streamsy/core";
 import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
+import { Schema } from "effect";
 
 import { catchUpDerived } from "./derived-streams.ts";
 
@@ -17,8 +18,7 @@ interface Value {
 
 const codec: JsonCodec<Value> = {
   encode: (value) => value,
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This caller-owned generic codec decodes only Value objects encoded by the same in-process test instance.
-  decode: (value) => value as Value,
+  decode: Schema.decodeUnknownSync(Schema.Struct({ kind: Schema.String })),
 };
 
 function raceFirstOutputAppend(

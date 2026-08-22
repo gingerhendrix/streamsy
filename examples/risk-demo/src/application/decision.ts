@@ -33,16 +33,11 @@
  * enough for a client to know *which* map it should have and where to get it.
  */
 
-import type {
-  AggregateState,
-  GamePhase,
-  PendingInteraction,
-  ReinforcementState,
-} from "../domain/aggregate.ts";
+import type { AggregateState } from "../domain/aggregate.ts";
 import { buildTurnId } from "../domain/aggregate.ts";
-import type { PlayerController } from "../domain/events.ts";
-import { decisionMode, legalActions, type DecisionMode } from "./legal-actions.ts";
-import type { LegalAction } from "./legal-actions.ts";
+import { PlayerControllerSchema, type PlayerController } from "../domain/events.ts";
+import { decisionMode, DecisionMode, legalActions, LegalAction } from "./legal-actions.ts";
+import { Schema } from "effect";
 
 /** Which map this decision was folded against, and where the snapshot lives. */
 export interface DecisionMapRef {
@@ -65,21 +60,86 @@ export interface DecisionBoard {
   players: Array<{ id: string; controller: PlayerController; eliminated: boolean }>;
 }
 
-export interface DecisionContext {
-  gameId: string;
-  player: { id: string; name: string; color: string; controller: PlayerController };
-  mode: DecisionMode;
-  turn: {
-    id: string;
-    round: number;
-    activePlayerId?: string;
-    phase: GamePhase | "setup";
-    reinforcement: ReinforcementState;
-  };
-  pendingInteraction?: PendingInteraction;
-  board: DecisionBoard;
-  legalMoves: LegalAction[];
-}
+const MutableArray = <S extends Schema.Top>(schema: S) => Schema.mutable(Schema.Array(schema));
+const ReinforcementStateSchema = Schema.Struct({
+  base: Schema.Int,
+  continents: MutableArray(Schema.Struct({ continentId: Schema.String, bonus: Schema.Int })),
+  total: Schema.Int,
+  remaining: Schema.Int,
+});
+export const PendingInteractionSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("defense"),
+    attackId: Schema.String,
+    turnId: Schema.String,
+    attackerId: Schema.String,
+    defenderId: Schema.String,
+    from: Schema.String,
+    to: Schema.String,
+    attackerDice: Schema.Int,
+    attackerRolls: MutableArray(Schema.Int),
+    defenderDice: Schema.Int,
+    declaredAt: Schema.Finite,
+    defenseDeadlineAt: Schema.Finite,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("occupation"),
+    attackId: Schema.String,
+    turnId: Schema.String,
+    playerId: Schema.String,
+    from: Schema.String,
+    to: Schema.String,
+    minArmies: Schema.Int,
+    maxArmies: Schema.Int,
+  }),
+]);
+export const DecisionContext = Schema.Struct({
+  gameId: Schema.String,
+  player: Schema.Struct({
+    id: Schema.String,
+    name: Schema.String,
+    color: Schema.String,
+    controller: PlayerControllerSchema,
+  }),
+  mode: DecisionMode,
+  turn: Schema.Struct({
+    id: Schema.String,
+    round: Schema.Int,
+    activePlayerId: Schema.optionalKey(Schema.String),
+    phase: Schema.Literals(["reinforce", "attack", "fortify", "setup"]),
+    reinforcement: ReinforcementStateSchema,
+  }),
+  pendingInteraction: Schema.optionalKey(PendingInteractionSchema),
+  board: Schema.Struct({
+    sourceStreamId: Schema.String,
+    sourceThroughOffset: Schema.NullOr(Schema.String),
+    generation: Schema.String,
+    map: Schema.Struct({
+      mapVersion: Schema.optionalKey(Schema.String),
+      generatorVersion: Schema.optionalKey(Schema.String),
+      seed: Schema.optionalKey(Schema.String),
+      boardStreamId: Schema.String,
+      territoryCount: Schema.Int,
+      continentCount: Schema.Int,
+    }),
+    territories: MutableArray(
+      Schema.Struct({
+        id: Schema.String,
+        ownerId: Schema.optionalKey(Schema.String),
+        armies: Schema.Int,
+      }),
+    ),
+    players: MutableArray(
+      Schema.Struct({
+        id: Schema.String,
+        controller: PlayerControllerSchema,
+        eliminated: Schema.Boolean,
+      }),
+    ),
+  }),
+  legalMoves: MutableArray(LegalAction),
+});
+export type DecisionContext = typeof DecisionContext.Type;
 
 export interface BoardWatermark {
   sourceStreamId: string;

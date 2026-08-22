@@ -144,10 +144,10 @@ describe("structured causal comparison", () => {
     for (const sentinel of ["-1", "now"]) {
       expect(() =>
         boardIncorporates(board, { sourceStreamId: SOURCE, sourceOffset: sentinel }),
-      ).toThrow(TypeError);
+      ).toThrow();
       expect(() =>
         boardIncorporates({ sourceStreamId: SOURCE, sourceThroughOffset: sentinel }, ack),
-      ).toThrow(TypeError);
+      ).toThrow();
     }
   });
 

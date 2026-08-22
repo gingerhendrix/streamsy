@@ -15,18 +15,18 @@ import {
   type Harness,
 } from "../harness.ts";
 import { createBot, type BotState, type HttpCall } from "../../server/demo/bot.ts";
-import { deriveActions, type AgentMessage } from "../../server/game/action-notifier.ts";
+import {
+  AgentMessageSchema,
+  deriveActions,
+  type AgentMessage,
+} from "../../server/game/action-notifier.ts";
+import { Schema } from "effect";
 import { actionStreamId, eventStreamId } from "../../server/game/names.ts";
 
 const passthrough = { encode: (value: any) => value, decode: (value: any) => value };
 
 function checkedAgentMessage(value: unknown): AgentMessage {
-  const message = checkedRecord(value, "agent message");
-  if (message.type !== "ActionRequired" && message.type !== "GameOver") {
-    throw new Error("agent message has an invalid type");
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The protocol value passed the closed AgentMessage discriminant check above and is produced by the in-process action notifier.
-  return value as AgentMessage;
+  return Schema.decodeUnknownSync(AgentMessageSchema)(value);
 }
 
 /** Read a player's whole action stream directly, without disturbing any cursor. */

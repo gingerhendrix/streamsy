@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { Schema } from "effect";
 
 import { rebuildBoardGeneration } from "../../server/game/rebuild.ts";
 import type { JsonValue } from "@streamsy/core";
@@ -388,8 +389,7 @@ describe("Hex Domination board projection surface", () => {
           return {
             ...mesh,
             reduce: (events, boundary, prior) => [
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The injected mesh reducer must return the framework JsonValue shape; this literal contains only JSON primitives and the framework-owned lineage fields shown here.
-              {
+              Schema.decodeUnknownSync(Schema.Json)({
                 type: BOARD_META_TYPE,
                 key: BOARD_META_KEY,
                 value: {
@@ -404,7 +404,7 @@ describe("Hex Domination board projection surface", () => {
                   snapshot: { ...prior.state, sourceThroughOffset: boundary.source.position },
                 },
                 headers: { operation: "upsert", offset: boundary.source.position },
-              } as unknown as JsonValue,
+              }),
             ],
           };
         },

@@ -12,12 +12,19 @@ import { generateHexMap } from "./hex-generator.ts";
 import { createSubstream } from "./generator-rng.ts";
 import type { GeneratedMap } from "./map.ts";
 import { RULES, mapProfileFor } from "./map.ts";
+import { Schema } from "effect";
 
 export interface InitialTerritory {
   readonly territoryId: string;
   readonly ownerId: string;
   readonly armies: number;
 }
+
+export const InitialTerritorySchema = Schema.Struct({
+  territoryId: Schema.String,
+  ownerId: Schema.String,
+  armies: Schema.Int,
+});
 
 export interface SetupAllocation {
   readonly turnOrder: readonly string[];

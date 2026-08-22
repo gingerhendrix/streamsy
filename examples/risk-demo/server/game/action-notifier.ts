@@ -5,10 +5,15 @@ import { catchUpDerived, readDerived } from "../compat/derived-streams.ts";
 import type { JsonCodec } from "@streamsy/json";
 
 import { foldAggregate, buildTurnId } from "../../src/domain/aggregate.ts";
-import type { PendingInteraction, ReinforcementState } from "../../src/domain/aggregate.ts";
-import { decisionMode, legalActions } from "../../src/application/legal-actions.ts";
-import type { DecisionMode, LegalAction } from "../../src/application/legal-actions.ts";
-import type { GameEvent } from "../../src/domain/events.ts";
+import type { PendingInteraction } from "../../src/domain/aggregate.ts";
+import { decisionMode, LegalAction, legalActions } from "../../src/application/legal-actions.ts";
+import type {
+  DecisionMode,
+  LegalAction as LegalActionType,
+} from "../../src/application/legal-actions.ts";
+import { PendingInteractionSchema } from "../../src/application/decision.ts";
+import { GameEvent, type GameEvent as GameEventType } from "../../src/domain/events.ts";
+import { Schema } from "effect";
 import { actionStreamId, eventStreamId } from "./names.ts";
 
 export type ActionReason =
@@ -19,57 +24,80 @@ export type ActionReason =
   | "occupation-required"
   | "defense-required";
 
-export interface ActionRequired {
-  type: "ActionRequired";
-  messageId: string;
-  seq: number;
-  gameId: string;
-  playerId: string;
-  reason: ActionReason;
-  turn: {
-    id: string;
-    round: number;
-    phase: "reinforce" | "attack" | "fortify";
-    activePlayerId: string;
-    reinforcement: ReinforcementState;
-  };
-  mode: Exclude<DecisionMode, "waiting" | "finished">;
-  pendingInteraction: PendingInteraction | null;
-  legalMoves: LegalAction[];
-  board: {
-    territories: Array<{ id: string; ownerId: string | null; armies: number }>;
-    players: Array<{ id: string; eliminated: boolean }>;
-  };
-  since: { fromEventOffset: string | null; events: GameEvent[] };
-  eventOffset: string;
-}
-
-export interface GameOver {
-  type: "GameOver";
-  messageId: string;
-  seq: number;
-  gameId: string;
-  playerId: string;
-  winner: { id: string; name: string };
-  since: { fromEventOffset: string | null; events: GameEvent[] };
-  eventOffset: string;
-}
-
-export type AgentMessage = ActionRequired | GameOver;
+const ReinforcementStateSchema = Schema.Struct({
+  base: Schema.Int,
+  continents: Schema.Array(Schema.Struct({ continentId: Schema.String, bonus: Schema.Int })),
+  total: Schema.Int,
+  remaining: Schema.Int,
+});
+const SinceSchema = Schema.Struct({
+  fromEventOffset: Schema.NullOr(Schema.String),
+  events: Schema.Array(GameEvent),
+});
+export const AgentMessageSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("ActionRequired"),
+    messageId: Schema.String,
+    seq: Schema.Int,
+    gameId: Schema.String,
+    playerId: Schema.String,
+    reason: Schema.Literals([
+      "turn-started",
+      "phase-changed",
+      "reinforcement-remaining",
+      "attack-resolved",
+      "occupation-required",
+      "defense-required",
+    ]),
+    turn: Schema.Struct({
+      id: Schema.String,
+      round: Schema.Int,
+      phase: Schema.Literals(["reinforce", "attack", "fortify"]),
+      activePlayerId: Schema.String,
+      reinforcement: ReinforcementStateSchema,
+    }),
+    mode: Schema.Literals(["active-turn", "defense"]),
+    pendingInteraction: Schema.NullOr(PendingInteractionSchema),
+    legalMoves: Schema.Array(LegalAction),
+    board: Schema.Struct({
+      territories: Schema.Array(
+        Schema.Struct({
+          id: Schema.String,
+          ownerId: Schema.NullOr(Schema.String),
+          armies: Schema.Int,
+        }),
+      ),
+      players: Schema.Array(Schema.Struct({ id: Schema.String, eliminated: Schema.Boolean })),
+    }),
+    since: SinceSchema,
+    eventOffset: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("GameOver"),
+    messageId: Schema.String,
+    seq: Schema.Int,
+    gameId: Schema.String,
+    playerId: Schema.String,
+    winner: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    since: SinceSchema,
+    eventOffset: Schema.String,
+  }),
+]);
+export type AgentMessage = typeof AgentMessageSchema.Type;
+export type ActionRequired = Extract<AgentMessage, { readonly type: "ActionRequired" }>;
+export type GameOver = Extract<AgentMessage, { readonly type: "GameOver" }>;
 interface OffsetEvent {
-  event: GameEvent;
+  event: GameEventType;
   offset: string;
 }
 
-const eventSchema: JsonCodec<GameEvent> = {
+const eventSchema: JsonCodec<GameEventType> = {
   encode: (event) => event,
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
-  decode: (value) => value as GameEvent,
+  decode: Schema.decodeUnknownSync(GameEvent),
 };
 const messageSchema: JsonCodec<AgentMessage> = {
   encode: (message) => message,
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
-  decode: (value) => value as AgentMessage,
+  decode: Schema.decodeUnknownSync(AgentMessageSchema),
 };
 
 /**
@@ -79,7 +107,7 @@ const messageSchema: JsonCodec<AgentMessage> = {
  * placement that empties it moves the turn into `attack` (`phase-changed`).
  */
 function reasonFor(
-  event: GameEvent,
+  event: GameEventType,
   pending: PendingInteraction | undefined,
   reinforcementRemaining: number,
 ): ActionReason {
@@ -98,7 +126,7 @@ function signature(
   turnId: string,
   phase: string | undefined,
   pending: PendingInteraction | undefined,
-  legalMoves: LegalAction[],
+  legalMoves: LegalActionType[],
 ): string {
   return JSON.stringify([
     mode,

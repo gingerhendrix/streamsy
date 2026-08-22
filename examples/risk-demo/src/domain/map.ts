@@ -12,6 +12,7 @@
 import type { Axial } from "./hex.ts";
 import { hexDistance, parseHexId } from "./hex.ts";
 import type { Rng } from "./rng.ts";
+import { Schema } from "effect";
 
 export const MAP_VERSION = "procedural-hex-v1";
 export const GENERATOR_VERSION = "hex-generator-v2";
@@ -67,6 +68,42 @@ export interface GeneratedMap {
   readonly territories: readonly TerritoryDef[];
   readonly continents: readonly ContinentDef[];
 }
+
+export const TerrainSchema = Schema.Literals(TERRAIN_TYPES);
+export const AxialSchema = Schema.Struct({ q: Schema.Int, r: Schema.Int });
+export const HexTileDefSchema = Schema.Struct({
+  id: Schema.String,
+  q: Schema.Int,
+  r: Schema.Int,
+  territoryId: Schema.String,
+  terrain: TerrainSchema,
+});
+export const TerritoryDefSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  continentId: Schema.String,
+  hexIds: Schema.Array(Schema.String),
+  adjacentTerritoryIds: Schema.Array(Schema.String),
+  labelAnchor: AxialSchema,
+});
+export const ContinentPaletteSchema = Schema.Struct({ hue: Schema.Finite, pattern: Schema.String });
+export const ContinentDefSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  territoryIds: Schema.Array(Schema.String),
+  reinforcementBonus: Schema.Int,
+  palette: ContinentPaletteSchema,
+});
+export const GeneratedMapSchema = Schema.Struct({
+  mapVersion: Schema.Literal(MAP_VERSION),
+  generatorVersion: Schema.Literal(GENERATOR_VERSION),
+  seed: Schema.String,
+  widthHint: Schema.Int,
+  heightHint: Schema.Int,
+  tiles: Schema.Array(HexTileDefSchema),
+  territories: Schema.Array(TerritoryDefSchema),
+  continents: Schema.Array(ContinentDefSchema),
+});
 
 /** Rules shared by the domain, generator, and tests. */
 export const RULES = {

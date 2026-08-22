@@ -1,16 +1,22 @@
 /* oxlint-disable effecttsgo/async-function -- Web-standard fetch handlers are Promise-native framework adapters; they delegate game and projection work to the existing application services and runtime. */
-import type {
+import {
+  AgentSeatRequestSchema,
   BoardResponse,
   AgentSeatResponse,
   CommandAck,
+  CreateGameRequestSchema,
   CreateGameResponse,
   GameResponse,
   JoinGameResponse,
+  JoinGameRequestSchema,
   LeaveGameResponse,
+  OptionalCommandRequestSchema,
+  RenamePlayerRequestSchema,
   RenamePlayerResponse,
 } from "../../src/application/api.ts";
 import { agentPlayInstructions, agentSeatDescriptor } from "../../src/application/agent-play.ts";
-import type { Command, GameAction, PlayCommand } from "../../src/domain/commands.ts";
+import { PlayCommand, type Command } from "../../src/domain/commands.ts";
+import { Schema, SchemaIssue } from "effect";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import { buildDecisionContext } from "../../src/application/decision.ts";
 import { MAP_VERSION, generateMapSeed } from "../../src/domain/map.ts";
@@ -74,7 +80,7 @@ function assignedSeatColor(result: AnyAccepted, fallback: string): string {
 const STATE_GUIDANCE = "Read your actions stream again and act on the newest message.";
 
 function rejection(result: AnyRejected, guideToState = false): Response {
-  const code = result.error.code as ErrorCode;
+  const code: ErrorCode = result.error.code;
   const extra = result.error.currentTurnId ? { currentTurnId: result.error.currentTurnId } : {};
   const message = guideToState ? `${result.error.message} ${STATE_GUIDANCE}` : result.error.message;
   return error(statusForCode(code), code, message, extra);
@@ -96,6 +102,13 @@ function requestsAgentSeat(value: unknown): boolean {
   return value === "agent" || value === "external-agent";
 }
 
+function decodeBody<A>(schema: Schema.Decoder<A, never>, value: unknown): A | Response {
+  const decoded = Schema.decodeUnknownOption(schema)(value);
+  return decoded._tag === "Some"
+    ? decoded.value
+    : error(400, "BAD_REQUEST", "The request body does not match the expected contract.");
+}
+
 export function createRiskRoutes(ctx: AppContext): Route[] {
   /** Catch a game's board projection up to the canonical head. */
   const syncBoard = (gameId: string) =>
@@ -110,7 +123,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   }
 
   async function createGame(request: Request): Promise<Response> {
-    const body = (await readJsonBody(request)) ?? {};
+    const body = decodeBody(CreateGameRequestSchema, (await readJsonBody(request)) ?? {});
+    if (body instanceof Response) return body;
     const caller = await ctx.authenticateCapability(request);
     if (caller?.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot create games.");
@@ -183,7 +197,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   async function joinGame(request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const body = (await readJsonBody(request)) ?? {};
+    const body = decodeBody(JoinGameRequestSchema, (await readJsonBody(request)) ?? {});
+    if (body instanceof Response) return body;
     const caller = await ctx.authenticateCapability(request);
     if (caller?.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot join games.");
@@ -247,10 +262,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (cap.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot rename seats.");
     }
-    const body = (await readJsonBody(request)) ?? {};
-    if (typeof body.name !== "string") {
-      return error(400, "BAD_REQUEST", "A rename must carry a name.");
-    }
+    const body = decodeBody(RenamePlayerRequestSchema, (await readJsonBody(request)) ?? {});
+    if (body instanceof Response) return body;
 
     if (cap.playerId !== playerId) {
       const target = (await seatsOf(gameId)).find((seat) => seat.id === playerId);
@@ -295,7 +308,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (cap.role === "agent") {
       return error(403, "FORBIDDEN", "An agent seat is played to the end, not given up.");
     }
-    const body = (await readJsonBody(request)) ?? {};
+    const body = decodeBody(OptionalCommandRequestSchema, (await readJsonBody(request)) ?? {});
+    if (body instanceof Response) return body;
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "leave-game",
       commandId: typeof body.commandId === "string" ? body.commandId : randomId("cmd"),
@@ -311,7 +325,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId, "host");
     if (cap instanceof Response) return cap;
-    const body = (await readJsonBody(request)) ?? {};
+    const body = decodeBody(OptionalCommandRequestSchema, (await readJsonBody(request)) ?? {});
+    if (body instanceof Response) return body;
     const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
     // The map is generated inside `decide` — after the command log has
     // deduped `commandId` and before the canonical append — so a start that
@@ -333,7 +348,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const cap = await ctx.requireCapability(request, gameId, "host");
     if (cap instanceof Response) return cap;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const body = (await readJsonBody(request)) ?? {};
+    const body = decodeBody(AgentSeatRequestSchema, (await readJsonBody(request)) ?? {});
+    if (body instanceof Response) return body;
     const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
     let playerId = typeof body.playerId === "string" ? body.playerId : undefined;
     let name = normalizePlayerName(typeof body.name === "string" ? body.name : "") || "Agent";
@@ -630,25 +646,6 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   ];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-interface Envelope {
-  commandId: string;
-  turnId: string;
-  action: Record<string, unknown>;
-}
-
-function readEnvelope(value: unknown): Envelope | null {
-  if (!isRecord(value) || typeof value.commandId !== "string" || typeof value.turnId !== "string") {
-    return null;
-  }
-  const action = value.action;
-  if (!isRecord(action) || typeof action.type !== "string") return null;
-  return { commandId: value.commandId, turnId: value.turnId, action };
-}
-
 /**
  * Parse a play command. `resolve-defense-timeout` is deliberately absent: it
  * is authorized by the game service, not by a player capability, so there is no
@@ -659,147 +656,56 @@ type ParsedPlayCommand =
   | { ok: true; value: { body: PlayCommand; command: Command } }
   | { ok: false; details: ValidationDetail[] };
 
-/** One malformed field, in the shape `INVALID_ACTION` publishes to the agent. */
-function invalid(path: string, expected: string, received: unknown): ParsedPlayCommand {
-  return { ok: false, details: [{ path, expected, received }] };
+function firstIssuePath(
+  issue: SchemaIssue.Issue,
+  prefix: ReadonlyArray<PropertyKey> = [],
+): ReadonlyArray<PropertyKey> {
+  switch (issue._tag) {
+    case "Pointer":
+      return firstIssuePath(issue.issue, [...prefix, ...issue.path]);
+    case "Composite":
+      return firstIssuePath(issue.issues[0], prefix);
+    case "AnyOf":
+      return issue.issues.length > 0 ? firstIssuePath(issue.issues[0], prefix) : prefix;
+    default:
+      return prefix;
+  }
+}
+
+function validationPath(issue: SchemaIssue.Issue): string {
+  const path = [...firstIssuePath(issue)];
+  // Placement errors have historically identified the complete placement item,
+  // not one field inside it. Preserve that public detail while Schema owns validation.
+  if (path[0] === "action" && path[1] === "placements" && typeof path[2] === "number") {
+    path.length = 3;
+  }
+  if (path.length === 0) return "body";
+  return path
+    .map((part, index) =>
+      typeof part === "number" ? `[${part}]` : `${index === 0 ? "" : "."}${String(part)}`,
+    )
+    .join("");
 }
 
 function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
-  const envelope = readEnvelope(value);
-  if (!envelope) {
+  const decoded = Schema.decodeUnknownResult(PlayCommand)(value);
+  if (decoded._tag === "Failure") {
     return {
       ok: false,
       details: [
         {
-          path: "body",
-          expected: "{ commandId: string, turnId: string, action: object }",
+          path: validationPath(decoded.failure.issue),
+          expected: String(decoded.failure.issue),
           received: value,
         },
       ],
     };
   }
-  const { commandId, turnId, action } = envelope;
-
-  let parsed: GameAction;
-  switch (action.type) {
-    case "reinforce": {
-      if (!Array.isArray(action.placements))
-        return invalid("action.placements", "array", action.placements);
-      const placements = action.placements.map((placement) => {
-        if (
-          !isRecord(placement) ||
-          typeof placement.territoryId !== "string" ||
-          typeof placement.armies !== "number"
-        ) {
-          return null;
-        }
-        return { territoryId: placement.territoryId, armies: placement.armies };
-      });
-      const invalidIndex = placements.findIndex((placement) => placement === null);
-      if (invalidIndex >= 0) {
-        return invalid(
-          `action.placements[${invalidIndex}]`,
-          "{ territoryId: string, armies: integer >= 1 }",
-          action.placements[invalidIndex],
-        );
-      }
-      const invalidArmies = placements.findIndex(
-        (placement) =>
-          placement !== null && (!Number.isInteger(placement.armies) || placement.armies < 1),
-      );
-      if (invalidArmies >= 0) {
-        const invalidPlacement = action.placements[invalidArmies];
-        return invalid(
-          `action.placements[${invalidArmies}].armies`,
-          "integer >= 1",
-          isRecord(invalidPlacement) ? invalidPlacement.armies : invalidPlacement,
-        );
-      }
-      parsed = {
-        type: "reinforce",
-        placements: placements.filter(
-          (placement): placement is { territoryId: string; armies: number } => placement !== null,
-        ),
-      };
-      break;
-    }
-    case "declare-attack":
-      if (
-        typeof action.from !== "string" ||
-        typeof action.to !== "string" ||
-        typeof action.attackerDice !== "number" ||
-        !Number.isInteger(action.attackerDice) ||
-        action.attackerDice < 1
-      ) {
-        return invalid(
-          "action",
-          "{ type: declare-attack, from: string, to: string, attackerDice: integer }",
-          action,
-        );
-      }
-      parsed = {
-        type: "declare-attack",
-        from: action.from,
-        to: action.to,
-        attackerDice: action.attackerDice,
-      };
-      break;
-    case "roll-defense":
-      if (typeof action.attackId !== "string")
-        return invalid("action.attackId", "string", action.attackId);
-      parsed = { type: "roll-defense", attackId: action.attackId };
-      break;
-    case "occupy-territory":
-      if (typeof action.attackId !== "string")
-        return invalid("action.attackId", "string", action.attackId);
-      if (
-        typeof action.armies !== "number" ||
-        !Number.isInteger(action.armies) ||
-        action.armies < 1
-      )
-        return invalid("action.armies", "integer >= 1", action.armies);
-      parsed = {
-        type: "occupy-territory",
-        attackId: action.attackId,
-        armies: action.armies,
-      };
-      break;
-    case "fortify":
-      if (
-        typeof action.from !== "string" ||
-        typeof action.to !== "string" ||
-        typeof action.armies !== "number" ||
-        !Number.isInteger(action.armies) ||
-        action.armies < 1
-      ) {
-        return invalid(
-          "action",
-          "{ type: fortify, from: string, to: string, armies: integer }",
-          action,
-        );
-      }
-      parsed = {
-        type: "fortify",
-        from: action.from,
-        to: action.to,
-        armies: action.armies,
-      };
-      break;
-    case "skip-fortifications":
-      parsed = { type: "skip-fortifications" };
-      break;
-    default:
-      return invalid(
-        "action.type",
-        "reinforce | declare-attack | roll-defense | occupy-territory | fortify | skip-fortifications",
-        action.type,
-      );
-  }
-
-  const body: PlayCommand = { commandId, turnId, action: parsed };
+  const body = decoded.success;
+  const { commandId, turnId, action } = body;
   // Nothing about *who* resolved a combat is taken from the transport: the kernel
   // derives human/bot/agent attribution from the defending seat's canonical
   // controller, so a client cannot mislabel its own roll.
-  const command: Command = { commandId, turnId, playerId, ...parsed };
+  const command: Command = { commandId, turnId, playerId, ...action };
   return { ok: true, value: { body, command } };
 }

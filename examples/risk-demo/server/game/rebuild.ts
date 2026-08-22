@@ -20,6 +20,7 @@
 
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { catchUpState } from "@streamsy/experimental/ivm-mesh";
+import { Schema } from "effect";
 
 import type { GameEvent } from "../../src/domain/events.ts";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
@@ -30,6 +31,7 @@ import {
   type ProjectionState,
 } from "../../src/board/projection.ts";
 import { BOARD_REDUCER_VERSION } from "../../src/board/board-projection.ts";
+import { ProjectionStateSchema } from "../../src/board/schemas.ts";
 import { createBoardMesh, type BoardMesh, type BoardMeshOptions } from "../../src/board/mesh.ts";
 import { readCanonical } from "./command-service.ts";
 import { boardStreamId, eventStreamId, nextGeneration } from "./names.ts";
@@ -84,6 +86,7 @@ export interface RebuildResult {
 
 interface RebuildPlan<State, Event> {
   reducerVersion: string;
+  state: Schema.Decoder<State>;
   mesh(options: BoardMeshOptions): Promise<BoardMesh>;
   readCanonical(
     protocol: StreamProtocolFactory,
@@ -95,6 +98,7 @@ interface RebuildPlan<State, Event> {
 function rebuildPlan(options: RebuildOptions): RebuildPlan<ProjectionState, GameEvent> {
   return {
     reducerVersion: BOARD_REDUCER_VERSION,
+    state: ProjectionStateSchema,
     mesh: options.makeMesh ?? createBoardMesh,
     readCanonical: (protocol, streamId) => readCanonical(protocol, streamId),
     boardEqual: (state, events) =>
@@ -181,8 +185,9 @@ async function runRebuild<State, Event>(
   const complete = rebuilt.status === "caught-up";
   const recovered = complete && "checkpoint" in rebuilt ? rebuilt : undefined;
   const rebuiltWatermark = recovered?.checkpoint.sourceThrough ?? null;
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic projection library returns the same State supplied by this caller; its API has no runtime State schema parameter.
-  const rebuiltState = (recovered?.state ?? mesh.initial).state as State;
+  const rebuiltState = Schema.decodeUnknownSync(plan.state)(
+    (recovered?.state ?? mesh.initial).state,
+  );
 
   const boardEqual = complete && plan.boardEqual(rebuiltState, events);
   const watermarkEqual = (rebuiltWatermark ?? null) === canonicalHead;
