@@ -49,6 +49,7 @@ try {
   await client.close();
 }
 
+// oxlint-disable-next-line effecttsgo/global-console -- This standalone Bun smoke executable reports its single result line directly to the invoking terminal.
 console.log(`causal-counter smoke passed at source token ${sourceToken}`);
 
 function assert(condition: unknown, message: string): asserts condition {

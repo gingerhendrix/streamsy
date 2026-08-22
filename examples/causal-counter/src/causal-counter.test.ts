@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native callbacks; the example's workflows are executed through one ManagedRuntime per harness. */
 import { officialProtocolClient, protocolPathUrl } from "@streamsy/client";
 import {
   StreamProtocol,
@@ -88,16 +89,12 @@ describe("causal counter — Effect runtime edge", () => {
     async (status) => {
       const h = await harness("direct");
       const outcome = await Effect.runPromise(
-        new EagerCounterConsumer()
-          .catchUp(h.target)
-          .pipe(
-            Effect.provide(
-              Layer.succeed(
-                ReadStreams,
-                ReadStreams.of({ open: () => Effect.succeed({ status }) }),
-              ),
-            ),
+        new EagerCounterConsumer().catchUp(h.target).pipe(
+          // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This is the Vitest execution boundary; the stub read layer is provided once at the point of execution.
+          Effect.provide(
+            Layer.succeed(ReadStreams, ReadStreams.of({ open: () => Effect.succeed({ status }) })),
           ),
+        ),
       );
       expect(outcome).toEqual({ status });
     },
@@ -109,6 +106,7 @@ describe("causal counter — Effect runtime edge", () => {
     await h.client.stream("text-state").append("not json", { contentType: "text/plain" });
     const textTarget = bindStream({ ...h.target, streamId: "text-state" });
     const exit = await Effect.runPromiseExit(
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This is the Vitest execution boundary; the read layer is provided once at the point of execution.
       new EagerCounterConsumer().catchUp(textTarget).pipe(Effect.provide(ReadStreamsLive)),
     );
     expect(typedError(exit)).toBeInstanceOf(MalformedCounterState);
@@ -139,6 +137,7 @@ describe("causal counter — Effect runtime edge", () => {
       await h.client.stream(h.target.streamId).appendJsonBatch([event]);
       const consumer = new EagerCounterConsumer();
       const exit = await Effect.runPromiseExit(
+        // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This is the Vitest execution boundary; the read layer is provided once at the point of execution.
         consumer.catchUp(h.target).pipe(Effect.provide(ReadStreamsLive)),
       );
       expect(typedError(exit)).toBeInstanceOf(ErrorClass);

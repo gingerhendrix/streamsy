@@ -79,6 +79,17 @@ const defaultLimits: CatchUpLimits = {
   maxBytes: 100_000,
 };
 
+/**
+ * Wire form of one source fact.
+ *
+ * `validateIncrement` has already proven the shape, so this codec only encodes
+ * the exact JSON body appended to the source stream.
+ */
+const CounterIncrementJson = Schema.fromJsonString(
+  Schema.Struct({ counterId: Schema.NonEmptyString, delta: Schema.Int }),
+);
+const encodeIncrement = Schema.encodeSync(CounterIncrementJson);
+
 /** Append one source fact through the fixed binding and return its exact acknowledgement. */
 export const appendCounterIncrement = Effect.fn("CausalCounter.appendIncrement")(function* (
   source: StreamBinding,
@@ -86,7 +97,7 @@ export const appendCounterIncrement = Effect.fn("CausalCounter.appendIncrement")
 ) {
   const validated = validateIncrement(increment);
   const appends = yield* AppendStreams;
-  const result = yield* appends.append(source, JSON.stringify(validated), {
+  const result = yield* appends.append(source, encodeIncrement(validated), {
     contentType: "application/json",
   });
   return result.status === "appended"
@@ -265,6 +276,7 @@ export class EagerCounterConsumer {
     consumer.lineage = lineage;
     consumer.targetResume = targetResume;
     observer?.(consumer.view());
+    return undefined;
   });
 }
 

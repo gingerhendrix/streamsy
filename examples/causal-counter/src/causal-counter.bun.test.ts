@@ -1,5 +1,8 @@
+/* oxlint-disable effecttsgo/async-function -- Bun's test runner owns these Promise-native callbacks; the example's workflows are executed through one ManagedRuntime per host. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The SQLite host needs a real on-disk database file, created through the Node-compatible filesystem API.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The SQLite host builds that database path with the Node-compatible path API.
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient } from "@streamsy/core";
