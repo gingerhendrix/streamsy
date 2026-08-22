@@ -47,6 +47,7 @@
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
     "smoke:causal-counter": "bun run --cwd examples/causal-counter smoke",
     "smoke:issue-tracker-projections": "bun run --cwd examples/issue-tracker-projections smoke:http",
+    "test:issue-tracker-demo": "bun run --cwd examples/issue-tracker-demo test",
     "test:issue-tracker-projections": "bun run --cwd examples/issue-tracker-projections test",
     "test:hex-domination": "bun run --cwd examples/risk-demo test",
     "test:hex-domination:sqlite": "bun run --cwd examples/risk-demo test:sqlite",

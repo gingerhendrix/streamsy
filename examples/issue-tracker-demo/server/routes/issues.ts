@@ -1,9 +1,9 @@
 import type { BunRequest } from "bun";
-import type { Issue } from "../../shared/types.ts";
+import { issueInput } from "../../shared/state-schema.ts";
 import { isValidWorkspaceId } from "../config.ts";
 import { issueUpdate, issueUpsert, mutateWorkspace, newIssue, nextIssue } from "../state.ts";
 import type { DemoStreams } from "../streams.ts";
-import { badRequest, json, notFound, type MutationBody } from "../utils.ts";
+import { badRequest, invalidBody, json, notFound, readMutation } from "../utils.ts";
 
 export function issueRoutes(streams: DemoStreams) {
   return {
@@ -12,13 +12,17 @@ export function issueRoutes(streams: DemoStreams) {
         const workspaceId = request.params.ws;
         if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
 
-        const body = (await request.json()) as MutationBody<Issue>;
+        const mutation = await readMutation(request);
+        if (mutation instanceof Response) return mutation;
+        const input = issueInput.safeParse(mutation.body);
+        if (!input.success) return invalidBody("issue", input.error);
+
         return mutateWorkspace(streams, workspaceId, (state) => {
-          const issue = newIssue(body);
+          const issue = newIssue(input.data);
           if (!state.getProject(issue.projectId)) {
             return { response: badRequest("Unknown projectId") };
           }
-          const event = issueUpsert(issue, body.txid);
+          const event = issueUpsert(issue, mutation.txid);
           return {
             event,
             respond: ({ offset }) =>
@@ -34,13 +38,17 @@ export function issueRoutes(streams: DemoStreams) {
         if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
 
         const issueId = decodeURIComponent(request.params.id);
-        const body = (await request.json()) as MutationBody<Issue>;
+        const mutation = await readMutation(request);
+        if (mutation instanceof Response) return mutation;
+        const input = issueInput.safeParse(mutation.body);
+        if (!input.success) return invalidBody("issue", input.error);
+
         return mutateWorkspace(streams, workspaceId, (state) => {
           const previous = state.getIssue(issueId);
           if (!previous) return { response: notFound("Issue not found") };
 
-          const issue = nextIssue(previous, body);
-          const event = issueUpdate(issue, previous, body.txid);
+          const issue = nextIssue(previous, input.data);
+          const event = issueUpdate(issue, previous, mutation.txid);
           return {
             event,
             respond: ({ offset }) => json({ issue, awaitOffset: offset, txid: event.headers.txid }),

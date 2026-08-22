@@ -1,9 +1,9 @@
 import type { BunRequest } from "bun";
-import type { Project } from "../../shared/types.ts";
+import { projectInput } from "../../shared/state-schema.ts";
 import { isValidWorkspaceId } from "../config.ts";
 import { mutateWorkspace, newProject, projectUpsert } from "../state.ts";
 import type { DemoStreams } from "../streams.ts";
-import { badRequest, json, type MutationBody } from "../utils.ts";
+import { badRequest, invalidBody, json, readMutation } from "../utils.ts";
 
 export function projectRoutes(streams: DemoStreams) {
   return {
@@ -12,10 +12,14 @@ export function projectRoutes(streams: DemoStreams) {
         const workspaceId = request.params.ws;
         if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
 
-        const body = (await request.json()) as MutationBody<Project>;
+        const mutation = await readMutation(request);
+        if (mutation instanceof Response) return mutation;
+        const input = projectInput.safeParse(mutation.body);
+        if (!input.success) return invalidBody("project", input.error);
+
         return mutateWorkspace(streams, workspaceId, () => {
-          const project = newProject(body);
-          const event = projectUpsert(project, body.txid);
+          const project = newProject(input.data);
+          const event = projectUpsert(project, mutation.txid);
           return {
             event,
             respond: ({ offset }) =>

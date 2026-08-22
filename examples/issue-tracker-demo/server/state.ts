@@ -243,8 +243,8 @@ export async function seedStarterProject(streams: DemoStreams, workspaceId: stri
 export function newProject(input: Partial<Project>): Project {
   return {
     id: input.id ?? id("proj"),
-    name: String(input.name ?? "Untitled project").trim(),
-    description: String(input.description ?? "").trim(),
+    name: (input.name ?? "Untitled project").trim(),
+    description: (input.description ?? "").trim(),
     createdAt: input.createdAt ?? now(),
   };
 }
@@ -254,8 +254,8 @@ export function newIssue(input: Partial<Issue>): Issue {
   const createdAt = input.createdAt ?? timestamp;
   return {
     id: input.id ?? id("issue"),
-    projectId: String(input.projectId ?? ""),
-    title: String(input.title ?? "Untitled issue").trim(),
+    projectId: input.projectId ?? "",
+    title: (input.title ?? "Untitled issue").trim(),
     status: input.status ?? "open",
     createdAt,
     updatedAt: input.updatedAt ?? createdAt,
@@ -265,7 +265,7 @@ export function newIssue(input: Partial<Issue>): Issue {
 export function nextIssue(previous: Issue, input: Partial<Issue>): Issue {
   return {
     ...previous,
-    title: input.title === undefined ? previous.title : String(input.title).trim(),
+    title: input.title === undefined ? previous.title : input.title.trim(),
     status: input.status ?? previous.status,
     updatedAt: input.updatedAt ?? now(),
   };
@@ -274,9 +274,9 @@ export function nextIssue(previous: Issue, input: Partial<Issue>): Issue {
 export function newComment(input: Partial<Comment>): Comment {
   return {
     id: input.id ?? id("comment"),
-    issueId: String(input.issueId ?? ""),
-    author: String(input.author ?? "you").trim() || "you",
-    body: String(input.body ?? "").trim(),
+    issueId: input.issueId ?? "",
+    author: (input.author ?? "you").trim() || "you",
+    body: (input.body ?? "").trim(),
     createdAt: input.createdAt ?? now(),
   };
 }

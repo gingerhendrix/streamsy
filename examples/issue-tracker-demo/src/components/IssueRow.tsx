@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isIssueStatus } from "../../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus } from "../../shared/types.ts";
 import { STATUS_LABEL, formatRelativeTime, shortId } from "../utils/format.ts";
 
@@ -33,7 +34,11 @@ export function IssueRow({
         <select
           aria-label={`Status for ${issue.title}`}
           value={issue.status}
-          onChange={(event) => onStatus(event.target.value as IssueStatus)}
+          onChange={(event) => {
+            // The select only offers the three statuses below; anything else
+            // is not a status change.
+            if (isIssueStatus(event.target.value)) onStatus(event.target.value);
+          }}
         >
           <option value="open">Open</option>
           <option value="in_progress">In progress</option>

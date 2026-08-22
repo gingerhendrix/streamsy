@@ -208,7 +208,10 @@ bun run --cwd examples/issue-tracker-demo smoke:http
 | `/streams/workspace/:ws`      | Streamsy durable stream per workspace (read/live-read, `?offset=-1`). |
 
 Unknown workspaces return 404; malformed workspace ids return 400; mutations that lose the CAS
-race four times return 409 with a retry hint.
+race four times return 409 with a retry hint. Mutation bodies are validated against the shared
+state schema before anything is appended: a body that is not a JSON object, a `txid` that is not
+a transaction id, or a field that does not match its declared wire type (a numeric `title`, a
+`status` outside `open | in_progress | done`) returns 400 and appends nothing.
 
 ## Why this shape
 

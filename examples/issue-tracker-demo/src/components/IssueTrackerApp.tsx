@@ -25,7 +25,7 @@ export function IssueTrackerApp({ db, workspaceId }: { db: IssueDb; workspaceId:
     () =>
       issues
         .filter((issue) => issue.projectId === selectedProject?.id)
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+        .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [issues, selectedProject?.id],
   );
   const issueCountByProject = useMemo(() => {

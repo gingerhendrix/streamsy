@@ -1,9 +1,9 @@
 import type { BunRequest } from "bun";
-import type { Comment } from "../../shared/types.ts";
+import { commentInput } from "../../shared/state-schema.ts";
 import { isValidWorkspaceId } from "../config.ts";
 import { commentUpsert, mutateWorkspace, newComment } from "../state.ts";
 import type { DemoStreams } from "../streams.ts";
-import { badRequest, json, type MutationBody } from "../utils.ts";
+import { badRequest, invalidBody, json, readMutation } from "../utils.ts";
 
 export function commentRoutes(streams: DemoStreams) {
   return {
@@ -12,13 +12,17 @@ export function commentRoutes(streams: DemoStreams) {
         const workspaceId = request.params.ws;
         if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
 
-        const body = (await request.json()) as MutationBody<Comment>;
+        const mutation = await readMutation(request);
+        if (mutation instanceof Response) return mutation;
+        const input = commentInput.safeParse(mutation.body);
+        if (!input.success) return invalidBody("comment", input.error);
+
         return mutateWorkspace(streams, workspaceId, (state) => {
-          const comment = newComment(body);
+          const comment = newComment(input.data);
           if (!state.getIssue(comment.issueId)) {
             return { response: badRequest("Unknown issueId") };
           }
-          const event = commentUpsert(comment, body.txid);
+          const event = commentUpsert(comment, mutation.txid);
           return {
             event,
             respond: ({ offset }) =>

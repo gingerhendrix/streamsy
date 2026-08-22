@@ -33,7 +33,7 @@ const loadArticles = createServerFn({ method: "GET" }).handler(() =>
       (article): article is { slug: string; title: string; description: string; date: string } =>
         article.slug !== undefined,
     )
-    .sort((a, b) => b.date.localeCompare(a.date)),
+    .toSorted((a, b) => b.date.localeCompare(a.date)),
 );
 
 const articleDateFormatter = new Intl.DateTimeFormat("en-GB", {

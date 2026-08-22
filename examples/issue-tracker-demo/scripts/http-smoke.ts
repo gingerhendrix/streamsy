@@ -26,12 +26,36 @@ interface ChangeEvent {
   headers: { operation: string; txid: string; timestamp: string };
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isChangeEvent(value: unknown): value is ChangeEvent {
+  return (
+    isJsonObject(value) &&
+    typeof value.type === "string" &&
+    typeof value.key === "string" &&
+    isJsonObject(value.value) &&
+    (value.old_value === undefined || isJsonObject(value.old_value)) &&
+    isJsonObject(value.headers) &&
+    typeof value.headers.operation === "string" &&
+    typeof value.headers.txid === "string" &&
+    typeof value.headers.timestamp === "string"
+  );
+}
+
 interface MutationResult {
   awaitOffset: string;
   txid: string;
   project?: { id: string };
   issue?: { id: string; status: string };
   comment?: { id: string };
+}
+
+function isMutationResult(value: unknown): value is MutationResult {
+  return (
+    isJsonObject(value) && typeof value.awaitOffset === "string" && typeof value.txid === "string"
+  );
 }
 
 function probeEvent(suffix: string) {
@@ -64,7 +88,12 @@ async function postJson(
   });
   const text = await response.text();
   assert(response.ok, `${method} ${path} expected 2xx, got ${response.status}: ${text}`);
-  return JSON.parse(text) as MutationResult;
+  const payload: unknown = JSON.parse(text);
+  assert(
+    isMutationResult(payload),
+    `${method} ${path} should return awaitOffset and txid: ${text}`,
+  );
+  return payload;
 }
 
 async function postStatus(path: string, body: unknown): Promise<number> {
@@ -72,6 +101,17 @@ async function postStatus(path: string, body: unknown): Promise<number> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+  });
+  await response.text();
+  return response.status;
+}
+
+/** POST a raw (possibly non-JSON) body and return only the status. */
+async function postRawStatus(path: string, body: string): Promise<number> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
   });
   await response.text();
   return response.status;
@@ -102,9 +142,15 @@ async function readStream(streamUrl: string): Promise<{ events: ChangeEvent[]; h
   assert(response.headers.get("stream-up-to-date") === "true", "stream read should be up to date");
   const head = response.headers.get("stream-next-offset");
   assert(head, "stream read should return a stream-next-offset header");
-  const body = (await response.json()) as ChangeEvent[];
+  const body: unknown = await response.json();
   assert(Array.isArray(body), "stream read body should be a JSON array");
-  return { events: body, head };
+
+  const events: ChangeEvent[] = [];
+  for (const event of body) {
+    assert(isChangeEvent(event), `stream read body should hold change events: ${String(event)}`);
+    events.push(event);
+  }
+  return { events, head };
 }
 
 function findEvent(
@@ -203,7 +249,11 @@ try {
   const createWorkspace = async (): Promise<string> => {
     const response = await fetch(`${baseUrl}/api/workspaces`, { method: "POST" });
     assert(response.status === 201, `POST /api/workspaces expected 201, got ${response.status}`);
-    const body = (await response.json()) as { id: string };
+    const body: unknown = await response.json();
+    assert(
+      isJsonObject(body) && typeof body.id === "string",
+      "workspace create should return an id",
+    );
     assert(/^[a-z0-9]{10}$/.test(body.id), `workspace id should be 10 base36 chars: ${body.id}`);
     return body.id;
   };
@@ -220,7 +270,7 @@ try {
     starterRead.events.length === 1,
     `new workspace should hold exactly 1 seed event, got ${starterRead.events.length}`,
   );
-  const starter = starterRead.events[0]!;
+  const starter = starterRead.events[0];
   assert(starter.type === "project", "starter event should be a project event");
   assert(starter.headers.operation === "upsert", "starter event should be an upsert");
   assert(starter.value.name === "Getting started", "starter project should be 'Getting started'");
@@ -254,6 +304,25 @@ try {
   assert(sharedIssue.issue?.id, "shared workspace issue create should return an issue id");
 
   // === 5. Unknown and malformed workspace ids ===
+
+  const invalidJsonStatus = await postRawStatus("/api/w/main/projects", "{ not json");
+  assert(invalidJsonStatus === 400, `invalid JSON body should 400, got ${invalidJsonStatus}`);
+
+  const arrayBodyStatus = await postRawStatus("/api/w/main/projects", "[]");
+  assert(arrayBodyStatus === 400, `a non-object JSON body should 400, got ${arrayBodyStatus}`);
+
+  const badTxidStatus = await postStatus("/api/w/main/projects", { name: "x", txid: "nope" });
+  assert(badTxidStatus === 400, `a malformed txid should 400, got ${badTxidStatus}`);
+
+  const badFieldStatus = await postStatus("/api/w/main/projects", { name: 42 });
+  assert(badFieldStatus === 400, `a non-string project name should 400, got ${badFieldStatus}`);
+
+  const badStatusStatus = await postStatus("/api/w/main/issues", {
+    projectId,
+    title: "bad status",
+    status: "archived",
+  });
+  assert(badStatusStatus === 400, `a status outside the schema should 400, got ${badStatusStatus}`);
 
   const unknownStatus = await postStatus("/api/w/nope12345/projects", { name: "x" });
   assert(unknownStatus === 404, `unknown workspace should 404, got ${unknownStatus}`);

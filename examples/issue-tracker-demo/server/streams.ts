@@ -5,16 +5,25 @@ import {
   type AppendResult,
 } from "@streamsy/core";
 import { createJsonProtocol, type JsonStream } from "@streamsy/json";
-import type { StateEvent } from "../shared/state-schema.ts";
+import { isStateEvent, type StateEvent } from "../shared/state-schema.ts";
 import { contentType } from "./config.ts";
 
 const streamPrefix = "/streams";
 
-// Events are validated by the server before they are appended; reads trust
-// the durable log, so the codec is a plain identity passthrough.
+/**
+ * Appends pass through unchanged; reads are validated, because the workspace
+ * stream endpoint is public and can hold events this server did not write.
+ * A payload that is not an issue tracker change event fails the read rather
+ * than being folded into materialized state.
+ */
 const eventCodec = {
   encode: (value: StateEvent): unknown => value,
-  decode: (value: unknown): StateEvent => value as StateEvent,
+  decode: (value: unknown): StateEvent => {
+    if (!isStateEvent(value)) {
+      throw new Error("Malformed state event: not an issue tracker change event");
+    }
+    return value;
+  },
 };
 
 /**

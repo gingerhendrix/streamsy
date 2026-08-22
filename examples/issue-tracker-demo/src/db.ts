@@ -6,6 +6,18 @@ export type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Pr
 
 type ApiMutationResult = { awaitOffset: string; txid: string };
 
+/** The mutation endpoints answer with the appended offset and its txid. */
+function isApiMutationResult(value: unknown): value is ApiMutationResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "awaitOffset" in value &&
+    typeof value.awaitOffset === "string" &&
+    "txid" in value &&
+    typeof value.txid === "string"
+  );
+}
+
 export type CreateProjectAction = { project: Project; txid: string };
 export type CreateIssueAction = { issue: Issue; txid: string };
 export type UpdateIssueStatusAction = {
@@ -50,7 +62,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.projects.insert(project);
         },
         mutationFn: async ({ project, txid }: CreateProjectAction) => {
-          const result = await postJson<ApiMutationResult>(apiUrl(workspaceId, "/projects"), {
+          const result = await postJson(apiUrl(workspaceId, "/projects"), {
             ...project,
             txid,
           });
@@ -62,7 +74,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.issues.insert(issue);
         },
         mutationFn: async ({ issue, txid }: CreateIssueAction) => {
-          const result = await postJson<ApiMutationResult>(apiUrl(workspaceId, "/issues"), {
+          const result = await postJson(apiUrl(workspaceId, "/issues"), {
             ...issue,
             txid,
           });
@@ -77,7 +89,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
           });
         },
         mutationFn: async ({ issue, status, updatedAt, txid }: UpdateIssueStatusAction) => {
-          const result = await postJson<ApiMutationResult>(
+          const result = await postJson(
             apiUrl(workspaceId, `/issues/${encodeURIComponent(issue.id)}`),
             { status, updatedAt, txid },
             { method: "PATCH" },
@@ -90,7 +102,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
           db.collections.comments.insert(comment);
         },
         mutationFn: async ({ comment, txid }: CreateCommentAction) => {
-          const result = await postJson<ApiMutationResult>(apiUrl(workspaceId, "/comments"), {
+          const result = await postJson(apiUrl(workspaceId, "/comments"), {
             ...comment,
             txid,
           });
@@ -98,10 +110,14 @@ export function createIssueDb(workspaceId: string): IssueDb {
         },
       },
     }),
-  }) as IssueDb;
+  });
 }
 
-async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): Promise<T> {
+async function postJson(
+  url: string,
+  body: unknown,
+  init: RequestInit = {},
+): Promise<ApiMutationResult> {
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetch(url, {
@@ -111,7 +127,11 @@ async function postJson<T>(url: string, body: unknown, init: RequestInit = {}): 
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await response.text());
-  return (await response.json()) as T;
+  const payload: unknown = await response.json();
+  if (!isApiMutationResult(payload)) {
+    throw new Error(`Unexpected mutation response from ${url}`);
+  }
+  return payload;
 }
 
 export async function awaitOptimisticAction<T>(
