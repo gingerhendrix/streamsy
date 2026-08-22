@@ -20,7 +20,7 @@ const site = await Website("streamsy-docs", {
   compatibilityDate: "2026-06-27",
   noBundle: true,
   spa: false,
-  domains: ["streamsy.gandrew.com"],
+  domains: ["streamsy.gandrew.com", "streamsy.dev"],
 });
 
 console.log({ url: site.url });
