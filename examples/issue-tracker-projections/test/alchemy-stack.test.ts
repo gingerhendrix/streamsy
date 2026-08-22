@@ -14,7 +14,9 @@
  *  - the topology is finite: it names a Worker, a queue, a DO namespace, and the
  *    assets, and carries no workspace, project, issue, or stream value.
  */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This suite inspects the deployment sources as text, so it reads `package.json` and `alchemy.run.ts` with the Node-compatible filesystem API.
 import { readFileSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The same reads resolve those paths relative to this test file with the Node-compatible path API.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";

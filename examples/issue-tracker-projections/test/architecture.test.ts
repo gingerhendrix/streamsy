@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns this file's control flow: every `test` and `afterEach` callback is a Promise the runner awaits, and the request helper is a Promise-native driver over the host's Web `fetch` handler. The application operations under test stay Effect descriptions; the tests run them with `ManagedRuntime.runPromise` on runtimes assembled from explicit layers. */
 /**
  * The server is Effect-first, and these tests only pass if it really is.
  *

@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns this file's control flow: every `test` and `afterEach` callback is a Promise the runner awaits, and the seeding helpers are Promise-native drivers over the host's Web `fetch` handler. The restore and projection passes under test stay Effect values, run on the host's runtime and read through `Effect.flip`. */
 /**
  * Durable target State is decoded, not trusted.
  *

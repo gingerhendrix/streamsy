@@ -1,5 +1,8 @@
+/* oxlint-disable effecttsgo/async-function -- `bun:test` owns this file's control flow: every `test` and `afterEach` callback is a Promise the runner awaits, and the setup helpers are Promise-native drivers over the host's Web `fetch` handler. The behaviour under test is the Effect application behind that HTTP surface, exercised across a restart against one on-disk SQLite database. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The restart fixture needs a real on-disk SQLite database, so it creates its temporary directory with the Node-compatible filesystem API.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The same fixture resolves that database path with the Node-compatible path API.
 import { join } from "node:path";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import { afterEach, describe, expect, test } from "bun:test";

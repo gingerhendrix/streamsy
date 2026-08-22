@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Vitest owns this file's control flow: every `test` and `afterEach` callback is a Promise the runner awaits, and the shared helpers are Promise-native drivers over the host's Web `fetch` handler. The behaviour under test is the Effect application behind that HTTP surface, which the host's own ManagedRuntime runs. */
 import { afterEach, describe, expect, test } from "vitest";
 import type {
   BoardResponse,
