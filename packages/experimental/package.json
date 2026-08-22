@@ -63,7 +63,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/binding.ts src/causal.ts src/causal/identity.ts src/effect.ts src/effect/state-projection.ts src/effect-testing.ts src/ivm-mesh.ts src/materializer.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external effect",
+    "build": "tsdown src/binding.ts src/causal.ts src/causal/identity.ts src/effect.ts src/effect/state-projection.ts src/effect-testing.ts src/ivm-mesh.ts src/materializer.ts --format esm --out-dir dist --clean --external @streamsy/core --external effect && tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
     "test:sqlite": "bun test src/ivm-mesh/*.bun.test.ts"
