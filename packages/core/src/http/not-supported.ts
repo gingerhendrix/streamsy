@@ -22,8 +22,9 @@ export function notSupportedResponse(
  * circuit on a `not-supported` result before pattern-matching the rest of a
  * union.
  */
-export function maybeNotSupportedResponse(
-  result: unknown,
+// oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- `T` is retained for public API compatibility: this is an exported declaration and dropping it would change the emitted `.d.ts` signature.
+export function maybeNotSupportedResponse<T>(
+  result: T | NotSupportedResult,
   responses: HttpResponseFactory,
 ): Response | null {
   return isNotSupported(result) ? notSupportedResponse(result, responses) : null;
