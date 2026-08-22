@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
+  "extends": ["./node_modules/@effect/tsgo/oxlint-presets/recommended.json"],
+  "plugins": ["effecttsgo"],
+  "options": {
+    "typeAware": true
+  },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  // Oxlint always enables the built-in `eslint` rules, and they cannot be turned
+  // off at plugin level. The general policy in `.oxlintrc.json` owns those rules
+  // for the whole repository, so they are disabled here to keep this inventory
+  // limited to Effect diagnostics.
+  "rules": {
+    "no-underscore-dangle": "off"
+  },
+  "env": {
+    "builtin": true
+  }
+}

@@ -28,8 +28,14 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Lint
-        run: bun run lint
+      - name: Lint policy split
+        run: bun run lint:policy
+
+      - name: Lint (general policy)
+        run: bun run lint:general
+
+      - name: Lint (Effect policy)
+        run: bun run lint:effect
 
       - name: Format check
         run: bun run format:check
