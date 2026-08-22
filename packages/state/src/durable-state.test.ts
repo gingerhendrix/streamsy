@@ -29,6 +29,16 @@ const userCodec: JsonCodec<User> = {
   },
 };
 
+/**
+ * Declares a wider value type than `userCodec` accepts at runtime, so a
+ * well-typed caller can still submit a value the schema rejects. Validation is
+ * delegated to `userCodec`, so the runtime contract is unchanged.
+ */
+const partialUserCodec: JsonCodec<Partial<User>> = {
+  encode: (value) => value,
+  decode: (value) => userCodec.decode(value),
+};
+
 function createProtocol(): StreamProtocolFactory {
   return createStreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
 }
@@ -94,16 +104,14 @@ describe("DurableStateProtocol", () => {
   it("rejects values that fail schema validation before appending", async () => {
     const protocol = createProtocol();
     const durable = createDurableStateProtocol(protocol, {
-      users: { type: "user", schema: userCodec, primaryKey: "id" },
+      users: { type: "user", schema: partialUserCodec, primaryKey: "id" },
     });
 
     const created = await durable.create("state");
     expect(created.status).toBe("created");
     if (created.status !== "created") throw new Error("expected created");
 
-    expect(() => created.stream.state.insert("users", { id: "u1" } as unknown as User)).toThrow(
-      "invalid user",
-    );
+    expect(() => created.stream.state.insert("users", { id: "u1" })).toThrow("invalid user");
 
     const read = await created.stream.read();
     expect(read.status).toBe("ok");
@@ -116,7 +124,7 @@ describe("DurableStateProtocol", () => {
     const durable = createDurableStateProtocol(protocol, {
       users: {
         schema: userCodec,
-        primaryKey: (value: unknown) => `user:${(value as User).id}`,
+        primaryKey: (value: unknown) => `user:${userCodec.decode(value).id}`,
       },
     });
 
@@ -137,26 +145,122 @@ describe("DurableStateProtocol", () => {
 
   it("rejects unknown collection types", async () => {
     const protocol = createProtocol();
+    // Without `as const` the collection's `type` is `string`, so the wire-type
+    // map is open and an unknown tag is a statically valid message. Rejecting it
+    // is then purely the runtime lookup's job.
     const schema = {
       users: { type: "user", schema: userCodec, primaryKey: "id" },
-    } as const;
+    };
     const durable = createDurableStateProtocol(protocol, schema);
 
     const created = await durable.create("state");
     expect(created.status).toBe("created");
     if (created.status !== "created") throw new Error("expected created");
 
-    const ghost = {
+    const ghost: DurableStateMessage<ValuesByWireType<typeof schema>> = {
       type: "ghost",
       key: "g1",
       value: { id: "g1", name: "Ghost" },
       headers: { operation: "insert" },
-    } as unknown as DurableStateMessage<ValuesByWireType<typeof schema>>;
+    };
     expect(() => created.stream.state.append(ghost)).toThrow("Unknown Durable State type: ghost");
 
     const read = await created.stream.read();
     expect(read.status).toBe("ok");
     if (read.status !== "ok") throw new Error("expected ok");
     expect(read.messages).toEqual([]);
+  });
+
+  it("round-trips change and control messages through a reopened stream", async () => {
+    const protocol = createProtocol();
+    const durable = createDurableStateProtocol(protocol, {
+      users: { type: "user", schema: userCodec, primaryKey: "id" },
+    });
+
+    const created = await durable.create("state");
+    expect(created.status).toBe("created");
+    if (created.status !== "created") throw new Error("expected created");
+
+    await created.stream.state.insert("users", { id: "u1", name: "Alice" });
+    await created.stream.state.snapshotEnd();
+
+    const reopened = await durable.get("state");
+    expect(reopened.status).toBe("ok");
+    if (reopened.status !== "ok") throw new Error("expected ok");
+
+    const read = await reopened.stream.read();
+    expect(read.status).toBe("ok");
+    if (read.status !== "ok") throw new Error("expected ok");
+    expect(read.messages).toHaveLength(2);
+
+    const change = read.messages[0]!.value;
+    if (!("type" in change)) throw new Error("expected change message");
+    expect(change.type).toBe("user");
+    expect(change.key).toBe("u1");
+    expect(change.value).toEqual({ id: "u1", name: "Alice" });
+
+    const control = read.messages[1]!.value;
+    if ("type" in control) throw new Error("expected control message");
+    expect(control.headers).toEqual({ control: "snapshot-end" });
+  });
+
+  it("rejects malformed stored messages on read", async () => {
+    const protocol = createProtocol();
+    const durable = createDurableStateProtocol(protocol, {
+      users: { type: "user", schema: userCodec, primaryKey: "id" },
+    });
+
+    const cases: ReadonlyArray<{ name: string; payload: unknown; message: string }> = [
+      {
+        name: "unknown wire tag",
+        payload: {
+          type: "ghost",
+          key: "g1",
+          value: { id: "g1", name: "Ghost" },
+          headers: { operation: "insert" },
+        },
+        message: "Unknown Durable State type: ghost",
+      },
+      {
+        name: "payload rejected by the collection schema",
+        payload: { type: "user", key: "u1", value: { id: "u1" }, headers: { operation: "insert" } },
+        message: "invalid user",
+      },
+      {
+        name: "missing headers",
+        payload: { type: "user", key: "u1", value: { id: "u1", name: "Alice" } },
+        message: "Durable State message requires headers object",
+      },
+      {
+        name: "unknown operation",
+        payload: {
+          type: "user",
+          key: "u1",
+          value: { id: "u1", name: "Alice" },
+          headers: { operation: "patch" },
+        },
+        message: "Invalid Durable State operation",
+      },
+      {
+        name: "unknown control",
+        payload: { headers: { control: "rewind" } },
+        message: "Invalid Durable State control message",
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      // `appendJson` bypasses the Durable State codec, so each case stores bytes
+      // that only the read path can reject. One stream per case: the first bad
+      // message ends the read.
+      const created = await durable.create(`state-${index}`);
+      expect(created.status, testCase.name).toBe("created");
+      if (created.status !== "created") throw new Error("expected created");
+      await created.stream.json.appendJson(testCase.payload);
+
+      const read = await created.stream.read();
+      expect(read.status, testCase.name).toBe("invalid-json");
+      if (read.status !== "invalid-json") throw new Error("expected invalid-json");
+      expect(String(read.error), testCase.name).toContain(testCase.message);
+    }
   });
 });

@@ -128,7 +128,6 @@ export type DurableStateGetResult<S extends DurableStateSchemaMap> =
   | { status: "not-supported"; feature: string; message?: string }
   | { status: "content-type-conflict"; contentType: string; expectedContentType: string };
 
-type AnyMessage = DurableStateMessage<Record<string, unknown>>;
 type CollectionRuntime = {
   key: string;
   wireType: string;
@@ -156,15 +155,26 @@ function buildRuntime(schema: DurableStateSchemaMap): CollectionRuntime[] {
   }));
 }
 
-function findByKey(runtime: CollectionRuntime[], key: string): CollectionRuntime | undefined {
-  return runtime.find((def) => def.key === key);
+/**
+ * The one checked collection-key lookup: resolves a schema-map key to its
+ * runtime entry, or rejects the key.
+ */
+function requireByKey(runtime: CollectionRuntime[], key: string): CollectionRuntime {
+  const def = runtime.find((entry) => entry.key === key);
+  if (!def) throw new Error(`Unknown Durable State collection: ${key}`);
+  return def;
 }
 
-function findByWireType(
-  runtime: CollectionRuntime[],
-  wireType: string,
-): CollectionRuntime | undefined {
-  return runtime.find((def) => def.wireType === wireType);
+/**
+ * The one checked wire-tag-to-codec lookup. Every path that needs a collection
+ * codec for an on-the-wire `type` tag resolves it here, so an unknown tag is
+ * rejected identically whether it arrives through `append`, `encode` or
+ * `decode`.
+ */
+function requireByWireType(runtime: CollectionRuntime[], wireType: string): CollectionRuntime {
+  const def = runtime.find((entry) => entry.wireType === wireType);
+  if (!def) throw new Error(`Unknown Durable State type: ${wireType}`);
+  return def;
 }
 
 function keyFromValue(def: CollectionRuntime, value: unknown): string {
@@ -176,7 +186,17 @@ function keyFromValue(def: CollectionRuntime, value: unknown): string {
   return key;
 }
 
-function validateMessage(runtime: CollectionRuntime[], value: unknown): AnyMessage {
+/**
+ * Checks `value` against the Durable State wire vocabulary and the collection
+ * table, and returns the same object so encoding preserves it byte-for-byte.
+ *
+ * A returned change message is proven to carry a `type` that
+ * {@link requireByWireType} resolved, a string `key`, a known `operation`, and a
+ * `value`/`old_value` that the resolved collection codec accepted. A returned
+ * control message is proven to carry a known `control` header and no `type` or
+ * `key`.
+ */
+function validateMessage(runtime: CollectionRuntime[], value: unknown): Record<string, unknown> {
   if (!isObject(value)) throw new Error("Durable State message must be an object");
   const headers = value.headers;
   if (!isObject(headers)) throw new Error("Durable State message requires headers object");
@@ -188,7 +208,7 @@ function validateMessage(runtime: CollectionRuntime[], value: unknown): AnyMessa
     if ("type" in value || "key" in value) {
       throw new Error("Durable State control messages must not include type or key");
     }
-    return value as AnyMessage;
+    return value;
   }
 
   const type = value.type;
@@ -202,8 +222,7 @@ function validateMessage(runtime: CollectionRuntime[], value: unknown): AnyMessa
     throw new Error("Invalid Durable State operation");
   }
 
-  const def = findByWireType(runtime, type);
-  if (!def) throw new Error(`Unknown Durable State type: ${type}`);
+  const def = requireByWireType(runtime, type);
 
   if (operation === "insert" || operation === "update" || operation === "upsert") {
     if (!hasOwn(value, "value")) throw new Error(`${operation} message requires value`);
@@ -214,16 +233,44 @@ function validateMessage(runtime: CollectionRuntime[], value: unknown): AnyMessa
     }
   }
   if (hasOwn(value, "old_value")) def.codec.decode(value.old_value);
-  return value as AnyMessage;
+  return value;
 }
 
-function durableStateCodec(runtime: CollectionRuntime[]): JsonCodec<AnyMessage> {
+/**
+ * Validates `value` and narrows it to the schema-typed message union.
+ *
+ * The invariant this stands on: `runtime` is always produced from the same
+ * schema map `S` by {@link buildRuntime}, so `wireType` ranges exactly over the
+ * wire tags of `ValuesByWireType<S>` and each entry's `codec` is the codec of
+ * that tag's collection. {@link validateMessage} therefore proves that an
+ * accepted change message is a `ChangeMessage<Tag, ValuesByWireType<S>[Tag]>`
+ * for some tag of `S`, and that an accepted control message is a
+ * `ControlMessage` — together, exactly the members of
+ * `DurableStateMessage<ValuesByWireType<S>>`.
+ *
+ * TypeScript cannot relate the value-level `CollectionRuntime[]` table to the
+ * type-level map `S`, so that last step is asserted here. This is the single
+ * unchecked narrowing in the package; every other path reaches the typed union
+ * through this function.
+ */
+function toDurableStateMessage<S extends DurableStateSchemaMap>(
+  runtime: CollectionRuntime[],
+  value: unknown,
+): DurableStateMessage<ValuesByWireType<S>> {
+  const validated = validateMessage(runtime, value);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Runtime-proven by `validateMessage`; see the invariant documented above.
+  return validated as DurableStateMessage<ValuesByWireType<S>>;
+}
+
+function durableStateCodec<S extends DurableStateSchemaMap>(
+  runtime: CollectionRuntime[],
+): JsonCodec<DurableStateMessage<ValuesByWireType<S>>> {
   return {
     encode(value) {
       return validateMessage(runtime, value);
     },
     decode(value) {
-      return validateMessage(runtime, value);
+      return toDurableStateMessage<S>(runtime, value);
     },
   };
 }
@@ -271,10 +318,7 @@ export class DurableStateProtocol<S extends DurableStateSchemaMap> {
     this.protocol = protocol;
     this.schema = schema;
     this.runtime = buildRuntime(schema);
-    this.json = new JsonProtocol(
-      protocol,
-      durableStateCodec(this.runtime) as JsonCodec<DurableStateMessage<ValuesByWireType<S>>>,
-    );
+    this.json = new JsonProtocol(protocol, durableStateCodec<S>(this.runtime));
   }
 
   async create(
@@ -370,8 +414,7 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
       headers?: DurableStateUserHeaders;
     } = {},
   ): DurableStateMessage<ValuesByWireType<S>> {
-    const def = findByKey(this.runtime, type);
-    if (!def) throw new Error(`Unknown Durable State collection: ${type}`);
+    const def = requireByKey(this.runtime, type);
     const validated = def.codec.decode(value);
     const message: Record<string, unknown> = {
       type: def.wireType,
@@ -380,7 +423,7 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
       headers: { ...options.headers, operation },
     };
     if (options.oldValue !== undefined) message.old_value = def.codec.decode(options.oldValue);
-    return validateMessage(this.runtime, message) as DurableStateMessage<ValuesByWireType<S>>;
+    return toDurableStateMessage<S>(this.runtime, message);
   }
 
   private deleteMessage<K extends keyof S & string>(
@@ -388,15 +431,14 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
     key: string,
     options: { oldValue?: CollectionValue<S[K]>; headers?: DurableStateUserHeaders } = {},
   ): DurableStateMessage<ValuesByWireType<S>> {
-    const def = findByKey(this.runtime, type);
-    if (!def) throw new Error(`Unknown Durable State collection: ${type}`);
+    const def = requireByKey(this.runtime, type);
     const message: Record<string, unknown> = {
       type: def.wireType,
       key,
       headers: { ...options.headers, operation: "delete" },
     };
     if (options.oldValue !== undefined) message.old_value = def.codec.decode(options.oldValue);
-    return validateMessage(this.runtime, message) as DurableStateMessage<ValuesByWireType<S>>;
+    return toDurableStateMessage<S>(this.runtime, message);
   }
 
   private control(
