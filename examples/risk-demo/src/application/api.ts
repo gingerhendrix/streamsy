@@ -70,6 +70,10 @@ export function friendlyError(code: ApiErrorCode, fallback?: string): string {
   return FRIENDLY_ERRORS[code] ?? fallback ?? "The move was rejected.";
 }
 
+export function isApiErrorCode(value: string): value is ApiErrorCode {
+  return Object.hasOwn(FRIENDLY_ERRORS, value);
+}
+
 export function statusForErrorCode(code: ApiErrorCode): number {
   switch (code) {
     case "NOT_YOUR_TURN":

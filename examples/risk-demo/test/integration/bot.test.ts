@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * `Hex Domination` scripted bot: a full game driven end-to-end through the HTTP
  * API by machine players that see nothing but `/decision`, `/commands`, and
@@ -19,6 +18,9 @@ import { defenseTimeoutCommandId } from "../../server/game/defense-timer.ts";
 import {
   DEFENSE_MS,
   boardFor,
+  checkedArray,
+  checkedNumber,
+  checkedString,
   createGame,
   decisionFor,
   declareAttack,
@@ -80,7 +82,8 @@ async function driveToCompletion(
       continue;
     }
 
-    const active = bots[meta.activePlayerId as string]!;
+    const activePlayerId = checkedString(meta.activePlayerId, "active player id");
+    const active = bots[activePlayerId]!;
     if (!(await active.step())) {
       // No legal action and no interrupt: nothing can make progress.
       return { finished: false, steps: step, defences };
@@ -140,7 +143,8 @@ describe("Hex Domination scripted bot", () => {
     expect(await defender.defend()).toBe(true);
     const record = h.stores.commands.get(game.gameId, `bot-defense:${attack.attackId}`)!;
     expect(record.status).toBe("accepted");
-    const resolved = (record.events as any[]).find((e) => e.type === "AttackResolved");
+    const resolved = record.events?.find((event) => event.type === "AttackResolved");
+    if (resolved?.type !== "AttackResolved") throw new Error("expected an attack resolution");
     expect(resolved.resolutionSource).toBe("bot");
 
     // A duplicate wake produces no second roll and no second event.
@@ -169,7 +173,8 @@ describe("Hex Domination scripted bot", () => {
     expect(fired?.status).toBe("accepted");
 
     const record = h.stores.commands.get(game.gameId, defenseTimeoutCommandId(attack.attackId))!;
-    const resolved = (record.events as any[]).find((e) => e.type === "AttackResolved");
+    const resolved = record.events?.find((event) => event.type === "AttackResolved");
+    if (resolved?.type !== "AttackResolved") throw new Error("expected an attack resolution");
     expect(resolved.resolutionSource).toBe("timeout");
 
     // And the attacker can carry on with their turn.
@@ -187,7 +192,9 @@ describe("Hex Domination scripted bot", () => {
       controllers: ["human", "bot"],
       mapSeed: "turtle-seed",
     });
-    const [turtleId, botId] = game.players as [string, string];
+    const turtleId = game.players[0];
+    const botId = game.players[1];
+    if (!turtleId || !botId) throw new Error("expected two players");
     const bot = botsFor(h, game)[botId]!;
 
     const countriesOf = async (playerId: string): Promise<number> => {
@@ -206,7 +213,9 @@ describe("Hex Domination scripted bot", () => {
         // Stick to the same country while it is still held; if it ever falls,
         // turtle onto the next one rather than spreading out.
         if (!fortress || !reinforce.territoryIds.includes(fortress)) {
-          fortress = (reinforce.territoryIds as string[]).toSorted()[0]!;
+          fortress = checkedArray(reinforce.territoryIds, "reinforcement territory ids")
+            .map((id) => checkedString(id, "reinforcement territory id"))
+            .toSorted()[0]!;
         }
         const target = fortress;
         await post(h.app, game, turtleId, {
@@ -317,7 +326,7 @@ describe("Hex Domination scripted bot", () => {
 
     const action = await attacker.step();
     expect(action?.type).toBe("occupy-territory");
-    const moved = action!.armies as number;
+    const moved = checkedNumber(action?.armies, "occupation armies");
     expect(moved).toBeGreaterThanOrEqual(occupation.minArmies);
     expect(moved).toBeLessThanOrEqual(occupation.maxArmies);
 
@@ -334,7 +343,7 @@ describe("Hex Domination scripted bot", () => {
 /** Declare a fresh attack if the board allows one; otherwise advance the turn. */
 async function declareAttackOrContinue(h: Harness, game: Game, guard: number): Promise<void> {
   const meta = await gameMeta(h.app, game);
-  const active = meta.activePlayerId as string;
+  const active = checkedString(meta.activePlayerId, "active player id");
   const decision = await decisionFor(h.app, game, active);
   const reinforce = decision.legalMoves.find((a: any) => a.type === "reinforce");
   if (reinforce) {

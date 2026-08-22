@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The thin match bar: round, seat, phase.
  *
@@ -43,7 +42,11 @@ export function MatchBar(props: MatchBarProps) {
         </span>
       </a>
 
-      <div className="match-state" style={{ "--player": activeColor } as CSSProperties}>
+      <div
+        className="match-state"
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
+        style={{ "--player": activeColor } as CSSProperties}
+      >
         <span className="match-fact">
           <small>Round</small>
           <b>{props.round || "—"}</b>

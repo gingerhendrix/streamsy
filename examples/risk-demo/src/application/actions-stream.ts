@@ -1,5 +1,3 @@
-/* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- The public action-notification Promise facade owns a cancellable subscription wait and preserves its existing caller contract. */
 /**
  * The wire contract of a player's actions stream, in one place: the framing the
@@ -135,10 +133,12 @@ export function createActionsDecoder<T = unknown>(): { push(chunk: string): Acti
       const batches: ActionsBatch<T>[] = [];
       for (const frame of parser.push(chunk)) {
         if (frame.event === "data") {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic SSE facade preserves the caller-selected message type; callers that consume domain messages own the matching decoder contract.
           pending = pending.concat(JSON.parse(frame.data) as T[]);
           continue;
         }
         if (frame.event !== "control") continue;
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic SSE facade preserves the caller-selected message type; callers that consume domain messages own the matching decoder contract.
         const control = JSON.parse(frame.data) as ActionsControl;
         batches.push({
           messages: pending,
@@ -191,6 +191,7 @@ export function createActionsReader<T = unknown>(
     return pending;
   };
   return {
+    // oxlint-disable-next-line effecttsgo/async-function -- AsyncIterator compatibility requires a Promise-returning next method at this public SSE facade.
     async next(timeoutMs: number): Promise<ActionsBatch<T> | null> {
       const arrival = advance();
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -204,15 +205,18 @@ export function createActionsReader<T = unknown>(
         clearTimeout(timer);
       }
     },
+    // oxlint-disable-next-line effecttsgo/async-function -- The public reader close contract waits for the Promise-native Web stream teardown.
     async close(): Promise<void> {
       connection.abort();
       await pending?.catch(() => {});
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic SSE facade preserves the caller-selected message type; callers that consume domain messages own the matching decoder contract.
       await batches.return(undefined as never).catch(() => {});
     },
   };
 }
 
 /** Read one actions response to its end, yielding each batch as it lands. */
+// oxlint-disable-next-line effecttsgo/async-function -- AsyncGenerator is the public Web-stream compatibility contract consumed by browser and agent clients.
 export async function* readActionsBatches<T = unknown>(
   response: Response,
 ): AsyncGenerator<ActionsBatch<T>> {

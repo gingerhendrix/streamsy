@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The `Hex Domination` board projection over HTTP.
  *
@@ -22,6 +21,9 @@ import {
 } from "../../src/board/board-projection.ts";
 import {
   boardFor,
+  checkedArray,
+  checkedRecord,
+  checkedString,
   call,
   createGame,
   decisionFor,
@@ -31,6 +33,46 @@ import {
   riskHarness,
 } from "../harness.ts";
 
+/** Write a pre-mesh board generation: application rows, no lineage row. */
+async function writeLegacyGeneration(h: ReturnType<typeof riskHarness>, gameId: string) {
+  const streamId = `games/${gameId}/projections/board/legacy1`;
+  const created = await h.protocol.create(streamId, { contentType: "application/json" });
+  if (created.status !== "created" && created.status !== "exists") {
+    throw new Error(`cannot create legacy stream: ${created.status}`);
+  }
+  const stream = created.stream;
+  const legacyRows: JsonValue[] = [
+    {
+      type: "game",
+      key: gameId,
+      value: { id: gameId, status: "lobby", round: 0 },
+      headers: { operation: "insert", offset: "0000000000000000_0000000000000001" },
+    },
+    {
+      type: BOARD_META_TYPE,
+      key: BOARD_META_KEY,
+      value: {
+        sourceStreamId: `games/${gameId}/events`,
+        sourceThroughOffset: "0000000000000000_0000000000000001",
+        sourceSeq: 0,
+        generation: "legacy1",
+        // The tell: written by the previous reducer.
+        reducerVersion: "hex-domination:board-2",
+        snapshot: { game: { id: gameId, status: "lobby", round: 0 } },
+      },
+      headers: { operation: "update", offset: "0000000000000000_0000000000000001" },
+    },
+  ];
+  // A JSON array body is framed into one message per item, which is exactly
+  // how the pre-mesh runtime wrote a transition.
+  const appended = await stream.append({
+    data: new TextEncoder().encode(JSON.stringify(legacyRows)),
+    contentType: "application/json",
+  });
+  if (appended.status !== "appended") throw new Error(`legacy append: ${appended.status}`);
+  return streamId;
+}
+
 describe("Hex Domination board projection surface", () => {
   it("assigns lobby colours conflict-safely instead of rejecting duplicates", async () => {
     const h = riskHarness();
@@ -39,7 +81,7 @@ describe("Hex Domination board projection surface", () => {
     });
     expect(created.status).toBe(201);
     expect(created.body.player.color).toBe("#E05A47");
-    const gameId = created.body.game.id as string;
+    const gameId = checkedString(checkedRecord(created.body.game, "created game").id, "game id");
 
     // Both contenders ask for the same colour; the decider seats both and issues
     // the loser the first free palette colour rather than rejecting the join.
@@ -128,10 +170,12 @@ describe("Hex Domination board projection surface", () => {
     const h = riskHarness();
     const game = await createGame(h.app, { mapSeed: "atomic-reinforcement" });
     const before = await boardFor(h.app, game);
-    const active = before.game.activePlayerId as string;
+    const active = checkedString(before.game.activePlayerId, "active player id");
     const decision = await decisionFor(h.app, game, active);
     const reinforce = decision.legalMoves.find((action: any) => action.type === "reinforce");
-    const [first, second] = reinforce.territoryIds as [string, string];
+    const territoryIds = checkedArray(reinforce.territoryIds, "reinforcement territory ids");
+    const first = checkedString(territoryIds[0], "first reinforcement territory id");
+    const second = checkedString(territoryIds[1], "second reinforcement territory id");
     const firstBefore = before.territories.find((territory: any) => territory.id === first).armies;
     const secondBefore = before.territories.find(
       (territory: any) => territory.id === second,
@@ -154,7 +198,7 @@ describe("Hex Domination board projection surface", () => {
     // offset, so atomicity is read off the recorded events rather than the ack.
     const record = h.stores.commands.get(game.gameId, "reinforce-all-at-once")!;
     expect(record.events).toHaveLength(2);
-    expect(new Set((record.events as any[]).map((event) => event.commandId))).toEqual(
+    expect(new Set(record.events?.map((event) => event.commandId))).toEqual(
       new Set(["reinforce-all-at-once"]),
     );
     const after = await boardFor(h.app, game);
@@ -250,7 +294,7 @@ describe("Hex Domination board projection surface", () => {
     expect(decision.board.map.boardStreamId).toBe(board.boardStreamId);
 
     // After a command, the ack's canonical offset is already incorporated.
-    const active = decision.turn.activePlayerId as string;
+    const active = checkedString(decision.turn.activePlayerId, "active player id");
     const activeDecision = await decisionFor(h.app, game, active);
     const reinforce = activeDecision.legalMoves.find((a: any) => a.type === "reinforce");
     const ack = await post(h.app, game, active, {
@@ -344,6 +388,7 @@ describe("Hex Domination board projection surface", () => {
           return {
             ...mesh,
             reduce: (events, boundary, prior) => [
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The injected mesh reducer must return the framework JsonValue shape; this literal contains only JSON primitives and the framework-owned lineage fields shown here.
               {
                 type: BOARD_META_TYPE,
                 key: BOARD_META_KEY,
@@ -391,46 +436,6 @@ describe("Hex Domination board projection surface", () => {
  * current, and that the documented repair actually repairs it.
  */
 describe("legacy generation upgrade", () => {
-  /** Write a pre-mesh board generation: application rows, no lineage row. */
-  async function writeLegacyGeneration(h: ReturnType<typeof riskHarness>, gameId: string) {
-    const streamId = `games/${gameId}/projections/board/legacy1`;
-    const created = await h.protocol.create(streamId, { contentType: "application/json" });
-    if (created.status !== "created" && created.status !== "exists") {
-      throw new Error(`cannot create legacy stream: ${created.status}`);
-    }
-    const stream = created.stream;
-    const legacyRows: JsonValue[] = [
-      {
-        type: "game",
-        key: gameId,
-        value: { id: gameId, status: "lobby", round: 0 },
-        headers: { operation: "insert", offset: "0000000000000000_0000000000000001" },
-      },
-      {
-        type: BOARD_META_TYPE,
-        key: BOARD_META_KEY,
-        value: {
-          sourceStreamId: `games/${gameId}/events`,
-          sourceThroughOffset: "0000000000000000_0000000000000001",
-          sourceSeq: 0,
-          generation: "legacy1",
-          // The tell: written by the previous reducer.
-          reducerVersion: "hex-domination:board-2",
-          snapshot: { game: { id: gameId, status: "lobby", round: 0 } },
-        },
-        headers: { operation: "update", offset: "0000000000000000_0000000000000001" },
-      },
-    ];
-    // A JSON array body is framed into one message per item, which is exactly
-    // how the pre-mesh runtime wrote a transition.
-    const appended = await stream.append({
-      data: new TextEncoder().encode(JSON.stringify(legacyRows)),
-      contentType: "application/json",
-    });
-    if (appended.status !== "appended") throw new Error(`legacy append: ${appended.status}`);
-    return streamId;
-  }
-
   it("refuses to read a pre-mesh generation instead of serving it as current", async () => {
     const h = riskHarness();
     const game = await createGame(h.app, { mapSeed: "legacy-refusal" });
@@ -496,7 +501,11 @@ describe("legacy generation upgrade", () => {
     expect(board.sourceThroughOffset).toBe(result.sourceThroughOffset);
     expect(board.territories.length).toBeGreaterThan(0);
     // The decision resource agrees, so the cutover is causally coherent too.
-    const decision = await decisionFor(h.app, game, board.game.activePlayerId as string);
+    const decision = await decisionFor(
+      h.app,
+      game,
+      checkedString(board.game.activePlayerId, "active player id"),
+    );
     expect(decision.board.sourceThroughOffset).toBe(board.sourceThroughOffset);
 
     // The old generation is retained, still recorded as legacy, and still
@@ -513,8 +522,11 @@ describe("legacy generation upgrade", () => {
     if (legacyStream.status !== "ok") throw new Error("legacy stream vanished");
     const legacyRead = await legacyStream.stream.read({});
     if (legacyRead.status !== "ok") throw new Error("cannot read legacy stream");
-    const legacyTypes = legacyRead.messages.map(
-      (message) => (JSON.parse(new TextDecoder().decode(message.data)) as { type: string }).type,
+    const legacyTypes = legacyRead.messages.map((message) =>
+      checkedString(
+        checkedRecord(JSON.parse(new TextDecoder().decode(message.data)), "legacy stream row").type,
+        "legacy stream row type",
+      ),
     );
     expect(legacyTypes).not.toContain("__streamsy.mesh.lineage.v1");
     expect(legacyTypes).toContain("projectionMeta");

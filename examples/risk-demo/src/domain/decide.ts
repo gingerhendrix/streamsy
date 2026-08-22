@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Pure `Hex Domination` command decision + validation.
  *
@@ -780,4 +779,5 @@ export function decide(state: AggregateState, command: Command, ctx: DecideConte
     case "skip-fortifications":
       return decideSkipFortifications(state, command);
   }
+  throw new Error(`Unsupported command: ${JSON.stringify(command)}`);
 }

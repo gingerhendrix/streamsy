@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The combat/dice experience: the live attack card and its defence prompt (design
  * spec §8.5).
@@ -70,10 +69,12 @@ export function Die(props: {
   outcome?: "won" | "lost" | null;
   reveal?: RevealPlan;
 }) {
+  /* oxlint-disable typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this declaration contains only local string values. */
   const style = {
     "--die": props.color,
     "--reveal-ms": `${props.reveal?.durationMs ?? 0}ms`,
   } as CSSProperties;
+  /* oxlint-enable typescript/no-unsafe-type-assertion */
   const classes = [
     "die",
     props.side,
@@ -172,7 +173,11 @@ export function CombatCard(props: CombatCardProps) {
 
       <div className="dice-rows">
         <div className="dice-row">
-          <span className="dice-side" style={{ "--player": attackerColor } as CSSProperties}>
+          <span
+            className="dice-side"
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
+            style={{ "--player": attackerColor } as CSSProperties}
+          >
             {names.player(combat.attackerId)}
             <small>attacking</small>
           </span>
@@ -195,7 +200,11 @@ export function CombatCard(props: CombatCardProps) {
         </div>
 
         <div className="dice-row">
-          <span className="dice-side" style={{ "--player": defenderColor } as CSSProperties}>
+          <span
+            className="dice-side"
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
+            style={{ "--player": defenderColor } as CSSProperties}
+          >
             {defenderName}
             <small>defending {names.territory(combat.to)}</small>
           </span>

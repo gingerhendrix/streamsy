@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This test harness intentionally exposes Promise helpers to Vitest while delegating application work to the existing runtime-owned APIs. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * HTTP-level fixtures for `Hex Domination` integration tests.
  *
@@ -28,6 +27,28 @@ import type { HttpCall, OpenActionsStream } from "../server/demo/bot.ts";
 
 export const BASE = "http://risk.test";
 export const DEFENSE_MS = 15_000;
+
+export function checkedRecord(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return Object.fromEntries(Object.entries(value));
+}
+
+export function checkedString(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  return value;
+}
+
+export function checkedNumber(value: unknown, label: string): number {
+  if (typeof value !== "number") throw new Error(`${label} must be a number`);
+  return value;
+}
+
+export function checkedArray(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
+  return value;
+}
 
 export interface Harness {
   app: App;
@@ -151,7 +172,7 @@ export async function createGame(
   const hostId: string = created.body.player.id;
   const players = [hostId];
   const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };
-  const hostCapability = created.body.capability as string;
+  const hostCapability = checkedString(created.body.capability, "host capability");
 
   if (options.controllers?.[0] === "agent") {
     const delegated = await call(app, "POST", `/v1/games/${gameId}/agent-seats`, {
@@ -241,7 +262,7 @@ export async function declareAttack(
   game: Game,
   attackerFaces: readonly number[] = [3, 3, 3],
 ): Promise<PendingAttack> {
-  const attacker = (await gameMeta(h.app, game)).activePlayerId as string;
+  const attacker = checkedString((await gameMeta(h.app, game)).activePlayerId, "attacker id");
   let decision = await decisionFor(h.app, game, attacker);
   const board = await boardFor(h.app, game);
 

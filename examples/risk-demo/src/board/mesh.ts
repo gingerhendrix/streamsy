@@ -1,5 +1,3 @@
-/* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Hex Domination's board projection, expressed on the mesh primitives.
  *
@@ -142,6 +140,7 @@ function restoreBoard(
   const { generation, sourceStreamId } = options;
   let prior = initial;
   for (const fact of facts) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
     const row = fact as { type?: string; key?: string; value?: BoardProjectionMetaRow };
     if (row.type !== BOARD_META_TYPE || row.key !== BOARD_META_KEY) continue;
     const value = row.value;
@@ -214,13 +213,16 @@ function diffRows(
     const key = rowKey(row);
     const prior = before.get(key);
     if (!prior) {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
       changes.push({ ...row, headers: { operation: "insert", offset, txid } } as JsonValue);
     } else if (!equal(prior.value, row.value)) {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
       changes.push({ ...row, headers: { operation: "update", offset, txid } } as JsonValue);
     }
     before.delete(key);
   }
   for (const removed of before.values()) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
     changes.push({
       type: removed.type,
       key: removed.key,
@@ -233,6 +235,7 @@ function diffRows(
 }
 
 /** Compose every piece `catchUp` needs to maintain one board generation. */
+// oxlint-disable-next-line effecttsgo/async-function -- The mesh library exposes Promise-native construction and this exported compatibility facade preserves it.
 export async function createBoardMesh(options: BoardMeshOptions): Promise<BoardMesh> {
   const client = options.client;
   const sourceIdentity = boardSourceIdentity(options.gameId);
@@ -293,6 +296,7 @@ export async function createBoardMesh(options: BoardMeshOptions): Promise<BoardM
       if (batch.kind !== "json" || !batch.items) {
         throw new Error("canonical game stream must be JSON");
       }
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
       return batch.items as readonly unknown[] as readonly GameEvent[];
     },
 
@@ -318,6 +322,7 @@ export async function createBoardMesh(options: BoardMeshOptions): Promise<BoardM
       facts.push({
         type: BOARD_META_TYPE,
         key: BOARD_META_KEY,
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The mesh JSON fact shape is produced by this reducer or checked for its discriminant and lineage immediately around this expression.
         value: meta as unknown as JsonValue,
         // Upsert: the first transition of a generation creates this row.
         headers: {

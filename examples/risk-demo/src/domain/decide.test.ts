@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 
 import { ownedBy } from "./aggregate.ts";
-import type { PendingInteraction } from "./aggregate.ts";
 import { legalActions, decisionMode } from "../application/legal-actions.ts";
 import { RULES } from "./map.ts";
 import {
@@ -27,10 +25,8 @@ function pendingDefense(game: ScriptedGame, faces = [3, 3, 3]) {
   const setup = armForAttack(game);
   game.rig(faces);
   const attackId = declareAttack(game, setup, 3);
-  const pending = game.state().pendingInteraction as Extract<
-    PendingInteraction,
-    { type: "defense" }
-  >;
+  const pending = game.state().pendingInteraction;
+  if (pending?.type !== "defense") throw new Error("expected a defense interaction");
   return { setup, attackId, pending };
 }
 
@@ -476,10 +472,9 @@ describe("current pending defence", () => {
       }),
       "ATTACK_ALREADY_RESOLVED",
     );
-    expect(
-      (game.state().pendingInteraction as Extract<PendingInteraction, { type: "defense" }>)
-        .attackId,
-    ).toBe(secondAttack);
+    const pending = game.state().pendingInteraction;
+    if (pending?.type !== "defense") throw new Error("expected a defense interaction");
+    expect(pending.attackId).toBe(secondAttack);
   });
 });
 
@@ -683,10 +678,11 @@ describe("current fortify", () => {
     );
 
     // An owned country in a *different* connected component is NO_FRIENDLY_PATH.
+    const fortify = legalActions(state, active).find((action) => action.type === "fortify");
     const reachable = new Set(
-      (legalActions(state, active).find((a) => a.type === "fortify") as any)?.choices
-        .find((c: any) => c.from === source)
-        ?.reachable.map((r: any) => r.to) ?? [],
+      fortify?.choices
+        .find((choice) => choice.from === source)
+        ?.reachable.map((route) => route.to) ?? [],
     );
     const disconnected = ownedBy(state, active).find((id) => id !== source && !reachable.has(id));
     if (disconnected) {
@@ -766,67 +762,63 @@ describe("current legal actions", () => {
 // Elimination and victory
 // ---------------------------------------------------------------------------
 
+/** All countries to `attacker` except one lone enemy holding, adjacent to a stack. */
+function nearFinalBoard(players: number) {
+  return startGame({
+    players,
+    board: ({ map, turnOrder, initialTerritories }) => {
+      const attacker = turnOrder[0]!;
+      const victim = turnOrder[1]!;
+      // The victim's last country neighbours the attacker's staging country.
+      const lastEnemy = map.territories.find((t) => t.adjacentTerritoryIds.length > 0)!;
+      const source = lastEnemy.adjacentTerritoryIds[0]!;
+      return {
+        initialTerritories: initialTerritories.map((t) => {
+          if (t.territoryId === lastEnemy.id) {
+            return { ...t, ownerId: victim, armies: 1 };
+          }
+          if (t.territoryId === source) return { ...t, ownerId: attacker, armies: 6 };
+          // A third player, if present, keeps one far-away country so the game
+          // is not already won when the victim falls.
+          const spare = turnOrder[2];
+          if (spare && t.territoryId === map.territories.at(-1)!.id) {
+            return { ...t, ownerId: spare, armies: 1 };
+          }
+          return { ...t, ownerId: attacker, armies: 1 };
+        }),
+      };
+    },
+  });
+}
+
+/** Reinforce, then capture the victim's last country. */
+function conquerLastCountry(game: ScriptedGame) {
+  const state = game.state();
+  const attacker = state.activePlayerId!;
+  const victim = state.turnOrder.find((id) => id !== attacker && ownedBy(state, id).length === 1)!;
+  const to = ownedBy(state, victim)[0]!;
+  const from = state
+    .index!.territoryById.get(to)!
+    .adjacentTerritoryIds.find((id) => state.territories[id]!.ownerId === attacker)!;
+
+  placeAllReinforcements(game, from);
+  winThrow(game, { from, to, attackerId: attacker, defenderId: victim }, 1);
+  const pending = game.state().pendingInteraction;
+  if (pending?.type !== "occupation") throw new Error("expected an occupation interaction");
+  expect(pending.type).toBe("occupation");
+  const outcome = game.must({
+    type: "occupy-territory",
+    commandId: nextCommandId(),
+    turnId: game.turnId(),
+    playerId: attacker,
+    attackId: pending.attackId,
+    armies: pending.minArmies,
+  });
+  if (outcome.status === "rejected") throw new Error("unreachable");
+  return { attacker, victim, events: outcome.events };
+}
+
 describe("current elimination and victory", () => {
-  /** All countries to `attacker` except one lone enemy holding, adjacent to a stack. */
-  function nearFinalBoard(players: number) {
-    return startGame({
-      players,
-      board: ({ map, turnOrder, initialTerritories }) => {
-        const attacker = turnOrder[0]!;
-        const victim = turnOrder[1]!;
-        // The victim's last country neighbours the attacker's staging country.
-        const lastEnemy = map.territories.find((t) => t.adjacentTerritoryIds.length > 0)!;
-        const source = lastEnemy.adjacentTerritoryIds[0]!;
-        return {
-          initialTerritories: initialTerritories.map((t) => {
-            if (t.territoryId === lastEnemy.id) {
-              return { ...t, ownerId: victim, armies: 1 };
-            }
-            if (t.territoryId === source) return { ...t, ownerId: attacker, armies: 6 };
-            // A third player, if present, keeps one far-away country so the game
-            // is not already won when the victim falls.
-            const spare = turnOrder[2];
-            if (spare && t.territoryId === map.territories.at(-1)!.id) {
-              return { ...t, ownerId: spare, armies: 1 };
-            }
-            return { ...t, ownerId: attacker, armies: 1 };
-          }),
-        };
-      },
-    });
-  }
-
-  /** Reinforce, then capture the victim's last country. */
-  function conquerLastCountry(game: ScriptedGame) {
-    const state = game.state();
-    const attacker = state.activePlayerId!;
-    const victim = state.turnOrder.find(
-      (id) => id !== attacker && ownedBy(state, id).length === 1,
-    )!;
-    const to = ownedBy(state, victim)[0]!;
-    const from = state
-      .index!.territoryById.get(to)!
-      .adjacentTerritoryIds.find((id) => state.territories[id]!.ownerId === attacker)!;
-
-    placeAllReinforcements(game, from);
-    winThrow(game, { from, to, attackerId: attacker, defenderId: victim }, 1);
-    const pending = game.state().pendingInteraction as Extract<
-      PendingInteraction,
-      { type: "occupation" }
-    >;
-    expect(pending.type).toBe("occupation");
-    const outcome = game.must({
-      type: "occupy-territory",
-      commandId: nextCommandId(),
-      turnId: game.turnId(),
-      playerId: attacker,
-      attackId: pending.attackId,
-      armies: pending.minArmies,
-    });
-    if (outcome.status === "rejected") throw new Error("unreachable");
-    return { attacker, victim, events: outcome.events };
-  }
-
   it("eliminates the loser in the same atomic batch as the occupation", () => {
     const game = nearFinalBoard(3);
     const { attacker, victim, events } = conquerLastCountry(game);

@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * SQLite-backed {@link Stores} (capability verifiers, game records, command log).
  *
@@ -10,17 +9,18 @@
 
 import type { Database } from "bun:sqlite";
 
-import type {
-  CapabilityRow,
-  CommandRow,
-  GameRow,
-  GenerationRow,
-  GenerationStatus,
-  Stores,
+import {
+  parseCapabilityRole,
+  parseCommandStatus,
+  parseDecisionErrorJson,
+  parseEventsJson,
+  parseGenerationStatus,
+  type CapabilityRow,
+  type CommandRow,
+  type GameRow,
+  type GenerationRow,
+  type Stores,
 } from "./stores.ts";
-import type { GameEvent } from "../../src/domain/events.ts";
-import type { DecisionError } from "../../src/domain/decide.ts";
-import type { CapabilityRole } from "../capabilities.ts";
 
 const SCHEMA = `
 create table if not exists risk_capabilities (
@@ -115,7 +115,7 @@ function generationFromDb(r: GenerationDbRow): GenerationRow {
     generation: r.generation,
     streamId: r.stream_id,
     reducerVersion: r.reducer_version,
-    status: r.status as GenerationStatus,
+    status: parseGenerationStatus(r.status),
     sourceThroughOffset: r.source_through_offset ?? null,
     createdAt: r.created_at,
   };
@@ -203,7 +203,7 @@ export function createSqliteStores(db: Database): Stores {
           verifierHash: r.verifier_hash,
           gameId: r.game_id,
           playerId: r.player_id,
-          role: r.role as CapabilityRole,
+          role: parseCapabilityRole(r.role),
           createdAt: r.created_at,
         };
       },
@@ -246,10 +246,10 @@ export function createSqliteStores(db: Database): Stores {
           gameId: r.game_id,
           commandId: r.command_id,
           payloadHash: r.payload_hash,
-          status: r.status as CommandRow["status"],
+          status: parseCommandStatus(r.status),
           sourceOffset: r.source_offset ?? undefined,
-          events: r.events_json ? (JSON.parse(r.events_json) as GameEvent[]) : undefined,
-          error: r.error_json ? (JSON.parse(r.error_json) as DecisionError) : undefined,
+          events: r.events_json ? parseEventsJson(r.events_json) : undefined,
+          error: r.error_json ? parseDecisionErrorJson(r.error_json) : undefined,
           createdAt: r.created_at,
         };
       },

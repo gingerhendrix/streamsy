@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Who may mint an agent seat, what a seat-scoped response may leak, and which
  * which resources remain private.
@@ -11,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { BASE, call, createGame, riskHarness } from "../harness.ts";
+import { BASE, checkedRecord, checkedString, call, createGame, riskHarness } from "../harness.ts";
 import { actionStreamId } from "../../server/game/names.ts";
 
 async function createHostedGame(h: ReturnType<typeof riskHarness>) {
@@ -19,10 +18,12 @@ async function createHostedGame(h: ReturnType<typeof riskHarness>) {
     body: { name: "Host", mapSeed: "authority-seed" },
   });
   expect(created.status).toBe(201);
+  const game = checkedRecord(created.body.game, "created game");
+  const player = checkedRecord(created.body.player, "created player");
   return {
-    gameId: created.body.game.id as string,
-    hostId: created.body.player.id as string,
-    hostToken: created.body.capability as string,
+    gameId: checkedString(game.id, "game id"),
+    hostId: checkedString(player.id, "host id"),
+    hostToken: checkedString(created.body.capability, "host capability"),
   };
 }
 
@@ -37,7 +38,7 @@ describe("agent seat authority", () => {
       body: { name: "Guest", color: "blue" },
     });
     expect(guest.status).toBe(201);
-    const guestId = guest.body.player.id as string;
+    const guestId = checkedString(checkedRecord(guest.body.player, "guest player").id, "guest id");
 
     const hijack = await call(h.app, "POST", `/v1/games/${gameId}/agent-seats`, {
       token: hostToken,
@@ -115,7 +116,7 @@ describe("seat-scoped exposure", () => {
     const h = riskHarness();
     const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const playerId = meta.activePlayerId as string;
+    const playerId = checkedString(meta.activePlayerId, "active player id");
 
     // The stream genuinely exists and carries this player's messages...
     const authorized = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {

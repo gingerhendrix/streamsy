@@ -1,17 +1,12 @@
 /* oxlint-disable effecttsgo/async-function -- Web-standard fetch handlers are Promise-native framework adapters; they delegate game and projection work to the existing application services and runtime. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import type {
   BoardResponse,
-  AgentSeatRequest,
   AgentSeatResponse,
   CommandAck,
-  CreateGameRequest,
   CreateGameResponse,
   GameResponse,
-  JoinGameRequest,
   JoinGameResponse,
   LeaveGameResponse,
-  RenamePlayerRequest,
   RenamePlayerResponse,
 } from "../../src/application/api.ts";
 import { agentPlayInstructions, agentSeatDescriptor } from "../../src/application/agent-play.ts";
@@ -115,7 +110,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   }
 
   async function createGame(request: Request): Promise<Response> {
-    const body = (await readJsonBody<CreateGameRequest>(request)) ?? {};
+    const body = (await readJsonBody(request)) ?? {};
     const caller = await ctx.authenticateCapability(request);
     if (caller?.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot create games.");
@@ -130,19 +125,22 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     // The landing page asks for no name at all — the creator names themselves in
     // the lobby — so the provisional default is load-bearing, not a fallback for
     // a field somebody left blank.
-    const name = normalizePlayerName(body.name ?? "") || "Host";
+    const requestedName = typeof body.name === "string" ? body.name : "";
+    const requestedColor = typeof body.color === "string" ? body.color : undefined;
+    const name = normalizePlayerName(requestedName) || "Host";
     const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
-    const commandId = body.commandId ?? randomId("cmd");
+    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "create-game",
       commandId,
       gameId,
       hostPlayerId,
       hostName: name,
-      hostColor: body.color,
+      hostColor: requestedColor,
       hostController: controllerOf(body.controller),
-      mapSeed: body.mapSeed ?? generateMapSeed(ctx.commandService.rng),
+      mapSeed:
+        typeof body.mapSeed === "string" ? body.mapSeed : generateMapSeed(ctx.commandService.rng),
     });
     if (result.status === "rejected") return rejection(result);
 
@@ -173,7 +171,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       player: {
         id: hostPlayerId,
         name,
-        color: assignedSeatColor(result, body.color ?? "#e05a47"),
+        color: assignedSeatColor(result, requestedColor ?? "#e05a47"),
         role: "host",
       },
       capability,
@@ -185,7 +183,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   async function joinGame(request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const body = (await readJsonBody<JoinGameRequest>(request)) ?? {};
+    const body = (await readJsonBody(request)) ?? {};
     const caller = await ctx.authenticateCapability(request);
     if (caller?.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot join games.");
@@ -197,15 +195,17 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         "The host must open agent seats with POST /agent-seats.",
       );
     }
-    const name = normalizePlayerName(body.name ?? "") || "Player";
+    const requestedName = typeof body.name === "string" ? body.name : "";
+    const requestedColor = typeof body.color === "string" ? body.color : undefined;
+    const name = normalizePlayerName(requestedName) || "Player";
     const playerId = randomId("p");
-    const commandId = body.commandId ?? randomId("cmd");
+    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "join-game",
       commandId,
       playerId,
       name,
-      color: body.color,
+      color: requestedColor,
       controller: controllerOf(body.controller),
     });
     if (result.status === "rejected") return rejection(result);
@@ -215,7 +215,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       player: {
         id: playerId,
         name,
-        color: assignedSeatColor(result, body.color ?? "#3b82f6"),
+        color: assignedSeatColor(result, requestedColor ?? "#3b82f6"),
         role: "player",
       },
       capability,
@@ -247,7 +247,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (cap.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot rename seats.");
     }
-    const body = (await readJsonBody<RenamePlayerRequest>(request)) ?? ({} as RenamePlayerRequest);
+    const body = (await readJsonBody(request)) ?? {};
     if (typeof body.name !== "string") {
       return error(400, "BAD_REQUEST", "A rename must carry a name.");
     }
@@ -262,7 +262,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
 
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "rename-player",
-      commandId: body.commandId ?? randomId("cmd"),
+      commandId: typeof body.commandId === "string" ? body.commandId : randomId("cmd"),
       playerId,
       name: body.name,
     });
@@ -295,10 +295,10 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (cap.role === "agent") {
       return error(403, "FORBIDDEN", "An agent seat is played to the end, not given up.");
     }
-    const body = (await readJsonBody<{ commandId?: string }>(request)) ?? {};
+    const body = (await readJsonBody(request)) ?? {};
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "leave-game",
-      commandId: body.commandId ?? randomId("cmd"),
+      commandId: typeof body.commandId === "string" ? body.commandId : randomId("cmd"),
       playerId: cap.playerId,
     });
     if (result.status === "rejected") return rejection(result);
@@ -311,8 +311,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId, "host");
     if (cap instanceof Response) return cap;
-    const body = (await readJsonBody<{ commandId?: string }>(request)) ?? {};
-    const commandId = body.commandId ?? randomId("cmd");
+    const body = (await readJsonBody(request)) ?? {};
+    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
     // The map is generated inside `decide` — after the command log has
     // deduped `commandId` and before the canonical append — so a start that
     // loses its CAS refolds and is rejected as already started, never regenerated.
@@ -333,11 +333,11 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const cap = await ctx.requireCapability(request, gameId, "host");
     if (cap instanceof Response) return cap;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const body = (await readJsonBody<AgentSeatRequest>(request)) ?? {};
-    const commandId = body.commandId ?? randomId("cmd");
-    let playerId = body.playerId;
-    let name = normalizePlayerName(body.name ?? "") || "Agent";
-    let color = body.color ?? "";
+    const body = (await readJsonBody(request)) ?? {};
+    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
+    let playerId = typeof body.playerId === "string" ? body.playerId : undefined;
+    let name = normalizePlayerName(typeof body.name === "string" ? body.name : "") || "Agent";
+    let color = typeof body.color === "string" ? body.color : "";
 
     if (playerId) {
       // Delegation converts an *existing* seat into an agent seat, and the only
@@ -370,7 +370,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         commandId,
         playerId,
         name,
-        color: body.color,
+        color: typeof body.color === "string" ? body.color : undefined,
         controller: "external-agent",
       });
       if (joined.status === "rejected") return rejection(joined);
@@ -523,7 +523,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
-    const raw = await readJsonBody<unknown>(request);
+    const raw = await readJsonBody(request);
 
     const parsed = buildPlayCommand(raw, cap.playerId);
     if (!parsed.ok)
@@ -708,15 +708,18 @@ function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
           placement !== null && (!Number.isInteger(placement.armies) || placement.armies < 1),
       );
       if (invalidArmies >= 0) {
+        const invalidPlacement = action.placements[invalidArmies];
         return invalid(
           `action.placements[${invalidArmies}].armies`,
           "integer >= 1",
-          (action.placements[invalidArmies] as Record<string, unknown>).armies,
+          isRecord(invalidPlacement) ? invalidPlacement.armies : invalidPlacement,
         );
       }
       parsed = {
         type: "reinforce",
-        placements: placements as Array<{ territoryId: string; armies: number }>,
+        placements: placements.filter(
+          (placement): placement is { territoryId: string; armies: number } => placement !== null,
+        ),
       };
       break;
     }
@@ -724,8 +727,9 @@ function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
       if (
         typeof action.from !== "string" ||
         typeof action.to !== "string" ||
+        typeof action.attackerDice !== "number" ||
         !Number.isInteger(action.attackerDice) ||
-        (action.attackerDice as number) < 1
+        action.attackerDice < 1
       ) {
         return invalid(
           "action",
@@ -737,7 +741,7 @@ function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
         type: "declare-attack",
         from: action.from,
         to: action.to,
-        attackerDice: action.attackerDice as number,
+        attackerDice: action.attackerDice,
       };
       break;
     case "roll-defense":
@@ -748,20 +752,25 @@ function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
     case "occupy-territory":
       if (typeof action.attackId !== "string")
         return invalid("action.attackId", "string", action.attackId);
-      if (!Number.isInteger(action.armies) || (action.armies as number) < 1)
+      if (
+        typeof action.armies !== "number" ||
+        !Number.isInteger(action.armies) ||
+        action.armies < 1
+      )
         return invalid("action.armies", "integer >= 1", action.armies);
       parsed = {
         type: "occupy-territory",
         attackId: action.attackId,
-        armies: action.armies as number,
+        armies: action.armies,
       };
       break;
     case "fortify":
       if (
         typeof action.from !== "string" ||
         typeof action.to !== "string" ||
+        typeof action.armies !== "number" ||
         !Number.isInteger(action.armies) ||
-        (action.armies as number) < 1
+        action.armies < 1
       ) {
         return invalid(
           "action",
@@ -773,7 +782,7 @@ function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
         type: "fortify",
         from: action.from,
         to: action.to,
-        armies: action.armies as number,
+        armies: action.armies,
       };
       break;
     case "skip-fortifications":

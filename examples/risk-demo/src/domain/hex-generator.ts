@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * `hex-generator-v2` — the pure, seeded procedural hex-map generator.
  *
@@ -60,6 +59,7 @@ const TERRAIN_SMOOTHING_PASSES = 2;
 /** Raw elevation/moisture scores are drawn from `[0, TERRAIN_SCORE_RANGE)`. */
 const TERRAIN_SCORE_RANGE = 256;
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- MapGenerationError is an intentional synchronous domain exception consumed by the pure decider through instanceof.
 export class MapGenerationError extends Error {
   readonly seed: string;
   readonly attempts: number;
@@ -581,6 +581,12 @@ function smoothScores(
   return next;
 }
 
+function rankTerrainScores(scores: ReadonlyMap<string, number>, ids: readonly string[]): string[] {
+  return ids.toSorted(
+    (a, b) => scores.get(a)! - scores.get(b)! || compareAxial(parseHexId(a), parseHexId(b)),
+  );
+}
+
 /**
  * Assign terrain from smoothed elevation and moisture fields.
  *
@@ -603,13 +609,8 @@ function assignTerrain(rng: IntRng, land: readonly Axial[]): Map<string, Terrain
     moisture = smoothScores(land, moisture);
   }
 
-  const rankBy = (scores: ReadonlyMap<string, number>, ids: readonly string[]): string[] =>
-    ids.toSorted(
-      (a, b) => scores.get(a)! - scores.get(b)! || compareAxial(parseHexId(a), parseHexId(b)),
-    );
-
   const allIds = land.map((h) => hexId(h.q, h.r));
-  const byElevation = rankBy(elevation, allIds);
+  const byElevation = rankTerrainScores(elevation, allIds);
   const total = allIds.length;
   const mountainCount = Math.max(1, Math.round((total * 12) / 100));
   const hillCount = Math.max(1, Math.round((total * 18) / 100));
@@ -621,7 +622,7 @@ function assignTerrain(rng: IntRng, land: readonly Axial[]): Map<string, Terrain
   for (const id of hills) terrain.set(id, "hills");
 
   const lowland = byElevation.slice(0, total - mountainCount - hillCount);
-  const byMoisture = rankBy(moisture, lowland);
+  const byMoisture = rankTerrainScores(moisture, lowland);
   const desertCount = Math.max(1, Math.round((byMoisture.length * 25) / 100));
   const forestCount = Math.max(1, Math.round((byMoisture.length * 30) / 100));
   for (let i = 0; i < byMoisture.length; i += 1) {
@@ -938,6 +939,7 @@ export function generateHexMap(request: GenerateMapRequest): GeneratedMap {
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Object.keys follows a non-null object guard immediately above; the assertion only exposes string indexing for recursive canonicalization.
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, v]) => v !== undefined)
     .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));

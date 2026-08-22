@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import { describe, expect, it } from "vitest";
 
 import worker, { type RiskWorkerEnv } from "./worker.ts";
@@ -35,8 +34,22 @@ describe("Cloudflare game routing", () => {
       new Request("https://risk.test/v1/games", { method: "POST", body: "{}" }),
       h.env,
     );
-    const firstId = ((await first.json()) as { gameId: string }).gameId;
-    const secondId = ((await second.json()) as { gameId: string }).gameId;
+    const firstBody: unknown = await first.json();
+    const secondBody: unknown = await second.json();
+    if (
+      firstBody === null ||
+      typeof firstBody !== "object" ||
+      !("gameId" in firstBody) ||
+      typeof firstBody.gameId !== "string" ||
+      secondBody === null ||
+      typeof secondBody !== "object" ||
+      !("gameId" in secondBody) ||
+      typeof secondBody.gameId !== "string"
+    ) {
+      throw new Error("worker response must contain a string gameId");
+    }
+    const firstId = firstBody.gameId;
+    const secondId = secondBody.gameId;
 
     expect(firstId).toMatch(/^game_[0-9a-f]{24}$/);
     expect(secondId).toMatch(/^game_[0-9a-f]{24}$/);

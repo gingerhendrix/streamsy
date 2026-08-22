@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The lobby roster over HTTP: who may rename which seat, who may give one up, and
  * what the projected board says afterwards.
@@ -13,33 +12,40 @@
 
 import { describe, expect, it } from "vitest";
 
-import { call, riskHarness } from "../harness.ts";
+import { checkedArray, checkedRecord, checkedString, call, riskHarness } from "../harness.ts";
 import { RULES } from "../../src/domain/map.ts";
 
 async function lobby(h: ReturnType<typeof riskHarness>) {
   // Created exactly as the landing page creates one: with no name at all.
   const created = await call(h.app, "POST", "/v1/games", { body: {} });
   expect(created.status).toBe(201);
-  const gameId = created.body.game.id as string;
+  const createdGame = checkedRecord(created.body.game, "created game");
+  const createdPlayer = checkedRecord(created.body.player, "created player");
+  const gameId = checkedString(createdGame.id, "created game id");
   const guest = await call(h.app, "POST", `/v1/games/${gameId}/players`, {
     body: { name: "Mina" },
   });
   expect(guest.status).toBe(201);
   return {
     gameId,
-    hostId: created.body.player.id as string,
-    hostName: created.body.player.name as string,
-    hostToken: created.body.capability as string,
-    guestId: guest.body.player.id as string,
-    guestToken: guest.body.capability as string,
+    hostId: checkedString(createdPlayer.id, "host id"),
+    hostName: checkedString(createdPlayer.name, "host name"),
+    hostToken: checkedString(created.body.capability, "host capability"),
+    guestId: checkedString(checkedRecord(guest.body.player, "guest player").id, "guest id"),
+    guestToken: checkedString(guest.body.capability, "guest capability"),
   };
 }
 
 const boardPlayers = async (h: ReturnType<typeof riskHarness>, gameId: string) =>
-  (await call(h.app, "GET", `/v1/games/${gameId}/board`)).body.players as Array<{
-    id: string;
-    name: string;
-  }>;
+  checkedArray((await call(h.app, "GET", `/v1/games/${gameId}/board`)).body.players, "players").map(
+    (value) => {
+      const player = checkedRecord(value, "player");
+      return {
+        id: checkedString(player.id, "player id"),
+        name: checkedString(player.name, "player name"),
+      };
+    },
+  );
 
 describe("creating a game without a name", () => {
   it("issues a provisional host name the creator can then set", async () => {
@@ -86,7 +92,10 @@ describe("rename authority", () => {
       body: { name: "Agent 3" },
     });
     expect(seat.status).toBe(201);
-    const agentId = seat.body.seat.playerId as string;
+    const agentId = checkedString(
+      checkedRecord(seat.body.seat, "agent seat").playerId,
+      "agent player id",
+    );
 
     const namedAgent = await call(h.app, "PATCH", `/v1/games/${gameId}/players/${agentId}`, {
       token: hostToken,
@@ -111,7 +120,10 @@ describe("rename authority", () => {
       token: hostToken,
       body: { name: "Agent 3" },
     });
-    const agentToken = seat.body.seat.token as string;
+    const agentToken = checkedString(
+      checkedRecord(seat.body.seat, "agent seat").token,
+      "agent token",
+    );
 
     const anonymous = await call(h.app, "PATCH", `/v1/games/${gameId}/players/${guestId}`, {
       body: { name: "Nobody" },
@@ -246,7 +258,8 @@ describe("leaving a lobby", () => {
       token: hostToken,
       body: { name: "Agent 3" },
     });
-    const agentToken = seat.body.seat.token as string;
+    const agentToken = seat.body.seat.token;
+    if (typeof agentToken !== "string") throw new Error("expected an agent token");
 
     const byAgent = await call(h.app, "DELETE", `/v1/games/${gameId}/players/me`, {
       token: agentToken,

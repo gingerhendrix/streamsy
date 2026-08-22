@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 
 import {
   AggregateIntegrityError,
@@ -12,7 +11,6 @@ import {
 } from "./aggregate.ts";
 import type { AggregateState } from "./aggregate.ts";
 import { compareRolls, legalDefenderDice, maxAttackerDice } from "./dice.ts";
-import type { GameEvent } from "./events.ts";
 import { RULES, baseReinforcement, continentBonus } from "./map.ts";
 import {
   armForAttack,
@@ -299,7 +297,10 @@ describe("current turn order", () => {
   it("wraps the round and skips eliminated players", () => {
     const game = startGame({ players: 3 });
     const state = game.state();
-    const [a, b, c] = state.turnOrder as [string, string, string];
+    const a = state.turnOrder[0];
+    const b = state.turnOrder[1];
+    const c = state.turnOrder[2];
+    if (!a || !b || !c) throw new Error("expected three players in turn order");
     expect(nextTurn(state, a)).toEqual({ nextPlayerId: b, round: 1 });
     expect(nextTurn(state, c)).toEqual({ nextPlayerId: a, round: 2 });
 
@@ -329,9 +330,11 @@ describe("current fold integrity", () => {
 
     const log = game.log.slice();
     const resolvedIndex = log.findIndex((e) => e.type === "AttackResolved");
+    const resolved = log[resolvedIndex];
+    if (resolved?.type !== "AttackResolved") throw new Error("expected an attack resolution");
     const tampered = log.slice();
     tampered[resolvedIndex] = {
-      ...(log[resolvedIndex] as Extract<GameEvent, { type: "AttackResolved" }>),
+      ...resolved,
       attackerRolls: [1, 1, 1],
     };
     expect(() => foldAggregate(tampered)).toThrow(AggregateIntegrityError);

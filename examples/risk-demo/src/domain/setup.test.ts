@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 
 import type { GameCreated, GameStarted } from "./events.ts";
 import { canonicalJson, generateHexMap, hashGeneratedMap } from "./hex-generator.ts";
@@ -174,6 +173,7 @@ describe("current canonical recording", () => {
     };
 
     // A replaying consumer only ever sees the serialized event.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON.stringify receives the complete typed GameStarted fixture immediately above; this round-trip test intentionally reconstructs that caller-owned value without an external boundary.
     const replayed = JSON.parse(JSON.stringify(started)) as GameStarted;
     expect(hashGeneratedMap(replayed.map)).toBe(hashGeneratedMap(plan.map));
     expect(replayed.map.tiles).toHaveLength(mapProfileFor(4).hexes);

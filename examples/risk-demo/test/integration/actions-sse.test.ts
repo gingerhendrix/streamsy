@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- These integration tests directly coordinate abortable Web SSE timing at the Promise-facing HTTP contract. */
 /**
  * The agent-facing actions resource is a bounded `text/event-stream`.
@@ -25,6 +24,7 @@ import { createBot } from "../../server/demo/bot.ts";
 import {
   BASE,
   call,
+  checkedString,
   createGame,
   httpFor,
   riskHarness,
@@ -81,7 +81,7 @@ async function playToCompletion(h: Harness, game: Game) {
   for (let step = 0; step < 4_000; step += 1) {
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
     if (meta.status === "finished") return meta;
-    const bot = bots[meta.activePlayerId as string]!;
+    const bot = bots[checkedString(meta.activePlayerId, "active player id")]!;
     await bot.awaitTurn();
     await bot.playTurn();
   }
@@ -91,7 +91,7 @@ async function playToCompletion(h: Harness, game: Game) {
 async function twoAgentGame(h: Harness) {
   const game = await createGame(h.app, { controllers: ["agent", "agent"] });
   const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-  const active = meta.activePlayerId as string;
+  const active = checkedString(meta.activePlayerId, "active player id");
   const idle = game.players.find((player) => player !== active)!;
   return { game, active, idle };
 }
@@ -262,7 +262,7 @@ describe("actions stream (SSE)", () => {
       mapSeed: "sse-game-over",
     });
     const meta = await playToCompletion(h, game);
-    const token = game.tokenByPlayer[meta.winnerId as string]!;
+    const token = game.tokenByPlayer[checkedString(meta.winnerId, "winner id")]!;
 
     // Read the seat's whole stream: the batch carrying `GameOver` says the
     // server is done, and the connection ends there rather than at its bound.

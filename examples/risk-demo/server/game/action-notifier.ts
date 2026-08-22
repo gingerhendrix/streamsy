@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /** Replay-safe, self-sufficient per-player action-required streams. */
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { catchUpDerived, readDerived } from "../compat/derived-streams.ts";
@@ -64,10 +63,12 @@ interface OffsetEvent {
 
 const eventSchema: JsonCodec<GameEvent> = {
   encode: (event) => event,
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
   decode: (value) => value as GameEvent,
 };
 const messageSchema: JsonCodec<AgentMessage> = {
   encode: (message) => message,
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
   decode: (value) => value as AgentMessage,
 };
 

@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The status column rendered for real.
  *
@@ -53,14 +52,14 @@ const CONTINENTS: ProjectedContinent[] = [
     territoryIds: ["t1", "t2"],
     reinforcementBonus: 2,
     controllerId: "p1",
-    palette: { base: "#101010", accent: "#202020" } as never,
+    palette: { hue: 16, pattern: "solid" },
   },
   {
     id: "c2",
     name: "Sunder",
     territoryIds: ["t3", "t4", "t5"],
     reinforcementBonus: 3,
-    palette: { base: "#101010", accent: "#202020" } as never,
+    palette: { hue: 210, pattern: "solid" },
   },
 ];
 

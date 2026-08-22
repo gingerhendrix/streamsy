@@ -1,15 +1,14 @@
-import type { CapabilityRole } from "../capabilities.ts";
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import type { DurableObjectStorage, SqlStorageValue } from "@cloudflare/workers-types";
-import type {
-  CommandRow,
-  GameRow,
-  GenerationRow,
-  GenerationStatus,
-  Stores,
+import {
+  parseCapabilityRole,
+  parseCommandStatus,
+  parseDecisionErrorJson,
+  parseEventsJson,
+  parseGenerationStatus,
+  type GameRow,
+  type GenerationRow,
+  type Stores,
 } from "../persistence/stores.ts";
-import type { DecisionError } from "../../src/domain/decide.ts";
-import type { GameEvent } from "../../src/domain/events.ts";
 
 const SCHEMA = [
   `create table if not exists risk_capabilities (
@@ -88,7 +87,7 @@ const generationFromDb = (row: GenerationDbRow): GenerationRow => ({
   generation: row.generation,
   streamId: row.stream_id,
   reducerVersion: row.reducer_version,
-  status: row.status as GenerationStatus,
+  status: parseGenerationStatus(row.status),
   sourceThroughOffset: row.source_through_offset,
   createdAt: row.created_at,
 });
@@ -126,7 +125,7 @@ export function createGameStores(storage: DurableObjectStorage): Stores {
               verifierHash: row.verifier_hash,
               gameId: row.game_id,
               playerId: row.player_id,
-              role: row.role as CapabilityRole,
+              role: parseCapabilityRole(row.role),
               createdAt: row.created_at,
             }
           : null;
@@ -185,10 +184,10 @@ export function createGameStores(storage: DurableObjectStorage): Stores {
           gameId: row.game_id,
           commandId: row.command_id,
           payloadHash: row.payload_hash,
-          status: row.status as CommandRow["status"],
+          status: parseCommandStatus(row.status),
           sourceOffset: row.source_offset ?? undefined,
-          events: row.events_json ? (JSON.parse(row.events_json) as GameEvent[]) : undefined,
-          error: row.error_json ? (JSON.parse(row.error_json) as DecisionError) : undefined,
+          events: row.events_json ? parseEventsJson(row.events_json) : undefined,
+          error: row.error_json ? parseDecisionErrorJson(row.error_json) : undefined,
           createdAt: row.created_at,
         };
       },

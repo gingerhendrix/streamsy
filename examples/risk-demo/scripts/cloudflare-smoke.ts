@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/process-env -- This standalone smoke executable uses native errors for terminal failure and directly owns Web requests, timestamps, output, and environment configuration. */
 /**
  * Runtime-neutral smoke for a running Cloudflare Worker (local or deployed).
@@ -63,7 +62,9 @@ async function main(): Promise<void> {
     body: { name: "Cloud Host", color: "red" },
   });
   assert(created.status === 201, `create returned ${created.status}`);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
   const gameId = created.body.game.id as string;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
   const hostId = created.body.player.id as string;
   const tokens: Record<string, string> = { [hostId]: created.body.capability };
 
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
   assert(started.status === 200, `start returned ${started.status}`);
 
   const metadata = await api("GET", `/v1/games/${gameId}`);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
   const active = metadata.body.activePlayerId as string;
   const decision = await api("GET", `/v1/games/${gameId}/decision`, {
     token: tokens[active],
@@ -123,6 +125,7 @@ async function main(): Promise<void> {
     body: { name: "Agent Host" },
   });
   assert(agentGame.status === 201, "agent game create failed");
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
   const agentGameId = agentGame.body.game.id as string;
   assert(agentGameId !== gameId, "two creates returned the same game id");
   const seat = await api("POST", `/v1/games/${agentGameId}/agent-seats`, {
@@ -164,6 +167,7 @@ async function main(): Promise<void> {
   // survive the edge intact: correct SSE framing, an unbuffered first batch, and
   // a connection genuinely held open rather than cut short by a proxy. None of
   // that is provable from a local harness.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
   const seatToken = seat.body.seat.token as string;
   const opened = await openActions(agentGameId, seatToken);
   assert(opened.response.status === 200, `actions stream returned ${opened.response.status}`);

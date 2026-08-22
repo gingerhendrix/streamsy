@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The current-turn column: one section per phase, in the order a turn happens.
  *
@@ -179,7 +178,11 @@ export function TurnColumn(props: TurnColumnProps) {
     ) : undefined;
   return (
     <aside className="turn-column" aria-label="Current turn">
-      <div className="column-head" style={{ "--player": activeColor } as CSSProperties}>
+      <div
+        className="column-head"
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
+        style={{ "--player": activeColor } as CSSProperties}
+      >
         <span className="eyebrow">Current turn</span>
         <h2>{props.statusLine}</h2>
         {props.activePlayer && (

@@ -1,4 +1,3 @@
-/* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
 /**
  * Capability tokens (bearer) with constant-time verification.
  *
@@ -35,6 +34,7 @@ function randomHex(byteLength: number): string {
   return toHex(crypto.getRandomValues(new Uint8Array(byteLength)));
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- WebCrypto digest is Promise-native at this cryptographic adapter boundary.
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return toHex(new Uint8Array(digest));
@@ -51,6 +51,7 @@ export function constantTimeEqual(a: string, b: string): boolean {
 }
 
 /** Mint a fresh capability. The returned `token` must be shown to the caller once. */
+// oxlint-disable-next-line effecttsgo/async-function -- Capability issuance preserves the public Promise contract around WebCrypto.
 export async function issueCapability(capability: Capability): Promise<IssuedCapability> {
   const tokenId = randomHex(9);
   const secret = randomHex(24);

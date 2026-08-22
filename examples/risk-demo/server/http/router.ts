@@ -1,11 +1,14 @@
 /* oxlint-disable effecttsgo/async-function -- Web-standard fetch handlers are Promise-native framework adapters; they delegate game and projection work to the existing application services and runtime. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * JSON HTTP helpers and a tiny path router (web-standard `Request`/`Response`,
  * so the whole app is testable without starting a Bun server).
  */
 
-import { statusForErrorCode, type ApiErrorCode } from "../../src/application/api.ts";
+import {
+  isApiErrorCode,
+  statusForErrorCode,
+  type ApiErrorCode,
+} from "../../src/application/api.ts";
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data, null, 2), {
@@ -35,7 +38,7 @@ export function error(
 
 /** HTTP status appropriate for a domain rejection code. */
 export function statusForCode(code: string): number {
-  return statusForErrorCode(code as ApiErrorCode);
+  return isApiErrorCode(code) ? statusForErrorCode(code) : 400;
 }
 
 export interface Route {
@@ -83,9 +86,12 @@ export function createRouter(routes: Route[]): (request: Request) => Promise<Res
   };
 }
 
-export async function readJsonBody<T>(request: Request): Promise<T | null> {
+export async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
   try {
-    return (await request.json()) as T;
+    const value: unknown = await request.json();
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value))
+      : null;
   } catch {
     return null;
   }

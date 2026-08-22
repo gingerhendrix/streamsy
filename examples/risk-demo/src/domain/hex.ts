@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Pointy-top axial hex coordinates.
  *
@@ -15,12 +14,12 @@
 
 /** The six axial neighbour offsets, in canonical order. */
 export const AXIAL_NEIGHBORS = [
-  [+1, 0],
-  [+1, -1],
+  [1, 0],
+  [1, -1],
   [0, -1],
   [-1, 0],
-  [-1, +1],
-  [0, +1],
+  [-1, 1],
+  [0, 1],
 ] as const;
 
 export interface Axial {

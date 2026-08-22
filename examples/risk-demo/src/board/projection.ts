@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Pure `Hex Domination` board projection reducer — the query-shaped read model.
  *
@@ -204,6 +203,7 @@ export interface ProjectionState {
  * event and halts the projection at the previous watermark, which is the right
  * outcome: a corrupt stream must not fold into a plausible-looking board.
  */
+// oxlint-disable-next-line effecttsgo/extends-native-error -- ProjectionIntegrityError is an intentional synchronous poison-event exception from the pure reducer.
 export class ProjectionIntegrityError extends Error {
   constructor(message: string) {
     super(message);

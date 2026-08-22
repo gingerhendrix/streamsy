@@ -1,8 +1,10 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import { describe, expect, it } from "vitest";
 import { createJsonProtocol } from "@streamsy/json";
 import {
+  checkedNumber,
+  checkedRecord,
+  checkedString,
   call,
   createGame,
   decisionFor,
@@ -18,12 +20,21 @@ import { actionStreamId, eventStreamId } from "../../server/game/names.ts";
 
 const passthrough = { encode: (value: any) => value, decode: (value: any) => value };
 
+function checkedAgentMessage(value: unknown): AgentMessage {
+  const message = checkedRecord(value, "agent message");
+  if (message.type !== "ActionRequired" && message.type !== "GameOver") {
+    throw new Error("agent message has an invalid type");
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The protocol value passed the closed AgentMessage discriminant check above and is produced by the in-process action notifier.
+  return value as AgentMessage;
+}
+
 /** Read a player's whole action stream directly, without disturbing any cursor. */
 async function allMessages(h: Harness, gameId: string, playerId: string): Promise<AgentMessage[]> {
   const stream = await createJsonProtocol(h.protocol, passthrough).getOrCreate(
     actionStreamId(gameId, playerId),
   );
-  return (await stream.readAll()).messages.map((message) => message.value as AgentMessage);
+  return (await stream.readAll()).messages.map((message) => checkedAgentMessage(message.value));
 }
 
 /**
@@ -139,7 +150,7 @@ describe("player actions stream", () => {
     const h = riskHarness();
     const game = await createGame(h.app, { controllers: ["agent", "agent"] });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const active = meta.activePlayerId as string;
+    const active = checkedString(meta.activePlayerId, "active player id");
     const token = game.tokenByPlayer[active]!;
 
     const opening = await call(h.app, "GET", `/v1/games/${game.gameId}/players/me/actions`, {
@@ -314,7 +325,8 @@ describe("player actions stream", () => {
       mapSeed: "consumer-crash",
     });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const active = meta.activePlayerId as string;
+    const active = meta.activePlayerId;
+    if (typeof active !== "string") throw new Error("expected an active player id");
     const options = {
       call: httpFor(h.app),
       gameId: game.gameId,
@@ -340,7 +352,7 @@ describe("player actions stream", () => {
     // the client. The retained in-flight body is replayed verbatim and the
     // server dedupes it — one recorded command, and the loop keeps moving.
     const nextMeta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const stillActive = nextMeta.activePlayerId as string;
+    const stillActive = checkedString(nextMeta.activePlayerId, "active player id after replay");
     let lostResponses = 0;
     const losing: HttpCall = async (method, path, opts) => {
       const response = await call(h.app, method, path, opts);
@@ -361,7 +373,10 @@ describe("player actions stream", () => {
     expect(lostResponses).toBe(1);
     const midFlight: BotState = structuredClone(crashing.state);
     expect(midFlight.inflight).toBeDefined();
-    const inflightCommandId = JSON.parse(midFlight.inflight!.body).commandId as string;
+    const inflightCommandId = checkedString(
+      checkedRecord(JSON.parse(midFlight.inflight!.body), "in-flight command").commandId,
+      "in-flight command id",
+    );
     expect(h.stores.commands.get(game.gameId, inflightCommandId)?.status).toBe("accepted");
 
     const recovered = createBot({
@@ -392,7 +407,8 @@ describe("player actions stream", () => {
       mapSeed: "actions-crash",
     });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const active = meta.activePlayerId as string;
+    const active = meta.activePlayerId;
+    if (typeof active !== "string") throw new Error("expected an active player id");
     const token = game.tokenByPlayer[active]!;
 
     // Consume the opening ask, then lose the process holding everything but the cursor.
@@ -400,7 +416,7 @@ describe("player actions stream", () => {
       token,
     });
     const cursor: string = before.body.nextOffset;
-    const seenSeq = before.body.messages.at(-1).seq as number;
+    const seenSeq = checkedNumber(before.body.messages.at(-1).seq, "last seen sequence");
 
     const restarted = restart(h, 4242);
     const decision = await decisionFor(restarted.app, game, active);

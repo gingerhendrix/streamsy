@@ -1,5 +1,4 @@
 /** Player session, typed fetch, identity fields, and sync presentation helpers. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 
 import type { CSSProperties, ReactNode } from "react";
 
@@ -25,7 +24,6 @@ export interface Identity {
 /** Seat-name limit, shared by the join field and every agent-seat field. */
 export const MAX_SEAT_NAME = 24;
 
-/* oxlint-disable effecttsgo/async-function -- React and the browser own these Promise-native event and lifecycle callbacks; reusable data orchestration remains behind the existing application facade. */
 /* oxlint-disable effecttsgo/global-fetch -- This shared React browser adapter performs the typed Web request used by UI event handlers. */
 /**
  * The name to send when opening or delegating an agent seat.
@@ -75,6 +73,7 @@ export const STORAGE_KEY = "risk-demo-identity";
 export function loadIdentity(): Identity | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
     return raw ? (JSON.parse(raw) as Identity) : null;
   } catch {
     return null;
@@ -99,6 +98,7 @@ export function gamePath(gameId: string): string {
   return `/game/${encodeURIComponent(gameId)}`;
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- React event handlers consume this Promise-native browser fetch facade directly.
 export async function api<T>(
   method: string,
   path: string,
@@ -113,6 +113,7 @@ export async function api<T>(
   });
   return {
     status: response.status,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
     body: (await response.json().catch(() => ({
       status: "rejected",
       error: { code: "INTERNAL", message: "Invalid server response." },
@@ -207,6 +208,7 @@ export function PlayerFields(props: { name: string; onName(value: string): void 
 
 export function PlayerChip(props: { name: string; color: string; label?: string }) {
   return (
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
     <span className="active-chip" style={{ "--player": props.color } as CSSProperties}>
       {props.label ?? props.name}
     </span>

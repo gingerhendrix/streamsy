@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- React and the browser own these Promise-native event and lifecycle callbacks; reusable data orchestration remains behind the existing application facade. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import { createStateSchema } from "@durable-streams/state";
 import {
   createStreamDB,
@@ -321,7 +320,7 @@ export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResu
     if (!streamId) {
       setActive(null);
       setStatus("idle");
-      return;
+      return undefined;
     }
 
     let cancelled = false;
@@ -341,14 +340,16 @@ export function useRiskBoardStream(streamId: string | null): RiskBoardStreamResu
 
     void created.preload().then(
       () => {
-        if (cancelled) return;
+        if (cancelled) return undefined;
         setStreamOffset(created.offset);
         setStatus("live");
+        return undefined;
       },
       (reason) => {
-        if (cancelled) return;
+        if (cancelled) return undefined;
         setError(reason instanceof Error ? reason.message : String(reason));
         setStatus("error");
+        return undefined;
       },
     );
 

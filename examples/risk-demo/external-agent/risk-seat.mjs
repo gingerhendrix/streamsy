@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/async-function -- This dependency-free Node executable is intentionally Promise-native and bounded at every HTTP, subprocess, and cancellation edge. */
 /* oxlint-disable effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/process-env -- This dependency-free Node launcher directly owns bounded Web requests, subprocesses, cancellation timers, filesystem state, and executable configuration. */
 
@@ -51,6 +50,7 @@ const ACTIONS_STREAM_TIMEOUT_MS = 30_000;
  */
 const ACTIONS_STREAM_CLIENT_TIMEOUT_MS = ACTIONS_STREAM_TIMEOUT_MS + 5_000;
 
+/** @returns {never} */
 function fail(message, code = 1) {
   const error = new Error(message);
   error.exitCode = code;
@@ -919,7 +919,7 @@ async function submitStable({
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
-  fail("post bound reached");
+  return fail("post bound reached");
 }
 
 async function runLoop(options) {
@@ -1028,7 +1028,7 @@ async function runLoop(options) {
         if (response.status !== 409) fail(`map returned HTTP ${response.status}`);
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
-      fail("map is still unavailable after the game started");
+      return fail("map is still unavailable after the game started");
     };
 
     /** The stream position this process has read to, ahead of the durable cursor. */

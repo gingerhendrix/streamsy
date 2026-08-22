@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createMemoryStorageAdapter,
@@ -95,6 +94,7 @@ describe("Risk board session", () => {
     const collections = { games: {}, players: {}, territories: {}, moves: {}, projectionMeta: {} };
     const preload = vi.fn(async () => undefined);
     const awaitTxId = vi.fn(async () => undefined);
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- StreamDB is an external structurally typed runtime object; this delegation test supplies every member the session exercises.
     const db = {
       collections,
       offset: "42",
@@ -122,6 +122,7 @@ describe("Risk board session", () => {
   it("closes the owned StreamDB exactly once across concurrent and later calls", async () => {
     vi.stubGlobal("window", { location: { origin: "https://risk.test" } });
     const close = vi.fn();
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- StreamDB is an external structurally typed runtime object; this focused close-lifetime test supplies every member it exercises.
     const db = {
       collections: {},
       offset: "-1",
@@ -200,9 +201,15 @@ describe("reserved mesh lineage and the browser mirror", () => {
     if (stream.status !== "ok") throw new Error("no board stream");
     const read = await stream.stream.read({});
     if (read.status !== "ok") throw new Error("cannot read board stream");
-    const written = read.messages.map(
-      (message) => JSON.parse(new TextDecoder().decode(message.data)) as { type: string },
-    );
+    const written = read.messages.map((message) => {
+      const value: unknown = JSON.parse(new TextDecoder().decode(message.data));
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("written board row must be an object");
+      }
+      const row = Object.fromEntries(Object.entries(value));
+      if (typeof row.type !== "string") throw new Error("written board row type must be a string");
+      return { type: row.type };
+    });
 
     const reserved = written.filter((row) => row.type.startsWith(MESH_RESERVED_TYPE_PREFIX));
     expect(reserved.length).toBeGreaterThan(0);

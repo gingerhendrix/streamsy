@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Risk bindings for the generic Streamsy event-sourced command log.
  *
@@ -26,6 +25,7 @@ import { ZERO_OFFSET, compareOffsets, type StreamProtocolFactory } from "@stream
 
 const eventSchema: JsonCodec<GameEvent> = {
   encode: (event) => event,
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
   decode: (value) => value as GameEvent,
 };
 
@@ -74,6 +74,7 @@ function commandLog(deps: CommandServiceDeps, sourceStreamId: string, gameId: st
           ? {
               ...row,
               events: row.events,
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
               error: row.error as DecisionError,
             }
           : null;
@@ -92,6 +93,7 @@ export async function submitCommand(
   sourceStreamId: string,
   command: Command,
 ): Promise<SubmitResult> {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON protocol codec is fixed to this demo's canonical event/message stream; the owning reducer validates domain invariants before use.
   const gameId = gameIdFor(sourceStreamId, command as { gameId?: string });
   try {
     const result = await commandLog(deps, sourceStreamId, gameId).submit(command);

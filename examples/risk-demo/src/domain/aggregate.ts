@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Pure authoritative `Hex Domination` aggregate fold.
  *
@@ -144,6 +143,7 @@ export interface AggregateState {
  * self-contained, not so consumers can trust it blindly; a mismatch means the
  * stream is corrupt and must fail loudly rather than fold into a plausible board.
  */
+// oxlint-disable-next-line effecttsgo/extends-native-error -- AggregateIntegrityError is an intentional synchronous corruption exception from the pure reducer, not an Effect failure value.
 export class AggregateIntegrityError extends Error {
   constructor(message: string) {
     super(message);

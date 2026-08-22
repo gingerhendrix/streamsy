@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import { describe, expect, it } from "vitest";
 import {
   createMemoryStorageAdapter,
@@ -342,17 +341,7 @@ describe("Hex Domination board projection materializer", () => {
     await writeCanonicalEvents(protocol, SOURCE, events);
     await runBoard(protocol);
 
-    const output = await protocol.get(OUTPUT);
-    if (output.status !== "ok") throw new Error("no projection stream");
-    const read = await output.stream.read({});
-    if (read.status !== "ok") throw new Error("cannot read projection stream");
-    const messages = read.messages.map(
-      (message) =>
-        JSON.parse(new TextDecoder().decode(message.data)) as {
-          type?: string;
-          headers?: { txid?: string };
-        },
-    );
+    const messages = await readRows(protocol);
     // The lineage row is the framework's and carries no application txid; the
     // last application row is the checkpoint, named after the final command.
     expect(messages.at(-1)?.type).toBe("__streamsy.mesh.lineage.v1");
@@ -552,9 +541,10 @@ describe("move row keys", () => {
     const mirror = new Map<string, unknown>();
     for (const row of await readRows(protocol)) {
       if (row.type !== "move") continue;
-      const operation = (row.headers as { operation: string }).operation;
-      if (operation === "delete") mirror.delete(row.key as string);
-      else mirror.set(row.key as string, row.value);
+      const operation = row.headers?.operation;
+      if (!row.key || typeof operation !== "string") throw new Error("invalid move row");
+      if (operation === "delete") mirror.delete(row.key);
+      else mirror.set(row.key, row.value);
     }
 
     expect(mirror.size).toBe(materialized.state.moves.length);
@@ -580,18 +570,34 @@ function groupByCommand(events: readonly GameEvent[]): Map<string, GameEvent[]> 
 function canonicalStream(protocol: StreamProtocolFactory) {
   return createJsonProtocol(protocol, {
     encode: (event: GameEvent) => event,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This caller-owned JSON codec returns only events appended by canonicalStream in the same in-process test protocol.
     decode: (value) => value as GameEvent,
   }).getOrCreate(SOURCE);
 }
 
 async function readRows(
   protocol: StreamProtocolFactory,
-): Promise<{ type: string; key?: unknown; value?: unknown; headers?: unknown }[]> {
+): Promise<{ type: string; key?: string; value?: unknown; headers?: Record<string, unknown> }[]> {
   const output = await protocol.get(OUTPUT);
   if (output.status !== "ok") throw new Error("no projection stream");
   const read = await output.stream.read({});
   if (read.status !== "ok") throw new Error("cannot read projection stream");
-  return read.messages.map((message) => JSON.parse(new TextDecoder().decode(message.data)));
+  return read.messages.map((message) => {
+    const value: unknown = JSON.parse(new TextDecoder().decode(message.data));
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("projection row must be an object");
+    }
+    const row = Object.fromEntries(Object.entries(value));
+    if (typeof row.type !== "string") throw new Error("projection row type must be a string");
+    if (row.key !== undefined && typeof row.key !== "string") {
+      throw new Error("projection row key must be a string");
+    }
+    const headers =
+      row.headers !== null && typeof row.headers === "object" && !Array.isArray(row.headers)
+        ? Object.fromEntries(Object.entries(row.headers))
+        : undefined;
+    return { type: row.type, key: row.key, value: row.value, headers };
+  });
 }
 
 /** Split the row stream into transactions; each ends at the reserved lineage row. */
@@ -604,8 +610,8 @@ async function readTransactions(protocol: StreamProtocolFactory): Promise<Set<st
       current = new Set<string>();
       continue;
     }
-    const txid = (row.headers as { txid?: string } | undefined)?.txid;
-    if (txid) current.add(txid);
+    const txid = row.headers?.txid;
+    if (typeof txid === "string") current.add(txid);
   }
   return transactions;
 }

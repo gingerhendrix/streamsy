@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The `Hex Domination` map: one responsive SVG, drawn from canonical `(q, r)` tiles.
  *
@@ -217,6 +216,7 @@ function terrainMarks(terrain: Terrain): ReactNode {
         </>
       );
   }
+  throw new Error("Unsupported terrain");
 }
 
 export function TerrainDefs() {
@@ -411,7 +411,7 @@ export function HexMap(props: HexMapProps) {
   // to keep the page from scrolling under the gesture.
   useEffect(() => {
     const element = svgRef.current;
-    if (!element || !onView) return;
+    if (!element || !onView) return undefined;
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
       const focus = clientToViewBox(
@@ -536,6 +536,7 @@ export function HexMap(props: HexMapProps) {
                   className={`highlight ${state}`}
                   d={geometry.outlines.get(territory.id) ?? ""}
                   fillRule="evenodd"
+                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
                   style={{ "--owner": props.colorOf(territory.ownerId) } as CSSProperties}
                 />
               );
@@ -583,6 +584,7 @@ export function HexMap(props: HexMapProps) {
                     cx={anchor.x}
                     cy={anchor.y}
                     r={BADGE_RADIUS}
+                    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
                     style={{ "--owner": props.colorOf(territory.ownerId) } as CSSProperties}
                   />
                   <text

@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 import { ZERO_OFFSET, type StreamProtocolFactory } from "@streamsy/core";
 import { createJsonProtocol, type JsonSchema } from "@streamsy/json";
 
@@ -102,6 +101,7 @@ export function createCommandLog<State, Event, Command, Rejection>(
         throw new CommandIdReuseError(commandId);
       }
       if (cached.status === "rejected") {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic rejection value is created and returned unchanged by this command-log instance; the library surface preserves the caller's Rejection type.
         return { status: "rejected", commandId, error: cached.error as Rejection };
       }
       return {
@@ -171,6 +171,7 @@ export function createCommandLog<State, Event, Command, Rejection>(
   return { submit, readAll };
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- CommandIdReuseError is the documented rejected-Promise compatibility error inspected by callers.
 export class CommandIdReuseError extends Error {
   constructor(public readonly commandId: string) {
     super(`commandId ${commandId} reused with a different payload`);

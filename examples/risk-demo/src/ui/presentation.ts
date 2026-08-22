@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Pure presentation helpers for the `Hex Domination` playing surface.
  *
@@ -149,6 +148,7 @@ export function defenseAttribution(
     case "timeout":
       return `${territoryName} was auto-rolled — ${defenderName}’s window expired`;
   }
+  throw new Error("Unsupported defense source");
 }
 
 export interface RevealPlan {
@@ -356,6 +356,7 @@ export function phaseInstruction(
         ? "Move armies once between any two countries connected through your own territory, or skip fortifications."
         : "The manoeuvre is spent and the turn ends automatically.";
   }
+  throw new Error("Unsupported phase");
 }
 
 /** What a finished phase achieved, read from the turn row rather than the move feed. */
@@ -379,6 +380,7 @@ export function phaseSummary(phase: GamePhase, turn: ProjectedTurn | null): stri
     case "fortify":
       return "Turn closed.";
   }
+  throw new Error("Unsupported phase");
 }
 
 // ---------------------------------------------------------------------------
@@ -529,6 +531,7 @@ export function moveText(move: ProjectedMove, names: NameLookup): string {
     case "GameWon":
       return `${who} conquered the map`;
   }
+  throw new Error("Unsupported move kind");
 }
 
 /** The dice line under a history row, when that row recorded a throw. */

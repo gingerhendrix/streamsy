@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * `Hex Domination` runtime: the two-stage combat protocol over the real command
  * log, notification streams, and durable defence timers.
@@ -14,12 +13,14 @@
 import { describe, expect, it } from "vitest";
 
 import { BOARD_REDUCER_VERSION } from "../../src/board/board-projection.ts";
+import type { GameEvent } from "../../src/domain/events.ts";
 
 import { defenseTimeoutCommandId, defenseTimerId } from "../../server/game/defense-timer.ts";
 import {
   DEFENSE_MS,
   boardFor,
   call,
+  checkedString,
   createGame,
   decisionFor,
   declareAttack,
@@ -28,6 +29,14 @@ import {
   restart,
   riskHarness,
 } from "../harness.ts";
+
+function attackResolved(
+  events: GameEvent[] | undefined,
+): Extract<GameEvent, { type: "AttackResolved" }> {
+  const event = events?.find((candidate) => candidate.type === "AttackResolved");
+  if (event?.type !== "AttackResolved") throw new Error("expected an attack resolution");
+  return event;
+}
 
 describe("Hex Domination creation seam", () => {
   it("creates a procedural Hex Domination game", async () => {
@@ -77,7 +86,7 @@ describe("Hex Domination creation seam", () => {
   it("ends the turn canonically when fortify succeeds through the public API", async () => {
     const h = riskHarness();
     const game = await createGame(h.app);
-    const active = (await gameMeta(h.app, game)).activePlayerId as string;
+    const active = checkedString((await gameMeta(h.app, game)).activePlayerId, "active player id");
     let decision = await decisionFor(h.app, game, active);
     const reinforce = decision.legalMoves.find((move: any) => move.type === "reinforce");
 
@@ -175,7 +184,7 @@ describe("Hex Domination defence resolution", () => {
     expect(rolled.status).toBe(200);
     // The ack is a receipt; the recorded outcome is read from canonical history.
     const rollRecord = h.stores.commands.get(game.gameId, "human-roll")!;
-    const resolved = (rollRecord.events as any[]).find((e) => e.type === "AttackResolved");
+    const resolved = attackResolved(rollRecord.events);
     expect(resolved.resolutionSource).toBe("human");
     expect(resolved.defenderRolls).toEqual([1, 1].slice(0, resolved.defenderRolls.length));
 
@@ -204,7 +213,7 @@ describe("Hex Domination defence resolution", () => {
     expect(meta.pendingInteraction?.type).not.toBe("defense");
     const record = h.stores.commands.get(game.gameId, defenseTimeoutCommandId(attack.attackId))!;
     expect(record.status).toBe("accepted");
-    const resolved = (record.events as any[]).find((e) => e.type === "AttackResolved");
+    const resolved = attackResolved(record.events);
     expect(resolved.resolutionSource).toBe("timeout");
 
     const late = await post(h.app, game, attack.defender, {
@@ -253,9 +262,7 @@ describe("Hex Domination defence resolution", () => {
     const first = await post(h.app, game, attack.defender, body);
     expect(first.status).toBe(200);
     const original = structuredClone(
-      (h.stores.commands.get(game.gameId, "retry-me")!.events as any[]).find(
-        (e) => e.type === "AttackResolved",
-      ),
+      attackResolved(h.stores.commands.get(game.gameId, "retry-me")!.events),
     );
     expect(original.defenderRolls.length).toBeGreaterThan(0);
 
@@ -272,7 +279,7 @@ describe("Hex Domination defence resolution", () => {
       "turnId",
     ]);
     const afterRetry = h.stores.commands.get(game.gameId, "retry-me")!;
-    expect((afterRetry.events as any[]).find((e) => e.type === "AttackResolved")).toEqual(original);
+    expect(attackResolved(afterRetry.events)).toEqual(original);
   });
 
   it("returns the original dice on a duplicate timeout delivery", async () => {

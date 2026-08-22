@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This executable script is a bounded Promise-native Bun/Node adapter over the demo's public HTTP and application APIs. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/global-console, effecttsgo/global-fetch, effecttsgo/process-env -- This executable smoke preparer directly owns its HTTP, terminal, and environment boundary. */
 /** Prepare a human-vs-human pending defence for DO alarm/restart verification. */
 
@@ -25,7 +24,9 @@ async function call(
 const created = await call("POST", "/v1/games", {
   body: { name: "Alarm Host", color: "red", mapSeed: "cloudflare-alarm-restart" },
 });
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
 const gameId = created.game.id as string;
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
 const hostId = created.player.id as string;
 const tokens: Record<string, string> = { [hostId]: created.capability };
 const joined = await call("POST", `/v1/games/${gameId}/players`, {
@@ -37,6 +38,7 @@ await call("POST", `/v1/games/${gameId}/start`, {
   body: { commandId: "alarm-smoke-start" },
 });
 const metadata = await call("GET", `/v1/games/${gameId}`);
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
 const active = metadata.activePlayerId as string;
 let decision = await call("GET", `/v1/games/${gameId}/decision`, { token: tokens[active] });
 const reinforce = decision.legalMoves.find(

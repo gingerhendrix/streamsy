@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/global-date -- Projection generation ids intentionally include the host wall-clock at this rebuild facade boundary. */
 /**
  * Board-projection generation rebuild and durable cutover.
@@ -182,6 +181,7 @@ async function runRebuild<State, Event>(
   const complete = rebuilt.status === "caught-up";
   const recovered = complete && "checkpoint" in rebuilt ? rebuilt : undefined;
   const rebuiltWatermark = recovered?.checkpoint.sourceThrough ?? null;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic projection library returns the same State supplied by this caller; its API has no runtime State schema parameter.
   const rebuiltState = (recovered?.state ?? mesh.initial).state as State;
 
   const boardEqual = complete && plan.boardEqual(rebuiltState, events);

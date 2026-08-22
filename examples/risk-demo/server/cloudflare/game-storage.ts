@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- Cloudflare Durable Object storage and fetch handlers are Promise-native platform adapters over the shared game services. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/global-timers, effecttsgo/new-promise -- Cloudflare's storage subscription adapter is callback/Promise-native and owns timer cancellation at this platform boundary. */
 import {
   runAwaitChangeLoop,
@@ -78,6 +77,7 @@ export function createGameStorageAdapter(
     const row = [
       ...sql.exec<RecordRow>("select record_json from risk_streams where stream_id = ?", streamId),
     ][0];
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Cloudflare's typed SQL/storage callback returns the same game-local adapter value supplied by this boundary.
     return row ? (JSON.parse(row.record_json) as StreamRecord) : null;
   };
 

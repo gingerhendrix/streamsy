@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/global-timers -- This host scheduler adapter owns cancellable and unref-able runtime timers while preserving the existing Promise facade and shutdown semantics. */
 /**
  * Durable defence-timeout runtime for `Hex Domination`.
@@ -83,6 +82,7 @@ export function createTimeoutScheduler(): TimerScheduler {
         Math.max(0, delayMs),
       );
       // Never hold the process open for a game nobody is watching.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Bun and Node timer handles may expose unref while browser numeric handles do not; this platform guard checks the optional method before calling it.
       (handle as unknown as { unref?: () => void }).unref?.();
       timers.set(timerId, handle);
     },

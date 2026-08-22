@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * Deterministic integer PRNG for `hex-generator-v2`.
  *
@@ -135,6 +134,7 @@ export type Substreams = Readonly<Record<Substream, IntRng>>;
 
 /** Derive every named substream for a seed. Streams are mutually independent. */
 export function createSubstreams(seed: string): Substreams {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The entries are constructed for every closed SUBSTREAMS key immediately above; the assertion preserves that key-indexed public type.
   const streams = {} as Record<Substream, IntRng>;
   for (const name of SUBSTREAMS) streams[name] = createSubstream(seed, name);
   return streams;

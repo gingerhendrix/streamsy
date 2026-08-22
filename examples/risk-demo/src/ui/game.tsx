@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function -- React and the browser own these Promise-native event and lifecycle callbacks; reusable data orchestration remains behind the existing application facade. */
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /* oxlint-disable effecttsgo/crypto-random-uuid, effecttsgo/global-date, effecttsgo/global-fetch -- React owns this browser interaction boundary, including request ids, display timing, and Web fetch callbacks. */
 /**
  * The `Hex Domination` playing surface: hex map, phase interactions, current-turn
@@ -135,7 +134,7 @@ function usePrefersReducedMotion(): boolean {
   );
   useEffect(() => {
     const query = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!query) return;
+    if (!query) return undefined;
     const onChange = (): void => setReduced(query.matches);
     query.addEventListener("change", onChange);
     return () => query.removeEventListener("change", onChange);
@@ -248,7 +247,7 @@ export function GameScreen(props: GameScreenProps) {
   useEffect(() => {
     if (!identity || spectating) {
       setDecision(null);
-      return;
+      return undefined;
     }
     const controller = new AbortController();
     void api<DecisionResponse>("GET", `/v1/games/${gameId}/decision`, {
@@ -345,7 +344,7 @@ export function GameScreen(props: GameScreenProps) {
   const pendingDeadline =
     combat?.status === "awaiting-defense" ? combat.defenseDeadlineAt : undefined;
   useEffect(() => {
-    if (pendingDeadline === undefined) return;
+    if (pendingDeadline === undefined) return undefined;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
@@ -409,6 +408,7 @@ export function GameScreen(props: GameScreenProps) {
       if (accepted) {
         try {
           if (!live.session) throw new Error("Board session is not connected.");
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The shared typed browser API facade pairs this call with the declared response contract and handles rejected bodies separately.
           await live.session.awaitTxId(ackTxId(result.body as CommandAck));
           setNotice(acknowledgementNotice(action.type));
         } catch {

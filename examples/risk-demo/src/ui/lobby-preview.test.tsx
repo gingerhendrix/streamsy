@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The terrain survey is only honest if it is the sheet the game would actually
  * start on: pure in `(seed, playerCount)`, absent rather than invented when there
@@ -11,6 +10,10 @@ import { describe, expect, it } from "vitest";
 import { hashGeneratedMap } from "../domain/hex-generator.ts";
 import { mapProfileFor } from "../domain/map.ts";
 import { LobbyTerrainPreview, surveyMap } from "./lobby-preview.tsx";
+
+function renderPreview(): string {
+  return renderToStaticMarkup(<LobbyTerrainPreview seed="lobby-survey-seed" playerCount={2} />);
+}
 
 describe("surveyMap", () => {
   it("draws nothing without a seed or a valid roster", () => {
@@ -71,8 +74,6 @@ describe("LobbyTerrainPreview", () => {
   });
 
   it("renders identically for the same inputs", () => {
-    const render = () =>
-      renderToStaticMarkup(<LobbyTerrainPreview seed="lobby-survey-seed" playerCount={2} />);
-    expect(render()).toBe(render());
+    expect(renderPreview()).toBe(renderPreview());
   });
 });

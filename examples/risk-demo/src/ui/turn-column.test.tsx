@@ -1,4 +1,3 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, typescript/consistent-return, typescript/no-unnecessary-type-conversion, unicorn/consistent-function-scoping, effecttsgo/extends-native-error -- Remaining assertions are confined to caller-owned generic codecs, framework-generated structural types, or test-owned fixtures; native errors are synchronous Promise/domain exceptions rather than Effect failure-channel values, and exhaustive switches are protected by closed unions. */
 /**
  * The current-turn column rendered for real, not just its helpers.
  *
@@ -11,7 +10,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { ProjectedTurn } from "../board/projection.ts";
+import type { ProjectedPlayer, ProjectedTurn } from "../board/projection.ts";
 import type { NameLookup } from "./presentation.ts";
 import { TurnColumn, VictoryCard } from "./turn-column.tsx";
 
@@ -35,7 +34,15 @@ const TURN: ProjectedTurn = {
   eliminations: 0,
 };
 
-const ADA = { id: "p1", name: "Ada", color: "#e05a47" } as never;
+const ADA: ProjectedPlayer = {
+  id: "p1",
+  name: "Ada",
+  color: "#e05a47",
+  controller: "human",
+  eliminated: false,
+  territoryCount: 3,
+  armyCount: 12,
+};
 
 const CONTROLS = <button className="primary">Declare attack</button>;
 
