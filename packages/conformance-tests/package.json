@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src/deployment-state.test.ts",
     "test:memory": "vitest --run src/memory.conformance.test.ts",
     "test:client": "vitest --run src/client.conformance.test.ts",
     "test:fs": "vitest --run src/fs.conformance.test.ts -t '^(?!.*Fork - )'",

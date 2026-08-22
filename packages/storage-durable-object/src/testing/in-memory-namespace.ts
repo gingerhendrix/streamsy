@@ -24,8 +24,34 @@ import type {
   StreamRecordPatch,
 } from "@streamsy/core";
 import type { DurableObjectStorageAdapterOptions } from "../adapter.ts";
+import type { DurableObjectStreamStorage } from "../storage.ts";
 
 type FactoryNamespace = DurableObjectStorageAdapterOptions["namespace"];
+type FactoryStub = DurableObjectStub<DurableObjectStreamStorage>;
+
+/**
+ * The stream-facing RPC surface of the real Durable Object, taken from the real
+ * class rather than restated. `FakeStub` declares `implements StreamStorageRpc`,
+ * so a parameter or return type that drifts on `DurableObjectStreamStorage`
+ * fails this package's typecheck instead of being hidden by the one assertion
+ * in `asStub` below.
+ */
+type StreamStorageRpc = Pick<
+  DurableObjectStreamStorage,
+  | "getRecord"
+  | "append"
+  | "applyMutation"
+  | "listMessages"
+  | "getProducerState"
+  | "awaitChange"
+  | "scheduleExpiry"
+  | "cancelExpiry"
+  | "purgeSelf"
+  | "softDelete"
+  | "addChildEdge"
+  | "dropChildEdge"
+  | "countChildEdges"
+>;
 
 type FailureReason = "offset" | "closed" | "producer";
 
@@ -51,7 +77,7 @@ interface FakeStubState {
   awaitOptions: AwaitChangeOptions[];
 }
 
-class FakeStub {
+class FakeStub implements StreamStorageRpc {
   readonly state: FakeStubState;
   private waiters = new Set<() => void>();
 
@@ -123,9 +149,13 @@ class FakeStub {
       recordPatch: plan.recordPatch,
     });
     if (out.status === "committed") return { status: "appended" as const, record: out.record };
-    return out.reason !== undefined
-      ? { status: "precondition-failed" as const, record: out.record, reason: out.reason }
-      : { status: "precondition-failed" as const, record: out.record };
+    // Mirrors the real class: `reason` is required on the seam, so an
+    // unattributable failure reports "offset" per the seam contract.
+    return {
+      status: "precondition-failed" as const,
+      record: out.record,
+      reason: out.reason ?? "offset",
+    };
   }
 
   async listMessages(
@@ -223,6 +253,43 @@ class FakeStub {
   }
 }
 
+/**
+ * Complete `DurableObjectId` for the fake. Ids in this harness are the stream id
+ * itself, which is what `idFromName` is given and what `get` routes on, so
+ * `toString()` round-trips the name and `equals` compares that round-trip.
+ */
+class FakeDurableObjectId implements DurableObjectId {
+  constructor(readonly name: string) {}
+
+  toString(): string {
+    return this.name;
+  }
+
+  equals(other: DurableObjectId): boolean {
+    return other.toString() === this.name;
+  }
+}
+
+/**
+ * The one place the fake crosses into workerd's RPC types.
+ *
+ * `DurableObjectStub<T>` is `Fetcher` intersected with every method of `T`
+ * rewritten to an `Rpc.Result`: a custom thenable that is also a `Provider` for
+ * pipelining and resolves to a `Disposable`. `DurableObjectStreamStorage`
+ * additionally carries the nominal `__DURABLE_OBJECT_BRAND` of
+ * `cloudflare:workers`. Neither is producible by an in-process object, so no
+ * fake can be assignable to this type and the conversion is asserted once, here.
+ *
+ * The assertion covers only that RPC wrapping. The method surface itself is
+ * checked: `FakeStub implements StreamStorageRpc`, which is derived from the
+ * real class. Structured-clone serialization is out of scope for this harness
+ * and is covered by the deployed conformance suite (see the file header).
+ */
+function asStub(stub: FakeStub): FactoryStub {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- workerd RPC result types and the DurableObject brand are unproducible in-process; the method surface is checked by `FakeStub implements StreamStorageRpc`.
+  return stub as unknown as FactoryStub;
+}
+
 export interface FakeNamespace {
   namespace: FactoryNamespace;
   stubFor: (name: string) => FakeStub;
@@ -231,7 +298,7 @@ export interface FakeNamespace {
 
 export function createFakeNamespace(): FakeNamespace {
   const stubs = new Map<string, FakeStub>();
-  const ids = new Map<string, { name: string; toString(): string }>();
+  const ids = new Map<string, FakeDurableObjectId>();
 
   function ensureStub(name: string): FakeStub {
     let stub = stubs.get(name);
@@ -250,22 +317,37 @@ export function createFakeNamespace(): FakeNamespace {
     return stub;
   }
 
-  const namespace = {
-    idFromName(name: string) {
-      let id = ids.get(name);
-      if (!id) {
-        id = { name, toString: () => name };
-        ids.set(name, id);
-      }
-      return id;
+  function ensureId(name: string): FakeDurableObjectId {
+    let id = ids.get(name);
+    if (!id) {
+      id = new FakeDurableObjectId(name);
+      ids.set(name, id);
+    }
+    return id;
+  }
+
+  /**
+   * Every member of `DurableObjectNamespace` is implemented, so the value is
+   * assignable without conversion. The two the adapter never uses raise instead
+   * of returning a plausible-looking stub: `newUniqueId` and `jurisdiction` have
+   * no meaning for a name-routed in-memory map, and a silent stand-in would let
+   * a routing regression pass as a green test.
+   */
+  const namespace: FactoryNamespace = {
+    idFromName: (name) => ensureId(name),
+    idFromString: (id) => ensureId(id),
+    get: (id) => asStub(ensureStub(id.toString())),
+    getByName: (name) => asStub(ensureStub(name)),
+    newUniqueId: () => {
+      throw new Error("createFakeNamespace: newUniqueId is not supported; route by stream id");
     },
-    get(id: { name: string }) {
-      return ensureStub(id.name);
+    jurisdiction: () => {
+      throw new Error("createFakeNamespace: jurisdiction is not supported");
     },
   };
 
   return {
-    namespace: namespace as unknown as FactoryNamespace,
+    namespace,
     stubFor: (name: string) => ensureStub(name),
     has: (name: string) => stubs.has(name),
   };

@@ -8,6 +8,7 @@
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { describe, beforeAll, afterAll } from "vitest";
 import { StreamProtocol, HttpHandler, createMemoryStorageAdapter } from "@streamsy/core";
+import type { NodeRequestInit } from "./node-request-init.ts";
 
 let server: { stop: () => void; port: number | undefined } | null = null;
 
@@ -38,18 +39,22 @@ describe("Memory Storage Server Implementation", () => {
           if (value) headers.set(key, Array.isArray(value) ? value[0]! : value);
         }
 
-        const body = await new Promise<Buffer>((resolve) => {
+        // A web `BodyInit` takes a plain byte view; Node's `Buffer` declares a
+        // wider `ArrayBufferLike` backing store, so the collected chunks are
+        // copied into a `Uint8Array`. Same bytes, forwarded unchanged.
+        const body = await new Promise<Uint8Array<ArrayBuffer>>((resolve) => {
           const chunks: Buffer[] = [];
           req.on("data", (chunk: Buffer) => chunks.push(chunk));
-          req.on("end", () => resolve(Buffer.concat(chunks)));
+          req.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
         });
 
-        const request = new Request(url, {
+        const init: NodeRequestInit = {
           method: req.method,
           headers,
           body: ["GET", "HEAD"].includes(req.method!) ? undefined : body,
           duplex: "half",
-        } as RequestInit);
+        };
+        const request = new Request(url, init);
 
         const response = await handler.fetch(request);
 

@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { workerUrlFrom } from "./deployment-state.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const alchemyEntrypoint = join(packageDir, "alchemy.run.ts");
@@ -58,10 +59,8 @@ function readWorkerUrl(): string {
     );
   }
 
-  const state = JSON.parse(readFileSync(statePath, "utf8")) as {
-    output?: { url?: string };
-  };
-  const url = state.output?.url;
+  const state: unknown = JSON.parse(readFileSync(statePath, "utf8"));
+  const url = workerUrlFrom(state);
 
   if (!url) {
     throw new Error(
@@ -69,7 +68,7 @@ function readWorkerUrl(): string {
     );
   }
 
-  return url.replace(/\/$/, "");
+  return url;
 }
 
 function logFailure(label: string, error: unknown): void {
