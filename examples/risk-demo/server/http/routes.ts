@@ -664,9 +664,10 @@ function firstIssuePath(
     case "Pointer":
       return firstIssuePath(issue.issue, [...prefix, ...issue.path]);
     case "Composite":
-      return firstIssuePath(issue.issues[0], prefix);
-    case "AnyOf":
-      return issue.issues.length > 0 ? firstIssuePath(issue.issues[0], prefix) : prefix;
+    case "AnyOf": {
+      const [firstIssue] = issue.issues;
+      return firstIssue === undefined ? prefix : firstIssuePath(firstIssue, prefix);
+    }
     default:
       return prefix;
   }
