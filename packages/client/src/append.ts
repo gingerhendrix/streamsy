@@ -1,6 +1,7 @@
 import type { AppendStreamOptions, ClientAppendResult, ClientFailure } from "@streamsy/core";
 import type { OfficialProtocolClient } from "./client.ts";
 import { failure } from "./errors.ts";
+import { copyToArrayBuffer } from "./bytes.ts";
 
 const STREAM_OFFSET_HEADER = "stream-next-offset";
 const PRODUCER_EPOCH_HEADER = "producer-epoch";
@@ -53,7 +54,7 @@ function encodeBody(data: Uint8Array | string, contentType?: string, jsonBatch =
     return jsonBatch ? json : `[${json}]`;
   }
   if (typeof data === "string") return data;
-  return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  return copyToArrayBuffer(data);
 }
 
 function normalizedContentType(contentType?: string): string | undefined {

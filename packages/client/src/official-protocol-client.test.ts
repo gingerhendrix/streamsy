@@ -2,6 +2,7 @@ import { createHttpHandler, createMemoryStorageAdapter, StreamProtocol } from "@
 import type { ClientReadResult, JsonValue } from "@streamsy/core";
 import { describe, expect, it, vi } from "vitest";
 import { officialProtocolClient } from "./client.ts";
+import { asFetch } from "./fetch-fn.ts";
 import { protocolPathUrl } from "./url.ts";
 
 const noRetry = { initialDelay: 1, maxDelay: 1, multiplier: 1, maxRetries: 0 };
@@ -13,11 +14,11 @@ function makeHarness(options: { headers?: Record<string, string | (() => string)
   });
   const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
   const requests: Request[] = [];
-  const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+  const fetch = asFetch(async (input, init) => {
     const request = new Request(input, init);
     requests.push(request.clone());
     return handler.fetch(request);
-  }) as typeof globalThis.fetch;
+  });
   const client = officialProtocolClient({
     urlFor: (id) => protocolPathUrl("https://stream.test/streams", id),
     fetch,
@@ -124,6 +125,25 @@ describe("officialProtocolClient", () => {
     await client.close();
   });
 
+  it("appends only the bytes a partial view covers and copies them off the caller's buffer", async () => {
+    const { client } = makeHarness();
+    const bytes = client.stream("partial");
+    await bytes.create({ contentType: "application/octet-stream" });
+
+    // A view over the middle of a larger buffer: the request body must carry
+    // the three viewed bytes, not the whole backing buffer.
+    const backing = new Uint8Array([255, 1, 2, 3, 255]);
+    const view = backing.subarray(1, 4);
+    await bytes.append(view, { contentType: "application/octet-stream" });
+    // The caller keeps ownership of the buffer and may reuse it immediately.
+    backing.fill(0);
+
+    const session = await okSession(await bytes.read());
+    const batch = await session[Symbol.asyncIterator]().next();
+    expect(batch.value).toMatchObject({ kind: "bytes", data: new Uint8Array([1, 2, 3]) });
+    await client.close();
+  });
+
   it("keeps official dynamic headers dynamic and disables append coalescing by default", async () => {
     let token = 0;
     const { client, requests } = makeHarness({
@@ -187,7 +207,7 @@ describe("officialProtocolClient", () => {
     const fetch = vi.fn(async () => new Response(null, { status: 204 }));
     const client = officialProtocolClient({
       urlFor: () => "https://stream.test/missing-offset",
-      fetch: fetch as unknown as typeof globalThis.fetch,
+      fetch: asFetch(fetch),
       backoffOptions: noRetry,
     });
 
@@ -204,12 +224,12 @@ describe("officialProtocolClient", () => {
     const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
     const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
     let posts = 0;
-    const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+    const fetch = asFetch(async (input, init) => {
       const request = new Request(input, init);
       const response = await handler.fetch(request);
       if (request.method === "POST" && posts++ === 0) throw new TypeError("response lost");
       return response;
-    }) as typeof globalThis.fetch;
+    });
     const client = officialProtocolClient({
       urlFor: (id) => protocolPathUrl("https://stream.test/streams", id),
       fetch,
@@ -292,9 +312,11 @@ describe("officialProtocolClient", () => {
   it("normalizes transport and abort failures to results", async () => {
     const network = officialProtocolClient({
       urlFor: () => "https://stream.test/fail",
-      fetch: vi.fn(async () => {
-        throw new TypeError("offline");
-      }) as unknown as typeof globalThis.fetch,
+      fetch: asFetch(
+        vi.fn(async () => {
+          throw new TypeError("offline");
+        }),
+      ),
       backoffOptions: noRetry,
     });
     expect(await network.stream("x").head()).toMatchObject({

@@ -1,3 +1,5 @@
+import { nodeBufferBase64, toArrayBuffer } from "./bytes.ts";
+
 export interface MessageWithData {
   data: Uint8Array;
 }
@@ -14,7 +16,7 @@ export class MessageBodyCodec {
     if (lower.startsWith("text/")) {
       return messages.map((msg) => this.decoder.decode(msg.data)).join("");
     }
-    return this.concatBytes(messages).buffer as ArrayBuffer;
+    return toArrayBuffer(this.concatBytes(messages));
   }
 
   emptyBodyForContentType(contentType: string): BodyInit {
@@ -33,12 +35,8 @@ export class MessageBodyCodec {
   }
 
   bytesToBase64(bytes: Uint8Array): string {
-    const BufferRef = (
-      globalThis as { Buffer?: { from: (...args: unknown[]) => { toString(enc: string): string } } }
-    ).Buffer;
-    if (BufferRef) {
-      return BufferRef.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
-    }
+    const viaBuffer = nodeBufferBase64(bytes);
+    if (viaBuffer !== undefined) return viaBuffer;
     let binary = "";
     const chunk = 0x8000;
     for (let i = 0; i < bytes.length; i += chunk) {

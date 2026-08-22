@@ -8,6 +8,7 @@ import type {
 } from "@durable-streams/client";
 import type { ClientFailure, StreamProtocolClient, StreamProtocolHandle } from "@streamsy/core";
 import { abortedFailure, clientClosedFailure } from "./errors.ts";
+import { wrapFetch } from "./fetch-fn.ts";
 import { OfficialProtocolHandle } from "./handle.ts";
 
 export interface OfficialProtocolClientOptions {
@@ -46,10 +47,7 @@ export class OfficialProtocolClient implements StreamProtocolClient {
 
   constructor(readonly options: OfficialProtocolClientOptions) {
     this.baseSignal = combineSignals(options.signal, this.controller.signal);
-    const baseFetch =
-      options.fetch ??
-      (((...args: Parameters<typeof globalThis.fetch>) =>
-        globalThis.fetch(...args)) as typeof globalThis.fetch);
+    const baseFetch = options.fetch ?? wrapFetch(globalThis.fetch);
     this.appendFetch = createFetchWithBackoff(baseFetch, options.backoffOptions ?? BackoffDefaults);
   }
 

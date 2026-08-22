@@ -135,21 +135,30 @@ export class CreateHttpService {
     >,
     location: string,
   ): Response {
-    if (result.status === "not-found")
-      return this.deps.responses.notFound(result.errorMessage ?? "Source stream not found");
-    if (result.status === "bad-request")
-      return this.deps.responses.badRequest(result.errorMessage ?? "Invalid fork parameters");
-    if (result.status === "conflict")
-      return this.deps.responses.conflict(
-        result.errorMessage ?? "Stream exists with different configuration",
-      );
-    const success = result as Extract<typeof result, { status: "created" | "exists" }>;
-    const status = success.status === "created" ? 201 : 200;
-    return this.deps.responses.empty(status, {
-      "content-type": success.contentType,
-      "stream-next-offset": success.nextOffset,
-      ...(status === 201 ? { location } : {}),
-      ...(success.closed ? { "stream-closed": "true" } : {}),
-    });
+    switch (result.status) {
+      case "not-found":
+        return this.deps.responses.notFound(result.errorMessage ?? "Source stream not found");
+      case "bad-request":
+        return this.deps.responses.badRequest(result.errorMessage ?? "Invalid fork parameters");
+      case "conflict":
+        return this.deps.responses.conflict(
+          result.errorMessage ?? "Stream exists with different configuration",
+        );
+      case "created":
+      case "exists": {
+        const status = result.status === "created" ? 201 : 200;
+        return this.deps.responses.empty(status, {
+          "content-type": result.contentType,
+          "stream-next-offset": result.nextOffset,
+          ...(status === 201 ? { location } : {}),
+          ...(result.closed ? { "stream-closed": "true" } : {}),
+        });
+      }
+    }
+    return exhaustive(result);
   }
+}
+
+function exhaustive(value: never): never {
+  throw new TypeError(`Unexpected create result: ${String(value)}`);
 }

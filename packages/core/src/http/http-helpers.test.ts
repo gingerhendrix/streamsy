@@ -27,16 +27,15 @@ describe("HTTP MessageBodyCodec", () => {
     expect(
       codec.encodeHttpBody([{ data: enc.encode("a") }, { data: enc.encode("b") }], "text/plain"),
     ).toBe("ab");
-    expect(
-      Array.from(
-        new Uint8Array(
-          codec.encodeHttpBody(
-            [{ data: new Uint8Array([1]) }, { data: new Uint8Array([2, 3]) }],
-            "application/octet-stream",
-          ) as ArrayBuffer,
-        ),
-      ),
-    ).toEqual([1, 2, 3]);
+    const binary = codec.encodeHttpBody(
+      [{ data: new Uint8Array([1]) }, { data: new Uint8Array([2, 3]) }],
+      "application/octet-stream",
+    );
+    // A binary body must reach `fetch` as a real `ArrayBuffer`, not a view or a
+    // shared buffer, so the boundary type is asserted before the bytes are read.
+    expect(binary).toBeInstanceOf(ArrayBuffer);
+    if (!(binary instanceof ArrayBuffer)) throw new TypeError("expected an ArrayBuffer body");
+    expect(Array.from(new Uint8Array(binary))).toEqual([1, 2, 3]);
   });
 
   it("returns content-type-shaped empty bodies", () => {

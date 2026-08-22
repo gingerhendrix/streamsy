@@ -2,6 +2,25 @@ import type { JsonValue, StreamBatch, StreamBatchMeta } from "./types.ts";
 
 const decoder = new TextDecoder();
 
+function isJsonArray(value: unknown): value is JsonValue[] {
+  return Array.isArray(value);
+}
+
+/**
+ * Decodes the JSON batch body into its items.
+ *
+ * `JSON.parse` is typed `any`, so the decoded value is validated as a JSON
+ * array before it is used. The element type `T` is the caller's declared
+ * contract for the stream's payloads and cannot be checked at runtime, so the
+ * narrowing to `T[]` is asserted once, here, behind that array check.
+ */
+function decodeJsonItems<T extends JsonValue>(body: string): T[] {
+  const parsed: unknown = JSON.parse(body);
+  if (!isJsonArray(parsed)) throw new SyntaxError("Stored JSON batch is not an array");
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `T` is a caller-declared payload contract; the runtime check above proves only that the batch is a JSON array.
+  return parsed as T[];
+}
+
 /**
  * Real impedance matching: turn a substrate's `StoredMessage[]` into a single
  * content-aware delivery batch, matching `MessageBodyCodec` semantics so direct
@@ -22,7 +41,7 @@ export function encodeBatch<T extends JsonValue>(
   const mediaType = contentType.split(";", 1)[0]!.trim().toLowerCase();
   if (mediaType === "application/json") {
     const body = `[${messages.map((message) => decoder.decode(message.data)).join(",")}]`;
-    return { kind: "json", items: JSON.parse(body) as T[], ...meta };
+    return { kind: "json", items: decodeJsonItems<T>(body), ...meta };
   }
   if (mediaType.startsWith("text/")) {
     return {
