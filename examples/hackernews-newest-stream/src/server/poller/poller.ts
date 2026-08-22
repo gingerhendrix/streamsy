@@ -98,10 +98,13 @@ export function makeNewestStoriesPoller<R = never>(
     const pollNow: Effect.Effect<void, never, R> = Effect.gen(function* () {
       if (yield* Ref.get(stoppedRef)) return;
       const gate = yield* Deferred.make<void>();
-      const claim = yield* Ref.modify(activeRef, (active): readonly [PollClaim, Option.Option<Deferred.Deferred<void>>] => {
-        if (Option.isSome(active)) return [{ owner: false, gate: active.value }, active] as const;
-        return [{ owner: true, gate }, Option.some(gate)] as const;
-      });
+      const claim = yield* Ref.modify(
+        activeRef,
+        (active): readonly [PollClaim, Option.Option<Deferred.Deferred<void>>] => {
+          if (Option.isSome(active)) return [{ owner: false, gate: active.value }, active] as const;
+          return [{ owner: true, gate }, Option.some(gate)] as const;
+        },
+      );
       if (!claim.owner) {
         yield* Deferred.await(claim.gate);
         return;
