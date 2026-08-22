@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient, type JsonValue } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUpState } from "./state-projection.ts";
@@ -17,6 +18,11 @@ interface Total {
 }
 
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
+const StateProjectionTestLive = Layer.merge(DerivedRecoveryLive, DerivedStateHistoryLive).pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 describe("Effect-first recovered State — SQLite", () => {
   test("validates restored application state before decoding resumed source", async () => {
@@ -165,12 +171,7 @@ async function makeHarness(filename: string) {
           ],
         };
       },
-    }).pipe(
-      Effect.provide(DerivedStateHistoryLive),
-      Effect.provide(DerivedRecoveryLive),
-      Effect.provide(ReadStreamsLive),
-      Effect.provide(AppendStreamsLive),
-    );
+    }).pipe((effect) => provideTestLayers(effect, StateProjectionTestLive));
   return {
     adapter,
     client,

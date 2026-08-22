@@ -6,12 +6,13 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity, type StreamIdentity } from "../causal.ts";
 import { ProjectionPoison } from "../effect/errors.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import {
   catchUpDynamicFanInState,
   FanInRecoveryLive,
@@ -22,6 +23,11 @@ import { deriveProducerLane, type ProducerLane } from "./lane.ts";
 
 const clients = new Set<StreamProtocolClient>();
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
+const FanInTestLive = FanInRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 afterEach(async () => {
   await Promise.all(Array.from(clients, (client) => client.close()));
@@ -164,11 +170,7 @@ function program(
         facts: [{ type: "row", key: member.identity.name, headers: { operation: "delete" } }],
       };
     },
-  }).pipe(
-    Effect.provide(FanInRecoveryLive),
-    Effect.provide(ReadStreamsLive),
-    Effect.provide(AppendStreamsLive),
-  );
+  }).pipe((effect) => provideTestLayers(effect, FanInTestLive));
 }
 
 function run(

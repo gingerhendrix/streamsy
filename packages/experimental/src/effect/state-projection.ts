@@ -130,6 +130,12 @@ export function layerClient(client: StreamProtocolClient): Layer.Layer<Client> {
   return Layer.succeed(Client, Client.of({ client }));
 }
 
+const StateProjectionLive = DerivedRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
+
 /** Bind a declaration to one immutable source, target, and output generation. */
 export function instance<Input>(
   definition: Definition<Input>,
@@ -194,9 +200,8 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(
 
       return toPublicOutcome(outcome);
     }).pipe(
-      Effect.provide(DerivedRecoveryLive),
-      Effect.provide(ReadStreamsLive),
-      Effect.provide(AppendStreamsLive),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- StateProjection.catchUp is the documented application facade that owns its fixed-client Live adapters.
+      Effect.provide(StateProjectionLive),
     ),
 );
 

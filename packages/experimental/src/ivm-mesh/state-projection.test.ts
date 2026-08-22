@@ -6,12 +6,13 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { ProjectionPoison, StateRestorePoison } from "../effect/errors.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
 import { deriveProducerLane, type ProducerLane } from "./lane.ts";
 import { catchUpState, type CatchUpStateResult } from "./state-projection.ts";
@@ -31,6 +32,11 @@ interface Total {
 }
 
 const initial: Total = { total: 0, applied: 0 };
+const StateProjectionTestLive = Layer.merge(DerivedRecoveryLive, DerivedStateHistoryLive).pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 interface Harness {
   readonly adapter: StorageAdapter;
@@ -116,12 +122,7 @@ function program(h: Harness, options: ProgramOptions = {}) {
         ],
       };
     },
-  }).pipe(
-    Effect.provide(DerivedStateHistoryLive),
-    Effect.provide(DerivedRecoveryLive),
-    Effect.provide(ReadStreamsLive),
-    Effect.provide(AppendStreamsLive),
-  );
+  }).pipe((effect) => provideTestLayers(effect, StateProjectionTestLive));
 }
 
 function run(h: Harness, options: ProgramOptions = {}): Promise<CatchUpStateResult<Total>> {

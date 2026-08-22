@@ -27,6 +27,7 @@ import {
   ProjectionPoison,
   StreamAppendError,
 } from "../effect/errors.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import {
   appendDerivedStateBatch,
   DerivedRecoveryLive,
@@ -45,6 +46,11 @@ import {
 
 const clients = new Set<StreamProtocolClient>();
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
+const MeshTestLive = DerivedRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 afterEach(async () => {
   await Promise.all(Array.from(clients, (client) => client.close()));
@@ -95,11 +101,7 @@ async function harness(transport: "direct" | "fetch" = "direct"): Promise<Harnes
 }
 
 const provideLive = <A, E, R>(program: Effect.Effect<A, E, R>) =>
-  program.pipe(
-    Effect.provide(DerivedRecoveryLive),
-    Effect.provide(ReadStreamsLive),
-    Effect.provide(AppendStreamsLive),
-  );
+  provideTestLayers(program, MeshTestLive);
 
 function fact(value: JsonValue): JsonValue {
   const key = typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -207,10 +209,14 @@ async function runScriptedProjection(
         return batch.items;
       },
       reduce: options.reduce ?? ((items) => items.map(fact)),
-    }).pipe(
-      Effect.provide(DerivedRecoveryTest(() => Effect.succeed(recovered))),
-      Effect.provide(scriptedReadLayer(pages)),
-      Effect.provide(AppendStreamsLive),
+    }).pipe((effect) =>
+      provideTestLayers(
+        effect,
+        Layer.merge(
+          DerivedRecoveryTest(() => Effect.succeed(recovered)),
+          scriptedReadLayer(pages),
+        ).pipe(Layer.merge(AppendStreamsLive)),
+      ),
     ),
   );
 }
@@ -449,9 +455,14 @@ describe("Effect-first mesh", () => {
         previous,
         sourceThrough: "00000001",
         facts: [fact(1)],
-      }).pipe(
-        Effect.provide(DerivedRecoveryTest(() => Effect.succeed(previous))),
-        Effect.provide(appendOutcomeLayer(outcome)),
+      }).pipe((effect) =>
+        provideTestLayers(
+          effect,
+          Layer.merge(
+            DerivedRecoveryTest(() => Effect.succeed(previous)),
+            appendOutcomeLayer(outcome),
+          ),
+        ),
       ),
     );
     expect(result).toEqual(outcome);
@@ -482,10 +493,14 @@ describe("Effect-first mesh", () => {
     const exit = await Effect.runPromise(
       Effect.gen(function* () {
         const appendCommitted = yield* Deferred.make<void>();
-        const program = projection(h).pipe(
-          Effect.provide(DerivedRecoveryTest(() => Effect.succeed(previous))),
-          Effect.provide(scriptedReadLayer([{ offset: "00000001", items: [1] }])),
-          Effect.provide(commitThenBlockLayer(appendCommitted)),
+        const program = projection(h).pipe((effect) =>
+          provideTestLayers(
+            effect,
+            Layer.merge(
+              DerivedRecoveryTest(() => Effect.succeed(previous)),
+              scriptedReadLayer([{ offset: "00000001", items: [1] }]),
+            ).pipe(Layer.merge(commitThenBlockLayer(appendCommitted))),
+          ),
         );
         const fiber = yield* Effect.forkChild(program);
         yield* Deferred.await(appendCommitted);

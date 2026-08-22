@@ -8,13 +8,16 @@ import {
   type StreamProtocolClient,
   type StreamProtocolHandle,
 } from "@streamsy/core";
-import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { StreamAppendError, StreamReadError } from "./errors.ts";
 import { TestStreams, TestStreamsLayer } from "./testing.ts";
 import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive } from "./streams.ts";
+import { provideTestLayers } from "./test-layers.ts";
+
+const StreamTestLive = Layer.merge(ReadStreamsLive, AppendStreamsLive);
 
 describe("Effect stream capabilities", () => {
   test("schema-backed faults preserve client classification and unknown append durability", () => {
@@ -73,7 +76,7 @@ describe("Effect stream capabilities", () => {
         const second = yield* opened.session.next;
         const ended = yield* opened.session.done;
         return { appended, first, second, ended };
-      }).pipe(Effect.scoped, Effect.provide(ReadStreamsLive), Effect.provide(AppendStreamsLive)),
+      }).pipe(Effect.scoped, (effect) => provideTestLayers(effect, StreamTestLive)),
     );
 
     expect(Exit.isSuccess(exit)).toBe(true);
@@ -112,7 +115,7 @@ describe("Effect stream capabilities", () => {
           }
           yield* opened.session.next;
           return yield* opened.session.done;
-        }).pipe(Effect.scoped, Effect.provide(ReadStreamsLive)),
+        }).pipe(Effect.scoped, (effect) => provideTestLayers(effect, ReadStreamsLive)),
       );
 
       expect(Exit.isSuccess(exit)).toBe(scenario === "early-return");
@@ -133,7 +136,11 @@ describe("Effect stream capabilities", () => {
           if (opened.status !== "ok") return opened;
           yield* Deferred.succeed(acquired, undefined);
           return yield* opened.session.next;
-        }).pipe(Effect.scoped, Effect.provide(ReadStreamsLive), Effect.forkChild);
+        }).pipe(
+          Effect.scoped,
+          (effect) => provideTestLayers(effect, ReadStreamsLive),
+          Effect.forkChild,
+        );
         yield* Deferred.await(acquired);
         yield* Fiber.interrupt(fiber);
         return yield* Fiber.await(fiber);
@@ -182,7 +189,7 @@ describe("Effect stream capabilities", () => {
           sameRead: reads === controls.read,
           sameAppend: appends === controls.append,
         };
-      }).pipe(Effect.scoped, Effect.provide(TestStreamsLayer(handlers))),
+      }).pipe(Effect.scoped, (effect) => provideTestLayers(effect, TestStreamsLayer(handlers))),
     );
     expect(result).toEqual({
       read: { status: "not-found" },

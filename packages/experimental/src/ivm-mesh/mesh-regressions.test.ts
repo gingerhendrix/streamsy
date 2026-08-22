@@ -33,6 +33,7 @@ import {
   ProjectionPoison,
   StreamAppendError,
 } from "../effect/errors.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import {
   appendDerivedStateBatch,
   DerivedRecoveryLive,
@@ -58,6 +59,11 @@ const generous: CatchUpLimits = {
   maxBytes: 100_000,
 };
 const noRetry = { initialDelay: 1, maxDelay: 1, multiplier: 1, maxRetries: 0 };
+const MeshTestLive = DerivedRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 interface Harness {
   readonly adapter: StorageAdapter;
@@ -79,11 +85,7 @@ afterEach(async () => {
 });
 
 const provideLive = <A, E, R>(program: Effect.Effect<A, E, R>) =>
-  program.pipe(
-    Effect.provide(DerivedRecoveryLive),
-    Effect.provide(ReadStreamsLive),
-    Effect.provide(AppendStreamsLive),
-  );
+  provideTestLayers(program, MeshTestLive);
 
 async function harness(): Promise<Harness> {
   const adapter = createMemoryStorageAdapter();
@@ -205,10 +207,14 @@ async function runScripted(
           return batch.items;
         }),
       reduce: options.reduce ?? ((items) => items.map(fact)),
-    }).pipe(
-      Effect.provide(DerivedRecoveryTest(() => Effect.succeed(recovered))),
-      Effect.provide(scriptedReadLayer(pages)),
-      Effect.provide(AppendStreamsLive),
+    }).pipe((effect) =>
+      provideTestLayers(
+        effect,
+        Layer.merge(
+          DerivedRecoveryTest(() => Effect.succeed(recovered)),
+          scriptedReadLayer(pages),
+        ).pipe(Layer.merge(AppendStreamsLive)),
+      ),
     ),
   );
 }
@@ -514,10 +520,14 @@ describe("projection semantic regressions", () => {
         limits: generous,
         decode: jsonItems,
         reduce: (items) => items.map(fact),
-      }).pipe(
-        Effect.provide(DerivedRecoveryTest(() => Effect.succeed(previous))),
-        Effect.provide(ReadStreamsLive),
-        Effect.provide(AppendStreamsLive),
+      }).pipe((effect) =>
+        provideTestLayers(
+          effect,
+          Layer.merge(
+            DerivedRecoveryTest(() => Effect.succeed(previous)),
+            ReadStreamsLive,
+          ).pipe(Layer.merge(AppendStreamsLive)),
+        ),
       ),
       sourceRead.opened,
     );
@@ -547,9 +557,14 @@ describe("projection semantic regressions", () => {
           decode: jsonItems,
           reduce: (items) => items.map(fact),
         }).pipe(
-          Effect.provide(DerivedRecoveryTest(() => Effect.succeed(beforePrevious))),
-          Effect.provide(scriptedReadLayer([{ offset: "00000001", items: [1] }])),
-          Effect.provide(noCommitAppend),
+          (effect) =>
+            provideTestLayers(
+              effect,
+              Layer.merge(
+                DerivedRecoveryTest(() => Effect.succeed(beforePrevious)),
+                scriptedReadLayer([{ offset: "00000001", items: [1] }]),
+              ).pipe(Layer.merge(noCommitAppend)),
+            ),
           Effect.forkChild,
         );
         yield* Deferred.await(entered);
@@ -608,9 +623,14 @@ describe("projection semantic regressions", () => {
           decode: jsonItems,
           reduce: (items) => items.map(fact),
         }).pipe(
-          Effect.provide(DerivedRecoveryTest(() => Effect.succeed(priorPrevious))),
-          Effect.provide(priorRead),
-          Effect.provide(AppendStreamsLive),
+          (effect) =>
+            provideTestLayers(
+              effect,
+              Layer.merge(
+                DerivedRecoveryTest(() => Effect.succeed(priorPrevious)),
+                priorRead,
+              ).pipe(Layer.merge(AppendStreamsLive)),
+            ),
           Effect.forkChild,
         );
         yield* Deferred.await(blocked);
@@ -642,10 +662,14 @@ function runScriptedEffect(
         limits: generous,
         decode: jsonItems,
         reduce: options.reduce ?? ((items) => items.map(fact)),
-      }).pipe(
-        Effect.provide(DerivedRecoveryTest(() => Effect.succeed(recovered))),
-        Effect.provide(scriptedReadLayer(pages)),
-        Effect.provide(AppendStreamsLive),
+      }).pipe((effect) =>
+        provideTestLayers(
+          effect,
+          Layer.merge(
+            DerivedRecoveryTest(() => Effect.succeed(recovered)),
+            scriptedReadLayer(pages),
+          ).pipe(Layer.merge(AppendStreamsLive)),
+        ),
       ),
     ),
   );
@@ -833,12 +857,7 @@ describe("Live adapter ambiguous append evidence", () => {
           previous,
           sourceThrough: "00000001",
           facts: [fact(1)],
-        }).pipe(
-          Effect.provide(DerivedRecoveryLive),
-          Effect.provide(ReadStreamsLive),
-          Effect.provide(AppendStreamsLive),
-          Effect.forkChild,
-        );
+        }).pipe((effect) => provideTestLayers(effect, MeshTestLive), Effect.forkChild);
         yield* Effect.promise(() => committed);
         yield* Fiber.interrupt(fiber);
         return yield* Fiber.await(fiber);

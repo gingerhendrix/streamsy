@@ -4,13 +4,20 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive } from "./derived-append.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUp } from "./projection.ts";
+
+const MeshTestLive = DerivedRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 describe("Effect-first mesh — SQLite", () => {
   test("reopens and resumes from durable lineage without duplicate output", async () => {
@@ -76,11 +83,7 @@ async function makeHarness(filename: string) {
               headers: { operation: "upsert" },
             }));
           },
-        }).pipe(
-          Effect.provide(DerivedRecoveryLive),
-          Effect.provide(ReadStreamsLive),
-          Effect.provide(AppendStreamsLive),
-        ),
+        }).pipe((effect) => provideTestLayers(effect, MeshTestLive)),
       ),
     async close() {
       await client.close();

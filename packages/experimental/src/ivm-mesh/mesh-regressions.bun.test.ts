@@ -12,10 +12,11 @@ import {
   type StreamProtocolHandle,
 } from "@streamsy/core";
 import { createSqliteStorageAdapter, type SqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import { IncompatibleLineage, MalformedLineage, StreamAppendError } from "../effect/errors.ts";
 import {
   appendDerivedStateBatch,
@@ -29,6 +30,11 @@ import { MESH_LINEAGE_TYPE, createLineageEvent } from "./state-meta.ts";
 
 const decoder = new TextDecoder();
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
+const MeshTestLive = DerivedRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 interface SqliteHarness {
   readonly adapter: SqliteStorageAdapter;
@@ -40,11 +46,7 @@ interface SqliteHarness {
 }
 
 const provideLive = <A, E, R>(program: Effect.Effect<A, E, R>) =>
-  program.pipe(
-    Effect.provide(DerivedRecoveryLive),
-    Effect.provide(ReadStreamsLive),
-    Effect.provide(AppendStreamsLive),
-  );
+  provideTestLayers(program, MeshTestLive);
 
 async function harness(filename?: string): Promise<SqliteHarness> {
   const adapter = createSqliteStorageAdapter(filename ? { filename } : {});

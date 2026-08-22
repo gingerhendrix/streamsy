@@ -4,16 +4,27 @@ import { join as joinPath } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient, type JsonValue } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
+import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
 import { catchUpDynamicFanInState, FanInRecoveryLive } from "./fan-in-state.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUpState } from "./state-projection.ts";
 
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
+const StateProjectionTestLive = Layer.merge(DerivedRecoveryLive, DerivedStateHistoryLive).pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
+const FanInTestLive = FanInRecoveryLive.pipe(
+  Layer.provide(ReadStreamsLive),
+  Layer.merge(ReadStreamsLive),
+  Layer.merge(AppendStreamsLive),
+);
 
 describe("recovered State and dynamic fan-in — SQLite", () => {
   test("restores application state and member cursors after reopening the database", async () => {
@@ -104,12 +115,7 @@ async function makeHarness(filename: string) {
               ],
             };
           },
-        }).pipe(
-          Effect.provide(DerivedStateHistoryLive),
-          Effect.provide(DerivedRecoveryLive),
-          Effect.provide(ReadStreamsLive),
-          Effect.provide(AppendStreamsLive),
-        ),
+        }).pipe((effect) => provideTestLayers(effect, StateProjectionTestLive)),
       ),
     board: () =>
       Effect.runPromise(
@@ -172,11 +178,7 @@ async function makeHarness(filename: string) {
               facts: [{ type: "row", key: member.identity.name, headers: { operation: "delete" } }],
             };
           },
-        }).pipe(
-          Effect.provide(FanInRecoveryLive),
-          Effect.provide(ReadStreamsLive),
-          Effect.provide(AppendStreamsLive),
-        ),
+        }).pipe((effect) => provideTestLayers(effect, FanInTestLive)),
       ),
     async close() {
       await client.close();
