@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/node-builtin-import, effecttsgo/process-env -- This is the Bun executable edge: Web fetch handlers, Node-compatible static-asset reads, the listen port read from the process environment, and one startup line on the terminal. Application work runs through the single ManagedRuntime this file owns. */
 /**
  * Local Bun host.
  *

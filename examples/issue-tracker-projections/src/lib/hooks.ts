@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-date, effecttsgo/global-timers -- useNow is the React binding for browser wall-clock time; its interval is created and cleared by the effect that owns it. Importing Effect would pull the runtime into the browser bundle. */
 /** React bindings over the durable feeds and the shareable URL. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { foldCollection } from "./state.ts";

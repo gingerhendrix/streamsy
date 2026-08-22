@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/global-fetch -- This is the Promise-native browser client for the demo's own same-origin API; Web fetch and WebCrypto identifiers are the platform contract here, and importing Effect would pull the runtime into the browser bundle. */
 /** Typed browser client for the demo API. Every failure surfaces a message. */
 import type {
   ApiError,

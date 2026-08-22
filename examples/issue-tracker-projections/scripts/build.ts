@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This one-shot Bun build executable resolves its output paths with the Node-compatible filesystem and path APIs and reports bundle results directly to the invoking terminal. */
 /**
  * Build the browser bundle and prove the Worker entry bundles for the
  * Cloudflare runtime. Alchemy bundles the Worker again at deploy time; this

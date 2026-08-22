@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-timers, effecttsgo/new-promise -- React owns this browser edge: event handlers and effects are Promise-native, wall-clock stamps only annotate optimistic overlays for display, and the refresh interval and the bounded convergence wait are created and cleared by the component that owns them. Importing Effect here would pull the runtime into the browser bundle for no behavioural gain. */
 /**
  * Projection issue tracker workspace.
  *

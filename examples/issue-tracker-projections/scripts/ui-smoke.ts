@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/global-fetch, effecttsgo/node-builtin-import, effecttsgo/process-env -- This Bun browser-smoke executable resolves the built bundle with Node-compatible filesystem and path APIs, reads its optional Playwright binary from the process environment, drives Playwright's Promise-native API and Web fetch, and reports skip or pass to the invoking terminal. */
 /**
  * Browser smoke over a production build of the UI.
  *

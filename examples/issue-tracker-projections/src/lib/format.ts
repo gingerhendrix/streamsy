@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-date -- These are browser display helpers: Date parses and renders an instant the caller supplies, and relativeTime's default argument is the browser wall clock for call sites that do not pass one (the app passes useNow()). Importing Effect would pull the runtime into the browser bundle. */
 /** Display helpers. Every value here is derived from durable domain state. */
 import type { IssuePriority, IssueStatus } from "../../shared/model.ts";
 import { TEAM } from "../../shared/model.ts";

@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/global-fetch, effecttsgo/global-random, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/process-env -- This standalone Bun smoke executable reads its target URL from the process environment, derives a disposable workspace suffix, drives the deployed HTTP surface with Web fetch, waits between convergence polls on a self-contained timer, and reports its evidence to the invoking terminal. */
 /**
  * Deployment smoke against a live URL.
  *

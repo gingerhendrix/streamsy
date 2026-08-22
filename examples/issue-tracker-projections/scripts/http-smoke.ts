@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/node-builtin-import -- This Bun smoke executable is a Promise-native driver over the local host's public HTTP surface; it creates its temporary SQLite database with Node-compatible filesystem and path APIs and reports its single result line to the invoking terminal. */
 /**
  * HTTP smoke over the local host.
  *

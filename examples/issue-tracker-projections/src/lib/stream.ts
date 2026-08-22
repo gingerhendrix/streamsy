@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/global-fetch, effecttsgo/global-timers, effecttsgo/new-promise -- This is the browser's long-poll tail over Web fetch; the abortable backoff delay owns and clears its own timer and abort listener, and an unexpected mid-session retry is reported to the browser console. Importing Effect would pull the runtime into the browser bundle. */
 /**
  * Browser tail of a durable State stream.
  *

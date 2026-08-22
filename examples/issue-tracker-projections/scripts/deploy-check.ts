@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/process-env -- This Bun check executable spawns child processes with the Node-compatible child-process and path APIs, wrapping each one in the Promise its exit event settles, reads the stage and credential environment directly, and reports every step to the invoking terminal. */
 /**
  * Validate a deployable topology without touching production.
  *

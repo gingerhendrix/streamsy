@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This Bun audit executable walks the on-disk Alchemy state tree with the Node-compatible filesystem and path APIs and reports its findings and exit status directly to the invoking terminal. */
 /**
  * Alchemy-state disposable-identifier audit.
  *

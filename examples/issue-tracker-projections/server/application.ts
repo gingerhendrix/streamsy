@@ -552,6 +552,7 @@ export const syncIssue = Effect.fn("Application.syncIssue")(function* (
 /** Wall-clock reads go through the Effect clock, so a test can control them. */
 const now = Effect.map(
   Effect.clockWith((clock) => clock.currentTimeMillis),
+  // oxlint-disable-next-line effecttsgo/global-date -- The instant is already the Effect clock's value; `Date` only renders those millis as the ISO-8601 string the durable event carries on the wire.
   (millis) => new Date(millis).toISOString(),
 );
 

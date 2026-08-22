@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function -- Cloudflare's ExportedHandler fetch and queue entry points are Promise-native platform contracts; both run application descriptions through the isolate's single ManagedRuntime. */
 /**
  * Cloudflare Worker host.
  *

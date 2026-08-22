@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This Bun check executable is a Promise-native driver over the local host's public HTTP surface and reports its single result line to the invoking terminal. */
 /**
  * Seed the deterministic `main` workspace twice and verify that seeding is
  * idempotent: the same issues, the same board, no duplicated rows.
