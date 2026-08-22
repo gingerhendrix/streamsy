@@ -21,9 +21,7 @@ const app = await alchemy(isExperimental ? "streamsy-docs-experimental" : "strea
 // for og:image rendering on Cloudflare's workerd runtime.
 const site = await Website(isExperimental ? "streamsy-docs-experimental" : "streamsy-docs", {
   name: isExperimental ? "streamsy-docs-experimental" : undefined,
-  build: isExperimental
-    ? { command: "bun run build", env: { SITE_BASE_PATH: "/experimental" } }
-    : "bun run build",
+  build: "bun run build",
   entrypoint: ".output/server/index.mjs",
   assets: ".output/public",
   compatibility: "node",
@@ -31,8 +29,8 @@ const site = await Website(isExperimental ? "streamsy-docs-experimental" : "stre
   noBundle: true,
   spa: false,
   ...(isExperimental
-    ? { routes: [{ pattern: "streamsy.gandrew.com/experimental*", adopt: true }] }
-    : { domains: ["streamsy.gandrew.com"] }),
+    ? { domains: ["experimental.streamsy.dev"] }
+    : { domains: ["streamsy.gandrew.com", "streamsy.dev"] }),
 });
 
 console.log({ url: site.url });
