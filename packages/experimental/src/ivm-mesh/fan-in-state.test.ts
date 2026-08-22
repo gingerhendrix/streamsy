@@ -6,7 +6,7 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity, type StreamIdentity } from "../causal.ts";
@@ -28,6 +28,7 @@ const FanInTestLive = FanInRecoveryLive.pipe(
   Layer.merge(ReadStreamsLive),
   Layer.merge(AppendStreamsLive),
 );
+const isProjectionPoison = Schema.is(ProjectionPoison);
 
 afterEach(async () => {
   await Promise.all(Array.from(clients, (client) => client.close()));
@@ -301,7 +302,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value instanceof ProjectionPoison).toBe(true);
+      expect(Option.isSome(error) && isProjectionPoison(error.value)).toBe(true);
     }
     expect(await h.adapter.listMessages(h.target.streamId)).toEqual(stored);
     // The poison is recoverable once decoding works again.
@@ -327,7 +328,7 @@ describe("catchUpDynamicFanInState — deterministic dynamic fan-in", () => {
       streamId: "absent-membership",
     });
     const result = await Effect.runPromise(
-      program({ ...h, membership: orphan } as Harness).pipe(Effect.orDie),
+      program({ ...h, membership: orphan }).pipe(Effect.orDie),
     );
     expect(result).toMatchObject({ status: "missing", stream: "membership" });
   });

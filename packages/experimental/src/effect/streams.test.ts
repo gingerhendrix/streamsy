@@ -103,15 +103,13 @@ describe("Effect stream capabilities", () => {
           if (opened.status !== "ok") return opened;
           if (scenario === "early-return") return opened.status;
           if (scenario === "missing-start-offset") {
-            return yield* Effect.fail(
-              new StreamReadError({
-                operation: "invariant",
-                failure: opened,
-                message: "missing start offset",
-                code: "unknown",
-                retryable: false,
-              }),
-            );
+            return yield* new StreamReadError({
+              operation: "invariant",
+              failure: opened,
+              message: "missing start offset",
+              code: "unknown",
+              retryable: false,
+            });
           }
           yield* opened.session.next;
           return yield* opened.session.done;

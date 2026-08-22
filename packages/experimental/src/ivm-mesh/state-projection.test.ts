@@ -6,7 +6,7 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
@@ -37,6 +37,8 @@ const StateProjectionTestLive = Layer.merge(DerivedRecoveryLive, DerivedStateHis
   Layer.merge(ReadStreamsLive),
   Layer.merge(AppendStreamsLive),
 );
+const isProjectionPoison = Schema.is(ProjectionPoison);
+const isStateRestorePoison = Schema.is(StateRestorePoison);
 
 interface Harness {
   readonly adapter: StorageAdapter;
@@ -179,13 +181,13 @@ describe("catchUpState — recovered single-source State", () => {
       createLineageEvent(h.lane, {
         sourceThrough: appended.offset,
         nextProducerSeq: 1,
-      }) as unknown as JsonValue,
+      }),
     ]);
     const exit = await Effect.runPromiseExit(program(h));
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value instanceof StateRestorePoison).toBe(true);
+      expect(Option.isSome(error) && isStateRestorePoison(error.value)).toBe(true);
     }
   });
 
@@ -196,8 +198,8 @@ describe("catchUpState — recovered single-source State", () => {
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value instanceof ProjectionPoison).toBe(true);
-      if (Option.isSome(error) && error.value instanceof ProjectionPoison) {
+      expect(Option.isSome(error) && isProjectionPoison(error.value)).toBe(true);
+      if (Option.isSome(error) && isProjectionPoison(error.value)) {
         expect(error.value.phase).toBe("step");
       }
     }
@@ -211,7 +213,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value instanceof StateRestorePoison).toBe(true);
+      expect(Option.isSome(error) && isStateRestorePoison(error.value)).toBe(true);
     }
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
   });
@@ -280,7 +282,7 @@ describe("catchUpState — recovered single-source State", () => {
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value instanceof StateRestorePoison).toBe(true);
+      expect(Option.isSome(error) && isStateRestorePoison(error.value)).toBe(true);
     }
     const written = await h.adapter.listMessages(h.target.streamId);
     expect(written).toHaveLength(2);

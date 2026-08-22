@@ -10,7 +10,7 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
@@ -51,6 +51,7 @@ const MeshTestLive = DerivedRecoveryLive.pipe(
   Layer.merge(ReadStreamsLive),
   Layer.merge(AppendStreamsLive),
 );
+const isProjectionPoison = Schema.is(ProjectionPoison);
 
 afterEach(async () => {
   await Promise.all(Array.from(clients, (client) => client.close()));
@@ -349,7 +350,7 @@ describe("Effect-first mesh", () => {
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error) && error.value instanceof ProjectionPoison).toBe(true);
+      expect(Option.isSome(error) && isProjectionPoison(error.value)).toBe(true);
     }
     expect(await h.adapter.listMessages(h.target.streamId)).toHaveLength(0);
   });

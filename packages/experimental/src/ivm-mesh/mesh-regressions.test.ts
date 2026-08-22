@@ -15,7 +15,7 @@ import {
   type StreamProtocolClient,
   type StreamProtocolHandle,
 } from "@streamsy/core";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { bindStream, type StreamBinding } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
@@ -64,6 +64,7 @@ const MeshTestLive = DerivedRecoveryLive.pipe(
   Layer.merge(ReadStreamsLive),
   Layer.merge(AppendStreamsLive),
 );
+const isIncompatibleLineage = Schema.is(IncompatibleLineage);
 
 interface Harness {
   readonly adapter: StorageAdapter;
@@ -332,10 +333,10 @@ describe("recovery and producer regressions", () => {
     const bareExit = await Effect.runPromiseExit(
       provideLive(recoverDerivedState(bare.target, bare.lane)),
     );
-    expect(typedError(bareExit)).toBeInstanceOf(IncompatibleLineage);
-    expect((typedError(bareExit) as IncompatibleLineage).message).toContain(
-      "lineage transaction boundary",
-    );
+    const bareError = typedError(bareExit);
+    expect(isIncompatibleLineage(bareError)).toBe(true);
+    if (!isIncompatibleLineage(bareError)) throw new Error("expected incompatible lineage");
+    expect(bareError.message).toContain("lineage transaction boundary");
 
     const mismatch = await harness();
     const accepted = await append(mismatch, await ready(mismatch), "00000001", [fact(1)]);
@@ -492,7 +493,7 @@ describe("projection semantic regressions", () => {
   test("interruption during recovery and blocked source reads releases each Live session once", async () => {
     const recoveryHarness = await harness();
     let recoveryCancelled = 0;
-    const recoveryRead = blockedReadClient(() => recoveryCancelled++);
+    const recoveryRead = await Effect.runPromise(blockedReadClient(() => recoveryCancelled++));
     const recoveryTarget = bindStream({
       ...recoveryHarness.target,
       client: recoveryRead.client,
@@ -506,7 +507,7 @@ describe("projection semantic regressions", () => {
 
     const sourceHarness = await harness();
     let sourceCancelled = 0;
-    const sourceRead = blockedReadClient(() => sourceCancelled++);
+    const sourceRead = await Effect.runPromise(blockedReadClient(() => sourceCancelled++));
     const source = bindStream({
       ...sourceHarness.source,
       client: sourceRead.client,
@@ -730,22 +731,25 @@ describe("Live adapter ambiguous append evidence", () => {
       readonly epoch: string | null;
       readonly seq: string | null;
     }> = [];
-    const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
-      const request = new Request(input, init);
-      const response = await handler.fetch(request);
-      if (request.method === "POST" && request.headers.has("producer-id")) {
-        producerTuples.push({
-          id: request.headers.get("producer-id"),
-          epoch: request.headers.get("producer-epoch"),
-          seq: request.headers.get("producer-seq"),
-        });
-        if (lose) {
-          lose = false;
-          throw new TypeError("response lost after durable commit");
+    const fetch: typeof globalThis.fetch = Object.assign(
+      async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+        const request = new Request(input, init);
+        const response = await handler.fetch(request);
+        if (request.method === "POST" && request.headers.has("producer-id")) {
+          producerTuples.push({
+            id: request.headers.get("producer-id"),
+            epoch: request.headers.get("producer-epoch"),
+            seq: request.headers.get("producer-seq"),
+          });
+          if (lose) {
+            lose = false;
+            throw new TypeError("response lost after durable commit");
+          }
         }
-      }
-      return response;
-    }) as typeof globalThis.fetch;
+        return response;
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    );
     const client = officialProtocolClient({
       urlFor: (id) => protocolPathUrl("https://mesh.test/streams", id),
       fetch,
@@ -841,13 +845,10 @@ describe("Live adapter ambiguous append evidence", () => {
     let commits = 0;
     h.protocol.onAfterCommit(() => commits++);
     const previous = await ready(h);
-    let committedResolve!: () => void;
-    const committed = new Promise<void>((resolve) => {
-      committedResolve = resolve;
-    });
+    const committed = await Effect.runPromise(Deferred.make<void>());
     const ambiguous = bindStream({
       ...h.target,
-      client: blockResponseAfterCommit(h.client, committedResolve),
+      client: blockResponseAfterCommit(h.client, committed),
     });
     const exit = await Effect.runPromise(
       Effect.gen(function* () {
@@ -858,7 +859,7 @@ describe("Live adapter ambiguous append evidence", () => {
           sourceThrough: "00000001",
           facts: [fact(1)],
         }).pipe((effect) => provideTestLayers(effect, MeshTestLive), Effect.forkChild);
-        yield* Effect.promise(() => committed);
+        yield* Deferred.await(committed);
         yield* Fiber.interrupt(fiber);
         return yield* Fiber.await(fiber);
       }),
@@ -888,11 +889,14 @@ async function transportAppendHarness(transport: "direct" | "fetch") {
   const protocol = new StreamProtocol({ storage: { adapter } });
   let posts = 0;
   const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
-  const fetch = (async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
-    const request = new Request(input, init);
-    if (request.method === "POST" && request.headers.has("producer-id")) posts++;
-    return handler.fetch(request);
-  }) as typeof globalThis.fetch;
+  const fetch: typeof globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.method === "POST" && request.headers.has("producer-id")) posts++;
+      return handler.fetch(request);
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  );
   const client =
     transport === "direct"
       ? directProtocolClient(protocol)
@@ -952,11 +956,14 @@ function jsonItems(batch: StreamBatch): readonly JsonValue[] {
   return batch.items;
 }
 
-async function interruptAfterOpen<A, E>(program: Effect.Effect<A, E>, opened: Promise<void>) {
+async function interruptAfterOpen<A, E>(
+  program: Effect.Effect<A, E>,
+  opened: Deferred.Deferred<void>,
+) {
   return Effect.runPromise(
     Effect.gen(function* () {
       const fiber = yield* program.pipe(Effect.forkChild);
-      yield* Effect.promise(() => opened);
+      yield* Deferred.await(opened);
       yield* Fiber.interrupt(fiber);
       return yield* Fiber.await(fiber);
     }),
@@ -967,42 +974,41 @@ async function unusedClientOperation(): Promise<never> {
   throw new Error("unused client operation");
 }
 
-function blockedReadClient(onCancel: () => void): {
+function blockedReadClient(onCancel: () => void): Effect.Effect<{
   readonly client: StreamProtocolClient;
-  readonly opened: Promise<void>;
-} {
-  let openedResolve!: () => void;
-  const opened = new Promise<void>((resolve) => {
-    openedResolve = resolve;
+  readonly opened: Deferred.Deferred<void>;
+}> {
+  return Effect.gen(function* () {
+    const opened = yield* Deferred.make<void>();
+    const client: StreamProtocolClient = {
+      stream(streamId): StreamProtocolHandle {
+        return {
+          id: streamId,
+          head: unusedClientOperation,
+          create: unusedClientOperation,
+          append: unusedClientOperation,
+          appendJsonBatch: unusedClientOperation,
+          close: unusedClientOperation,
+          read: async <T extends JsonValue>() => {
+            const session = new ClientReadSession<T>({ startOffset: "-1" });
+            const originalCancel = session.cancel.bind(session);
+            session.cancel = (reason?: unknown) => {
+              onCancel();
+              originalCancel(reason);
+            };
+            const originalNext = session.next.bind(session);
+            session.next = () => {
+              Deferred.doneUnsafe(opened, Effect.void);
+              return originalNext();
+            };
+            return { status: "ok", session };
+          },
+        };
+      },
+      async close() {},
+    };
+    return { client, opened };
   });
-  const client: StreamProtocolClient = {
-    stream(streamId): StreamProtocolHandle {
-      return {
-        id: streamId,
-        head: unusedClientOperation,
-        create: unusedClientOperation,
-        append: unusedClientOperation,
-        appendJsonBatch: unusedClientOperation,
-        close: unusedClientOperation,
-        read: async <T extends JsonValue>() => {
-          const session = new ClientReadSession<T>({ startOffset: "-1" });
-          const originalCancel = session.cancel.bind(session);
-          session.cancel = (reason?: unknown) => {
-            onCancel();
-            originalCancel(reason);
-          };
-          const originalNext = session.next.bind(session);
-          session.next = () => {
-            openedResolve();
-            return originalNext();
-          };
-          return { status: "ok", session };
-        },
-      };
-    },
-    async close() {},
-  };
-  return { client, opened };
 }
 
 function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolClient {
@@ -1022,19 +1028,14 @@ function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolCl
 
 function blockResponseAfterCommit(
   client: StreamProtocolClient,
-  committed: () => void,
+  committed: Deferred.Deferred<void>,
 ): StreamProtocolClient {
   return mapAppend(client, async (delegate, items, options) => {
     const result = await delegate.appendJsonBatch(items, options);
     if (result.status !== "appended") return result;
-    committed();
-    return new Promise<ClientAppendResult>((_resolve, reject) => {
-      const signal = options?.signal;
-      if (signal?.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    Deferred.doneUnsafe(committed, Effect.void);
+    return Effect.runPromise(Effect.never, {
+      signal: options?.signal,
     });
   });
 }

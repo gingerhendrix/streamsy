@@ -15,7 +15,9 @@ const sum: Materializer<number, number> = {
 
 const decodeNumbers = (batch: { kind: string; items?: readonly unknown[] }): Iterable<number> => {
   if (batch.kind !== "json") throw new Error(`expected json batch, received ${batch.kind}`);
-  return batch.items as readonly number[];
+  const items = batch.items ?? [];
+  if (!items.every((item) => typeof item === "number")) throw new TypeError("expected numbers");
+  return items;
 };
 
 describe("streamCheckpointStore", () => {

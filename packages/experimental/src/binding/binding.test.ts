@@ -5,14 +5,20 @@ import {
   directProtocolClient,
   StreamProtocol,
   type ClientReadResult,
+  type JsonValue,
   type ReadStreamOptions,
   type StreamProtocolClient,
+  type StreamProtocolHandle,
 } from "@streamsy/core";
 import { describe, expect, it, vi } from "vitest";
 import { streamIdentity } from "../causal.ts";
 import { appendBoundStream, bindStream, readBoundStream } from "./binding.ts";
 
 const noRetry = { initialDelay: 1, maxDelay: 1, multiplier: 1, maxRetries: 0 };
+
+function unusedHandleOperation(): Promise<never> {
+  return Promise.reject(new Error("unused client operation"));
+}
 
 function directHarness(identityName = "logical-orders", streamId = "physical/orders") {
   const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
@@ -24,8 +30,11 @@ function directHarness(identityName = "logical-orders", streamId = "physical/ord
 function fetchHarness(identityName = "logical-orders", streamId = "physical/orders") {
   const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
   const handler = createHttpHandler({ protocol, pathPrefix: "/streams" });
-  const fetch = ((input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
-    handler.fetch(new Request(input, init))) as typeof globalThis.fetch;
+  const fetch: typeof globalThis.fetch = Object.assign(
+    (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
+      handler.fetch(new Request(input, init)),
+    { preconnect: globalThis.fetch.preconnect },
+  );
   const client = officialProtocolClient({
     urlFor: (id) => protocolPathUrl("https://stream.test/streams", id),
     fetch,
@@ -71,15 +80,27 @@ describe("fixed-client binding", () => {
   });
 
   it("passes -1 and now through unchanged to the fixed handle read", async () => {
-    const read = vi.fn(
-      async (_options?: ReadStreamOptions): Promise<ClientReadResult> => ({ status: "not-found" }),
-    );
-    const handle = { read };
+    const readCalls = vi.fn((_options?: ReadStreamOptions) => undefined);
+    const read = <T extends JsonValue = JsonValue>(
+      options?: ReadStreamOptions,
+    ): Promise<ClientReadResult<T>> => {
+      readCalls(options);
+      return Promise.resolve({ status: "not-found" });
+    };
+    const handle: StreamProtocolHandle = {
+      id: "physical",
+      head: unusedHandleOperation,
+      create: unusedHandleOperation,
+      append: unusedHandleOperation,
+      appendJsonBatch: unusedHandleOperation,
+      close: unusedHandleOperation,
+      read,
+    };
     const stream = vi.fn((_streamId: string) => handle);
-    const client = {
+    const client: StreamProtocolClient = {
       stream,
       close: vi.fn(async () => undefined),
-    } as unknown as StreamProtocolClient;
+    };
     const binding = bindStream({
       identity: streamIdentity("logical"),
       client,
@@ -91,8 +112,8 @@ describe("fixed-client binding", () => {
 
     expect(stream).toHaveBeenNthCalledWith(1, "physical");
     expect(stream).toHaveBeenNthCalledWith(2, "physical");
-    expect(read).toHaveBeenNthCalledWith(1, { offset: "-1" });
-    expect(read).toHaveBeenNthCalledWith(2, { offset: "now", live: "long-poll" });
+    expect(readCalls).toHaveBeenNthCalledWith(1, { offset: "-1" });
+    expect(readCalls).toHaveBeenNthCalledWith(2, { offset: "now", live: "long-poll" });
   });
 
   it.each([
@@ -124,15 +145,16 @@ describe("fixed-client binding", () => {
 
   it("does not mint an acknowledgement when fetch success lacks an exact offset", async () => {
     const requests: Request[] = [];
-    const fetch = vi.fn(
-      async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+    const fetch: typeof globalThis.fetch = Object.assign(
+      vi.fn(async (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
         requests.push(new Request(input, init));
         return new Response(null, { status: 204 });
-      },
+      }),
+      { preconnect: globalThis.fetch.preconnect },
     );
     const client = officialProtocolClient({
       urlFor: () => "https://stream.test/missing-offset",
-      fetch: fetch as unknown as typeof globalThis.fetch,
+      fetch,
       backoffOptions: noRetry,
     });
     const binding = bindStream({
