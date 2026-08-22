@@ -9,13 +9,15 @@
  * skipped here rather than treated as a fault: the browser is a reader, not a
  * projection owner.
  */
-import type { BoardRow, Project } from "../../shared/model.ts";
 import {
+  BoardRowSchema,
   BOARD_ROW_COLLECTION,
-  isIssuePriority,
-  isIssueStatus,
+  ProjectSchema,
   PROJECT_COLLECTION,
+  type BoardRow,
+  type Project,
 } from "../../shared/model.ts";
+import { Schema } from "effect";
 
 /** One State message as it appears in the JSON stream body. */
 export interface StateItem {
@@ -42,22 +44,14 @@ function isDelete(item: StateItem): boolean {
  * rendered as a partly-typed card.
  */
 export function toBoardRow(value: Record<string, unknown>): BoardRow | undefined {
-  const { issueId, issueKey, title, status, priority, assigneeId, commentCount, updatedAt } = value;
-  if (typeof issueId !== "string" || typeof issueKey !== "string") return undefined;
-  if (typeof title !== "string" || typeof updatedAt !== "string") return undefined;
-  if (typeof status !== "string" || !isIssueStatus(status)) return undefined;
-  if (typeof priority !== "string" || !isIssuePriority(priority)) return undefined;
-  if (assigneeId !== null && typeof assigneeId !== "string") return undefined;
-  if (typeof commentCount !== "number") return undefined;
-  return { issueId, issueKey, title, status, priority, assigneeId, commentCount, updatedAt };
+  const decoded = Schema.decodeUnknownOption(BoardRowSchema)(value);
+  return decoded._tag === "Some" ? decoded.value : undefined;
 }
 
 /** Decode one durable project row, on the same terms as {@link toBoardRow}. */
 export function toProject(value: Record<string, unknown>): Project | undefined {
-  const { projectId, projectKey, name } = value;
-  if (typeof projectId !== "string" || typeof projectKey !== "string") return undefined;
-  if (typeof name !== "string") return undefined;
-  return { projectId, projectKey, name };
+  const decoded = Schema.decodeUnknownOption(ProjectSchema)(value);
+  return decoded._tag === "Some" ? decoded.value : undefined;
 }
 
 /**

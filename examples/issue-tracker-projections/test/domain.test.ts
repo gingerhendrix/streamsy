@@ -1,12 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
-  assertIdentifier,
+  Identifier,
   boardRow,
   evolveIssue,
   streamNames,
   type IssueDetail,
   type IssueEvent,
 } from "../shared/domain.ts";
+import { Schema } from "effect";
 
 const created: IssueEvent = {
   type: "IssueCreated",
@@ -121,8 +122,9 @@ describe("issue domain", () => {
   });
 
   test("identifiers that would break stream paths are rejected", () => {
-    expect(() => assertIdentifier("a/b", "issueId")).toThrow(TypeError);
-    expect(() => assertIdentifier("", "issueId")).toThrow(TypeError);
-    expect(assertIdentifier("issue-1", "issueId")).toBe("issue-1");
+    const decodeIdentifier = Schema.decodeUnknownSync(Identifier);
+    expect(() => decodeIdentifier("a/b")).toThrow();
+    expect(() => decodeIdentifier("")).toThrow();
+    expect(decodeIdentifier("issue-1")).toBe("issue-1");
   });
 });

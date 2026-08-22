@@ -1,92 +1,88 @@
-/**
- * Wire contract shared by the local host, the Worker, and the browser.
- *
- * Request bodies are defined once as Effect Schemas in `./requests.ts` and
- * re-exported here as types. The re-export is type-only, so the browser bundle
- * still contains no Effect runtime.
- */
-import type { BoardRow, IssueDetail, Project } from "./domain.ts";
+/** Canonical wire contracts shared by the local host, Worker, scripts, and browser. */
+import { Schema } from "effect";
+import { BoardRowSchema, IssueDetailSchema, ProjectSchema } from "./model.ts";
 
 export type { CreateIssueRequest, CreateProjectRequest, IssueCommandRequest } from "./requests.ts";
 
-export interface HopReport {
-  readonly label: "issue-detail" | "project-board";
-  readonly source: string;
-  readonly through: string | null;
-  readonly output: string | null;
-}
+const Ack = Schema.Struct({ stream: Schema.String, position: Schema.String });
 
-export interface CoverageReport {
-  readonly status: "proven" | "not-yet" | "incomparable";
-  readonly blockedAt?: string;
-  readonly ack: { readonly stream: string; readonly position: string };
-  readonly hops: readonly HopReport[];
-}
+export const HopReport = Schema.Struct({
+  label: Schema.Literals(["issue-detail", "project-board"]),
+  source: Schema.String,
+  through: Schema.NullOr(Schema.String),
+  output: Schema.NullOr(Schema.String),
+});
+export type HopReport = typeof HopReport.Type;
 
-/**
- * What one bounded projection pass did.
- *
- * `caught-up` is the only outcome that permits a `Synced` claim. `deferred`
- * means more bounded work remains and repair or the wake consumer will carry
- * it; `faulted` means this pass cannot make progress without intervention.
- */
-export type ProjectionOutcome = "caught-up" | "deferred" | "faulted";
+export const CoverageReport = Schema.Struct({
+  status: Schema.Literals(["proven", "not-yet", "incomparable"]),
+  blockedAt: Schema.optionalKey(Schema.String),
+  ack: Ack,
+  hops: Schema.Array(HopReport),
+});
+export type CoverageReport = typeof CoverageReport.Type;
 
-export interface ProjectionPassReport {
-  readonly label: "issue-detail" | "project-board";
-  /** The exact kernel status, or the tag of a typed mesh error. */
-  readonly status: string;
-  readonly outcome: ProjectionOutcome;
-  readonly detail?: string;
-}
+export const ProjectionOutcome = Schema.Literals(["caught-up", "deferred", "faulted"]);
+export type ProjectionOutcome = typeof ProjectionOutcome.Type;
 
-/** A read-only lineage probe for one accepted acknowledgement. */
-export interface CoverageResponse {
-  readonly issueId: string;
-  readonly projectId: string;
-  readonly coverage: CoverageReport;
-  /** Always empty: a probe reads lineage and runs no projection work. */
-  readonly projections: readonly ProjectionPassReport[];
-}
+export const ProjectionPassReport = Schema.Struct({
+  label: Schema.Literals(["issue-detail", "project-board"]),
+  status: Schema.String,
+  outcome: ProjectionOutcome,
+  detail: Schema.optionalKey(Schema.String),
+});
+export type ProjectionPassReport = typeof ProjectionPassReport.Type;
 
-export interface MutationResponse {
-  readonly commandId: string;
-  readonly issueId: string;
-  readonly projectId: string;
-  /** The exact accepted source acknowledgement for this command. */
-  readonly ack: { readonly stream: string; readonly position: string };
-  readonly reconciled: boolean;
-  readonly coverage: CoverageReport;
-  /** Classified result of every projection pass this request attempted. */
-  readonly projections: readonly ProjectionPassReport[];
-  readonly detail: IssueDetail | null;
-}
+export const CoverageResponse = Schema.Struct({
+  issueId: Schema.String,
+  projectId: Schema.String,
+  coverage: CoverageReport,
+  projections: Schema.Array(ProjectionPassReport),
+});
+export type CoverageResponse = typeof CoverageResponse.Type;
 
-export interface RepairResponse {
-  readonly repaired: readonly string[];
-  readonly board: string;
-  readonly projections: readonly ProjectionPassReport[];
-}
+export const MutationResponse = Schema.Struct({
+  commandId: Schema.String,
+  issueId: Schema.String,
+  projectId: Schema.String,
+  ack: Ack,
+  reconciled: Schema.Boolean,
+  coverage: CoverageReport,
+  projections: Schema.Array(ProjectionPassReport),
+  detail: Schema.NullOr(IssueDetailSchema),
+});
+export type MutationResponse = typeof MutationResponse.Type;
 
-export interface BoardResponse {
-  readonly projectId: string;
-  readonly boardStream: string;
-  readonly rows: readonly BoardRow[];
-}
+export const RepairResponse = Schema.Struct({
+  repaired: Schema.Array(Schema.String),
+  board: Schema.String,
+  projections: Schema.Array(ProjectionPassReport),
+});
+export type RepairResponse = typeof RepairResponse.Type;
 
-export interface ProjectsResponse {
-  readonly workspaceId: string;
-  readonly projects: readonly Project[];
-}
+export const BoardResponse = Schema.Struct({
+  projectId: Schema.String,
+  boardStream: Schema.String,
+  rows: Schema.Array(BoardRowSchema),
+});
+export type BoardResponse = typeof BoardResponse.Type;
 
-export interface HealthResponse {
-  readonly status: "ok";
-  readonly deployment: string;
-  readonly schemaVersion: string;
-  readonly host: "local" | "cloudflare";
-}
+export const ProjectsResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  projects: Schema.Array(ProjectSchema),
+});
+export type ProjectsResponse = typeof ProjectsResponse.Type;
 
-export interface ApiError {
-  readonly error: string;
-  readonly detail?: string;
-}
+export const HealthResponse = Schema.Struct({
+  status: Schema.Literal("ok"),
+  deployment: Schema.String,
+  schemaVersion: Schema.String,
+  host: Schema.Literals(["local", "cloudflare"]),
+});
+export type HealthResponse = typeof HealthResponse.Type;
+
+export const ApiError = Schema.Struct({
+  error: Schema.String,
+  detail: Schema.optionalKey(Schema.String),
+});
+export type ApiError = typeof ApiError.Type;

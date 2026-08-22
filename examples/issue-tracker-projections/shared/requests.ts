@@ -10,18 +10,10 @@
  * the same names with `import type` and pulls no Effect runtime into its bundle.
  */
 import { Schema } from "effect";
-import { IssuePrioritySchema, IssueStatusSchema, TEAM } from "./domain.ts";
+import { Identifier, IssuePrioritySchema, IssueStatusSchema, MemberId, Prose } from "./model.ts";
 
-/** One stream path segment. Identical to `isIdentifier` in `shared/model.ts`. */
-export const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-
-export const Identifier = Schema.String.check(Schema.isPattern(IDENTIFIER_PATTERN));
-
-/** Free text that must carry at least one non-space character. */
-export const Prose = Schema.String.check(Schema.isPattern(/\S/, { title: "a non-blank string" }));
-
-export const MemberId = Schema.Literals(TEAM.map((member) => member.id));
-export type MemberId = Schema.Schema.Type<typeof MemberId>;
+export { Identifier, MemberId, Prose } from "./model.ts";
+export type { MemberId as MemberIdType } from "./model.ts";
 
 export const CreateProjectRequest = Schema.Struct({
   projectId: Identifier,

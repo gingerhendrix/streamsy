@@ -1,17 +1,25 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/global-fetch -- This is the Promise-native browser client for the demo's own same-origin API; Web fetch and WebCrypto identifiers are the platform contract here, and importing Effect would pull the runtime into the browser bundle. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/global-fetch -- This Promise-native browser client owns Web fetch and WebCrypto platform boundaries. */
 /** Typed browser client for the demo API. Every failure surfaces a message. */
-import type {
+import { Option, Schema } from "effect";
+import {
   ApiError,
   BoardResponse,
   CoverageResponse,
-  CreateIssueRequest,
-  CreateProjectRequest,
   HealthResponse,
-  IssueCommandRequest,
   MutationResponse,
   ProjectsResponse,
 } from "../../shared/api.ts";
-import type { IssueDetail, Project } from "../../shared/model.ts";
+import type {
+  CreateIssueRequest,
+  CreateProjectRequest,
+  IssueCommandRequest,
+} from "../../shared/api.ts";
+import {
+  IssueDetailSchema,
+  ProjectSchema,
+  type IssueDetail,
+  type Project,
+} from "../../shared/model.ts";
 
 /**
  * A failed API call.
@@ -33,7 +41,7 @@ export class ApiFailure extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(schema: Schema.Decoder<T>, path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     const headers = new Headers(init?.headers);
@@ -49,7 +57,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const text = await response.text();
   if (!response.ok) throw new ApiFailure(errorDetail(text), response.status);
-  return parseBody(text);
+  return Schema.decodeUnknownSync(schema)(parseBody(text));
 }
 
 /**
@@ -68,16 +76,10 @@ function errorDetail(text: string): string {
     // Non-JSON error bodies stay as raw text.
     return raw;
   }
-  if (!isApiError(parsed)) return raw;
-  const { error, detail } = parsed;
+  const decoded = Schema.decodeUnknownOption(ApiError)(parsed);
+  if (Option.isNone(decoded)) return raw;
+  const { error, detail } = decoded.value;
   return detail === undefined || detail.length === 0 ? error : `${error}: ${detail}`;
-}
-
-function isApiError(value: unknown): value is ApiError {
-  if (typeof value !== "object" || value === null) return false;
-  const error: unknown = Reflect.get(value, "error");
-  const detail: unknown = Reflect.get(value, "detail");
-  return typeof error === "string" && (detail === undefined || typeof detail === "string");
 }
 
 /**
@@ -109,38 +111,43 @@ const deferQuery = (options: CommandOptions): string =>
   options.deferProjections === true ? "?projections=deferred" : "";
 
 export const api = {
-  health: (): Promise<HealthResponse> => request<HealthResponse>("/health"),
+  health: (): Promise<HealthResponse> => request(HealthResponse, "/health"),
 
   seed: (workspaceId: string): Promise<unknown> =>
-    request(`${workspacePath(workspaceId)}/seed`, { method: "POST" }),
+    request(Schema.Unknown, `${workspacePath(workspaceId)}/seed`, { method: "POST" }),
 
   listProjects: (workspaceId: string): Promise<readonly Project[]> =>
-    request<ProjectsResponse>(`${workspacePath(workspaceId)}/projects`).then(
+    request(ProjectsResponse, `${workspacePath(workspaceId)}/projects`).then(
       (response) => response.projects,
     ),
 
   createProject: (workspaceId: string, body: CreateProjectRequest): Promise<Project> =>
-    request<Project>(`${workspacePath(workspaceId)}/projects`, {
+    request(ProjectSchema, `${workspacePath(workspaceId)}/projects`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   board: (workspaceId: string, projectId: string): Promise<BoardResponse> =>
-    request<BoardResponse>(
+    request(
+      BoardResponse,
       `${workspacePath(workspaceId)}/projects/${encodeURIComponent(projectId)}/board`,
     ),
 
   repair: (workspaceId: string, projectId: string): Promise<unknown> =>
-    request(`${workspacePath(workspaceId)}/projects/${encodeURIComponent(projectId)}/repair`, {
-      method: "POST",
-    }),
+    request(
+      Schema.Unknown,
+      `${workspacePath(workspaceId)}/projects/${encodeURIComponent(projectId)}/repair`,
+      {
+        method: "POST",
+      },
+    ),
 
   createIssue: (
     workspaceId: string,
     body: CreateIssueRequest,
     options: CommandOptions = {},
   ): Promise<MutationResponse> =>
-    request<MutationResponse>(`${workspacePath(workspaceId)}/issues${deferQuery(options)}`, {
+    request(MutationResponse, `${workspacePath(workspaceId)}/issues${deferQuery(options)}`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -151,7 +158,8 @@ export const api = {
     body: IssueCommandRequest,
     options: CommandOptions = {},
   ): Promise<MutationResponse> =>
-    request<MutationResponse>(
+    request(
+      MutationResponse,
       `${workspacePath(workspaceId)}/issues/${encodeURIComponent(issueId)}/commands${deferQuery(
         options,
       )}`,
@@ -159,11 +167,15 @@ export const api = {
     ),
 
   issueDetail: (workspaceId: string, issueId: string): Promise<IssueDetail> =>
-    request<IssueDetail>(`${workspacePath(workspaceId)}/issues/${encodeURIComponent(issueId)}`),
+    request(
+      IssueDetailSchema,
+      `${workspacePath(workspaceId)}/issues/${encodeURIComponent(issueId)}`,
+    ),
 
   /** Read-only lineage probe for one accepted acknowledgement. */
   coverage: (workspaceId: string, issueId: string, position: string): Promise<CoverageResponse> =>
-    request<CoverageResponse>(
+    request(
+      CoverageResponse,
       `${workspacePath(workspaceId)}/issues/${encodeURIComponent(
         issueId,
       )}/coverage?position=${encodeURIComponent(position)}`,
