@@ -14,8 +14,7 @@
     "src/effect.ts",
     "src/effect/state-projection.ts",
     "src/effect-testing.ts",
-    "src/ivm-mesh.ts",
-    "src/materializer.ts"
+    "src/ivm-mesh.ts"
   ],
   "include": []
 }

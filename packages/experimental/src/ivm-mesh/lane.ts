@@ -1,4 +1,6 @@
 import { encodeStreamIdentity, type StreamIdentity } from "../causal.ts";
+import { Schema } from "effect";
+import { NonNegativeInt, NormalizedRequiredText } from "./schemas.ts";
 
 const LANE_PREFIX = "streamsy-mesh-v1-";
 export const MAX_PRODUCER_ID_LENGTH = LANE_PREFIX.length + 64;
@@ -41,25 +43,14 @@ export function canonicalLaneInput(config: ProducerLaneConfig): string {
 }
 
 function validatedConfig(config: ProducerLaneConfig): ProducerLaneConfig {
+  const decodeText = Schema.decodeUnknownSync(NormalizedRequiredText);
+  const decodeNonNegativeInt = Schema.decodeUnknownSync(NonNegativeInt);
   return Object.freeze({
-    processorId: requiredText(config.processorId, "processorId"),
-    processorVersion: requiredText(config.processorVersion, "processorVersion"),
-    outputGeneration: requiredText(config.outputGeneration, "outputGeneration"),
+    processorId: decodeText(config.processorId),
+    processorVersion: decodeText(config.processorVersion),
+    outputGeneration: decodeText(config.outputGeneration),
     source: config.source,
     target: config.target,
-    producerEpoch: nonNegativeSafeInteger(config.producerEpoch, "producerEpoch"),
+    producerEpoch: decodeNonNegativeInt(config.producerEpoch),
   });
-}
-
-function requiredText(value: string, name: string): string {
-  if (typeof value !== "string" || value.length === 0) throw new TypeError(`${name} is required`);
-  if (value.length > 512) throw new TypeError(`${name} must not exceed 512 code units`);
-  return value.normalize("NFC");
-}
-
-function nonNegativeSafeInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`${name} must be a non-negative safe integer`);
-  }
-  return value;
 }

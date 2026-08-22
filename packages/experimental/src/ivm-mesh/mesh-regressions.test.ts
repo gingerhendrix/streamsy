@@ -259,6 +259,16 @@ describe("producer lane regressions", () => {
     expect(bumped.producerId).toBe(first.producerId);
     expect(bumped.producerEpoch).toBe(8);
   });
+
+  // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning compatibility scenario at the test boundary.
+  test("NFC-equivalent processor ids derive one producer lane", async () => {
+    const composed = await deriveProducerLane({ ...laneConfig, processorId: "caf\u00e9" });
+    const decomposed = await deriveProducerLane({ ...laneConfig, processorId: "cafe\u0301" });
+    expect(decomposed.producerId).toBe(composed.producerId);
+    expect(canonicalLaneInput({ ...laneConfig, processorId: "cafe\u0301" })).toBe(
+      canonicalLaneInput({ ...laneConfig, processorId: "caf\u00e9" }),
+    );
+  });
 });
 
 describe("recovery and producer regressions", () => {

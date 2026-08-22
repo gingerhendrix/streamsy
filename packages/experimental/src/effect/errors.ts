@@ -17,6 +17,23 @@ const CLIENT_ERROR_CODES = [
 
 const ClientErrorCode = Schema.Literals(CLIENT_ERROR_CODES);
 
+const ClientFailureSchema = Schema.Struct({
+  status: Schema.Literal("error"),
+  code: ClientErrorCode,
+  message: Schema.String,
+  httpStatus: Schema.optional(Schema.Number),
+  retryable: Schema.Boolean,
+  cause: Schema.optional(Schema.Unknown),
+});
+
+type ClientFailureSchemaType = typeof ClientFailureSchema.Type;
+const clientFailureSchemaInput = (value: ClientFailure): ClientFailureSchemaType => value;
+const isClientFailureSchema = Schema.is(ClientFailureSchema);
+
+function isClientFailure(value: unknown): value is ClientFailure {
+  return isClientFailureSchema(value) && clientFailureSchemaInput(value) === value;
+}
+
 export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()("StreamReadError", {
   operation: Schema.String,
   failure: Schema.Defect(),
@@ -101,26 +118,6 @@ function clientFailureClassification(failure: unknown) {
   return isClientFailure(failure)
     ? { code: failure.code, retryable: failure.retryable }
     : { code: "unknown" as const, retryable: false };
-}
-
-function isClientFailure(value: unknown): value is ClientFailure {
-  try {
-    return (
-      typeof value === "object" &&
-      value !== null &&
-      "status" in value &&
-      value.status === "error" &&
-      "code" in value &&
-      typeof value.code === "string" &&
-      CLIENT_ERROR_CODES.some((code) => code === value.code) &&
-      "message" in value &&
-      typeof value.message === "string" &&
-      "retryable" in value &&
-      typeof value.retryable === "boolean"
-    );
-  } catch {
-    return false;
-  }
 }
 
 function clientFailureMessage(failure: unknown): string {

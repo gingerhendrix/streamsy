@@ -56,11 +56,11 @@ describe("causal coverage", () => {
 
   it("rejects protocol read sentinels and unsafe tokens", () => {
     for (const invalid of ["", "-1", "now", "bad/value", "x".repeat(256)]) {
-      expect(() => streamPosition(invalid)).toThrow(TypeError);
-      expect(() => compareStreamPositions(invalid, "01")).toThrow(TypeError);
-      expect(() => compareStreamPositions("01", invalid)).toThrow(TypeError);
-      expect(() => sourceAck(identity, invalid)).toThrow(TypeError);
-      expect(() => sourceWatermark(identity, invalid)).toThrow(TypeError);
+      expect(() => streamPosition(invalid)).toThrow();
+      expect(() => compareStreamPositions(invalid, "01")).toThrow();
+      expect(() => compareStreamPositions("01", invalid)).toThrow();
+      expect(() => sourceAck(identity, invalid)).toThrow();
+      expect(() => sourceWatermark(identity, invalid)).toThrow();
     }
   });
 

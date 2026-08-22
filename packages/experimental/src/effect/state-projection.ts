@@ -5,6 +5,7 @@ import { streamIdentity, type SourceAck, type StreamIdentity } from "../causal.t
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
 import { DerivedRecoveryLive } from "../ivm-mesh/derived-append.ts";
 import { canonicalLaneInput, deriveProducerLane } from "../ivm-mesh/lane.ts";
+import { NonNegativeInt, NormalizedRequiredText, PositiveInt } from "../ivm-mesh/schemas.ts";
 import {
   catchUp as catchUpInternal,
   type CatchUpProgress as InternalProgress,
@@ -109,10 +110,12 @@ class Client extends Context.Service<Client, ClientShape>()(
 
 /** Declare stable projection identity and pure JSON-item-to-State logic. */
 export function make<Input>(options: MakeOptions<Input>): Definition<Input> {
+  const decodeText = Schema.decodeUnknownSync(NormalizedRequiredText);
+  const decodePositiveInt = Schema.decodeUnknownSync(PositiveInt);
   const definition = {
     ...options,
-    id: requiredText(options.id, "id"),
-    version: positiveSafeInteger(options.version, "version"),
+    id: decodeText(options.id),
+    version: decodePositiveInt(options.version),
   };
   return Object.freeze(definition);
 }
@@ -121,7 +124,7 @@ export function make<Input>(options: MakeOptions<Input>): Definition<Input> {
 export function resource(options: StreamResourceOptions): StreamResource {
   return Object.freeze({
     identity: streamIdentity(options.identity.name),
-    streamId: requiredText(options.streamId, "streamId"),
+    streamId: Schema.decodeUnknownSync(NormalizedRequiredText)(options.streamId),
   });
 }
 
@@ -143,8 +146,8 @@ export function instance<Input>(
 ): Instance<Input> {
   const source = resource(options.source);
   const target = resource(options.target);
-  const generation = requiredText(options.generation, "generation");
-  const producerEpoch = nonNegativeSafeInteger(options.producerEpoch, "producerEpoch");
+  const generation = Schema.decodeUnknownSync(NormalizedRequiredText)(options.generation);
+  const producerEpoch = Schema.decodeUnknownSync(NonNegativeInt)(options.producerEpoch);
 
   // Validate the complete lane configuration synchronously while keeping the
   // derived producer id out of application-visible state.
@@ -169,7 +172,14 @@ export function instance<Input>(
 export const catchUp = Effect.fn("StateProjection.catchUp")(
   <Input>(projection: Instance<Input>, options: CatchUpOptions) =>
     Effect.gen(function* () {
-      validateLimits(options.limits);
+      Schema.decodeUnknownSync(
+        Schema.Struct({
+          pages: PositiveInt,
+          batches: PositiveInt,
+          items: PositiveInt,
+          bytes: PositiveInt,
+        }),
+      )(options.limits);
       const { client } = yield* Client;
       const source = bindStream({ ...projection.source, client });
       const target = bindStream({ ...projection.target, client });
@@ -300,31 +310,4 @@ function publicLimit(limit: keyof import("../ivm-mesh/projection.ts").CatchUpLim
 
 function exhaustive(value: never): never {
   throw new TypeError(`Unexpected StateProjection variant: ${String(value)}`);
-}
-
-function validateLimits(limits: Limits): void {
-  positiveSafeInteger(limits.pages, "limits.pages");
-  positiveSafeInteger(limits.batches, "limits.batches");
-  positiveSafeInteger(limits.items, "limits.items");
-  positiveSafeInteger(limits.bytes, "limits.bytes");
-}
-
-function requiredText(value: string, name: string): string {
-  if (typeof value !== "string" || value.length === 0) throw new TypeError(`${name} is required`);
-  if (value.length > 512) throw new TypeError(`${name} must not exceed 512 code units`);
-  return value.normalize("NFC");
-}
-
-function positiveSafeInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new TypeError(`${name} must be a positive safe integer`);
-  }
-  return value;
-}
-
-function nonNegativeSafeInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`${name} must be a non-negative safe integer`);
-  }
-  return value;
 }

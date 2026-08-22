@@ -1,5 +1,5 @@
 import type { JsonValue, StreamBatch } from "@streamsy/core";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { StreamBinding } from "../binding.ts";
 import { sourceAck, streamIdentityEquals } from "../causal.ts";
 import {
@@ -19,6 +19,7 @@ import {
 } from "./derived-append.ts";
 import type { ProducerLane } from "./lane.ts";
 import type { CatchUpLimits, ProjectionBoundary } from "./projection.ts";
+import { CatchUpLimits as CatchUpLimitsSchema } from "./schemas.ts";
 
 /** Versioned recovery law implemented by {@link catchUpState}. */
 export const SINGLE_SOURCE_STATE_KIND = "single-source-state/v1";
@@ -301,10 +302,7 @@ function validateStateOptions<State, Input>(options: CatchUpStateOptions<State, 
     throw new TypeError("Source binding identity does not match the producer lane");
   if (!streamIdentityEquals(options.target.identity, options.lane.target))
     throw new TypeError("Target binding identity does not match the producer lane");
-  for (const [name, value] of Object.entries(options.limits)) {
-    if (!Number.isSafeInteger(value) || value <= 0)
-      throw new TypeError(`${name} must be a positive safe integer`);
-  }
+  Schema.decodeUnknownSync(CatchUpLimitsSchema)(options.limits);
 }
 
 function hasSourcePayload(batch: StreamBatch): boolean {

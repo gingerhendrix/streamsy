@@ -13,12 +13,12 @@ import type { ProducerLane } from "./lane.ts";
 import {
   MESH_LINEAGE_TYPE,
   MESH_RESERVED_TYPE_PREFIX,
-  assertFactTypeAllowed,
   createLineageEvent,
   decodeLineageEvent,
   ensureLineageCompatible,
   type MeshLineageEvent,
 } from "./state-meta.ts";
+import { decodeStateFact } from "./schemas.ts";
 
 export interface RecoveredDerivedState {
   readonly status: "ready";
@@ -311,24 +311,8 @@ function validateAppendInput(options: AppendDerivedStateBatchOptions): void {
     throw new TypeError("sourceThrough must advance beyond the recovered checkpoint");
   }
   for (const fact of options.facts) {
-    assertFactTypeAllowed(fact);
-    assertStateFactShape(fact);
+    decodeStateFact(fact);
   }
-}
-
-/** Validate one application State fact event before any durable append. */
-export function assertStateFactShape(value: JsonValue): void {
-  if (!isRecord(value) || typeof value.key !== "string" || value.key.length === 0)
-    throw new TypeError("State fact event requires a non-empty key");
-  if (!isRecord(value.headers)) throw new TypeError("State fact event requires headers");
-  const operation = value.headers.operation;
-  if (
-    typeof operation !== "string" ||
-    !["insert", "update", "upsert", "delete"].includes(operation)
-  )
-    throw new TypeError("State fact event has an invalid operation");
-  if (operation !== "delete" && !("value" in value))
-    throw new TypeError(`${operation} State fact event requires value`);
 }
 
 function checkpoint(

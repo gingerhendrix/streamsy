@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect";
 import { encodeStreamIdentity, type StreamIdentity } from "../causal.ts";
 import { IncompatibleLineage, MalformedLineage } from "../effect/errors.ts";
 import type { ProducerLane } from "./lane.ts";
+import { DurablePosition, NonNegativeInt } from "./schemas.ts";
 import { MESH_RESERVED_TYPE_PREFIX } from "./state-meta.ts";
 
 /** Versioned recovery law implemented by the dynamic fan-in kernel. */
@@ -23,10 +24,10 @@ export const FanInCheckpointValue = Schema.Struct({
   membershipIdentity: Schema.NonEmptyString,
   targetIdentity: Schema.NonEmptyString,
   producerId: Schema.NonEmptyString,
-  producerEpoch: Schema.Int,
-  nextProducerSeq: Schema.Int,
+  producerEpoch: NonNegativeInt,
+  nextProducerSeq: NonNegativeInt,
   /** Membership-source position incorporated by this transaction. */
-  membershipThrough: Schema.NullOr(Schema.NonEmptyString),
+  membershipThrough: Schema.NullOr(DurablePosition),
 });
 export interface FanInCheckpointValue extends Schema.Schema.Type<typeof FanInCheckpointValue> {}
 
@@ -42,9 +43,9 @@ export const FanInMemberValue = Schema.Struct({
   format: Schema.Literal(FAN_IN_MEMBER_FORMAT),
   memberIdentity: Schema.NonEmptyString,
   /** Declared start position; `null` reads the member from its beginning. */
-  from: Schema.NullOr(Schema.NonEmptyString),
+  from: Schema.NullOr(DurablePosition),
   /** Member position already incorporated into the target State. */
-  through: Schema.NullOr(Schema.NonEmptyString),
+  through: Schema.NullOr(DurablePosition),
 });
 export interface FanInMemberValue extends Schema.Schema.Type<typeof FanInMemberValue> {}
 
@@ -95,21 +96,6 @@ export function createFanInCheckpoint(
   lane: ProducerLane,
   checkpoint: { readonly membershipThrough: string | null; readonly nextProducerSeq: number },
 ): FanInCheckpointEvent {
-  if (
-    !Number.isSafeInteger(checkpoint.nextProducerSeq) ||
-    checkpoint.nextProducerSeq < 0 ||
-    checkpoint.nextProducerSeq > Number.MAX_SAFE_INTEGER
-  ) {
-    throw new TypeError("nextProducerSeq must be a non-negative safe integer");
-  }
-  if (
-    checkpoint.membershipThrough !== null &&
-    (checkpoint.membershipThrough.length === 0 ||
-      checkpoint.membershipThrough === "-1" ||
-      checkpoint.membershipThrough === "now")
-  ) {
-    throw new TypeError("membershipThrough must be a real durable-stream position");
-  }
   return FanInCheckpointEvent.make({
     type: FAN_IN_CHECKPOINT_TYPE,
     key: FAN_IN_CHECKPOINT_KEY,

@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import { encodeStreamIdentity } from "../causal.ts";
 import { IncompatibleLineage, MalformedLineage } from "../effect/errors.ts";
 import type { ProducerLane } from "./lane.ts";
+import { DurablePosition, NonNegativeInt, StateFact } from "./schemas.ts";
 
 export const MESH_RESERVED_TYPE_PREFIX = "__streamsy.";
 export const MESH_LINEAGE_TYPE = "__streamsy.mesh.lineage.v1";
@@ -15,10 +16,10 @@ export const MeshLineageValue = Schema.Struct({
   outputGeneration: Schema.NonEmptyString,
   sourceIdentity: Schema.NonEmptyString,
   targetIdentity: Schema.NonEmptyString,
-  sourceThrough: Schema.NonEmptyString,
+  sourceThrough: DurablePosition,
   producerId: Schema.NonEmptyString,
-  producerEpoch: Schema.Int,
-  nextProducerSeq: Schema.Int,
+  producerEpoch: NonNegativeInt,
+  nextProducerSeq: NonNegativeInt,
 });
 export interface MeshLineageValue extends Schema.Schema.Type<typeof MeshLineageValue> {}
 
@@ -39,8 +40,6 @@ export function createLineageEvent(
   lane: ProducerLane,
   checkpoint: LineageCheckpoint,
 ): MeshLineageEvent {
-  validateRealPosition(checkpoint.sourceThrough);
-  validateSequence(checkpoint.nextProducerSeq);
   return MeshLineageEvent.make({
     type: MESH_LINEAGE_TYPE,
     key: MESH_LINEAGE_KEY,
@@ -62,23 +61,11 @@ export function createLineageEvent(
 
 /** Decode unknown durable lineage and keep all validation failures typed. */
 export const decodeLineageEvent = Effect.fn("MeshLineage.decode")(function* (value: unknown) {
-  const event = yield* Schema.decodeUnknownEffect(MeshLineageEvent)(value).pipe(
+  return yield* Schema.decodeUnknownEffect(MeshLineageEvent)(value).pipe(
     Effect.mapError(
       (cause) => new MalformedLineage({ message: "Malformed mesh lineage event", cause }),
     ),
   );
-  if (
-    event.value.sourceThrough === "-1" ||
-    event.value.sourceThrough === "now" ||
-    event.value.producerEpoch < 0 ||
-    event.value.nextProducerSeq < 0
-  ) {
-    return yield* new MalformedLineage({
-      message: "Lineage positions and producer sequences must be durable and non-negative",
-      cause: event,
-    });
-  }
-  return event;
 });
 
 export const ensureLineageCompatible = Effect.fn("MeshLineage.ensureCompatible")(function* (
@@ -108,27 +95,4 @@ export const ensureLineageCompatible = Effect.fn("MeshLineage.ensureCompatible")
   return undefined;
 });
 
-export function assertFactTypeAllowed(value: unknown): void {
-  if (!isRecord(value) || typeof value.type !== "string" || value.type.length === 0) {
-    throw new TypeError("State fact event requires a non-empty type");
-  }
-  if (value.type.startsWith(MESH_RESERVED_TYPE_PREFIX)) {
-    throw new TypeError(`State fact event type uses reserved prefix ${MESH_RESERVED_TYPE_PREFIX}`);
-  }
-}
-
-function validateRealPosition(value: unknown): asserts value is string {
-  if (typeof value !== "string" || value.length === 0 || value === "-1" || value === "now") {
-    throw new TypeError("sourceThrough must be a real durable-stream position");
-  }
-}
-
-function validateSequence(value: unknown, name = "nextProducerSeq"): asserts value is number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`${name} must be a non-negative safe integer`);
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+export { StateFact };

@@ -14,11 +14,7 @@ Import stream identity helpers from `@streamsy/experimental/stream-identity`. Th
 
 Import the binding API from `@streamsy/experimental/binding`.
 
-`bindStream()` creates an inert `{ identity, client, streamId }` value. `readBoundStream()` and `appendBoundStream()` delegate through the existing fixed `StreamProtocolClient` handle; the binding is not another transport handle, registry, or address resolver. Read offsets, including `-1` and `now`, pass through unchanged.
-
-`appendBoundStream()` adds a `SourceAck` only to a new `appended` result carrying its exact response offset. Producer `duplicate` remains a distinct result without an acknowledgement and does not assert payload equality. The binding never follows an append with `HEAD` or infers identity from the stream id or URL.
-
-These Promise helpers are the deliberately retained compatibility facade for lightweight callers. Experimental mesh orchestration does not call them.
+`bindStream()` creates an inert `{ identity, client, streamId }` value. The binding is not another transport handle, registry, or address resolver. Transport operations stay on the fixed `StreamProtocolClient` handle, while Effect-owned orchestration consumes that Promise client through the capabilities below.
 
 ## Effect capabilities
 
@@ -32,19 +28,7 @@ The package pins `effect@4.0.0-beta.99` exactly. Libraries return Effect descrip
 
 Import `StateProjection` from `@streamsy/experimental/state-projection` for the first application-facing bounded projection seam. `make()` declares stable identity, a service-free Effect `Schema` decoder, and pure JSON-item-to-State logic. `resource()` creates inert stream identity/id values, and `instance()` binds two resources to a declaration, generation, and fixed producer epoch without capturing a client. Provide `layerClient(client)` when running `catchUp()`; the facade resolves resources to compatibility bindings and derives the producer lane internally. Public progress omits recovered checkpoints and producer sequence.
 
-This tracer supports one ordered JSON source and one Durable State target, runs a finite catch-up pass, and scans complete target history during recovery. The facade owns its fixed-client Effect Layer while the existing Promise `StreamBinding` API and `ReadStreams` / `AppendStreams` mesh capabilities remain compatible. State change constructors, snapshots, resource address resolution, and long-lived supervision remain later API batches. Existing `@streamsy/experimental/ivm-mesh` exports remain available for regression compatibility.
-
-## Materializer
-
-Import the materializer API from `@streamsy/experimental/materializer`.
-
-It provides pure catch-up folds and checkpoint storage over the transport-neutral Streamsy client. Both direct and remote clients can be supplied through the same `StreamProtocolClient` seam.
-
-`materialize()` reads from an optional after-exclusive client cursor, folds every currently available content-aware batch, inspects the session terminal result, and returns the last completely consumed batch cursor. Its decoder maps each batch to zero or more domain events. It rejects on source/read/session, decode, or evolve failure. The pure fold commits nothing, so re-running it after a failure is safe.
-
-Checkpoint snapshots and the checkpoint store's `State` must be JSON-serializable. By default, each view is stored at `__streamsy/views/${encodeURIComponent(viewId)}/checkpoint`; callers may supply a custom stream-id function.
-
-Checkpoint loading is fail-fast when the latest record is malformed and uses last-write-wins, not max-cursor-wins, semantics. Re-appending a stale checkpoint can regress its cursor, but that is safe for level-triggered, idempotent consumers because it only causes batches to be read again. Loading currently reads the full checkpoint stream and costs O(saves); planned stream compaction will bound that cost.
+This tracer supports one ordered JSON source and one Durable State target, runs a finite catch-up pass, and scans complete target history during recovery. The facade owns its fixed-client Effect Layer while `StreamBinding` remains a plain method argument and `ReadStreams` / `AppendStreams` adapt the Promise-native client. State change constructors, snapshots, resource address resolution, and long-lived supervision remain later API batches. Existing `@streamsy/experimental/ivm-mesh` exports remain available for regression compatibility.
 
 ## IVM mesh incubation
 

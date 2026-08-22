@@ -22,7 +22,7 @@ import {
   type AppendOutcome,
   type ReadStreamsShape,
 } from "../effect/streams.ts";
-import { assertStateFactShape, type AppendDerivedStateResult } from "./derived-append.ts";
+import type { AppendDerivedStateResult } from "./derived-append.ts";
 import {
   compareMembers,
   createFanInCheckpoint,
@@ -39,7 +39,7 @@ import {
 } from "./fan-in-meta.ts";
 import type { ProducerLane } from "./lane.ts";
 import type { CatchUpLimits, ProjectionBoundary } from "./projection.ts";
-import { assertFactTypeAllowed } from "./state-meta.ts";
+import { CatchUpLimits as CatchUpLimitsSchema, decodeStateFact } from "./schemas.ts";
 
 export type { FanInMember } from "./fan-in-meta.ts";
 
@@ -447,8 +447,7 @@ const appendFanInBatch = (
 ): Effect.Effect<FanInAppendStep, MeshOperationalError, AppendStreams | FanInRecovery> =>
   Effect.gen(function* () {
     for (const fact of input.facts) {
-      assertFactTypeAllowed(fact);
-      assertStateFactShape(fact);
+      decodeStateFact(fact);
     }
     const nextProducerSeq = previous.nextProducerSeq + 1;
     if (!Number.isSafeInteger(nextProducerSeq)) throw new TypeError("Producer sequence exhausted");
@@ -741,10 +740,7 @@ function validateFanInOptions<State, MemberInput>(
   if (!streamIdentityEquals(options.membership.identity, options.lane.source))
     throw new TypeError("Membership binding identity does not match the producer lane source");
   assertLaneTarget(options.target, options.lane);
-  for (const [name, value] of Object.entries(options.limits)) {
-    if (!Number.isSafeInteger(value) || value <= 0)
-      throw new TypeError(`${name} must be a positive safe integer`);
-  }
+  Schema.decodeUnknownSync(CatchUpLimitsSchema)(options.limits);
 }
 
 function assertLaneTarget(target: StreamBinding, lane: ProducerLane): void {

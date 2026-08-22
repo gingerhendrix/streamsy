@@ -1,9 +1,20 @@
 import { streamIdentity, streamIdentityEquals, type StreamIdentity } from "./identity.ts";
+import { Schema } from "effect";
 
-declare const streamPositionBrand: unique symbol;
+const FORBIDDEN_POSITION_CHARACTERS = /[,&=?/]/;
 
 /** A real durable-stream position, excluding protocol read sentinels. */
-export type StreamPosition = string & { readonly [streamPositionBrand]: true };
+export const StreamPosition = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(255),
+  Schema.makeFilter((position) => position !== "-1" && position !== "now", {
+    description: "a real stream position rather than a protocol read sentinel",
+  }),
+  Schema.makeFilter((position) => !FORBIDDEN_POSITION_CHARACTERS.test(position), {
+    description: "a stream position without reserved URL characters",
+  }),
+).pipe(Schema.brand("StreamPosition"));
+export type StreamPosition = typeof StreamPosition.Type;
 
 export interface SourceAck {
   readonly identity: StreamIdentity;
@@ -20,22 +31,9 @@ export type Coverage =
   | { readonly status: "not-yet" }
   | { readonly status: "incomparable" };
 
-const FORBIDDEN_POSITION_CHARACTERS = /[,&=?/]/;
-
 /** Validate a real position without interpreting its opaque wire format. */
 export function streamPosition(position: string): StreamPosition {
-  if (
-    typeof position !== "string" ||
-    position.length === 0 ||
-    position.length >= 256 ||
-    position === "-1" ||
-    position === "now" ||
-    FORBIDDEN_POSITION_CHARACTERS.test(position)
-  ) {
-    throw new TypeError(`Invalid real stream position: ${position}`);
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The checks above validate the opaque StreamPosition brand boundary.
-  return position as StreamPosition;
+  return Schema.decodeUnknownSync(StreamPosition)(position);
 }
 
 export function compareStreamPositions(a: string, b: string): -1 | 0 | 1 {

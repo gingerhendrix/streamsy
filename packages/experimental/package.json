@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/experimental",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Experimental primitives for Streamsy durable streams.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -33,11 +33,6 @@
       "import": "./dist/causal.js",
       "default": "./dist/causal.js"
     },
-    "./materializer": {
-      "types": "./dist/materializer.d.ts",
-      "import": "./dist/materializer.js",
-      "default": "./dist/materializer.js"
-    },
     "./ivm-mesh": {
       "types": "./dist/ivm-mesh.d.ts",
       "import": "./dist/ivm-mesh.js",
@@ -63,7 +58,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/binding.ts src/causal.ts src/causal/identity.ts src/effect.ts src/effect/state-projection.ts src/effect-testing.ts src/ivm-mesh.ts src/materializer.ts --format esm --out-dir dist --clean --external @streamsy/core --external effect && tsc --project tsconfig.build.json",
+    "build": "tsdown src/binding.ts src/causal.ts src/causal/identity.ts src/effect.ts src/effect/state-projection.ts src/effect-testing.ts src/ivm-mesh.ts --format esm --out-dir dist --clean --external @streamsy/core --external effect && tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
     "test:sqlite": "bun test src/ivm-mesh/*.bun.test.ts"
