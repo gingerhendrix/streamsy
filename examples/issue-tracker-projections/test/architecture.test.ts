@@ -22,6 +22,7 @@ import {
 } from "@streamsy/core";
 import { ConfigProvider, Effect, Layer, ManagedRuntime, Ref } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
+import type { ApiError, BoardResponse } from "../shared/api.ts";
 import {
   createIssue,
   createProject,
@@ -113,8 +114,10 @@ describe("application operations are Effect descriptions", () => {
         }),
       ),
     );
-    expect(failure._tag).toBe("UnknownProject");
-    expect((failure as { projectId: string }).projectId).toBe("absent");
+    const { _tag: tag } = failure;
+    expect(tag).toBe("UnknownProject");
+    if (tag !== "UnknownProject") throw new Error("the failure must be UnknownProject");
+    expect(failure.projectId).toBe("absent");
   });
 });
 
@@ -155,9 +158,9 @@ describe("Schema decodes the HTTP boundary", () => {
     expect(bad.status).toBe(400);
 
     // No rejected body created durable state.
-    const board = (await (
+    const board: BoardResponse = await (
       await call(host, "GET", "/api/workspaces/arch/projects/launch/board")
-    ).json()) as { rows: { issueId: string }[] };
+    ).json();
     expect(board.rows.map((row) => row.issueId)).toEqual(["issue-ok"]);
   });
 
@@ -171,7 +174,8 @@ describe("Schema decodes the HTTP boundary", () => {
       }),
     );
     expect(response.status).toBe(400);
-    expect(((await response.json()) as { error: string }).error).toBe("invalid-json");
+    const body: ApiError = await response.json();
+    expect(body.error).toBe("invalid-json");
   });
 });
 

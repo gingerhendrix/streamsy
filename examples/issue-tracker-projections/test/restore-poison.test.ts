@@ -29,6 +29,7 @@ import {
   runProjectBoard,
 } from "../server/projections.ts";
 import { Streams } from "../server/streams.ts";
+import type { ApiError } from "../shared/api.ts";
 
 type Host = ReturnType<typeof createLocalHost>;
 
@@ -75,7 +76,25 @@ async function seeded(host: Host): Promise<void> {
   expect(created.status).toBe(201);
 }
 
-const validDetail = {
+/** A JSON record as it appears in a durable State stream. */
+type JsonRecord = { readonly [key: string]: JsonValue };
+
+/**
+ * Restate a typed mesh event as the durable JSON record the append API takes.
+ *
+ * The round trip is the encoding the transport performs anyway, so the row
+ * these tests commit is the row the kernel itself would have written.
+ */
+function meshFact(event: object): JsonValue {
+  const encoded: unknown = JSON.parse(JSON.stringify(event));
+  if (typeof encoded !== "object" || encoded === null || Array.isArray(encoded)) {
+    throw new TypeError("a mesh event must encode to a JSON object");
+  }
+  // Every value reachable here came out of `JSON.parse`, so it is a JsonValue.
+  return { ...encoded };
+}
+
+const validDetail: JsonRecord = {
   issueId: ISSUE,
   issueKey: "SHIP-100",
   projectId: PROJECT,
@@ -88,7 +107,7 @@ const validDetail = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
-const validRow = {
+const validRow: JsonRecord = {
   issueId: ISSUE,
   issueKey: "SHIP-100",
   title: "Restore me",
@@ -99,21 +118,19 @@ const validRow = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
-const detailFact = (value: unknown): JsonValue =>
-  ({
-    type: "issue-detail",
-    key: ISSUE,
-    value,
-    headers: { operation: "upsert" },
-  }) as JsonValue;
+const detailFact = (value: JsonValue): JsonValue => ({
+  type: "issue-detail",
+  key: ISSUE,
+  value,
+  headers: { operation: "upsert" },
+});
 
-const boardFact = (value: unknown): JsonValue =>
-  ({
-    type: "board-issue",
-    key: ISSUE,
-    value,
-    headers: { operation: "upsert" },
-  }) as JsonValue;
+const boardFact = (value: JsonValue): JsonValue => ({
+  type: "board-issue",
+  key: ISSUE,
+  value,
+  headers: { operation: "upsert" },
+});
 
 describe("schema-backed restore", () => {
   test("a correctly tagged issue-detail row with a malformed value is rejected", () => {
@@ -125,9 +142,8 @@ describe("schema-backed restore", () => {
     expect(() =>
       restoreDetail(undefined, [detailFact({ ...validDetail, status: "shipped" })]),
     ).toThrow();
-    expect(() =>
-      restoreDetail(undefined, [detailFact({ ...validDetail, comments: undefined })]),
-    ).toThrow();
+    const { comments: _comments, ...withoutComments } = validDetail;
+    expect(() => restoreDetail(undefined, [detailFact(withoutComments)])).toThrow();
     expect(() => restoreDetail(undefined, [detailFact({ ...validDetail, title: 42 })])).toThrow();
   });
 
@@ -154,10 +170,12 @@ describe("typed restore poison from durable history", () => {
         const lane = yield* lanes.issueDetail(WORKSPACE, ISSUE);
         const recovered = yield* recoverDerivedStateHistory(target, lane);
         if (recovered.status !== "ready") throw new Error("target history must recover");
-        const lineage = createLineageEvent(lane, {
-          sourceThrough: recovered.checkpoint.sourceThrough ?? "0_0",
-          nextProducerSeq: recovered.checkpoint.nextProducerSeq + 1,
-        }) as unknown as JsonValue;
+        const lineage = meshFact(
+          createLineageEvent(lane, {
+            sourceThrough: recovered.checkpoint.sourceThrough ?? "0_0",
+            nextProducerSeq: recovered.checkpoint.nextProducerSeq + 1,
+          }),
+        );
         const appends = yield* AppendStreams;
         const appended = yield* appends.appendJsonBatch(
           target,
@@ -178,7 +196,8 @@ describe("typed restore poison from durable history", () => {
     );
 
     const failure = await host.runtime.runPromise(Effect.flip(runIssueDetail(WORKSPACE, ISSUE)));
-    expect(failure._tag).toBe("StateRestorePoison");
+    const { _tag: tag } = failure;
+    expect(tag).toBe("StateRestorePoison");
   });
 
   test("a malformed board row poisons the next fan-in pass", async () => {
@@ -194,10 +213,12 @@ describe("typed restore poison from durable history", () => {
         const recovery = yield* FanInRecovery;
         const recovered = yield* recovery.recoverFanIn(target, lane);
         if (recovered.status !== "ready") throw new Error("board must recover");
-        const checkpoint = createFanInCheckpoint(lane, {
-          membershipThrough: recovered.checkpoint.membershipThrough,
-          nextProducerSeq: recovered.checkpoint.nextProducerSeq + 1,
-        }) as unknown as JsonValue;
+        const checkpoint = meshFact(
+          createFanInCheckpoint(lane, {
+            membershipThrough: recovered.checkpoint.membershipThrough,
+            nextProducerSeq: recovered.checkpoint.nextProducerSeq + 1,
+          }),
+        );
         const appends = yield* AppendStreams;
         const appended = yield* appends.appendJsonBatch(
           target,
@@ -218,7 +239,8 @@ describe("typed restore poison from durable history", () => {
     );
 
     const failure = await host.runtime.runPromise(Effect.flip(runProjectBoard(WORKSPACE, PROJECT)));
-    expect(failure._tag).toBe("StateRestorePoison");
+    const { _tag: tag } = failure;
+    expect(tag).toBe("StateRestorePoison");
   });
 
   test("the board endpoint names a malformed durable row instead of serving it", async () => {
@@ -234,10 +256,12 @@ describe("typed restore poison from durable history", () => {
         const recovery = yield* FanInRecovery;
         const recovered = yield* recovery.recoverFanIn(target, lane);
         if (recovered.status !== "ready") throw new Error("board must recover");
-        const checkpoint = createFanInCheckpoint(lane, {
-          membershipThrough: recovered.checkpoint.membershipThrough,
-          nextProducerSeq: recovered.checkpoint.nextProducerSeq + 1,
-        }) as unknown as JsonValue;
+        const checkpoint = meshFact(
+          createFanInCheckpoint(lane, {
+            membershipThrough: recovered.checkpoint.membershipThrough,
+            nextProducerSeq: recovered.checkpoint.nextProducerSeq + 1,
+          }),
+        );
         const appends = yield* AppendStreams;
         yield* appends.appendJsonBatch(
           target,
@@ -260,6 +284,7 @@ describe("typed restore poison from durable history", () => {
       `/api/workspaces/${WORKSPACE}/projects/${PROJECT}/board`,
     );
     expect(response.status).toBe(500);
-    expect(((await response.json()) as { error: string }).error).toBe("state-restore-poison");
+    const body: ApiError = await response.json();
+    expect(body.error).toBe("state-restore-poison");
   });
 });

@@ -114,7 +114,7 @@ const readAllItems = Effect.fn("Application.readAllItems")(function* (binding: S
   }
   const ended = yield* opened.session.done;
   if (ended.status === "cancelled") return yield* Effect.interrupt;
-  return { status: "ok" as const, items: items as readonly JsonValue[] };
+  return { status: "ok" as const, items };
 });
 
 const readAllScoped = (binding: StreamBinding) => readAllItems(binding).pipe(Effect.scoped);
@@ -173,7 +173,7 @@ export const createProject = Effect.fn("Application.createProject")(function* (
       {
         type: PROJECT_COLLECTION,
         key: project.projectId,
-        value: project as unknown as JsonValue,
+        value: project,
         headers: { operation: "upsert" },
       },
     ],
@@ -563,24 +563,23 @@ const now = Effect.map(
  */
 function buildEvent(request: IssueCommandRequest, at: string): IssueEvent {
   const base = { commandId: request.commandId, at };
-  switch (request.type) {
-    case "rename":
-      return { ...base, type: "IssueRenamed", title: request.title };
-    case "status":
-      return { ...base, type: "IssueStatusChanged", status: request.status };
-    case "priority":
-      return { ...base, type: "IssuePriorityChanged", priority: request.priority };
-    case "assign":
-      return { ...base, type: "IssueAssigned", assigneeId: request.assigneeId };
-    case "comment":
-      return {
-        ...base,
-        type: "CommentAdded",
-        commentId: request.commentId,
-        authorId: request.authorId,
-        body: request.body,
-      };
+  if (request.type === "rename") return { ...base, type: "IssueRenamed", title: request.title };
+  if (request.type === "status") {
+    return { ...base, type: "IssueStatusChanged", status: request.status };
   }
+  if (request.type === "priority") {
+    return { ...base, type: "IssuePriorityChanged", priority: request.priority };
+  }
+  if (request.type === "assign") {
+    return { ...base, type: "IssueAssigned", assigneeId: request.assigneeId };
+  }
+  return {
+    ...base,
+    type: "CommentAdded",
+    commentId: request.commentId,
+    authorId: request.authorId,
+    body: request.body,
+  };
 }
 
 export const getBoard = Effect.fn("Application.getBoard")(function* (

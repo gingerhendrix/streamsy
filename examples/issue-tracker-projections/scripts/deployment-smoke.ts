@@ -147,10 +147,17 @@ function call(method: string, path: string, body?: unknown): Promise<Response> {
   });
 }
 
+/**
+ * Read a JSON body.
+ *
+ * The type parameter names the response contract the caller expects; the
+ * server builds that contract from the shared Schemas, and the assertions in
+ * this smoke are what check it.
+ */
 async function json<T = any>(response: Response): Promise<T> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 400)}`);
-  return JSON.parse(text) as T;
+  return JSON.parse(text);
 }
 
 function assert(condition: unknown, message: string): asserts condition {

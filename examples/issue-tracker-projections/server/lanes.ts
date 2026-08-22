@@ -57,7 +57,10 @@ export const layer: Layer.Layer<ProjectionLanes> = Layer.effect(
     const cache = yield* Cache.make<string, ProducerLane>({
       capacity: LANE_CAPACITY,
       lookup: (encoded) => {
-        const [processorId, source, target] = encoded.split(" ") as [string, string, string];
+        const [processorId, source, target] = encoded.split(" ");
+        if (processorId === undefined || source === undefined || target === undefined) {
+          throw new TypeError(`a lane key must be "processorId source target": ${encoded}`);
+        }
         return derive({ processorId, source, target });
       },
     });

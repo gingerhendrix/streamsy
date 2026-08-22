@@ -10,8 +10,18 @@
 export const ISSUE_STATUSES = ["backlog", "in-progress", "done"] as const;
 export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 
+/** True when an arbitrary string is one of the three board statuses. */
+export function isIssueStatus(value: string): value is IssueStatus {
+  return ISSUE_STATUSES.some((status) => status === value);
+}
+
 export const ISSUE_PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
+
+/** True when an arbitrary string is one of the four issue priorities. */
+export function isIssuePriority(value: string): value is IssuePriority {
+  return ISSUE_PRIORITIES.some((priority) => priority === value);
+}
 
 export const TEAM = [
   { id: "ada", name: "Ada" },
@@ -20,14 +30,22 @@ export const TEAM = [
   { id: "omar", name: "Omar" },
 ] as const;
 
-export interface Comment {
+/**
+ * Durable application values.
+ *
+ * These are object *types* rather than interfaces on purpose: every one of them
+ * is written into a durable State stream as a JSON record, and only a type
+ * alias carries the implicit index signature that lets TypeScript accept it as
+ * a `JsonValue` without an assertion.
+ */
+export type Comment = {
   readonly commentId: string;
   readonly authorId: string;
   readonly body: string;
   readonly at: string;
-}
+};
 
-export interface IssueDetail {
+export type IssueDetail = {
   readonly issueId: string;
   readonly issueKey: string;
   readonly projectId: string;
@@ -38,9 +56,9 @@ export interface IssueDetail {
   readonly comments: readonly Comment[];
   readonly createdAt: string;
   readonly updatedAt: string;
-}
+};
 
-export interface BoardRow {
+export type BoardRow = {
   readonly issueId: string;
   readonly issueKey: string;
   readonly title: string;
@@ -49,13 +67,13 @@ export interface BoardRow {
   readonly assigneeId: string | null;
   readonly commentCount: number;
   readonly updatedAt: string;
-}
+};
 
-export interface Project {
+export type Project = {
   readonly projectId: string;
   readonly projectKey: string;
   readonly name: string;
-}
+};
 
 export const ISSUE_DETAIL_COLLECTION = "issue-detail";
 export const BOARD_ROW_COLLECTION = "board-issue";

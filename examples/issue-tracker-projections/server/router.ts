@@ -53,7 +53,7 @@ const fail = (status: number, error: string, detail?: string): Response =>
  */
 const body = <S extends Schema.Top>(schema: S, request: Request) =>
   Effect.tryPromise({
-    try: () => request.json() as Promise<unknown>,
+    try: () => request.json(),
     catch: () => new MalformedBody({ detail: "the request body is not valid JSON" }),
   }).pipe(
     Effect.flatMap((value) =>

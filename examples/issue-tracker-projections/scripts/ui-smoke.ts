@@ -100,9 +100,7 @@ try {
   // The accessible status control is a first-class equal of dragging.
   await page.selectOption("[data-testid=issue-status]", "done");
   await page.waitForFunction(
-    () =>
-      (document.querySelector("[data-testid=issue-status]") as HTMLSelectElement | null)?.value ===
-      "done",
+    () => document.querySelector<HTMLSelectElement>("[data-testid=issue-status]")?.value === "done",
   );
   await page.click("[data-testid=close-drawer]");
   await page.waitForTimeout(300);

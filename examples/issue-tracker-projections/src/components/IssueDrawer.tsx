@@ -1,7 +1,14 @@
 /** Right-side detail drawer on desktop, full-screen sheet on mobile. */
 import { useEffect, useRef, useState } from "react";
 import type { IssueDetail, IssuePriority, IssueStatus, TeamMemberId } from "../../shared/model.ts";
-import { ISSUE_PRIORITIES, ISSUE_STATUSES, isKnownMember, TEAM } from "../../shared/model.ts";
+import {
+  ISSUE_PRIORITIES,
+  ISSUE_STATUSES,
+  isIssuePriority,
+  isIssueStatus,
+  isKnownMember,
+  TEAM,
+} from "../../shared/model.ts";
 import { memberName, PRIORITY_LABELS, relativeTime, STATUS_LABELS } from "../lib/format.ts";
 import type { CardSync } from "../lib/pending.ts";
 
@@ -110,7 +117,7 @@ export function IssueDrawer(props: IssueDrawerProps) {
               if (title.trim().length > 0 && title.trim() !== detail.title) {
                 props.onRename(title.trim());
               }
-              (event.currentTarget.querySelector("input") as HTMLInputElement | null)?.blur();
+              event.currentTarget.querySelector("input")?.blur();
             }}
           >
             <label htmlFor="issue-title">Title</label>
@@ -136,7 +143,10 @@ export function IssueDrawer(props: IssueDrawerProps) {
                 id="issue-status"
                 data-testid="issue-status"
                 value={detail.status}
-                onChange={(event) => props.onStatus(event.target.value as IssueStatus)}
+                onChange={(event) => {
+                  const { value } = event.target;
+                  if (isIssueStatus(value)) props.onStatus(value);
+                }}
               >
                 {ISSUE_STATUSES.map((status) => (
                   <option key={status} value={status}>
@@ -152,7 +162,10 @@ export function IssueDrawer(props: IssueDrawerProps) {
                 id="issue-priority"
                 data-testid="issue-priority"
                 value={detail.priority}
-                onChange={(event) => props.onPriority(event.target.value as IssuePriority)}
+                onChange={(event) => {
+                  const { value } = event.target;
+                  if (isIssuePriority(value)) props.onPriority(value);
+                }}
               >
                 {ISSUE_PRIORITIES.map((priority) => (
                   <option key={priority} value={priority}>

@@ -37,17 +37,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiFailure(error instanceof Error ? error.message : "Network error", 0);
   }
   const text = await response.text();
-  if (!response.ok) {
-    let detail = text.slice(0, 200);
-    try {
-      const parsed = JSON.parse(text) as ApiError;
-      detail = parsed.detail ? `${parsed.error}: ${parsed.detail}` : parsed.error;
-    } catch {
-      // Non-JSON error bodies stay as raw text.
-    }
-    throw new ApiFailure(detail, response.status);
+  if (!response.ok) throw new ApiFailure(errorDetail(text), response.status);
+  return parseBody(text);
+}
+
+/**
+ * Describe a failed response.
+ *
+ * The server reports failures as `ApiError`, but an error body can also be a
+ * proxy page or an empty string, so the shape is checked before it is read.
+ * Anything else stays as raw text.
+ */
+function errorDetail(text: string): string {
+  const raw = text.slice(0, 200);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Non-JSON error bodies stay as raw text.
+    return raw;
   }
-  return (text.length === 0 ? undefined : JSON.parse(text)) as T;
+  if (!isApiError(parsed)) return raw;
+  const { error, detail } = parsed;
+  return detail === undefined || detail.length === 0 ? error : `${error}: ${detail}`;
+}
+
+function isApiError(value: unknown): value is ApiError {
+  if (typeof value !== "object" || value === null) return false;
+  const error: unknown = Reflect.get(value, "error");
+  const detail: unknown = Reflect.get(value, "detail");
+  return typeof error === "string" && (detail === undefined || typeof detail === "string");
+}
+
+/**
+ * Read a success body.
+ *
+ * The declared response type is the endpoint's wire contract, which the server
+ * builds from the shared Schemas in `shared/requests.ts` and `shared/api.ts`.
+ * The browser is a same-origin reader of its own API and does not re-validate
+ * that contract. An empty body reads as `undefined`, which only the endpoints
+ * declared as `Promise<unknown>` return.
+ */
+function parseBody(text: string) {
+  return text.length === 0 ? undefined : JSON.parse(text);
 }
 
 const workspacePath = (workspaceId: string): string =>

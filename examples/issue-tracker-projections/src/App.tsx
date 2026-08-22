@@ -32,7 +32,7 @@ import {
   type Mutation,
   type PendingPatch,
 } from "./lib/pending.ts";
-import { sortBoardRows } from "./lib/state.ts";
+import { sortBoardRows, toBoardRow, toProject } from "./lib/state.ts";
 
 const MUTATION_HISTORY = 12;
 
@@ -95,7 +95,11 @@ export function App() {
   const detail = detailResult?.issueId === issueId ? detailResult.detail : undefined;
   const detailMissing = detailResult?.issueId === issueId && detailResult.missing === true;
 
-  const projectFeed = useStateFeed<Project>(streamNames.projects(workspaceId), PROJECT_COLLECTION);
+  const projectFeed = useStateFeed<Project>(
+    streamNames.projects(workspaceId),
+    PROJECT_COLLECTION,
+    toProject,
+  );
   const projects = useMemo(
     () => Array.from(projectFeed.rows.values()).toSorted((a, b) => a.name.localeCompare(b.name)),
     [projectFeed.rows],
@@ -106,7 +110,7 @@ export function App() {
 
   const boardStream =
     activeProjectId === null ? null : streamNames.board(workspaceId, activeProjectId);
-  const boardFeed = useStateFeed<BoardRow>(boardStream, BOARD_ROW_COLLECTION);
+  const boardFeed = useStateFeed<BoardRow>(boardStream, BOARD_ROW_COLLECTION, toBoardRow);
 
   useEffect(() => {
     api.health().then(setHealth, () => setHealth(undefined));
@@ -342,7 +346,7 @@ export function App() {
   useEffect(() => {
     if (issueId === null) {
       setDetailResult(undefined);
-      return;
+      return undefined;
     }
     let cancelled = false;
     api.issueDetail(workspaceId, issueId).then(
@@ -361,7 +365,7 @@ export function App() {
   // Project rail counts come from the durable board of every project.
   const projectIds = projects.map((project) => project.projectId).join(",");
   useEffect(() => {
-    if (projectIds.length === 0) return;
+    if (projectIds.length === 0) return undefined;
     let cancelled = false;
     const load = async () => {
       const entries = await Promise.all(

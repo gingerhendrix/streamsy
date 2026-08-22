@@ -171,29 +171,24 @@ export function evolveIssue(current: IssueDetail | undefined, event: IssueEvent)
     throw new TypeError(`Issue event ${event.type} arrived before IssueCreated`);
   }
   const touched = { ...current, updatedAt: event.at };
-  switch (event.type) {
-    case "IssueRenamed":
-      return { ...touched, title: event.title };
-    case "IssueStatusChanged":
-      return { ...touched, status: event.status };
-    case "IssuePriorityChanged":
-      return { ...touched, priority: event.priority };
-    case "IssueAssigned":
-      return { ...touched, assigneeId: event.assigneeId };
-    case "CommentAdded":
-      return current.comments.some((comment) => comment.commentId === event.commentId)
-        ? touched
-        : {
-            ...touched,
-            comments: [
-              ...current.comments,
-              {
-                commentId: event.commentId,
-                authorId: event.authorId,
-                body: event.body,
-                at: event.at,
-              },
-            ],
-          };
-  }
+  // Every remaining variant returns, so the fold is total without a defensive
+  // branch: adding an event type makes the final block stop typechecking.
+  if (event.type === "IssueRenamed") return { ...touched, title: event.title };
+  if (event.type === "IssueStatusChanged") return { ...touched, status: event.status };
+  if (event.type === "IssuePriorityChanged") return { ...touched, priority: event.priority };
+  if (event.type === "IssueAssigned") return { ...touched, assigneeId: event.assigneeId };
+  return current.comments.some((comment) => comment.commentId === event.commentId)
+    ? touched
+    : {
+        ...touched,
+        comments: [
+          ...current.comments,
+          {
+            commentId: event.commentId,
+            authorId: event.authorId,
+            body: event.body,
+            at: event.at,
+          },
+        ],
+      };
 }

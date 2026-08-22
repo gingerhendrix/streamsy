@@ -13,7 +13,11 @@ export interface Feed<T> {
  * Tail one durable State stream and fold a single collection out of it.
  * Reserved framework lineage rows in the same stream are ignored.
  */
-export function useStateFeed<T>(streamName: string | null, collection: string): Feed<T> {
+export function useStateFeed<T>(
+  streamName: string | null,
+  collection: string,
+  decode: (value: Record<string, unknown>) => T | undefined,
+): Feed<T> {
   const [feed, setFeed] = useState<Feed<T>>({
     rows: new Map(),
     status: "connecting",
@@ -21,7 +25,7 @@ export function useStateFeed<T>(streamName: string | null, collection: string): 
   });
 
   useEffect(() => {
-    if (streamName === null) return;
+    if (streamName === null) return undefined;
     setFeed({ rows: new Map(), status: "connecting", ready: false });
     const controller = new AbortController();
     subscribeToStream(
@@ -30,7 +34,7 @@ export function useStateFeed<T>(streamName: string | null, collection: string): 
         onItems: (items) =>
           setFeed((previous) => ({
             ...previous,
-            rows: foldCollection<T>(previous.rows, items, collection),
+            rows: foldCollection<T>(previous.rows, items, collection, decode),
           })),
         onStatus: (status) => setFeed((previous) => ({ ...previous, status })),
         onReady: () => setFeed((previous) => ({ ...previous, ready: true })),
@@ -38,7 +42,7 @@ export function useStateFeed<T>(streamName: string | null, collection: string): 
       controller.signal,
     );
     return () => controller.abort();
-  }, [streamName, collection]);
+  }, [streamName, collection, decode]);
 
   return feed;
 }

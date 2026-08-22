@@ -1,7 +1,7 @@
 /** Three-column board with pointer drag and a first-class keyboard path. */
 import { useState } from "react";
 import type { BoardRow, IssueStatus } from "../../shared/model.ts";
-import { ISSUE_STATUSES } from "../../shared/model.ts";
+import { ISSUE_STATUSES, isIssueStatus } from "../../shared/model.ts";
 import {
   initials,
   memberName,
@@ -170,7 +170,10 @@ function IssueCard(props: IssueCardProps) {
           className="status-select"
           value={row.status}
           data-testid={`status-select-${row.issueId}`}
-          onChange={(event) => props.onStatusChange(row, event.target.value as IssueStatus)}
+          onChange={(event) => {
+            const { value } = event.target;
+            if (isIssueStatus(value)) props.onStatusChange(row, value);
+          }}
         >
           {ISSUE_STATUSES.map((status) => (
             <option key={status} value={status}>

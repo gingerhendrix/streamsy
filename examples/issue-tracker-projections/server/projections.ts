@@ -60,7 +60,7 @@ function detailFact(detail: IssueDetail): JsonValue {
   return {
     type: ISSUE_DETAIL_COLLECTION,
     key: detail.issueId,
-    value: detail as unknown as JsonValue,
+    value: detail,
     headers: { operation: "upsert" },
   };
 }
@@ -69,7 +69,7 @@ function boardFact(row: BoardRow): JsonValue {
   return {
     type: BOARD_ROW_COLLECTION,
     key: row.issueId,
-    value: row as unknown as JsonValue,
+    value: row,
     headers: { operation: "upsert" },
   };
 }
@@ -124,7 +124,7 @@ export const runIssueDetail = Effect.fn("Projections.issueDetail")(function* (
   const streams = yield* Streams;
   const lanes = yield* ProjectionLanes;
   const lane = yield* lanes.issueDetail(workspaceId, issueId);
-  return (yield* catchUpState<DetailState, IssueEvent>({
+  return yield* catchUpState<DetailState, IssueEvent>({
     source: streams.bindings.issueEvents(workspaceId, issueId),
     target: streams.bindings.issueDetail(workspaceId, issueId),
     lane,
@@ -142,7 +142,7 @@ export const runIssueDetail = Effect.fn("Projections.issueDetail")(function* (
       if (next === undefined) return { facts: [] };
       return { facts: [detailFact(next)] };
     },
-  })) as CatchUpStateResult<DetailState>;
+  });
 });
 
 /** Run one bounded `ProjectMembership + IssueDetail* -> ProjectBoard` pass. */
@@ -153,7 +153,7 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
   const streams = yield* Streams;
   const lanes = yield* ProjectionLanes;
   const lane = yield* lanes.projectBoard(workspaceId, projectId);
-  return (yield* catchUpDynamicFanInState<BoardState, IssueDetail>({
+  return yield* catchUpDynamicFanInState<BoardState, IssueDetail>({
     membership: streams.bindings.membership(workspaceId, projectId),
     target: streams.bindings.board(workspaceId, projectId),
     lane,
@@ -191,7 +191,7 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
       const { [issueId]: _removed, ...rest } = state;
       return { state: rest, facts: [boardRemoval(issueId)] };
     },
-  })) as CatchUpFanInResult<BoardState>;
+  });
 });
 
 function detailPrefix(workspaceId: string): string {
@@ -275,7 +275,7 @@ export function faultedPass(
   label: ProjectionPassReport["label"],
   error: { readonly _tag: string },
 ): ProjectionPassReport {
-  const tag = error._tag;
+  const { _tag: tag } = error;
   return {
     label,
     status: tag,

@@ -23,15 +23,38 @@ import stack, { Api, ProjectionWakes, STACK_NAME, StreamDO } from "../alchemy.ru
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const readJson = (path: string): Record<string, any> =>
+const readJson = (path: string): unknown =>
   JSON.parse(readFileSync(join(packageDir, path), "utf8"));
+
+/**
+ * Read one nested field of an unknown value, failing the test with the path it
+ * could not follow. The Alchemy resource internals below are deliberately
+ * untyped, so every probe of them goes through here rather than an assertion.
+ */
+function field(root: unknown, ...path: readonly string[]): unknown {
+  let current = root;
+  for (const key of path) {
+    // An Alchemy resource is a callable Effect, so a function is readable too.
+    if (current === null || (typeof current !== "object" && typeof current !== "function")) {
+      throw new TypeError(`${path.join(".")} is not readable`);
+    }
+    current = Reflect.get(current, key);
+  }
+  return current;
+}
+
+function stringField(root: unknown, ...path: readonly string[]): string {
+  const value = field(root, ...path);
+  if (typeof value !== "string") throw new TypeError(`${path.join(".")} must be a string`);
+  return value;
+}
 
 describe("Alchemy v2 deployment program", () => {
   test("the example depends on Alchemy v2, not the 0.x line", () => {
-    const declared = readJson("package.json").devDependencies.alchemy as string;
+    const declared = stringField(readJson("package.json"), "devDependencies", "alchemy");
     expect(declared.startsWith("2.")).toBe(true);
 
-    const installed = readJson("node_modules/alchemy/package.json").version as string;
+    const installed = stringField(readJson("node_modules/alchemy/package.json"), "version");
     expect(Number.parseInt(installed.split(".")[0]!, 10)).toBe(2);
   });
 
@@ -45,10 +68,8 @@ describe("Alchemy v2 deployment program", () => {
     // In v2 a resource is an Effect that only runs inside the stack program.
     expect(Effect.isEffect(Api)).toBe(true);
     expect(Effect.isEffect(ProjectionWakes)).toBe(true);
-    expect((Api as unknown as { LogicalId: string }).LogicalId).toBe("Api");
-    expect(String((Api as unknown as { Platform: { key: string } }).Platform.key)).toContain(
-      "Cloudflare.Worker",
-    );
+    expect(stringField(Api, "LogicalId")).toBe("Api");
+    expect(stringField(Api, "Platform", "key")).toContain("Cloudflare.Worker");
   });
 
   test("the Durable Object binding names the class the Worker exports", () => {
@@ -63,10 +84,9 @@ describe("Alchemy v2 deployment program", () => {
 
   test("the stack is wired with a providers layer and a state layer", () => {
     // Both are required by v2; a stack missing either dies with a named error.
-    const compiled = stack as unknown as { stackName: string; providers: unknown; state: unknown };
-    expect(compiled.stackName).toBe(STACK_NAME);
-    expect(compiled.providers).toBeDefined();
-    expect(compiled.state).toBeDefined();
+    expect(stringField(stack, "stackName")).toBe(STACK_NAME);
+    expect(field(stack, "providers")).toBeDefined();
+    expect(field(stack, "state")).toBeDefined();
   });
 
   /**

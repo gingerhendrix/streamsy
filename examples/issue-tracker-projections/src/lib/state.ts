@@ -10,7 +10,12 @@
  * projection owner.
  */
 import type { BoardRow, Project } from "../../shared/model.ts";
-import { BOARD_ROW_COLLECTION, PROJECT_COLLECTION } from "../../shared/model.ts";
+import {
+  BOARD_ROW_COLLECTION,
+  isIssuePriority,
+  isIssueStatus,
+  PROJECT_COLLECTION,
+} from "../../shared/model.ts";
 
 /** One State message as it appears in the JSON stream body. */
 export interface StateItem {
@@ -29,18 +34,47 @@ function isDelete(item: StateItem): boolean {
 }
 
 /**
+ * Decode one durable board row, or return `undefined` when the row is not the
+ * shape this reader understands.
+ *
+ * The server writes these rows through `BoardRowSchema`, so a row that fails
+ * here is not something the browser can repair: it is skipped rather than
+ * rendered as a partly-typed card.
+ */
+export function toBoardRow(value: Record<string, unknown>): BoardRow | undefined {
+  const { issueId, issueKey, title, status, priority, assigneeId, commentCount, updatedAt } = value;
+  if (typeof issueId !== "string" || typeof issueKey !== "string") return undefined;
+  if (typeof title !== "string" || typeof updatedAt !== "string") return undefined;
+  if (typeof status !== "string" || !isIssueStatus(status)) return undefined;
+  if (typeof priority !== "string" || !isIssuePriority(priority)) return undefined;
+  if (assigneeId !== null && typeof assigneeId !== "string") return undefined;
+  if (typeof commentCount !== "number") return undefined;
+  return { issueId, issueKey, title, status, priority, assigneeId, commentCount, updatedAt };
+}
+
+/** Decode one durable project row, on the same terms as {@link toBoardRow}. */
+export function toProject(value: Record<string, unknown>): Project | undefined {
+  const { projectId, projectKey, name } = value;
+  if (typeof projectId !== "string" || typeof projectKey !== "string") return undefined;
+  if (typeof name !== "string") return undefined;
+  return { projectId, projectKey, name };
+}
+
+/**
  * Fold State messages of one collection into a keyed map. Unknown collections
- * (including reserved `__streamsy.mesh.*` lineage rows) are ignored.
+ * (including reserved `__streamsy.mesh.*` lineage rows) are ignored, and so is
+ * any row `decode` cannot read.
  */
 export function foldCollection<T>(
   previous: ReadonlyMap<string, T>,
   items: readonly unknown[],
   collection: string,
+  decode: (value: Record<string, unknown>) => T | undefined,
 ): ReadonlyMap<string, T> {
   let next: Map<string, T> | undefined;
   for (const raw of items) {
     if (!isRecord(raw)) continue;
-    const item = raw as StateItem;
+    const item: StateItem = raw;
     if (item.type !== collection || typeof item.key !== "string") continue;
     next ??= new Map(previous);
     if (isDelete(item)) {
@@ -48,7 +82,9 @@ export function foldCollection<T>(
       continue;
     }
     if (!isRecord(item.value)) continue;
-    next.set(item.key, item.value as T);
+    const decoded = decode(item.value);
+    if (decoded === undefined) continue;
+    next.set(item.key, decoded);
   }
   return next ?? previous;
 }
@@ -56,12 +92,14 @@ export function foldCollection<T>(
 export const foldBoardRows = (
   previous: ReadonlyMap<string, BoardRow>,
   items: readonly unknown[],
-): ReadonlyMap<string, BoardRow> => foldCollection<BoardRow>(previous, items, BOARD_ROW_COLLECTION);
+): ReadonlyMap<string, BoardRow> =>
+  foldCollection<BoardRow>(previous, items, BOARD_ROW_COLLECTION, toBoardRow);
 
 export const foldProjects = (
   previous: ReadonlyMap<string, Project>,
   items: readonly unknown[],
-): ReadonlyMap<string, Project> => foldCollection<Project>(previous, items, PROJECT_COLLECTION);
+): ReadonlyMap<string, Project> =>
+  foldCollection<Project>(previous, items, PROJECT_COLLECTION, toProject);
 
 /** Board order: newest activity first inside a column, then by issue key. */
 export function sortBoardRows(rows: readonly BoardRow[]): readonly BoardRow[] {

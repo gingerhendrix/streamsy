@@ -33,10 +33,17 @@ async function call(host: Host, method: string, path: string, body?: unknown): P
   );
 }
 
+/**
+ * Read a JSON body.
+ *
+ * The type parameter names the response contract the caller expects; the
+ * server builds that contract from the shared Schemas, and the assertions in
+ * this suite are what check it.
+ */
 async function json<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 500)}`);
-  return JSON.parse(text) as T;
+  return JSON.parse(text);
 }
 
 async function workspace(host: Host, workspaceId: string, projectId = "launch"): Promise<void> {

@@ -95,7 +95,7 @@ async function run(streamName: string, handlers: FeedHandlers, signal: AbortSign
       const next = response.headers.get("stream-next-offset");
       cursor = response.headers.get("stream-cursor") ?? undefined;
       if (response.status !== 204) {
-        const items = (await response.json()) as readonly unknown[];
+        const items: unknown = await response.json();
         if (Array.isArray(items) && items.length > 0) handlers.onItems(items);
       }
       if (next !== null) offset = next;
