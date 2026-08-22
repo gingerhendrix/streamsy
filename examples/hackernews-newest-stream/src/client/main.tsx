@@ -8,10 +8,15 @@ import "./styles.css";
 type HnDb = StreamDB<typeof hackerNewsState>;
 type ApiStatus = {
   streamPath: string;
+  sourceStreamPath: string;
   newestLimit: number;
   pollIntervalMs: number;
   polling: boolean;
-  projectionDisposed: boolean;
+  projection: {
+    running: boolean;
+    lastError?: string;
+    lastOutcome?: { status: string };
+  };
   lastPollStartedAt?: string;
   lastPollCompletedAt?: string;
   lastPollError?: string;
@@ -19,6 +24,9 @@ type ApiStatus = {
   lastFetchedNewStories: number;
   lastRefreshedStories: number;
   lastChangedStories: number;
+  lastRemovedStories: number;
+  sourceBatches: number;
+  sourceChanges: number;
 };
 
 function streamUrl(): string {
@@ -127,12 +135,12 @@ function HnApp({ db }: { db: HnDb }) {
   return (
     <Shell status={status}>
       <section className="panel intro">
-        <p className="eyebrow">Demo 1: server TanStack DB to Durable State stream</p>
+        <p className="eyebrow">Streamsy StateProjection demo</p>
         <h1>Hacker News newest stories</h1>
         <p>
-          A Bun server polls HN, writes rows into a server-owned TanStack DB collection, and a
-          <code> createEffect </code> projection emits durable state events. The browser mirrors
-          that stream into its own TanStack DB via <code>createStreamDB</code>.
+          A Bun server reconciles HN polls into a durable JSON source stream, then a bounded
+          <code> StateProjection </code> emits Durable State upserts and deletes with lineage. The
+          browser mirrors that target stream into TanStack DB via <code>createStreamDB</code>.
         </p>
       </section>
 
@@ -186,12 +194,12 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
         {status ? (
           <div className="status">
             <span>{status.lastStoryCount} rows</span>
-            <span>{status.lastChangedStories} changed</span>
+            <span>{status.lastChangedStories + status.lastRemovedStories} changed</span>
             <span>poll {status.pollIntervalMs / 1000}s</span>
-            {status.lastPollError ? (
+            {status.lastPollError || status.projection.lastError ? (
               <span className="bad">error</span>
             ) : (
-              <span className="good">ok</span>
+              <span className="good">{status.projection.lastOutcome?.status ?? "starting"}</span>
             )}
           </div>
         ) : null}
@@ -201,4 +209,6 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const root = document.getElementById("root");
+if (!root) throw new Error("Hacker News app root element is missing");
+createRoot(root).render(<App />);

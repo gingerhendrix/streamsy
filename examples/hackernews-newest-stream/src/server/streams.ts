@@ -1,56 +1,68 @@
 import {
   createHttpHandler,
   createMemoryStorageAdapter,
-  createStreamProtocol,
-  type ProtocolStream,
+  directProtocolClient,
+  StreamProtocol,
+  type JsonValue,
+  type StorageAdapter,
+  type StreamProtocolClient,
 } from "@streamsy/core";
-import { contentType, streamPath } from "./config.ts";
+import { Effect } from "effect";
+import { streamContentType, streamPrefix } from "./config.ts";
+import { pollFailure, type PollFailure } from "./poller/contract.ts";
+import { hackerNewsResources, hackerNewsSource } from "./stream-resources.ts";
+import type { HackerNewsSourceChange } from "./story-index-projection.ts";
 
-const encoder = new TextEncoder();
-const streamPrefix = "/streams";
-const streamId = streamPath.replace(/^\/streams\/?/, "");
+export { hackerNewsResources, hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 
 export class DemoStreams {
-  private readonly protocol = createStreamProtocol({
-    storage: { adapter: createMemoryStorageAdapter() },
-  });
-  private readonly handler = createHttpHandler({
-    protocol: this.protocol,
-    pathPrefix: streamPrefix,
-  });
-  private stream: ProtocolStream | undefined;
+  private readonly protocol: StreamProtocol;
+  readonly client: StreamProtocolClient;
+  private readonly handler: ReturnType<typeof createHttpHandler>;
 
-  async start(): Promise<void> {
-    const result = await this.protocol.create(streamId, { contentType });
-    if (result.status !== "created" && result.status !== "exists") {
-      throw new Error(`Unable to create Streamsy demo stream: ${result.status}`);
-    }
-
-    this.stream = result.stream;
+  constructor(adapter?: StorageAdapter) {
+    this.protocol = new StreamProtocol({
+      storage: { adapter: adapter ?? createMemoryStorageAdapter() },
+    });
+    this.handler = createHttpHandler({ protocol: this.protocol, pathPrefix: streamPrefix });
+    this.client = directProtocolClient(this.protocol);
   }
 
-  async appendJson(value: unknown): Promise<string> {
-    if (!this.stream) {
-      const result = await this.protocol.get(streamId);
-      if (result.status !== "ok") {
-        throw new Error(`Unable to resolve Streamsy demo stream: ${result.status}`);
+  async start(): Promise<void> {
+    for (const resource of hackerNewsResources) {
+      const result = await this.client
+        .stream(resource.streamId)
+        .create({ contentType: streamContentType });
+      if (result.status !== "created" && result.status !== "conflict") {
+        throw new Error(
+          `Unable to create Streamsy demo stream ${resource.streamId}: ${result.status}`,
+        );
       }
-      this.stream = result.stream;
     }
+  }
 
-    const result = await this.stream.append({
-      data: encoder.encode(JSON.stringify(value)),
-      contentType,
-    });
-
+  async appendSourceBatch(items: readonly JsonValue[]): Promise<string> {
+    const result = await this.client.stream(hackerNewsSource.streamId).appendJsonBatch(items);
     if (result.status !== "appended" && result.status !== "duplicate") {
-      throw new Error(`Unable to append state event to Streamsy stream: ${result.status}`);
+      throw new Error(`Unable to append Hacker News source batch: ${result.status}`);
     }
-
     return result.offset;
   }
 
   async fetch(request: Request): Promise<Response> {
     return this.handler.fetch(request);
   }
+
+  async close(): Promise<void> {
+    await this.client.close();
+  }
 }
+
+/** Adapt a Promise-based source append (such as DemoStreams) to the sink contract. */
+export const appendSourceBatchFromPromise =
+  (append: (changes: readonly HackerNewsSourceChange[]) => Promise<string>) =>
+  (changes: readonly HackerNewsSourceChange[]): Effect.Effect<string, PollFailure> =>
+    Effect.tryPromise({
+      try: () => append(changes),
+      catch: pollFailure("appendSourceBatch"),
+    });

@@ -1,32 +1,43 @@
+import * as StateProjection from "@streamsy/experimental/state-projection";
+import { ManagedRuntime } from "effect";
 import {
   newestLimit,
   pollIntervalMs,
   port,
+  projectionLimits,
   serverIdleTimeoutSeconds,
+  sourceStreamPath,
   streamPath,
+  streamPrefix,
 } from "./config.ts";
 import { json } from "./http.ts";
-import { NewestStoriesPoller } from "./newest-poller.ts";
-import { createHnServerDb } from "./server-db.ts";
-import { startNewestProjection } from "./stream-projection.ts";
-import { DemoStreams } from "./streams.ts";
+import { makeNewestStoriesPoller } from "./poller/poller.ts";
+import { makeStoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
+import { appendSourceBatchFromPromise, DemoStreams } from "./streams.ts";
 
 const streams = new DemoStreams();
 await streams.start();
 
-const serverDb = createHnServerDb();
-const projection = startNewestProjection({
-  storiesCollection: serverDb.storiesCollection,
-  streams,
-});
+const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
+const projection = await runtime.runPromise(makeStoryProjection(projectionLimits));
+const poller = await runtime.runPromise(
+  makeNewestStoriesPoller({
+    limit: newestLimit,
+    intervalMs: pollIntervalMs,
+    sink: {
+      appendSourceBatch: appendSourceBatchFromPromise((changes) =>
+        streams.appendSourceBatch(changes),
+      ),
+      catchUpProjection: projection.catchUp,
+    },
+  }),
+);
 
-const poller = new NewestStoriesPoller({
-  limit: newestLimit,
-  intervalMs: pollIntervalMs,
-  writer: serverDb.storiesWriter,
+const currentStats = () => ({
+  projection: runtime.runSync(projection.status),
+  ...runtime.runSync(poller.stats),
 });
-poller.start();
 
 const server = Bun.serve({
   port,
@@ -34,21 +45,22 @@ const server = Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
     try {
-      if (url.pathname.startsWith("/streams/")) {
+      if (url.pathname.startsWith(`${streamPrefix}/`)) {
         return streams.fetch(request);
       }
       if (url.pathname === "/api/status") {
         return json({
           streamPath,
+          sourceStreamPath,
           newestLimit,
           pollIntervalMs,
-          projectionDisposed: projection.disposed,
-          ...poller.stats(),
+          projectionLimits,
+          ...currentStats(),
         });
       }
       if (url.pathname === "/api/poll" && request.method === "POST") {
-        void poller.pollNow();
-        return json({ ok: true });
+        await runtime.runPromise(poller.pollNow);
+        return json({ ok: true, ...currentStats() });
       }
       if (url.pathname.startsWith("/api/")) {
         return json({ error: "Not found" }, { status: 404 });
@@ -61,15 +73,29 @@ const server = Bun.serve({
   },
 });
 
-process.on("SIGINT", async () => {
-  poller.stop();
-  await projection.dispose();
-  server.stop();
-  process.exit(0);
-});
+await runtime.runPromise(poller.start);
+
+let shuttingDown: Promise<void> | undefined;
+function shutdown(): Promise<void> {
+  if (shuttingDown) return shuttingDown;
+  shuttingDown = (async () => {
+    server.stop(true);
+    await runtime.runPromise(poller.stop);
+    await runtime.dispose();
+    await streams.close();
+  })();
+  return shuttingDown;
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void shutdown().finally(() => process.exit(0));
+  });
+}
 
 console.log(`Hacker News newest stream demo listening on http://localhost:${server.port}`);
-console.log(`Streamsy durable state stream: http://localhost:${server.port}${streamPath}`);
+console.log(`Streamsy source stream: http://localhost:${server.port}${sourceStreamPath}`);
+console.log(`Streamsy durable State stream: http://localhost:${server.port}${streamPath}`);
 console.log(`Polling HN newest ${newestLimit} every ${pollIntervalMs}ms`);
 
-export { server };
+export { server, shutdown };
