@@ -13,7 +13,7 @@ import { useMDXComponents } from "#/components/mdx";
 export const Route = createFileRoute("/docs/$")({
   component: Page,
   loader: async ({ params }) => {
-    const slugs = params._splat?.split("/").filter(Boolean) ?? [];
+    const slugs = params["_splat"]?.split("/").filter(Boolean) ?? [];
     const data = await serverLoader({ data: slugs });
     await clientLoader.preload(data.path);
     return data;
