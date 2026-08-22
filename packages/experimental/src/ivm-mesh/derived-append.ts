@@ -191,7 +191,7 @@ const makeScan = (reads: ReadStreamsShape) =>
             producerId: lane.producerId,
             producerEpoch: lane.producerEpoch,
           },
-          facts: facts as readonly JsonValue[],
+          facts,
         };
       });
       return yield* pull;

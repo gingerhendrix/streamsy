@@ -259,6 +259,7 @@ function toPublicOutcome(outcome: InternalResult): CatchUpOutcome {
     case "invalid-epoch-seq":
       return { status: outcome.status, progress: publicProgress(outcome) };
   }
+  return exhaustive(outcome);
 }
 
 function hasProgress(outcome: InternalResult): outcome is InternalResult & InternalProgress {
@@ -289,6 +290,11 @@ function publicLimit(limit: keyof import("../ivm-mesh/projection.ts").CatchUpLim
     case "maxBytes":
       return "bytes";
   }
+  return exhaustive(limit);
+}
+
+function exhaustive(value: never): never {
+  throw new TypeError(`Unexpected StateProjection variant: ${String(value)}`);
 }
 
 function validateLimits(limits: Limits): void {

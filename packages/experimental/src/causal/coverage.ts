@@ -32,8 +32,9 @@ export function streamPosition(position: string): StreamPosition {
     position === "now" ||
     FORBIDDEN_POSITION_CHARACTERS.test(position)
   ) {
-    throw new TypeError(`Invalid real stream position: ${String(position)}`);
+    throw new TypeError(`Invalid real stream position: ${position}`);
   }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The checks above validate the opaque StreamPosition brand boundary.
   return position as StreamPosition;
 }
 

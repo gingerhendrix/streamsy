@@ -105,6 +105,7 @@ export const ensureLineageCompatible = Effect.fn("MeshLineage.ensureCompatible")
       });
     }
   }
+  return undefined;
 });
 
 export function assertFactTypeAllowed(value: unknown): void {

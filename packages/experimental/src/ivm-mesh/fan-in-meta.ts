@@ -180,6 +180,7 @@ export const ensureFanInCheckpointCompatible = Effect.fn("MeshFanIn.ensureCompat
       });
     }
   }
+  return undefined;
 });
 
 export function isReservedType(type: string): boolean {

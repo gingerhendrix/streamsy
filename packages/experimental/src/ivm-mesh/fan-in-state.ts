@@ -1,5 +1,5 @@
 import type { JsonValue, StreamBatch } from "@streamsy/core";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import type { StreamBinding } from "../binding.ts";
 import {
   decodeStreamIdentity,
@@ -294,7 +294,7 @@ const advanceMembership = <State, MemberInput>(
           through: null,
         };
         members.set(key, member);
-        meta.push(createMemberRow(member) as unknown as JsonValue);
+        meta.push(decodeJsonValue(createMemberRow(member)));
         continue;
       }
       const existing = members.get(key);
@@ -388,7 +388,7 @@ const advanceMembers = <State, MemberInput>(
       const advancedMember: FanInMember = { ...member, through: ack.position };
       const appended = yield* appendFanInBatch(options, progress.checkpoint, {
         facts: stepped.facts,
-        meta: [createMemberRow(advancedMember) as unknown as JsonValue],
+        meta: [decodeJsonValue(createMemberRow(advancedMember))],
         membershipThrough: progress.checkpoint.membershipThrough,
       });
       if (appended.kind === "failed") {
@@ -452,10 +452,12 @@ const appendFanInBatch = (
     }
     const nextProducerSeq = previous.nextProducerSeq + 1;
     if (!Number.isSafeInteger(nextProducerSeq)) throw new TypeError("Producer sequence exhausted");
-    const checkpointRow = createFanInCheckpoint(options.lane, {
-      membershipThrough: input.membershipThrough,
-      nextProducerSeq,
-    }) as unknown as JsonValue;
+    const checkpointRow = decodeJsonValue(
+      createFanInCheckpoint(options.lane, {
+        membershipThrough: input.membershipThrough,
+        nextProducerSeq,
+      }),
+    );
 
     const appends = yield* AppendStreams;
     const result = yield* appends.appendJsonBatch(
@@ -672,7 +674,7 @@ const makeFanInScan = (reads: ReadStreamsShape) =>
             producerEpoch: lane.producerEpoch,
           },
           members: sortMembers(Array.from(members.values())),
-          facts: facts as readonly JsonValue[],
+          facts,
         };
       });
       return yield* pull;
@@ -766,3 +768,5 @@ function encodedBatchBytes(batch: StreamBatch): number {
 function isRecord(value: unknown): value is Record<string, JsonValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+const decodeJsonValue = Schema.decodeUnknownSync(Schema.Json);

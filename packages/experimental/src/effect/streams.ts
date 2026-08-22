@@ -79,7 +79,7 @@ function scopedReadOpen(
     acquire,
     (opened) =>
       opened.status === "ok"
-        ? opened.session.cancel("read scope closed").pipe(Effect.catchCause(() => Effect.void))
+        ? opened.session.cancel("read scope closed").pipe(Effect.ignoreCause)
         : Effect.void,
     { interruptible: true },
   );
@@ -94,8 +94,7 @@ export const ReadStreamsLive = Layer.succeed(
           const result: ClientReadResult = yield* readPromise("open", (signal) =>
             binding.client.stream(binding.streamId).read({ ...options, signal }),
           );
-          if (result.status === "error")
-            return yield* Effect.fail(StreamReadError.from("open", result));
+          if (result.status === "error") return yield* StreamReadError.from("open", result);
           if (result.status !== "ok") return result;
           const iterator = result.session[Symbol.asyncIterator]();
           return {
