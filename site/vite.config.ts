@@ -6,7 +6,11 @@ import tailwindcss from "@tailwindcss/vite";
 import { nitro } from "nitro/vite";
 import mdx from "fumadocs-mdx/vite";
 
+const siteBasePath = process.env.SITE_BASE_PATH?.replace(/^\/+|\/+$/g, "");
+const viteBase = siteBasePath ? `/${siteBasePath}/` : "/";
+
 const config = defineConfig({
+  base: viteBase,
   plugins: [
     nitro({
       preset: "cloudflare_module",
