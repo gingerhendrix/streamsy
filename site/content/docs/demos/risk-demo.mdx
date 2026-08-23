@@ -1,0 +1,184 @@
+---
+title: "Hex Domination"
+description: A complete event-sourced game on Streamsy — canonical events, a recovered board projection with lineage, causal coverage in the client, verified rebuilds, and a typed browser mirror.
+---
+
+This tutorial walks through [`examples/risk-demo`](https://github.com/gingerhendrix/streamsy/tree/experimental/examples/risk-demo), **Hex Domination**: an event-sourced territory game and the largest of the experimental demos. Where the other tutorials isolate one API, this one shows the whole approach inside a real application:
+
+- canonical game events in `games/<gameId>/events`;
+- an independently reduced board projection at `games/<gameId>/projections/board/<generation>`;
+- private, per-player action streams;
+- idempotent commands with expected-head concurrency control;
+- projection recovery from durable output, with validation;
+- verified projection rebuilds and generation cutover;
+- a React browser that follows typed Durable State;
+- Bun/SQLite and Cloudflare Durable Object hosts.
+
+The generated map is recorded inside the `GameStarted` event, so replay reads a durable snapshot instead of rerunning the generator.
+
+## The write path
+
+`server/http/routes.ts` decodes each request and identifies the player from a bearer capability. `server/game/command-service.ts` deduplicates the `commandId`, folds canonical history, calls the pure decider in `src/domain/decide.ts`, and appends every accepted event under a source-head precondition. Randomness and clock-derived deadlines become recorded event data, so replay is deterministic.
+
+The command acknowledgement contains `commandId`, `turnId`, and the final canonical `eventOffset`. It is a receipt, not the outcome. Dice results, captures, phase changes, and victory arrive through the board projection or the player's private action stream.
+
+## The board as a mesh projection
+
+The board is a stateful projection: to emit a row *change*, it must know the rows it previously wrote. `src/board/mesh.ts` expresses the board on the mesh primitives:
+
+```ts title="src/board/mesh.ts"
+import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
+import { streamIdentity, type StreamIdentity } from "@streamsy/experimental/causal";
+import {
+  deriveProducerLane,
+  type CatchUpLimits,
+  type ProducerLane,
+  type ProjectionBoundary,
+} from "@streamsy/experimental/ivm-mesh";
+
+/**
+ * The epoch is fixed configuration for a board generation, never claimed and
+ * never bumped on restart. A generation's output is immutable; a *new* board is
+ * a new generation with its own stream, which is what `rebuild` produces.
+ */
+export const BOARD_PRODUCER_EPOCH = 1;
+
+/** Bounded per-invocation work. Generous: a game's canonical log is small. */
+export const BOARD_CATCHUP_LIMITS: CatchUpLimits = {
+  maxItems: 10_000,
+  maxPages: 1_000,
+  maxBatches: 1_000,
+  maxBytes: 16 * 1024 * 1024,
+};
+```
+
+One source delivery boundary becomes one State transaction holding every implied row change, the application's own `projectionMeta` checkpoint row, and the framework's reserved lineage row. The board and its causal position can never commit apart. A boundary never splits one command's events, but it can contain several commands when catching up on a backlog, so each application change carries a transaction ID derived from its command ID.
+
+## Materialize by recovering, every time
+
+`server/game/board.ts` holds no cached board state. Each `GET /board` runs one bounded `catchUpState` invocation, and the mesh recovers `{ rows, lineage, next sequence }` from the durable target first. Two servers, or one server on either side of a restart, cannot disagree about the board because one of them holds a warmer copy.
+
+```ts title="server/game/board.ts"
+const BoardLayer = Layer.mergeAll(DerivedRecoveryLive, DerivedStateHistoryLive).pipe(
+  Layer.provideMerge(Layer.mergeAll(ReadStreamsLive, AppendStreamsLive)),
+);
+
+export function createBoardRuntimeCache(protocol: StreamProtocolFactory): BoardRuntimeCache {
+  return {
+    client: directProtocolClient(protocol),
+    runtime: ManagedRuntime.make(BoardLayer),
+  };
+}
+
+export function runBoardCatchUp(mesh: BoardMesh) {
+  return catchUpState<BoardMaterialized, GameEvent>({
+    source: mesh.source,
+    target: mesh.target,
+    lane: mesh.lane,
+    limits: mesh.limits,
+    initial: mesh.initial,
+    restore: (initial, facts) => mesh.restore(initial, facts),
+    validateRecovered: (checkpoint) => mesh.validateRecovered(checkpoint),
+    decode: (batch) => mesh.decode(batch),
+    step: (prior, events, boundary) => ({ facts: mesh.reduce(events, boundary, prior) }),
+  });
+}
+```
+
+Two properties are worth naming:
+
+- **Recovery validation.** `mesh.validateRecovered` checks that the application checkpoint agrees with the mesh lineage *before* any source is read. A mismatch poisons restoration instead of being overwritten by a resumed pass.
+- **No partial boards.** A `limit-reached` checkpoint would describe a partial board, and its watermark would be false proof. `materializeBoard` runs further bounded passes and fails the read outright if the backlog does not drain, rather than returning a board that looks complete.
+
+The honest cost: recovery is O(board history) per call, because the incubating mesh has no bounded recovery anchor yet. For one game's board that is a small scan; it is not a shape to carry into a large history without a snapshot anchor.
+
+## Causal coverage in the client path
+
+A command acknowledgement names a canonical-stream offset. The board is a separate projection that may lag. `server/game/board-sync.ts` waits until the board provably incorporates an acknowledged offset, using the pure `coverage()` function from `@streamsy/experimental/causal`:
+
+```ts title="server/game/board-sync.ts"
+import {
+  coverage,
+  sourceAck,
+  sourceWatermark,
+  streamIdentityEquals,
+} from "@streamsy/experimental/causal";
+```
+
+Both operands are positions in the *canonical* stream, lifted into structured identities. Coverage answers `proven`, `not-yet`, or `incomparable`, and this module turns `incomparable` into a hard error rather than a retry. Nothing ever compares a source offset with a target offset.
+
+## The typed browser mirror
+
+The browser follows the active board generation through the read-only `/streams/` facade, using `createStreamDB` and a `createStateSchema` definition that registers every board row type:
+
+```ts title="src/ui/board-stream-db.ts"
+export const riskBoardState = createStateSchema({
+  games: { schema: Schema.toStandardSchemaV1(ProjectedGameSchema), type: "game", primaryKey: "id" },
+  players: {
+    schema: Schema.toStandardSchemaV1(ProjectedPlayerSchema),
+    type: "player",
+    primaryKey: "id",
+  },
+  hexes: { schema: Schema.toStandardSchemaV1(ProjectedHexSchema), type: "hex", primaryKey: "id" },
+  territories: {
+    schema: Schema.toStandardSchemaV1(ProjectedTerritorySchema),
+    type: "territory",
+    primaryKey: "id",
+  },
+  // ...continents, turn, combat, moves, projectionMeta
+});
+```
+
+Framework lineage rows stay internal because no UI collection registers their reserved type. After submitting a command, `src/ui/game.tsx` derives the board transaction ID from the command ID and calls `awaitTxId`, so the UI reports the board as caught up only when the matching board transaction has arrived. The server exposes only the current board generation; canonical events, retired generations, command records, and private action streams are excluded.
+
+## Private action streams and agent seats
+
+Each player has a private action stream. `server/game/action-notifier.ts` derives replay-safe, self-sufficient `ActionRequired` and `GameOver` messages, served as bearer-authenticated SSE.
+
+This powers a second journey: the host opens an agent seat, hands the returned one-time descriptor to a coding agent, and the agent follows its SSE stream, posting one legal command per `ActionRequired` message. The protocol is specified in `examples/risk-demo/docs/agent-api.md`. The `demo` script plays a watchable bot-versus-bot game and prints a spectator URL.
+
+## Verified rebuilds
+
+`BOARD_REDUCER_VERSION` identifies the output-producing code. Changing it does not migrate anything; the verified rebuild does. `server/game/rebuild.ts` replays canonical history into a fresh generation with its own stream, compares the rebuilt logical board with the aggregate fold, requires the new watermark to equal the canonical head, and only then atomically activates the new generation. A failed generation stays recorded and the old one remains active.
+
+The projection reducer in `src/board/projection.ts` deliberately does not import the aggregate fold. Tests compare the two at every event prefix, which is what makes the rebuild comparison meaningful.
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install
+bun run build
+bun run --cwd examples/risk-demo demo
+```
+
+The demo script uses a temporary SQLite database and deletes it on exit. For interactive local play use `dev` or `start`; prefer `start` for browser automation, because Bun's development HMR overlay intercepts synthesized clicks. The Bun server uses an in-memory database unless `DB_PATH` is set.
+
+Rebuild a stored game:
+
+```bash
+DB_PATH=./risk.sqlite \
+  bun run --cwd examples/risk-demo rebuild -- <game-id>
+```
+
+## Verify it
+
+```bash
+bun run --cwd examples/risk-demo typecheck
+bun run --cwd examples/risk-demo test
+bun run --cwd examples/risk-demo test:sqlite
+bun run --cwd examples/risk-demo build:cloudflare
+bun run --cwd examples/risk-demo smoke:http
+```
+
+The Vitest suites cover domain rules, projection equivalence and recovery, HTTP contracts, SSE framing, agents, bots, rebuilds, and UI behavior. Bun tests cover SQLite persistence and rebuild cutover across restart. For Cloudflare, the repository records local build evidence only; `docs/cloudflare.md` states there is no live deployment or deployed smoke evidence on this branch.
+
+## Limits
+
+- Board recovery restores the complete output history on each materialization. A bounded recovery anchor is noted as future work in `server/game/board.ts`.
+- Catch-up currently reads all unread source data as one delivery boundary; an oversized boundary fails atomically, and paginated draining is future work.
+- The move feed caps at 40 rows. It is a presentation feed, not full history.
+- Cloudflare hosting uses one SQLite Durable Object per game, not the one-object-per-stream model of `@streamsy/storage-durable-object`.
+- Board delivery uses a long-poll Durable State stream; agent actions use SSE. The transports differ by design, and the agent API rejects `wait`.
+- Duplicate command acceptance proves reuse of a producer sequence, not payload equality. Positions from different identities are incomparable. Wakeups improve latency; durable rereads, lineage, and checkpoints provide the proof.
