@@ -18,7 +18,7 @@ Import the binding API from `@streamsy/experimental/binding`.
 
 ## Effect capabilities
 
-Import the Effect-native `ReadStreams` and `AppendStreams` capabilities from `@streamsy/experimental/effect`, and deterministic test-layer helpers from `@streamsy/experimental/effect/testing`. `DerivedRecovery` is exported from `@streamsy/experimental/ivm-mesh` with the derived-state orchestration that it serves.
+Import the Effect-native `CreateStreams`, `ReadStreams`, and `AppendStreams` capabilities from `@streamsy/experimental/effect`, and deterministic test-layer helpers from `@streamsy/experimental/effect/testing`. `DerivedRecovery` is exported from `@streamsy/experimental/ivm-mesh` with the derived-state orchestration that it serves.
 
 These are finite capabilities; a binding remains a method argument rather than becoming a service tag. Live Layers adapt the existing fixed Promise client. Expected transport/session failures use schema-backed tagged errors, while protocol classifications such as missing, gone, duplicate, conflict, stale epoch, and producer gap remain values.
 

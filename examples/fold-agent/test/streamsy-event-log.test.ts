@@ -19,7 +19,7 @@ import {
   type LogEntryInput,
 } from "@humanlayer/fold-core";
 import type { JsonValue } from "@streamsy/core";
-import { StreamReadError } from "@streamsy/experimental/effect";
+import { StreamCreateError, StreamReadError } from "@streamsy/experimental/effect";
 import { TestStreamsLayer } from "@streamsy/experimental/effect/testing";
 import { Cause, Effect, Exit, Fiber, Stream, type Scope } from "effect";
 import { openMemoryStore, openStore, type StreamsyStore } from "../src/storage.ts";
@@ -366,13 +366,16 @@ for (const backend of backends) {
 
 describe("Streamsy EventLog capability injection", () => {
   /**
-   * The adapter consumes the `ReadStreams`/`AppendStreams` capabilities, so a
+   * The adapter consumes the create/read/append capabilities, so a
    * test can script them with `TestStreamsLayer` and no transport at all. Here
    * a scripted retryable read failure surfaces as Fold's typed unavailability.
    */
   test("a scripted capability failure surfaces as a typed Fold error", async () => {
     const store = openMemoryStore();
     const capabilities = TestStreamsLayer({
+      create: {
+        create: () => Effect.die(new Error("unused")),
+      },
       read: {
         open: () =>
           Effect.fail(
@@ -399,6 +402,42 @@ describe("Streamsy EventLog capability injection", () => {
     const error = failureOf(exit) as { _tag?: string; message?: string; retryable?: boolean };
     expect(error._tag).toBe("EventLogUnavailableError");
     expect(error.message).toContain("scripted outage");
+    expect(error.retryable).toBe(true);
+  });
+
+  test("a scripted create failure crosses the same typed capability boundary", async () => {
+    const store = openMemoryStore();
+    const capabilities = TestStreamsLayer({
+      create: {
+        create: () =>
+          Effect.fail(
+            new StreamCreateError({
+              operation: "create",
+              failure: { status: "error" },
+              message: "scripted create outage",
+              code: "transport",
+              retryable: true,
+              durability: "unknown",
+            }),
+          ),
+      },
+      read: {
+        open: () => Effect.die(new Error("unused")),
+      },
+      append: {
+        append: () => Effect.die(new Error("unused")),
+        appendJsonBatch: () => Effect.die(new Error("unused")),
+      },
+    });
+
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(openLog(store, "log/create-outage", "create", capabilities)),
+    );
+    await store.close();
+
+    const error = failureOf(exit) as { _tag?: string; message?: string; retryable?: boolean };
+    expect(error._tag).toBe("EventLogUnavailableError");
+    expect(error.message).toContain("scripted create outage");
     expect(error.retryable).toBe(true);
   });
 });

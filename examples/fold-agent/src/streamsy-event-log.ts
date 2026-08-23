@@ -9,11 +9,10 @@
  * sequence carried inside the message. Neither is derived from the other.
  *
  * Unlike the Promise-bridging variant of this example, nothing here calls
- * `Effect.tryPromise` on the read or append hot paths. Reads and appends go
- * through the `ReadStreams` and `AppendStreams` services, whose Live layers own
- * the Promise client and whose test layer can stand in for it without any
- * transport at all. The one remaining Promise seam is stream creation, which
- * the experimental surface does not cover yet.
+ * `Effect.tryPromise`. Creation, reads, and appends go through the
+ * `CreateStreams`, `ReadStreams`, and `AppendStreams` services. Their Live
+ * layers own the Promise client, and their test layer can stand in for it
+ * without any transport at all.
  *
  * The adapter deliberately stays inside this example: Fold is young, its log
  * API can still move, and no second consumer has yet justified a `@streamsy/*`
@@ -40,10 +39,14 @@ import type { StreamBinding } from "@streamsy/experimental/binding";
 import {
   AppendStreams,
   AppendStreamsLive,
+  CreateStreams,
+  CreateStreamsLive,
   ReadStreams,
   ReadStreamsLive,
   type AppendStreamsShape,
+  type CreateStreamsShape,
   type ReadStreamsShape,
+  type StreamCreateError,
   type StreamReadError,
 } from "@streamsy/experimental/effect";
 import { Context, Effect, Layer, Ref, Schema, Semaphore, Stream } from "effect";
@@ -52,7 +55,7 @@ import { Context, Effect, Layer, Ref, Schema, Semaphore, Stream } from "effect";
 export type StreamsyEventLogMode = "create" | "resume";
 
 /** The capabilities the adapter consumes. Live by default, injectable in tests. */
-export type StreamsyEventLogCapabilities = Layer.Layer<ReadStreams | AppendStreams>;
+export type StreamsyEventLogCapabilities = Layer.Layer<CreateStreams | ReadStreams | AppendStreams>;
 
 export interface StreamsyEventLogOptions {
   /** The bound stream holding this session's Fold log. One stream is one session. */
@@ -64,14 +67,15 @@ export interface StreamsyEventLogOptions {
    */
   readonly mode: StreamsyEventLogMode;
   /**
-   * The `ReadStreams`/`AppendStreams` layer to run against. Defaults to the
+   * The create/read/append capability layer to run against. Defaults to the
    * Live layers over the binding's client. Tests may supply
    * `TestStreamsLayer(...)` to script capability behaviour with no transport.
    */
   readonly capabilities?: StreamsyEventLogCapabilities;
 }
 
-const liveCapabilities: StreamsyEventLogCapabilities = Layer.merge(
+const liveCapabilities: StreamsyEventLogCapabilities = Layer.mergeAll(
+  CreateStreamsLive,
   ReadStreamsLive,
   AppendStreamsLive,
 );
@@ -109,6 +113,9 @@ const fromReadError =
     error.code === "parse-error"
       ? corrupt(operation, "Stored Fold entry is not valid JSON", undefined, error)
       : unavailable(operation, error.message, error.retryable, error);
+
+const fromCreateError = (error: StreamCreateError): EventLogError =>
+  unavailable("append", error.message, error.retryable, error);
 
 /**
  * Decode one stored Streamsy message into a Fold entry and check that it sits at
@@ -188,19 +195,15 @@ const encodeEntry = (entry: LogEntry) =>
     ),
   );
 
-/**
- * Create the durable stream for a fresh session. Creation is the one operation
- * the experimental Effect surface does not expose yet, so this is the single
- * remaining place the adapter touches the Promise client directly.
- */
-const createLogStream = (binding: StreamBinding): Effect.Effect<void, EventLogError> =>
+/** Create the durable stream for a fresh session through the Effect capability. */
+const createLogStream = (
+  create: CreateStreamsShape,
+  binding: StreamBinding,
+): Effect.Effect<void, EventLogError> =>
   Effect.gen(function* () {
-    const created = yield* Effect.tryPromise({
-      try: () =>
-        binding.client.stream(binding.streamId).create({ contentType: "application/json" }),
-      catch: (cause) =>
-        unavailable("append", `Unable to create stream "${binding.streamId}"`, true, cause),
-    });
+    const created = yield* create
+      .create(binding, { contentType: "application/json" })
+      .pipe(Effect.mapError(fromCreateError));
     if (created.status === "conflict") {
       return yield* unavailable(
         "append",
@@ -208,15 +211,6 @@ const createLogStream = (binding: StreamBinding): Effect.Effect<void, EventLogEr
         false,
       );
     }
-    if (created.status !== "created") {
-      return yield* unavailable(
-        "append",
-        `Unable to create stream "${binding.streamId}" (${created.message})`,
-        created.retryable,
-        created,
-      );
-    }
-    return undefined;
   });
 
 /**
@@ -230,12 +224,13 @@ const makeService = (
   binding: StreamBinding,
   mode: StreamsyEventLogMode,
   ids: IdsService,
-): Effect.Effect<EventLogService, EventLogError, ReadStreams | AppendStreams> =>
+): Effect.Effect<EventLogService, EventLogError, CreateStreams | ReadStreams | AppendStreams> =>
   Effect.gen(function* () {
+    const create: CreateStreamsShape = yield* CreateStreams;
     const read: ReadStreamsShape = yield* ReadStreams;
     const append: AppendStreamsShape = yield* AppendStreams;
 
-    if (mode === "create") yield* createLogStream(binding);
+    if (mode === "create") yield* createLogStream(create, binding);
 
     const initial = yield* readAll(read, binding, "entries");
 

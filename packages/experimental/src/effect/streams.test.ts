@@ -13,26 +13,37 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
-import { StreamAppendError, StreamReadError } from "./errors.ts";
+import { StreamAppendError, StreamCreateError, StreamReadError } from "./errors.ts";
 import { TestStreams, TestStreamsLayer } from "./testing.ts";
-import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive } from "./streams.ts";
+import {
+  AppendStreams,
+  AppendStreamsLive,
+  CreateStreams,
+  CreateStreamsLive,
+  ReadStreams,
+  ReadStreamsLive,
+} from "./streams.ts";
 import { provideTestLayers } from "./test-layers.ts";
 
-const StreamTestLive = Layer.merge(ReadStreamsLive, AppendStreamsLive);
+const StreamTestLive = Layer.mergeAll(CreateStreamsLive, ReadStreamsLive, AppendStreamsLive);
 
 describe("Effect stream capabilities", () => {
-  test("schema-backed faults preserve client classification and unknown append durability", () => {
+  test("schema-backed write faults preserve client classification and unknown durability", () => {
     const failure: ClientFailure = {
       status: "error",
       code: "busy",
       message: "temporarily unavailable",
       retryable: true,
     };
+    const create = Schema.decodeUnknownSync(StreamCreateError)(
+      StreamCreateError.from("create", failure),
+    );
     const read = Schema.decodeUnknownSync(StreamReadError)(StreamReadError.from("open", failure));
     const append = Schema.decodeUnknownSync(StreamAppendError)(
       StreamAppendError.from("appendJsonBatch", failure),
     );
 
+    expect(create).toMatchObject({ code: "busy", retryable: true, durability: "unknown" });
     expect(read).toMatchObject({ code: "busy", retryable: true });
     expect(append).toMatchObject({ code: "busy", retryable: true, durability: "unknown" });
   });
@@ -42,8 +53,14 @@ describe("Effect stream capabilities", () => {
     { status: "error", code: "busy" },
     { status: "error", code: "not-real", message: 1, retryable: "yes" },
   ])("partial unknown failures cannot defect during tagged-error construction", (failure) => {
+    expect(() => StreamCreateError.from("create", failure)).not.toThrow();
     expect(() => StreamReadError.from("open", failure)).not.toThrow();
     expect(() => StreamAppendError.from("append", failure)).not.toThrow();
+    expect(StreamCreateError.from("create", failure)).toMatchObject({
+      code: "unknown",
+      retryable: false,
+      durability: "unknown",
+    });
     expect(StreamReadError.from("open", failure)).toMatchObject({
       code: "unknown",
       retryable: false,
@@ -65,25 +82,26 @@ describe("Effect stream capabilities", () => {
       client,
       streamId: "facts",
     });
-    await client.stream("facts").create({ contentType: "application/json" });
-
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
+        const create = yield* CreateStreams;
         const append = yield* AppendStreams;
         const read = yield* ReadStreams;
+        const created = yield* create.create(binding, { contentType: "application/json" });
         const appended = yield* append.appendJsonBatch(binding, [1]);
         const opened = yield* read.open(binding);
         if (opened.status !== "ok") return { appended, opened };
         const first = yield* opened.session.next;
         const second = yield* opened.session.next;
         const ended = yield* opened.session.done;
-        return { appended, first, second, ended };
+        return { created, appended, first, second, ended };
       }).pipe(Effect.scoped, (effect) => provideTestLayers(effect, StreamTestLive)),
     );
 
     expect(Exit.isSuccess(exit)).toBe(true);
     if (Exit.isSuccess(exit)) {
       expect(exit.value).toMatchObject({
+        created: { status: "created", contentType: "application/json" },
         appended: { status: "appended" },
         first: { done: false, value: { kind: "json", items: [1] } },
         second: { done: true },
@@ -161,6 +179,9 @@ describe("Effect stream capabilities", () => {
     );
     const binding = bindStream({ identity: streamIdentity("test"), client, streamId: "test" });
     const handlers = {
+      create: {
+        create: () => Effect.succeed({ status: "conflict" as const }),
+      },
       read: {
         open: () => Effect.succeed({ status: "not-found" as const }),
       },
@@ -183,18 +204,22 @@ describe("Effect stream capabilities", () => {
     };
     const result = await Effect.runPromise(
       Effect.gen(function* () {
+        const creates = yield* CreateStreams;
         const reads = yield* ReadStreams;
         const appends = yield* AppendStreams;
         const controls = yield* TestStreams;
         return {
+          create: yield* creates.create(binding),
           read: yield* reads.open(binding),
           append: yield* appends.append(binding, "x"),
+          sameCreate: creates === controls.create,
           sameRead: reads === controls.read,
           sameAppend: appends === controls.append,
         };
       }).pipe(Effect.scoped, (effect) => provideTestLayers(effect, TestStreamsLayer(handlers))),
     );
     expect(result).toEqual({
+      create: { status: "conflict" },
       read: { status: "not-found" },
       append: {
         status: "duplicate",
@@ -202,6 +227,7 @@ describe("Effect stream capabilities", () => {
         producerEpoch: 1,
         producerSeq: 0,
       },
+      sameCreate: true,
       sameRead: true,
       sameAppend: true,
     });

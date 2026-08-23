@@ -16,20 +16,22 @@ interruption, and resume semantics. Streamsy owns durability through Fold's
 The adapter consumes the experimental Effect capabilities instead of bridging
 the Promise client by hand:
 
+- `CreateStreams.create` creates a session log through a typed write capability.
 - `ReadStreams.open` acquires scoped read sessions. One catch-up session backs
   `entries()`; one long-poll session backs `subscribe()`, so backlog and live
   tail are the same call and there is no catch-up/live boundary to lose an
   entry across.
 - `AppendStreams.appendJsonBatch` commits each Fold entry under an
   exact-offset precondition (`expectedOffset`).
-- `StreamReadError` / `StreamAppendError` carry the failure classification;
+- `StreamCreateError` / `StreamReadError` / `StreamAppendError` carry the failure classification;
   the adapter maps them to Fold's typed `EventLog` errors.
 - Capabilities are a `Layer`, so tests can swap in
   `TestStreamsLayer(...)` from `@streamsy/experimental/effect/testing` and
   script capability behaviour with no transport at all.
 
-The one remaining direct Promise call is stream creation: the experimental
-surface does not expose a create capability yet.
+Stream creation, reads, and appends all cross the same injectable Effect
+capability boundary. The Live layers own Promise-client adaptation, while tests
+can replace the complete stream interface without constructing a transport.
 
 ## Commands
 

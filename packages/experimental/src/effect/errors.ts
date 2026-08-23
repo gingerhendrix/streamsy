@@ -34,6 +34,29 @@ function isClientFailure(value: unknown): value is ClientFailure {
   return isClientFailureSchema(value) && clientFailureSchemaInput(value) === value;
 }
 
+export class StreamCreateError extends Schema.TaggedError<StreamCreateError>()(
+  "StreamCreateError",
+  {
+    operation: Schema.String,
+    failure: Schema.Defect(),
+    message: Schema.String,
+    code: ClientErrorCode,
+    retryable: Schema.Boolean,
+    durability: Schema.Literal("unknown"),
+  },
+) {
+  static from(operation: string, failure: unknown): StreamCreateError {
+    const classification = clientFailureClassification(failure);
+    return new StreamCreateError({
+      operation,
+      failure,
+      message: clientFailureMessage(failure),
+      ...classification,
+      durability: "unknown",
+    });
+  }
+}
+
 export class StreamReadError extends Schema.TaggedError<StreamReadError>()("StreamReadError", {
   operation: Schema.String,
   failure: Schema.Defect(),

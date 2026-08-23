@@ -2,7 +2,9 @@ import type {
   AppendJsonBatchOptions,
   AppendStreamOptions,
   ClientAppendResult,
+  ClientCreateResult,
   ClientReadResult,
+  CreateStreamOptions,
   JsonValue,
   ReadEndResult,
   ReadStreamOptions,
@@ -10,7 +12,7 @@ import type {
 } from "@streamsy/core";
 import { Context, Effect, Layer, type Scope } from "effect";
 import type { StreamBinding } from "../binding.ts";
-import { StreamAppendError, StreamReadError } from "./errors.ts";
+import { StreamAppendError, StreamCreateError, StreamReadError } from "./errors.ts";
 
 export interface EffectReadSession<T extends JsonValue = JsonValue> {
   readonly contentType?: string;
@@ -23,7 +25,19 @@ export interface EffectReadSession<T extends JsonValue = JsonValue> {
 export type ReadOpenResult<T extends JsonValue = JsonValue> =
   | { readonly status: "ok"; readonly session: EffectReadSession<T> }
   | { readonly status: "not-found" | "gone" };
+export type CreateOutcome = Exclude<ClientCreateResult, { status: "error" }>;
 export type AppendOutcome = Exclude<ClientAppendResult, { status: "error" }>;
+
+export interface CreateStreamsShape {
+  readonly create: (
+    binding: StreamBinding,
+    options?: CreateStreamOptions,
+  ) => Effect.Effect<CreateOutcome, StreamCreateError>;
+}
+
+export class CreateStreams extends Context.Service<CreateStreams, CreateStreamsShape>()(
+  "@streamsy/experimental/CreateStreams",
+) {}
 
 export interface ReadStreamsShape {
   /**
@@ -60,6 +74,13 @@ export class AppendStreams extends Context.Service<AppendStreams, AppendStreamsS
   "@streamsy/experimental/AppendStreams",
 ) {}
 
+function createPromise<A>(operation: string, run: (signal: AbortSignal) => Promise<A>) {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) => StreamCreateError.from(operation, cause),
+  });
+}
+
 function readPromise<A>(operation: string, run: (signal: AbortSignal) => Promise<A>) {
   return Effect.tryPromise({ try: run, catch: (cause) => StreamReadError.from(operation, cause) });
 }
@@ -84,6 +105,23 @@ function scopedReadOpen(
     { interruptible: true },
   );
 }
+
+export const CreateStreamsLive = Layer.succeed(
+  CreateStreams,
+  CreateStreams.of({
+    create: Effect.fn("CreateStreams.create")((binding, options) =>
+      createPromise("create", (signal) =>
+        binding.client.stream(binding.streamId).create({ ...options, signal }),
+      ).pipe(
+        Effect.flatMap((result: ClientCreateResult) =>
+          result.status === "error"
+            ? Effect.fail(StreamCreateError.from("create", result))
+            : Effect.succeed(result),
+        ),
+      ),
+    ),
+  }),
+);
 
 export const ReadStreamsLive = Layer.succeed(
   ReadStreams,
