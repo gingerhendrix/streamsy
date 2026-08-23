@@ -25,3 +25,6 @@ Thumbs.db
 dist/
 build/
 *.log
+
+# fold-agent example local database
+examples/fold-agent/.data/

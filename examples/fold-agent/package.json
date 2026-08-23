@@ -1,0 +1,26 @@
+{
+  "name": "fold-agent-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/cli.ts start",
+    "resume": "bun run src/cli.ts resume",
+    "inspect": "bun run src/cli.ts inspect",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test test"
+  },
+  "dependencies": {
+    "@effect/ai-anthropic": "4.0.0-rc.109",
+    "@effect/ai-openai": "4.0.0-rc.109",
+    "@humanlayer/fold-core": "0.1.4",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/experimental": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
+    "effect": "4.0.0-rc.109"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:"
+  }
+}
