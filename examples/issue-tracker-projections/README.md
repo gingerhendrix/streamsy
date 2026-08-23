@@ -194,9 +194,12 @@ its own change.
 
 ## Local development
 
+From the repository root, install the workspace and build its package entry
+points once before starting the example:
+
 ```bash
-bun install
-bun run build
+bun install --frozen-lockfile
+bun run build                                              # workspace packages
 bun run --cwd examples/issue-tracker-projections dev      # http://localhost:8787
 curl -X POST http://localhost:8787/api/workspaces/main/seed
 open 'http://localhost:8787/?workspace=main&project=launch'
@@ -222,6 +225,7 @@ bun run --cwd examples/issue-tracker-projections typecheck
 bun run --cwd examples/issue-tracker-projections test       # vitest + bun sqlite
 bun run --cwd examples/issue-tracker-projections build
 bun run --cwd examples/issue-tracker-projections smoke:http
+bun run --cwd examples/issue-tracker-projections smoke:ui   # passes or explicitly skips
 bun run --cwd examples/issue-tracker-projections seed:check
 bun run --cwd examples/issue-tracker-projections audit:state
 bun run --cwd examples/issue-tracker-projections deploy:check
