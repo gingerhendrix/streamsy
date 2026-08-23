@@ -22,7 +22,7 @@ Import the Effect-native `ReadStreams` and `AppendStreams` capabilities from `@s
 
 These are finite capabilities; a binding remains a method argument rather than becoming a service tag. Live Layers adapt the existing fixed Promise client. Expected transport/session failures use schema-backed tagged errors, while protocol classifications such as missing, gone, duplicate, conflict, stale epoch, and producer gap remain values.
 
-The package pins `effect@4.0.0-beta.99` exactly. Libraries return Effect descriptions and never create a runtime or call `runPromise` internally.
+The package pins `effect@4.0.0-rc.111` exactly. Libraries return Effect descriptions and never create a runtime or call `runPromise` internally.
 
 ## State projection facade
 

@@ -58,7 +58,12 @@ describe("agent seat authority and contract", () => {
     expect(response.status).toBe(400);
     expect(response.body.error).toMatchObject({
       code: "INVALID_ACTION",
-      details: [{ path: "action.placements[0]" }],
+      details: [
+        {
+          path: "action.placements[0]",
+          expected: 'Expected number, got "three"\n  at ["action"]["placements"][0]["armies"]',
+        },
+      ],
     });
   });
 

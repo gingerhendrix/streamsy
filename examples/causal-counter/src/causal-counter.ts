@@ -46,12 +46,12 @@ export interface CounterContributionEvent extends Schema.Schema.Type<
   typeof CounterContributionEvent
 > {}
 
-export class MalformedCounterState extends Schema.TaggedErrorClass<MalformedCounterState>()(
+export class MalformedCounterState extends Schema.TaggedError<MalformedCounterState>()(
   "MalformedCounterState",
   { message: Schema.String, cause: Schema.Defect() },
 ) {}
 
-export class UnregisteredCounterStateCollection extends Schema.TaggedErrorClass<UnregisteredCounterStateCollection>()(
+export class UnregisteredCounterStateCollection extends Schema.TaggedError<UnregisteredCounterStateCollection>()(
   "UnregisteredCounterStateCollection",
   { collection: Schema.String },
 ) {}

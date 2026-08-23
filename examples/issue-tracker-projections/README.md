@@ -31,7 +31,7 @@ it can fail. Nothing takes an options record, resolves a client, converts a
 Promise, or throws to signal an expected failure.
 
 ```text
-server/errors.ts       typed failures (Schema.TaggedErrorClass)
+server/errors.ts       typed failures (Schema.TaggedError)
 server/config.ts       AppConfig service, read through Effect Config
 server/streams.ts      Streams service — the only protocol-client boundary
 server/lanes.ts        ProjectionLanes service — Cache-backed producer lanes

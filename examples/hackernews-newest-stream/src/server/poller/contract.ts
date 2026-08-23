@@ -5,7 +5,7 @@ import type { HackerNewsSourceChange } from "../story-index-projection.ts";
 import { errorMessage } from "../util.ts";
 
 /** Expected operational failure from one poll pass boundary. */
-export class PollFailure extends Schema.TaggedErrorClass<PollFailure>()(
+export class PollFailure extends Schema.TaggedError<PollFailure>()(
   "NewestStoriesPoller.PollFailure",
   { operation: Schema.String, reason: Schema.String },
 ) {}

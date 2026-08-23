@@ -34,7 +34,7 @@ function isClientFailure(value: unknown): value is ClientFailure {
   return isClientFailureSchema(value) && clientFailureSchemaInput(value) === value;
 }
 
-export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()("StreamReadError", {
+export class StreamReadError extends Schema.TaggedError<StreamReadError>()("StreamReadError", {
   operation: Schema.String,
   failure: Schema.Defect(),
   message: Schema.String,
@@ -52,7 +52,7 @@ export class StreamReadError extends Schema.TaggedErrorClass<StreamReadError>()(
   }
 }
 
-export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError>()(
+export class StreamAppendError extends Schema.TaggedError<StreamAppendError>()(
   "StreamAppendError",
   {
     operation: Schema.String,
@@ -75,32 +75,29 @@ export class StreamAppendError extends Schema.TaggedErrorClass<StreamAppendError
   }
 }
 
-export class MalformedLineage extends Schema.TaggedErrorClass<MalformedLineage>()(
-  "MalformedLineage",
-  { message: Schema.String, cause: Schema.Defect() },
-) {}
+export class MalformedLineage extends Schema.TaggedError<MalformedLineage>()("MalformedLineage", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
 
-export class IncompatibleLineage extends Schema.TaggedErrorClass<IncompatibleLineage>()(
+export class IncompatibleLineage extends Schema.TaggedError<IncompatibleLineage>()(
   "IncompatibleLineage",
   { message: Schema.String },
 ) {}
 
-export class MalformedSourceBoundary extends Schema.TaggedErrorClass<MalformedSourceBoundary>()(
+export class MalformedSourceBoundary extends Schema.TaggedError<MalformedSourceBoundary>()(
   "MalformedSourceBoundary",
   { offset: Schema.String, cause: Schema.Defect() },
 ) {}
 
-export class ProjectionPoison extends Schema.TaggedErrorClass<ProjectionPoison>()(
-  "ProjectionPoison",
-  {
-    phase: Schema.Literals(["decode", "reduce", "step", "membership", "member", "remove"]),
-    sourcePosition: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {}
+export class ProjectionPoison extends Schema.TaggedError<ProjectionPoison>()("ProjectionPoison", {
+  phase: Schema.Literals(["decode", "reduce", "step", "membership", "member", "remove"]),
+  sourcePosition: Schema.String,
+  cause: Schema.Defect(),
+}) {}
 
 /** Durable target State could not be restored into typed application state. */
-export class StateRestorePoison extends Schema.TaggedErrorClass<StateRestorePoison>()(
+export class StateRestorePoison extends Schema.TaggedError<StateRestorePoison>()(
   "StateRestorePoison",
   { targetOffset: Schema.String, cause: Schema.Defect() },
 ) {}

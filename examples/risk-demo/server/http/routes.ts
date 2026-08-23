@@ -652,6 +652,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
  * transport path by which a player could submit one.
  */
 type ValidationDetail = { path: string; expected: string; received: unknown };
+const formatSchemaIssue = SchemaIssue.makeFormatterDefault();
 type ParsedPlayCommand =
   | { ok: true; value: { body: PlayCommand; command: Command } }
   | { ok: false; details: ValidationDetail[] };
@@ -689,14 +690,14 @@ function validationPath(issue: SchemaIssue.Issue): string {
 }
 
 function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
-  const decoded = Schema.decodeUnknownResult(PlayCommand)(value);
+  const decoded = Schema.decodeUnknownResult(PlayCommand, { reportInput: true })(value);
   if (decoded._tag === "Failure") {
     return {
       ok: false,
       details: [
         {
           path: validationPath(decoded.failure.issue),
-          expected: String(decoded.failure.issue),
+          expected: formatSchemaIssue(decoded.failure.issue),
           received: value,
         },
       ],

@@ -18,7 +18,7 @@
     "@streamsy/experimental": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
-    "effect": "4.0.0-beta.99",
+    "effect": "4.0.0-rc.111",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "catalog:"

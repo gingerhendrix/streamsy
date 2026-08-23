@@ -14,7 +14,7 @@
 import { Schema } from "effect";
 
 /** A request value that cannot be accepted. Always a 400. */
-export class InvalidRequest extends Schema.TaggedErrorClass<InvalidRequest>()("InvalidRequest", {
+export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()("InvalidRequest", {
   field: Schema.String,
   detail: Schema.String,
 }) {
@@ -24,20 +24,20 @@ export class InvalidRequest extends Schema.TaggedErrorClass<InvalidRequest>()("I
 }
 
 /** A malformed JSON body, or a body that does not decode to the request shape. */
-export class MalformedBody extends Schema.TaggedErrorClass<MalformedBody>()("MalformedBody", {
+export class MalformedBody extends Schema.TaggedError<MalformedBody>()("MalformedBody", {
   detail: Schema.String,
 }) {}
 
-export class UnknownProject extends Schema.TaggedErrorClass<UnknownProject>()("UnknownProject", {
+export class UnknownProject extends Schema.TaggedError<UnknownProject>()("UnknownProject", {
   projectId: Schema.String,
 }) {}
 
-export class UnknownIssue extends Schema.TaggedErrorClass<UnknownIssue>()("UnknownIssue", {
+export class UnknownIssue extends Schema.TaggedError<UnknownIssue>()("UnknownIssue", {
   issueId: Schema.String,
 }) {}
 
 /** A durable stream could not be created or is not usable. */
-export class StreamUnavailable extends Schema.TaggedErrorClass<StreamUnavailable>()(
+export class StreamUnavailable extends Schema.TaggedError<StreamUnavailable>()(
   "StreamUnavailable",
   { streamId: Schema.String, status: Schema.String },
 ) {}
@@ -47,7 +47,7 @@ export class StreamUnavailable extends Schema.TaggedErrorClass<StreamUnavailable
  * producer duplicate — an offset conflict, a rejected producer tuple, a missing
  * or gone stream. It is never reported as a success.
  */
-export class AppendRejected extends Schema.TaggedErrorClass<AppendRejected>()("AppendRejected", {
+export class AppendRejected extends Schema.TaggedError<AppendRejected>()("AppendRejected", {
   stream: Schema.String,
   status: Schema.String,
 }) {}

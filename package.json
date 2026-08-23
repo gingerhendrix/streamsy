@@ -69,8 +69,8 @@
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
-    "@effect/platform-node": "4.0.0-beta.99",
+    "@effect/platform-node": "4.0.0-rc.111",
     "@tanstack/db": "0.6.8",
-    "effect": "4.0.0-beta.99"
+    "effect": "4.0.0-rc.111"
   }
 }
