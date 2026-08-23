@@ -12,22 +12,6 @@
         "tsdown": "^0.9.9",
       },
     },
-    "examples/causal-counter": {
-      "name": "causal-counter",
-      "version": "0.0.1",
-      "dependencies": {
-        "@streamsy/core": "workspace:*",
-        "@streamsy/experimental": "workspace:*",
-        "effect": "4.0.0-rc.111",
-      },
-      "devDependencies": {
-        "@streamsy/client": "workspace:*",
-        "@streamsy/storage-sqlite": "workspace:*",
-        "@types/bun": "^1.2.0",
-        "typescript": "catalog:",
-        "vitest": "^4.0.16",
-      },
-    },
     "examples/hackernews-newest-stream": {
       "name": "hackernews-newest-stream",
       "version": "0.0.1",
@@ -1080,8 +1064,6 @@
     "capnp-es": ["capnp-es@0.0.14", "", { "peerDependencies": { "typescript": "^5.7.3" }, "optionalPeers": ["typescript"], "bin": { "capnp-es": "dist/compiler/capnpc-js.mjs", "capnpc-js": "dist/compiler/capnpc-js.mjs", "capnpc-ts": "dist/compiler/capnpc-ts.mjs", "capnpc-dts": "dist/compiler/capnpc-dts.mjs" } }, "sha512-8lWj4GJISiqRSlAJGkWpI4Azib7QY5UDIkqxeHcI7aAnXVk9SFuWxl1Fme+2HhzNANV0WTJqwUZvvXvloc3sBA=="],
 
     "capnweb": ["capnweb@0.6.1", "", {}, "sha512-fmhV26QPd1ewf5R74h55oVZnGwIcSaRMzbfLQUy8+zOBjuTmT3KXoT8wxHvnp1m9Ht9BoUUS5ZwNLoVLfQTyBg=="],
-
-    "causal-counter": ["causal-counter@workspace:examples/causal-counter"],
 
     "chai": ["chai@6.2.2", "", {}, "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg=="],
 

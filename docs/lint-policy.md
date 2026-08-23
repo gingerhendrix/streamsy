@@ -20,7 +20,6 @@ enables only the `effecttsgo` plugin. It runs against an explicit path
 allow-list, held in the `lint:effect` script:
 
 - `packages/experimental`
-- `examples/causal-counter`
 - `examples/hackernews-newest-stream`
 - `examples/issue-tracker-projections`
 - `examples/risk-demo`
