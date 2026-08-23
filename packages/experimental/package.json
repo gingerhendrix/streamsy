@@ -65,7 +65,7 @@
   },
   "dependencies": {
     "@streamsy/core": "0.2.1",
-    "effect": "4.0.0-rc.111"
+    "effect": "4.0.0-rc.109"
   },
   "devDependencies": {
     "@streamsy/client": "workspace:*",
