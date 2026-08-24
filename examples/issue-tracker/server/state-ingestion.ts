@@ -1,4 +1,5 @@
 /** Catch-up ingestion for the four application-owned Durable State sources. */
+/* oxlint-disable typescript/consistent-return -- Effect requires `return yield*` for a never-succeeding failure branch; successful catch-up branches intentionally return void. */
 import type { JsonValue, ReadStreamOptions } from "@streamsy/core";
 import type { StreamBinding } from "@streamsy/experimental/binding";
 import { ReadStreams } from "@streamsy/experimental/effect";
@@ -50,14 +51,16 @@ export interface StateIngestionReport {
   readonly changes: readonly Change<CatalogRow>[];
 }
 
+export interface StateFoldResult {
+  readonly rows: ReadonlyMap<string, CatalogRow>;
+  readonly changes: readonly Change<CatalogRow>[];
+}
+
 /** Pure current-row fold used by both hosts and by repeated-delivery tests. */
 export function foldStateBoundary(
   current: ReadonlyMap<string, CatalogRow>,
   upserts: readonly DecodedStateUpsert[],
-): {
-  readonly rows: ReadonlyMap<string, CatalogRow>;
-  readonly changes: readonly Change<CatalogRow>[];
-} {
+): StateFoldResult {
   const final = new Map<string, CatalogRow>();
   for (const upsert of upserts) final.set(upsert.key, upsert.row);
 
@@ -91,7 +94,7 @@ export const catchUpStateSource = Effect.fn("StateIngestion.catchUpStateSource")
       const options: ReadStreamOptions = { live: false };
       if (checkpoint !== undefined) options.offset = checkpoint;
       const opened = yield* reads.open(binding, options);
-      if (opened.status !== "ok") return;
+      if (opened.status !== "ok") return undefined;
 
       for (;;) {
         const next = yield* opened.session.next;
@@ -129,6 +132,7 @@ export const catchUpStateSource = Effect.fn("StateIngestion.catchUpStateSource")
         changes.push(...result.changes);
         if (batch.upToDate) break;
       }
+      return undefined;
     }),
   );
 
@@ -230,6 +234,8 @@ export function stateSourceId(collection: CatalogCollection): string {
     case "metadata":
       return workspaceMetadata.name;
   }
+  collection satisfies never;
+  throw new TypeError("unknown catalog collection");
 }
 
 export function stateSourceBinding(
@@ -247,4 +253,6 @@ export function stateSourceBinding(
     case "metadata":
       return bindings.metadata(workspaceId);
   }
+  collection satisfies never;
+  throw new TypeError("unknown catalog collection");
 }

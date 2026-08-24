@@ -68,6 +68,7 @@ export const catalog = {
   },
 } as const;
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This function is the named schema boundary shared by HTTP ingestion and persisted-row restore; every branch immediately decodes the unknown value through the collection's declared Schema.
 export function decodeCatalogRow(collection: CatalogCollection, value: unknown): DecodedCatalogRow {
   switch (collection) {
     case "projects": {
@@ -87,4 +88,6 @@ export function decodeCatalogRow(collection: CatalogCollection, value: unknown):
       return { row, key: row.workspaceId, workspaceId: row.workspaceId };
     }
   }
+  collection satisfies never;
+  throw new TypeError("unknown catalog collection");
 }
