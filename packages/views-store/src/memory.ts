@@ -16,6 +16,7 @@ import type {
   ViewStoreService,
 } from "./contracts.ts";
 import {
+  ViewCheckpointIncompatible,
   ViewCursorConflict,
   ViewHistoryExpired,
   ViewStateRestorePoison,
@@ -99,8 +100,9 @@ function applyValues(target: Map<string, string>, mutations: readonly ValueMutat
 function storeError(
   operation: string,
   cause: unknown,
-): ViewStoreUnavailable | ViewStateRestorePoison {
-  if (cause instanceof ViewStateRestorePoison) return cause;
+): ViewStoreUnavailable | ViewStateRestorePoison | ViewCheckpointIncompatible {
+  if (cause instanceof ViewStateRestorePoison || cause instanceof ViewCheckpointIncompatible)
+    return cause;
   return new ViewStoreUnavailable({
     operation,
     detail: cause instanceof Error ? cause.message : String(cause),
@@ -133,6 +135,11 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
           try: () => {
             const pkey = partitionKey(input.identity);
             const existing = backing.partitions.get(pkey);
+            if (existing !== undefined && existing.planHash !== input.identity.planHash)
+              throw new ViewCheckpointIncompatible({
+                reducerId: input.identity.planName,
+                reason: `stored plan ${existing.planHash} does not match ${input.identity.planHash}`,
+              });
             const duplicate = [...backing.batches.entries()].find(
               ([key, batch]) =>
                 key.startsWith(`${pkey}\u0000`) &&
@@ -327,7 +334,8 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
     loadCheckpoint: Effect.fn("ViewStore.loadCheckpoint")((descriptor) =>
       Effect.try({
         try: () => {
-          const match = (backing.checkpoints.get(checkpointKey(descriptor)) ?? [])
+          const generations = backing.checkpoints.get(checkpointKey(descriptor)) ?? [];
+          const match = generations
             .filter(
               (item) =>
                 item.descriptor.planHash === descriptor.planHash &&
@@ -335,6 +343,11 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
                 item.descriptor.reducerVersion === descriptor.reducerVersion,
             )
             .at(-1);
+          if (match === undefined && generations.length > 0)
+            throw new ViewCheckpointIncompatible({
+              reducerId: descriptor.reducerId,
+              reason: "no active generation matches the plan, source, and reducer version",
+            });
           return match === undefined ? undefined : decodeCheckpoint(match);
         },
         catch: (cause) => storeError("loadCheckpoint", cause),

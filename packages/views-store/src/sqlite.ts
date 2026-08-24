@@ -16,6 +16,7 @@ import type {
   ViewStoreService,
 } from "./contracts.ts";
 import {
+  ViewCheckpointIncompatible,
   ViewCursorConflict,
   ViewHistoryExpired,
   ViewStateRestorePoison,
@@ -39,6 +40,7 @@ export interface SqliteStoreOptions {
   readonly now?: () => number;
 }
 const fail = (operation: string, cause: unknown) =>
+  cause instanceof ViewCheckpointIncompatible ||
   cause instanceof ViewCursorConflict ||
   cause instanceof ViewHistoryExpired ||
   cause instanceof ViewStateRestorePoison
@@ -91,6 +93,11 @@ export function sqliteService(database: Database): ViewStoreService {
           "SELECT plan_hash,source_cursor,history_epoch,next_history_seq,history_floor FROM streamsy_view_partitions WHERE plan_name=? AND partition_key=?",
         )
         .get(i.planName, i.partition);
+      if (current !== null && current.plan_hash !== i.planHash)
+        throw new ViewCheckpointIncompatible({
+          reducerId: i.planName,
+          reason: `stored plan ${current.plan_hash} does not match ${i.planHash}`,
+        });
       const duplicate = database
         .query<{ history_epoch: number; history_seq: number }, [string, string, string, string]>(
           "SELECT history_epoch,history_seq FROM streamsy_view_change_batches WHERE plan_name=? AND partition_key=? AND source_id=? AND source_cursor=?",
@@ -498,7 +505,19 @@ function loadCheckpoint(
       input.reducerVersion,
       input.sourceId,
     );
-  if (row === null) return undefined;
+  if (row === null) {
+    const anyGeneration = db
+      .query<{ present: number }, [string, string, string]>(
+        "SELECT 1 present FROM streamsy_view_checkpoint_manifests WHERE plan_name=? AND partition_key=? AND reducer_id=? AND status='active' LIMIT 1",
+      )
+      .get(input.planName, input.partition, input.reducerId);
+    if (anyGeneration !== null)
+      throw new ViewCheckpointIncompatible({
+        reducerId: input.reducerId,
+        reason: "no active generation matches the plan, source, and reducer version",
+      });
+    return undefined;
+  }
   const entries = db
     .query<{ row_key: string; value_json: string }, [string, string, string, number]>(
       "SELECT row_key,value_json FROM streamsy_view_checkpoint_entries WHERE plan_name=? AND partition_key=? AND reducer_id=? AND generation=? ORDER BY row_key",

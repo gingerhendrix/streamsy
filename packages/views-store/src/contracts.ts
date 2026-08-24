@@ -1,5 +1,6 @@
 import type { Effect } from "effect";
 import type {
+  ViewCheckpointIncompatible,
   ViewCursorConflict,
   ViewHistoryExpired,
   ViewStateRestorePoison,
@@ -127,7 +128,8 @@ export type StoreError =
   | ViewStoreUnavailable
   | ViewStateRestorePoison
   | ViewCursorConflict
-  | ViewHistoryExpired;
+  | ViewHistoryExpired
+  | ViewCheckpointIncompatible;
 
 export interface ViewStoreService {
   readonly commit: (

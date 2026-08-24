@@ -183,11 +183,10 @@ export function viewStoreConformance(name: string, factory: ConformanceFactory):
         );
         expect(loaded?.generation).toBe(2);
         expect(loaded?.entries[0]?.value).toEqual({ n: 2 });
-        expect(
-          await run(
-            backend.store.loadCheckpoint({ ...identity, reducerId: "r", reducerVersion: 2 }),
-          ),
-        ).toBeUndefined();
+        const incompatible = await Effect.runPromiseExit(
+          backend.store.loadCheckpoint({ ...identity, reducerId: "r", reducerVersion: 2 }),
+        );
+        expect(Exit.isFailure(incompatible)).toBe(true);
       } finally {
         await backend.close();
       }
