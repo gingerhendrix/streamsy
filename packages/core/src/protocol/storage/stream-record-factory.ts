@@ -1,7 +1,7 @@
 /** Stream record construction for the durable streams protocol. */
 
 import type { CreateOptions } from "../../types/protocol.ts";
-import type { Clock, StreamRecord } from "../../types/storage.ts";
+import type { Clock, StreamLifecycleState, StreamRecord } from "../../types/storage.ts";
 import type { OffsetGenerator } from "../helpers/offset-generator.ts";
 import { ExpiryPolicy } from "../helpers/expiry-policy.ts";
 
@@ -34,17 +34,18 @@ export class StreamRecordFactory {
       expiresAt: options.expiresAt,
       createdAt: this.deps.clock.now(),
     };
+    const lifecycle: StreamLifecycleState = {
+      forkedFrom: fork?.forkedFrom,
+      forkOffset,
+      expiresAtMs: this.deps.expiryPolicy.computeExpiresAtMs(config),
+    };
+    if (fork?.forkSubOffset !== undefined && fork.forkSubOffset > 0) {
+      lifecycle.forkSubOffset = fork.forkSubOffset;
+    }
     return {
       id: streamId,
       config,
-      lifecycle: {
-        forkedFrom: fork?.forkedFrom,
-        forkOffset,
-        ...(fork?.forkSubOffset !== undefined && fork.forkSubOffset > 0
-          ? { forkSubOffset: fork.forkSubOffset }
-          : {}),
-        expiresAtMs: this.deps.expiryPolicy.computeExpiresAtMs(config),
-      },
+      lifecycle,
       currentOffset: forkOffset ?? this.deps.offsets.initialOffset,
       // Kept as adapter metadata for backwards compatibility. Offset generation
       // no longer interprets or depends on this numeric field.

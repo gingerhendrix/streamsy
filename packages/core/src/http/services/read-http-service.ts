@@ -54,17 +54,18 @@ export class ReadHttpService {
         return { ok: false, response: this.deps.responses.notFound() };
       if (read.status === "gone") return { ok: false, response: this.deps.responses.gone() };
       const contentType = meta.contentType;
+      const headers = new Headers({
+        "content-type": contentType,
+        "stream-next-offset": read.nextOffset,
+        "stream-up-to-date": "true",
+        "cache-control": CACHE_NO_STORE,
+      });
+      if (read.closed) headers.set("stream-closed", "true");
       return {
         ok: true,
         offset: read.nextOffset,
         response: new Response(this.deps.bodyCodec.emptyBodyForContentType(contentType), {
-          headers: {
-            "content-type": contentType,
-            "stream-next-offset": read.nextOffset,
-            "stream-up-to-date": "true",
-            ...(read.closed ? { "stream-closed": "true" } : {}),
-            "cache-control": CACHE_NO_STORE,
-          },
+          headers,
         }),
       };
     }
@@ -91,15 +92,16 @@ export class ReadHttpService {
     const metadata = await ctx.stream.metadata();
     if (metadata.status === "not-found") return this.deps.responses.notFound();
     if (metadata.status === "gone") return this.deps.responses.gone();
+    const headers = new Headers({
+      "content-type": metadata.contentType,
+      "stream-next-offset": result.nextOffset,
+      etag,
+      "cache-control": this.deps.cacheControl,
+    });
+    if (result.upToDate) headers.set("stream-up-to-date", "true");
+    if (result.closed) headers.set("stream-closed", "true");
     return new Response(this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType), {
-      headers: {
-        "content-type": metadata.contentType,
-        "stream-next-offset": result.nextOffset,
-        ...(result.upToDate ? { "stream-up-to-date": "true" } : {}),
-        ...(result.closed ? { "stream-closed": "true" } : {}),
-        etag,
-        "cache-control": this.deps.cacheControl,
-      },
+      headers,
     });
   }
 }

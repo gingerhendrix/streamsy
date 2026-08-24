@@ -117,14 +117,16 @@ export class CreateStreamService {
     closed: boolean,
   ): StreamRecord {
     const lastMessage = initialMessages[initialMessages.length - 1];
+    const lifecycle = { ...record.lifecycle };
+    if (closed) {
+      lifecycle.closed = true;
+      lifecycle.closedAt = this.deps.clock.now();
+    }
     return {
       ...record,
       currentOffset: lastMessage?.offset ?? record.currentOffset,
       counter: record.counter + initialMessages.length,
-      lifecycle: {
-        ...record.lifecycle,
-        ...(closed ? { closed: true, closedAt: this.deps.clock.now() } : {}),
-      },
+      lifecycle,
     };
   }
 }

@@ -115,7 +115,7 @@ function encode(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert<Condition>(condition: Condition, message: string): asserts condition {
   if (!condition) throw new Error(`storage-adapter-contract: ${message}`);
 }
 
@@ -683,15 +683,12 @@ function runLifecycleContract(
       // callable `fork`, which the cases below then exercise.
       if (adapter.fork === undefined) {
         assert(
-          typeof adapter.create === "function" && typeof adapter.delete === "function",
+          adapter.create instanceof Function && adapter.delete instanceof Function,
           "a forkless adapter still provides the required create/delete intents",
         );
         return;
       }
-      assert(
-        typeof adapter.fork === "function",
-        "fork capability is a callable method when present",
-      );
+      assert(adapter.fork instanceof Function, "fork capability is a callable method when present");
     },
   );
 

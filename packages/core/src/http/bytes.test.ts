@@ -30,19 +30,35 @@ describe("toArrayBuffer", () => {
   });
 });
 
+type HostValue = null | undefined | boolean | number | bigint | string | symbol | object;
+
+interface BufferReceiver {}
+
+function restoreBuffer(descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor === undefined) Reflect.deleteProperty(globalThis, "Buffer");
+  else Object.defineProperty(globalThis, "Buffer", descriptor);
+}
+
 /** Installs a stand-in `Buffer` global for one call, then restores the original. */
-function withBufferGlobal<T>(replacement: unknown, run: () => T): T {
-  const original = Reflect.get(globalThis, "Buffer");
-  Reflect.set(globalThis, "Buffer", replacement);
+function withBufferGlobal<Result, Replacement>(
+  replacement: Replacement,
+  run: () => Result,
+): Result {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
+  Object.defineProperty(globalThis, "Buffer", {
+    configurable: true,
+    writable: true,
+    value: replacement,
+  });
   try {
     return run();
   } finally {
-    Reflect.set(globalThis, "Buffer", original);
+    restoreBuffer(original);
   }
 }
 
 /** A `Buffer`-shaped global whose `from` returns whatever the test supplies. */
-function foreignBuffer(from: () => unknown): unknown {
+function foreignBuffer<Result>(from: () => Result) {
   return Object.assign(function foreign() {}, { from });
 }
 
@@ -56,29 +72,29 @@ describe("nodeBufferBase64", () => {
   });
 
   it("returns undefined when the host has no Buffer global", () => {
-    const original = Reflect.get(globalThis, "Buffer");
+    const original = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
     Reflect.deleteProperty(globalThis, "Buffer");
     try {
       expect(nodeBufferBase64(new Uint8Array([1, 2, 3]))).toBeUndefined();
     } finally {
-      Reflect.set(globalThis, "Buffer", original);
+      restoreBuffer(original);
     }
   });
 
-  // Each case is a shape a foreign `Buffer` global can return that the encoder
+  // Each case is a value a foreign `Buffer` global can return that the encoder
   // must reject by returning `undefined` rather than by throwing. `toBeUndefined`
   // fails on a thrown error, so these pin both halves of that contract.
-  const unusable: [string, () => unknown][] = [
+  const unusable: [string, () => HostValue][] = [
     ["null", () => null],
     ["undefined", () => undefined],
     ["a primitive", () => 7],
-    ["an object with no toString", () => Object.create(null) as unknown],
+    ["an object with no toString", () => Object.create(null)],
     ["an object with a non-callable toString", () => ({ toString: "not-callable" })],
     ["an object whose toString returns a non-string", () => ({ toString: () => 42 })],
   ];
 
-  for (const [shape, from] of unusable) {
-    it(`returns undefined when a foreign Buffer.from returns ${shape}`, () => {
+  for (const [description, from] of unusable) {
+    it(`returns undefined when a foreign Buffer.from returns ${description}`, () => {
       expect(
         withBufferGlobal(foreignBuffer(from), () => nodeBufferBase64(new Uint8Array([1, 2, 3]))),
       ).toBeUndefined();
@@ -88,12 +104,12 @@ describe("nodeBufferBase64", () => {
   it("calls from and toString with their own receivers", () => {
     const receivers: unknown[] = [];
     const produced = {
-      toString(this: unknown) {
+      toString(this: BufferReceiver) {
         receivers.push(this);
         return "AQID";
       },
     };
-    const global = foreignBuffer(function from(this: unknown) {
+    const global = foreignBuffer(function from(this: BufferReceiver) {
       receivers.push(this);
       return produced;
     });
@@ -113,13 +129,13 @@ describe("MessageBodyCodec base64 fallback", () => {
 
     const withBuffer = codec.bytesToBase64(view);
 
-    const original = Reflect.get(globalThis, "Buffer");
+    const original = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
     Reflect.deleteProperty(globalThis, "Buffer");
     let withoutBuffer: string;
     try {
       withoutBuffer = codec.bytesToBase64(view);
     } finally {
-      Reflect.set(globalThis, "Buffer", original);
+      restoreBuffer(original);
     }
 
     expect(withBuffer).toBe(withoutBuffer);

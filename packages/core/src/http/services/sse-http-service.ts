@@ -2,7 +2,11 @@ import type { ProtocolStream } from "../../types/protocol.ts";
 import { generateCursor } from "../../protocol/helpers/cursor-generator.ts";
 import type { Clock } from "../types.ts";
 import { HttpResponseFactory } from "../responses.ts";
-import { SseEventEncoder, type SseEncodingOptions } from "../sse-event-encoder.ts";
+import {
+  SseEventEncoder,
+  type SseControlData,
+  type SseEncodingOptions,
+} from "../sse-event-encoder.ts";
 
 const CONNECTION_TIMEOUT_MS = 60_000;
 
@@ -34,14 +38,13 @@ export class SseHttpService {
       metadata.closed === true,
       encoding,
     );
-    return new Response(body, {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-        ...(encoding.useBase64 ? { "stream-sse-data-encoding": "base64" } : {}),
-      },
+    const headers = new Headers({
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
     });
+    if (encoding.useBase64) headers.set("stream-sse-data-encoding", "base64");
+    return new Response(body, { headers });
   }
 
   private createStream(
@@ -206,12 +209,13 @@ export class SseHttpService {
     cursor: string | undefined,
     upToDate: boolean,
     closed: boolean,
-  ): Record<string, unknown> {
+  ): SseControlData {
     if (closed) return { streamNextOffset: nextOffset, streamClosed: true };
-    return {
+    const data: SseControlData = {
       streamNextOffset: nextOffset,
       streamCursor: cursor,
-      ...(upToDate ? { upToDate: true } : {}),
     };
+    if (upToDate) data.upToDate = true;
+    return data;
   }
 }

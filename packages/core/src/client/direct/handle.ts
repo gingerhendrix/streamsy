@@ -133,5 +133,5 @@ export class DirectProtocolHandle implements StreamProtocolHandle {
 }
 
 function toBytes(value: Uint8Array | string | undefined): Uint8Array | undefined {
-  return typeof value === "string" ? encoder.encode(value) : value;
+  return value === undefined || value instanceof Uint8Array ? value : encoder.encode(value);
 }

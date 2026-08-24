@@ -40,14 +40,14 @@ export function clientClosedFailure(): ClientFailure {
 }
 
 /** Maps an unexpected thrown value (not a protocol result) to a failure. */
-export function failureFromThrown(error: unknown): ClientFailure {
-  if (error instanceof SyntaxError) {
-    return failure("parse-error", error.message, { cause: error });
+export function failureFromThrown(cause: unknown): ClientFailure {
+  if (cause instanceof SyntaxError) {
+    return failure("parse-error", cause.message, { cause });
   }
-  if (isNotSupportedError(error)) {
-    return failure("not-supported", error.message, { cause: error });
+  if (isNotSupportedError(cause)) {
+    return failure("not-supported", cause.message, { cause });
   }
-  return failure("unknown", "Stream operation failed", { cause: error });
+  return failure("unknown", "Stream operation failed", { cause });
 }
 
 /** Narrows the shared absent/failure statuses of a get/metadata/read result. */

@@ -80,8 +80,8 @@ describe("SSE boundary — awaitChange receives only serializable arguments", ()
       expect(seen.length).toBeGreaterThan(0);
       for (const options of seen) {
         expect(options).not.toHaveProperty("signal");
-        expect(typeof options.timeoutMs).toBe("number");
-        expect(typeof options.fromOffset).toBe("string");
+        expect(Number.isFinite(options.timeoutMs)).toBe(true);
+        expect(options.fromOffset.length).toBeGreaterThan(0);
       }
       // A structured-clone failure would have rejected the live read and logged an
       // "SSE stream error"; the clean run proves no non-serializable value crossed.

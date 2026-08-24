@@ -205,8 +205,8 @@ export function unsupported(feature: string, message?: string): NotSupportedErro
 }
 
 /** Type guard for storage-level unsupported-feature errors. */
-export function isNotSupportedError(value: unknown): value is NotSupportedError {
-  return value instanceof NotSupportedError;
+export function isNotSupportedError(cause: unknown): cause is NotSupportedError {
+  return cause instanceof NotSupportedError;
 }
 
 /** Convert storage-level unsupported-feature errors to public protocol results. */
@@ -215,8 +215,11 @@ export function notSupportedFromError(error: NotSupportedError): NotSupportedRes
 }
 
 /** Type guard for protocol results that may be a {@link NotSupportedResult}. */
-export function isNotSupported(value: unknown): value is NotSupportedResult {
-  if (typeof value !== "object" || value === null) return false;
-  const status = (value as { status?: unknown }).status;
-  return status === "not-supported";
+export function isNotSupported<Result>(result: Result): result is Result & NotSupportedResult {
+  if (!isReferenceValue(result) || result instanceof Function) return false;
+  return "status" in result && result.status === "not-supported";
+}
+
+function isReferenceValue<Value>(value: Value): value is Value & object {
+  return value !== null && Object(value) === value;
 }

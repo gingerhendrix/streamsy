@@ -39,10 +39,10 @@ export class DirectProtocolClient implements StreamsyProtocolClient {
     return new DirectProtocolHandle(this, streamId);
   }
 
-  async close(reason?: unknown): Promise<void> {
+  async close(cause?: unknown): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.controller.abort(reason);
+    this.controller.abort(cause);
   }
 
   /**

@@ -19,6 +19,11 @@ export interface ForkDescriptor {
   forkSubOffset?: number;
 }
 
+export interface ForkExpiryOptions {
+  ttlSeconds?: number;
+  expiresAt?: string;
+}
+
 export type ForkBuildResult =
   | { kind: "terminal"; result: CreateOutcome }
   | {
@@ -40,10 +45,7 @@ export interface ForkPlanBuilderDeps {
   ): StreamRecord;
 }
 
-export function resolveForkExpiry(
-  opts: CreateOptions,
-  source: StreamRecord,
-): { ttlSeconds?: number; expiresAt?: string } {
+export function resolveForkExpiry(opts: CreateOptions, source: StreamRecord): ForkExpiryOptions {
   if (opts.ttlSeconds !== undefined) return { ttlSeconds: opts.ttlSeconds };
   if (opts.expiresAt) return { expiresAt: opts.expiresAt };
   if (source.config.ttlSeconds !== undefined) return { ttlSeconds: source.config.ttlSeconds };
@@ -146,16 +148,12 @@ export class ForkPlanBuilder {
     }
 
     const expiry = resolveForkExpiry(options, source);
-    const baseRecord = this.deps.newRecord(
-      targetId,
-      contentType,
-      { ...options, ...expiry },
-      {
-        forkedFrom: sourcePath,
-        forkOffset,
-        ...(subOffset !== undefined && subOffset > 0 ? { forkSubOffset: subOffset } : {}),
-      },
-    );
+    const fork: ForkDescriptor = {
+      forkedFrom: sourcePath,
+      forkOffset,
+    };
+    if (subOffset !== undefined && subOffset > 0) fork.forkSubOffset = subOffset;
+    const baseRecord = this.deps.newRecord(targetId, contentType, { ...options, ...expiry }, fork);
     const initialMessages = this.initialMessages(
       prefix.messages,
       options.initialData,

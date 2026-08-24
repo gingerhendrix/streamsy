@@ -2,10 +2,6 @@ import type { JsonValue, StreamBatch, StreamBatchMeta } from "./types.ts";
 
 const decoder = new TextDecoder();
 
-function isJsonArray(value: unknown): value is JsonValue[] {
-  return Array.isArray(value);
-}
-
 /**
  * Decodes the JSON batch body into its items.
  *
@@ -15,8 +11,10 @@ function isJsonArray(value: unknown): value is JsonValue[] {
  * narrowing to `T[]` is asserted once, here, behind that array check.
  */
 function decodeJsonItems<T extends JsonValue>(body: string): T[] {
-  const parsed: unknown = JSON.parse(body);
-  if (!isJsonArray(parsed)) throw new SyntaxError("Stored JSON batch is not an array");
+  const parsed: JsonValue = JSON.parse(body);
+  if (!Array.isArray(parsed)) throw new SyntaxError("Stored JSON batch is not an array");
+  // SAFETY: JSON parsing establishes JSON values, the array guard establishes
+  // the batch container, and T is the caller-declared contract for those values.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `T` is a caller-declared payload contract; the runtime check above proves only that the batch is a JSON array.
   return parsed as T[];
 }

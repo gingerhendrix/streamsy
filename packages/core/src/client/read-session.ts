@@ -34,7 +34,7 @@ export class ClientReadSession<T extends JsonValue = JsonValue>
   private waiting?: WaitingNext<T>;
   private ended = false;
   private iterated = false;
-  private cancelHook?: (reason?: unknown) => void;
+  private cancelHook?: (cause?: unknown) => void;
 
   constructor(options: {
     contentType?: string;
@@ -43,7 +43,7 @@ export class ClientReadSession<T extends JsonValue = JsonValue>
     cursor?: string;
     upToDate?: boolean;
     streamClosed?: boolean;
-    onCancel?: (reason?: unknown) => void;
+    onCancel?: (cause?: unknown) => void;
   }) {
     this.contentType = options.contentType;
     this.startOffset = options.startOffset;
@@ -57,7 +57,7 @@ export class ClientReadSession<T extends JsonValue = JsonValue>
     });
   }
 
-  setCancelHook(hook: (reason?: unknown) => void): void {
+  setCancelHook(hook: (cause?: unknown) => void): void {
     this.cancelHook = hook;
   }
 
@@ -82,9 +82,9 @@ export class ClientReadSession<T extends JsonValue = JsonValue>
     return Promise.resolve({ done: true, value: undefined });
   }
 
-  cancel(reason?: unknown): void {
+  cancel(cause?: unknown): void {
     if (this.ended) return;
-    this.cancelHook?.(reason);
+    this.cancelHook?.(cause);
     this.end({ status: "cancelled" });
   }
 

@@ -6,6 +6,13 @@ export interface SseEncodingOptions {
   useBase64: boolean;
 }
 
+export interface SseControlData {
+  streamNextOffset: string;
+  streamCursor?: string;
+  streamClosed?: true;
+  upToDate?: true;
+}
+
 export class SseEventEncoder {
   private encoder = new TextEncoder();
   private decoder = new TextDecoder();
@@ -35,7 +42,7 @@ export class SseEventEncoder {
     return chunks;
   }
 
-  controlEvent(data: Record<string, unknown>): Uint8Array {
+  controlEvent(data: SseControlData): Uint8Array {
     return this.encode(`event: control\ndata:${JSON.stringify(data)}\n\n`);
   }
 

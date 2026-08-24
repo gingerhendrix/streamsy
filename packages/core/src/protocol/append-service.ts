@@ -2,7 +2,7 @@
 
 import type { AppendPlan } from "../types/storage-adapter.ts";
 import type { AppendOptions, AppendResult } from "../types/protocol.ts";
-import type { Clock, ProducerState, StreamRecord } from "../types/storage.ts";
+import type { Clock, ProducerState, StreamLifecycleState, StreamRecord } from "../types/storage.ts";
 import type { AfterCommitEffects } from "./helpers/after-commit-effects.ts";
 import { contentTypeMatches } from "./helpers/content-type-matcher.ts";
 import { frameMessages } from "./helpers/message-framer.ts";
@@ -145,25 +145,26 @@ export class AppendService {
     }));
     const expiresAtMs =
       record.config.ttlSeconds === undefined ? undefined : now + record.config.ttlSeconds * 1000;
-    const lifecycle = {
-      ...(options.seq ? { lastSeq: options.seq } : {}),
-      ...(wantClose ? { closed: true, closedAt: now } : {}),
-      ...(expiresAtMs !== undefined ? { expiresAtMs } : {}),
+    const lifecycle: StreamLifecycleState = {};
+    if (options.seq) lifecycle.lastSeq = options.seq;
+    if (wantClose) {
+      lifecycle.closed = true;
+      lifecycle.closedAt = now;
+    }
+    if (expiresAtMs !== undefined) lifecycle.expiresAtMs = expiresAtMs;
+    const preconditions: AppendPlan["preconditions"] = {
+      expectedOffset: options.expectedOffset ?? record.currentOffset,
+      expectedClosed: false,
     };
+    if (options.producer && producerValidation?.kind === "accepted") {
+      preconditions.producer = {
+        producerId: options.producer.producerId,
+        expected: producerState,
+        next: producerValidation.proposedState,
+      };
+    }
     const plan: AppendPlan = {
-      preconditions: {
-        expectedOffset: options.expectedOffset ?? record.currentOffset,
-        expectedClosed: false,
-        ...(options.producer && producerValidation?.kind === "accepted"
-          ? {
-              producer: {
-                producerId: options.producer.producerId,
-                expected: producerState,
-                next: producerValidation.proposedState,
-              },
-            }
-          : {}),
-      },
+      preconditions,
       messages,
       recordPatch: {
         currentOffset: allocation.nextOffset,

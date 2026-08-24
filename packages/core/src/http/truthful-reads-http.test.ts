@@ -25,13 +25,12 @@ async function create(
   handler: ReturnType<typeof createHttpHandler>,
   options: { ttlSeconds?: number; body?: string } = {},
 ) {
+  const headers = new Headers({ "content-type": "text/plain" });
+  if (options.ttlSeconds !== undefined) headers.set("stream-ttl", String(options.ttlSeconds));
   const response = await handler.fetch(
     new Request("http://x/s", {
       method: "PUT",
-      headers: {
-        "content-type": "text/plain",
-        ...(options.ttlSeconds === undefined ? {} : { "stream-ttl": String(options.ttlSeconds) }),
-      },
+      headers,
       body: options.body,
     }),
   );

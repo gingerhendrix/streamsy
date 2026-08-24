@@ -60,7 +60,7 @@ describe("raceAbortAwaitChange", () => {
 
   it("propagates a rejection from the underlying wait", async () => {
     const controller = new AbortController();
-    let rejectWait!: (reason: unknown) => void;
+    let rejectWait!: (cause: unknown) => void;
     const wait = new Promise<AwaitChangeResult>((_, reject) => {
       rejectWait = reject;
     });

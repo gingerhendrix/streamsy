@@ -3,13 +3,12 @@ import { HttpHandler, StreamProtocol } from "../../index.ts";
 import { createMemoryStorageAdapter } from "../../storage/memory/adapter.ts";
 
 function append(handler: HttpHandler, body: string, expectedOffset?: string) {
+  const headers = new Headers({ "content-type": "text/plain" });
+  if (expectedOffset !== undefined) headers.set("stream-expected-offset", expectedOffset);
   return handler.fetch(
     new Request("http://x/s", {
       method: "POST",
-      headers: {
-        "content-type": "text/plain",
-        ...(expectedOffset !== undefined ? { "stream-expected-offset": expectedOffset } : {}),
-      },
+      headers,
       body,
     }),
   );

@@ -199,7 +199,7 @@ export interface StreamReadSession<T extends JsonValue = JsonValue> extends Asyn
   readonly cursor?: string;
   readonly upToDate: boolean;
   readonly streamClosed: boolean;
-  cancel(reason?: unknown): void;
+  cancel(cause?: unknown): void;
   /** Always resolves, never rejects. */
   readonly done: Promise<ReadEndResult>;
 }
@@ -232,7 +232,7 @@ export interface StreamProtocolClient {
   /** Cold handle creation: no I/O. Repeated calls need not return the same object. */
   stream(streamId: string): StreamProtocolHandle;
   /** Cancel all sessions created by this client and reject future operations. */
-  close(reason?: unknown): Promise<void>;
+  close(cause?: unknown): Promise<void>;
 }
 
 export interface StreamsyProtocolClient extends StreamProtocolClient {

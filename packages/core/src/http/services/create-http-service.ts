@@ -147,12 +147,13 @@ export class CreateHttpService {
       case "created":
       case "exists": {
         const status = result.status === "created" ? 201 : 200;
-        return this.deps.responses.empty(status, {
+        const headers = new Headers({
           "content-type": result.contentType,
           "stream-next-offset": result.nextOffset,
-          ...(status === 201 ? { location } : {}),
-          ...(result.closed ? { "stream-closed": "true" } : {}),
         });
+        if (status === 201) headers.set("location", location);
+        if (result.closed) headers.set("stream-closed", "true");
+        return this.deps.responses.empty(status, headers);
       }
     }
     return exhaustive(result);

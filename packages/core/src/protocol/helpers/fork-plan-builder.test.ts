@@ -39,6 +39,14 @@ function newRecord(
   options: CreateOptions,
   fork: { forkedFrom: string; forkOffset: string; forkSubOffset?: number },
 ): StreamRecord {
+  const lifecycle: StreamRecord["lifecycle"] = {
+    forkedFrom: fork.forkedFrom,
+    forkOffset: fork.forkOffset,
+    expiresAtMs: options.ttlSeconds === undefined ? undefined : 11_000,
+  };
+  if (fork.forkSubOffset !== undefined && fork.forkSubOffset > 0) {
+    lifecycle.forkSubOffset = fork.forkSubOffset;
+  }
   return {
     id: streamId,
     config: {
@@ -47,14 +55,7 @@ function newRecord(
       expiresAt: options.expiresAt,
       createdAt: 1_000,
     },
-    lifecycle: {
-      forkedFrom: fork.forkedFrom,
-      forkOffset: fork.forkOffset,
-      ...(fork.forkSubOffset !== undefined && fork.forkSubOffset > 0
-        ? { forkSubOffset: fork.forkSubOffset }
-        : {}),
-      expiresAtMs: options.ttlSeconds === undefined ? undefined : 11_000,
-    },
+    lifecycle,
     currentOffset: fork.forkOffset,
     counter: parseCounter(fork.forkOffset),
   };

@@ -42,16 +42,17 @@ export class LongPollHttpService {
     if (!literalNow && ctx.request.headers.get("if-none-match") === etag) {
       return this.deps.responses.empty(304, { etag, "cache-control": cacheControl });
     }
+    const headers = new Headers({
+      "content-type": metadata.contentType,
+      "stream-next-offset": result.nextOffset,
+      "stream-up-to-date": "true",
+      "cache-control": cacheControl,
+    });
+    if (result.closed) headers.set("stream-closed", "true");
+    else headers.set("stream-cursor", result.cursor);
+    if (!literalNow) headers.set("etag", etag);
     return new Response(this.deps.bodyCodec.encodeHttpBody(result.messages, metadata.contentType), {
-      headers: {
-        "content-type": metadata.contentType,
-        "stream-next-offset": result.nextOffset,
-        "stream-up-to-date": "true",
-        ...(result.closed ? {} : { "stream-cursor": result.cursor }),
-        ...(result.closed ? { "stream-closed": "true" } : {}),
-        ...(!literalNow ? { etag } : {}),
-        "cache-control": cacheControl,
-      },
+      headers,
     });
   }
 
@@ -60,12 +61,13 @@ export class LongPollHttpService {
     cursor: string;
     closed?: boolean;
   }): Response {
-    return this.deps.responses.empty(204, {
+    const headers = new Headers({
       "stream-next-offset": result.nextOffset,
       "stream-up-to-date": "true",
-      ...(result.closed ? {} : { "stream-cursor": result.cursor }),
-      ...(result.closed ? { "stream-closed": "true" } : {}),
       "cache-control": CACHE_NO_STORE,
     });
+    if (result.closed) headers.set("stream-closed", "true");
+    else headers.set("stream-cursor", result.cursor);
+    return this.deps.responses.empty(204, headers);
   }
 }

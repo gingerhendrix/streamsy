@@ -129,20 +129,22 @@ export class AppendHttpService {
       case "invalid-epoch-seq":
         return this.deps.responses.badRequest("New epoch must start at seq=0");
       case "duplicate":
-        return this.deps.responses.empty(204, {
+        const duplicateHeaders = new Headers({
           "stream-next-offset": result.offset,
           "producer-epoch": String(result.producerEpoch),
           "producer-seq": String(result.producerSeq),
-          ...(result.closed ? { "stream-closed": "true" } : {}),
         });
+        if (result.closed) duplicateHeaders.set("stream-closed", "true");
+        return this.deps.responses.empty(204, duplicateHeaders);
       case "appended": {
-        const headers: Record<string, string> = {
+        const headers = new Headers({
           "stream-next-offset": result.offset,
-          ...(result.closed ? { "stream-closed": "true" } : {}),
-        };
+        });
+        if (result.closed) headers.set("stream-closed", "true");
         if (result.producerEpoch !== undefined)
-          headers["producer-epoch"] = String(result.producerEpoch);
-        if (result.producerSeq !== undefined) headers["producer-seq"] = String(result.producerSeq);
+          headers.set("producer-epoch", String(result.producerEpoch));
+        if (result.producerSeq !== undefined)
+          headers.set("producer-seq", String(result.producerSeq));
         return this.deps.responses.empty(
           producerHeaders.kind === "ok" && !isEmpty ? 200 : 204,
           headers,
