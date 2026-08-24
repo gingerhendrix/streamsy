@@ -1,0 +1,45 @@
+{
+  "name": "@streamsy/views",
+  "version": "0.2.1",
+  "description": "Typed inert declarations and plan checking for Streamsy views.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/views"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/views-ir --external effect",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src"
+  },
+  "dependencies": {
+    "@streamsy/views-ir": "workspace:*",
+    "effect": "4.0.0-rc.109"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}
