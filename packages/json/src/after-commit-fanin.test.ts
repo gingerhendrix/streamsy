@@ -4,6 +4,7 @@ import {
   createStreamProtocol,
   ZERO_OFFSET,
   type CommitEvent,
+  type JsonValue,
   type StreamProtocolFactory,
 } from "@streamsy/core";
 import { createJsonProtocol, type JsonCodec } from "./index.ts";
@@ -15,28 +16,39 @@ type CommitFrame = {
   softDeleted: boolean;
 };
 
+type JsonRecord = { readonly [key: string]: JsonValue };
+
+function isJsonRecord(value: JsonValue): value is JsonRecord {
+  return value !== null && value instanceof Object && !Array.isArray(value);
+}
+
+function isJsonString(value: JsonValue | undefined): value is string {
+  return value?.constructor === String;
+}
+
+function isJsonBoolean(value: JsonValue | undefined): value is boolean {
+  return value?.constructor === Boolean;
+}
+
+function parseCommitFrame(value: JsonValue): CommitFrame {
+  if (!isJsonRecord(value)) throw new Error("invalid commit frame");
+  const { streamId, offset, closed, softDeleted } = value;
+  if (
+    !isJsonString(streamId) ||
+    !isJsonString(offset) ||
+    !isJsonBoolean(closed) ||
+    !isJsonBoolean(softDeleted)
+  ) {
+    throw new Error("invalid commit frame");
+  }
+  return { streamId, offset, closed, softDeleted };
+}
+
 const commitFrameCodec: JsonCodec<CommitFrame> = {
   encode(value) {
     return value;
   },
-  decode(value) {
-    if (!value || typeof value !== "object") throw new Error("invalid commit frame");
-    const candidate = value as Partial<CommitFrame>;
-    if (
-      typeof candidate.streamId !== "string" ||
-      typeof candidate.offset !== "string" ||
-      typeof candidate.closed !== "boolean" ||
-      typeof candidate.softDeleted !== "boolean"
-    ) {
-      throw new Error("invalid commit frame");
-    }
-    return {
-      streamId: candidate.streamId,
-      offset: candidate.offset,
-      closed: candidate.closed,
-      softDeleted: candidate.softDeleted,
-    };
-  },
+  decode: parseCommitFrame,
 };
 
 function createProtocol(): StreamProtocolFactory {

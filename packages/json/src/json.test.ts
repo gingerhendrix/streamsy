@@ -3,6 +3,7 @@ import {
   createMemoryStorageAdapter,
   createStreamProtocol,
   ZERO_OFFSET,
+  type JsonValue,
   type StreamProtocolFactory,
 } from "@streamsy/core";
 import { createJsonProtocol, type JsonCodec } from "./index.ts";
@@ -12,20 +13,29 @@ const encoder = new TextEncoder();
 
 type User = { id: string; name: string };
 
+type JsonRecord = { readonly [key: string]: JsonValue };
+
+function isJsonRecord(value: JsonValue): value is JsonRecord {
+  return value !== null && value instanceof Object && !Array.isArray(value);
+}
+
+function isJsonString(value: JsonValue | undefined): value is string {
+  return value?.constructor === String;
+}
+
+function parseUser(value: JsonValue): User {
+  if (!isJsonRecord(value)) throw new Error("invalid user");
+  const id = value.id;
+  const name = value.name;
+  if (!isJsonString(id) || !isJsonString(name)) throw new Error("invalid user");
+  return { id, name };
+}
+
 const userCodec: JsonCodec<User> = {
   encode(value) {
-    if (typeof value.id !== "string" || typeof value.name !== "string")
-      throw new Error("invalid user");
     return value;
   },
-  decode(value) {
-    if (!value || typeof value !== "object") throw new Error("invalid user");
-    const candidate = value as Partial<User>;
-    if (typeof candidate.id !== "string" || typeof candidate.name !== "string") {
-      throw new Error("invalid user");
-    }
-    return { id: candidate.id, name: candidate.name };
-  },
+  decode: parseUser,
 };
 
 function createProtocol(): StreamProtocolFactory {
@@ -82,27 +92,22 @@ describe("JsonProtocol", () => {
     });
   });
 
-  it("propagates JSON parse errors when invalid bytes are appended to a json stream", async () => {
-    // The base protocol's message framer parses application/json bodies, so
-    // invalid JSON bytes are rejected at append time and never reach storage.
-    // The read-side invalid-json status therefore only surfaces codec/schema
-    // failures (covered below) or externally corrupted storage.
-    const protocol = createProtocol();
-    const json = createJsonProtocol(protocol, userCodec);
+  it("returns the JSON parse error for malformed stored bytes", async () => {
+    const json = createJsonProtocol(createProtocol(), userCodec);
+    const stream = await json.getOrCreate("users");
+    vi.spyOn(stream.stream, "read").mockResolvedValue({
+      status: "ok",
+      messages: [{ data: encoder.encode("not json"), offset: "1_0", timestamp: 1 }],
+      nextOffset: "1_0",
+      upToDate: true,
+    });
 
-    const created = await json.create("users");
-    expect(created.status).toBe("created");
-    if (created.status !== "created") throw new Error("expected created");
+    const read = await stream.read();
 
-    const lookup = await protocol.get("users");
-    expect(lookup.status).toBe("ok");
-    if (lookup.status !== "ok") throw new Error("expected ok");
-    await expect(() =>
-      lookup.stream.append({
-        data: encoder.encode("not json"),
-        contentType: "application/json",
-      }),
-    ).rejects.toThrow(SyntaxError);
+    expect(read.status).toBe("invalid-json");
+    if (read.status !== "invalid-json") throw new Error("expected invalid-json");
+    expect(read.error).toBeInstanceOf(SyntaxError);
+    expect(read.offset).toBe("1_0");
   });
 
   it("returns invalid-json when a stored value fails schema validation", async () => {

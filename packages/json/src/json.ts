@@ -15,6 +15,7 @@ import type {
   StoredMessage,
   StreamId,
   StreamProtocolFactory,
+  JsonValue,
 } from "@streamsy/core";
 import { ZERO_OFFSET } from "@streamsy/core";
 
@@ -24,15 +25,18 @@ type StandardSchemaResult<T> =
   | { value: T; issues?: undefined }
   | { value?: undefined; issues: readonly unknown[] };
 
+/** A JavaScript value at the package boundary before JSON serialization or schema parsing. */
+type JsonSourceValue = {} | null | undefined;
+
 type StandardSchema<T> = {
   "~standard": {
-    validate(value: unknown): StandardSchemaResult<T> | Promise<StandardSchemaResult<T>>;
+    validate(value: JsonSourceValue): StandardSchemaResult<T> | Promise<StandardSchemaResult<T>>;
   };
 };
 
 export interface JsonCodec<T> {
-  encode(value: T): unknown;
-  decode(value: unknown): T;
+  encode(value: T): JsonSourceValue;
+  decode(value: JsonSourceValue): T;
 }
 
 export type JsonSchema<T> = JsonCodec<T> | StandardSchema<T>;
@@ -96,8 +100,12 @@ export type JsonReadNextResult<T> =
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+function isJsonCodec<T>(schema: JsonSchema<T>): schema is JsonCodec<T> {
+  return "decode" in schema && schema.decode?.constructor === Function;
+}
+
 export function normalizeJsonCodec<T>(schema: JsonSchema<T>): JsonCodec<T> {
-  if ("decode" in schema && typeof schema.decode === "function") {
+  if (isJsonCodec(schema)) {
     return schema;
   }
   if ("~standard" in schema) {
@@ -110,7 +118,7 @@ export function normalizeJsonCodec<T>(schema: JsonSchema<T>): JsonCodec<T> {
         if (result instanceof Promise) {
           throw new JsonValidationError("Async Standard Schema validation is not supported");
         }
-        if ("issues" in result && result.issues) {
+        if (result.issues !== undefined) {
           throw new JsonValidationError("JSON value failed schema validation", result.issues);
         }
         return result.value;
@@ -132,8 +140,12 @@ function encodeJsonBatch<T>(codec: JsonCodec<T>, values: readonly T[]): Uint8Arr
   return encoder.encode(JSON.stringify(values.map((value) => codec.encode(value))));
 }
 
+function parseJsonText(text: string): JsonValue {
+  return JSON.parse(text);
+}
+
 function decodeJsonMessage<T>(codec: JsonCodec<T>, message: StoredMessage): JsonStoredMessage<T> {
-  const parsed = JSON.parse(decoder.decode(message.data)) as unknown;
+  const parsed = parseJsonText(decoder.decode(message.data));
   return { ...message, value: codec.decode(parsed) };
 }
 
@@ -280,7 +292,7 @@ export class JsonStream<T> {
     });
   }
 
-  appendJson(value: unknown, options: JsonAppendOptions = {}): Promise<AppendResult> {
+  appendJson(value: JsonSourceValue, options: JsonAppendOptions = {}): Promise<AppendResult> {
     return this.stream.append({
       ...options,
       data: encoder.encode(JSON.stringify(value)),
