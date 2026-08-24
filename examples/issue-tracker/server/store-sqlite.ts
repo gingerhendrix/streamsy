@@ -13,7 +13,8 @@
 import { Database } from "bun:sqlite";
 import { Effect, Layer } from "effect";
 import type { IssueRow } from "../domain/issue.ts";
-import { StoreUnavailable } from "./errors.ts";
+import { decodeCatalogRow, type CatalogRow } from "../domain/catalog.ts";
+import { StoreRestorePoison, StoreUnavailable } from "./errors.ts";
 import {
   IssueStore,
   restoreRow,
@@ -49,6 +50,19 @@ CREATE TABLE IF NOT EXISTS command_receipts (
   event_id     TEXT NOT NULL,
   sequence     INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS source_state_rows (
+  source_id    TEXT NOT NULL,
+  partition_id TEXT NOT NULL,
+  row_key      TEXT NOT NULL,
+  value        TEXT NOT NULL,
+  PRIMARY KEY (source_id, partition_id, row_key)
+);
+CREATE TABLE IF NOT EXISTS source_progress (
+  source_id    TEXT NOT NULL,
+  partition_id TEXT NOT NULL,
+  checkpoint   TEXT,
+  PRIMARY KEY (source_id, partition_id)
+);
 `;
 
 interface ValueRow {
@@ -69,6 +83,10 @@ interface ReceiptRow {
   readonly offset_token: string;
   readonly event_id: string;
   readonly sequence: number;
+}
+
+interface StateProgressRow {
+  readonly checkpoint: string | null;
 }
 
 /** Wrap one synchronous SQLite operation as a typed failure rather than a throw. */
@@ -140,6 +158,22 @@ function service(database: Database): IssueStoreService {
       " (command_id, workspace_id, issue_id, offset_token, event_id, sequence)" +
       " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (command_id) DO NOTHING",
   );
+  const selectStateProgress = database.query<StateProgressRow, [string, string]>(
+    "SELECT checkpoint FROM source_progress WHERE source_id = ? AND partition_id = ?",
+  );
+  const selectSourceRows = database.query<ValueRow, [string, string]>(
+    "SELECT row_key, value FROM source_state_rows" +
+      " WHERE source_id = ? AND partition_id = ? ORDER BY row_key",
+  );
+  const upsertSourceRow = database.query<never, [string, string, string, string]>(
+    "INSERT INTO source_state_rows (source_id, partition_id, row_key, value)" +
+      " VALUES (?, ?, ?, ?) ON CONFLICT (source_id, partition_id, row_key)" +
+      " DO UPDATE SET value = excluded.value",
+  );
+  const upsertSourceProgress = database.query<never, [string, string, string]>(
+    "INSERT INTO source_progress (source_id, partition_id, checkpoint) VALUES (?, ?, ?)" +
+      " ON CONFLICT (source_id, partition_id) DO UPDATE SET checkpoint = excluded.checkpoint",
+  );
 
   /**
    * The atomic advance. `db.transaction` rolls back on a throw, so a failed
@@ -153,6 +187,19 @@ function service(database: Database): IssueStoreService {
     }
     upsertCheckpoint.run(workspaceId, input.checkpoint, input.nextSequence);
   });
+  const commitStateTransaction = database.transaction(
+    (
+      sourceId: string,
+      partitionId: string,
+      checkpoint: string,
+      rows: ReadonlyMap<string, CatalogRow>,
+    ) => {
+      for (const [key, row] of rows) {
+        upsertSourceRow.run(sourceId, partitionId, key, JSON.stringify(row));
+      }
+      upsertSourceProgress.run(sourceId, partitionId, checkpoint);
+    },
+  );
 
   return IssueStore.of({
     progress: Effect.fn("IssueStore.progress")(function* (workspaceId: string) {
@@ -218,6 +265,37 @@ function service(database: Database): IssueStoreService {
     nextSequence: Effect.fn("IssueStore.nextSequence")(function* (workspaceId: string) {
       const row = yield* sqlite("nextSequence", () => selectProgress.get(workspaceId));
       return row?.next_sequence ?? 0;
+    }),
+    stateCheckpoint: Effect.fn("IssueStore.stateCheckpoint")(function* (
+      sourceId: string,
+      partitionId: string,
+    ) {
+      const row = yield* sqlite("stateCheckpoint", () =>
+        selectStateProgress.get(sourceId, partitionId),
+      );
+      return row?.checkpoint ?? undefined;
+    }),
+    stateRows: Effect.fn("IssueStore.stateRows")(function* (sourceId, collection, partitionId) {
+      const found = yield* sqlite("stateRows", () => selectSourceRows.all(sourceId, partitionId));
+      const restored: CatalogRow[] = [];
+      for (const row of found) {
+        const decoded = yield* Effect.try({
+          try: () => decodeCatalogRow(collection, JSON.parse(row.value)).row,
+          catch: (cause) =>
+            new StoreRestorePoison({
+              table: "source_state_rows",
+              key: row.row_key,
+              detail: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        restored.push(decoded);
+      }
+      return restored;
+    }),
+    commitState: Effect.fn("IssueStore.commitState")(function* (sourceId, partitionId, input) {
+      yield* sqlite("commitState", () =>
+        commitStateTransaction(sourceId, partitionId, input.checkpoint, input.rows),
+      );
     }),
   });
 }

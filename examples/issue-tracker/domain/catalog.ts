@@ -51,6 +51,12 @@ export type CatalogCollection = typeof CatalogCollection.Type;
 
 export type CatalogRow = ProjectRow | UserRow | LabelRow | WorkspaceMetadataRow;
 
+export interface DecodedCatalogRow {
+  readonly row: CatalogRow;
+  readonly key: string;
+  readonly workspaceId: string;
+}
+
 export const catalog = {
   projects: { type: "project", schema: ProjectRow, key: (row: ProjectRow) => row.projectId },
   users: { type: "user", schema: UserRow, key: (row: UserRow) => row.userId },
@@ -62,15 +68,23 @@ export const catalog = {
   },
 } as const;
 
-export function rowKey(collection: CatalogCollection, row: CatalogRow): string {
+export function decodeCatalogRow(collection: CatalogCollection, value: unknown): DecodedCatalogRow {
   switch (collection) {
-    case "projects":
-      return (row as ProjectRow).projectId;
-    case "users":
-      return (row as UserRow).userId;
-    case "labels":
-      return (row as LabelRow).labelId;
-    case "metadata":
-      return (row as WorkspaceMetadataRow).workspaceId;
+    case "projects": {
+      const row = Schema.decodeUnknownSync(ProjectRow)(value);
+      return { row, key: row.projectId, workspaceId: row.workspaceId };
+    }
+    case "users": {
+      const row = Schema.decodeUnknownSync(UserRow)(value);
+      return { row, key: row.userId, workspaceId: row.workspaceId };
+    }
+    case "labels": {
+      const row = Schema.decodeUnknownSync(LabelRow)(value);
+      return { row, key: row.labelId, workspaceId: row.workspaceId };
+    }
+    case "metadata": {
+      const row = Schema.decodeUnknownSync(WorkspaceMetadataRow)(value);
+      return { row, key: row.workspaceId, workspaceId: row.workspaceId };
+    }
   }
 }

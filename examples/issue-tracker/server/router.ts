@@ -9,15 +9,18 @@
 import type { JsonValue } from "@streamsy/core";
 import { Cause, Effect, Schema } from "effect";
 import { issues } from "../domain/declaration.ts";
+import { CatalogCollection } from "../domain/catalog.ts";
 import type { ApiError } from "../shared/api.ts";
-import { ChangeStatusRequest, CreateIssueRequest } from "../shared/api.ts";
+import { CatalogUpsertRequest, ChangeStatusRequest, CreateIssueRequest } from "../shared/api.ts";
 import {
   changeStatus,
   createIssue,
   health,
   listIssues,
+  listCatalog,
   seedWorkspace,
   sinkSession,
+  upsertCatalog,
   type ApplicationServices,
   type CommandResult,
 } from "./application.ts";
@@ -77,6 +80,10 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
         Effect.succeed(fail(503, "stream-unavailable", `${error.streamId}: ${error.status}`)),
       SourcePoison: (error) =>
         Effect.succeed(fail(500, "source-poison", `${error.position}: ${error.detail}`)),
+      UnsupportedStateOperation: (error) =>
+        Effect.succeed(
+          fail(500, "unsupported-state-operation", `${error.collection}/${error.key}: delete`),
+        ),
       MaintenanceFault: (error) =>
         Effect.succeed(fail(500, "maintenance-fault", `${error.phase}: ${error.detail}`)),
       StoreRestorePoison: (error) =>
@@ -133,6 +140,37 @@ const route = (request: Request) =>
       if (request.method !== "POST") return fail(405, "method-not-allowed");
       const created = yield* createIssue(workspaceId, yield* body(CreateIssueRequest, request));
       return json(commandBody(created), created.reconciled ? 200 : 201);
+    }
+
+    if (rest[0] === "catalog" && rest[1] !== undefined && rest.length === 2) {
+      const collection = yield* Schema.decodeUnknownEffect(CatalogCollection)(rest[1]).pipe(
+        Effect.mapError(() => InvalidRequest.of("collection", rest[1] ?? "missing")),
+      );
+      if (request.method === "GET") {
+        const listed = yield* listCatalog(workspaceId, collection);
+        return json({
+          workspaceId,
+          collection,
+          checkpoint: listed.report.checkpoint ?? null,
+          folded: listed.report.folded,
+          changed: listed.report.changes.length,
+          rows: listed.rows,
+        });
+      }
+      if (request.method !== "POST") return fail(405, "method-not-allowed");
+      const listed = yield* upsertCatalog(
+        workspaceId,
+        collection,
+        yield* body(CatalogUpsertRequest, request),
+      );
+      return json({
+        workspaceId,
+        collection,
+        checkpoint: listed.report.checkpoint ?? null,
+        folded: listed.report.folded,
+        changed: listed.report.changes.length,
+        rows: listed.rows,
+      });
     }
 
     if (

@@ -8,6 +8,7 @@
  */
 import { Schema } from "effect";
 import { Identifier, IssueRow, IssueStatus, Title } from "../domain/issue.ts";
+import { CatalogCollection } from "../domain/catalog.ts";
 
 export const CreateIssueRequest = Schema.Struct({
   commandId: Identifier,
@@ -54,6 +55,22 @@ export const IssuesResponse = Schema.Struct({
   rows: Schema.Array(IssueRow),
 });
 export type IssuesResponse = typeof IssuesResponse.Type;
+
+export const CatalogUpsertRequest = Schema.Struct({
+  key: Identifier,
+  value: Schema.Json,
+});
+export type CatalogUpsertRequest = typeof CatalogUpsertRequest.Type;
+
+export const CatalogRowsResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  collection: CatalogCollection,
+  checkpoint: Schema.NullOr(Schema.String),
+  folded: Schema.Number,
+  changed: Schema.Number,
+  rows: Schema.Array(Schema.Json),
+});
+export type CatalogRowsResponse = typeof CatalogRowsResponse.Type;
 
 /** What a consumer needs to bind the sink's public product. */
 export const SinkSessionResponse = Schema.Struct({

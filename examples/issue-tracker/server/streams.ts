@@ -21,6 +21,10 @@ export interface WorkspaceBindings {
   readonly issueEvents: (workspaceId: string) => StreamBinding;
   /** The Durable State stream the `stateSink` publishes. */
   readonly boardState: (workspaceId: string) => StreamBinding;
+  readonly projects: (workspaceId: string) => StreamBinding;
+  readonly users: (workspaceId: string) => StreamBinding;
+  readonly labels: (workspaceId: string) => StreamBinding;
+  readonly metadata: (workspaceId: string) => StreamBinding;
 }
 
 export interface WorkspaceStreams {
@@ -46,6 +50,10 @@ export function workspaceBindings(client: StreamProtocolClient): WorkspaceBindin
   return {
     issueEvents: (workspaceId) => bindByName(client, streamNames.issueEvents(workspaceId)),
     boardState: (workspaceId) => bindByName(client, streamNames.boardState(workspaceId)),
+    projects: (workspaceId) => bindByName(client, streamNames.projects(workspaceId)),
+    users: (workspaceId) => bindByName(client, streamNames.users(workspaceId)),
+    labels: (workspaceId) => bindByName(client, streamNames.labels(workspaceId)),
+    metadata: (workspaceId) => bindByName(client, streamNames.metadata(workspaceId)),
   };
 }
 
@@ -76,4 +84,8 @@ export const ensureWorkspace = Effect.fn("Streams.ensureWorkspace")(function* (
   const streams = yield* Streams;
   yield* streams.ensure(streamNames.issueEvents(workspaceId));
   yield* streams.ensure(streamNames.boardState(workspaceId));
+  yield* streams.ensure(streamNames.projects(workspaceId));
+  yield* streams.ensure(streamNames.users(workspaceId));
+  yield* streams.ensure(streamNames.labels(workspaceId));
+  yield* streams.ensure(streamNames.metadata(workspaceId));
 });

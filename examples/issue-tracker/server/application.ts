@@ -19,15 +19,18 @@ import {
 } from "@streamsy/experimental/effect";
 import { Clock, Effect, Layer } from "effect";
 import type { CreateIssueRequest, ChangeStatusRequest } from "../shared/api.ts";
+import type { CatalogUpsertRequest } from "../shared/api.ts";
+import { catalog, decodeCatalogRow, type CatalogCollection } from "../domain/catalog.ts";
 import { boardIssues, issues, streamNames } from "../domain/declaration.ts";
 import type { IssueEvent, IssueRow, IssueStatus } from "../domain/issue.ts";
 import { AppConfig } from "./config.ts";
 import { appendIssueEvent, CommandProducers } from "./commands.ts";
-import { UnknownIssue } from "./errors.ts";
+import { AppendRejected, InvalidRequest, UnknownIssue } from "./errors.ts";
 import { advance, type MaintenanceReport } from "./maintenance.ts";
 import { IssueSink } from "./sink.ts";
 import { IssueStore, type CommandReceipt } from "./store.ts";
 import { ensureWorkspace, Streams } from "./streams.ts";
+import { catchUpStateSource, stateSourceBinding, stateSourceId } from "./state-ingestion.ts";
 
 export type ApplicationServices =
   | AppConfig
@@ -123,6 +126,51 @@ export const listIssues = Effect.fn("Application.listIssues")(function* (workspa
   yield* ensureWorkspace(workspaceId);
   yield* advance(workspaceId);
   return yield* store.rows(workspaceId);
+});
+
+export const listCatalog = Effect.fn("Application.listCatalog")(function* (
+  workspaceId: string,
+  collection: CatalogCollection,
+) {
+  const store = yield* IssueStore;
+  yield* ensureWorkspace(workspaceId);
+  const report = yield* catchUpStateSource(collection, workspaceId);
+  const rows = yield* store.stateRows(stateSourceId(collection), collection, workspaceId);
+  return { report, rows };
+});
+
+export const upsertCatalog = Effect.fn("Application.upsertCatalog")(function* (
+  workspaceId: string,
+  collection: CatalogCollection,
+  request: CatalogUpsertRequest,
+) {
+  const streams = yield* Streams;
+  const appends = yield* AppendStreams;
+  yield* ensureWorkspace(workspaceId);
+  const decoded = yield* Effect.try({
+    try: () => decodeCatalogRow(collection, request.value),
+    catch: (cause) =>
+      InvalidRequest.of("value", cause instanceof Error ? cause.message : String(cause)),
+  });
+  if (decoded.key !== request.key) {
+    return yield* InvalidRequest.of("key", `must equal row key ${decoded.key}`);
+  }
+  if (decoded.workspaceId !== workspaceId) {
+    return yield* InvalidRequest.of("workspaceId", `must equal ${workspaceId}`);
+  }
+  const binding = stateSourceBinding(streams.bindings, collection, workspaceId);
+  const appended = yield* appends.appendJsonBatch(binding, [
+    {
+      type: catalog[collection].type,
+      key: request.key,
+      value: request.value,
+      headers: { operation: "upsert" },
+    },
+  ]);
+  if (appended.status !== "appended" && appended.status !== "duplicate") {
+    return yield* new AppendRejected({ stream: binding.streamId, status: appended.status });
+  }
+  return yield* listCatalog(workspaceId, collection);
 });
 
 /** The sink session contract: where the product lives and its current offset. */

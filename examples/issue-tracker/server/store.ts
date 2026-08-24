@@ -20,6 +20,7 @@
  */
 import { Context, Effect, Layer } from "effect";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
+import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
 import { StoreRestorePoison, StoreUnavailable } from "./errors.ts";
 
 /** What the view has consumed, and what the sink has published. */
@@ -55,6 +56,11 @@ export interface CommitInput {
   readonly nextSequence: number;
 }
 
+export interface StateCommitInput {
+  readonly checkpoint: string;
+  readonly rows: ReadonlyMap<string, CatalogRow>;
+}
+
 export interface IssueStoreService {
   readonly progress: (workspaceId: string) => Effect.Effect<ViewProgress, StoreUnavailable>;
   /** Prior reducer state for exactly the keys a batch touches. */
@@ -80,6 +86,21 @@ export interface IssueStoreService {
   readonly recordReceipt: (receipt: CommandReceipt) => Effect.Effect<void, StoreUnavailable>;
   /** Next source sequence for a workspace: one past the highest folded event. */
   readonly nextSequence: (workspaceId: string) => Effect.Effect<number, StoreUnavailable>;
+  readonly stateCheckpoint: (
+    sourceId: string,
+    partitionId: string,
+  ) => Effect.Effect<string | undefined, StoreUnavailable>;
+  readonly stateRows: (
+    sourceId: string,
+    collection: CatalogCollection,
+    partitionId: string,
+  ) => Effect.Effect<readonly CatalogRow[], StoreUnavailable | StoreRestorePoison>;
+  /** Commit current State rows and their after-exclusive source checkpoint atomically. */
+  readonly commitState: (
+    sourceId: string,
+    partitionId: string,
+    input: StateCommitInput,
+  ) => Effect.Effect<void, StoreUnavailable>;
 }
 
 export class IssueStore extends Context.Service<IssueStore, IssueStoreService>()(
@@ -110,6 +131,11 @@ interface WorkspaceMemory {
   nextSequence: number;
 }
 
+interface StateSourceMemory {
+  readonly rows: Map<string, string>;
+  checkpoint?: string;
+}
+
 export interface MemoryStoreOptions {
   /**
    * Durable values to start from, as raw JSON text.
@@ -130,6 +156,7 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
   Layer.sync(IssueStore, () => {
     const workspaces = new Map<string, WorkspaceMemory>();
     const receipts = new Map<string, CommandReceipt>();
+    const stateSources = new Map<string, StateSourceMemory>();
 
     const workspace = (workspaceId: string): WorkspaceMemory => {
       const existing = workspaces.get(workspaceId);
@@ -140,6 +167,15 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
         created.state.set(key, json);
       }
       workspaces.set(workspaceId, created);
+      return created;
+    };
+
+    const stateSource = (sourceId: string, partitionId: string): StateSourceMemory => {
+      const id = `${sourceId}\u0000${partitionId}`;
+      const existing = stateSources.get(id);
+      if (existing !== undefined) return existing;
+      const created: StateSourceMemory = { rows: new Map() };
+      stateSources.set(id, created);
       return created;
     };
 
@@ -201,6 +237,34 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
       ),
       nextSequence: Effect.fn("IssueStore.nextSequence")((workspaceId: string) =>
         Effect.sync(() => workspace(workspaceId).nextSequence),
+      ),
+      stateCheckpoint: Effect.fn("IssueStore.stateCheckpoint")((sourceId, partitionId) =>
+        Effect.sync(() => stateSource(sourceId, partitionId).checkpoint),
+      ),
+      stateRows: Effect.fn("IssueStore.stateRows")(function* (sourceId, collection, partitionId) {
+        const restored: CatalogRow[] = [];
+        for (const [key, json] of [...stateSource(sourceId, partitionId).rows].sort(
+          ([left], [right]) => left.localeCompare(right),
+        )) {
+          const decoded = yield* Effect.try({
+            try: () => decodeCatalogRow(collection, JSON.parse(json)).row,
+            catch: (cause) =>
+              new StoreRestorePoison({
+                table: "source_state_rows",
+                key,
+                detail: cause instanceof Error ? cause.message : String(cause),
+              }),
+          });
+          restored.push(decoded);
+        }
+        return restored;
+      }),
+      commitState: Effect.fn("IssueStore.commitState")((sourceId, partitionId, input) =>
+        Effect.sync(() => {
+          const state = stateSource(sourceId, partitionId);
+          for (const [key, row] of input.rows) state.rows.set(key, JSON.stringify(row));
+          state.checkpoint = input.checkpoint;
+        }),
       ),
     });
   });

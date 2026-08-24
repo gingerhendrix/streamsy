@@ -50,8 +50,22 @@ export class AppendRejected extends Schema.TaggedError<AppendRejected>()("Append
 export class SourcePoison extends Schema.TaggedError<SourcePoison>()("SourcePoison", {
   sourceId: Schema.String,
   position: Schema.String,
+  collection: Schema.optionalKey(Schema.String),
+  key: Schema.optionalKey(Schema.String),
   detail: Schema.String,
 }) {}
+
+/** A State delete reached an A3 relation that intentionally supports upserts only. */
+export class UnsupportedStateOperation extends Schema.TaggedError<UnsupportedStateOperation>()(
+  "UnsupportedStateOperation",
+  {
+    sourceId: Schema.String,
+    position: Schema.String,
+    collection: Schema.String,
+    key: Schema.String,
+    operation: Schema.Literal("delete"),
+  },
+) {}
 
 /** The reducer could not fold a decoded source item into a declared row. */
 export class MaintenanceFault extends Schema.TaggedError<MaintenanceFault>()("MaintenanceFault", {
@@ -94,6 +108,7 @@ export type ApplicationError =
   | StreamUnavailable
   | AppendRejected
   | SourcePoison
+  | UnsupportedStateOperation
   | MaintenanceFault
   | StoreRestorePoison
   | StoreUnavailable
