@@ -38,6 +38,7 @@ interface Partition {
   floor: number;
 }
 interface RawBatch {
+  batchId: string;
   sourceCursor: string;
   committedAtMs: number;
   changes: readonly string[];
@@ -145,6 +146,11 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
                 key.startsWith(`${pkey}\u0000`) &&
                 batch.sourceCursor === input.afterExclusiveCursor,
             );
+            if (duplicate !== undefined && duplicate[1].batchId !== input.batchId)
+              throw new ViewCheckpointIncompatible({
+                reducerId: input.identity.planName,
+                reason: `source cursor ${input.afterExclusiveCursor} is already committed as batch ${duplicate[1].batchId}`,
+              });
             if (duplicate !== undefined)
               return { epoch: existing?.epoch ?? 1, sequence: Number(duplicate[0].slice(-16)) };
             if (existing?.cursor !== input.expectedCursor)
@@ -173,6 +179,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
             const sequence = existing?.nextSequence ?? 1;
             const epoch = existing?.epoch ?? 1;
             batches.set(batchKey(input.identity, sequence), {
+              batchId: input.batchId,
               sourceCursor: input.afterExclusiveCursor,
               committedAtMs: input.committedAtMs,
               changes: (input.changes ?? []).map(raw),

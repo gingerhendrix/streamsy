@@ -101,6 +101,10 @@ export function viewStoreConformance(name: string, factory: ConformanceFactory):
         await run(backend.store.commit(first));
         const duplicate = await run(backend.store.commit(first));
         expect(duplicate.sequence).toBe(1);
+        const mismatchedReplay = await Effect.runPromiseExit(
+          backend.store.commit({ ...first, batchId: "different-batch" }),
+        );
+        expect(Exit.isFailure(mismatchedReplay)).toBe(true);
         const exit = await Effect.runPromiseExit(
           backend.store.commit(
             commit("2", undefined, {

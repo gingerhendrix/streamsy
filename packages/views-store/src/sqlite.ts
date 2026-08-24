@@ -99,10 +99,18 @@ export function sqliteService(database: Database): ViewStoreService {
           reason: `stored plan ${current.plan_hash} does not match ${i.planHash}`,
         });
       const duplicate = database
-        .query<{ history_epoch: number; history_seq: number }, [string, string, string, string]>(
-          "SELECT history_epoch,history_seq FROM streamsy_view_change_batches WHERE plan_name=? AND partition_key=? AND source_id=? AND source_cursor=?",
+        .query<
+          { history_epoch: number; history_seq: number; batch_id: string },
+          [string, string, string, string]
+        >(
+          "SELECT history_epoch,history_seq,batch_id FROM streamsy_view_change_batches WHERE plan_name=? AND partition_key=? AND source_id=? AND source_cursor=?",
         )
         .get(i.planName, i.partition, i.sourceId, input.afterExclusiveCursor);
+      if (duplicate !== null && duplicate.batch_id !== input.batchId)
+        throw new ViewCheckpointIncompatible({
+          reducerId: i.planName,
+          reason: `source cursor ${input.afterExclusiveCursor} is already committed as batch ${duplicate.batch_id}`,
+        });
       if (duplicate !== null)
         return { epoch: duplicate.history_epoch, sequence: duplicate.history_seq };
       const actual = current?.source_cursor ?? undefined;
