@@ -287,7 +287,7 @@ function hasProgress(outcome: InternalResult): outcome is InternalResult & Inter
 }
 
 function publicProgress(progress: InternalProgress): CatchUpProgress {
-  const publicProgress: CatchUpProgress = {
+  const snapshot: CatchUpProgress = {
     targetOffset: progress.checkpoint.targetOffset,
     pages: progress.pages,
     batches: progress.batches,
@@ -295,8 +295,8 @@ function publicProgress(progress: InternalProgress): CatchUpProgress {
     bytes: progress.bytes,
   };
   return progress.checkpoint.sourceThrough === undefined
-    ? publicProgress
-    : { ...publicProgress, sourceThrough: progress.checkpoint.sourceThrough };
+    ? snapshot
+    : { ...snapshot, sourceThrough: progress.checkpoint.sourceThrough };
 }
 
 function publicLimit(limit: keyof import("../ivm-mesh/projection.ts").CatchUpLimits): keyof Limits {

@@ -191,13 +191,13 @@ const makeScan = (reads: ReadStreamsService) =>
           producerId: lane.producerId,
           producerEpoch: lane.producerEpoch,
         };
-        const checkpoint: RecoveredDerivedState =
+        const recoveredCheckpoint: RecoveredDerivedState =
           lineage === undefined
             ? checkpointBase
             : { ...checkpointBase, sourceThrough: lineage.value.sourceThrough };
         return {
           status: "ready" as const,
-          checkpoint,
+          checkpoint: recoveredCheckpoint,
           facts,
         };
       });
