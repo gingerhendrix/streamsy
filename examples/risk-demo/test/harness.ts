@@ -51,7 +51,7 @@ export function checkedString(value: CheckedJsonValue, label: string): string {
 
 export function checkedNumber(value: CheckedJsonValue, label: string): number {
   try {
-    return Schema.decodeUnknownSync(Schema.Number)(value);
+    return Schema.decodeUnknownSync(Schema.Finite)(value);
   } catch {
     throw new Error(`${label} must be a number`);
   }

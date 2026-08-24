@@ -677,13 +677,13 @@ function validationPath(issue: SchemaIssue.Issue): string {
   const path = [...firstIssuePath(issue)];
   // Placement errors have historically identified the complete placement item,
   // not one field inside it. Preserve that public detail while Schema owns validation.
-  if (path[0] === "action" && path[1] === "placements" && Schema.is(Schema.Number)(path[2])) {
+  if (path[0] === "action" && path[1] === "placements" && Schema.is(Schema.Finite)(path[2])) {
     path.length = 3;
   }
   if (path.length === 0) return "body";
   return path
     .map((part, index) => {
-      if (Schema.is(Schema.Number)(part)) return `[${part}]`;
+      if (Schema.is(Schema.Finite)(part)) return `[${part}]`;
       return `${index === 0 ? "" : "."}${String(part)}`;
     })
     .join("");

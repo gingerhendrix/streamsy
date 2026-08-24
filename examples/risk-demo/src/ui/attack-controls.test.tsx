@@ -56,7 +56,7 @@ function controls(
 function textContent(node: ReactNode): string {
   const text = Schema.decodeUnknownOption(Schema.String)(node);
   if (Option.isSome(text)) return text.value;
-  const number = Schema.decodeUnknownOption(Schema.Number)(node);
+  const number = Schema.decodeUnknownOption(Schema.Finite)(node);
   if (Option.isSome(number)) return String(number.value);
   if (!isValidElement<{ children?: ReactNode }>(node)) return "";
   return Children.toArray(node.props.children).map(textContent).join("");

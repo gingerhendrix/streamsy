@@ -75,7 +75,7 @@ export async function findFreePort(): Promise<number> {
     probe.once("error", reject);
     probe.listen(0, "127.0.0.1", () => {
       try {
-        const { port } = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Number }))(
+        const { port } = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Finite }))(
           probe.address(),
         );
         probe.close((error) => (error ? reject(error) : resolvePort(port)));

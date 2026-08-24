@@ -254,7 +254,7 @@ async function startFixture(state: FixtureState) {
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Number }))(
+  const address = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Finite }))(
     server.address(),
   );
   return {
