@@ -100,11 +100,11 @@ export type CatchUpOutcome =
       readonly progress: CatchUpProgress;
     };
 
-interface ClientShape {
+interface ClientService {
   readonly client: StreamProtocolClient;
 }
 
-class Client extends Context.Service<Client, ClientShape>()(
+class Client extends Context.Service<Client, ClientService>()(
   "@streamsy/experimental/StateProjection/Client",
 ) {}
 

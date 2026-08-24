@@ -28,18 +28,18 @@ export type ReadOpenResult<T extends JsonValue = JsonValue> =
 export type CreateOutcome = Exclude<ClientCreateResult, { status: "error" }>;
 export type AppendOutcome = Exclude<ClientAppendResult, { status: "error" }>;
 
-export interface CreateStreamsShape {
+export interface CreateStreamsService {
   readonly create: (
     binding: StreamBinding,
     options?: CreateStreamOptions,
   ) => Effect.Effect<CreateOutcome, StreamCreateError>;
 }
 
-export class CreateStreams extends Context.Service<CreateStreams, CreateStreamsShape>()(
+export class CreateStreams extends Context.Service<CreateStreams, CreateStreamsService>()(
   "@streamsy/experimental/CreateStreams",
 ) {}
 
-export interface ReadStreamsShape {
+export interface ReadStreamsService {
   /**
    * Acquire a finite read session in the current Scope.
    *
@@ -53,11 +53,11 @@ export interface ReadStreamsShape {
   ) => Effect.Effect<ReadOpenResult, StreamReadError, Scope.Scope>;
 }
 
-export class ReadStreams extends Context.Service<ReadStreams, ReadStreamsShape>()(
+export class ReadStreams extends Context.Service<ReadStreams, ReadStreamsService>()(
   "@streamsy/experimental/ReadStreams",
 ) {}
 
-export interface AppendStreamsShape {
+export interface AppendStreamsService {
   readonly append: (
     binding: StreamBinding,
     data: Uint8Array | string,
@@ -70,7 +70,7 @@ export interface AppendStreamsShape {
   ) => Effect.Effect<AppendOutcome, StreamAppendError>;
 }
 
-export class AppendStreams extends Context.Service<AppendStreams, AppendStreamsShape>()(
+export class AppendStreams extends Context.Service<AppendStreams, AppendStreamsService>()(
   "@streamsy/experimental/AppendStreams",
 ) {}
 

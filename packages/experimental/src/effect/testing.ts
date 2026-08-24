@@ -3,23 +3,23 @@ import {
   AppendStreams,
   CreateStreams,
   ReadStreams,
-  type AppendStreamsShape,
-  type CreateStreamsShape,
-  type ReadStreamsShape,
+  type AppendStreamsService,
+  type CreateStreamsService,
+  type ReadStreamsService,
 } from "./streams.ts";
 
-export interface TestStreamsShape {
-  readonly create: CreateStreamsShape;
-  readonly read: ReadStreamsShape;
-  readonly append: AppendStreamsShape;
+export interface TestStreamsHandlers {
+  readonly create: CreateStreamsService;
+  readonly read: ReadStreamsService;
+  readonly append: AppendStreamsService;
 }
 
-export class TestStreams extends Context.Service<TestStreams, TestStreamsShape>()(
+export class TestStreams extends Context.Service<TestStreams, TestStreamsHandlers>()(
   "@streamsy/experimental/TestStreams",
 ) {}
 
 /** Supply deterministic create/read/append handlers without constructing a client or transport. */
-export const TestStreamsLayer = (handlers: TestStreamsShape) =>
+export const TestStreamsLayer = (handlers: TestStreamsHandlers) =>
   Layer.effectContext(
     Effect.succeed(
       Context.empty().pipe(

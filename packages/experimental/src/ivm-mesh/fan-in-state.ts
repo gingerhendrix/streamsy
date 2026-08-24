@@ -20,7 +20,7 @@ import {
   AppendStreams,
   ReadStreams,
   type AppendOutcome,
-  type ReadStreamsShape,
+  type ReadStreamsService,
 } from "../effect/streams.ts";
 import type { AppendDerivedStateResult } from "./derived-append.ts";
 import {
@@ -65,14 +65,14 @@ export interface RecoveredFanInState {
 
 export type FanInRecoveryResult = RecoveredFanInState | { readonly status: "not-found" | "gone" };
 
-export interface FanInRecoveryShape {
+export interface FanInRecoveryService {
   readonly recoverFanIn: (
     target: StreamBinding,
     lane: ProducerLane,
   ) => Effect.Effect<FanInRecoveryResult, MeshOperationalError>;
 }
 
-export class FanInRecovery extends Context.Service<FanInRecovery, FanInRecoveryShape>()(
+export class FanInRecovery extends Context.Service<FanInRecovery, FanInRecoveryService>()(
   "@streamsy/experimental/FanInRecovery",
 ) {}
 
@@ -84,7 +84,7 @@ export const FanInRecoveryLive = Layer.effect(
   }),
 );
 
-export const FanInRecoveryTest = (recoverFanIn: FanInRecoveryShape["recoverFanIn"]) =>
+export const FanInRecoveryTest = (recoverFanIn: FanInRecoveryService["recoverFanIn"]) =>
   Layer.succeed(FanInRecovery, FanInRecovery.of({ recoverFanIn }));
 
 export interface FanInStepResult<State> {
@@ -580,7 +580,7 @@ const readNextBoundary = (
     }
   }).pipe(Effect.scoped);
 
-const makeFanInScan = (reads: ReadStreamsShape) =>
+const makeFanInScan = (reads: ReadStreamsService) =>
   Effect.fn("FanInRecovery.recoverFanIn")((target: StreamBinding, lane: ProducerLane) =>
     Effect.gen(function* () {
       assertLaneTarget(target, lane);

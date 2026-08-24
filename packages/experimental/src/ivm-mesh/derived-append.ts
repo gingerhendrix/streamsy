@@ -6,7 +6,7 @@ import {
   AppendStreams,
   type AppendOutcome,
   ReadStreams,
-  type ReadStreamsShape,
+  type ReadStreamsService,
 } from "../effect/streams.ts";
 import { IncompatibleLineage, MalformedLineage, type StreamReadError } from "../effect/errors.ts";
 import type { ProducerLane } from "./lane.ts";
@@ -34,14 +34,14 @@ export type DerivedRecoveryResult =
   | { readonly status: "not-found" | "gone" };
 export type DerivedRecoveryError = StreamReadError | MalformedLineage | IncompatibleLineage;
 
-export interface DerivedRecoveryShape {
+export interface DerivedRecoveryService {
   readonly recover: (
     target: StreamBinding,
     lane: ProducerLane,
   ) => Effect.Effect<DerivedRecoveryResult, DerivedRecoveryError>;
 }
 
-export class DerivedRecovery extends Context.Service<DerivedRecovery, DerivedRecoveryShape>()(
+export class DerivedRecovery extends Context.Service<DerivedRecovery, DerivedRecoveryService>()(
   "@streamsy/experimental/DerivedRecovery",
 ) {}
 
@@ -62,7 +62,7 @@ export type DerivedHistoryResult =
   | RecoveredDerivedHistory
   | { readonly status: "not-found" | "gone" };
 
-export interface DerivedStateHistoryShape {
+export interface DerivedStateHistoryService {
   readonly recoverHistory: (
     target: StreamBinding,
     lane: ProducerLane,
@@ -71,7 +71,7 @@ export interface DerivedStateHistoryShape {
 
 export class DerivedStateHistory extends Context.Service<
   DerivedStateHistory,
-  DerivedStateHistoryShape
+  DerivedStateHistoryService
 >()("@streamsy/experimental/DerivedStateHistory") {}
 
 export interface AppendDerivedStateBatchOptions {
@@ -116,14 +116,14 @@ export const DerivedStateHistoryLive = Layer.effect(
 );
 
 /** Deterministic recovery capability for processor tests. */
-export const DerivedRecoveryTest = (recover: DerivedRecoveryShape["recover"]) =>
+export const DerivedRecoveryTest = (recover: DerivedRecoveryService["recover"]) =>
   Layer.succeed(DerivedRecovery, DerivedRecovery.of({ recover }));
 
 export const DerivedStateHistoryTest = (
-  recoverHistory: DerivedStateHistoryShape["recoverHistory"],
+  recoverHistory: DerivedStateHistoryService["recoverHistory"],
 ) => Layer.succeed(DerivedStateHistory, DerivedStateHistory.of({ recoverHistory }));
 
-const makeScan = (reads: ReadStreamsShape) =>
+const makeScan = (reads: ReadStreamsService) =>
   Effect.fn("DerivedStateHistory.recoverHistory")((target: StreamBinding, lane: ProducerLane) =>
     Effect.gen(function* () {
       assertTargetMatchesLane(target, lane);
@@ -251,7 +251,7 @@ function reconcileDuplicate(
   options: AppendDerivedStateBatchOptions,
   duplicate: Extract<AppendOutcome, { status: "duplicate" }>,
   nextProducerSeq: number,
-  recovery: DerivedRecoveryShape,
+  recovery: DerivedRecoveryService,
 ) {
   return Effect.gen(function* () {
     if (
