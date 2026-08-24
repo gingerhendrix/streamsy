@@ -22,6 +22,7 @@
     "@streamsy/storage-sqlite": "workspace:*",
     "@streamsy/views": "workspace:*",
     "@streamsy/views-ir": "workspace:*",
+    "@streamsy/views-store": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
     "effect": "4.0.0-rc.109",
