@@ -1,5 +1,5 @@
 import type { ClientAppendResult, JsonValue } from "@streamsy/core";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { streamIdentityEquals } from "../causal.ts";
 import type { StreamBinding } from "../binding.ts";
 import {
@@ -19,6 +19,9 @@ import {
   type MeshLineageEvent,
 } from "./state-meta.ts";
 import { decodeStateFact } from "./schemas.ts";
+
+const isJsonObject = Schema.is(Schema.Record(Schema.String, Schema.Json));
+const isString = Schema.is(Schema.String);
 
 export interface RecoveredDerivedState {
   readonly status: "ready";
@@ -156,7 +159,7 @@ const makeScan = (reads: ReadStreamsService) =>
           for (const item of batch.items) {
             sawItems = true;
             lastWasLineage = false;
-            if (!isRecord(item) || typeof item.type !== "string") {
+            if (!isJsonObject(item) || !isString(item.type)) {
               facts.push(item);
               continue;
             }
@@ -181,16 +184,20 @@ const makeScan = (reads: ReadStreamsService) =>
             message: "Derived State history does not end at a lineage transaction boundary",
           });
         }
+        const checkpointBase = {
+          status: "ready" as const,
+          targetOffset,
+          nextProducerSeq: lineage?.value.nextProducerSeq ?? 0,
+          producerId: lane.producerId,
+          producerEpoch: lane.producerEpoch,
+        };
+        const checkpoint: RecoveredDerivedState =
+          lineage === undefined
+            ? checkpointBase
+            : { ...checkpointBase, sourceThrough: lineage.value.sourceThrough };
         return {
           status: "ready" as const,
-          checkpoint: {
-            status: "ready" as const,
-            targetOffset,
-            ...(lineage === undefined ? {} : { sourceThrough: lineage.value.sourceThrough }),
-            nextProducerSeq: lineage?.value.nextProducerSeq ?? 0,
-            producerId: lane.producerId,
-            producerEpoch: lane.producerEpoch,
-          },
+          checkpoint,
           facts,
         };
       });
@@ -285,11 +292,12 @@ function classifyAppendOutcome(
   result: Exclude<AppendOutcome, { status: "appended" | "duplicate" }>,
 ): AppendDerivedStateResult {
   if (result.status === "conflict") {
-    return {
+    const conflict: Extract<AppendDerivedStateResult, { status: "output-conflict" }> = {
       status: "output-conflict",
       reason: result.conflictReason,
-      ...("offset" in result ? { offset: result.offset } : {}),
     };
+    if ("offset" in result) return { ...conflict, offset: result.offset };
+    return conflict;
   }
   if (result.status === "closed")
     return { status: "output-conflict", reason: "closed", offset: result.offset };
@@ -333,8 +341,4 @@ function checkpoint(
 function assertTargetMatchesLane(target: StreamBinding, lane: ProducerLane): void {
   if (!streamIdentityEquals(target.identity, lane.target))
     throw new TypeError("Target binding identity does not match the producer lane");
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

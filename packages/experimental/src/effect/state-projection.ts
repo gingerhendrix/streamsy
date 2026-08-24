@@ -257,16 +257,21 @@ function toPublicOutcome(outcome: InternalResult): CatchUpOutcome {
       };
     case "missing":
     case "gone":
-      return {
-        status: outcome.status,
-        stream: outcome.stream,
-        ...(progress === undefined ? {} : { progress }),
-      };
+      return progress === undefined
+        ? { status: outcome.status, stream: outcome.stream }
+        : { status: outcome.status, stream: outcome.stream, progress };
     case "output-conflict":
+      if (outcome.offset === undefined) {
+        return {
+          status: outcome.status,
+          reason: outcome.reason,
+          progress: publicProgress(outcome),
+        };
+      }
       return {
         status: outcome.status,
         reason: outcome.reason,
-        ...(outcome.offset === undefined ? {} : { offset: outcome.offset }),
+        offset: outcome.offset,
         progress: publicProgress(outcome),
       };
     case "stale-epoch":
@@ -282,16 +287,16 @@ function hasProgress(outcome: InternalResult): outcome is InternalResult & Inter
 }
 
 function publicProgress(progress: InternalProgress): CatchUpProgress {
-  return {
-    ...(progress.checkpoint.sourceThrough === undefined
-      ? {}
-      : { sourceThrough: progress.checkpoint.sourceThrough }),
+  const publicProgress: CatchUpProgress = {
     targetOffset: progress.checkpoint.targetOffset,
     pages: progress.pages,
     batches: progress.batches,
     items: progress.items,
     bytes: progress.bytes,
   };
+  return progress.checkpoint.sourceThrough === undefined
+    ? publicProgress
+    : { ...publicProgress, sourceThrough: progress.checkpoint.sourceThrough };
 }
 
 function publicLimit(limit: keyof import("../ivm-mesh/projection.ts").CatchUpLimits): keyof Limits {

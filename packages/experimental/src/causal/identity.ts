@@ -1,5 +1,8 @@
+import { Schema } from "effect";
+
 const IDENTITY_ENCODING_PREFIX = "streamsy.identity.v1:";
 const MAX_IDENTITY_NAME_LENGTH = 256;
+const isString = Schema.is(Schema.String);
 
 /** A mesh-assigned identity. It is deliberately independent of a stream address. */
 export interface StreamIdentity {
@@ -8,7 +11,7 @@ export interface StreamIdentity {
 
 /** Construct a validated, canonical stream identity. */
 export function streamIdentity(name: string): StreamIdentity {
-  if (typeof name !== "string") throw new TypeError("Stream identity name must be a string");
+  if (!isString(name)) throw new TypeError("Stream identity name must be a string");
   const canonical = name.normalize("NFC");
   if (canonical.trim().length === 0) {
     throw new TypeError("Stream identity name must not be empty or whitespace-only");

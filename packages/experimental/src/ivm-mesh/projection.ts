@@ -99,10 +99,11 @@ export const catchUp = Effect.fn("catchUp")(<Input>(options: CatchUpOptions<Inpu
       items: 0,
       bytes: 0,
     };
-    const opened = yield* reads.open(options.source, {
-      ...(recovered.sourceThrough === undefined ? {} : { offset: recovered.sourceThrough }),
-      live: false,
-    });
+    const readOptions =
+      recovered.sourceThrough === undefined
+        ? { live: false as const }
+        : { offset: recovered.sourceThrough, live: false as const };
+    const opened = yield* reads.open(options.source, readOptions);
     if (opened.status !== "ok")
       return {
         status: opened.status === "not-found" ? ("missing" as const) : ("gone" as const),

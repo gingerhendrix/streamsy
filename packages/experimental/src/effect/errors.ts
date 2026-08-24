@@ -26,12 +26,17 @@ const ClientFailureSchema = Schema.Struct({
   cause: Schema.optional(Schema.Unknown),
 });
 
-type ClientFailureSchemaType = typeof ClientFailureSchema.Type;
-const clientFailureSchemaInput = (value: ClientFailure): ClientFailureSchemaType => value;
 const isClientFailureSchema = Schema.is(ClientFailureSchema);
 
-function isClientFailure(value: unknown): value is ClientFailure {
-  return isClientFailureSchema(value) && clientFailureSchemaInput(value) === value;
+type ClientFailureSource = Schema.Schema.Type<ReturnType<typeof Schema.Defect>>;
+
+const isClientFailure = (value: ClientFailureSource): value is ClientFailure =>
+  isClientFailureSchema(value);
+
+interface ClientFailureDetails {
+  readonly code: ClientFailure["code"];
+  readonly retryable: boolean;
+  readonly message: string;
 }
 
 export class StreamCreateError extends Schema.TaggedError<StreamCreateError>()(
@@ -45,13 +50,12 @@ export class StreamCreateError extends Schema.TaggedError<StreamCreateError>()(
     durability: Schema.Literal("unknown"),
   },
 ) {
-  static from(operation: string, failure: unknown): StreamCreateError {
-    const classification = clientFailureClassification(failure);
+  static from(operation: string, failure: ClientFailureSource): StreamCreateError {
+    const details = decodeClientFailureDetails(failure);
     return new StreamCreateError({
       operation,
       failure,
-      message: clientFailureMessage(failure),
-      ...classification,
+      ...details,
       durability: "unknown",
     });
   }
@@ -64,13 +68,12 @@ export class StreamReadError extends Schema.TaggedError<StreamReadError>()("Stre
   code: ClientErrorCode,
   retryable: Schema.Boolean,
 }) {
-  static from(operation: string, failure: unknown): StreamReadError {
-    const classification = clientFailureClassification(failure);
+  static from(operation: string, failure: ClientFailureSource): StreamReadError {
+    const details = decodeClientFailureDetails(failure);
     return new StreamReadError({
       operation,
       failure,
-      message: clientFailureMessage(failure),
-      ...classification,
+      ...details,
     });
   }
 }
@@ -86,13 +89,12 @@ export class StreamAppendError extends Schema.TaggedError<StreamAppendError>()(
     durability: Schema.Literal("unknown"),
   },
 ) {
-  static from(operation: string, failure: unknown): StreamAppendError {
-    const classification = clientFailureClassification(failure);
+  static from(operation: string, failure: ClientFailureSource): StreamAppendError {
+    const details = decodeClientFailureDetails(failure);
     return new StreamAppendError({
       operation,
       failure,
-      message: clientFailureMessage(failure),
-      ...classification,
+      ...details,
       durability: "unknown",
     });
   }
@@ -134,18 +136,17 @@ export type MeshOperationalError =
   | ProjectionPoison
   | StateRestorePoison;
 
-function clientFailureClassification(failure: unknown) {
-  return isClientFailure(failure)
-    ? { code: failure.code, retryable: failure.retryable }
-    : { code: "unknown" as const, retryable: false };
-}
-
-function clientFailureMessage(failure: unknown): string {
-  if (isClientFailure(failure)) return failure.message;
+function decodeClientFailureDetails(failure: ClientFailureSource): ClientFailureDetails {
+  if (isClientFailure(failure)) {
+    return { code: failure.code, retryable: failure.retryable, message: failure.message };
+  }
   try {
-    if (failure instanceof Error && typeof failure.message === "string") return failure.message;
-    return String(failure);
+    return {
+      code: "unknown",
+      retryable: false,
+      message: failure instanceof Error ? failure.message : String(failure),
+    };
   } catch {
-    return "Unknown client failure";
+    return { code: "unknown", retryable: false, message: "Unknown client failure" };
   }
 }

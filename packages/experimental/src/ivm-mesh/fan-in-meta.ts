@@ -117,7 +117,7 @@ export function createFanInCheckpoint(
 }
 
 export const decodeFanInCheckpoint = Effect.fn("MeshFanIn.decodeCheckpoint")(function* (
-  value: unknown,
+  value: JsonValue,
 ) {
   return yield* Schema.decodeUnknownEffect(FanInCheckpointEvent)(value).pipe(
     Effect.mapError(
@@ -126,7 +126,7 @@ export const decodeFanInCheckpoint = Effect.fn("MeshFanIn.decodeCheckpoint")(fun
   );
 });
 
-export const decodeFanInMember = Effect.fn("MeshFanIn.decodeMember")(function* (value: unknown) {
+export const decodeFanInMember = Effect.fn("MeshFanIn.decodeMember")(function* (value: JsonValue) {
   const event = yield* Schema.decodeUnknownEffect(FanInMemberEvent)(value).pipe(
     Effect.mapError(
       (cause) => new MalformedLineage({ message: "Malformed fan-in member row", cause }),

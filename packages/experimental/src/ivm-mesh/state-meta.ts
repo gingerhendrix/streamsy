@@ -1,3 +1,4 @@
+import type { JsonValue } from "@streamsy/core";
 import { Effect, Schema } from "effect";
 import { encodeStreamIdentity } from "../causal.ts";
 import { IncompatibleLineage, MalformedLineage } from "../effect/errors.ts";
@@ -60,7 +61,7 @@ export function createLineageEvent(
 }
 
 /** Decode unknown durable lineage and keep all validation failures typed. */
-export const decodeLineageEvent = Effect.fn("MeshLineage.decode")(function* (value: unknown) {
+export const decodeLineageEvent = Effect.fn("MeshLineage.decode")(function* (value: JsonValue) {
   return yield* Schema.decodeUnknownEffect(MeshLineageEvent)(value).pipe(
     Effect.mapError(
       (cause) => new MalformedLineage({ message: "Malformed mesh lineage event", cause }),

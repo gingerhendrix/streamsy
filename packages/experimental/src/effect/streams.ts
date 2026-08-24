@@ -10,16 +10,18 @@ import type {
   ReadStreamOptions,
   StreamBatch,
 } from "@streamsy/core";
-import { Context, Effect, Layer, type Scope } from "effect";
+import { Context, Effect, Layer, Schema, type Scope } from "effect";
 import type { StreamBinding } from "../binding.ts";
 import { StreamAppendError, StreamCreateError, StreamReadError } from "./errors.ts";
+
+export type StreamCancellationReason = Schema.Schema.Type<ReturnType<typeof Schema.Defect>>;
 
 export interface EffectReadSession<T extends JsonValue = JsonValue> {
   readonly contentType?: string;
   readonly startOffset?: string;
   readonly next: Effect.Effect<IteratorResult<StreamBatch<T>>, StreamReadError>;
   readonly done: Effect.Effect<Exclude<ReadEndResult, { status: "error" }>, StreamReadError>;
-  readonly cancel: (reason?: unknown) => Effect.Effect<void>;
+  readonly cancel: (reason?: StreamCancellationReason) => Effect.Effect<void>;
 }
 
 export type ReadOpenResult<T extends JsonValue = JsonValue> =
@@ -148,7 +150,8 @@ export const ReadStreamsLive = Layer.succeed(
                     : Effect.succeed(ended),
                 ),
               ),
-              cancel: (reason?: unknown) => Effect.sync(() => result.session.cancel(reason)),
+              cancel: (reason?: StreamCancellationReason) =>
+                Effect.sync(() => result.session.cancel(reason)),
             },
           };
         }),

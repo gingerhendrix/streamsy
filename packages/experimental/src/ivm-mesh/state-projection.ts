@@ -125,12 +125,11 @@ export const catchUpState = Effect.fn("catchUpState")(
         items: 0,
         bytes: 0,
       };
-      const opened = yield* reads.open(options.source, {
-        ...(recovered.checkpoint.sourceThrough === undefined
-          ? {}
-          : { offset: recovered.checkpoint.sourceThrough }),
-        live: false,
-      });
+      const readOptions =
+        recovered.checkpoint.sourceThrough === undefined
+          ? { live: false as const }
+          : { offset: recovered.checkpoint.sourceThrough, live: false as const };
+      const opened = yield* reads.open(options.source, readOptions);
       if (opened.status !== "ok") {
         return {
           status: opened.status === "not-found" ? ("missing" as const) : ("gone" as const),

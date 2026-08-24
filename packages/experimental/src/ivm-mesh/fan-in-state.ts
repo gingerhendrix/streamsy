@@ -43,6 +43,9 @@ import { CatchUpLimits as CatchUpLimitsSchema, decodeStateFact } from "./schemas
 
 export type { FanInMember } from "./fan-in-meta.ts";
 
+const isJsonObject = Schema.is(Schema.Record(Schema.String, Schema.Json));
+const isString = Schema.is(Schema.String);
+
 /** One decoded membership transition. `from` declares the member start position. */
 export type MembershipChange =
   | { readonly type: "join"; readonly member: StreamIdentity; readonly from?: string }
@@ -533,11 +536,12 @@ function classifyFanInOutcome(
   if (result.status === "not-found") return { status: "missing", stream: "target" };
   if (result.status === "gone") return { status: "gone", stream: "target" };
   if (result.status === "conflict") {
-    return {
+    const conflict: Extract<FanInAppendFailure, { status: "output-conflict" }> = {
       status: "output-conflict",
       reason: result.conflictReason,
-      ...("offset" in result ? { offset: result.offset } : {}),
     };
+    if ("offset" in result) return { ...conflict, offset: result.offset };
+    return conflict;
   }
   if (result.status === "closed") {
     return { status: "output-conflict", reason: "closed", offset: result.offset };
@@ -558,10 +562,9 @@ const readNextBoundary = (
 ): Effect.Effect<BoundaryRead, MeshOperationalError, ReadStreams> =>
   Effect.gen(function* () {
     const reads = yield* ReadStreams;
-    const opened = yield* reads.open(binding, {
-      ...(after === null ? {} : { offset: after }),
-      live: false,
-    });
+    const readOptions =
+      after === null ? { live: false as const } : { offset: after, live: false as const };
+    const opened = yield* reads.open(binding, readOptions);
     if (opened.status !== "ok") {
       return {
         status: opened.status === "not-found" ? ("missing" as const) : ("gone" as const),
@@ -613,7 +616,7 @@ const makeFanInScan = (reads: ReadStreamsService) =>
           for (const item of batch.items) {
             sawItems = true;
             lastWasCheckpoint = false;
-            if (!isRecord(item) || typeof item.type !== "string") {
+            if (!isJsonObject(item) || !isString(item.type)) {
               facts.push(item);
               continue;
             }
@@ -624,9 +627,9 @@ const makeFanInScan = (reads: ReadStreamsService) =>
               nextProducerSeq = decoded.value.nextProducerSeq;
               lastWasCheckpoint = true;
             } else if (item.type === FAN_IN_MEMBER_TYPE) {
-              const operation = isRecord(item.headers) ? item.headers.operation : undefined;
+              const operation = isJsonObject(item.headers) ? item.headers.operation : undefined;
               if (operation === "delete") {
-                const key = typeof item.key === "string" ? item.key : "";
+                const key = isString(item.key) ? item.key : "";
                 if (!key.startsWith(MEMBER_KEY_PREFIX)) {
                   return yield* new MalformedLineage({
                     message: "Fan-in member removal row has an unusable key",
@@ -759,10 +762,6 @@ function encodedBatchBytes(batch: StreamBatch): number {
     return new TextEncoder().encode(JSON.stringify(batch.items)).byteLength;
   if (batch.kind === "text") return new TextEncoder().encode(batch.text).byteLength;
   return batch.data.byteLength;
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const decodeJsonValue = Schema.decodeUnknownSync(Schema.Json);
