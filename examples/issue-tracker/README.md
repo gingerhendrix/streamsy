@@ -6,7 +6,7 @@ React board.
 
 ```text
 HTTP issue command
--> canonical issue event append (producer lane = commandId)
+-> canonical issue event append (producer lane = workspaceId + commandId, expected-offset CAS)
 -> real workspace Durable Stream
 -> typed source decode
 -> reduceByKey issue lifecycle
@@ -29,9 +29,8 @@ older hand-built projection API through an adapter.
 ```ts
 export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
-  key: x.row.eventId,
-  order: x.row.sequence,
   partitionBy: x.row.workspaceId,
+  mode: { kind: "facts", key: x.row.eventId, order: x.row.sequence },
 });
 
 export const issues = view(
@@ -64,6 +63,52 @@ plan hash, so two hosts can be compared by inspection.
 this slice executes. Nodes the slice does not run — filter, project, key, left
 join, grouped aggregate, top-N — are deliberately absent rather than declared
 and unimplemented.
+
+This branch also carries the smallest local source-mode compatibility contract
+needed while A1 owns the public `@streamsy/views-ir` and `@streamsy/views`
+packages. It encodes `facts` and `state` modes in plan version 2. Integration
+should replace this local shape with A1's contract rather than publishing a
+second IR.
+
+## State sources
+
+Projects, users, labels, and workspace metadata use four independent Durable
+State streams:
+
+```text
+state/workspaces/{workspaceId}/projects
+state/workspaces/{workspaceId}/users
+state/workspaces/{workspaceId}/labels
+state/workspaces/{workspaceId}/metadata
+```
+
+Each source decodes the State envelope, checks its collection, key, workspace,
+and typed row, then commits current rows with that source's native checkpoint in
+one application-store transaction. A bad immutable boundary is fail-stop: rows
+and checkpoint remain unchanged. `delete` is decoded and returned as the typed
+`UnsupportedStateOperation`; A3 intentionally implements upserts only.
+
+Catalog rows are available at
+`GET|POST /api/workspaces/:workspaceId/catalog/:collection`, where collection is
+`projects`, `users`, `labels`, or `metadata`.
+
+## Command reconciliation
+
+Commands hash normalized semantic intent and scope receipts plus producer lanes
+by workspace. A bounded scan of the canonical issue-event source runs before a
+new append, after a producer duplicate, and after an append transport failure
+whose durability is unknown. Catch-up reads use one message per batch so a
+recovered receipt retains the original native offset even after later events.
+
+New commands append with the observed source head as `expectedOffset`. A loser
+rescans and rebuilds its sequence, up to eight attempts; exhaustion is the typed
+`CommandContention` response with HTTP 409. The recovery scan is deliberately
+bounded to 512 batches and 10,000 events in A3.
+
+The SQLite migration replaces only Slice 1's command-receipt table, whose rows
+lack canonical intent. Accepted commands remain recoverable from the canonical
+source. State tables and transactions are application-owned; A4's generic
+operator store, indexes, history, checkpoints, and migrations are not included.
 
 ## Server architecture
 
@@ -181,12 +226,9 @@ would have been dishonest.
   without an open sync transaction when a `reset` is the first thing a session
   sees, which throws. `reset` belongs to the first view that can drop a row, and
   that upstream path needs fixing before then.
-- **Concurrent commands can propose the same `sequence`.** Numbering is read
-  from the last committed fold, and the maintenance pass runs inside the command,
-  so sequential commands are strictly ordered. Two genuinely concurrent commands
-  can both read the same next value; the durable stream order still decides the
-  fold, because the engine's sort is stable over it. Assigning `sequence` from an
-  append acknowledgement is the fix, and it belongs with the multi-writer work.
+- **Receipt recovery is bounded.** A workspace with more than 10,000 canonical
+  issue events returns `command-recovery-exhausted` until a later indexed receipt
+  authority replaces the A3 scan.
 - **`out-of-window` is reachable but not exercised.** The sink maps an offset
   it can no longer serve to the declared snapshot fallback. Nothing in this
   slice trims history, so no test produces that reason.

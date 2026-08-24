@@ -8,7 +8,7 @@
  * the maintained rows — and the published product — to be identical.
  */
 import { describe, expect, test } from "bun:test";
-import { IssuesResponse } from "../shared/api.ts";
+import { CatalogRowsResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 
 const SCOPE = "issue-tracker:workspace";
@@ -21,6 +21,35 @@ interface Published {
 
 /** The same script of commands, whatever the host is made of. */
 async function drive(instance: Host): Promise<void> {
+  const at = "2026-08-24T10:00:00.000Z";
+  await call(instance, "POST", "/api/workspaces/main/catalog/projects", {
+    key: "p1",
+    value: {
+      projectId: "p1",
+      workspaceId: "main",
+      key: "ENG",
+      name: "Engineering",
+      updatedAt: at,
+    },
+  });
+  await call(instance, "POST", "/api/workspaces/main/catalog/users", {
+    key: "u1",
+    value: { userId: "u1", workspaceId: "main", name: "Ada", updatedAt: at },
+  });
+  await call(instance, "POST", "/api/workspaces/main/catalog/labels", {
+    key: "l1",
+    value: {
+      labelId: "l1",
+      workspaceId: "main",
+      name: "Bug",
+      color: "#ff0000",
+      updatedAt: at,
+    },
+  });
+  await call(instance, "POST", "/api/workspaces/main/catalog/metadata", {
+    key: "main",
+    value: { workspaceId: "main", name: "Main", updatedAt: at },
+  });
   await call(
     instance,
     "POST",
@@ -55,6 +84,7 @@ interface Product {
     readonly status: string;
   }[];
   readonly published: readonly { readonly key?: string; readonly status?: string }[];
+  readonly catalog: readonly { readonly collection: string; readonly rows: readonly unknown[] }[];
 }
 
 /** The current product, with the fields a durable clock would otherwise perturb removed. */
@@ -72,6 +102,15 @@ async function product(instance: Host): Promise<Product> {
   const published = (JSON.parse(await sink.text()) as Published[])
     .filter((message) => message.type === "issue")
     .map((message) => ({ key: message.key, status: message.value?.status }));
+  const catalog = await Promise.all(
+    ["projects", "users", "labels", "metadata"].map(async (collection) => {
+      const response = await json(
+        await call(instance, "GET", `/api/workspaces/main/catalog/${collection}`),
+        CatalogRowsResponse,
+      );
+      return { collection, rows: response.rows };
+    }),
+  );
 
   return {
     view: listed.view,
@@ -83,6 +122,7 @@ async function product(instance: Host): Promise<Product> {
       status: row.status,
     })),
     published,
+    catalog,
   };
 }
 

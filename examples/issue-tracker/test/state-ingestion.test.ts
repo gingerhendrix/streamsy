@@ -133,4 +133,32 @@ describe("State source ingestion", () => {
     );
     expect(checkpoint).toBeUndefined();
   });
+
+  test("malformed envelopes, collection mismatches, and invalid values fail-stop", async () => {
+    const cases = [
+      { type: "project", key: "p1", value: rows.projects, headers: {} },
+      { type: "user", key: "p1", value: rows.projects, headers: { operation: "upsert" } },
+      {
+        type: "project",
+        key: "p1",
+        value: { ...rows.projects, name: "" },
+        headers: { operation: "upsert" },
+      },
+    ] as const;
+    for (const value of cases) {
+      const instance = fresh();
+      const stream = instance.client.stream(streamNames.projects("main"));
+      await stream.create({ contentType: "application/json" });
+      await stream.appendJsonBatch([value]);
+      const response = await call(instance, "GET", "/api/workspaces/main/catalog/projects");
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ error: "source-poison" });
+      const checkpoint = await instance.runtime.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* IssueStore).stateCheckpoint(stateSourceId("projects"), "main");
+        }),
+      );
+      expect(checkpoint).toBeUndefined();
+    }
+  });
 });

@@ -100,6 +100,23 @@ try {
     retriedBody,
   );
 
+  const project = await post(running.origin, "/api/workspaces/main/catalog/projects", {
+    key: "streamsy",
+    value: {
+      projectId: "streamsy",
+      workspaceId: "main",
+      key: "STR",
+      name: "Streamsy",
+      updatedAt: "2026-08-24T10:00:00.000Z",
+    },
+  });
+  const projectBody = (await project.json()) as { rows: unknown[]; changed: number };
+  check(
+    "a State upsert maintains one current project row",
+    project.status === 200 && projectBody.rows.length === 1 && projectBody.changed === 1,
+    projectBody,
+  );
+
   // === the sink product, read the way a browser reads it ===
   const connection = createBoardConnection({
     workspaceId: "main",
@@ -130,6 +147,30 @@ try {
   }
   check("a move reaches the live consumer without a refresh", live);
   connection.close();
+
+  const concurrent = await Promise.all([
+    post(running.origin, "/api/workspaces/main/issues", {
+      commandId: "smoke-concurrent-a",
+      issueId: "smoke-concurrent-a",
+      projectId: "streamsy",
+      title: "Concurrent A",
+    }),
+    post(running.origin, "/api/workspaces/main/issues", {
+      commandId: "smoke-concurrent-b",
+      issueId: "smoke-concurrent-b",
+      projectId: "streamsy",
+      title: "Concurrent B",
+    }),
+  ]);
+  const concurrentBodies = (await Promise.all(concurrent.map((response) => response.json()))) as {
+    sequence: number;
+  }[];
+  check(
+    "concurrent commands receive distinct source sequences",
+    concurrent.every((response) => response.status === 201) &&
+      new Set(concurrentBodies.map((body) => body.sequence)).size === 2,
+    concurrentBodies,
+  );
 
   // === offset-based sink resume ===
   const session = (await (
@@ -173,7 +214,7 @@ try {
   ).json()) as { rows: { issueId: string; status: string }[] };
   check(
     "a restart preserves the maintained rows",
-    afterRestart.rows.length === 6 &&
+    afterRestart.rows.length === 8 &&
       afterRestart.rows.find((row) => row.issueId === "smoke-issue")?.status === "done",
     afterRestart.rows.map((row) => row.issueId),
   );
