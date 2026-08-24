@@ -2,12 +2,17 @@ import { createHttpHandler, createMemoryStorageAdapter, StreamProtocol } from "@
 import type { ClientReadResult, JsonValue } from "@streamsy/core";
 import { describe, expect, it, vi } from "vitest";
 import { officialProtocolClient } from "./client.ts";
+import { decodeOfficialError, headErrorResult } from "./errors.ts";
 import { asFetch } from "./fetch-fn.ts";
 import { protocolPathUrl } from "./url.ts";
 
 const noRetry = { initialDelay: 1, maxDelay: 1, multiplier: 1, maxRetries: 0 };
 
-function makeHarness(options: { headers?: Record<string, string | (() => string)> } = {}) {
+function makeHarness(
+  options: {
+    headers?: Record<string, string | (() => string | Promise<string>)>;
+  } = {},
+) {
   const protocol = new StreamProtocol({
     storage: { adapter: createMemoryStorageAdapter() },
     longPollTimeoutMs: 50,
@@ -147,7 +152,7 @@ describe("officialProtocolClient", () => {
   it("keeps official dynamic headers dynamic and disables append coalescing by default", async () => {
     let token = 0;
     const { client, requests } = makeHarness({
-      headers: { authorization: () => `Bearer ${++token}` },
+      headers: { authorization: async () => `Bearer ${++token}` },
     });
     const handle = client.stream("headers");
     await handle.create({ contentType: "text/plain" });
@@ -334,6 +339,32 @@ describe("officialProtocolClient", () => {
       code: "aborted",
     });
     await client.close();
+  });
+});
+
+describe("official error decoding", () => {
+  it("keeps an unrecognized thrown value observable as the failure cause", () => {
+    const cause = { protocol: "unexpected" };
+
+    expect(headErrorResult(decodeOfficialError(cause))).toEqual({
+      status: "error",
+      code: "unknown",
+      message: "Stream operation failed",
+      retryable: false,
+      cause,
+    });
+  });
+
+  it("preserves the transport classification for thrown TypeErrors", () => {
+    const cause = new TypeError("offline");
+
+    expect(headErrorResult(decodeOfficialError(cause))).toEqual({
+      status: "error",
+      code: "transport",
+      message: "offline",
+      retryable: true,
+      cause,
+    });
   });
 });
 

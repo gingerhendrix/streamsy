@@ -7,7 +7,8 @@ import type {
   StreamErrorHandler,
 } from "@durable-streams/client";
 import type { ClientFailure, StreamProtocolClient, StreamProtocolHandle } from "@streamsy/core";
-import { abortedFailure, clientClosedFailure } from "./errors.ts";
+import { abortedFailure, clientClosedFailure, decodeOfficialError } from "./errors.ts";
+import type { OfficialError } from "./errors.ts";
 import { wrapFetch } from "./fetch-fn.ts";
 import { OfficialProtocolHandle } from "./handle.ts";
 
@@ -55,10 +56,10 @@ export class OfficialProtocolClient implements StreamProtocolClient {
     return new OfficialProtocolHandle(this, streamId, this.options.urlFor(streamId));
   }
 
-  async close(reason?: unknown): Promise<void> {
+  async close(cause?: unknown): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
-    this.controller.abort(reason);
+    this.controller.abort(cause);
   }
 
   get signal(): AbortSignal {
@@ -74,16 +75,16 @@ export class OfficialProtocolClient implements StreamProtocolClient {
   async run<R>(
     signal: AbortSignal | undefined,
     work: (signal: AbortSignal) => Promise<R>,
-    onError: (error: unknown, signal: AbortSignal) => R,
+    onError: (error: OfficialError, signal: AbortSignal) => R,
   ): Promise<R | ClientFailure> {
     if (this.disposed) return clientClosedFailure();
     const combined = combineSignals(this.baseSignal, signal);
     if (combined.aborted) return abortedFailure(combined.reason);
     try {
       return await work(combined);
-    } catch (error) {
-      if (combined.aborted) return abortedFailure(combined.reason ?? error);
-      return onError(error, combined);
+    } catch (cause) {
+      if (combined.aborted) return abortedFailure(combined.reason ?? cause);
+      return onError(decodeOfficialError(cause), combined);
     }
   }
 
@@ -105,7 +106,7 @@ export class OfficialProtocolClient implements StreamProtocolClient {
     const fetchUrl = new URL(url);
     for (const [key, value] of Object.entries(this.options.params ?? {})) {
       if (value === undefined) continue;
-      fetchUrl.searchParams.set(key, typeof value === "function" ? await value() : value);
+      fetchUrl.searchParams.set(key, isDynamicString(value) ? await value() : value);
     }
     return this.appendFetch(fetchUrl, init);
   }
@@ -113,10 +114,16 @@ export class OfficialProtocolClient implements StreamProtocolClient {
   async appendHeaders(): Promise<Headers> {
     const headers = new Headers();
     for (const [key, value] of Object.entries(this.options.headers ?? {})) {
-      headers.set(key, typeof value === "function" ? await value() : value);
+      headers.set(key, isDynamicString(value) ? await value() : value);
     }
     return headers;
   }
+}
+
+function isDynamicString(
+  value: string | (() => string | Promise<string>),
+): value is () => string | Promise<string> {
+  return Object.prototype.toString.call(value).endsWith("Function]");
 }
 
 export function combineSignals(...signals: (AbortSignal | undefined)[]): AbortSignal {

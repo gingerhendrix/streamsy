@@ -50,11 +50,10 @@ export async function officialAppend(
 
 function encodeBody(data: Uint8Array | string, contentType?: string, jsonBatch = false): BodyInit {
   if (normalizedContentType(contentType) === "application/json") {
-    const json = typeof data === "string" ? data : new TextDecoder().decode(data);
+    const json = data instanceof Uint8Array ? new TextDecoder().decode(data) : data;
     return jsonBatch ? json : `[${json}]`;
   }
-  if (typeof data === "string") return data;
-  return copyToArrayBuffer(data);
+  return data instanceof Uint8Array ? copyToArrayBuffer(data) : data;
 }
 
 function normalizedContentType(contentType?: string): string | undefined {

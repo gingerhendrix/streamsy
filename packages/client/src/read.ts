@@ -3,7 +3,7 @@ import { ClientReadSession } from "@streamsy/core";
 import type { ClientReadResult, JsonValue, ReadStreamOptions } from "@streamsy/core";
 import type { OfficialProtocolClient } from "./client.ts";
 import { deliverCloseOnlyEof, openReadStream } from "./compat.ts";
-import { readEndFailure, readErrorResult } from "./errors.ts";
+import { decodeOfficialError, readEndFailure, readErrorResult } from "./errors.ts";
 
 /**
  * Opens an official `StreamResponse` and bridges its `subscribe*` callbacks into
@@ -100,8 +100,12 @@ function wrapResponse<T extends JsonValue>(
         session.end({ status: "done" });
       }
     },
-    (error: unknown) => {
-      session.end(signal.aborted ? { status: "cancelled" } : readEndFailure(error, signal));
+    (cause: unknown) => {
+      session.end(
+        signal.aborted
+          ? { status: "cancelled" }
+          : readEndFailure(decodeOfficialError(cause), signal),
+      );
     },
   );
   return session;

@@ -27,6 +27,35 @@ export interface OfficialClassification {
   failure: ClientFailure;
 }
 
+interface UnrecognizedOfficialError {
+  readonly kind: "unrecognized-official-error";
+  readonly cause: unknown;
+}
+
+export type OfficialError =
+  | DurableStreamError
+  | FetchBackoffAbortError
+  | FetchError
+  | StreamClosedError
+  | TypeError
+  | DOMException
+  | UnrecognizedOfficialError;
+
+/** Decodes a thrown value once before operation-specific error mapping. */
+export function decodeOfficialError(cause: unknown): OfficialError {
+  if (
+    cause instanceof DurableStreamError ||
+    cause instanceof FetchBackoffAbortError ||
+    cause instanceof FetchError ||
+    cause instanceof StreamClosedError ||
+    cause instanceof TypeError ||
+    cause instanceof DOMException
+  ) {
+    return cause;
+  }
+  return { kind: "unrecognized-official-error", cause };
+}
+
 export function failure(
   code: ClientErrorCode,
   message: string,
@@ -51,11 +80,13 @@ export function clientClosedFailure(): ClientFailure {
 }
 
 export function classifyOfficialError(
-  error: unknown,
+  error: OfficialError,
   signal?: AbortSignal,
 ): OfficialClassification {
+  const cause =
+    "kind" in error && error.kind === "unrecognized-official-error" ? error.cause : error;
   if (signal?.aborted || isAbortError(error) || error instanceof FetchBackoffAbortError) {
-    return { kind: "aborted", failure: abortedFailure(error) };
+    return { kind: "aborted", failure: abortedFailure(cause) };
   }
   if (error instanceof StreamClosedError) {
     return {
@@ -84,7 +115,7 @@ export function classifyOfficialError(
   }
   return {
     kind: "other",
-    failure: failure("unknown", "Stream operation failed", { cause: error }),
+    failure: failure("unknown", "Stream operation failed", { cause }),
   };
 }
 
@@ -181,19 +212,19 @@ function failureFromCode(code: DurableStreamError["code"]): ExtendedCode {
   }
 }
 
-export function headErrorResult(error: unknown, signal?: AbortSignal): ClientHeadResult {
+export function headErrorResult(error: OfficialError, signal?: AbortSignal): ClientHeadResult {
   const classified = classifyOfficialError(error, signal);
   if (classified.kind === "not-found") return { status: "not-found" };
   if (classified.kind === "gone") return { status: "gone" };
   return classified.failure;
 }
 
-export function createErrorResult(error: unknown, signal?: AbortSignal): ClientCreateResult {
+export function createErrorResult(error: OfficialError, signal?: AbortSignal): ClientCreateResult {
   const classified = classifyOfficialError(error, signal);
   return classified.kind === "conflict" ? { status: "conflict" } : classified.failure;
 }
 
-export function appendErrorResult(error: unknown, signal?: AbortSignal): ClientAppendResult {
+export function appendErrorResult(error: OfficialError, signal?: AbortSignal): ClientAppendResult {
   if (error instanceof FetchError) {
     const rich = richAppendError(error);
     if (rich) return rich;
@@ -272,7 +303,7 @@ function safeIntegerHeader(value: string | undefined): number | undefined {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-export function closeErrorResult(error: unknown, signal?: AbortSignal): ClientCloseResult {
+export function closeErrorResult(error: OfficialError, signal?: AbortSignal): ClientCloseResult {
   const classified = classifyOfficialError(error, signal);
   switch (classified.kind) {
     case "not-found":
@@ -289,7 +320,7 @@ export function closeErrorResult(error: unknown, signal?: AbortSignal): ClientCl
 
 /** Returns only the T-independent members, so it composes with any `ClientReadResult<T>`. */
 export function readErrorResult(
-  error: unknown,
+  error: OfficialError,
   signal?: AbortSignal,
 ): Exclude<ClientReadResult, { status: "ok" }> {
   const classified = classifyOfficialError(error, signal);
@@ -298,7 +329,7 @@ export function readErrorResult(
   return classified.failure;
 }
 
-export function readEndFailure(error: unknown, signal?: AbortSignal): ClientFailure {
+export function readEndFailure(error: OfficialError, signal?: AbortSignal): ClientFailure {
   return classifyOfficialError(error, signal).failure;
 }
 
@@ -306,6 +337,6 @@ function isRetryable(code: ClientErrorCode): boolean {
   return code === "transport" || code === "busy" || code === "rate-limited";
 }
 
-function isAbortError(error: unknown): boolean {
+function isAbortError(error: OfficialError): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
