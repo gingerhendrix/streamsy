@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Context, Effect, Schema } from "effect";
 import type * as StateProjection from "@streamsy/experimental/state-projection";
 import type { HnStory } from "../../state-schema.ts";
 import type { HackerNewsSourceChange } from "../story-index-projection.ts";
@@ -10,8 +10,8 @@ export class PollFailure extends Schema.TaggedError<PollFailure>()(
   { operation: Schema.String, reason: Schema.String },
 ) {}
 
-export const pollFailure = (operation: string) => (error: unknown) =>
-  new PollFailure({ operation, reason: errorMessage(error) });
+export const pollFailure = (operation: string) => (cause: unknown) =>
+  new PollFailure({ operation, reason: errorMessage(cause) });
 
 export type ProjectionServices = Effect.Services<ReturnType<typeof StateProjection.catchUp>>;
 
@@ -53,7 +53,7 @@ export type PollerConfig = {
   readonly api?: HackerNewsApi;
 };
 
-export interface NewestStoriesPoller {
+export interface NewestStoriesPollerService {
   /** One coalesced poll pass. Joins the in-flight pass instead of queueing another. */
   readonly pollNow: Effect.Effect<void, never, ProjectionServices>;
   /** Fork the interval polling loop. The first pass runs immediately. */
@@ -62,6 +62,11 @@ export interface NewestStoriesPoller {
   readonly stop: Effect.Effect<void>;
   readonly stats: Effect.Effect<PollStats>;
 }
+
+export class NewestStoriesPoller extends Context.Service<
+  NewestStoriesPoller,
+  NewestStoriesPollerService
+>()("HackerNews/NewestStoriesPoller") {}
 
 export const initialCounters: PollCounters = {
   lastFetchedNewStories: 0,

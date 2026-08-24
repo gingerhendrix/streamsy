@@ -1,12 +1,15 @@
-import { Deferred, Effect, Fiber, Option, Ref, Schedule } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Ref, Schedule } from "effect";
 import type { HnStory } from "../../state-schema.ts";
 import { liveHackerNewsApi } from "../hnews.ts";
+import { StoryProjection } from "../projection.ts";
 import { nowIso } from "../util.ts";
 import {
   initialCounters,
-  type NewestStoriesPoller,
+  NewestStoriesPoller,
+  type NewestStoriesPollerService,
   type PollCounters,
   type PollerConfig,
+  type PollerSink,
   type PollStats,
   type ProjectionServices,
 } from "./contract.ts";
@@ -17,7 +20,9 @@ type PollClaim = {
   readonly gate: Deferred.Deferred<void>;
 };
 
-export function makeNewestStoriesPoller(config: PollerConfig): Effect.Effect<NewestStoriesPoller> {
+export function makeNewestStoriesPoller(
+  config: PollerConfig,
+): Effect.Effect<NewestStoriesPollerService> {
   return Effect.gen(function* () {
     const api = config.api ?? liveHackerNewsApi;
     const storiesRef = yield* Ref.make<ReadonlyMap<number, HnStory>>(new Map());
@@ -153,6 +158,25 @@ export function makeNewestStoriesPoller(config: PollerConfig): Effect.Effect<New
       return result;
     });
 
-    return { pollNow, start, stop, stats };
+    return NewestStoriesPoller.of({ pollNow, start, stop, stats });
   });
 }
+
+export type NewestStoriesPollerLayerConfig = Omit<PollerConfig, "sink"> & {
+  readonly sink: Omit<PollerSink, "catchUpProjection">;
+};
+
+export const newestStoriesPollerLayer = (config: NewestStoriesPollerLayerConfig) =>
+  Layer.effect(
+    NewestStoriesPoller,
+    Effect.gen(function* () {
+      const projection = yield* StoryProjection;
+      return yield* makeNewestStoriesPoller({
+        ...config,
+        sink: {
+          ...config.sink,
+          catchUpProjection: projection.catchUp,
+        },
+      });
+    }),
+  );

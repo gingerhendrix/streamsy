@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This Bun executable is the Promise-native HTTP/process edge; Effect-owned poller and projection work runs through the single ManagedRuntime below. */
 import * as StateProjection from "@streamsy/experimental/state-projection";
-import { ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import {
   newestLimit,
   pollIntervalMs,
@@ -12,26 +12,34 @@ import {
   streamPrefix,
 } from "./config.ts";
 import { json } from "./http.ts";
-import { makeNewestStoriesPoller } from "./poller/poller.ts";
-import { makeStoryProjection } from "./projection.ts";
+import { NewestStoriesPoller } from "./poller/contract.ts";
+import { newestStoriesPollerLayer } from "./poller/poller.ts";
+import { StoryProjection, storyProjectionLayer } from "./projection.ts";
 import { serveStatic } from "./static.ts";
 import { appendSourceBatchFromPromise, DemoStreams } from "./streams.ts";
 
 const streams = new DemoStreams();
 await streams.start();
 
-const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
-const projection = await runtime.runPromise(makeStoryProjection(projectionLimits));
-const poller = await runtime.runPromise(
-  makeNewestStoriesPoller({
-    limit: newestLimit,
-    intervalMs: pollIntervalMs,
-    sink: {
-      appendSourceBatch: appendSourceBatchFromPromise((changes) =>
-        streams.appendSourceBatch(changes),
-      ),
-      catchUpProjection: projection.catchUp,
-    },
+const applicationLayer = newestStoriesPollerLayer({
+  limit: newestLimit,
+  intervalMs: pollIntervalMs,
+  sink: {
+    appendSourceBatch: appendSourceBatchFromPromise((changes) =>
+      streams.appendSourceBatch(changes),
+    ),
+  },
+}).pipe(
+  Layer.provideMerge(storyProjectionLayer(projectionLimits)),
+  Layer.provideMerge(StateProjection.layerClient(streams.client)),
+);
+const runtime = ManagedRuntime.make(applicationLayer);
+const { projection, poller } = runtime.runSync(
+  Effect.gen(function* () {
+    return {
+      projection: yield* StoryProjection,
+      poller: yield* NewestStoriesPoller,
+    };
   }),
 );
 

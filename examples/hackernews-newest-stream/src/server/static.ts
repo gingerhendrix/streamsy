@@ -1,15 +1,15 @@
-const contentTypes: Record<string, string> = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-};
+const contentTypes = new Map([
+  [".css", "text/css; charset=utf-8"],
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".map", "application/json; charset=utf-8"],
+  [".svg", "image/svg+xml"],
+]);
 
 function contentType(pathname: string): string | undefined {
   const extension = pathname.match(/\.[^.]+$/)?.[0];
-  return extension ? contentTypes[extension] : undefined;
+  return extension ? contentTypes.get(extension) : undefined;
 }
 
 // oxlint-disable-next-line effecttsgo/async-function -- Bun.file exposes Promise-native existence checks at this HTTP framework edge.

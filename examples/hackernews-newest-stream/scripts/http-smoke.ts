@@ -20,7 +20,7 @@ class SmokeError extends Error {
   }
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new SmokeError(message);
 }
 
@@ -44,8 +44,8 @@ const fixtureStories: FixtureStory[] = [
 const fixtureById = new Map(fixtureStories.map((value) => [value.id, value]));
 let newestIds = [101, 102];
 
-type ChangeEvent = typeof HackerNewsStateChange.Type;
-type ApiStatus = typeof ApiStatusSmokeView.Type;
+type ChangeEvent = HackerNewsStateChange;
+type ApiStatus = Schema.Schema.Type<typeof ApiStatusSmokeView>;
 
 const fixture = Bun.serve({
   port: fixturePort,

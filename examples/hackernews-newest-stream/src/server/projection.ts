@@ -3,7 +3,7 @@ import type {
   CatchUpOutcome,
   Limits as StateProjectionLimits,
 } from "@streamsy/experimental/state-projection";
-import { Cause, Effect, Ref } from "effect";
+import { Cause, Context, Effect, Layer, Ref } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 import { errorMessage, nowIso } from "./util.ts";
@@ -18,10 +18,14 @@ export type ProjectionStatus = {
 
 type ProjectionServices = Effect.Services<ReturnType<typeof StateProjection.catchUp>>;
 
-export interface StoryProjection {
+export interface StoryProjectionService {
   readonly catchUp: Effect.Effect<void, never, ProjectionServices>;
   readonly status: Effect.Effect<ProjectionStatus>;
 }
+
+export class StoryProjection extends Context.Service<StoryProjection, StoryProjectionService>()(
+  "HackerNews/StoryProjection",
+) {}
 
 const initialStatus: ProjectionStatus = { running: false };
 
@@ -34,7 +38,19 @@ export function makeStoryProjectionInstance() {
   });
 }
 
-export function makeStoryProjection(limits: StateProjectionLimits): Effect.Effect<StoryProjection> {
+export class StoryProjectionInstance extends Context.Service<
+  StoryProjectionInstance,
+  ReturnType<typeof makeStoryProjectionInstance>
+>()("HackerNews/StoryProjectionInstance") {}
+
+export const storyProjectionInstanceLayer = Layer.succeed(
+  StoryProjectionInstance,
+  makeStoryProjectionInstance(),
+);
+
+export function makeStoryProjection(
+  limits: StateProjectionLimits,
+): Effect.Effect<StoryProjectionService> {
   return Effect.gen(function* () {
     const projection = makeStoryProjectionInstance();
     const statusRef = yield* Ref.make(initialStatus);
@@ -68,9 +84,12 @@ export function makeStoryProjection(limits: StateProjectionLimits): Effect.Effec
       );
     });
 
-    return {
+    return StoryProjection.of({
       catchUp: catchUp().pipe(Effect.orDie),
       status: Ref.get(statusRef),
-    };
+    });
   });
 }
+
+export const storyProjectionLayer = (limits: StateProjectionLimits) =>
+  Layer.effect(StoryProjection, makeStoryProjection(limits));

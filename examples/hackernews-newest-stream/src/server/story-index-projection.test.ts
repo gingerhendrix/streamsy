@@ -8,7 +8,7 @@ import { makeStoryProjectionInstance } from "./projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 import { sourceDelete, sourceUpsert } from "./story-index-projection.ts";
 import { demoHarness, story } from "./test-support.ts";
-import { HackerNewsStateChange, HackerNewsStory } from "../state-schema.ts";
+import { HackerNewsStateChange, type HnStory } from "../state-schema.ts";
 
 const clients = new Set<StreamProtocolClient>();
 const limits = { pages: 10, batches: 10, items: 50, bytes: 100_000 };
@@ -145,8 +145,7 @@ async function readAllJson(client: StreamProtocolClient, streamId: string): Prom
 }
 
 const isStoryFact = Schema.is(HackerNewsStateChange);
-const isStoryValue = Schema.is(HackerNewsStory);
 
-function storyTitle(value: unknown): string | undefined {
-  return value !== undefined && isStoryValue(value) ? value.title : undefined;
+function storyTitle(value: HnStory | undefined): string | undefined {
+  return value?.title;
 }

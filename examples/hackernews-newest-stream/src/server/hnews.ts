@@ -8,6 +8,7 @@ import { pollFailure, type HackerNewsApi } from "./poller/contract.ts";
 const defaultHnBase = hnApiBase;
 
 const NewestStoryIds = Schema.Array(Schema.Finite);
+type HackerNewsStoryResponse = { -readonly [Key in keyof HnStory]: HnStory[Key] };
 
 // oxlint-disable-next-line effecttsgo/async-function -- This exported Promise helper is the documented HN compatibility adapter used at non-Effect edges.
 export async function fetchNewestStoryIds(
@@ -32,17 +33,18 @@ export async function fetchStory(id: number, apiBase = defaultHnBase): Promise<H
   if (!item || item.deleted || item.dead || item.type !== "story" || !item.title || !item.time)
     return null;
 
-  return Schema.decodeUnknownSync(HackerNewsStory)({
+  const story: HackerNewsStoryResponse = {
     id: item.id,
-    ...(item.by === undefined ? {} : { by: item.by }),
-    ...(item.descendants === undefined ? {} : { descendants: item.descendants }),
-    ...(item.score === undefined ? {} : { score: item.score }),
     time: item.time,
     title: item.title,
     type: "story",
-    ...(item.url === undefined ? {} : { url: item.url }),
-    ...(item.text === undefined ? {} : { text: item.text }),
-  });
+  };
+  if (item.by !== undefined) story.by = item.by;
+  if (item.descendants !== undefined) story.descendants = item.descendants;
+  if (item.score !== undefined) story.score = item.score;
+  if (item.url !== undefined) story.url = item.url;
+  if (item.text !== undefined) story.text = item.text;
+  return Schema.decodeSync(HackerNewsStory)(story);
 }
 
 /**
