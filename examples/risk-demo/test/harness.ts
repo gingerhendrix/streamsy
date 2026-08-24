@@ -24,30 +24,45 @@ import { createManualScheduler, type ManualScheduler } from "../server/game/defe
 import type { Rng } from "../src/domain/rng.ts";
 import { createSeededRng } from "../src/domain/rng.ts";
 import type { HttpCall, OpenActionsStream } from "../server/demo/bot.ts";
+import { Schema } from "effect";
 
 export const BASE = "http://risk.test";
 export const DEFENSE_MS = 15_000;
 
-export function checkedRecord(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+type CheckedJsonValue = Schema.Schema.Type<typeof Schema.Json> | undefined;
+const CheckedRecordSchema = Schema.Record(Schema.String, Schema.Json);
+type CheckedRecord = Schema.Schema.Type<typeof CheckedRecordSchema>;
+
+export function checkedRecord(value: CheckedJsonValue, label: string): CheckedRecord {
+  try {
+    return Schema.decodeUnknownSync(CheckedRecordSchema)(value);
+  } catch {
     throw new Error(`${label} must be an object`);
   }
-  return Object.fromEntries(Object.entries(value));
 }
 
-export function checkedString(value: unknown, label: string): string {
-  if (typeof value !== "string") throw new Error(`${label} must be a string`);
-  return value;
+export function checkedString(value: CheckedJsonValue, label: string): string {
+  try {
+    return Schema.decodeUnknownSync(Schema.String)(value);
+  } catch {
+    throw new Error(`${label} must be a string`);
+  }
 }
 
-export function checkedNumber(value: unknown, label: string): number {
-  if (typeof value !== "number") throw new Error(`${label} must be a number`);
-  return value;
+export function checkedNumber(value: CheckedJsonValue, label: string): number {
+  try {
+    return Schema.decodeUnknownSync(Schema.Number)(value);
+  } catch {
+    throw new Error(`${label} must be a number`);
+  }
 }
 
-export function checkedArray(value: unknown, label: string): unknown[] {
-  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
-  return value;
+export function checkedArray(value: CheckedJsonValue, label: string): CheckedJsonValue[] {
+  try {
+    return Schema.decodeUnknownSync(Schema.mutable(Schema.Array(Schema.Json)))(value);
+  } catch {
+    throw new Error(`${label} must be an array`);
+  }
 }
 
 export interface Harness {
@@ -112,11 +127,11 @@ export async function call(
 ): Promise<{ status: number; body: any }> {
   // The actions resource streams unless a caller asks for the immediate page, so
   // every JSON-reading helper says so explicitly.
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     "content-type": "application/json",
     accept: options.accept ?? "application/json",
-  };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const res = await app.fetch(
     new Request(`${BASE}${path}`, {
       method,
@@ -171,7 +186,7 @@ export async function createGame(
   const gameId: string = created.body.game.id;
   const hostId: string = created.body.player.id;
   const players = [hostId];
-  const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };
+  const tokenByPlayer: Game["tokenByPlayer"] = { [hostId]: created.body.capability };
   const hostCapability = checkedString(created.body.capability, "host capability");
 
   if (options.controllers?.[0] === "agent") {
@@ -236,7 +251,7 @@ export async function post(
   app: App,
   game: Game,
   playerId: string,
-  body: { commandId: string; turnId: string; action: Record<string, unknown> },
+  body: { commandId: string; turnId: string; action: {} },
 ) {
   return call(app, "POST", `/v1/games/${game.gameId}/commands`, {
     token: game.tokenByPlayer[playerId]!,

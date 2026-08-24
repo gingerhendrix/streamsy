@@ -48,10 +48,12 @@ describe("published OpenAPI contract", () => {
   });
 
   it("publishes current reinforcement as one complete allocation command", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated OpenAPI literal fixes this schema branch; the test intentionally traverses its structural union.
     const reinforce = jsonSchemas.GameCommand.properties.action.oneOf.find(
-      (variant: any) => variant.properties.type.const === "reinforce",
-    ) as any;
+      (variant) => variant.properties.type.const === "reinforce",
+    );
+    if (!reinforce || !("placements" in reinforce.properties)) {
+      throw new Error("reinforcement schema is missing");
+    }
     expect(reinforce.required).toEqual(["type", "placements"]);
     expect(reinforce.properties.placements.minItems).toBe(1);
     expect(reinforce.properties.placements.items.required).toEqual(["territoryId", "armies"]);
@@ -60,10 +62,8 @@ describe("published OpenAPI contract", () => {
 
   it("publishes one board and decision shape", () => {
     for (const path of ["/v1/games/{gameId}/board", "/v1/games/{gameId}/decision"] as const) {
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated OpenAPI literal fixes this response branch; the test intentionally traverses its structural union.
-      const schema = (openApiDocument.paths[path].get.responses["200"] as any).content[
-        "application/json"
-      ].schema;
+      const schema =
+        openApiDocument.paths[path].get.responses["200"].content["application/json"].schema;
       expect(schema.$ref).toMatch(/^#\/components\/schemas\//);
     }
   });
@@ -87,23 +87,20 @@ describe("published OpenAPI contract", () => {
     expect(jsonSchemas.SeatControllerInput.enum).toEqual(["human", "bot", "agent"]);
     expect(jsonSchemas.SeatControllerInput.description).toContain("external coding-agent");
     expect(
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated OpenAPI literal fixes this request-body branch; the test intentionally traverses its structural union.
-      (openApiDocument.paths["/v1/games"].post.requestBody as any).content["application/json"]
-        .schema.$ref,
+      openApiDocument.paths["/v1/games"].post.requestBody.content["application/json"].schema.$ref,
     ).toBe("#/components/schemas/CreateGameRequest");
     expect(
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated OpenAPI literal fixes this request-body branch; the test intentionally traverses its structural union.
-      (openApiDocument.paths["/v1/games/{gameId}/players"].post.requestBody as any).content[
+      openApiDocument.paths["/v1/games/{gameId}/players"].post.requestBody.content[
         "application/json"
       ].schema.$ref,
     ).toBe("#/components/schemas/JoinGameRequest");
   });
 
   it("documents `roll-defense` as an out-of-turn legal action with a deadline", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated OpenAPI literal fixes this decision schema branch; the test intentionally traverses its structural union.
     const rollDefense = jsonSchemas.DecisionContext.properties.legalMoves.items.oneOf.find(
-      (variant: any) => variant.properties.type.const === "roll-defense",
-    ) as any;
+      (variant) => variant.properties.type.const === "roll-defense",
+    );
+    if (!rollDefense) throw new Error("roll-defense schema is missing");
     expect(rollDefense.required).toEqual(["type", "attackId", "dice", "deadlineAt", "submit"]);
   });
 
@@ -139,7 +136,7 @@ describe("published OpenAPI contract", () => {
     const agentPaths = Object.entries(openApiDocument.paths)
       .filter(([, item]) =>
         Object.values(item).some(
-          (operation: any) => Array.isArray(operation.tags) && operation.tags.includes("agent"),
+          (operation) => Array.isArray(operation.tags) && operation.tags.includes("agent"),
         ),
       )
       .map(([path]) => path)
@@ -160,15 +157,17 @@ describe("published OpenAPI contract", () => {
     // undiscoverable from the document alone, which is the whole point of it.
     for (const [path, item] of Object.entries(openApiDocument.paths)) {
       const templated = [...path.matchAll(/\{(\w+)\}/g)].map((match) => match[1]);
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The route item comes from the locally generated OpenAPI document and is checked structurally by this test.
-      const declared = ((item as any).parameters ?? []).map((parameter: any) =>
+      const declared = ("parameters" in item ? item.parameters : []).map((parameter) =>
         parameter.$ref.replace("#/components/parameters/", ""),
       );
-      const resolved = declared.map(
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The parameter reference resolves against the locally generated OpenAPI components table under test.
-        (name: string) => (openApiDocument.components.parameters as any)[name],
-      );
-      expect(resolved.map((parameter: any) => parameter.name)).toEqual(templated);
+      const resolved = declared.map((name) => {
+        const parameter = Object.entries(openApiDocument.components.parameters).find(
+          ([candidate]) => candidate === name,
+        )?.[1];
+        if (!parameter) throw new Error(`missing parameter ${name}`);
+        return parameter;
+      });
+      expect(resolved.map((parameter) => parameter.name)).toEqual(templated);
       for (const parameter of resolved) {
         expect(parameter).toMatchObject({ in: "path", required: true, schema: { type: "string" } });
       }
@@ -194,21 +193,16 @@ describe("published OpenAPI contract", () => {
       for (const [status, response] of Object.entries(operation.responses)) {
         // Every documented status names a schema and says something specific
         // about when it happens; a bare `{ "403": {} }` documents nothing.
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This response is a fixed locally generated OpenAPI response object whose schema reference is the assertion target.
-        const schema = (response as any).content["application/json"].schema.$ref;
+        const schema = response.content["application/json"].schema.$ref;
         if (status === "200") expect(schema).toMatch(/^#\/components\/schemas\/(Rename|Leave)/);
         else expect(schema).toBe("#/components/schemas/ErrorResponse");
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This response is a fixed locally generated OpenAPI response object whose description is the assertion target.
-        expect((response as any).description.length).toBeGreaterThan(20);
+        expect(response.description.length).toBeGreaterThan(20);
       }
     }
     // The specific rejections each route is documented to distinguish.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated rename response table has a declared 403 response checked here.
-    expect((rename.responses["403"] as any).description).toContain("agent seat it hosts");
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated rename response table has a declared 409 response checked here.
-    expect((rename.responses["409"] as any).description).toContain("GAME_ALREADY_STARTED");
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated leave response table has a declared 409 response checked here.
-    expect((leave.responses["409"] as any).description).toContain("ILLEGAL_ACTION");
+    expect(rename.responses["403"].description).toContain("agent seat it hosts");
+    expect(rename.responses["409"].description).toContain("GAME_ALREADY_STARTED");
+    expect(leave.responses["409"].description).toContain("ILLEGAL_ACTION");
   });
 
   it("documents the actions resource as an SSE stream resumed by offset alone", () => {
@@ -217,8 +211,7 @@ describe("published OpenAPI contract", () => {
     expect(actions.parameters.map((parameter) => parameter.name)).toEqual(["offset"]);
     expect(actions.parameters[0]).toMatchObject({ in: "query", required: false });
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The locally generated actions response table has a declared 200 response checked here.
-    const ok = actions.responses["200"] as any;
+    const ok = actions.responses["200"];
     expect(Object.keys(ok.content)).toEqual(["text/event-stream", "application/json"]);
     expect(ok.content["application/json"].schema.$ref).toBe(
       "#/components/schemas/AgentActionsPage",

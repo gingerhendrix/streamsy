@@ -22,6 +22,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { Schema } from "effect";
+import type { JsonValue } from "@streamsy/core";
 
 import {
   actionIsLegal,
@@ -165,7 +167,7 @@ function fixtureState(overrides: Partial<FixtureState> = {}): FixtureState {
   };
 }
 
-function sendJson(response: ServerResponse, body: unknown, status = 200): void {
+function sendJson(response: ServerResponse, body: JsonValue, status = 200): void {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
@@ -252,8 +254,9 @@ async function startFixture(state: FixtureState) {
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("fixture did not bind");
+  const address = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Number }))(
+    server.address(),
+  );
   return {
     origin: `http://127.0.0.1:${address.port}`,
     close: async () => {

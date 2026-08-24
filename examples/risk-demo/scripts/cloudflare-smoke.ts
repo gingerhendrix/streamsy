@@ -6,13 +6,18 @@
  */
 
 import { createActionsReader, type ActionsReader } from "../src/application/actions-stream.ts";
+import { Schema } from "effect";
 
 const baseUrl = new URL(process.env.BASE_URL ?? "http://127.0.0.1:8791").origin;
 
 class SmokeError extends Error {}
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new SmokeError(message);
 }
+
+const JsonRecord = Schema.Record(Schema.String, Schema.Json);
+const checkedRecord = Schema.decodeUnknownSync(JsonRecord);
+const checkedString = Schema.decodeUnknownSync(Schema.String);
 
 async function api(
   method: string,
@@ -20,11 +25,11 @@ async function api(
   options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; body: any }> {
   // The actions resource streams unless a caller negotiates the JSON reading.
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     "content-type": "application/json",
     accept: options.accept ?? "application/json",
-  };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
@@ -62,29 +67,31 @@ async function main(): Promise<void> {
     body: { name: "Cloud Host", color: "red" },
   });
   assert(created.status === 201, `create returned ${created.status}`);
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
-  const gameId = created.body.game.id as string;
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
-  const hostId = created.body.player.id as string;
-  const tokens: Record<string, string> = { [hostId]: created.body.capability };
+  const createdGame = checkedRecord(created.body.game);
+  const createdPlayer = checkedRecord(created.body.player);
+  const gameId = checkedString(createdGame.id);
+  const hostId = checkedString(createdPlayer.id);
+  const tokens = new Map([[hostId, checkedString(created.body.capability)]]);
 
   const joined = await api("POST", `/v1/games/${gameId}/players`, {
     body: { name: "Cloud Guest", color: "blue" },
   });
   assert(joined.status === 201, `join returned ${joined.status}`);
-  tokens[joined.body.player.id] = joined.body.capability;
+  tokens.set(
+    checkedString(checkedRecord(joined.body.player).id),
+    checkedString(joined.body.capability),
+  );
 
   const started = await api("POST", `/v1/games/${gameId}/start`, {
-    token: tokens[hostId],
+    token: tokens.get(hostId),
     body: { commandId: "cloud-smoke-start" },
   });
   assert(started.status === 200, `start returned ${started.status}`);
 
   const metadata = await api("GET", `/v1/games/${gameId}`);
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
-  const active = metadata.body.activePlayerId as string;
+  const active = checkedString(metadata.body.activePlayerId);
   const decision = await api("GET", `/v1/games/${gameId}/decision`, {
-    token: tokens[active],
+    token: tokens.get(active),
   });
   const reinforce = decision.body.legalMoves.find(
     (action: { type: string }) => action.type === "reinforce",
@@ -99,12 +106,12 @@ async function main(): Promise<void> {
     },
   };
   const accepted = await api("POST", `/v1/games/${gameId}/commands`, {
-    token: tokens[active],
+    token: tokens.get(active),
     body: command,
   });
   assert(accepted.body.status === "accepted", "command was not accepted");
   const duplicate = await api("POST", `/v1/games/${gameId}/commands`, {
-    token: tokens[active],
+    token: tokens.get(active),
     body: command,
   });
   assert(duplicate.body.status === "duplicate", "command retry was not deduplicated");
@@ -125,8 +132,7 @@ async function main(): Promise<void> {
     body: { name: "Agent Host" },
   });
   assert(agentGame.status === 201, "agent game create failed");
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
-  const agentGameId = agentGame.body.game.id as string;
+  const agentGameId = checkedString(checkedRecord(agentGame.body.game).id);
   assert(agentGameId !== gameId, "two creates returned the same game id");
   const seat = await api("POST", `/v1/games/${agentGameId}/agent-seats`, {
     token: agentGame.body.capability,
@@ -167,8 +173,7 @@ async function main(): Promise<void> {
   // survive the edge intact: correct SSE framing, an unbuffered first batch, and
   // a connection genuinely held open rather than cut short by a proxy. None of
   // that is provable from a local harness.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- This bounded smoke executable immediately verifies the local demo response fields before using them and exits on contract mismatch.
-  const seatToken = seat.body.seat.token as string;
+  const seatToken = checkedString(checkedRecord(seat.body.seat).token);
   const opened = await openActions(agentGameId, seatToken);
   assert(opened.response.status === 200, `actions stream returned ${opened.response.status}`);
   assert(
@@ -182,7 +187,7 @@ async function main(): Promise<void> {
   const opening = await opened.reader.next(10_000);
   await opened.reader.close();
   assert(opening !== null, "the edge delivered no opening batch");
-  assert(typeof opening.nextOffset === "string", "no control frame cursor across the edge");
+  assert(opening.nextOffset.length > 0, "no control frame cursor across the edge");
 
   // Reconnecting from that cursor restates it, delivers nothing twice, and then
   // holds — the streaming equivalent of the bounded wait this replaced.

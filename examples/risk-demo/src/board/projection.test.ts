@@ -12,7 +12,7 @@ import { createJsonProtocol } from "@streamsy/json";
 
 import { foldAggregate } from "../domain/aggregate.ts";
 import { GameEvent } from "../domain/events.ts";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import {
   ProjectionIntegrityError,
   aggregateBoardView,
@@ -23,9 +23,10 @@ import {
   type ProjectionState,
 } from "./projection.ts";
 import { writeCanonicalEvents, BOARD_REDUCER_VERSION } from "./board-projection.ts";
-import { createBoardMesh, type BoardMaterialized } from "./mesh.ts";
+import { createBoardMesh, type BoardMaterialized, type BoardMeshOptions } from "./mesh.ts";
 import { createLineageEvent, type CatchUpLimits } from "@streamsy/experimental/ivm-mesh";
 import { boardProjectionTxId } from "./transaction.ts";
+import { ProjectedMoveSchema } from "./schemas.ts";
 import {
   armForAttack,
   declareAttack,
@@ -56,14 +57,15 @@ async function runBoard(
   const outputStreamId = `games/game/projections/board/${generation}`;
   await protocol.create(outputStreamId, { contentType: "application/json" });
   const client = directProtocolClient(protocol);
-  const mesh = await createBoardMesh({
+  const meshOptions: BoardMeshOptions = {
     gameId: "game",
     client,
     sourceStreamId: SOURCE,
     outputStreamId,
     generation,
-    ...(limits ? { limits } : {}),
-  });
+  };
+  if (limits) meshOptions.limits = limits;
+  const mesh = await createBoardMesh(meshOptions);
   const result = await catchUp<GameEvent, BoardMaterialized>({
     source: mesh.source,
     target: mesh.target,
@@ -539,13 +541,13 @@ describe("move row keys", () => {
 
     // Apply the emitted changes the way a keyed consumer does, then compare the
     // resulting move rows with the snapshot's own feed.
-    const mirror = new Map<string, unknown>();
+    const mirror = new Map<string, (typeof materialized.state.moves)[number]>();
     for (const row of await readRows(protocol)) {
       if (row.type !== "move") continue;
       const operation = row.headers?.operation;
-      if (!row.key || typeof operation !== "string") throw new Error("invalid move row");
+      if (!row.key || !operation) throw new Error("invalid move row");
       if (operation === "delete") mirror.delete(row.key);
-      else mirror.set(row.key, row.value);
+      else mirror.set(row.key, Schema.decodeUnknownSync(ProjectedMoveSchema)(row.value));
     }
 
     expect(mirror.size).toBe(materialized.state.moves.length);
@@ -575,29 +577,29 @@ function canonicalStream(protocol: StreamProtocolFactory) {
   }).getOrCreate(SOURCE);
 }
 
-async function readRows(
-  protocol: StreamProtocolFactory,
-): Promise<{ type: string; key?: string; value?: unknown; headers?: Record<string, unknown> }[]> {
+const ProjectionRow = Schema.Struct({
+  type: Schema.String,
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(Schema.Unknown),
+  headers: Schema.optionalKey(
+    Schema.Struct({
+      operation: Schema.optionalKey(Schema.String),
+      txid: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+
+interface ProjectionRow extends Schema.Schema.Type<typeof ProjectionRow> {}
+
+async function readRows(protocol: StreamProtocolFactory): Promise<ProjectionRow[]> {
   const output = await protocol.get(OUTPUT);
   if (output.status !== "ok") throw new Error("no projection stream");
   const read = await output.stream.read({});
   if (read.status !== "ok") throw new Error("cannot read projection stream");
-  return read.messages.map((message) => {
-    const value: unknown = JSON.parse(new TextDecoder().decode(message.data));
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("projection row must be an object");
-    }
-    const row = Object.fromEntries(Object.entries(value));
-    if (typeof row.type !== "string") throw new Error("projection row type must be a string");
-    if (row.key !== undefined && typeof row.key !== "string") {
-      throw new Error("projection row key must be a string");
-    }
-    const headers =
-      row.headers !== null && typeof row.headers === "object" && !Array.isArray(row.headers)
-        ? Object.fromEntries(Object.entries(row.headers))
-        : undefined;
-    return { type: row.type, key: row.key, value: row.value, headers };
-  });
+  const decodeRow = Schema.decodeUnknownSync(ProjectionRow);
+  return read.messages.map((message) =>
+    decodeRow(JSON.parse(new TextDecoder().decode(message.data))),
+  );
 }
 
 /** Split the row stream into transactions; each ends at the reserved lineage row. */
@@ -610,8 +612,8 @@ async function readTransactions(protocol: StreamProtocolFactory): Promise<Set<st
       current = new Set<string>();
       continue;
     }
-    const txid = row.headers?.txid;
-    if (typeof txid === "string") current.add(txid);
+    const txid = Schema.decodeUnknownOption(Schema.String)(row.headers?.txid);
+    if (Option.isSome(txid)) current.add(txid.value);
   }
   return transactions;
 }

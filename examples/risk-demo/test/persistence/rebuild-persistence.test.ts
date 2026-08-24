@@ -48,8 +48,8 @@ async function call(
   path: string,
   options: { token?: string; body?: unknown } = {},
 ): Promise<{ status: number; body: any }> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  const headers = new Headers({ "content-type": "application/json" });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const res = await app.fetch(
     new Request(`${BASE}${path}`, {
       method,
@@ -72,18 +72,18 @@ test("a board-generation cutover survives a SQLite restart and keeps the old gen
   const joined = await call(first.app, "POST", `/v1/games/${gameId}/players`, {
     body: { name: "Bob", color: "blue" },
   });
-  const tokenByPlayer: Record<string, string> = {
-    [hostId]: hostToken,
-    [joined.body.player.id]: joined.body.capability,
-  };
+  const tokenByPlayer = new Map([
+    [hostId, hostToken],
+    [joined.body.player.id, joined.body.capability],
+  ]);
   await call(first.app, "POST", `/v1/games/${gameId}/start`, { token: hostToken, body: {} });
   const active: string = (await call(first.app, "GET", `/v1/games/${gameId}`)).body.activePlayerId;
   const decision = await call(first.app, "GET", `/v1/games/${gameId}/decision`, {
-    token: tokenByPlayer[active]!,
+    token: tokenByPlayer.get(active)!,
   });
   const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
   await call(first.app, "POST", `/v1/games/${gameId}/commands`, {
-    token: tokenByPlayer[active]!,
+    token: tokenByPlayer.get(active)!,
     body: {
       commandId: "rein-1",
       turnId: decision.body.turn.id,

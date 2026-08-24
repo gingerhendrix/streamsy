@@ -68,7 +68,12 @@ describe("actions stream framing", () => {
 });
 
 /** A response body that says nothing until pushed, and errors when aborted. */
-function slowResponse(signal: AbortSignal): { response: Response; push(chunk: string): void } {
+interface SlowResponse {
+  response: Response;
+  push(chunk: string): void;
+}
+
+function slowResponse(signal: AbortSignal): SlowResponse {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({

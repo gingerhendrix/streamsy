@@ -32,17 +32,20 @@ import {
   type Harness,
 } from "../harness.ts";
 
-function botsFor(h: Harness, game: Game): Record<string, Bot> {
+function botsFor(h: Harness, game: Game): Map<string, Bot> {
   const http = httpFor(h.app);
-  const bots: Record<string, Bot> = {};
+  const bots = new Map<string, Bot>();
   for (const playerId of game.players) {
-    bots[playerId] = createBot({
-      call: http,
-      gameId: game.gameId,
+    bots.set(
       playerId,
-      token: game.tokenByPlayer[playerId]!,
-      state: {},
-    });
+      createBot({
+        call: http,
+        gameId: game.gameId,
+        playerId,
+        token: game.tokenByPlayer[playerId]!,
+        state: {},
+      }),
+    );
   }
   return bots;
 }
@@ -56,7 +59,7 @@ function botsFor(h: Harness, game: Game): Record<string, Bot> {
 async function driveToCompletion(
   h: Harness,
   game: Game,
-  bots: Record<string, Bot>,
+  bots: Map<string, Bot>,
   options: { maxSteps?: number; onStep?: (meta: any) => Promise<void> | void } = {},
 ): Promise<{ finished: boolean; steps: number; defences: number }> {
   let defences = 0;
@@ -69,7 +72,7 @@ async function driveToCompletion(
 
     const pending = meta.pendingInteraction;
     if (pending?.type === "defense") {
-      const defender = bots[pending.defenderId]!;
+      const defender = bots.get(pending.defenderId)!;
       // Consume the wake first, the way a real harness would.
       await defender.awaitTurn();
       const rolled = await defender.defend();
@@ -83,7 +86,7 @@ async function driveToCompletion(
     }
 
     const activePlayerId = checkedString(meta.activePlayerId, "active player id");
-    const active = bots[activePlayerId]!;
+    const active = bots.get(activePlayerId)!;
     if (!(await active.step())) {
       // No legal action and no interrupt: nothing can make progress.
       return { finished: false, steps: step, defences };
@@ -127,7 +130,7 @@ describe("Hex Domination scripted bot", () => {
     const game = await createGame(h.app, { controllers: ["bot", "bot"] });
     const attack = await declareAttack(h, game);
     const bots = botsFor(h, game);
-    const defender = bots[attack.defender]!;
+    const defender = bots.get(attack.defender)!;
 
     const wake = await defender.awaitTurn();
     expect(wake?.type).toBe("ActionRequired");
@@ -195,7 +198,7 @@ describe("Hex Domination scripted bot", () => {
     const turtleId = game.players[0];
     const botId = game.players[1];
     if (!turtleId || !botId) throw new Error("expected two players");
-    const bot = botsFor(h, game)[botId]!;
+    const bot = botsFor(h, game).get(botId)!;
 
     const countriesOf = async (playerId: string): Promise<number> => {
       const decision = await decisionFor(h.app, game, botId);
@@ -318,7 +321,7 @@ describe("Hex Domination scripted bot", () => {
     }
     expect(occupation).toBeDefined();
 
-    const attacker = bots[occupation.playerId]!;
+    const attacker = bots.get(occupation.playerId)!;
     const before = await decisionFor(h.app, game, occupation.playerId);
     const sourceArmies = before.board.territories.find(
       (t: any) => t.id === occupation.from,

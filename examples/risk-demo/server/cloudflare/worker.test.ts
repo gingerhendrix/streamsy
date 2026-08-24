@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
 import { describe, expect, it } from "vitest";
+import { Schema } from "effect";
 
 import worker, { type RiskWorkerEnv } from "./worker.ts";
 
@@ -34,20 +35,10 @@ describe("Cloudflare game routing", () => {
       new Request("https://risk.test/v1/games", { method: "POST", body: "{}" }),
       h.env,
     );
-    const firstBody: unknown = await first.json();
-    const secondBody: unknown = await second.json();
-    if (
-      firstBody === null ||
-      typeof firstBody !== "object" ||
-      !("gameId" in firstBody) ||
-      typeof firstBody.gameId !== "string" ||
-      secondBody === null ||
-      typeof secondBody !== "object" ||
-      !("gameId" in secondBody) ||
-      typeof secondBody.gameId !== "string"
-    ) {
-      throw new Error("worker response must contain a string gameId");
-    }
+    const ResponseBody = Schema.Struct({ gameId: Schema.String });
+    const decodeResponse = Schema.decodeUnknownSync(ResponseBody);
+    const firstBody = decodeResponse(await first.json());
+    const secondBody = decodeResponse(await second.json());
     const firstId = firstBody.gameId;
     const secondId = secondBody.gameId;
 

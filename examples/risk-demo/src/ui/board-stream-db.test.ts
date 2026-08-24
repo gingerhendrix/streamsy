@@ -1,5 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createStreamDB } from "@durable-streams/state/db";
+import { Schema } from "effect";
 import {
   createMemoryStorageAdapter,
   createStreamProtocol,
@@ -17,7 +19,7 @@ import {
   boardRowsFromQueries,
   createRiskBoardSession,
   riskBoardState,
-  type RiskBoardDb,
+  type CreateRiskBoardSessionOptions,
 } from "./board-stream-db.ts";
 
 const REINFORCEMENT = { base: 5, continents: [], total: 5, remaining: 2 };
@@ -91,28 +93,31 @@ afterEach(() => vi.unstubAllGlobals());
 describe("Risk board session", () => {
   it("encapsulates typed collections and delegates preload and awaitTxId", async () => {
     vi.stubGlobal("window", { location: { origin: "https://risk.test" } });
-    const collections = { games: {}, players: {}, territories: {}, moves: {}, projectionMeta: {} };
     const preload = vi.fn(async () => undefined);
     const awaitTxId = vi.fn(async () => undefined);
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- StreamDB is an external structurally typed runtime object; this delegation test supplies every member the session exercises.
-    const db = {
-      collections,
-      offset: "42",
-      preload,
-      close: vi.fn(),
-      utils: { awaitTxId },
-    } as unknown as RiskBoardDb;
-    const createDb = vi.fn((_options: unknown) => db);
+    const db = createStreamDB({
+      streamOptions: { url: "https://risk.test/streams/board" },
+      state: riskBoardState,
+    });
+    Object.defineProperty(db, "offset", { value: "42" });
+    db.preload = preload;
+    db.utils.awaitTxId = awaitTxId;
+    type CreateDb = NonNullable<CreateRiskBoardSessionOptions["createDb"]>;
+    let receivedOptions: Parameters<CreateDb>[0] | undefined;
+    const createDb: CreateDb = (options) => {
+      receivedOptions = options;
+      return db;
+    };
 
     const session = createRiskBoardSession({ streamId: "games/g1/board/board1", createDb });
     await session.preload();
     await session.awaitTxId("risk-board:cmd:42", 1234);
 
-    expect(session.collections).toBe(collections);
+    expect(session.collections).toBe(db.collections);
     expect(session.offset).toBe("42");
     expect(preload).toHaveBeenCalledOnce();
     expect(awaitTxId).toHaveBeenCalledWith("risk-board:cmd:42", 1234);
-    expect(createDb.mock.calls[0]?.[0]).toMatchObject({
+    expect(receivedOptions).toMatchObject({
       streamOptions: { url: "https://risk.test/streams/games/g1/board/board1" },
       live: "long-poll",
       state: riskBoardState,
@@ -122,14 +127,11 @@ describe("Risk board session", () => {
   it("closes the owned StreamDB exactly once across concurrent and later calls", async () => {
     vi.stubGlobal("window", { location: { origin: "https://risk.test" } });
     const close = vi.fn();
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- StreamDB is an external structurally typed runtime object; this focused close-lifetime test supplies every member it exercises.
-    const db = {
-      collections: {},
-      offset: "-1",
-      preload: vi.fn(),
-      close,
-      utils: { awaitTxId: vi.fn() },
-    } as unknown as RiskBoardDb;
+    const db = createStreamDB({
+      streamOptions: { url: "https://risk.test/streams/board" },
+      state: riskBoardState,
+    });
+    db.close = close;
     const session = createRiskBoardSession({
       streamId: "board",
       createDb: () => db,
@@ -161,7 +163,7 @@ describe("Risk board session", () => {
  */
 describe("reserved mesh lineage and the browser mirror", () => {
   const registeredTypes = new Set(
-    Object.values(riskBoardState).map((definition) => (definition as { type: string }).type),
+    Object.values(riskBoardState).map((definition) => definition.type),
   );
 
   it("registers no reserved __streamsy. collection, so lineage rows are ignored", () => {
@@ -201,15 +203,11 @@ describe("reserved mesh lineage and the browser mirror", () => {
     if (stream.status !== "ok") throw new Error("no board stream");
     const read = await stream.stream.read({});
     if (read.status !== "ok") throw new Error("cannot read board stream");
-    const written = read.messages.map((message) => {
-      const value: unknown = JSON.parse(new TextDecoder().decode(message.data));
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error("written board row must be an object");
-      }
-      const row = Object.fromEntries(Object.entries(value));
-      if (typeof row.type !== "string") throw new Error("written board row type must be a string");
-      return { type: row.type };
-    });
+    const WrittenRow = Schema.Struct({ type: Schema.String });
+    const decodeWrittenRow = Schema.decodeUnknownSync(WrittenRow);
+    const written = read.messages.map((message) =>
+      decodeWrittenRow(JSON.parse(new TextDecoder().decode(message.data))),
+    );
 
     const reserved = written.filter((row) => row.type.startsWith(MESH_RESERVED_TYPE_PREFIX));
     expect(reserved.length).toBeGreaterThan(0);

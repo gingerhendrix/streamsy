@@ -9,7 +9,7 @@ import {
   hashGeneratedMap,
   validateGeneratedMap,
 } from "./hex-generator.ts";
-import type { GeneratedMap } from "./map.ts";
+import { GeneratedMapSchema, type GeneratedMap } from "./map.ts";
 import {
   GENERATOR_VERSION,
   MAP_PROFILES,
@@ -23,6 +23,7 @@ import {
   maxContinentTerritories,
 } from "./map.ts";
 import { createSeededRng } from "./rng.ts";
+import { Option, Schema } from "effect";
 
 // ---------------------------------------------------------------------------
 // Axial coordinate primitives
@@ -136,10 +137,11 @@ describe("known-seed map snapshots", () => {
 
   it("hashes independently of key insertion order", () => {
     const map = generateHexMap({ seed: "key-order", playerCount: 2 });
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- reverseKeyOrder preserves every value and only changes insertion order; this typed generated map is the caller-owned input.
-    const reordered = reverseKeyOrder(map) as GeneratedMap;
+    const jsonMap = Schema.decodeUnknownSync(Schema.Json)(map);
+    const reorderedJson = reverseKeyOrder(jsonMap);
     // Raw JSON differs (keys really were re-inserted in the opposite order)...
-    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(map));
+    expect(JSON.stringify(reorderedJson)).not.toBe(JSON.stringify(map));
+    const reordered = Schema.decodeUnknownSync(GeneratedMapSchema)(reorderedJson);
     // ...but the canonical encoding and therefore the hash do not.
     expect(canonicalJson(reordered)).toBe(canonicalJson(map));
     expect(hashGeneratedMap(reordered)).toBe(hashGeneratedMap(map));
@@ -356,11 +358,14 @@ describe("generation failure handling", () => {
 });
 
 /** Deep clone with every object's keys re-inserted in the opposite order. */
-function reverseKeyOrder(value: unknown): unknown {
+function reverseKeyOrder(
+  value: Schema.Schema.Type<typeof Schema.Json>,
+): Schema.Schema.Type<typeof Schema.Json> {
   if (Array.isArray(value)) return value.map(reverseKeyOrder);
-  if (value === null || typeof value !== "object") return value;
-  const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value).toReversed()) {
+  const record = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Json))(value);
+  if (Option.isNone(record)) return value;
+  const out: Record<string, Schema.Schema.Type<typeof Schema.Json>> = {};
+  for (const [key, item] of Object.entries(record.value).toReversed()) {
     out[key] = reverseKeyOrder(item);
   }
   return out;

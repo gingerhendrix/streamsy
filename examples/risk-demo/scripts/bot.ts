@@ -42,11 +42,11 @@ if (!gameId || !playerId || !token) {
 }
 
 const httpCall: HttpCall = async (method, path, opts = {}) => {
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     "content-type": "application/json",
     accept: opts.accept ?? "application/json",
-  };
-  if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+  });
+  if (opts.token) headers.set("authorization", `Bearer ${opts.token}`);
   const init: RequestInit = { method, headers };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
   const res = await fetch(`${baseUrl}${path}`, init);

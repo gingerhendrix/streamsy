@@ -21,7 +21,7 @@ const packageDir = new URL("..", import.meta.url).pathname;
 
 class SmokeError extends Error {}
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new SmokeError(message);
 }
 
@@ -64,11 +64,11 @@ async function api(
   options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; contentType: string; body: any }> {
   // The actions resource streams unless a caller negotiates the JSON reading.
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     "content-type": "application/json",
     accept: options.accept ?? "application/json",
-  };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
@@ -115,16 +115,16 @@ async function main(): Promise<void> {
     assert(created.status === 201, `create game: ${created.status}`);
     const gameId: string = created.body.game.id;
     const hostId: string = created.body.player.id;
-    const tokenByPlayer: Record<string, string> = { [hostId]: created.body.capability };
+    const tokenByPlayer = new Map([[hostId, created.body.capability]]);
 
     const joined = await api(server.baseUrl, "POST", `/v1/games/${gameId}/players`, {
       body: { name: "Bob", color: "blue" },
     });
     assert(joined.status === 201, `join: ${joined.status}`);
-    tokenByPlayer[joined.body.player.id] = joined.body.capability;
+    tokenByPlayer.set(joined.body.player.id, joined.body.capability);
 
     const started = await api(server.baseUrl, "POST", `/v1/games/${gameId}/start`, {
-      token: tokenByPlayer[hostId],
+      token: tokenByPlayer.get(hostId),
       body: {},
     });
     assert(started.status === 200, `start: ${started.status}`);
@@ -132,7 +132,7 @@ async function main(): Promise<void> {
     const meta = await api(server.baseUrl, "GET", `/v1/games/${gameId}`);
     const active: string = meta.body.activePlayerId;
     const decision = await api(server.baseUrl, "GET", `/v1/games/${gameId}/decision`, {
-      token: tokenByPlayer[active],
+      token: tokenByPlayer.get(active),
     });
     assert(decision.status === 200, `decision: ${decision.status}`);
     const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
       },
     };
     const ack = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
-      token: tokenByPlayer[active],
+      token: tokenByPlayer.get(active),
       body: commandBody,
     });
     assert(ack.status === 200 && ack.body.status === "accepted", `command: ${ack.status}`);
@@ -214,7 +214,7 @@ async function main(): Promise<void> {
       backlog.messages.some((message: any) => message.type === "ActionRequired"),
       "the actions stream backlog carried no ActionRequired",
     );
-    assert(typeof backlog.nextOffset === "string", "no control frame cursor");
+    assert(backlog.nextOffset.length > 0, "no control frame cursor");
 
     const resumed = await openActions(server.baseUrl, agentGameId, seatToken, backlog.nextOffset);
     // Reconnecting re-states the cursor immediately and reports nothing new…
@@ -246,7 +246,7 @@ async function main(): Promise<void> {
     // Seat-scoped reads are never cached, and the private actions stream is not
     // reachable through the public spectator facade.
     const decisionHeaders = await fetch(`${server.baseUrl}/v1/games/${gameId}/decision`, {
-      headers: { authorization: `Bearer ${tokenByPlayer[active]}` },
+      headers: { authorization: `Bearer ${tokenByPlayer.get(active)}` },
     });
     assert(
       decisionHeaders.headers.get("cache-control") === "no-store",
@@ -276,7 +276,7 @@ async function main(): Promise<void> {
     // Authorization: another player's token cannot play the active turn.
     const inactive = active === hostId ? joined.body.player.id : hostId;
     const forbidden = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
-      token: tokenByPlayer[inactive],
+      token: tokenByPlayer.get(inactive),
       body: {
         commandId: "nope",
         turnId: decision.body.turn.id,
@@ -293,7 +293,7 @@ async function main(): Promise<void> {
     assert(metaAfter.body.status === "playing", "status lost across restart");
 
     const retry = await api(server.baseUrl, "POST", `/v1/games/${gameId}/commands`, {
-      token: tokenByPlayer[active],
+      token: tokenByPlayer.get(active),
       body: commandBody,
     });
     assert(retry.body.status === "duplicate", "command retry was not deduplicated after restart");
@@ -310,7 +310,7 @@ async function main(): Promise<void> {
 
     // Original capability still authenticates after restart.
     const decisionAfter = await api(server.baseUrl, "GET", `/v1/games/${gameId}/decision`, {
-      token: tokenByPlayer[hostId],
+      token: tokenByPlayer.get(hostId),
     });
     assert(decisionAfter.status === 200, "capability verifier lost across restart");
 

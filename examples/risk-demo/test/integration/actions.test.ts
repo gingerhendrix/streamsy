@@ -25,7 +25,7 @@ import { actionStreamId, eventStreamId } from "../../server/game/names.ts";
 
 const passthrough = { encode: (value: any) => value, decode: (value: any) => value };
 
-function checkedAgentMessage(value: unknown): AgentMessage {
+function checkedAgentMessage(value: NonNullable<unknown>): AgentMessage {
   return Schema.decodeUnknownSync(AgentMessageSchema)(value);
 }
 
@@ -325,8 +325,7 @@ describe("player actions stream", () => {
       mapSeed: "consumer-crash",
     });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const active = meta.activePlayerId;
-    if (typeof active !== "string") throw new Error("expected an active player id");
+    const active = checkedString(meta.activePlayerId, "active player id");
     const options = {
       call: httpFor(h.app),
       gameId: game.gameId,
@@ -407,8 +406,7 @@ describe("player actions stream", () => {
       mapSeed: "actions-crash",
     });
     const meta = (await call(h.app, "GET", `/v1/games/${game.gameId}`)).body;
-    const active = meta.activePlayerId;
-    if (typeof active !== "string") throw new Error("expected an active player id");
+    const active = checkedString(meta.activePlayerId, "active player id");
     const token = game.tokenByPlayer[active]!;
 
     // Consume the opening ask, then lose the process holding everything but the cursor.

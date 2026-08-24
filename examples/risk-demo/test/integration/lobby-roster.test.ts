@@ -258,8 +258,10 @@ describe("leaving a lobby", () => {
       token: hostToken,
       body: { name: "Agent 3" },
     });
-    const agentToken = seat.body.seat.token;
-    if (typeof agentToken !== "string") throw new Error("expected an agent token");
+    const agentToken = checkedString(
+      checkedRecord(seat.body.seat, "agent seat").token,
+      "agent token",
+    );
 
     const byAgent = await call(h.app, "DELETE", `/v1/games/${gameId}/players/me`, {
       token: agentToken,

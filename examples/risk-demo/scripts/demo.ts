@@ -20,6 +20,8 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Schema } from "effect";
+import type { BotAction } from "../server/demo/bot.ts";
 
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const rootDir = resolve(packageDir, "../..");
@@ -72,14 +74,15 @@ export async function findFreePort(): Promise<number> {
     const probe = createServer();
     probe.once("error", reject);
     probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      if (!address || typeof address === "string") {
+      try {
+        const { port } = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Number }))(
+          probe.address(),
+        );
+        probe.close((error) => (error ? reject(error) : resolvePort(port)));
+      } catch {
         probe.close();
         reject(new Error("could not allocate a demo port"));
-        return;
       }
-      const { port } = address;
-      probe.close((error) => (error ? reject(error) : resolvePort(port)));
     });
   });
 }
@@ -96,11 +99,11 @@ async function api(
   options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<HttpResult> {
   // The actions resource streams by default; a JSON reader says so explicitly.
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     "content-type": "application/json",
     accept: options.accept ?? "application/json",
-  };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
@@ -173,8 +176,8 @@ export const DEMO_LEAD_IN_MS = 10_000;
  */
 export const DEMO_COMMAND_PACE_MS = 1_000;
 
-function actionLabel(action: Record<string, unknown>): string {
-  return typeof action.type === "string" ? action.type.replaceAll("-", " ") : "command";
+function actionLabel(action: BotAction): string {
+  return action.type.replaceAll("-", " ");
 }
 
 async function playGame(baseUrl: string, gameId: string, players: DemoPlayer[]): Promise<void> {

@@ -2,6 +2,7 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { Option, Schema } from "effect";
 
 import type { LegalAction } from "../application/legal-actions.ts";
 import { PhaseControls } from "./game.tsx";
@@ -53,20 +54,26 @@ function controls(
 }
 
 function textContent(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
+  const text = Schema.decodeUnknownOption(Schema.String)(node);
+  if (Option.isSome(text)) return text.value;
+  const number = Schema.decodeUnknownOption(Schema.Number)(node);
+  if (Option.isSome(number)) return String(number.value);
   if (!isValidElement<{ children?: ReactNode }>(node)) return "";
   return Children.toArray(node.props.children).map(textContent).join("");
 }
 
-function buttonNamed(node: ReactNode, name: string): ReactElement<{ onClick(): void }> {
+interface ClickableButtonProps {
+  children?: ReactNode;
+  onClick(): void;
+}
+
+function buttonNamed(node: ReactNode, name: string): ReactElement<ClickableButtonProps> {
   if (
-    isValidElement<{ children?: ReactNode; onClick?: () => void }>(node) &&
+    isValidElement<ClickableButtonProps>(node) &&
     node.type === "button" &&
-    textContent(node) === name &&
-    node.props.onClick
+    textContent(node) === name
   ) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React's structural guard above proves this is a button with a callable onClick prop; the narrower element type preserves that invariant for the test helper.
-    return node as ReactElement<{ onClick(): void }>;
+    return node;
   }
   if (isValidElement<{ children?: ReactNode }>(node)) {
     for (const child of Children.toArray(node.props.children)) {

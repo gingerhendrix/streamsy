@@ -42,8 +42,8 @@ function open(
   options: { offset?: string; signal?: AbortSignal; accept?: string } = {},
 ): Promise<Response> {
   const query = options.offset ? `?offset=${encodeURIComponent(options.offset)}` : "";
-  const headers: Record<string, string> = { accept: options.accept ?? "text/event-stream" };
-  if (token) headers.authorization = `Bearer ${token}`;
+  const headers = new Headers({ accept: options.accept ?? "text/event-stream" });
+  if (token) headers.set("authorization", `Bearer ${token}`);
   return h.app.fetch(
     new Request(`${BASE}/v1/games/${gameId}/players/me/actions${query}`, {
       headers,

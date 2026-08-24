@@ -63,16 +63,19 @@ const CONTINENTS: ProjectedContinent[] = [
   },
 ];
 
-const territory = (id: string, continentId: string, ownerId?: string): ProjectedTerritory => ({
-  id,
-  name: id,
-  continentId,
-  ...(ownerId ? { ownerId } : {}),
-  armies: 4,
-  hexIds: [],
-  adjacentTerritoryIds: [],
-  labelAnchor: { q: 0, r: 0 },
-});
+const territory = (id: string, continentId: string, ownerId?: string): ProjectedTerritory => {
+  const row: ProjectedTerritory = {
+    id,
+    name: id,
+    continentId,
+    armies: 4,
+    hexIds: [],
+    adjacentTerritoryIds: [],
+    labelAnchor: { q: 0, r: 0 },
+  };
+  if (ownerId) row.ownerId = ownerId;
+  return row;
+};
 
 const TERRITORIES = [
   territory("t1", "c1", "p1"),

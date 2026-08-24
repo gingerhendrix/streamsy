@@ -23,7 +23,13 @@ const dbPath = join(dir, "risk.sqlite");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-function openApp(): { app: App; close: () => void; db: import("bun:sqlite").Database } {
+interface OpenedApp {
+  app: App;
+  close: () => void;
+  db: import("bun:sqlite").Database;
+}
+
+function openApp(): OpenedApp {
   const adapter = createSqliteStorageAdapter({ filename: dbPath });
   const protocol = createStreamProtocol({ storage: { adapter } });
   const stores = createSqliteStores(adapter.state.db);
@@ -40,11 +46,11 @@ async function call(
   options: { token?: string; body?: unknown; accept?: string } = {},
 ): Promise<{ status: number; body: any }> {
   // The actions resource streams unless a caller negotiates the JSON reading.
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     "content-type": "application/json",
     accept: options.accept ?? "application/json",
-  };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const res = await app.fetch(
     new Request(`${BASE}${path}`, {
       method,
@@ -69,17 +75,17 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
   const joined = await call(first.app, "POST", `/v1/games/${gameId}/players`, {
     body: { name: "Bob", color: "blue" },
   });
-  const tokenByPlayer: Record<string, string> = {
-    [hostId]: hostToken,
-    [joined.body.player.id]: joined.body.capability,
-  };
+  const tokenByPlayer = new Map([
+    [hostId, hostToken],
+    [joined.body.player.id, joined.body.capability],
+  ]);
 
   await call(first.app, "POST", `/v1/games/${gameId}/start`, { token: hostToken, body: {} });
 
   const meta = await call(first.app, "GET", `/v1/games/${gameId}`);
   const active: string = meta.body.activePlayerId;
   const decision = await call(first.app, "GET", `/v1/games/${gameId}/decision`, {
-    token: tokenByPlayer[active]!,
+    token: tokenByPlayer.get(active)!,
   });
   const reinforce = decision.body.legalMoves.find((a: any) => a.type === "reinforce");
   const commandBody = {
@@ -91,7 +97,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
     },
   };
   const ack = await call(first.app, "POST", `/v1/games/${gameId}/commands`, {
-    token: tokenByPlayer[active]!,
+    token: tokenByPlayer.get(active)!,
     body: commandBody,
   });
   expect(ack.status).toBe(200);
@@ -129,7 +135,7 @@ test("SQLite preserves events, projections, command retries, and capabilities ac
 
   // A retry of the persisted command is still idempotent after restart.
   const retry = await call(second.app, "POST", `/v1/games/${gameId}/commands`, {
-    token: tokenByPlayer[active]!,
+    token: tokenByPlayer.get(active)!,
     body: commandBody,
   });
   expect(retry.status).toBe(200);

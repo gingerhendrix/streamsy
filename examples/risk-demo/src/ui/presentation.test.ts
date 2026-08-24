@@ -411,16 +411,19 @@ const continent = (overrides: Partial<ProjectedContinent> = {}): ProjectedContin
   ...overrides,
 });
 
-const territory = (id: string, ownerId?: string): ProjectedTerritory => ({
-  id,
-  name: id,
-  continentId: "c1",
-  ...(ownerId ? { ownerId } : {}),
-  armies: 3,
-  hexIds: [],
-  adjacentTerritoryIds: [],
-  labelAnchor: { q: 0, r: 0 },
-});
+const territory = (id: string, ownerId?: string): ProjectedTerritory => {
+  const row: ProjectedTerritory = {
+    id,
+    name: id,
+    continentId: "c1",
+    armies: 3,
+    hexIds: [],
+    adjacentTerritoryIds: [],
+    labelAnchor: { q: 0, r: 0 },
+  };
+  if (ownerId) row.ownerId = ownerId;
+  return row;
+};
 
 describe("standings", () => {
   it("counts a contested continent strongest holder first", () => {

@@ -23,8 +23,14 @@ const ctx: DecideContext = { rng: createSeededRng(3), now: () => 1_700_000_000_0
 let sequence = 0;
 const commandId = (): string => `lobby-${(sequence += 1)}`;
 
+interface LobbyFixture {
+  events: GameEvent[];
+  state(): AggregateState;
+  run(command: Command): void;
+}
+
 /** A two-seat lobby: a human host, a human guest, and an agent seat. */
-function lobby(): { events: GameEvent[]; state(): AggregateState; run(command: Command): void } {
+function lobby(): LobbyFixture {
   const events: GameEvent[] = [];
   const run = (command: Command) => {
     const decision = decide(foldAggregate(events), command, ctx);
