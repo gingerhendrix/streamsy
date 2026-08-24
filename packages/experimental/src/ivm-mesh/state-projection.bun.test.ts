@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun SQLite adapter constructs its temporary database filename through Node path.
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { StreamProtocol, directProtocolClient, type JsonValue } from "@streamsy/core";
+import { StreamProtocol, directProtocolClient } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import { Effect, Exit, Layer } from "effect";
 import { bindStream, type StreamBinding } from "../binding.ts";
@@ -15,6 +15,12 @@ import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUpState } from "./state-projection.ts";
+import {
+  decodeMemberValue,
+  decodeTotalFact,
+  lostResponseClient,
+  replaceFirstTotal,
+} from "./state-test-fixtures.ts";
 
 interface Total {
   readonly total: number;
@@ -70,35 +76,7 @@ describe("Effect-first recovered State — SQLite", () => {
     await h.client.stream("target").create({ contentType: "application/json" });
     await h.client.stream("source").appendJsonBatch([{ v: 1 }]);
     const underlying = h.target.client;
-    let staged = false;
-    const racingClient = new Proxy(underlying, {
-      get(target, property, receiver) {
-        if (property !== "stream") return Reflect.get(target, property, receiver);
-        return (streamId: string) => {
-          const handle = target.stream(streamId);
-          return new Proxy(handle, {
-            get(handleTarget, handleProperty, handleReceiver) {
-              if (handleProperty !== "appendJsonBatch") {
-                const value = Reflect.get(handleTarget, handleProperty, handleReceiver);
-                return typeof value === "function" ? value.bind(handleTarget) : value;
-              }
-              return async (items: readonly JsonValue[], appendOptions: object) => {
-                if (!staged) {
-                  staged = true;
-                  const accepted = items.map((item, index) =>
-                    index === 0 && isRecord(item) && isRecord(item.value)
-                      ? { ...item, value: { ...item.value, total: 999 } }
-                      : item,
-                  );
-                  await handleTarget.appendJsonBatch(accepted, appendOptions);
-                }
-                return handleTarget.appendJsonBatch(items, appendOptions);
-              };
-            },
-          });
-        };
-      },
-    });
+    const racingClient = lostResponseClient(underlying, (items) => replaceFirstTotal(items, 999));
     const target = { ...h.target, client: racingClient };
     const exit = await Effect.runPromiseExit(
       h.program({
@@ -149,10 +127,8 @@ async function makeHarness(filename: string) {
       limits,
       initial: { total: 0 },
       restore(initial, facts) {
-        return facts.reduce((_state, fact) => {
-          if (!isRecord(fact) || !isRecord(fact.value) || typeof fact.value.total !== "number") {
-            throw new Error("malformed total fact");
-          }
+        return facts.reduce((_state, encodedFact) => {
+          const fact = decodeTotalFact(encodedFact);
           if (fact.value.total === options.rejectTotal) throw new Error("rejected total");
           return { total: fact.value.total };
         }, initial);
@@ -161,10 +137,7 @@ async function makeHarness(filename: string) {
       decode(batch) {
         options.onDecode?.();
         if (batch.kind !== "json") throw new Error("expected JSON");
-        return batch.items.map((item) => {
-          if (!isRecord(item) || typeof item.v !== "number") throw new Error("bad item");
-          return item.v;
-        });
+        return batch.items.map((item) => decodeMemberValue(item).v);
       },
       step(state, values) {
         const total = state.total + values.reduce((sum, value) => sum + value, 0);
@@ -186,8 +159,4 @@ async function makeHarness(filename: string) {
       adapter.close();
     },
   };
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

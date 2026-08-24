@@ -15,6 +15,7 @@ import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive } from "./derived-append.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUp } from "./projection.ts";
+import { jsonValueKey } from "./state-test-fixtures.ts";
 
 const MeshTestLive = DerivedRecoveryLive.pipe(
   Layer.provide(ReadStreamsLive),
@@ -81,7 +82,7 @@ async function makeHarness(filename: string) {
           reduce(items) {
             return items.map((item) => ({
               type: "value",
-              key: typeof item === "object" ? JSON.stringify(item) : String(item),
+              key: jsonValueKey(item),
               value: item,
               headers: { operation: "upsert" },
             }));

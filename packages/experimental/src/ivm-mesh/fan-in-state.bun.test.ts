@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun SQLite adapter constructs its temporary database filename through Node path.
 import { join as joinPath } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { StreamProtocol, directProtocolClient, type JsonValue } from "@streamsy/core";
+import { StreamProtocol, directProtocolClient } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { bindStream } from "../binding.ts";
 import { streamIdentity } from "../causal.ts";
 import { AppendStreamsLive, ReadStreamsLive } from "../effect/streams.ts";
@@ -16,6 +16,12 @@ import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.t
 import { catchUpDynamicFanInState, FanInRecoveryLive } from "./fan-in-state.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUpState } from "./state-projection.ts";
+import {
+  decodeBoardFactOption,
+  decodeMemberValue,
+  decodeMembershipFact,
+  decodeTotalFactOption,
+} from "./state-test-fixtures.ts";
 
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
 const StateProjectionTestLive = Layer.merge(DerivedRecoveryLive, DerivedStateHistoryLive).pipe(
@@ -95,20 +101,14 @@ async function makeHarness(filename: string) {
           limits,
           initial: { total: 0 },
           restore: (initial, facts) =>
-            facts.reduce<{ total: number }>(
-              (state, fact) =>
-                isRecord(fact) && isRecord(fact.value) && typeof fact.value.total === "number"
-                  ? { total: fact.value.total }
-                  : state,
-              initial,
-            ),
+            facts.reduce<{ total: number }>((state, encodedFact) => {
+              const fact = decodeTotalFactOption(encodedFact);
+              return Option.isSome(fact) ? { total: fact.value.value.total } : state;
+            }, initial),
           validateRecovered: () => {},
           decode: (batch) => {
             if (batch.kind !== "json") throw new Error("expected JSON");
-            return batch.items.map((item) => {
-              if (!isRecord(item) || typeof item.v !== "number") throw new Error("bad item");
-              return item.v;
-            });
+            return batch.items.map((item) => decodeMemberValue(item).v);
           },
           step: (state, values) => {
             const total = state.total + values.reduce((sum, value) => sum + value, 0);
@@ -129,19 +129,20 @@ async function makeHarness(filename: string) {
           limits,
           initial: {},
           restore: (initial, facts) =>
-            facts.reduce<Record<string, number>>((state, fact) => {
-              if (!isRecord(fact) || typeof fact.key !== "string") return state;
-              if (isRecord(fact.headers) && fact.headers.operation === "delete") {
+            facts.reduce<Record<string, number>>((state, encodedFact) => {
+              const decoded = decodeBoardFactOption(encodedFact);
+              if (Option.isNone(decoded)) return state;
+              const fact = decoded.value;
+              if (!("value" in fact)) {
                 const { [fact.key]: _removed, ...rest } = state;
                 return rest;
               }
-              if (!isRecord(fact.value) || typeof fact.value.last !== "number") return state;
               return { ...state, [fact.key]: fact.value.last };
             }, initial),
           decodeMembership: (batch) => {
             if (batch.kind !== "json") throw new Error("expected JSON membership");
-            return batch.items.map((item) => {
-              if (!isRecord(item) || typeof item.member !== "string") throw new Error("bad fact");
+            return batch.items.map((encodedItem) => {
+              const item = decodeMembershipFact(encodedItem);
               return item.type === "leave"
                 ? ({ type: "leave", member: streamIdentity(item.member) } as const)
                 : ({ type: "join", member: streamIdentity(item.member) } as const);
@@ -150,14 +151,10 @@ async function makeHarness(filename: string) {
           resolveMember: (identity) => (identity.name === "detail" ? detailBinding : undefined),
           decodeMember: (batch) => {
             if (batch.kind !== "json") throw new Error("expected JSON member");
-            return batch.items.flatMap((item) =>
-              isRecord(item) &&
-              item.type === "total" &&
-              isRecord(item.value) &&
-              typeof item.value.total === "number"
-                ? [item.value.total]
-                : [],
-            );
+            return batch.items.flatMap((item) => {
+              const fact = decodeTotalFactOption(item);
+              return Option.isSome(fact) ? [fact.value.value.total] : [];
+            });
           },
           onRecord: (state, member, values) => {
             const last = values.at(-1);
@@ -188,8 +185,4 @@ async function makeHarness(filename: string) {
       adapter.close();
     },
   };
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

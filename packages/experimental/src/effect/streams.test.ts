@@ -22,6 +22,7 @@ import {
   CreateStreamsLive,
   ReadStreams,
   ReadStreamsLive,
+  type StreamCancellationReason,
 } from "./streams.ts";
 import { provideTestLayers } from "./test-layers.ts";
 
@@ -255,7 +256,7 @@ function sessionBinding(options: {
         read: <T extends JsonValue>() => {
           const session = new ClientReadSession<T>({ startOffset: "-1" });
           const originalCancel = session.cancel.bind(session);
-          session.cancel = (reason?: unknown) => {
+          session.cancel = (reason?: StreamCancellationReason) => {
             options.onCancel();
             originalCancel(reason);
           };

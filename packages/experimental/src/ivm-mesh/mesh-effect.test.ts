@@ -37,6 +37,7 @@ import {
 } from "./derived-append.ts";
 import { deriveProducerLane, type ProducerLane } from "./lane.ts";
 import { catchUp } from "./projection.ts";
+import { jsonValueKey } from "./state-test-fixtures.ts";
 import {
   MESH_LINEAGE_TYPE,
   createLineageEvent,
@@ -105,7 +106,7 @@ const provideLive = <A, E, R>(program: Effect.Effect<A, E, R>) =>
   provideTestLayers(program, MeshTestLive);
 
 function fact(value: JsonValue): JsonValue {
-  const key = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const key = jsonValueKey(value);
   return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 

@@ -2,7 +2,6 @@ import {
   StreamProtocol,
   createMemoryStorageAdapter,
   directProtocolClient,
-  type JsonValue,
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
@@ -16,6 +15,12 @@ import { provideTestLayers } from "../effect/test-layers.ts";
 import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
 import { deriveProducerLane, type ProducerLane } from "./lane.ts";
 import { catchUpState, type CatchUpStateResult } from "./state-projection.ts";
+import {
+  decodeMemberValue,
+  decodeTotalFact,
+  lostResponseClient,
+  replaceFirstTotal,
+} from "./state-test-fixtures.ts";
 import { createLineageEvent } from "./state-meta.ts";
 
 const clients = new Set<StreamProtocolClient>();
@@ -85,14 +90,9 @@ function program(h: Harness, options: ProgramOptions = {}) {
     initial,
     restore(start, events) {
       let state = start;
-      for (const event of events) {
-        if (!isRecord(event) || event.type !== "total") {
-          throw new TypeError("unexpected target State fact");
-        }
+      for (const encodedEvent of events) {
+        const event = decodeTotalFact(encodedEvent);
         const value = event.value;
-        if (!isRecord(value) || typeof value.total !== "number") {
-          throw new TypeError("malformed total row");
-        }
         if (value.total === options.rejectFactTotal) throw new Error("rejected proposed total");
         state = { total: value.total, applied: Number(value.applied) };
       }
@@ -102,10 +102,7 @@ function program(h: Harness, options: ProgramOptions = {}) {
     decode(batch) {
       options.onDecode?.();
       if (batch.kind !== "json") throw new TypeError("expected JSON");
-      return batch.items.map((item) => {
-        if (!isRecord(item) || typeof item.v !== "number") throw new TypeError("bad item");
-        return item.v;
-      });
+      return batch.items.map((item) => decodeMemberValue(item).v);
     },
     step(state, values) {
       if (options.poisonStep) throw new Error("poisoned step");
@@ -247,36 +244,7 @@ describe("catchUpState — recovered single-source State", () => {
     const h = await harness();
     await h.client.stream(h.source.streamId).appendJsonBatch([{ v: 1 }]);
     const underlying = h.target.client;
-    let staged = false;
-    const racingClient = new Proxy(underlying, {
-      get(target, property, receiver) {
-        if (property !== "stream") return Reflect.get(target, property, receiver);
-        return (streamId: string) => {
-          const handle = target.stream(streamId);
-          return new Proxy(handle, {
-            get(handleTarget, handleProperty, handleReceiver) {
-              if (handleProperty !== "appendJsonBatch") {
-                const value = Reflect.get(handleTarget, handleProperty, handleReceiver);
-                return typeof value === "function" ? value.bind(handleTarget) : value;
-              }
-              // oxlint-disable-next-line effecttsgo/async-function -- This callback implements the Promise-native append test adapter.
-              return async (items: readonly JsonValue[], appendOptions: object) => {
-                if (!staged) {
-                  staged = true;
-                  const interloper = items.map((item, index) =>
-                    index === 0 && isRecord(item) && isRecord(item.value)
-                      ? { ...item, value: { ...item.value, total: 999 } }
-                      : item,
-                  );
-                  await handleTarget.appendJsonBatch(interloper, appendOptions);
-                }
-                return handleTarget.appendJsonBatch(items, appendOptions);
-              };
-            },
-          });
-        };
-      },
-    });
+    const racingClient = lostResponseClient(underlying, (items) => replaceFirstTotal(items, 999));
     const target = { ...h.target, client: racingClient };
     const exit = await Effect.runPromiseExit(
       program(h, {
@@ -324,7 +292,3 @@ describe("catchUpState — recovered single-source State", () => {
     expect(await h.adapter.listMessages(h.target.streamId)).toEqual(stored);
   });
 });
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

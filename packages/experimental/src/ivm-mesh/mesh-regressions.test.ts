@@ -25,6 +25,7 @@ import {
   ReadStreams,
   ReadStreamsLive,
   type EffectReadSession,
+  type StreamCancellationReason,
 } from "../effect/streams.ts";
 import {
   IncompatibleLineage,
@@ -50,6 +51,7 @@ import {
 } from "./lane.ts";
 import { catchUp, type CatchUpLimits } from "./projection.ts";
 import { MESH_LINEAGE_TYPE, createLineageEvent } from "./state-meta.ts";
+import { isLineageValue, jsonValueKey, parseStoredJson } from "./state-test-fixtures.ts";
 
 const clients = new Set<StreamProtocolClient>();
 const generous: CatchUpLimits = {
@@ -111,15 +113,15 @@ async function harness(): Promise<Harness> {
 }
 
 function fact(value: JsonValue): JsonValue {
-  const key = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const key = jsonValueKey(value);
   return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 
 // oxlint-disable-next-line effecttsgo/async-function -- This Promise helper reads the storage adapter fixture for Vitest assertions.
-async function values(h: Harness): Promise<unknown[]> {
+async function values(h: Harness): Promise<JsonValue[]> {
   const decoder = new TextDecoder();
   return (await h.adapter.listMessages(h.target.streamId)).map((message) =>
-    JSON.parse(decoder.decode(message.data)),
+    parseStoredJson(decoder.decode(message.data)),
   );
 }
 
@@ -287,7 +289,7 @@ describe("recovery and producer regressions", () => {
       epoch: 7,
       lastSeq: 1,
     });
-    expect((await values(h)).filter(isLineage)).toHaveLength(2);
+    expect((await values(h)).filter(isLineageValue)).toHaveLength(2);
   });
 
   // oxlint-disable-next-line effecttsgo/async-function -- Vitest executes this Promise-returning Effect scenario at the test boundary.
@@ -388,7 +390,7 @@ describe("recovery and producer regressions", () => {
           const result = await delegate.read<T>(options);
           if (result.status === "ok") {
             const originalCancel = result.session.cancel.bind(result.session);
-            result.session.cancel = (reason?: unknown) => {
+            result.session.cancel = (reason?: StreamCancellationReason) => {
               cancelled++;
               originalCancel(reason);
             };
@@ -429,7 +431,7 @@ describe("projection semantic regressions", () => {
         batches: 1,
         checkpoint: { sourceThrough: "00000002", nextProducerSeq: 2 },
       });
-      expect((await values(h)).filter(isLineage)).toHaveLength(2);
+      expect((await values(h)).filter(isLineageValue)).toHaveLength(2);
     },
   );
 
@@ -976,15 +978,6 @@ async function transportAppendHarness(transport: "direct" | "fetch") {
   };
 }
 
-function isLineage(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    value.type === MESH_LINEAGE_TYPE
-  );
-}
-
 function jsonItems(batch: StreamBatch): readonly JsonValue[] {
   if (batch.kind !== "json") throw new TypeError("expected JSON");
   return batch.items;
@@ -1027,7 +1020,7 @@ function blockedReadClient(onCancel: () => void): Effect.Effect<{
           read: <T extends JsonValue>() => {
             const session = new ClientReadSession<T>({ startOffset: "-1" });
             const originalCancel = session.cancel.bind(session);
-            session.cancel = (reason?: unknown) => {
+            session.cancel = (reason?: StreamCancellationReason) => {
               onCancel();
               originalCancel(reason);
             };

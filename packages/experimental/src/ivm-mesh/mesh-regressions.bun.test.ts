@@ -30,6 +30,7 @@ import {
 import { deriveProducerLane, type ProducerLane } from "./lane.ts";
 import { catchUp } from "./projection.ts";
 import { MESH_LINEAGE_TYPE, createLineageEvent } from "./state-meta.ts";
+import { isLineageValue, jsonValueKey, parseStoredJson } from "./state-test-fixtures.ts";
 
 const decoder = new TextDecoder();
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
@@ -85,7 +86,7 @@ async function createStreams(h: SqliteHarness) {
 }
 
 function fact(value: JsonValue): JsonValue {
-  const key = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const key = jsonValueKey(value);
   return { type: "order", key: `o-${key}`, value, headers: { operation: "upsert" } };
 }
 
@@ -128,9 +129,9 @@ async function append(
   );
 }
 
-async function values(h: SqliteHarness, streamId = h.target.streamId): Promise<unknown[]> {
+async function values(h: SqliteHarness, streamId = h.target.streamId): Promise<JsonValue[]> {
   return (await h.adapter.listMessages(streamId)).map((message) =>
-    JSON.parse(decoder.decode(message.data)),
+    parseStoredJson(decoder.decode(message.data)),
   );
 }
 
@@ -173,7 +174,7 @@ describe("Effect-first mesh — SQLite regression evidence", () => {
     expect(allBytes.slice(0, priorBytes.length)).toEqual(priorBytes);
     expect(producerRows(reopened)).toBe(1);
     expect(await run(reopened)).toMatchObject({ status: "caught-up", batches: 0 });
-    expect((await values(reopened)).filter(isLineage)).toHaveLength(2);
+    expect((await values(reopened)).filter(isLineageValue)).toHaveLength(2);
     await reopened.close();
   });
 
@@ -342,15 +343,6 @@ function producerRows(h: SqliteHarness): number {
   return h.adapter.state.db
     .query<{ count: number }, []>("select count(*) as count from streamsy_producers")
     .get()!.count;
-}
-
-function isLineage(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    value.type === MESH_LINEAGE_TYPE
-  );
 }
 
 function loseFirstAppendResponse(client: StreamProtocolClient): StreamProtocolClient {

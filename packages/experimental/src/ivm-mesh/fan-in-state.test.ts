@@ -2,7 +2,6 @@ import {
   StreamProtocol,
   createMemoryStorageAdapter,
   directProtocolClient,
-  type JsonValue,
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
@@ -20,6 +19,13 @@ import {
   type MembershipChange,
 } from "./fan-in-state.ts";
 import { deriveProducerLane, type ProducerLane } from "./lane.ts";
+import {
+  BoardFact,
+  decodeBoardFact,
+  decodeMemberValue,
+  decodeMembershipFact,
+  parseStoredJson,
+} from "./state-test-fixtures.ts";
 
 const clients = new Set<StreamProtocolClient>();
 const limits = { maxItems: 100, maxPages: 100, maxBatches: 100, maxBytes: 100_000 };
@@ -104,38 +110,28 @@ function program(
     limits: options.limits ?? limits,
     initial: {},
     restore(initial, events) {
-      let board: Board = initial;
-      for (const event of events) {
-        if (!isRecord(event) || event.type !== "row" || typeof event.key !== "string") {
-          throw new TypeError("unexpected board fact");
-        }
-        if (isRecord(event.headers) && event.headers.operation === "delete") {
+      let board = initial;
+      for (const encodedEvent of events) {
+        const event = decodeBoardFact(encodedEvent);
+        if (!("value" in event)) {
           const { [event.key]: _removed, ...rest } = board;
           board = rest;
           continue;
         }
-        const value = event.value;
-        if (!isRecord(value) || typeof value.last !== "number") {
-          throw new TypeError("malformed board row");
-        }
-        board = { ...board, [event.key]: value.last };
+        board = { ...board, [event.key]: event.value.last };
       }
       return board;
     },
     decodeMembership(batch) {
       if (batch.kind !== "json") throw new TypeError("expected JSON membership");
-      return batch.items.map((item): MembershipChange => {
-        if (!isRecord(item) || typeof item.member !== "string") {
-          throw new TypeError("bad membership fact");
-        }
+      return batch.items.map((encodedItem): MembershipChange => {
+        const item = decodeMembershipFact(encodedItem);
         if (item.type === "leave") {
           return { type: "leave", member: streamIdentity(item.member) };
         }
-        return {
-          type: "join",
-          member: streamIdentity(item.member),
-          ...(typeof item.from === "string" ? { from: item.from } : {}),
-        };
+        return item.from === undefined
+          ? { type: "join", member: streamIdentity(item.member) }
+          : { type: "join", member: streamIdentity(item.member), from: item.from };
       });
     },
     resolveMember(identity: StreamIdentity) {
@@ -145,10 +141,7 @@ function program(
     decodeMember(batch) {
       if (options.poisonMember) throw new Error("poisoned member decode");
       if (batch.kind !== "json") throw new TypeError("expected JSON member");
-      return batch.items.map((item) => {
-        if (!isRecord(item) || typeof item.v !== "number") throw new TypeError("bad member item");
-        return item.v;
-      });
+      return batch.items.map((item) => decodeMemberValue(item).v);
     },
     onRecord(state, member, values) {
       const last = values.at(-1);
@@ -185,9 +178,13 @@ function run(
 // oxlint-disable-next-line effecttsgo/async-function -- This Promise helper drives the protocol-client membership fixture for Vitest.
 async function join(h: Harness, name: string, from?: string): Promise<void> {
   await h.createMember(name);
+  if (from === undefined) {
+    await h.client.stream(h.membership.streamId).appendJsonBatch([{ type: "join", member: name }]);
+    return;
+  }
   await h.client
     .stream(h.membership.streamId)
-    .appendJsonBatch([{ type: "join", member: name, ...(from === undefined ? {} : { from }) }]);
+    .appendJsonBatch([{ type: "join", member: name, from }]);
 }
 
 // oxlint-disable-next-line effecttsgo/async-function -- This Promise helper drives the protocol-client membership fixture for Vitest.
@@ -368,14 +365,10 @@ async function boardFactOrder(h: Harness): Promise<string[]> {
   const decoder = new TextDecoder();
   const keys: string[] = [];
   for (const message of await h.adapter.listMessages(h.target.streamId)) {
-    const value: unknown = JSON.parse(decoder.decode(message.data));
-    if (isRecord(value) && value.type === "row" && typeof value.key === "string") {
+    const value = parseStoredJson(decoder.decode(message.data));
+    if (Schema.is(BoardFact)(value)) {
       keys.push(value.key);
     }
   }
   return keys;
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
