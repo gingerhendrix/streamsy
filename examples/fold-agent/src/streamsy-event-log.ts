@@ -8,15 +8,6 @@
  * and for the compare-and-swap precondition, Fold `seq` is the agent-domain
  * sequence carried inside the message. Neither is derived from the other.
  *
- * Unlike the Promise-bridging variant of this example, nothing here calls
- * `Effect.tryPromise`. Creation, reads, and appends go through the
- * `CreateStreams`, `ReadStreams`, and `AppendStreams` services. Their Live
- * layers own the Promise client, and their test layer can stand in for it
- * without any transport at all.
- *
- * The adapter deliberately stays inside this example: Fold is young, its log
- * API can still move, and no second consumer has yet justified a `@streamsy/*`
- * package.
  */
 import {
   decodeStoredLogEntry,
