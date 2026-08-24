@@ -33,7 +33,7 @@ type FactoryStub = DurableObjectStub<DurableObjectStreamStorage>;
  * The stream-facing RPC surface of the real Durable Object, taken from the real
  * class rather than restated. `FakeStub` declares `implements StreamStorageRpc`,
  * so a parameter or return type that drifts on `DurableObjectStreamStorage`
- * fails this package's typecheck instead of being hidden by the one assertion
+ * fails this package's typecheck instead of being hidden by the RPC boundary
  * in `asStub` below.
  */
 type StreamStorageRpc = Pick<
@@ -286,8 +286,9 @@ class FakeDurableObjectId implements DurableObjectId {
  * and is covered by the deployed conformance suite (see the file header).
  */
 function asStub(stub: FakeStub): FactoryStub {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- workerd RPC result types and the DurableObject brand are unproducible in-process; the method surface is checked by `FakeStub implements StreamStorageRpc`.
-  return stub as unknown as FactoryStub;
+  // SAFETY: `FakeStub` implements the real stream RPC surface; this intersection adds only
+  // workerd's unavailable Fetcher, Provider, Disposable, and nominal brand types at the test seam.
+  return stub as FakeStub & FactoryStub;
 }
 
 export interface FakeNamespace {
