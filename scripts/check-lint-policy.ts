@@ -19,6 +19,7 @@ const effectAreas = [
   "packages/experimental",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
+  "examples/issue-tracker",
   "examples/issue-tracker-projections",
   "examples/risk-demo",
 ] as const;

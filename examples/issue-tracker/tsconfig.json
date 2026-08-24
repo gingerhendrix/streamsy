@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["bun"]
+  },
+  "include": [
+    "server/**/*",
+    "shared/**/*",
+    "domain/**/*",
+    "views/**/*",
+    "scripts/**/*",
+    "test/**/*",
+    "src/**/*"
+  ],
+  "exclude": ["node_modules", "dist", "scripts/ui-smoke.ts"]
+}

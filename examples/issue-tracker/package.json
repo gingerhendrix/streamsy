@@ -1,0 +1,35 @@
+{
+  "name": "issue-tracker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run build && bun --hot server/local.ts",
+    "start": "bun server/local.ts",
+    "build": "bun run scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test",
+    "smoke:http": "bun run scripts/http-smoke.ts",
+    "smoke:ui": "bun run scripts/ui-smoke.ts"
+  },
+  "dependencies": {
+    "@durable-streams/client": "^0.2.6",
+    "@durable-streams/state": "^0.3.1",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/experimental": "workspace:*",
+    "@streamsy/json": "workspace:*",
+    "@streamsy/state": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
+    "@tanstack/db": "0.6.8",
+    "@tanstack/react-db": "^0.1.83",
+    "effect": "4.0.0-rc.109",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "catalog:"
+  }
+}

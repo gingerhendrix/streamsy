@@ -1,0 +1,93 @@
+/**
+ * The wire contracts shared by the host, the scripts, the tests and the
+ * browser.
+ *
+ * Request bodies are decoded here before any workflow sees them, so an unknown
+ * status or a wrong-typed field is a 400 and never a durable fact. Response
+ * shapes are declared here too, so a test decodes exactly what a client would.
+ */
+import { Schema } from "effect";
+import { Identifier, IssueRow, IssueStatus, Title } from "../domain/issue.ts";
+
+export const CreateIssueRequest = Schema.Struct({
+  commandId: Identifier,
+  issueId: Identifier,
+  projectId: Identifier,
+  title: Title,
+  status: Schema.optionalKey(IssueStatus),
+});
+export type CreateIssueRequest = typeof CreateIssueRequest.Type;
+
+export const ChangeStatusRequest = Schema.Struct({
+  commandId: Identifier,
+  status: IssueStatus,
+});
+export type ChangeStatusRequest = typeof ChangeStatusRequest.Type;
+
+export const Ack = Schema.Struct({ stream: Schema.String, offset: Schema.String });
+
+export const MaintenanceReportBody = Schema.Struct({
+  checkpoint: Schema.NullOr(Schema.String),
+  folded: Schema.Number,
+  changed: Schema.Number,
+  publication: Schema.Literals(["none", "changes", "snapshot"]),
+});
+
+export const CommandResponse = Schema.Struct({
+  commandId: Schema.String,
+  workspaceId: Schema.String,
+  issueId: Schema.String,
+  eventId: Schema.String,
+  sequence: Schema.Number,
+  ack: Ack,
+  /** True when this command had already been accepted; `ack` is the original. */
+  reconciled: Schema.Boolean,
+  maintenance: MaintenanceReportBody,
+  row: Schema.NullOr(IssueRow),
+});
+export type CommandResponse = typeof CommandResponse.Type;
+
+export const IssuesResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  view: Schema.String,
+  planHash: Schema.String,
+  rows: Schema.Array(IssueRow),
+});
+export type IssuesResponse = typeof IssuesResponse.Type;
+
+/** What a consumer needs to bind the sink's public product. */
+export const SinkSessionResponse = Schema.Struct({
+  sink: Schema.String,
+  route: Schema.String,
+  transport: Schema.Literal("durable-state"),
+  fallback: Schema.Literal("snapshot-then-live"),
+  scope: Schema.String,
+  /** Resume token for the sink's current tail. */
+  resume: Schema.String,
+  expiresInSeconds: Schema.Number,
+});
+export type SinkSessionResponse = typeof SinkSessionResponse.Type;
+
+export const SeedResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  issues: Schema.Array(Schema.String),
+  seeded: Schema.Boolean,
+});
+export type SeedResponse = typeof SeedResponse.Type;
+
+export const HealthResponse = Schema.Struct({
+  status: Schema.Literal("ok"),
+  deployment: Schema.String,
+  schemaVersion: Schema.String,
+  view: Schema.String,
+  planHash: Schema.String,
+});
+export type HealthResponse = typeof HealthResponse.Type;
+
+export const ApiError = Schema.Struct({
+  error: Schema.String,
+  detail: Schema.optionalKey(Schema.String),
+  /** Present when the failure has a declared recovery, such as a stale resume token. */
+  fallback: Schema.optionalKey(Schema.String),
+});
+export type ApiError = typeof ApiError.Type;
