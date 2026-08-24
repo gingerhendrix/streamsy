@@ -30,6 +30,68 @@ async function close(instance: Host): Promise<void> {
 }
 
 describe("durable recovery", () => {
+  test("the live host replays an uncheckpointed suffix from its latest checkpoint", async () => {
+    const directory = temporaryDirectory("issue-tracker-checkpoint-suffix");
+    const first = durable(directory);
+    await call(
+      first,
+      "POST",
+      "/api/workspaces/main/issues",
+      createIssueBody("cmd-1", "issue-1", "Checkpoint then replay", "backlog"),
+    );
+    await call(first, "POST", "/api/workspaces/main/issues/issue-1/status", {
+      commandId: "cmd-2",
+      status: "todo",
+    });
+    const uncheckpointed = await json(
+      await call(first, "POST", "/api/workspaces/main/issues/issue-1/status", {
+        commandId: "cmd-3",
+        status: "done",
+      }),
+      CommandResponse,
+    );
+    await close(first);
+
+    const filename = join(directory, "view.sqlite");
+    const before = new Database(filename);
+    const checkpoint = before
+      .query<{ source_cursor: string }, []>(
+        "SELECT source_cursor FROM streamsy_view_checkpoint_manifests WHERE status='active'",
+      )
+      .get();
+    const batchesBefore = before
+      .query<{ count: number }, []>("SELECT COUNT(*) count FROM streamsy_view_change_batches")
+      .get()?.count;
+    before.close(false);
+    expect(checkpoint?.source_cursor).not.toBe(uncheckpointed.ack.offset);
+    expect(batchesBefore).toBe(3);
+
+    const restarted = durable(directory);
+    const recovered = await json(
+      await call(restarted, "POST", "/api/workspaces/main/issues/issue-1/status", {
+        commandId: "cmd-3",
+        status: "done",
+      }),
+      CommandResponse,
+    );
+    expect(recovered.maintenance.folded).toBe(1);
+    expect(recovered.reconciled).toBe(true);
+    const listed = await json(
+      await call(restarted, "GET", "/api/workspaces/main/issues"),
+      IssuesResponse,
+    );
+    expect(listed.rows[0]?.status).toBe("done");
+    await close(restarted);
+
+    const after = new Database(filename);
+    expect(
+      after
+        .query<{ count: number }, []>("SELECT COUNT(*) count FROM streamsy_view_change_batches")
+        .get()?.count,
+    ).toBe(batchesBefore);
+    after.close(false);
+  });
+
   test("rows survive a restart and ingestion resumes without folding twice", async () => {
     const directory = temporaryDirectory("issue-tracker-recovery");
 
