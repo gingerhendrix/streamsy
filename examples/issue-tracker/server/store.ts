@@ -21,7 +21,7 @@
 import { Context, Effect, Layer } from "effect";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
 import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
-import { StoreRestorePoison, StoreUnavailable } from "./errors.ts";
+import { CommandIdConflict, StoreRestorePoison, StoreUnavailable } from "./errors.ts";
 
 /** What the view has consumed, and what the sink has published. */
 export interface ViewProgress {
@@ -34,11 +34,13 @@ export interface ViewProgress {
 export interface CommandReceipt {
   readonly commandId: string;
   readonly workspaceId: string;
-  readonly issueId: string;
-  /** The offset the *original* append received. */
-  readonly offset: string;
+  readonly commandKind: "create-issue" | "change-status";
+  readonly targetId: string;
+  readonly requestHash: string;
   readonly eventId: string;
-  readonly sequence: number;
+  readonly eventSequence: number;
+  /** The offset the *original* append received. */
+  readonly eventOffset: string;
 }
 
 /** One atomic advance of the maintained view. */
@@ -81,9 +83,12 @@ export interface IssueStoreService {
     position: string,
   ) => Effect.Effect<void, StoreUnavailable>;
   readonly receipt: (
+    workspaceId: string,
     commandId: string,
   ) => Effect.Effect<CommandReceipt | undefined, StoreUnavailable>;
-  readonly recordReceipt: (receipt: CommandReceipt) => Effect.Effect<void, StoreUnavailable>;
+  readonly recordReceipt: (
+    receipt: CommandReceipt,
+  ) => Effect.Effect<void, StoreUnavailable | CommandIdConflict>;
   /** Next source sequence for a workspace: one past the highest folded event. */
   readonly nextSequence: (workspaceId: string) => Effect.Effect<number, StoreUnavailable>;
   readonly stateCheckpoint: (
@@ -202,7 +207,7 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
       rows: Effect.fn("IssueStore.rows")(function* (workspaceId: string) {
         const memory = workspace(workspaceId);
         const restored: IssueRow[] = [];
-        for (const [key, json] of [...memory.rows].sort(([left], [right]) =>
+        for (const [key, json] of [...memory.rows].toSorted(([left], [right]) =>
           left.localeCompare(right),
         )) {
           restored.push(yield* restoreRow("view_rows", key, json));
@@ -227,14 +232,21 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
             workspace(workspaceId).published = position;
           }),
       ),
-      receipt: Effect.fn("IssueStore.receipt")((commandId: string) =>
-        Effect.sync(() => receipts.get(commandId)),
+      receipt: Effect.fn("IssueStore.receipt")((workspaceId: string, commandId: string) =>
+        Effect.sync(() => receipts.get(`${workspaceId}\u0000${commandId}`)),
       ),
-      recordReceipt: Effect.fn("IssueStore.recordReceipt")((receipt: CommandReceipt) =>
-        Effect.sync(() => {
-          if (!receipts.has(receipt.commandId)) receipts.set(receipt.commandId, receipt);
-        }),
-      ),
+      recordReceipt: Effect.fn("IssueStore.recordReceipt")(function* (receipt: CommandReceipt) {
+        const key = `${receipt.workspaceId}\u0000${receipt.commandId}`;
+        const existing = receipts.get(key);
+        if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(receipt)) {
+          return yield* new CommandIdConflict({
+            workspaceId: receipt.workspaceId,
+            commandId: receipt.commandId,
+          });
+        }
+        receipts.set(key, receipt);
+        return undefined;
+      }),
       nextSequence: Effect.fn("IssueStore.nextSequence")((workspaceId: string) =>
         Effect.sync(() => workspace(workspaceId).nextSequence),
       ),
@@ -243,7 +255,7 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
       ),
       stateRows: Effect.fn("IssueStore.stateRows")(function* (sourceId, collection, partitionId) {
         const restored: CatalogRow[] = [];
-        for (const [key, json] of [...stateSource(sourceId, partitionId).rows].sort(
+        for (const [key, json] of [...stateSource(sourceId, partitionId).rows].toSorted(
           ([left], [right]) => left.localeCompare(right),
         )) {
           const decoded = yield* Effect.try({

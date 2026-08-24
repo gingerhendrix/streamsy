@@ -24,8 +24,21 @@ import { catalog, decodeCatalogRow, type CatalogCollection } from "../domain/cat
 import { boardIssues, issues, streamNames } from "../domain/declaration.ts";
 import type { IssueEvent, IssueRow, IssueStatus } from "../domain/issue.ts";
 import { AppConfig } from "./config.ts";
-import { appendIssueEvent, CommandProducers } from "./commands.ts";
-import { AppendRejected, InvalidRequest, UnknownIssue } from "./errors.ts";
+import {
+  appendIssueEvent,
+  CommandProducers,
+  hashCommandIntent,
+  intentFromEvent,
+  type CommandIntent,
+} from "./commands.ts";
+import {
+  AppendRejected,
+  CommandContention,
+  CommandIdConflict,
+  InvalidRequest,
+  UnknownIssue,
+} from "./errors.ts";
+import { scanCanonicalIssueSource, type CanonicalIssueSource } from "./command-reconciliation.ts";
 import { advance, type MaintenanceReport } from "./maintenance.ts";
 import { IssueSink } from "./sink.ts";
 import { IssueStore, type CommandReceipt } from "./store.ts";
@@ -59,6 +72,8 @@ export interface CommandResult {
   readonly row: IssueRow | undefined;
 }
 
+const COMMAND_CAS_ATTEMPTS = 8;
+
 export const health = Effect.fn("Application.health")(function* () {
   const config = yield* AppConfig;
   return {
@@ -75,22 +90,28 @@ export const createIssue = Effect.fn("Application.createIssue")(function* (
   workspaceId: string,
   request: CreateIssueRequest,
 ) {
-  return yield* command(
+  const intent: CommandIntent = {
     workspaceId,
-    request.commandId,
-    request.issueId,
-    (sequence, occurredAt) => ({
-      type: "IssueCreated",
-      eventId: request.commandId,
-      workspaceId,
-      issueId: request.issueId,
-      sequence,
-      occurredAt,
-      title: request.title,
+    commandId: request.commandId,
+    commandKind: "create-issue",
+    targetId: request.issueId,
+    payload: {
       projectId: request.projectId,
       status: request.status ?? "backlog",
-    }),
-  );
+      title: request.title,
+    },
+  };
+  return yield* command(intent, (sequence, occurredAt) => ({
+    type: "IssueCreated",
+    eventId: request.commandId,
+    workspaceId,
+    issueId: request.issueId,
+    sequence,
+    occurredAt,
+    title: request.title,
+    projectId: request.projectId,
+    status: request.status ?? "backlog",
+  }));
 });
 
 /** Move one issue between columns: `IssueStatusChanged`. */
@@ -100,7 +121,7 @@ export const changeStatus = Effect.fn("Application.changeStatus")(function* (
   request: ChangeStatusRequest,
 ) {
   const store = yield* IssueStore;
-  const receipt = yield* store.receipt(request.commandId);
+  const receipt = yield* store.receipt(workspaceId, request.commandId);
   if (receipt === undefined) {
     // A move only means something against an issue that exists, so the current
     // rows are read before the fact is appended rather than after it.
@@ -109,15 +130,24 @@ export const changeStatus = Effect.fn("Application.changeStatus")(function* (
     const known = (yield* store.rows(workspaceId)).some((row) => row.issueId === issueId);
     if (!known) return yield* new UnknownIssue({ issueId });
   }
-  return yield* command(workspaceId, request.commandId, issueId, (sequence, occurredAt) => ({
-    type: "IssueStatusChanged",
-    eventId: request.commandId,
-    workspaceId,
-    issueId,
-    sequence,
-    occurredAt,
-    status: request.status,
-  }));
+  return yield* command(
+    {
+      workspaceId,
+      commandId: request.commandId,
+      commandKind: "change-status",
+      targetId: issueId,
+      payload: { status: request.status },
+    },
+    (sequence, occurredAt) => ({
+      type: "IssueStatusChanged",
+      eventId: request.commandId,
+      workspaceId,
+      issueId,
+      sequence,
+      occurredAt,
+      status: request.status,
+    }),
+  );
 });
 
 /** The maintained rows, read from durable state and decoded through the view's schema. */
@@ -201,75 +231,135 @@ export const sinkSession = Effect.fn("Application.sinkSession")(function* (works
  * version of the same intent.
  */
 const command = Effect.fn("Application.command")(function* (
-  workspaceId: string,
-  commandId: string,
-  issueId: string,
+  intent: CommandIntent,
   build: (sequence: number, occurredAt: string) => IssueEvent,
 ) {
   const store = yield* IssueStore;
   const streams = yield* Streams;
   const producers = yield* CommandProducers;
 
+  const { workspaceId, commandId } = intent;
   yield* ensureWorkspace(workspaceId);
+  const requestHash = yield* hashCommandIntent(intent);
 
-  const existing = yield* store.receipt(commandId);
+  const existing = yield* store.receipt(workspaceId, commandId);
   if (existing !== undefined) {
+    if (existing.requestHash !== requestHash) {
+      return yield* new CommandIdConflict({ workspaceId, commandId });
+    }
     // Already accepted. Report the original acceptance and append nothing.
     const maintenance = yield* advance(workspaceId);
-    return yield* result(existing, true, maintenance, workspaceId, issueId);
+    return yield* result(existing, true, maintenance);
   }
 
-  const producer = yield* producers.forCommand(commandId);
-  const sequence = yield* store.nextSequence(workspaceId);
+  const producer = yield* producers.forCommand(workspaceId, commandId);
   const occurredAt = yield* Clock.currentTimeMillis.pipe(
     Effect.map((millis) => new Date(millis).toISOString()),
   );
-  const event = build(sequence, occurredAt);
-
   const binding = streams.bindings.issueEvents(workspaceId);
-  const appended = yield* appendIssueEvent(binding, event, producer);
 
-  const receipt: CommandReceipt = {
-    commandId,
-    workspaceId,
-    issueId,
-    offset: appended.offset,
-    eventId: event.eventId,
-    sequence: event.sequence,
-  };
-  yield* store.recordReceipt(receipt);
+  for (let attempt = 1; attempt <= COMMAND_CAS_ATTEMPTS; attempt += 1) {
+    const source = yield* scanCanonicalIssueSource(workspaceId, commandId);
+    const recovered = yield* receiptFromSource(intent, requestHash, source);
+    if (recovered !== undefined) {
+      yield* store.recordReceipt(recovered);
+      const maintenance = yield* advance(workspaceId);
+      return yield* result(recovered, true, maintenance);
+    }
 
-  const maintenance = yield* advance(workspaceId);
-  return yield* result(
-    receipt,
-    appended.status === "reconciled",
-    maintenance,
-    workspaceId,
-    issueId,
-  );
+    const event = build(source.maxSequence + 1, occurredAt);
+    const decision = yield* appendIssueEvent(binding, event, producer, source.tail).pipe(
+      Effect.map((append) => ({ kind: "append" as const, append })),
+      Effect.catchTag("StreamAppendError", (error) =>
+        Effect.gen(function* () {
+          const afterFailure = yield* scanCanonicalIssueSource(workspaceId, commandId);
+          const receipt = yield* receiptFromSource(intent, requestHash, afterFailure);
+          if (receipt === undefined) return yield* error;
+          return { kind: "receipt" as const, receipt };
+        }),
+      ),
+    );
+    if (decision.kind === "receipt") {
+      yield* store.recordReceipt(decision.receipt);
+      const maintenance = yield* advance(workspaceId);
+      return yield* result(decision.receipt, true, maintenance);
+    }
+    if (decision.append.status === "contention") continue;
+    if (decision.append.status === "reconciled") {
+      const afterDuplicate = yield* scanCanonicalIssueSource(workspaceId, commandId);
+      const receipt = yield* receiptFromSource(intent, requestHash, afterDuplicate);
+      if (receipt === undefined) {
+        return yield* new AppendRejected({ stream: binding.streamId, status: "duplicate-missing" });
+      }
+      yield* store.recordReceipt(receipt);
+      const maintenance = yield* advance(workspaceId);
+      return yield* result(receipt, true, maintenance);
+    }
+
+    const receipt = receiptFor(intent, requestHash, event, decision.append.offset);
+    yield* store.recordReceipt(receipt);
+    const maintenance = yield* advance(workspaceId);
+    return yield* result(receipt, false, maintenance);
+  }
+  return yield* new CommandContention({ workspaceId, attempts: COMMAND_CAS_ATTEMPTS });
 });
 
 const result = Effect.fn("Application.commandResult")(function* (
   receipt: CommandReceipt,
   reconciled: boolean,
   maintenance: MaintenanceReport,
-  workspaceId: string,
-  issueId: string,
 ) {
   const store = yield* IssueStore;
-  const rows = yield* store.rows(workspaceId);
+  const rows = yield* store.rows(receipt.workspaceId);
   return {
     commandId: receipt.commandId,
-    workspaceId,
-    issueId,
+    workspaceId: receipt.workspaceId,
+    issueId: receipt.targetId,
     eventId: receipt.eventId,
-    sequence: receipt.sequence,
-    ack: { stream: streamNames.issueEvents(workspaceId), offset: receipt.offset },
+    sequence: receipt.eventSequence,
+    ack: {
+      stream: streamNames.issueEvents(receipt.workspaceId),
+      offset: receipt.eventOffset,
+    },
     reconciled,
     maintenance,
-    row: rows.find((row) => row.issueId === issueId),
+    row: rows.find((row) => row.issueId === receipt.targetId),
   } satisfies CommandResult;
 });
+
+const receiptFromSource = Effect.fn("Application.receiptFromSource")(function* (
+  intent: CommandIntent,
+  requestHash: string,
+  source: CanonicalIssueSource,
+) {
+  if (source.match === undefined) return undefined;
+  const durableHash = yield* hashCommandIntent(intentFromEvent(source.match.event));
+  if (durableHash !== requestHash) {
+    return yield* new CommandIdConflict({
+      workspaceId: intent.workspaceId,
+      commandId: intent.commandId,
+    });
+  }
+  return receiptFor(intent, requestHash, source.match.event, source.match.offset);
+});
+
+function receiptFor(
+  intent: CommandIntent,
+  requestHash: string,
+  event: IssueEvent,
+  eventOffset: string,
+): CommandReceipt {
+  return {
+    workspaceId: intent.workspaceId,
+    commandId: intent.commandId,
+    commandKind: intent.commandKind,
+    targetId: intent.targetId,
+    requestHash,
+    eventId: event.eventId,
+    eventSequence: event.sequence,
+    eventOffset,
+  };
+}
 
 /** A tiny seeded board, so a fresh workspace opens onto something. */
 export const seedWorkspace = Effect.fn("Application.seedWorkspace")(function* (

@@ -76,6 +76,14 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
       MalformedBody: (error) => Effect.succeed(fail(400, "invalid-json", error.detail)),
       UnknownIssue: (error) => Effect.succeed(fail(404, "unknown-issue", error.issueId)),
       AppendRejected: (error) => Effect.succeed(fail(409, "append-rejected", error.status)),
+      CommandIdConflict: (error) =>
+        Effect.succeed(fail(409, "command-id-conflict", error.commandId)),
+      CommandContention: (error) =>
+        Effect.succeed(fail(409, "command-contention", `${error.attempts} attempts`)),
+      CommandRecoveryExhausted: (error) =>
+        Effect.succeed(
+          fail(503, "command-recovery-exhausted", `${error.maxBatches}/${error.maxItems}`),
+        ),
       StreamUnavailable: (error) =>
         Effect.succeed(fail(503, "stream-unavailable", `${error.streamId}: ${error.status}`)),
       SourcePoison: (error) =>

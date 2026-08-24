@@ -46,6 +46,21 @@ export class AppendRejected extends Schema.TaggedError<AppendRejected>()("Append
   status: Schema.String,
 }) {}
 
+export class CommandIdConflict extends Schema.TaggedError<CommandIdConflict>()(
+  "CommandIdConflict",
+  { workspaceId: Schema.String, commandId: Schema.String },
+) {}
+
+export class CommandContention extends Schema.TaggedError<CommandContention>()(
+  "CommandContention",
+  { workspaceId: Schema.String, attempts: Schema.Number },
+) {}
+
+export class CommandRecoveryExhausted extends Schema.TaggedError<CommandRecoveryExhausted>()(
+  "CommandRecoveryExhausted",
+  { workspaceId: Schema.String, maxBatches: Schema.Number, maxItems: Schema.Number },
+) {}
+
 /** A durable source item that the declared source schema rejects. */
 export class SourcePoison extends Schema.TaggedError<SourcePoison>()("SourcePoison", {
   sourceId: Schema.String,
@@ -107,6 +122,9 @@ export type ApplicationError =
   | UnknownIssue
   | StreamUnavailable
   | AppendRejected
+  | CommandIdConflict
+  | CommandContention
+  | CommandRecoveryExhausted
   | SourcePoison
   | UnsupportedStateOperation
   | MaintenanceFault

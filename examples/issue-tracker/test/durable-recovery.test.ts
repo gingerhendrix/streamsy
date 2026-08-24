@@ -8,6 +8,8 @@
  * single event twice.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { join } from "node:path";
 import { CommandResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 
@@ -132,5 +134,39 @@ describe("durable recovery", () => {
       CommandResponse,
     );
     expect(third.sequence).toBe(2);
+  });
+
+  test("upgrades Slice 1 receipts to the workspace-scoped application schema", async () => {
+    const directory = temporaryDirectory("issue-tracker-receipt-migration");
+    const filename = join(directory, "view.sqlite");
+    const legacy = new Database(filename, { create: true });
+    legacy.exec(`CREATE TABLE command_receipts (
+      command_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      issue_id TEXT NOT NULL,
+      offset_token TEXT NOT NULL,
+      event_id TEXT NOT NULL,
+      sequence INTEGER NOT NULL
+    )`);
+    legacy.close(false);
+
+    const migrated = durable(directory);
+    const created = await call(
+      migrated,
+      "POST",
+      "/api/workspaces/main/issues",
+      createIssueBody("cmd-new", "issue-new", "After migration"),
+    );
+    expect(created.status).toBe(201);
+    await close(migrated);
+
+    const checked = new Database(filename);
+    const columns = checked
+      .query<{ name: string }, []>("PRAGMA table_info(command_receipts)")
+      .all()
+      .map((column) => column.name);
+    checked.close(false);
+    expect(columns).toContain("request_hash");
+    expect(columns).toContain("event_offset");
   });
 });

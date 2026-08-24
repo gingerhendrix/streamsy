@@ -6,7 +6,7 @@
  * producer tuple and returns the exact offset the original append received.
  * Payload equality is never claimed, and no second event is appended.
  *
- * Deriving a lane hashes the command id through WebCrypto, which is async. It
+ * Deriving a lane hashes workspace plus command id through WebCrypto, which is async. It
  * is wrapped once, here, so no application workflow contains a Promise call.
  */
 import type { ClientProducerOptions } from "@streamsy/core";
@@ -19,7 +19,18 @@ import { AppendRejected, InvalidRequest } from "./errors.ts";
 export type CommandAppend =
   | { readonly status: "accepted"; readonly offset: string }
   /** The producer sequence was already accepted; `offset` is the original one. */
-  | { readonly status: "reconciled"; readonly offset: string };
+  | { readonly status: "reconciled"; readonly offset: string }
+  | { readonly status: "contention"; readonly actualOffset: string };
+
+export type CommandKind = "create-issue" | "change-status";
+
+export interface CommandIntent {
+  readonly workspaceId: string;
+  readonly commandId: string;
+  readonly commandKind: CommandKind;
+  readonly targetId: string;
+  readonly payload: Readonly<Record<string, string>>;
+}
 
 const encoder = new TextEncoder();
 
@@ -27,15 +38,18 @@ const encoder = new TextEncoder();
 const PRODUCER_CAPACITY = 4_096;
 
 export interface CommandProducerResolver {
-  readonly forCommand: (commandId: string) => Effect.Effect<ClientProducerOptions, InvalidRequest>;
+  readonly forCommand: (
+    workspaceId: string,
+    commandId: string,
+  ) => Effect.Effect<ClientProducerOptions, InvalidRequest>;
 }
 
 export class CommandProducers extends Context.Service<CommandProducers, CommandProducerResolver>()(
   "issue-tracker/CommandProducers",
 ) {}
 
-const digest = (commandId: string): Effect.Effect<ClientProducerOptions> =>
-  Effect.promise(() => crypto.subtle.digest("SHA-256", encoder.encode(commandId))).pipe(
+const digest = (identity: string): Effect.Effect<ClientProducerOptions> =>
+  Effect.promise(() => crypto.subtle.digest("SHA-256", encoder.encode(identity))).pipe(
     Effect.map((bytes) => {
       const hex = Array.from(new Uint8Array(bytes), (byte) =>
         byte.toString(16).padStart(2, "0"),
@@ -56,11 +70,14 @@ export const layer: Layer.Layer<CommandProducers> = Layer.effect(
       lookup: digest,
     });
     return CommandProducers.of({
-      forCommand: Effect.fn("CommandProducers.forCommand")(function* (commandId: string) {
+      forCommand: Effect.fn("CommandProducers.forCommand")(function* (
+        workspaceId: string,
+        commandId: string,
+      ) {
         if (commandId.length === 0 || commandId.length > 128) {
           return yield* InvalidRequest.of("commandId", "must be 1 to 128 characters long");
         }
-        return yield* Cache.get(cache, commandId);
+        return yield* Cache.get(cache, `issue-tracker\u0000${workspaceId}\u0000${commandId}`);
       }),
     });
   }),
@@ -71,12 +88,14 @@ export const appendIssueEvent = Effect.fn("Commands.appendIssueEvent")(function*
   source: StreamBinding,
   event: IssueEvent,
   producer: ClientProducerOptions,
+  expectedOffset: string,
 ) {
   const appends = yield* AppendStreams;
   const payload = yield* Effect.sync(() => encodeIssueEventJson(event));
   const result = yield* appends.append(source, payload, {
     contentType: "application/json",
     producer,
+    expectedOffset,
   });
   return yield* classify(source, result);
 });
@@ -96,5 +115,50 @@ function classify(
   if (result.status === "duplicate") {
     return Effect.succeed({ status: "reconciled", offset: result.offset });
   }
+  if (result.status === "conflict" && result.conflictReason === "expected-offset") {
+    return Effect.succeed({ status: "contention", actualOffset: result.offset });
+  }
   return Effect.fail(new AppendRejected({ stream: binding.streamId, status: result.status }));
+}
+
+/** Canonical semantic identity; source ordering and observation time are intentionally excluded. */
+export const hashCommandIntent = Effect.fn("Commands.hashCommandIntent")(function* (
+  intent: CommandIntent,
+) {
+  const canonical = JSON.stringify({
+    workspaceId: intent.workspaceId,
+    commandId: intent.commandId,
+    commandKind: intent.commandKind,
+    targetId: intent.targetId,
+    payload: Object.fromEntries(
+      Object.entries(intent.payload).toSorted(([left], [right]) => left.localeCompare(right)),
+    ),
+  });
+  const bytes = yield* Effect.promise(() =>
+    crypto.subtle.digest("SHA-256", encoder.encode(canonical)),
+  );
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+});
+
+export function intentFromEvent(event: IssueEvent): CommandIntent {
+  if (event.type === "IssueCreated") {
+    return {
+      workspaceId: event.workspaceId,
+      commandId: event.eventId,
+      commandKind: "create-issue",
+      targetId: event.issueId,
+      payload: {
+        projectId: event.projectId,
+        status: event.status,
+        title: event.title,
+      },
+    };
+  }
+  return {
+    workspaceId: event.workspaceId,
+    commandId: event.eventId,
+    commandKind: "change-status",
+    targetId: event.issueId,
+    payload: { status: event.status },
+  };
 }

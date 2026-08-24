@@ -14,7 +14,7 @@ import { Database } from "bun:sqlite";
 import { Effect, Layer } from "effect";
 import type { IssueRow } from "../domain/issue.ts";
 import { decodeCatalogRow, type CatalogRow } from "../domain/catalog.ts";
-import { StoreRestorePoison, StoreUnavailable } from "./errors.ts";
+import { CommandIdConflict, StoreRestorePoison, StoreUnavailable } from "./errors.ts";
 import {
   IssueStore,
   restoreRow,
@@ -22,6 +22,18 @@ import {
   type CommitInput,
   type IssueStoreService,
 } from "./store.ts";
+
+const COMMAND_RECEIPTS_SCHEMA = `CREATE TABLE IF NOT EXISTS command_receipts (
+  workspace_id TEXT NOT NULL,
+  command_id   TEXT NOT NULL,
+  command_kind TEXT NOT NULL,
+  target_id    TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  event_id     TEXT NOT NULL,
+  event_sequence INTEGER NOT NULL,
+  event_offset TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, command_id)
+);`;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS view_rows (
@@ -42,14 +54,7 @@ CREATE TABLE IF NOT EXISTS view_progress (
   published     TEXT,
   next_sequence INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS command_receipts (
-  command_id   TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL,
-  issue_id     TEXT NOT NULL,
-  offset_token TEXT NOT NULL,
-  event_id     TEXT NOT NULL,
-  sequence     INTEGER NOT NULL
-);
+${COMMAND_RECEIPTS_SCHEMA}
 CREATE TABLE IF NOT EXISTS source_state_rows (
   source_id    TEXT NOT NULL,
   partition_id TEXT NOT NULL,
@@ -79,14 +84,33 @@ interface ProgressRow {
 interface ReceiptRow {
   readonly command_id: string;
   readonly workspace_id: string;
-  readonly issue_id: string;
-  readonly offset_token: string;
+  readonly command_kind: "create-issue" | "change-status";
+  readonly target_id: string;
+  readonly request_hash: string;
   readonly event_id: string;
-  readonly sequence: number;
+  readonly event_sequence: number;
+  readonly event_offset: string;
 }
 
 interface StateProgressRow {
   readonly checkpoint: string | null;
+}
+
+interface TableInfoRow {
+  readonly name: string;
+}
+
+/**
+ * Slice 1 receipts lack canonical intent. Replace only that application table;
+ * accepted commands remain recoverable from the canonical issue-event source.
+ */
+function migrateCommandReceipts(database: Database): void {
+  const columns = database.query<TableInfoRow, []>("PRAGMA table_info(command_receipts)").all();
+  if (columns.some((column) => column.name === "request_hash")) return;
+  database.transaction(() => {
+    database.exec("DROP TABLE command_receipts");
+    database.exec(COMMAND_RECEIPTS_SCHEMA);
+  })();
 }
 
 /** Wrap one synchronous SQLite operation as a typed failure rather than a throw. */
@@ -117,6 +141,7 @@ export const sqliteLayer = (options: SqliteStoreOptions): Layer.Layer<IssueStore
         database.exec("PRAGMA journal_mode = WAL");
         database.exec("PRAGMA foreign_keys = ON");
         database.exec(SCHEMA);
+        migrateCommandReceipts(database);
         return database;
       }),
       (database) => Effect.sync(() => database.close(false)),
@@ -150,13 +175,17 @@ function service(database: Database): IssueStoreService {
     "INSERT INTO view_progress (workspace_id, published) VALUES (?, ?)" +
       " ON CONFLICT (workspace_id) DO UPDATE SET published = excluded.published",
   );
-  const selectReceipt = database.query<ReceiptRow, [string]>(
-    "SELECT * FROM command_receipts WHERE command_id = ?",
+  const selectReceipt = database.query<ReceiptRow, [string, string]>(
+    "SELECT * FROM command_receipts WHERE workspace_id = ? AND command_id = ?",
   );
-  const insertReceipt = database.query<never, [string, string, string, string, string, number]>(
+  const insertReceipt = database.query<
+    never,
+    [string, string, string, string, string, string, number, string]
+  >(
     "INSERT INTO command_receipts" +
-      " (command_id, workspace_id, issue_id, offset_token, event_id, sequence)" +
-      " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (command_id) DO NOTHING",
+      " (workspace_id, command_id, command_kind, target_id, request_hash," +
+      " event_id, event_sequence, event_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?)" +
+      " ON CONFLICT (workspace_id, command_id) DO NOTHING",
   );
   const selectStateProgress = database.query<StateProgressRow, [string, string]>(
     "SELECT checkpoint FROM source_progress WHERE source_id = ? AND partition_id = ?",
@@ -238,29 +267,52 @@ function service(database: Database): IssueStoreService {
     ) {
       yield* sqlite("markPublished", () => upsertPublished.run(workspaceId, position));
     }),
-    receipt: Effect.fn("IssueStore.receipt")(function* (commandId: string) {
-      const row = yield* sqlite("receipt", () => selectReceipt.get(commandId));
+    receipt: Effect.fn("IssueStore.receipt")(function* (workspaceId: string, commandId: string) {
+      const row = yield* sqlite("receipt", () => selectReceipt.get(workspaceId, commandId));
       if (row === null || row === undefined) return undefined;
       return {
         commandId: row.command_id,
         workspaceId: row.workspace_id,
-        issueId: row.issue_id,
-        offset: row.offset_token,
+        commandKind: row.command_kind,
+        targetId: row.target_id,
+        requestHash: row.request_hash,
         eventId: row.event_id,
-        sequence: row.sequence,
+        eventSequence: row.event_sequence,
+        eventOffset: row.event_offset,
       } satisfies CommandReceipt;
     }),
     recordReceipt: Effect.fn("IssueStore.recordReceipt")(function* (receipt: CommandReceipt) {
       yield* sqlite("recordReceipt", () =>
         insertReceipt.run(
-          receipt.commandId,
           receipt.workspaceId,
-          receipt.issueId,
-          receipt.offset,
+          receipt.commandId,
+          receipt.commandKind,
+          receipt.targetId,
+          receipt.requestHash,
           receipt.eventId,
-          receipt.sequence,
+          receipt.eventSequence,
+          receipt.eventOffset,
         ),
       );
+      const stored = yield* sqlite("recordReceipt.verify", () =>
+        selectReceipt.get(receipt.workspaceId, receipt.commandId),
+      );
+      if (
+        stored === null ||
+        stored === undefined ||
+        stored.command_kind !== receipt.commandKind ||
+        stored.target_id !== receipt.targetId ||
+        stored.request_hash !== receipt.requestHash ||
+        stored.event_id !== receipt.eventId ||
+        stored.event_sequence !== receipt.eventSequence ||
+        stored.event_offset !== receipt.eventOffset
+      ) {
+        return yield* new CommandIdConflict({
+          workspaceId: receipt.workspaceId,
+          commandId: receipt.commandId,
+        });
+      }
+      return undefined;
     }),
     nextSequence: Effect.fn("IssueStore.nextSequence")(function* (workspaceId: string) {
       const row = yield* sqlite("nextSequence", () => selectProgress.get(workspaceId));

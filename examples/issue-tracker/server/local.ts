@@ -21,6 +21,7 @@ import {
   directProtocolClient,
   StreamProtocol,
   type StorageAdapter,
+  type StreamProtocolClient,
 } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import { Layer, ManagedRuntime } from "effect";
@@ -46,6 +47,8 @@ export interface LocalHostOptions {
   /** Put both the durable log and the maintained state on disk in this directory. */
   readonly databaseDirectory?: string;
   readonly deployment?: string;
+  /** Test/host adapter seam for transport fault injection around application calls. */
+  readonly applicationClient?: (client: StreamProtocolClient) => StreamProtocolClient;
 }
 
 export function createLocalHost(options: LocalHostOptions = {}) {
@@ -58,6 +61,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
         }));
   const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 5_000 });
   const client = directProtocolClient(protocol);
+  const applicationClient = options.applicationClient?.(client) ?? client;
   const gateway = createHttpHandler({ protocol, pathPrefix: "/streams" });
   const store =
     options.store ??
@@ -70,7 +74,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   const runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never> =
     ManagedRuntime.make(
       applicationLayer({
-        client,
+        client: applicationClient,
         protocol,
         gateway,
         store,
