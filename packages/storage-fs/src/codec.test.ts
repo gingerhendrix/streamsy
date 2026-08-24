@@ -102,6 +102,7 @@ describe("encodeEnvelope / decodeEnvelope", () => {
     // whose `b64` is not a string.
     expect(decodeEnvelope('{"offset":"o","timestamp":1}')).toBeNull();
     expect(decodeEnvelope('{"offset":"o","timestamp":1,"b64":5}')).toBeNull();
+    expect(decodeEnvelope('{"offset":"o","timestamp":"1","b64":"YQ=="}')).toBeNull();
   });
 });
 
@@ -131,6 +132,7 @@ describe("parseRecord", () => {
       JSON.stringify({ ...record, currentOffset: undefined }),
       JSON.stringify({ ...record, counter: "1" }),
       JSON.stringify({ ...record, config: { contentType: "text/plain" } }),
+      JSON.stringify({ ...record, config: { contentType: 1, createdAt: 7 } }),
       JSON.stringify({ ...record, lifecycle: [] }),
     ]) {
       expect(() => parseRecord(value)).toThrow(/corrupt record\.json/);
@@ -153,6 +155,7 @@ describe("parseProducers", () => {
       '{"p1":null}',
       '{"p1":"state"}',
       '{"p1":{"epoch":2}}',
+      '{"p1":{"epoch":"2","lastSeq":9}}',
       '{"p1":{"epoch":2,"lastSeq":null}}',
     ]) {
       expect(() => parseProducers(value)).toThrow(/corrupt producers\.json/);

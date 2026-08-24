@@ -24,7 +24,13 @@
 import { Buffer } from "node:buffer";
 import path from "node:path";
 import type { Offset, ProducerState, StoredMessage, StreamRecord } from "@streamsy/core";
-import { isJsonObject } from "./guards.ts";
+import {
+  isJsonNumber,
+  isJsonObject,
+  isJsonString,
+  type PersistedJson,
+  type PersistedJsonObject,
+} from "./guards.ts";
 
 export const JSON_CONTENT_TYPE = "application/json";
 
@@ -71,14 +77,14 @@ export function serializeRecord(record: StreamRecord): string {
  * left to the reader, exactly as they were before validation existed: a record
  * written by an older version that simply omits them stays readable.
  */
-function isStreamRecord(value: unknown): value is StreamRecord {
+function isStreamRecord(value: PersistedJson): value is PersistedJsonObject & StreamRecord {
   if (!isJsonObject(value)) return false;
-  if (typeof value.id !== "string") return false;
-  if (typeof value.currentOffset !== "string") return false;
-  if (typeof value.counter !== "number") return false;
+  if (!isJsonString(value.id)) return false;
+  if (!isJsonString(value.currentOffset)) return false;
+  if (!isJsonNumber(value.counter)) return false;
   if (!isJsonObject(value.config)) return false;
-  if (typeof value.config.contentType !== "string") return false;
-  if (typeof value.config.createdAt !== "number") return false;
+  if (!isJsonString(value.config.contentType)) return false;
+  if (!isJsonNumber(value.config.createdAt)) return false;
   return isJsonObject(value.lifecycle);
 }
 
@@ -92,7 +98,7 @@ function isStreamRecord(value: unknown): value is StreamRecord {
  * stream, which would present a corrupt stream as a fresh one.
  */
 export function parseRecord(text: string): StreamRecord {
-  const parsed: unknown = JSON.parse(text);
+  const parsed: PersistedJson = JSON.parse(text);
   if (!isStreamRecord(parsed)) {
     throw new Error("storage-fs: corrupt record.json: not a stream record");
   }
@@ -102,13 +108,11 @@ export function parseRecord(text: string): StreamRecord {
 /** Per-producer idempotency state, keyed by producer id (`producers.json`). */
 export type ProducerMap = Record<string, ProducerState>;
 
-function isProducerState(value: unknown): value is ProducerState {
-  return (
-    isJsonObject(value) && typeof value.epoch === "number" && typeof value.lastSeq === "number"
-  );
+function isProducerState(value: PersistedJson): value is PersistedJsonObject & ProducerState {
+  return isJsonObject(value) && isJsonNumber(value.epoch) && isJsonNumber(value.lastSeq);
 }
 
-function isProducerMap(value: unknown): value is ProducerMap {
+function isProducerMap(value: PersistedJson): value is PersistedJsonObject & ProducerMap {
   return isJsonObject(value) && Object.values(value).every(isProducerState);
 }
 
@@ -118,7 +122,7 @@ function isProducerMap(value: unknown): value is ProducerMap {
  * has never written", which would let a duplicate append through.
  */
 export function parseProducers(text: string): ProducerMap {
-  const parsed: unknown = JSON.parse(text);
+  const parsed: PersistedJson = JSON.parse(text);
   if (!isProducerMap(parsed)) {
     throw new Error("storage-fs: corrupt producers.json: not a producer map");
   }
@@ -128,7 +132,7 @@ export function parseProducers(text: string): ProducerMap {
 interface MessageEnvelope {
   offset: Offset;
   timestamp: number;
-  json?: unknown;
+  json?: PersistedJson;
   b64?: string;
 }
 
@@ -136,7 +140,7 @@ interface MessageEnvelope {
 export function encodeEnvelope(message: StoredMessage, contentType: string): string {
   if (isJsonContentType(contentType)) {
     try {
-      const json = JSON.parse(textDecoder.decode(message.data)) as unknown;
+      const json: PersistedJson = JSON.parse(textDecoder.decode(message.data));
       const envelope: MessageEnvelope = {
         offset: message.offset,
         timestamp: message.timestamp,
@@ -161,17 +165,15 @@ export function encodeEnvelope(message: StoredMessage, contentType: string): str
  * A line that is valid JSON but not an object (`null`, `123`, `[]`) fails here
  * rather than being indexed as one.
  */
-function isMessageEnvelope(value: unknown): value is MessageEnvelope {
-  return (
-    isJsonObject(value) && typeof value.offset === "string" && typeof value.timestamp === "number"
-  );
+function isMessageEnvelope(value: PersistedJson): value is PersistedJsonObject & MessageEnvelope {
+  return isJsonObject(value) && isJsonString(value.offset) && isJsonNumber(value.timestamp);
 }
 
 /** Decode one JSONL line back to a stored message, or `null` for a malformed line. */
 export function decodeEnvelope(line: string): StoredMessage | null {
   const trimmed = line.trim();
   if (trimmed.length === 0) return null;
-  let parsed: unknown;
+  let parsed: PersistedJson;
   try {
     parsed = JSON.parse(trimmed);
   } catch {
@@ -181,7 +183,7 @@ export function decodeEnvelope(line: string): StoredMessage | null {
   const envelope: MessageEnvelope = parsed;
 
   let data: Uint8Array;
-  if (typeof envelope.b64 === "string") {
+  if (isJsonString(envelope.b64)) {
     data = new Uint8Array(Buffer.from(envelope.b64, "base64"));
   } else if ("json" in envelope) {
     data = textEncoder.encode(JSON.stringify(envelope.json));

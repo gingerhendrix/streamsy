@@ -15,7 +15,14 @@
  * which is exactly the multi-writer model here.
  */
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
-import { isErrnoException, isJsonObject } from "./guards.ts";
+import {
+  isErrnoException,
+  isJsonNumber,
+  isJsonObject,
+  isJsonString,
+  type PersistedJson,
+  type PersistedJsonObject,
+} from "./guards.ts";
 
 export interface LockOptions {
   /** Max time to wait for the lock before giving up. Default 5000ms. */
@@ -49,10 +56,10 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-function isLockFileContents(value: unknown): value is LockFileContents {
+function isLockFileContents(value: PersistedJson): value is PersistedJsonObject & LockFileContents {
   if (!isJsonObject(value)) return false;
-  if (typeof value.pid !== "number" || typeof value.ts !== "number") return false;
-  return value.host === undefined || typeof value.host === "string";
+  if (!isJsonNumber(value.pid) || !isJsonNumber(value.ts)) return false;
+  return value.host === undefined || isJsonString(value.host);
 }
 
 /**
@@ -64,7 +71,7 @@ function isLockFileContents(value: unknown): value is LockFileContents {
  * aged-out nor dead-owned, and pin the lock forever.
  */
 function parseLockFile(raw: string): LockFileContents | null {
-  let parsed: unknown;
+  let parsed: PersistedJson;
   try {
     parsed = JSON.parse(raw);
   } catch {

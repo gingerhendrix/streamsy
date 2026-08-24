@@ -18,8 +18,29 @@
  * Anything else (a `SyntaxError` from a corrupt file, a validation error raised
  * by this package, a thrown non-error) is not an errno error and must propagate.
  */
-export function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && typeof error.code === "string";
+export function isErrnoException(cause: unknown): cause is NodeJS.ErrnoException {
+  return (
+    cause instanceof Error &&
+    "code" in cause &&
+    cause.code !== null &&
+    cause.code !== undefined &&
+    Object(cause.code) !== cause.code &&
+    cause.code.constructor === String
+  );
+}
+
+/** The complete value domain produced by parsing persisted JSON. */
+export type PersistedJson =
+  | null
+  | boolean
+  | number
+  | string
+  | PersistedJson[]
+  | PersistedJsonObject;
+
+/** A persisted JSON object with recursively validated JSON values. */
+export interface PersistedJsonObject {
+  readonly [key: string]: PersistedJson;
 }
 
 /**
@@ -27,6 +48,20 @@ export function isErrnoException(error: unknown): error is NodeJS.ErrnoException
  * persists may decode to. Arrays and `null` are excluded: both are objects to
  * `typeof`, and both would otherwise be indexed as records of named fields.
  */
-export function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isJsonObject(value: PersistedJson | undefined): value is PersistedJsonObject {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
+
+/** Whether a persisted property is a JSON string. */
+export function isJsonString(value: PersistedJson | undefined): value is string {
+  return (
+    value !== null && value !== undefined && Object(value) !== value && value.constructor === String
+  );
+}
+
+/** Whether a persisted property is a JSON number. */
+export function isJsonNumber(value: PersistedJson | undefined): value is number {
+  return (
+    value !== null && value !== undefined && Object(value) !== value && value.constructor === Number
+  );
 }
