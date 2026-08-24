@@ -14,9 +14,16 @@
   // for the whole repository, so they are disabled here to keep this inventory
   // limited to Effect diagnostics.
   "rules": {
-    "no-underscore-dangle": "off"
+    "no-underscore-dangle": "off",
+    "anti-slop-effect/no-service-constructor-imports": "error"
   },
   "env": {
     "builtin": true
-  }
+  },
+  "jsPlugins": [
+    {
+      "name": "anti-slop-effect",
+      "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
+    }
+  ]
 }

@@ -61,6 +61,7 @@
   },
   "devDependencies": {
     "@effect/tsgo": "0.36.5",
+    "@oxlint/plugins": "1.78.0",
     "oxfmt": "^0.48.0",
     "oxlint": "1.78.0",
     "oxlint-tsgolint": "7.0.2001",

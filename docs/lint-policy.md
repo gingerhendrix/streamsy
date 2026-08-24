@@ -5,9 +5,9 @@ architectural choice made per package, not a repository-wide style.
 
 ## General policy
 
-`.oxlintrc.json` holds the general TypeScript, Unicorn, Oxc, and Oxlint core
-policy with type-aware rules enabled. It applies to every source and test file
-in the repository, including the Effect-owned areas.
+`.oxlintrc.json` holds the general TypeScript, Unicorn, Oxc, Oxlint core, and
+vendored anti-slop policy with type-aware rules enabled. It applies to every
+source and test file in the repository, including the Effect-owned areas.
 
 ```bash
 bun run lint:general
@@ -16,8 +16,9 @@ bun run lint:general
 ## Effect policy
 
 `.oxlintrc.effect.json` extends the `@effect/tsgo` recommended preset and
-enables only the `effecttsgo` plugin. It runs against an explicit path
-allow-list, held in the `lint:effect` script:
+enables the `effecttsgo` plugin plus the Effect-specific vendored anti-slop
+plugin. It runs against an explicit path allow-list, held in the `lint:effect`
+script:
 
 - `packages/experimental`
 - `examples/hackernews-newest-stream`
