@@ -40,22 +40,31 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   const sink = yield* IssueSink;
 
   const before = yield* store.progress(workspaceId);
-  const suffix = yield* readSuffix(workspaceId, before.checkpoint);
+  const recovery = yield* store.takeRecoveryCheckpoint(workspaceId);
+  const suffix = yield* readSuffix(workspaceId, recovery?.sourceCursor ?? before.checkpoint);
 
   let checkpoint = before.checkpoint;
   let changes: readonly Change<IssueRow, string>[] = [];
 
   if (suffix.items.length > 0) {
     const keys = touchedKeys(issues.plan, suffix.items);
-    const current = yield* store.reducerStates(workspaceId, keys);
+    const current =
+      recovery === undefined
+        ? yield* store.reducerStates(workspaceId, keys)
+        : yield* restoreCheckpoint(recovery.entries);
     const result = yield* fold(current, suffix.items);
     changes = result.changes;
     checkpoint = suffix.cursor;
     yield* store.commit(workspaceId, {
+      expectedCheckpoint: before.checkpoint,
       checkpoint: suffix.cursor,
       rows: result.rows,
       nextSequence: suffix.maxSequence + 1,
+      changes,
     });
+    if ((suffix.maxSequence + 1) % 2 === 0) {
+      yield* store.saveCheckpoint(workspaceId, suffix.cursor);
+    }
   }
 
   // Publication is a separate durable step, so its progress is read again
@@ -190,3 +199,26 @@ const fold = (current: ReadonlyMap<string, IssueRow>, items: readonly JsonObject
         detail: cause instanceof Error ? cause.message : String(cause),
       }),
   });
+
+const restoreCheckpoint = (
+  entries: readonly {
+    readonly key: string | number | boolean | null | readonly JsonValue[];
+    readonly value: JsonValue;
+  }[],
+) =>
+  Effect.forEach(entries, (entry) =>
+    Effect.try({
+      try: () => {
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Checkpoint RowKey is a decoded closed union; this issue reducer accepts only its string arm.
+        if (typeof entry.key !== "string")
+          throw new TypeError("issue checkpoint key is not a string");
+        return [entry.key, decodeIssueRow(entry.value)] as const;
+      },
+      catch: (cause) =>
+        new MaintenanceFault({
+          view: issues.name,
+          phase: "decode",
+          detail: cause instanceof Error ? cause.message : String(cause),
+        }),
+    }),
+  ).pipe(Effect.map((rows) => new Map(rows)));

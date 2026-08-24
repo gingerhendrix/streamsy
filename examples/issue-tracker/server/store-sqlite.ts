@@ -1,26 +1,20 @@
-/**
- * The SQLite maintained-state store.
- *
- * One `bun:sqlite` database holds the maintained rows, the reducer state, the
- * source checkpoint, the published position, and the command receipts. The
- * advance is one transaction: rows, reducer state and the checkpoint commit
- * together, so a crash can leave the view behind the source but never ahead of
- * it, and never half-folded.
- *
- * The Durable Streams themselves live in their own storage adapter. This
- * database is the *view's* durable state, not the log's.
- */
+/** SQLite application boundary over the generic maintained-view store. */
 import { Database } from "bun:sqlite";
+import {
+  importLegacyIssueStore,
+  migrateViewStore,
+  sqliteService,
+} from "@streamsy/views-store/sqlite";
 import { Effect, Layer } from "effect";
-import type { IssueRow } from "../domain/issue.ts";
+import { planHash } from "@streamsy/views";
 import { decodeCatalogRow, type CatalogRow } from "../domain/catalog.ts";
+import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { CommandIdConflict, StoreRestorePoison, StoreUnavailable } from "./errors.ts";
 import {
   IssueStore,
-  restoreRow,
+  issueStoreAdapter,
   type CommandReceipt,
-  type CommitInput,
-  type IssueStoreService,
+  type IssueStoreBoundary,
 } from "./store.ts";
 
 const COMMAND_RECEIPTS_SCHEMA = `CREATE TABLE IF NOT EXISTS command_receipts (
@@ -35,23 +29,18 @@ const COMMAND_RECEIPTS_SCHEMA = `CREATE TABLE IF NOT EXISTS command_receipts (
   PRIMARY KEY (workspace_id, command_id)
 );`;
 
-const SCHEMA = `
+/** Slice 1 tables stay present so migration is recoverable and receipts remain app-owned. */
+const APPLICATION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS view_rows (
-  workspace_id TEXT NOT NULL,
-  row_key      TEXT NOT NULL,
-  value        TEXT NOT NULL,
+  workspace_id TEXT NOT NULL, row_key TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY (workspace_id, row_key)
 );
 CREATE TABLE IF NOT EXISTS reducer_state (
-  workspace_id TEXT NOT NULL,
-  row_key      TEXT NOT NULL,
-  value        TEXT NOT NULL,
+  workspace_id TEXT NOT NULL, row_key TEXT NOT NULL, value TEXT NOT NULL,
   PRIMARY KEY (workspace_id, row_key)
 );
 CREATE TABLE IF NOT EXISTS view_progress (
-  workspace_id  TEXT PRIMARY KEY,
-  checkpoint    TEXT,
-  published     TEXT,
+  workspace_id TEXT PRIMARY KEY, checkpoint TEXT, published TEXT,
   next_sequence INTEGER NOT NULL DEFAULT 0
 );
 ${COMMAND_RECEIPTS_SCHEMA}
@@ -70,17 +59,10 @@ CREATE TABLE IF NOT EXISTS source_progress (
 );
 `;
 
-interface ValueRow {
-  readonly row_key: string;
-  readonly value: string;
-}
-
 interface ProgressRow {
-  readonly checkpoint: string | null;
   readonly published: string | null;
   readonly next_sequence: number;
 }
-
 interface ReceiptRow {
   readonly command_id: string;
   readonly workspace_id: string;
@@ -94,6 +76,11 @@ interface ReceiptRow {
 
 interface StateProgressRow {
   readonly checkpoint: string | null;
+}
+
+interface ValueRow {
+  readonly row_key: string;
+  readonly value: string;
 }
 
 interface TableInfoRow {
@@ -113,7 +100,6 @@ function migrateCommandReceipts(database: Database): void {
   })();
 }
 
-/** Wrap one synchronous SQLite operation as a typed failure rather than a throw. */
 const sqlite = <A>(operation: string, run: () => A): Effect.Effect<A, StoreUnavailable> =>
   Effect.try({
     try: run,
@@ -128,10 +114,6 @@ export interface SqliteStoreOptions {
   readonly filename: string;
 }
 
-/**
- * Open the database for the lifetime of the layer's scope and close it on
- * release, so a host that disposes its runtime releases the file handle too.
- */
 export const sqliteLayer = (options: SqliteStoreOptions): Layer.Layer<IssueStore> =>
   Layer.effect(
     IssueStore,
@@ -140,40 +122,37 @@ export const sqliteLayer = (options: SqliteStoreOptions): Layer.Layer<IssueStore
         const database = new Database(options.filename, { create: true });
         database.exec("PRAGMA journal_mode = WAL");
         database.exec("PRAGMA foreign_keys = ON");
-        database.exec(SCHEMA);
+        database.exec(APPLICATION_SCHEMA);
         migrateCommandReceipts(database);
+        migrateViewStore(database);
+        importLegacyIssueStore(database, {
+          planName: issues.name,
+          planHash: planHash(issues.plan),
+          partition: "main",
+          sourceId: "issue-tracker.issue-events",
+          relationId: issues.name,
+          reducerId: issueLifecycle.ref.name,
+          reducerVersion: issueLifecycle.ref.version,
+        });
         return database;
       }),
       (database) => Effect.sync(() => database.close(false)),
-    ).pipe(Effect.map(service)),
+    ).pipe(
+      Effect.map((database) => issueStoreAdapter(sqliteService(database), boundary(database))),
+    ),
   );
 
-function service(database: Database): IssueStoreService {
+function boundary(database: Database): IssueStoreBoundary {
   const selectProgress = database.query<ProgressRow, [string]>(
-    "SELECT checkpoint, published, next_sequence FROM view_progress WHERE workspace_id = ?",
-  );
-  const selectState = database.query<ValueRow, [string, string]>(
-    "SELECT row_key, value FROM reducer_state WHERE workspace_id = ? AND row_key = ?",
-  );
-  const selectRows = database.query<ValueRow, [string]>(
-    "SELECT row_key, value FROM view_rows WHERE workspace_id = ? ORDER BY row_key",
-  );
-  const upsertRow = database.query<never, [string, string, string]>(
-    "INSERT INTO view_rows (workspace_id, row_key, value) VALUES (?, ?, ?)" +
-      " ON CONFLICT (workspace_id, row_key) DO UPDATE SET value = excluded.value",
-  );
-  const upsertState = database.query<never, [string, string, string]>(
-    "INSERT INTO reducer_state (workspace_id, row_key, value) VALUES (?, ?, ?)" +
-      " ON CONFLICT (workspace_id, row_key) DO UPDATE SET value = excluded.value",
-  );
-  const upsertCheckpoint = database.query<never, [string, string, number]>(
-    "INSERT INTO view_progress (workspace_id, checkpoint, next_sequence) VALUES (?, ?, ?)" +
-      " ON CONFLICT (workspace_id) DO UPDATE SET checkpoint = excluded.checkpoint," +
-      " next_sequence = MAX(view_progress.next_sequence, excluded.next_sequence)",
+    "SELECT published, next_sequence FROM view_progress WHERE workspace_id = ?",
   );
   const upsertPublished = database.query<never, [string, string]>(
     "INSERT INTO view_progress (workspace_id, published) VALUES (?, ?)" +
       " ON CONFLICT (workspace_id) DO UPDATE SET published = excluded.published",
+  );
+  const upsertSequence = database.query<never, [string, number]>(
+    "INSERT INTO view_progress (workspace_id, next_sequence) VALUES (?, ?)" +
+      " ON CONFLICT (workspace_id) DO UPDATE SET next_sequence = MAX(view_progress.next_sequence, excluded.next_sequence)",
   );
   const selectReceipt = database.query<ReceiptRow, [string, string]>(
     "SELECT * FROM command_receipts WHERE workspace_id = ? AND command_id = ?",
@@ -204,18 +183,6 @@ function service(database: Database): IssueStoreService {
       " ON CONFLICT (source_id, partition_id) DO UPDATE SET checkpoint = excluded.checkpoint",
   );
 
-  /**
-   * The atomic advance. `db.transaction` rolls back on a throw, so a failed
-   * row write cannot leave the checkpoint claiming work that did not land.
-   */
-  const commitTransaction = database.transaction((workspaceId: string, input: CommitInput) => {
-    for (const [key, row] of input.rows) {
-      const value = JSON.stringify(row);
-      upsertRow.run(workspaceId, key, value);
-      upsertState.run(workspaceId, key, value);
-    }
-    upsertCheckpoint.run(workspaceId, input.checkpoint, input.nextSequence);
-  });
   const commitStateTransaction = database.transaction(
     (
       sourceId: string,
@@ -230,124 +197,95 @@ function service(database: Database): IssueStoreService {
     },
   );
 
-  return IssueStore.of({
-    progress: Effect.fn("IssueStore.progress")(function* (workspaceId: string) {
-      const row = yield* sqlite("progress", () => selectProgress.get(workspaceId));
-      return {
-        checkpoint: row?.checkpoint ?? undefined,
-        published: row?.published ?? undefined,
-      };
-    }),
-    reducerStates: Effect.fn("IssueStore.reducerStates")(function* (
-      workspaceId: string,
-      keys: readonly string[],
-    ) {
-      const restored = new Map<string, IssueRow>();
-      for (const key of keys) {
-        const row = yield* sqlite("reducerStates", () => selectState.get(workspaceId, key));
-        if (row === null || row === undefined) continue;
-        restored.set(key, yield* restoreRow("reducer_state", key, row.value));
-      }
-      return restored;
-    }),
-    rows: Effect.fn("IssueStore.rows")(function* (workspaceId: string) {
-      const found = yield* sqlite("rows", () => selectRows.all(workspaceId));
-      const restored: IssueRow[] = [];
-      for (const row of found) {
-        restored.push(yield* restoreRow("view_rows", row.row_key, row.value));
-      }
-      return restored;
-    }),
-    commit: Effect.fn("IssueStore.commit")(function* (workspaceId: string, input: CommitInput) {
-      yield* sqlite("commit", () => commitTransaction(workspaceId, input));
-    }),
-    markPublished: Effect.fn("IssueStore.markPublished")(function* (
-      workspaceId: string,
-      position: string,
-    ) {
-      yield* sqlite("markPublished", () => upsertPublished.run(workspaceId, position));
-    }),
-    receipt: Effect.fn("IssueStore.receipt")(function* (workspaceId: string, commandId: string) {
-      const row = yield* sqlite("receipt", () => selectReceipt.get(workspaceId, commandId));
-      if (row === null || row === undefined) return undefined;
-      return {
-        commandId: row.command_id,
-        workspaceId: row.workspace_id,
-        commandKind: row.command_kind,
-        targetId: row.target_id,
-        requestHash: row.request_hash,
-        eventId: row.event_id,
-        eventSequence: row.event_sequence,
-        eventOffset: row.event_offset,
-      } satisfies CommandReceipt;
-    }),
-    recordReceipt: Effect.fn("IssueStore.recordReceipt")(function* (receipt: CommandReceipt) {
-      yield* sqlite("recordReceipt", () =>
-        insertReceipt.run(
-          receipt.workspaceId,
-          receipt.commandId,
-          receipt.commandKind,
-          receipt.targetId,
-          receipt.requestHash,
-          receipt.eventId,
-          receipt.eventSequence,
-          receipt.eventOffset,
-        ),
-      );
-      const stored = yield* sqlite("recordReceipt.verify", () =>
-        selectReceipt.get(receipt.workspaceId, receipt.commandId),
-      );
-      if (
-        stored === null ||
-        stored === undefined ||
-        stored.command_kind !== receipt.commandKind ||
-        stored.target_id !== receipt.targetId ||
-        stored.request_hash !== receipt.requestHash ||
-        stored.event_id !== receipt.eventId ||
-        stored.event_sequence !== receipt.eventSequence ||
-        stored.event_offset !== receipt.eventOffset
-      ) {
-        return yield* new CommandIdConflict({
-          workspaceId: receipt.workspaceId,
-          commandId: receipt.commandId,
-        });
-      }
-      return undefined;
-    }),
-    nextSequence: Effect.fn("IssueStore.nextSequence")(function* (workspaceId: string) {
-      const row = yield* sqlite("nextSequence", () => selectProgress.get(workspaceId));
-      return row?.next_sequence ?? 0;
-    }),
-    stateCheckpoint: Effect.fn("IssueStore.stateCheckpoint")(function* (
-      sourceId: string,
-      partitionId: string,
-    ) {
-      const row = yield* sqlite("stateCheckpoint", () =>
-        selectStateProgress.get(sourceId, partitionId),
-      );
-      return row?.checkpoint ?? undefined;
-    }),
-    stateRows: Effect.fn("IssueStore.stateRows")(function* (sourceId, collection, partitionId) {
-      const found = yield* sqlite("stateRows", () => selectSourceRows.all(sourceId, partitionId));
-      const restored: CatalogRow[] = [];
-      for (const row of found) {
-        const decoded = yield* Effect.try({
-          try: () => decodeCatalogRow(collection, JSON.parse(row.value)).row,
-          catch: (cause) =>
-            new StoreRestorePoison({
-              table: "source_state_rows",
-              key: row.row_key,
-              detail: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
-        restored.push(decoded);
-      }
-      return restored;
-    }),
-    commitState: Effect.fn("IssueStore.commitState")(function* (sourceId, partitionId, input) {
-      yield* sqlite("commitState", () =>
+  return {
+    progress: (workspaceId) =>
+      sqlite("progress", () => {
+        const row = selectProgress.get(workspaceId);
+        return { published: row?.published ?? undefined, nextSequence: row?.next_sequence ?? 0 };
+      }),
+    markPublished: (workspaceId, position) =>
+      sqlite("markPublished", () => {
+        upsertPublished.run(workspaceId, position);
+      }),
+    updateNextSequence: (workspaceId, nextSequence) =>
+      sqlite("updateNextSequence", () => {
+        upsertSequence.run(workspaceId, nextSequence);
+      }),
+    receipt: (workspaceId, commandId) =>
+      sqlite("receipt", () => {
+        const row = selectReceipt.get(workspaceId, commandId);
+        if (row === null) return undefined;
+        return {
+          commandId: row.command_id,
+          workspaceId: row.workspace_id,
+          commandKind: row.command_kind,
+          targetId: row.target_id,
+          requestHash: row.request_hash,
+          eventId: row.event_id,
+          eventSequence: row.event_sequence,
+          eventOffset: row.event_offset,
+        } satisfies CommandReceipt;
+      }),
+    recordReceipt: (receipt) =>
+      Effect.gen(function* () {
+        yield* sqlite("recordReceipt", () =>
+          insertReceipt.run(
+            receipt.workspaceId,
+            receipt.commandId,
+            receipt.commandKind,
+            receipt.targetId,
+            receipt.requestHash,
+            receipt.eventId,
+            receipt.eventSequence,
+            receipt.eventOffset,
+          ),
+        );
+        const stored = yield* sqlite("recordReceipt.verify", () =>
+          selectReceipt.get(receipt.workspaceId, receipt.commandId),
+        );
+        if (
+          stored === null ||
+          stored === undefined ||
+          stored.command_kind !== receipt.commandKind ||
+          stored.target_id !== receipt.targetId ||
+          stored.request_hash !== receipt.requestHash ||
+          stored.event_id !== receipt.eventId ||
+          stored.event_sequence !== receipt.eventSequence ||
+          stored.event_offset !== receipt.eventOffset
+        ) {
+          return yield* new CommandIdConflict({
+            workspaceId: receipt.workspaceId,
+            commandId: receipt.commandId,
+          });
+        }
+        return undefined;
+      }),
+    stateCheckpoint: (sourceId, partitionId) =>
+      sqlite(
+        "stateCheckpoint",
+        () => selectStateProgress.get(sourceId, partitionId)?.checkpoint ?? undefined,
+      ),
+    stateRows: (sourceId, collection, partitionId) =>
+      Effect.gen(function* () {
+        const found = yield* sqlite("stateRows", () => selectSourceRows.all(sourceId, partitionId));
+        const restored: CatalogRow[] = [];
+        for (const row of found) {
+          const decoded = yield* Effect.try({
+            try: () => decodeCatalogRow(collection, JSON.parse(row.value)).row,
+            catch: (cause) =>
+              new StoreRestorePoison({
+                table: "source_state_rows",
+                key: row.row_key,
+                detail: cause instanceof Error ? cause.message : String(cause),
+              }),
+          });
+          restored.push(decoded);
+        }
+        return restored;
+      }),
+    commitState: (sourceId, partitionId, input) =>
+      sqlite("commitState", () =>
         commitStateTransaction(sourceId, partitionId, input.checkpoint, input.rows),
-      );
-    }),
-  });
+      ),
+  };
 }

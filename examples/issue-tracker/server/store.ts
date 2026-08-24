@@ -1,24 +1,37 @@
 /**
  * Maintained state, as a service.
  *
- * The store owns four durable things for one workspace:
+ * The adapter presents the Slice 1 application contract over generic
+ * `ViewStore` state plus application-owned command bookkeeping:
  *
- * - `view_rows`     — the maintained output of `issue-tracker.issues`;
- * - `reducer_state` — the fold state of `issue-tracker.issue-lifecycle`;
- * - `progress`      — the consumed source checkpoint and the published position;
- * - `receipts`      — one row per accepted `commandId`.
+ * - generic relation rows and reducer state;
+ * - generic source progress, change history, and reducer checkpoints;
+ * - application publication progress and source sequence allocation;
+ * - application command receipts.
  *
  * Row and state are equal values today, because this reducer's state *is* the
  * published row. They are still stored apart: a reducer whose state carries
  * bookkeeping the sink must not publish is the normal case, and collapsing the
  * two now would hide that seam behind a coincidence.
  *
- * Both values are stored as JSON text and decoded through the declared Schema
- * on the way out. A durable value that no longer decodes becomes a typed
+ * Generic JSON values are decoded through the declared Schema on the way out.
+ * A durable value that no longer decodes becomes a typed
  * {@link StoreRestorePoison} rather than a row the board would serve — the same
  * law `issue-tracker-projections` established for its State restores.
  */
-import { Context, Effect, Layer } from "effect";
+import {
+  makeMemoryBacking,
+  memoryService,
+  type Checkpoint,
+  type JsonValue,
+  type StoredChange,
+  type StoreError,
+  type ViewStoreService,
+} from "@streamsy/views-store";
+import { Clock, Context, Effect, Layer } from "effect";
+import { planHash } from "@streamsy/views";
+import type { Change } from "@streamsy/views-ir";
+import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
 import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
 import { CommandIdConflict, StoreRestorePoison, StoreUnavailable } from "./errors.ts";
@@ -45,6 +58,7 @@ export interface CommandReceipt {
 
 /** One atomic advance of the maintained view. */
 export interface CommitInput {
+  readonly expectedCheckpoint: string | undefined;
   readonly checkpoint: string;
   /** Final reducer state per touched key; also the maintained row. */
   readonly rows: ReadonlyMap<string, IssueRow>;
@@ -56,6 +70,7 @@ export interface CommitInput {
    * process happened to hold.
    */
   readonly nextSequence: number;
+  readonly changes: readonly Change<IssueRow, string>[];
 }
 
 export interface StateCommitInput {
@@ -106,6 +121,14 @@ export interface IssueStoreService {
     partitionId: string,
     input: StateCommitInput,
   ) => Effect.Effect<void, StoreUnavailable>;
+  /** The first call in one process returns the latest durable recovery anchor. */
+  readonly takeRecoveryCheckpoint: (
+    workspaceId: string,
+  ) => Effect.Effect<Checkpoint | undefined, StoreUnavailable | StoreRestorePoison>;
+  readonly saveCheckpoint: (
+    workspaceId: string,
+    sourceCursor: string,
+  ) => Effect.Effect<void, StoreUnavailable | StoreRestorePoison>;
 }
 
 export class IssueStore extends Context.Service<IssueStore, IssueStoreService>()(
@@ -129,9 +152,6 @@ export const restoreRow = (
   });
 
 interface WorkspaceMemory {
-  rows: Map<string, string>;
-  state: Map<string, string>;
-  checkpoint?: string;
   published?: string;
   nextSequence: number;
 }
@@ -139,6 +159,30 @@ interface WorkspaceMemory {
 interface StateSourceMemory {
   readonly rows: Map<string, string>;
   checkpoint?: string;
+}
+
+export interface IssueStoreBoundary {
+  readonly progress: (
+    workspaceId: string,
+  ) => Effect.Effect<{ published?: string; nextSequence: number }, StoreUnavailable>;
+  readonly markPublished: (
+    workspaceId: string,
+    position: string,
+  ) => Effect.Effect<void, StoreUnavailable>;
+  readonly updateNextSequence: (
+    workspaceId: string,
+    nextSequence: number,
+  ) => Effect.Effect<void, StoreUnavailable>;
+  readonly receipt: (
+    workspaceId: string,
+    commandId: string,
+  ) => Effect.Effect<CommandReceipt | undefined, StoreUnavailable>;
+  readonly recordReceipt: (
+    receipt: CommandReceipt,
+  ) => Effect.Effect<void, StoreUnavailable | CommandIdConflict>;
+  readonly stateCheckpoint: IssueStoreService["stateCheckpoint"];
+  readonly stateRows: IssueStoreService["stateRows"];
+  readonly commitState: IssueStoreService["commitState"];
 }
 
 export interface MemoryStoreOptions {
@@ -162,19 +206,15 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
     const workspaces = new Map<string, WorkspaceMemory>();
     const receipts = new Map<string, CommandReceipt>();
     const stateSources = new Map<string, StateSourceMemory>();
+    const viewStore = memoryService(makeMemoryBacking());
 
     const workspace = (workspaceId: string): WorkspaceMemory => {
       const existing = workspaces.get(workspaceId);
       if (existing !== undefined) return existing;
-      const created: WorkspaceMemory = { rows: new Map(), state: new Map(), nextSequence: 0 };
-      for (const [key, json] of Object.entries(options.preload?.[workspaceId] ?? {})) {
-        created.rows.set(key, json);
-        created.state.set(key, json);
-      }
+      const created: WorkspaceMemory = { nextSequence: 0 };
       workspaces.set(workspaceId, created);
       return created;
     };
-
     const stateSource = (sourceId: string, partitionId: string): StateSourceMemory => {
       const id = `${sourceId}\u0000${partitionId}`;
       const existing = stateSources.get(id);
@@ -184,99 +224,237 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
       return created;
     };
 
-    return IssueStore.of({
-      progress: Effect.fn("IssueStore.progress")((workspaceId: string) =>
+    const boundary: IssueStoreBoundary = {
+      progress: (workspaceId) =>
+        Effect.sync(() => ({
+          published: workspace(workspaceId).published,
+          nextSequence: workspace(workspaceId).nextSequence,
+        })),
+      markPublished: (workspaceId, position) =>
         Effect.sync(() => {
-          const memory = workspace(workspaceId);
-          return { checkpoint: memory.checkpoint, published: memory.published };
+          workspace(workspaceId).published = position;
         }),
-      ),
-      reducerStates: Effect.fn("IssueStore.reducerStates")(function* (
-        workspaceId: string,
-        keys: readonly string[],
-      ) {
-        const memory = workspace(workspaceId);
-        const restored = new Map<string, IssueRow>();
-        for (const key of keys) {
-          const json = memory.state.get(key);
-          if (json === undefined) continue;
-          restored.set(key, yield* restoreRow("reducer_state", key, json));
-        }
-        return restored;
-      }),
-      rows: Effect.fn("IssueStore.rows")(function* (workspaceId: string) {
-        const memory = workspace(workspaceId);
-        const restored: IssueRow[] = [];
-        for (const [key, json] of [...memory.rows].toSorted(([left], [right]) =>
-          left.localeCompare(right),
-        )) {
-          restored.push(yield* restoreRow("view_rows", key, json));
-        }
-        return restored;
-      }),
-      commit: Effect.fn("IssueStore.commit")((workspaceId: string, input: CommitInput) =>
+      updateNextSequence: (workspaceId, nextSequence) =>
         Effect.sync(() => {
-          const memory = workspace(workspaceId);
-          for (const [key, row] of input.rows) {
-            const json = JSON.stringify(row);
-            memory.rows.set(key, json);
-            memory.state.set(key, json);
-          }
-          memory.checkpoint = input.checkpoint;
-          memory.nextSequence = Math.max(memory.nextSequence, input.nextSequence);
+          const state = workspace(workspaceId);
+          state.nextSequence = Math.max(state.nextSequence, nextSequence);
         }),
-      ),
-      markPublished: Effect.fn("IssueStore.markPublished")(
-        (workspaceId: string, position: string) =>
-          Effect.sync(() => {
-            workspace(workspaceId).published = position;
-          }),
-      ),
-      receipt: Effect.fn("IssueStore.receipt")((workspaceId: string, commandId: string) =>
+      receipt: (workspaceId, commandId) =>
         Effect.sync(() => receipts.get(`${workspaceId}\u0000${commandId}`)),
-      ),
-      recordReceipt: Effect.fn("IssueStore.recordReceipt")(function* (receipt: CommandReceipt) {
-        const key = `${receipt.workspaceId}\u0000${receipt.commandId}`;
-        const existing = receipts.get(key);
-        if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(receipt)) {
-          return yield* new CommandIdConflict({
-            workspaceId: receipt.workspaceId,
-            commandId: receipt.commandId,
-          });
-        }
-        receipts.set(key, receipt);
-        return undefined;
-      }),
-      nextSequence: Effect.fn("IssueStore.nextSequence")((workspaceId: string) =>
-        Effect.sync(() => workspace(workspaceId).nextSequence),
-      ),
-      stateCheckpoint: Effect.fn("IssueStore.stateCheckpoint")((sourceId, partitionId) =>
+      recordReceipt: (receipt) =>
+        Effect.gen(function* () {
+          const key = `${receipt.workspaceId}\u0000${receipt.commandId}`;
+          const existing = receipts.get(key);
+          if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(receipt)) {
+            return yield* new CommandIdConflict({
+              workspaceId: receipt.workspaceId,
+              commandId: receipt.commandId,
+            });
+          }
+          receipts.set(key, receipt);
+          return undefined;
+        }),
+      stateCheckpoint: (sourceId, partitionId) =>
         Effect.sync(() => stateSource(sourceId, partitionId).checkpoint),
-      ),
-      stateRows: Effect.fn("IssueStore.stateRows")(function* (sourceId, collection, partitionId) {
-        const restored: CatalogRow[] = [];
-        for (const [key, json] of [...stateSource(sourceId, partitionId).rows].toSorted(
-          ([left], [right]) => left.localeCompare(right),
-        )) {
-          const decoded = yield* Effect.try({
-            try: () => decodeCatalogRow(collection, JSON.parse(json)).row,
-            catch: (cause) =>
-              new StoreRestorePoison({
-                table: "source_state_rows",
-                key,
-                detail: cause instanceof Error ? cause.message : String(cause),
-              }),
-          });
-          restored.push(decoded);
-        }
-        return restored;
-      }),
-      commitState: Effect.fn("IssueStore.commitState")((sourceId, partitionId, input) =>
+      stateRows: (sourceId, collection, partitionId) =>
+        Effect.gen(function* () {
+          const restored: CatalogRow[] = [];
+          for (const [key, json] of [...stateSource(sourceId, partitionId).rows].toSorted(
+            ([left], [right]) => left.localeCompare(right),
+          )) {
+            const decoded = yield* Effect.try({
+              try: () => decodeCatalogRow(collection, JSON.parse(json)).row,
+              catch: (cause) =>
+                new StoreRestorePoison({
+                  table: "source_state_rows",
+                  key,
+                  detail: cause instanceof Error ? cause.message : String(cause),
+                }),
+            });
+            restored.push(decoded);
+          }
+          return restored;
+        }),
+      commitState: (sourceId, partitionId, input) =>
         Effect.sync(() => {
           const state = stateSource(sourceId, partitionId);
           for (const [key, row] of input.rows) state.rows.set(key, JSON.stringify(row));
           state.checkpoint = input.checkpoint;
         }),
-      ),
-    });
+    };
+    return issueStoreAdapter(viewStore, boundary, options.preload);
   });
+
+export function issueStoreAdapter(
+  viewStore: ViewStoreService,
+  boundary: IssueStoreBoundary,
+  preload: MemoryStoreOptions["preload"] = {},
+): IssueStoreService {
+  const recoveryTaken = new Set<string>();
+  return IssueStore.of({
+    progress: Effect.fn("IssueStore.progress")(function* (workspaceId: string) {
+      const checkpoint = yield* mapStoreUnavailable(
+        "progress",
+        viewStore.sourceProgress(identity(workspaceId)),
+      );
+      const app = yield* boundary.progress(workspaceId);
+      return { checkpoint, published: app.published };
+    }),
+    reducerStates: Effect.fn("IssueStore.reducerStates")(function* (workspaceId, keys) {
+      const restored = new Map<string, IssueRow>();
+      for (const key of keys) {
+        const planted = preload?.[workspaceId]?.[key];
+        if (planted !== undefined) {
+          restored.set(key, yield* restoreRow("reducer_state", key, planted));
+          continue;
+        }
+        const value = yield* mapStoreError(
+          "reducerStates",
+          viewStore.getReducerState(reducerRef(workspaceId), key),
+        );
+        if (value !== undefined)
+          restored.set(key, yield* decodeStoredRow("reducer_state", key, value));
+      }
+      return restored;
+    }),
+    rows: Effect.fn("IssueStore.rows")(function* (workspaceId) {
+      const snapshot = yield* mapStoreError(
+        "rows",
+        viewStore.snapshotRows(relationRef(workspaceId)),
+      );
+      const rows: IssueRow[] = [];
+      for (const row of snapshot.rows)
+        rows.push(yield* decodeStoredRow("view_rows", JSON.stringify(row.key), row.value));
+      for (const [key, json] of Object.entries(preload?.[workspaceId] ?? {})) {
+        if (!snapshot.rows.some((row) => row.key === key))
+          rows.push(yield* restoreRow("view_rows", key, json));
+      }
+      return rows.toSorted((left, right) => left.issueId.localeCompare(right.issueId));
+    }),
+    commit: Effect.fn("IssueStore.commit")(function* (workspaceId, input) {
+      yield* mapStoreUnavailable(
+        "commit",
+        viewStore.commit(
+          {
+            identity: identity(workspaceId),
+            expectedCursor: input.expectedCheckpoint,
+            afterExclusiveCursor: input.checkpoint,
+            batchId: input.checkpoint,
+            committedAtMs: input.nextSequence,
+            rows: [...input.rows].map(([key, row]) => ({
+              kind: "put" as const,
+              namespace: relationRef(workspaceId),
+              key,
+              value: encodeRow(row),
+            })),
+            reducerStates: [...input.rows].map(([key, row]) => ({
+              kind: "put" as const,
+              namespace: reducerRef(workspaceId),
+              key,
+              value: encodeRow(row),
+            })),
+            changes: input.changes.map(encodeChange),
+          },
+          { keepLastBatches: 256 },
+        ),
+      );
+      yield* boundary.updateNextSequence(workspaceId, input.nextSequence);
+    }),
+    markPublished: boundary.markPublished,
+    receipt: boundary.receipt,
+    recordReceipt: boundary.recordReceipt,
+    nextSequence: Effect.fn("IssueStore.nextSequence")(function* (workspaceId) {
+      return (yield* boundary.progress(workspaceId)).nextSequence;
+    }),
+    takeRecoveryCheckpoint: Effect.fn("IssueStore.takeRecoveryCheckpoint")(function* (workspaceId) {
+      if (recoveryTaken.has(workspaceId)) return undefined;
+      recoveryTaken.add(workspaceId);
+      return yield* mapStoreError(
+        "loadCheckpoint",
+        viewStore.loadCheckpoint(checkpointDescriptor(workspaceId)),
+      );
+    }),
+    saveCheckpoint: Effect.fn("IssueStore.saveCheckpoint")(function* (workspaceId, sourceCursor) {
+      const snapshot = yield* mapStoreError(
+        "checkpointRows",
+        viewStore.snapshotRows(relationRef(workspaceId)),
+      );
+      const createdAtMs = yield* Clock.currentTimeMillis;
+      yield* mapStoreError(
+        "saveCheckpoint",
+        viewStore.saveCheckpoint({
+          ...checkpointDescriptor(workspaceId),
+          sourceCursor,
+          createdAtMs,
+          entries: snapshot.rows,
+        }),
+      );
+    }),
+    stateCheckpoint: boundary.stateCheckpoint,
+    stateRows: boundary.stateRows,
+    commitState: boundary.commitState,
+  });
+}
+
+const PLAN_HASH = planHash(issues.plan);
+const identity = (workspaceId: string) => ({
+  planName: issues.name,
+  planHash: PLAN_HASH,
+  partition: workspaceId,
+  sourceId: "issue-tracker.issue-events",
+});
+const relationRef = (workspaceId: string) => ({ ...identity(workspaceId), id: issues.name });
+const reducerRef = (workspaceId: string) => ({
+  ...identity(workspaceId),
+  id: issueLifecycle.ref.name,
+});
+const checkpointDescriptor = (workspaceId: string) => ({
+  ...identity(workspaceId),
+  reducerId: issueLifecycle.ref.name,
+  reducerVersion: issueLifecycle.ref.version,
+});
+
+function encodeRow(row: IssueRow): JsonValue {
+  return {
+    issueId: row.issueId,
+    workspaceId: row.workspaceId,
+    projectId: row.projectId,
+    title: row.title,
+    status: row.status,
+    updatedAt: row.updatedAt,
+  };
+}
+function encodeChange(change: Change<IssueRow, string>): StoredChange {
+  if (change.kind === "enter")
+    return { ...change, relationId: issues.name, after: encodeRow(change.after) };
+  if (change.kind === "update")
+    return {
+      ...change,
+      relationId: issues.name,
+      before: encodeRow(change.before),
+      after: encodeRow(change.after),
+    };
+  return { ...change, relationId: issues.name, before: encodeRow(change.before) };
+}
+const decodeStoredRow = (table: string, key: string, value: JsonValue) =>
+  Effect.try({
+    try: () => decodeIssueRow(value),
+    catch: (cause) =>
+      new StoreRestorePoison({
+        table,
+        key,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+const mapStoreError = <A>(operation: string, effect: Effect.Effect<A, StoreError>) =>
+  effect.pipe(
+    Effect.mapError((error) =>
+      error._tag === "ViewStateRestorePoison"
+        ? new StoreRestorePoison({ table: error.table, key: error.key, detail: error.detail })
+        : new StoreUnavailable({ operation, detail: JSON.stringify(error) }),
+    ),
+  );
+const mapStoreUnavailable = <A>(operation: string, effect: Effect.Effect<A, StoreError>) =>
+  effect.pipe(
+    Effect.mapError((error) => new StoreUnavailable({ operation, detail: JSON.stringify(error) })),
+  );
