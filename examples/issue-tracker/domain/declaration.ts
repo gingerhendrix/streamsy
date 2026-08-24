@@ -9,8 +9,7 @@
  */
 import { IssueEvent, IssueRow } from "./issue.ts";
 import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
-import { from, reducer, scope, source, stateSink, view } from "../views/dsl.ts";
-import { selectors } from "../views/expression.ts";
+import { from, reducer, scope, selectors, source, stateSink, view } from "@streamsy/views";
 
 /** Selectors over one canonical fact, the fold state, and the maintained row. */
 const x = selectors<IssueEventType, IssueEventType, IssueRowType>();

@@ -166,7 +166,7 @@ export type RelationExpression<Row = unknown> =
 export interface TopSpec {
   readonly by: readonly SortTerm[];
   readonly limit: number | TypedExpression<number>;
-  readonly partitionBy?: readonly TypedExpression<unknown>[];
+  readonly partitionBy?: readonly Expression[];
 }
 
 export interface JoinSpec {
@@ -181,26 +181,24 @@ export interface RelationBuilder<Row> {
     fields: Fields,
   ) => RelationBuilder<Selected<Fields>>;
   readonly keyBy: <Key extends RowKey>(key: TypedExpression<Key>) => RelationBuilder<Row>;
-  readonly join: <Right, Alias extends string>(
-    other: SourceDeclarationFor<Right> | RelationBuilder<Right>,
+  readonly join: <S extends Schema.Top, Alias extends string>(
+    other: SourceDeclaration<S> | RelationBuilder<S["Type"]>,
     spec: JoinSpec & { readonly as: Alias },
-  ) => RelationBuilder<Row & Record<Alias, Right>>;
-  readonly leftJoin: <Right, Alias extends string>(
-    other: SourceDeclarationFor<Right> | RelationBuilder<Right>,
+  ) => RelationBuilder<Row & Record<Alias, S["Type"]>>;
+  readonly leftJoin: <S extends Schema.Top, Alias extends string>(
+    other: SourceDeclaration<S> | RelationBuilder<S["Type"]>,
     spec: JoinSpec & { readonly as: Alias },
-  ) => RelationBuilder<Row & Partial<Record<Alias, Right>>>;
+  ) => RelationBuilder<Row & Partial<Record<Alias, S["Type"]>>>;
   readonly groupBy: <Fields extends Readonly<Record<string, Expression>>>(
     fields: Fields,
   ) => GroupedBuilder<Selected<Fields>>;
   readonly top: (spec: TopSpec) => RelationBuilder<Row>;
-  readonly reduceByKey: (spec: {
+  readonly reduceByKey: <State extends Schema.Top>(spec: {
     readonly key: Expression;
     readonly order: Expression;
-    readonly reducer: ReducerDeclaration;
-  }) => RelationBuilder<unknown>;
+    readonly reducer: ReducerDeclaration<State>;
+  }) => RelationBuilder<State["Type"]>;
 }
-
-type SourceDeclarationFor<Row> = SourceDeclaration<Schema.Top> & { readonly __row?: Row };
 
 export interface GroupedBuilder<Group> {
   readonly aggregate: <
@@ -211,7 +209,7 @@ export interface GroupedBuilder<Group> {
 }
 
 const asExpression = <Row>(
-  input: SourceDeclarationFor<Row> | RelationBuilder<Row>,
+  input: SourceDeclaration<Schema.Top> | RelationBuilder<Row>,
 ): RelationExpression<Row> =>
   "expression" in input ? input.expression : deepFreeze({ kind: "source-relation", source: input });
 
@@ -224,7 +222,7 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
     select: (fields: Readonly<Record<string, Expression>>) =>
       builder(deepFreeze({ kind: "project", input: expression, fields })) as never,
     keyBy: (key: Expression) => builder(deepFreeze({ kind: "key", input: expression, key })),
-    join: (other: SourceDeclarationFor<unknown> | RelationBuilder<unknown>, spec: JoinSpec) =>
+    join: (other: SourceDeclaration<Schema.Top> | RelationBuilder<unknown>, spec: JoinSpec) =>
       builder(
         deepFreeze({
           kind: "inner-join",
@@ -234,7 +232,7 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
           rightAlias: spec.as,
         }),
       ) as never,
-    leftJoin: (other: SourceDeclarationFor<unknown> | RelationBuilder<unknown>, spec: JoinSpec) =>
+    leftJoin: (other: SourceDeclaration<Schema.Top> | RelationBuilder<unknown>, spec: JoinSpec) =>
       builder(
         deepFreeze({
           kind: "left-join",

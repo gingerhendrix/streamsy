@@ -26,6 +26,7 @@ interface CommonOperations<T> {
   readonly [ExpressionType]?: T;
   readonly eq: (right: LiteralOperand<T>) => TypedExpression<boolean>;
   readonly ne: (right: LiteralOperand<T>) => TypedExpression<boolean>;
+  readonly in: (...values: readonly LiteralOperand<T>[]) => TypedExpression<boolean>;
 }
 
 type SortOperations<T> = undefined extends T
@@ -114,6 +115,7 @@ const sort = (expression: Expression, direction: SortTerm["direction"]): SortTer
 const operations = new Set([
   "eq",
   "ne",
+  "in",
   "gt",
   "gte",
   "lt",
@@ -141,6 +143,9 @@ function decorate<T>(node: Expression): TypedExpression<T> {
           return (right: LiteralOperand<T>) => binary<boolean>("equal", target, operand(right));
         case "ne":
           return (right: LiteralOperand<T>) => binary<boolean>("not-equal", target, operand(right));
+        case "in":
+          return (...values: readonly LiteralOperand<T>[]) =>
+            variadic<boolean>("in", [target, ...values.map(operand)]);
         case "gt":
           return (right: LiteralOperand<T>) =>
             binary<boolean>("greater-than", target, operand(right));
@@ -195,10 +200,10 @@ const reference = <T>(scope: ReferenceScope, path: readonly string[]): TypedExpr
 export const literal = <T extends JsonValue>(value: T): TypedExpression<T> =>
   decorate<T>(Object.freeze({ kind: "literal", value }));
 
-export interface Selectors<Row, Event, State, Parameter> {
+export interface Selectors<Row, Event, State, Parameter, Right> {
   readonly row: Reference<Row>;
   readonly left: Reference<Row>;
-  readonly right: Reference<Row>;
+  readonly right: Reference<Right>;
   readonly keyRef: Reference<unknown>;
   readonly event: Reference<Event>;
   readonly state: Reference<State>;
@@ -215,16 +220,17 @@ export interface Selectors<Row, Event, State, Parameter> {
 
 type RowKeyValue = boolean | number | string;
 
-export const selectors = <Row, Event = Row, State = Row, Parameter = never>(): Selectors<
+export const selectors = <
   Row,
-  Event,
-  State,
-  Parameter
-> =>
+  Event = Row,
+  State = Row,
+  Parameter = never,
+  Right = Row,
+>(): Selectors<Row, Event, State, Parameter, Right> =>
   Object.freeze({
     row: reference<Row>("row", []),
     left: reference<Row>("left", []),
-    right: reference<Row>("right", []),
+    right: reference<Right>("right", []),
     keyRef: reference<unknown>("key", []),
     event: reference<Event>("event", []),
     state: reference<State>("state", []),
@@ -238,6 +244,14 @@ export const selectors = <Row, Event = Row, State = Row, Parameter = never>(): S
       )[]
     ) => variadic<readonly RowKeyValue[]>("key", parts),
   });
+
+export const joinSelectors = <Left, Right>(): {
+  readonly left: Reference<Left>;
+  readonly right: Reference<Right>;
+} => {
+  const roots = selectors<Left, Left, Left, never, Right>();
+  return Object.freeze({ left: roots.left, right: roots.right });
+};
 
 export const parameterReference = <T>(name: string): TypedExpression<T> =>
   reference<T>("parameter", [name]);

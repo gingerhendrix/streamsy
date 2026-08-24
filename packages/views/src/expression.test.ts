@@ -30,6 +30,15 @@ describe("expression construction", () => {
         },
       ],
     });
+    expect(x.row.id.in("issue-1", "issue-2")).toEqual({
+      kind: "variadic",
+      operator: "in",
+      operands: [
+        { kind: "reference", scope: "row", path: ["id"] },
+        { kind: "literal", value: "issue-1" },
+        { kind: "literal", value: "issue-2" },
+      ],
+    });
   });
 
   it("keeps optional presence, value and fallback explicit", () => {

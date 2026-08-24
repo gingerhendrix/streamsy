@@ -54,12 +54,12 @@ export const boardIssues = stateSink("issue-tracker.board-issues", {
 });
 ```
 
-Everything it builds is frozen, inert data. `views/dsl.ts` lowers it to a
-serializable `RelationPlan`, `views/plan.ts` hashes that plan canonically, and
+Everything it builds is frozen, inert data. `@streamsy/views` lowers it to a
+serializable `RelationPlan`, hashes that plan canonically, and
 `views/engine.ts` is a pure interpreter of the plan. `GET /health` reports the
 plan hash, so two hosts can be compared by inspection.
 
-`views/contracts.ts` adapts the `@streamsy/views-ir` draft from the
+`@streamsy/views-ir` supplies the shared JSON-only contract promoted from the
 `contracts-spike-minimal` stream (commit `11742f6`), narrowed to the vocabulary
 this slice executes. Nodes the slice does not run — filter, project, key, left
 join, grouped aggregate, top-N — are deliberately absent rather than declared

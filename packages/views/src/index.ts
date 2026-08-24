@@ -1,4 +1,4 @@
-export { aggregate, literal, parameterReference, selectors } from "./expression.ts";
+export { aggregate, joinSelectors, literal, parameterReference, selectors } from "./expression.ts";
 export type {
   AggregateValue,
   BooleanExpression,

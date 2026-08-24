@@ -66,12 +66,83 @@ export const IssueRow = Schema.Struct({
   title: Title,
   status: IssueStatus,
   updatedAt: Timestamp,
+  assigneeId: Schema.optionalKey(Identifier),
 });
 export type IssueRow = typeof IssueRow.Type;
 
 export const decodeIssueEvent = Schema.decodeUnknownSync(IssueEvent);
 export const encodeIssueEventJson = Schema.encodeUnknownSync(Schema.fromJsonString(IssueEvent));
 export const decodeIssueRow = Schema.decodeUnknownSync(IssueRow);
+
+/** Supporting A1 relation rows. Their ingestion and runtime maintenance belong to later tracks. */
+export const ProjectRow = Schema.Struct({
+  projectId: Identifier,
+  workspaceId: Identifier,
+  name: Title,
+  revision: Sequence,
+});
+export type ProjectRow = typeof ProjectRow.Type;
+
+export const UserRow = Schema.Struct({
+  userId: Identifier,
+  workspaceId: Identifier,
+  displayName: Title,
+  revision: Sequence,
+});
+export type UserRow = typeof UserRow.Type;
+
+export const LabelRow = Schema.Struct({
+  labelId: Identifier,
+  workspaceId: Identifier,
+  name: Title,
+  revision: Sequence,
+});
+export type LabelRow = typeof LabelRow.Type;
+
+export const IssueLabelRow = Schema.Struct({
+  issueId: Identifier,
+  labelId: Identifier,
+  revision: Sequence,
+});
+export type IssueLabelRow = typeof IssueLabelRow.Type;
+
+export const ProjectBoardCard = Schema.Struct({
+  issueId: Identifier,
+  projectId: Identifier,
+  projectName: Title,
+  title: Title,
+  status: IssueStatus,
+  assignee: Schema.String,
+  updatedAt: Timestamp,
+});
+export type ProjectBoardCard = typeof ProjectBoardCard.Type;
+
+export const AssigneeQueueRow = Schema.Struct({
+  issueId: Identifier,
+  assigneeId: Identifier,
+  assigneeName: Title,
+  title: Title,
+  status: IssueStatus,
+  updatedAt: Timestamp,
+});
+export type AssigneeQueueRow = typeof AssigneeQueueRow.Type;
+
+export const LabelCountRow = Schema.Struct({
+  labelId: Identifier,
+  labelName: Title,
+  issueCount: Schema.Int,
+});
+export type LabelCountRow = typeof LabelCountRow.Type;
+
+export const RecentActivityRow = Schema.Struct({
+  eventId: Identifier,
+  issueId: Identifier,
+  eventType: Schema.Literals(["IssueCreated", "IssueStatusChanged"]),
+  status: IssueStatus,
+  sequence: Sequence,
+  occurredAt: Timestamp,
+});
+export type RecentActivityRow = typeof RecentActivityRow.Type;
 
 /** Board column order, left to right. */
 export const BOARD_COLUMNS: readonly { readonly status: IssueStatus; readonly label: string }[] = [

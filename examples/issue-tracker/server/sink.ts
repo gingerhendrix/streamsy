@@ -18,7 +18,7 @@ import {
 import { Context, Effect, Layer } from "effect";
 import { streamNames } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
-import type { Change } from "../views/contracts.ts";
+import type { Change } from "@streamsy/views-ir";
 import { AppendRejected, StreamUnavailable } from "./errors.ts";
 
 /**
@@ -50,7 +50,7 @@ export interface IssueSinkService {
   /** Publish keyed changes as live Durable State messages. */
   readonly publish: (
     workspaceId: string,
-    changes: readonly Change<IssueRow>[],
+    changes: readonly Change<IssueRow, string>[],
   ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
   /** Re-publish the complete current relation as a fresh snapshot. */
   readonly republish: (
@@ -111,7 +111,7 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
 
         publish: Effect.fn("IssueSink.publish")(function* (
           workspaceId: string,
-          changes: readonly Change<IssueRow>[],
+          changes: readonly Change<IssueRow, string>[],
         ) {
           if (changes.length === 0) return;
           const stream = yield* open(workspaceId);

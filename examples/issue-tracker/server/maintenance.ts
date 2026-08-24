@@ -14,7 +14,7 @@ import { ReadStreams } from "@streamsy/experimental/effect";
 import { Effect } from "effect";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueEvent, decodeIssueRow, type IssueRow } from "../domain/issue.ts";
-import type { Change, JsonObject } from "../views/contracts.ts";
+import type { Change, JsonObject } from "@streamsy/views-ir";
 import { maintain, ReducerFault, touchedKeys } from "../views/engine.ts";
 import { MaintenanceFault, SourcePoison } from "./errors.ts";
 import { IssueSink } from "./sink.ts";
@@ -26,7 +26,7 @@ export interface MaintenanceReport {
   /** After-exclusive source cursor now committed. */
   readonly checkpoint: string | undefined;
   readonly folded: number;
-  readonly changes: readonly Change<IssueRow>[];
+  readonly changes: readonly Change<IssueRow, string>[];
   /** How the sink was brought up to the committed checkpoint. */
   readonly publication: "none" | "changes" | "snapshot";
 }
@@ -43,7 +43,7 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   const suffix = yield* readSuffix(workspaceId, before.checkpoint);
 
   let checkpoint = before.checkpoint;
-  let changes: readonly Change<IssueRow>[] = [];
+  let changes: readonly Change<IssueRow, string>[] = [];
 
   if (suffix.items.length > 0) {
     const keys = touchedKeys(issues.plan, suffix.items);
@@ -87,7 +87,7 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
     id: string,
     cursor: string | undefined,
     folded: number,
-    published: readonly Change<IssueRow>[],
+    published: readonly Change<IssueRow, string>[],
     publication: MaintenanceReport["publication"],
   ): MaintenanceReport {
     return { workspaceId: id, checkpoint: cursor, folded, changes: published, publication };

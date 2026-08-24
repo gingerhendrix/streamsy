@@ -11,16 +11,9 @@
  * plan. It is written against {@link RelationPlan} rather than the declaration
  * so a later host can execute a plan it received rather than one it built.
  */
-import type {
-  Change,
-  Expression,
-  JsonObject,
-  JsonValue,
-  RelationPlan,
-  RowKey,
-} from "./contracts.ts";
-import type { ReducerDeclaration } from "./dsl.ts";
-import { evaluate, evaluateKey, evaluateOrder } from "./expression.ts";
+import type { Change, Expression, JsonObject, JsonValue, RelationPlan } from "@streamsy/views-ir";
+import type { ReducerDeclaration } from "@streamsy/views";
+import { evaluate, evaluateKey, evaluateOrder } from "./reducer-expression.ts";
 
 /** A source item that the reducer cannot fold. Always a declaration or data bug. */
 export class ReducerFault extends TypeError {
@@ -48,16 +41,16 @@ export interface MaintainInput<Row> {
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Documented above: the callback is the schema boundary itself.
   readonly decodeRow: (value: unknown) => Row;
   /** Prior reducer state for every key this batch can touch. */
-  readonly current: ReadonlyMap<RowKey, Row>;
+  readonly current: ReadonlyMap<string, Row>;
   /** Decoded source items, in arrival order. */
   readonly items: readonly JsonObject[];
 }
 
 export interface MaintainResult<Row> {
   /** One coalesced change per touched key: `before` is the batch's entry state. */
-  readonly changes: readonly Change<Row>[];
+  readonly changes: readonly Change<Row, string>[];
   /** Final reducer state for every touched key. */
-  readonly rows: ReadonlyMap<RowKey, Row>;
+  readonly rows: ReadonlyMap<string, Row>;
 }
 
 /** Fold one batch of source items into keyed row changes. */
@@ -68,8 +61,8 @@ export function maintain<Row>(input: MaintainInput<Row>): MaintainResult<Row> {
   }
 
   const ordered = sortBySourceOrder(node.order, input.items);
-  const before = new Map<RowKey, Row | undefined>();
-  const after = new Map<RowKey, Row>();
+  const before = new Map<string, Row | undefined>();
+  const after = new Map<string, Row>();
 
   for (const item of ordered) {
     const key = keyOf(node.key, item);
@@ -78,7 +71,7 @@ export function maintain<Row>(input: MaintainInput<Row>): MaintainResult<Row> {
     after.set(key, fold(input, key, previous, item));
   }
 
-  const changes: Change<Row>[] = [];
+  const changes: Change<Row, string>[] = [];
   for (const [key, next] of after) {
     const entry = before.get(key);
     if (entry === undefined) {
@@ -91,17 +84,17 @@ export function maintain<Row>(input: MaintainInput<Row>): MaintainResult<Row> {
 }
 
 /** Every key one batch of source items can touch, so the caller can load exactly those rows. */
-export function touchedKeys(plan: RelationPlan, items: readonly JsonObject[]): readonly RowKey[] {
+export function touchedKeys(plan: RelationPlan, items: readonly JsonObject[]): readonly string[] {
   const node = plan.nodes.find((candidate) => candidate.id === plan.output);
   if (node === undefined || node.kind !== "reduce-by-key") return [];
-  const keys = new Set<RowKey>();
+  const keys = new Set<string>();
   for (const item of items) keys.add(keyOf(node.key, item));
   return [...keys];
 }
 
 function fold<Row>(
   input: MaintainInput<Row>,
-  key: RowKey,
+  key: string,
   previous: Row | undefined,
   item: JsonObject,
 ): Row {
@@ -150,7 +143,7 @@ function sortBySourceOrder(order: Expression, items: readonly JsonObject[]): rea
   return [...items].sort((left, right) => orderOf(order, left) - orderOf(order, right));
 }
 
-function keyOf(expression: Expression, item: JsonObject): RowKey {
+function keyOf(expression: Expression, item: JsonObject): string {
   try {
     return evaluateKey(expression, { row: item, event: item });
   } catch (cause) {

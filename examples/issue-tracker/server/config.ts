@@ -8,7 +8,7 @@
  */
 import { Config, Context, Effect, Layer } from "effect";
 import { issues } from "../domain/declaration.ts";
-import { planHash } from "../views/plan.ts";
+import { planHash } from "@streamsy/views";
 
 /** Fixed identity of this application's durable value shapes. */
 export const SCHEMA_VERSION = "issue-tracker/1";

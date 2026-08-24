@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
-import type { JsonObject } from "../views/contracts.ts";
+import type { JsonObject } from "@streamsy/views-ir";
 import { maintain, ReducerFault, touchedKeys } from "../views/engine.ts";
 
 const created = (issueId: string, sequence: number, status = "backlog"): JsonObject => ({

@@ -7,9 +7,8 @@
  * next host might not agree with.
  */
 import { describe, expect, test } from "bun:test";
+import { compilePlan, encodePlan, planHash } from "@streamsy/views";
 import { boardIssues, issueEvents, issueLifecycle, issues } from "../domain/declaration.ts";
-import { compilePlan } from "../views/dsl.ts";
-import { encodePlan, planHash } from "../views/plan.ts";
 
 describe("the issue-tracker declaration", () => {
   test("every declaration node is frozen", () => {
@@ -40,6 +39,11 @@ describe("the issue-tracker declaration", () => {
     const rebuilt = compilePlan(issues.name, issues.expression);
     expect(encodePlan(rebuilt)).toBe(encodePlan(issues.plan));
     expect(planHash(rebuilt)).toBe(planHash(issues.plan));
+  });
+
+  test("preserves the accepted Slice 1 canonical plan and hash", () => {
+    expect(planHash(issues.plan)).toBe("5100f293");
+    expect(encodePlan(issues.plan)).toContain('"output":"issue-tracker.issues"');
   });
 
   test("a different plan hashes differently", () => {
