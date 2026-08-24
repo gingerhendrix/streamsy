@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { isIssueStatus } from "../../shared/state-schema.ts";
+import { issueStatusSchema } from "../../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus } from "../../shared/types.ts";
 import { STATUS_LABEL, formatRelativeTime, shortId } from "../utils/format.ts";
 
@@ -37,7 +37,8 @@ export function IssueRow({
           onChange={(event) => {
             // The select only offers the three statuses below; anything else
             // is not a status change.
-            if (isIssueStatus(event.target.value)) onStatus(event.target.value);
+            const status = issueStatusSchema.safeParse(event.target.value);
+            if (status.success) onStatus(status.data);
           }}
         >
           <option value="open">Open</option>

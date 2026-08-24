@@ -1,4 +1,15 @@
 import { resolve } from "node:path";
+import type { JsonValue } from "@streamsy/core";
+import {
+  commentSchema,
+  issueSchema,
+  mutationResultSchema,
+  projectSchema,
+  stateEventsSchema,
+  workspaceResultSchema,
+  type MutationResult,
+  type StateEvent,
+} from "../shared/state-schema.ts";
 
 const packageDir = resolve(import.meta.dir, "..");
 const port = 20_000 + Math.floor(Math.random() * 20_000);
@@ -12,50 +23,12 @@ class SmokeError extends Error {
   }
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+type AssertionCondition = boolean | string | null | undefined;
+
+function assert(condition: AssertionCondition, message: string): asserts condition {
   if (!condition) {
     throw new SmokeError(message);
   }
-}
-
-interface ChangeEvent {
-  type: string;
-  key: string;
-  value: Record<string, unknown>;
-  old_value?: Record<string, unknown>;
-  headers: { operation: string; txid: string; timestamp: string };
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isChangeEvent(value: unknown): value is ChangeEvent {
-  return (
-    isJsonObject(value) &&
-    typeof value.type === "string" &&
-    typeof value.key === "string" &&
-    isJsonObject(value.value) &&
-    (value.old_value === undefined || isJsonObject(value.old_value)) &&
-    isJsonObject(value.headers) &&
-    typeof value.headers.operation === "string" &&
-    typeof value.headers.txid === "string" &&
-    typeof value.headers.timestamp === "string"
-  );
-}
-
-interface MutationResult {
-  awaitOffset: string;
-  txid: string;
-  project?: { id: string };
-  issue?: { id: string; status: string };
-  comment?: { id: string };
-}
-
-function isMutationResult(value: unknown): value is MutationResult {
-  return (
-    isJsonObject(value) && typeof value.awaitOffset === "string" && typeof value.txid === "string"
-  );
 }
 
 function probeEvent(suffix: string) {
@@ -78,7 +51,7 @@ function probeEvent(suffix: string) {
 
 async function postJson(
   path: string,
-  body: unknown,
+  body: JsonValue,
   method: "POST" | "PATCH" = "POST",
 ): Promise<MutationResult> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -88,15 +61,12 @@ async function postJson(
   });
   const text = await response.text();
   assert(response.ok, `${method} ${path} expected 2xx, got ${response.status}: ${text}`);
-  const payload: unknown = JSON.parse(text);
-  assert(
-    isMutationResult(payload),
-    `${method} ${path} should return awaitOffset and txid: ${text}`,
-  );
-  return payload;
+  const payload = mutationResultSchema.safeParse(JSON.parse(text));
+  assert(payload.success, `${method} ${path} should return awaitOffset and txid: ${text}`);
+  return payload.data;
 }
 
-async function postStatus(path: string, body: unknown): Promise<number> {
+async function postStatus(path: string, body: JsonValue): Promise<number> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -136,33 +106,22 @@ async function waitForServer(): Promise<void> {
   throw new SmokeError(`Issue tracker server did not become ready: ${String(lastError)}`);
 }
 
-async function readStream(streamUrl: string): Promise<{ events: ChangeEvent[]; head: string }> {
+async function readStream(streamUrl: string): Promise<{ events: StateEvent[]; head: string }> {
   const response = await fetch(`${streamUrl}?offset=-1`);
   assert(response.status === 200, `stream read status ${response.status}`);
   assert(response.headers.get("stream-up-to-date") === "true", "stream read should be up to date");
   const head = response.headers.get("stream-next-offset");
   assert(head, "stream read should return a stream-next-offset header");
-  const body: unknown = await response.json();
-  assert(Array.isArray(body), "stream read body should be a JSON array");
-
-  const events: ChangeEvent[] = [];
-  for (const event of body) {
-    assert(isChangeEvent(event), `stream read body should hold change events: ${String(event)}`);
-    events.push(event);
-  }
-  return { events, head };
+  const events = stateEventsSchema.safeParse(await response.json());
+  assert(events.success, "stream read body should hold change events");
+  return { events: events.data, head };
 }
 
-function findEvent(
-  events: ChangeEvent[],
-  type: string,
-  key: string,
-  operation: string,
-): ChangeEvent {
+function findEvent(events: StateEvent[], type: string, key: string, operation: string): StateEvent {
   const match = events.find(
     (event) => event.type === type && event.key === key && event.headers.operation === operation,
   );
-  assert(match, `expected a ${operation} ${type} event for ${key} in the stream`);
+  assert(match !== undefined, `expected a ${operation} ${type} event for ${key} in the stream`);
   return match;
 }
 
@@ -225,35 +184,29 @@ try {
   const { events } = await readStream(mainStreamUrl);
 
   const projectEvent = findEvent(events, "project", projectId, "upsert");
-  assert(projectEvent.value.id === projectId, "project event value should carry the project id");
+  const projectValue = projectSchema.parse(projectEvent.value);
+  assert(projectValue.id === projectId, "project event value should carry the project id");
 
   findEvent(events, "issue", issueId, "upsert");
 
   const issueUpdate = findEvent(events, "issue", issueId, "update");
-  assert(issueUpdate.value.status === "done", "issue update event should carry status=done");
-  assert(issueUpdate.old_value, "issue update event should include old_value for replication");
+  const updatedIssue = issueSchema.parse(issueUpdate.value);
+  assert(updatedIssue.status === "done", "issue update event should carry status=done");
+  assert(
+    issueUpdate.old_value !== undefined,
+    "issue update event should include old_value for replication",
+  );
 
   const commentEvent = findEvent(events, "comment", commentId, "upsert");
-  assert(commentEvent.value.issueId === issueId, "comment event value should reference its issue");
-
-  // Every event must be a well-formed Durable State change event a client can replay.
-  for (const event of events) {
-    assert(typeof event.type === "string" && event.type.length > 0, "event missing type");
-    assert(typeof event.key === "string" && event.key.length > 0, "event missing key");
-    assert(event.value && typeof event.value === "object", "event missing value");
-    assert(typeof event.headers?.operation === "string", "event missing headers.operation");
-  }
+  const commentValue = commentSchema.parse(commentEvent.value);
+  assert(commentValue.issueId === issueId, "comment event value should reference its issue");
 
   // === 2. Shareable workspace creation ===
 
   const createWorkspace = async (): Promise<string> => {
     const response = await fetch(`${baseUrl}/api/workspaces`, { method: "POST" });
     assert(response.status === 201, `POST /api/workspaces expected 201, got ${response.status}`);
-    const body: unknown = await response.json();
-    assert(
-      isJsonObject(body) && typeof body.id === "string",
-      "workspace create should return an id",
-    );
+    const body = workspaceResultSchema.parse(await response.json());
     assert(/^[a-z0-9]{10}$/.test(body.id), `workspace id should be 10 base36 chars: ${body.id}`);
     return body.id;
   };
@@ -273,8 +226,9 @@ try {
   const starter = starterRead.events[0];
   assert(starter.type === "project", "starter event should be a project event");
   assert(starter.headers.operation === "upsert", "starter event should be an upsert");
-  assert(starter.value.name === "Getting started", "starter project should be 'Getting started'");
-  const starterProjectId = String(starter.value.id);
+  const starterProject = projectSchema.parse(starter.value);
+  assert(starterProject.name === "Getting started", "starter project should be 'Getting started'");
+  const starterProjectId = starterProject.id;
 
   // === 4. Isolation between workspaces ===
 

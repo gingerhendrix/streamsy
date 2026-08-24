@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { invalidBody, isTxId, readMutation } from "./utils.ts";
-import { issueInput } from "../shared/state-schema.ts";
+import { invalidBody, readMutation } from "./utils.ts";
+import { errorResponseSchema, issueInput, txIdSchema } from "../shared/state-schema.ts";
 
 function post(body: string): Request {
   return new Request("http://localhost/api/w/main/issues", {
@@ -55,13 +55,13 @@ describe("readMutation", () => {
   });
 });
 
-describe("isTxId", () => {
+describe("txIdSchema", () => {
   test("accepts a uuid", () => {
-    expect(isTxId(crypto.randomUUID())).toBe(true);
+    expect(txIdSchema.safeParse(crypto.randomUUID()).success).toBe(true);
   });
 
   test.each([["nope"], [""], [42], [undefined], [null], [{}]])("rejects %p", (value) => {
-    expect(isTxId(value)).toBe(false);
+    expect(txIdSchema.safeParse(value).success).toBe(false);
   });
 });
 
@@ -73,11 +73,7 @@ describe("invalidBody", () => {
 
     const response = invalidBody("issue", parsed.error);
     expect(response.status).toBe(400);
-    const payload: unknown = await response.json();
-    const message =
-      typeof payload === "object" && payload !== null && "error" in payload
-        ? payload.error
-        : undefined;
-    expect(message).toContain("title");
+    const payload = errorResponseSchema.parse(await response.json());
+    expect(payload.error).toContain("title");
   });
 });

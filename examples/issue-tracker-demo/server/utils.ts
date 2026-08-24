@@ -1,24 +1,21 @@
 import type { ZodError } from "zod";
+import type { JsonValue } from "@streamsy/core";
+import {
+  jsonObjectSchema,
+  txIdSchema,
+  type MutationBody,
+  type TxId,
+} from "../shared/state-schema.ts";
 
-export type TxId = `${string}-${string}-${string}-${string}-${string}`;
-
-/** The untrusted JSON object body of a mutation request. */
-export type MutationBody = Readonly<Record<string, unknown>>;
-
-/** A client-supplied transaction id: the `a-b-c-d-e` shape of {@link TxId}. */
-export function isTxId(value: unknown): value is TxId {
-  return typeof value === "string" && value.split("-").length === 5;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+export type { TxId } from "../shared/state-schema.ts";
 
 /** One accepted mutation request: its untrusted body and its optional txid. */
 export interface Mutation {
   body: MutationBody;
   txid: TxId | undefined;
 }
+
+type JsonResponseData = JsonValue | Readonly<Record<string, JsonValue | undefined>>;
 
 /**
  * Read the mutation envelope: a JSON object body plus, when the client sent
@@ -27,16 +24,18 @@ export interface Mutation {
  * as a value the wire shape does not allow (bad txid).
  */
 export async function readMutation(request: Request): Promise<Mutation | Response> {
-  let payload: unknown;
+  let payload: JsonValue;
   try {
     payload = await request.json();
   } catch {
     return badRequest("Invalid JSON body");
   }
-  if (!isJsonObject(payload)) return badRequest("Body must be a JSON object");
-  if (payload.txid === undefined) return { body: payload, txid: undefined };
-  if (!isTxId(payload.txid)) return badRequest("Invalid txid");
-  return { body: payload, txid: payload.txid };
+  const body = jsonObjectSchema.safeParse(payload);
+  if (!body.success) return badRequest("Body must be a JSON object");
+  if (body.data.txid === undefined) return { body: body.data, txid: undefined };
+  const txid = txIdSchema.safeParse(body.data.txid);
+  if (!txid.success) return badRequest("Invalid txid");
+  return { body: body.data, txid: txid.data };
 }
 
 /** 400 for a body whose fields do not match the entity's wire schema. */
@@ -47,7 +46,7 @@ export function invalidBody(entity: string, error: ZodError): Response {
   return badRequest(`Invalid ${entity} body — ${detail}`);
 }
 
-export function json(data: unknown, init: ResponseInit = {}): Response {
+export function json(data: JsonResponseData, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
   return new Response(JSON.stringify(data, null, 2), {

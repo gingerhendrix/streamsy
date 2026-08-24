@@ -1,10 +1,10 @@
 import type { IssueStatus } from "../../shared/types.ts";
 
-export const STATUS_LABEL: Record<IssueStatus, string> = {
+export const STATUS_LABEL = {
   open: "open",
   in_progress: "in progress",
   done: "done",
-};
+} satisfies Record<IssueStatus, string>;
 
 export function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime();

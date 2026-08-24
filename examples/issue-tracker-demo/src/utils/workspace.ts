@@ -1,3 +1,5 @@
+import { workspaceResultSchema } from "../../shared/state-schema.ts";
+
 /** The always-present demo workspace, used when no `?w=` param is set. */
 export const mainWorkspaceId = "main";
 
@@ -25,9 +27,5 @@ export function gotoWorkspace(workspaceId: string): void {
 export async function createSharedWorkspace(): Promise<string> {
   const response = await fetch("/api/workspaces", { method: "POST" });
   if (!response.ok) throw new Error(await response.text());
-  const body: unknown = await response.json();
-  if (typeof body !== "object" || body === null || !("id" in body) || typeof body.id !== "string") {
-    throw new Error("POST /api/workspaces did not return a workspace id");
-  }
-  return body.id;
+  return workspaceResultSchema.parse(await response.json()).id;
 }

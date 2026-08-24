@@ -5,10 +5,11 @@ import {
   type AppendResult,
 } from "@streamsy/core";
 import { createJsonProtocol, type JsonStream } from "@streamsy/json";
-import { isStateEvent, type StateEvent } from "../shared/state-schema.ts";
+import { stateEventSchema, type StateEvent } from "../shared/state-schema.ts";
 import { contentType } from "./config.ts";
 
 const streamPrefix = "/streams";
+type JsonSourceValue = {} | null | undefined;
 
 /**
  * Appends pass through unchanged; reads are validated, because the workspace
@@ -17,13 +18,8 @@ const streamPrefix = "/streams";
  * than being folded into materialized state.
  */
 const eventCodec = {
-  encode: (value: StateEvent): unknown => value,
-  decode: (value: unknown): StateEvent => {
-    if (!isStateEvent(value)) {
-      throw new Error("Malformed state event: not an issue tracker change event");
-    }
-    return value;
-  },
+  encode: (value: StateEvent): JsonSourceValue => value,
+  decode: (value: JsonSourceValue): StateEvent => stateEventSchema.parse(value),
 };
 
 /**

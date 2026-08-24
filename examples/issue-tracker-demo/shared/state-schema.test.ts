@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isStateEvent, issueTrackerState } from "./state-schema.ts";
+import { issueTrackerState, stateEventSchema } from "./state-schema.ts";
 
 const project = {
   id: "proj_1",
@@ -15,64 +15,83 @@ const upsert = issueTrackerState.projects.upsert({
 
 describe("isStateEvent", () => {
   test("accepts an event built by the state schema", () => {
-    expect(isStateEvent(upsert)).toBe(true);
+    expect(stateEventSchema.safeParse(upsert).success).toBe(true);
   });
 
   test("accepts a hand-written change event appended straight to the stream", () => {
     expect(
-      isStateEvent({
+      stateEventSchema.safeParse({
         type: "project",
         key: project.id,
         value: project,
         headers: { operation: "upsert", txid: crypto.randomUUID(), timestamp: project.createdAt },
-      }),
+      }).success,
     ).toBe(true);
   });
 
   test("accepts an update event carrying old_value", () => {
     expect(
-      isStateEvent({
+      stateEventSchema.safeParse({
         type: "project",
         key: project.id,
         value: project,
         old_value: { ...project, name: "Old" },
         headers: { operation: "update" },
-      }),
+      }).success,
     ).toBe(true);
+  });
+
+  test("preserves JSON extension fields while decoding a public stream event", () => {
+    const event = {
+      ...upsert,
+      extension: "event metadata",
+      value: { ...project, extension: "entity metadata" },
+      headers: { ...upsert.headers, extension: "header metadata" },
+    };
+
+    expect(stateEventSchema.parse(event)).toEqual(event);
   });
 
   test.each([[undefined], [null], ["text"], [42], [[]]])(
     "rejects the non-object payload %p",
     (value) => {
-      expect(isStateEvent(value)).toBe(false);
+      expect(stateEventSchema.safeParse(value).success).toBe(false);
     },
   );
 
   test("rejects an unknown entity type", () => {
-    expect(isStateEvent({ ...upsert, type: "invoice" })).toBe(false);
+    expect(stateEventSchema.safeParse({ ...upsert, type: "invoice" }).success).toBe(false);
   });
 
   test("rejects a missing key", () => {
-    expect(isStateEvent({ ...upsert, key: undefined })).toBe(false);
+    expect(stateEventSchema.safeParse({ ...upsert, key: undefined }).success).toBe(false);
   });
 
   test("rejects an unknown operation", () => {
-    expect(isStateEvent({ ...upsert, headers: { operation: "merge" } })).toBe(false);
+    expect(stateEventSchema.safeParse({ ...upsert, headers: { operation: "merge" } }).success).toBe(
+      false,
+    );
   });
 
   test("rejects non-string header metadata", () => {
-    expect(isStateEvent({ ...upsert, headers: { operation: "upsert", txid: 7 } })).toBe(false);
+    expect(
+      stateEventSchema.safeParse({ ...upsert, headers: { operation: "upsert", txid: 7 } }).success,
+    ).toBe(false);
   });
 
   test("rejects a value that does not match its entity schema", () => {
-    expect(isStateEvent({ ...upsert, value: { ...project, name: 7 } })).toBe(false);
+    expect(stateEventSchema.safeParse({ ...upsert, value: { ...project, name: 7 } }).success).toBe(
+      false,
+    );
   });
 
   test("rejects a value that belongs to another entity type", () => {
-    expect(isStateEvent({ ...upsert, type: "issue" })).toBe(false);
+    expect(stateEventSchema.safeParse({ ...upsert, type: "issue" }).success).toBe(false);
   });
 
   test("rejects a malformed old_value", () => {
-    expect(isStateEvent({ ...upsert, old_value: { id: "proj_1" } })).toBe(false);
+    expect(stateEventSchema.safeParse({ ...upsert, old_value: { id: "proj_1" } }).success).toBe(
+      false,
+    );
   });
 });

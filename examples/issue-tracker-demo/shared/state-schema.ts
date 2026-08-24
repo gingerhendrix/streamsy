@@ -1,32 +1,40 @@
 import { createStateSchema, type ChangeEvent } from "@durable-streams/state";
 import { z } from "zod";
 
-const projectSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  createdAt: z.string(),
-});
+export const projectSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+    createdAt: z.string(),
+  })
+  .catchall(z.json());
 
 /** The issue statuses accepted on the wire, in UI order. */
 export const issueStatuses = ["open", "in_progress", "done"] as const;
 
-const issueSchema = z.object({
-  id: z.string(),
-  projectId: z.string(),
-  title: z.string(),
-  status: z.enum(issueStatuses),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
+export const issueStatusSchema = z.enum(issueStatuses);
 
-const commentSchema = z.object({
-  id: z.string(),
-  issueId: z.string(),
-  author: z.string(),
-  body: z.string(),
-  createdAt: z.string(),
-});
+export const issueSchema = z
+  .object({
+    id: z.string(),
+    projectId: z.string(),
+    title: z.string(),
+    status: issueStatusSchema,
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .catchall(z.json());
+
+export const commentSchema = z
+  .object({
+    id: z.string(),
+    issueId: z.string(),
+    author: z.string(),
+    body: z.string(),
+    createdAt: z.string(),
+  })
+  .catchall(z.json());
 
 export const issueTrackerState = createStateSchema({
   projects: {
@@ -68,57 +76,73 @@ export type EntityByType = {
 
 export type StateEvent<T extends EntityType = EntityType> = ChangeEvent<EntityByType[T]>;
 
-const entitySchemaByType = {
-  project: projectSchema,
-  issue: issueSchema,
-  comment: commentSchema,
-} as const satisfies Record<EntityType, z.ZodType>;
-
 /** Change operations `MaterializedState` understands. */
-const changeOperations = new Set<string>(["insert", "update", "delete", "upsert"]);
+const changeOperationSchema = z.enum(["insert", "update", "delete", "upsert"]);
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const changeHeadersSchema = z
+  .object({
+    operation: changeOperationSchema,
+    txid: z.string().optional(),
+    timestamp: z.string().optional(),
+    from: z.string().optional(),
+    offset: z.string().optional(),
+  })
+  .catchall(z.json());
 
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
-}
+const projectEventSchema = z
+  .object({
+    type: z.literal("project"),
+    key: z.string(),
+    value: projectSchema.optional(),
+    old_value: projectSchema.optional(),
+    headers: changeHeadersSchema,
+  })
+  .catchall(z.json());
 
-export function isIssueStatus(value: unknown): value is IssueStatus {
-  return typeof value === "string" && issueStatuses.some((status) => status === value);
-}
+const issueEventSchema = z
+  .object({
+    type: z.literal("issue"),
+    key: z.string(),
+    value: issueSchema.optional(),
+    old_value: issueSchema.optional(),
+    headers: changeHeadersSchema,
+  })
+  .catchall(z.json());
 
-function isEntityType(value: unknown): value is EntityType {
-  return typeof value === "string" && Object.hasOwn(entitySchemaByType, value);
-}
+const commentEventSchema = z
+  .object({
+    type: z.literal("comment"),
+    key: z.string(),
+    value: commentSchema.optional(),
+    old_value: commentSchema.optional(),
+    headers: changeHeadersSchema,
+  })
+  .catchall(z.json());
 
-function isChangeHeaders(value: unknown): value is StateEvent["headers"] {
-  return (
-    isJsonObject(value) &&
-    typeof value.operation === "string" &&
-    changeOperations.has(value.operation) &&
-    isOptionalString(value.txid) &&
-    isOptionalString(value.timestamp) &&
-    isOptionalString(value.from) &&
-    isOptionalString(value.offset)
-  );
-}
+/** Shared decoder for values read from the public workspace stream. */
+export const stateEventSchema: z.ZodType<StateEvent> = z.discriminatedUnion("type", [
+  projectEventSchema,
+  issueEventSchema,
+  commentEventSchema,
+]);
+export const stateEventsSchema = z.array(stateEventSchema);
 
-/**
- * Structural check for one payload read back from a workspace stream: the
- * change-event envelope, plus the entity payload validated against the schema
- * for its declared `type`. The stream is public (`/streams/workspace/<id>`
- * accepts direct appends), so a read cannot assume its own writer produced the
- * event.
- */
-export function isStateEvent(value: unknown): value is StateEvent {
-  if (!isJsonObject(value)) return false;
-  if (!isEntityType(value.type) || typeof value.key !== "string") return false;
-  if (!isChangeHeaders(value.headers)) return false;
+/** Shared HTTP response contracts used by the browser and smoke client. */
+export const mutationResultSchema = z
+  .object({
+    awaitOffset: z.string(),
+    txid: z.string(),
+    project: z.object({ id: z.string() }).catchall(z.json()).optional(),
+    issue: z.object({ id: z.string(), status: issueStatusSchema }).catchall(z.json()).optional(),
+    comment: z.object({ id: z.string() }).catchall(z.json()).optional(),
+  })
+  .catchall(z.json());
 
-  const schema = entitySchemaByType[value.type];
-  const matchesSchema = (entity: unknown): boolean =>
-    entity === undefined || schema.safeParse(entity).success;
-  return matchesSchema(value.value) && matchesSchema(value.old_value);
-}
+export const workspaceResultSchema = z.object({ id: z.string() }).catchall(z.json());
+export const errorResponseSchema = z.object({ error: z.string() }).catchall(z.json());
+export const jsonObjectSchema = z.object({}).catchall(z.json());
+export const txIdSchema = z.string().refine((value) => value.split("-").length === 5);
+
+export type MutationResult = z.infer<typeof mutationResultSchema>;
+export type MutationBody = z.infer<typeof jsonObjectSchema>;
+export type TxId = z.infer<typeof txIdSchema>;
