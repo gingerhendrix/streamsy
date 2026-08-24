@@ -27,6 +27,7 @@
     "@streamsy/storage-durable-object": "workspace:*",
     "@streamsy/storage-fs": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
+    "valibot": "1.0.0",
     "vitest": "^4.0.16"
   },
   "devDependencies": {

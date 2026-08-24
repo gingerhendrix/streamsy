@@ -4,10 +4,12 @@ const STREAM_CLOSED_HEADER = "Stream-Closed";
 const STREAM_OFFSET_HEADER = "Stream-Next-Offset";
 const decoder = new TextDecoder();
 
+type TraceDetails = Readonly<Record<string, string | number | boolean | null>>;
+
 interface TraceEntry {
   t: number;
   event: string;
-  details?: unknown;
+  details?: TraceDetails;
 }
 
 interface SseEvent {
@@ -23,8 +25,14 @@ function now(startedAt: number): number {
   return Date.now() - startedAt;
 }
 
-function pushTrace(trace: TraceEntry[], startedAt: number, event: string, details?: unknown): void {
-  const entry = { t: now(startedAt), event, ...(details === undefined ? {} : { details }) };
+function pushTrace(
+  trace: TraceEntry[],
+  startedAt: number,
+  event: string,
+  details?: TraceDetails,
+): void {
+  const entry: TraceEntry = { t: now(startedAt), event };
+  if (details !== undefined) entry.details = details;
   trace.push(entry);
   console.log(`[sse-final-append-diagnostic] ${JSON.stringify(entry)}`);
 }

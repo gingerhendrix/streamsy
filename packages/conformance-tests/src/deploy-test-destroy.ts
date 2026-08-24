@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { workerUrlFrom } from "./deployment-state.ts";
+import { deploymentOutputFromJson, workerUrlFrom } from "./deployment-state.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const alchemyEntrypoint = join(packageDir, "alchemy.run.ts");
@@ -22,7 +22,7 @@ const env = {
   STAGE: stage,
 };
 
-async function runStep(label: string, command: () => Promise<unknown>) {
+async function runStep(label: string, command: () => Promise<void>): Promise<void> {
   console.log(`\n==> ${label}`);
   await command();
 }
@@ -59,30 +59,25 @@ function readWorkerUrl(): string {
     );
   }
 
-  const state: unknown = JSON.parse(readFileSync(statePath, "utf8"));
-  const url = workerUrlFrom(state);
+  const output = deploymentOutputFromJson(readFileSync(statePath, "utf8"));
 
-  if (!url) {
+  if (output === null) {
     throw new Error(
       `Alchemy state file ${statePath} did not contain output.url. Ensure the worker has a workers.dev URL enabled.`,
     );
   }
 
-  return url;
+  return workerUrlFrom(output);
 }
 
-function logFailure(label: string, error: unknown): void {
+function logFailure(label: string, error: Error): void {
   console.error(`\n${label}:`);
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(error);
-  }
+  console.error(error.message);
 }
 
 async function waitForWorkerReady(baseUrl: string): Promise<void> {
   const deadline = Date.now() + 60_000;
-  let lastError: unknown;
+  let lastError = new Error("Worker readiness check did not receive a response");
 
   while (Date.now() < deadline) {
     try {
@@ -93,7 +88,7 @@ async function waitForWorkerReady(baseUrl: string): Promise<void> {
         `Unexpected readiness response ${response.status}: ${body.slice(0, 120)}`,
       );
     } catch (error) {
-      lastError = error;
+      lastError = error instanceof Error ? error : new Error(String(error));
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
@@ -128,7 +123,10 @@ try {
   );
 } catch (error) {
   exitCode = 1;
-  logFailure("Conformance deploy/test failed", error);
+  logFailure(
+    "Conformance deploy/test failed",
+    error instanceof Error ? error : new Error(String(error)),
+  );
 } finally {
   try {
     await runStep(`destroy test server with STAGE=${stage}`, () =>
@@ -136,7 +134,10 @@ try {
     );
   } catch (error) {
     exitCode = 1;
-    logFailure("Conformance destroy failed", error);
+    logFailure(
+      "Conformance destroy failed",
+      error instanceof Error ? error : new Error(String(error)),
+    );
   }
 }
 

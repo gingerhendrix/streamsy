@@ -24,7 +24,7 @@ describe("Memory Storage Server Implementation", () => {
     const handler = new HttpHandler({ protocol, pathPrefix: "/" });
 
     // Use globalThis.Bun for Bun runtime, fall back to node:http
-    if (typeof Bun !== "undefined") {
+    if ("bun" in process.versions) {
       server = Bun.serve({
         port,
         fetch: (req: Request) => handler.fetch(req),
