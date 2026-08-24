@@ -115,8 +115,18 @@ function encode(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-function assert<Condition>(condition: Condition, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(`storage-adapter-contract: ${message}`);
+}
+
+function isCallable<Value>(value: Value): value is Value & Function {
+  if (value === null || Object(value) !== value) return false;
+  try {
+    Function.prototype.toString.call(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function assertStatus(result: { status: string }, expected: string, label: string): void {
@@ -139,7 +149,7 @@ function newRecord(id: StreamId, forkedFrom?: StreamId): StreamRecord {
 
 async function currentRecord(adapter: StorageAdapter, id: StreamId): Promise<StreamRecord> {
   const record = await adapter.getRecord(id);
-  assert(record, `expected record for stream "${id}"`);
+  assert(record !== null, `expected record for stream "${id}"`);
   return record;
 }
 
@@ -683,12 +693,15 @@ function runLifecycleContract(
       // callable `fork`, which the cases below then exercise.
       if (adapter.fork === undefined) {
         assert(
-          adapter.create instanceof Function && adapter.delete instanceof Function,
+          isCallable(adapter.create.bind(adapter)) && isCallable(adapter.delete.bind(adapter)),
           "a forkless adapter still provides the required create/delete intents",
         );
         return;
       }
-      assert(adapter.fork instanceof Function, "fork capability is a callable method when present");
+      assert(
+        isCallable(adapter.fork.bind(adapter)),
+        "fork capability is a callable method when present",
+      );
     },
   );
 

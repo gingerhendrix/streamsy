@@ -216,10 +216,20 @@ export function notSupportedFromError(error: NotSupportedError): NotSupportedRes
 
 /** Type guard for protocol results that may be a {@link NotSupportedResult}. */
 export function isNotSupported<Result>(result: Result): result is Result & NotSupportedResult {
-  if (!isReferenceValue(result) || result instanceof Function) return false;
+  if (!isReferenceValue(result) || isCallable(result)) return false;
   return "status" in result && result.status === "not-supported";
 }
 
 function isReferenceValue<Value>(value: Value): value is Value & object {
   return value !== null && Object(value) === value;
+}
+
+function isCallable<Value>(value: Value): value is Value & Function {
+  if (!isReferenceValue(value)) return false;
+  try {
+    Function.prototype.toString.call(value);
+    return true;
+  } catch {
+    return false;
+  }
 }

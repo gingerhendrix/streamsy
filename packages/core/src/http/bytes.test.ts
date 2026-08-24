@@ -42,7 +42,7 @@ function restoreBuffer(descriptor: PropertyDescriptor | undefined): void {
 /** Installs a stand-in `Buffer` global for one call, then restores the original. */
 function withBufferGlobal<Result, Replacement>(
   replacement: Replacement,
-  run: () => Result,
+  run: (installed: Replacement) => Result,
 ): Result {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
   Object.defineProperty(globalThis, "Buffer", {
@@ -51,7 +51,7 @@ function withBufferGlobal<Result, Replacement>(
     value: replacement,
   });
   try {
-    return run();
+    return run(replacement);
   } finally {
     restoreBuffer(original);
   }
