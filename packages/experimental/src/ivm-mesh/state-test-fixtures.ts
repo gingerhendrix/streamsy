@@ -9,6 +9,9 @@ const CompositeJsonValue = Schema.Union([
   Schema.Record(Schema.String, Schema.Json),
 ]);
 const isCompositeJsonValue = Schema.is(CompositeJsonValue);
+const decodeScalarJsonValue = Schema.decodeUnknownSync(
+  Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]),
+);
 const LineageEnvelope = Schema.Struct({
   type: Schema.Literal("__streamsy.mesh.lineage.v1"),
 });
@@ -65,7 +68,9 @@ export function parseStoredJson(text: string): JsonValue {
 }
 
 export function jsonValueKey(value: JsonValue): string {
-  return isCompositeJsonValue(value) ? (JSON.stringify(value) ?? String(value)) : String(value);
+  return isCompositeJsonValue(value)
+    ? (JSON.stringify(value) ?? "null")
+    : String(decodeScalarJsonValue(value));
 }
 
 export const isLineageValue = Schema.is(LineageEnvelope);
