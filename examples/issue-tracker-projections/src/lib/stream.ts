@@ -7,10 +7,13 @@
  * returned offset. A lost connection resumes from the last durable offset, so
  * convergence never depends on a command response.
  */
+import type { JsonValue } from "@streamsy/core";
+import { Schema } from "effect";
+
 export type FeedStatus = "connecting" | "live" | "missing" | "reconnecting";
 
 export interface FeedHandlers {
-  readonly onItems: (items: readonly unknown[]) => void;
+  readonly onItems: (items: readonly JsonValue[]) => void;
   readonly onStatus: (status: FeedStatus) => void;
   /** Called once the initial catch-up read has been applied. */
   readonly onReady?: () => void;
@@ -25,7 +28,7 @@ const MAX_BACKOFF_MS = 8_000;
  * not be logged like one — while a real mid-session failure still must be.
  */
 let navigating = false;
-if (typeof globalThis.addEventListener === "function") {
+if ("addEventListener" in globalThis) {
   for (const event of ["pagehide", "beforeunload"] as const) {
     globalThis.addEventListener(event, () => {
       navigating = true;
@@ -38,13 +41,19 @@ export interface TeardownState {
   readonly navigating: boolean;
 }
 
-/** True when a failed read is expected teardown rather than a retryable fault. */
-export function isExpectedTeardown(error: unknown, state: TeardownState): boolean {
-  if (state.aborted || state.navigating) return true;
-  return error instanceof Error && error.name === "AbortError";
+export interface StreamReadQuery {
+  readonly offset: string;
+  live?: "long-poll";
+  cursor?: string;
 }
 
-export function streamUrl(streamName: string, query: Record<string, string>): string {
+/** True when a failed read is expected teardown rather than a retryable fault. */
+export function isExpectedTeardown(error: Error | undefined, state: TeardownState): boolean {
+  if (state.aborted || state.navigating) return true;
+  return error?.name === "AbortError";
+}
+
+export function streamUrl(streamName: string, query: StreamReadQuery): string {
   const path = streamName
     .split("/")
     .map((segment) => encodeURIComponent(segment))
@@ -73,14 +82,10 @@ async function run(streamName: string, handlers: FeedHandlers, signal: AbortSign
     const live = offset !== "-1";
     if (!live) handlers.onStatus(ready ? "reconnecting" : "connecting");
     try {
-      const response = await fetch(
-        streamUrl(streamName, {
-          offset,
-          ...(live ? { live: "long-poll" } : {}),
-          ...(live && cursor !== undefined ? { cursor } : {}),
-        }),
-        { signal, cache: "no-store" },
-      );
+      const query: StreamReadQuery = { offset };
+      if (live) query.live = "long-poll";
+      if (live && cursor !== undefined) query.cursor = cursor;
+      const response = await fetch(streamUrl(streamName, query), { signal, cache: "no-store" });
 
       if (response.status === 404 || response.status === 410) {
         handlers.onStatus("missing");
@@ -96,8 +101,8 @@ async function run(streamName: string, handlers: FeedHandlers, signal: AbortSign
       const next = response.headers.get("stream-next-offset");
       cursor = response.headers.get("stream-cursor") ?? undefined;
       if (response.status !== 204) {
-        const items: unknown = await response.json();
-        if (Array.isArray(items) && items.length > 0) handlers.onItems(items);
+        const items = Schema.decodeUnknownSync(Schema.Array(Schema.Json))(await response.json());
+        if (items.length > 0) handlers.onItems(items);
       }
       if (next !== null) offset = next;
       backoff = 500;
@@ -107,7 +112,8 @@ async function run(streamName: string, handlers: FeedHandlers, signal: AbortSign
         handlers.onReady?.();
       }
     } catch (error) {
-      if (isExpectedTeardown(error, { aborted: signal.aborted, navigating })) return;
+      const caught = error instanceof Error ? error : undefined;
+      if (isExpectedTeardown(caught, { aborted: signal.aborted, navigating })) return;
       console.warn(`stream tail ${streamName} retrying`, error);
       handlers.onStatus("reconnecting");
       await delay(backoff, signal);

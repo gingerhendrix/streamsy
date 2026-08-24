@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/global-date, effecttsgo/global-timers -- useNow is the React binding for browser wall-clock time; its interval is created and cleared by the effect that owns it. Importing Effect would pull the runtime into the browser bundle. */
 /** React bindings over the durable feeds and the shareable URL. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { foldCollection } from "./state.ts";
+import { foldCollection, type StateValue } from "./state.ts";
 import { subscribeToStream, type FeedStatus } from "./stream.ts";
 
 export interface Feed<T> {
@@ -17,7 +17,7 @@ export interface Feed<T> {
 export function useStateFeed<T>(
   streamName: string | null,
   collection: string,
-  decode: (value: Record<string, unknown>) => T | undefined,
+  decode: (value: StateValue) => T | undefined,
 ): Feed<T> {
   const [feed, setFeed] = useState<Feed<T>>({
     rows: new Map(),

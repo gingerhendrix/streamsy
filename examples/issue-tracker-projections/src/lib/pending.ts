@@ -136,16 +136,19 @@ export function overlayRows(
   for (const mutation of overlays) {
     const existing = merged.get(mutation.issueId) ?? mutation.insert;
     if (existing === undefined) continue;
-    merged.set(mutation.issueId, {
+    const patched: BoardRow = {
       ...existing,
-      ...(mutation.patch.title === undefined ? {} : { title: mutation.patch.title }),
-      ...(mutation.patch.status === undefined ? {} : { status: mutation.patch.status }),
-      ...(mutation.patch.priority === undefined ? {} : { priority: mutation.patch.priority }),
-      ...(mutation.patch.assigneeId === undefined ? {} : { assigneeId: mutation.patch.assigneeId }),
-      ...(mutation.patch.commentCount === undefined
-        ? {}
-        : { commentCount: Math.max(existing.commentCount, mutation.patch.commentCount) }),
-    });
+      title: mutation.patch.title ?? existing.title,
+      status: mutation.patch.status ?? existing.status,
+      priority: mutation.patch.priority ?? existing.priority,
+      assigneeId:
+        mutation.patch.assigneeId === undefined ? existing.assigneeId : mutation.patch.assigneeId,
+      commentCount:
+        mutation.patch.commentCount === undefined
+          ? existing.commentCount
+          : Math.max(existing.commentCount, mutation.patch.commentCount),
+    };
+    merged.set(mutation.issueId, patched);
   }
   return Array.from(merged.values());
 }
@@ -153,13 +156,13 @@ export function overlayRows(
 export type CardSync = "idle" | "synced" | "pending" | "syncing" | "failed";
 
 /** Strongest state first: nothing weaker may hide a failure or an unproven hop. */
-const SYNC_RANK: Readonly<Record<CardSync, number>> = {
+const SYNC_RANK = {
   idle: 0,
   synced: 1,
   pending: 2,
   syncing: 3,
   failed: 4,
-};
+} satisfies Readonly<Record<CardSync, number>>;
 
 /** The strongest sync state to show on one card. Failure wins over progress. */
 export function cardSync(issueId: string, overlays: readonly Mutation[]): CardSync {
@@ -173,10 +176,12 @@ export function cardSync(issueId: string, overlays: readonly Mutation[]): CardSy
 }
 
 /** Workspace-level status line for the header and the live region. */
-export function syncSummary(overlays: readonly Mutation[]): {
+export interface SyncSummary {
   readonly state: CardSync;
   readonly count: number;
-} {
+}
+
+export function syncSummary(overlays: readonly Mutation[]): SyncSummary {
   for (const phase of ["failed", "syncing", "pending"] as const) {
     const count = overlays.filter((mutation) => mutation.phase === phase).length;
     if (count > 0) return { state: phase, count };

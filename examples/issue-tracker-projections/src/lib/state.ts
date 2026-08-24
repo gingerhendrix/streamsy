@@ -9,6 +9,7 @@
  * skipped here rather than treated as a fault: the browser is a reader, not a
  * projection owner.
  */
+import type { JsonValue } from "@streamsy/core";
 import {
   BoardRowSchema,
   BOARD_ROW_COLLECTION,
@@ -17,22 +18,26 @@ import {
   type BoardRow,
   type Project,
 } from "../../shared/model.ts";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 
 /** One State message as it appears in the JSON stream body. */
-export interface StateItem {
-  readonly type?: unknown;
-  readonly key?: unknown;
-  readonly value?: unknown;
-  readonly headers?: unknown;
-}
+export const StateItem = Schema.Struct({
+  type: Schema.String,
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(Schema.Json),
+  headers: Schema.optionalKey(
+    Schema.Struct({
+      operation: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+export type StateItem = typeof StateItem.Type;
+export type StateValue = JsonValue;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const decodeStateItem = Schema.decodeUnknownOption(StateItem);
 
 function isDelete(item: StateItem): boolean {
-  return isRecord(item.headers) && item.headers.operation === "delete";
+  return item.headers?.operation === "delete";
 }
 
 /**
@@ -43,15 +48,15 @@ function isDelete(item: StateItem): boolean {
  * here is not something the browser can repair: it is skipped rather than
  * rendered as a partly-typed card.
  */
-export function toBoardRow(value: Record<string, unknown>): BoardRow | undefined {
+export function toBoardRow(value: StateValue): BoardRow | undefined {
   const decoded = Schema.decodeUnknownOption(BoardRowSchema)(value);
-  return decoded._tag === "Some" ? decoded.value : undefined;
+  return Option.isSome(decoded) ? decoded.value : undefined;
 }
 
 /** Decode one durable project row, on the same terms as {@link toBoardRow}. */
-export function toProject(value: Record<string, unknown>): Project | undefined {
+export function toProject(value: StateValue): Project | undefined {
   const decoded = Schema.decodeUnknownOption(ProjectSchema)(value);
-  return decoded._tag === "Some" ? decoded.value : undefined;
+  return Option.isSome(decoded) ? decoded.value : undefined;
 }
 
 /**
@@ -61,21 +66,22 @@ export function toProject(value: Record<string, unknown>): Project | undefined {
  */
 export function foldCollection<T>(
   previous: ReadonlyMap<string, T>,
-  items: readonly unknown[],
+  items: readonly StateValue[],
   collection: string,
-  decode: (value: Record<string, unknown>) => T | undefined,
+  decode: (value: StateValue) => T | undefined,
 ): ReadonlyMap<string, T> {
   let next: Map<string, T> | undefined;
   for (const raw of items) {
-    if (!isRecord(raw)) continue;
-    const item: StateItem = raw;
-    if (item.type !== collection || typeof item.key !== "string") continue;
+    const decodedItem = decodeStateItem(raw);
+    if (Option.isNone(decodedItem)) continue;
+    const item = decodedItem.value;
+    if (item.type !== collection || item.key === undefined) continue;
     next ??= new Map(previous);
     if (isDelete(item)) {
       next.delete(item.key);
       continue;
     }
-    if (!isRecord(item.value)) continue;
+    if (item.value === undefined) continue;
     const decoded = decode(item.value);
     if (decoded === undefined) continue;
     next.set(item.key, decoded);
@@ -85,13 +91,13 @@ export function foldCollection<T>(
 
 export const foldBoardRows = (
   previous: ReadonlyMap<string, BoardRow>,
-  items: readonly unknown[],
+  items: readonly StateValue[],
 ): ReadonlyMap<string, BoardRow> =>
   foldCollection<BoardRow>(previous, items, BOARD_ROW_COLLECTION, toBoardRow);
 
 export const foldProjects = (
   previous: ReadonlyMap<string, Project>,
-  items: readonly unknown[],
+  items: readonly StateValue[],
 ): ReadonlyMap<string, Project> =>
   foldCollection<Project>(previous, items, PROJECT_COLLECTION, toProject);
 

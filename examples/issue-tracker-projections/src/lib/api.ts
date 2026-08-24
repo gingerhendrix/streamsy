@@ -8,6 +8,8 @@ import {
   HealthResponse,
   MutationResponse,
   ProjectsResponse,
+  RepairResponse,
+  SeedResponse,
 } from "../../shared/api.ts";
 import type {
   CreateIssueRequest,
@@ -113,8 +115,8 @@ const deferQuery = (options: CommandOptions): string =>
 export const api = {
   health: (): Promise<HealthResponse> => request(HealthResponse, "/health"),
 
-  seed: (workspaceId: string): Promise<unknown> =>
-    request(Schema.Unknown, `${workspacePath(workspaceId)}/seed`, { method: "POST" }),
+  seed: (workspaceId: string): Promise<SeedResponse> =>
+    request(SeedResponse, `${workspacePath(workspaceId)}/seed`, { method: "POST" }),
 
   listProjects: (workspaceId: string): Promise<readonly Project[]> =>
     request(ProjectsResponse, `${workspacePath(workspaceId)}/projects`).then(
@@ -133,9 +135,9 @@ export const api = {
       `${workspacePath(workspaceId)}/projects/${encodeURIComponent(projectId)}/board`,
     ),
 
-  repair: (workspaceId: string, projectId: string): Promise<unknown> =>
+  repair: (workspaceId: string, projectId: string): Promise<RepairResponse> =>
     request(
-      Schema.Unknown,
+      RepairResponse,
       `${workspacePath(workspaceId)}/projects/${encodeURIComponent(projectId)}/repair`,
       {
         method: "POST",

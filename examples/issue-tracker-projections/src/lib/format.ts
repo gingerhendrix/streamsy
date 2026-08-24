@@ -3,18 +3,18 @@
 import type { IssuePriority, IssueStatus } from "../../shared/model.ts";
 import { TEAM } from "../../shared/model.ts";
 
-export const STATUS_LABELS: Readonly<Record<IssueStatus, string>> = {
+export const STATUS_LABELS = {
   backlog: "Backlog",
   "in-progress": "In progress",
   done: "Done",
-};
+} satisfies Readonly<Record<IssueStatus, string>>;
 
-export const PRIORITY_LABELS: Readonly<Record<IssuePriority, string>> = {
+export const PRIORITY_LABELS = {
   low: "Low",
   medium: "Medium",
   high: "High",
   urgent: "Urgent",
-};
+} satisfies Readonly<Record<IssuePriority, string>>;
 
 export function memberName(id: string | null): string {
   if (id === null) return "Unassigned";

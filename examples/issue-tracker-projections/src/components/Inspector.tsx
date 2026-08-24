@@ -6,20 +6,20 @@
  * this panel say `Proven`.
  */
 import { useEffect, useRef, useState } from "react";
-import type { CoverageReport } from "../../shared/api.ts";
+import type { CoverageReport, ProjectionPassReport } from "../../shared/api.ts";
 import { shortPosition, shortStream } from "../lib/format.ts";
 import type { Mutation } from "../lib/pending.ts";
 
-const COVERAGE_LABELS: Readonly<Record<CoverageReport["status"], string>> = {
+const COVERAGE_LABELS = {
   proven: "Proven",
   "not-yet": "Not yet",
   incomparable: "Incomparable",
-};
+} satisfies Readonly<Record<CoverageReport["status"], string>>;
 
-const HOP_LABELS: Readonly<Record<string, string>> = {
+const HOP_LABELS = {
   "issue-detail": "Issue detail projection",
   "project-board": "Project board fan-in",
-};
+} satisfies Readonly<Record<ProjectionPassReport["label"], string>>;
 
 export interface InspectorProps {
   readonly mutations: readonly Mutation[];

@@ -163,14 +163,17 @@ export function App() {
           .catch(() => undefined);
         if (probe !== undefined) {
           const settled = classifySettlement(spec.label, probe);
-          patchMutation(spec.commandId, {
+          const patch: Partial<Mutation> = {
             phase: settled.phase,
             settledAt: Date.now(),
             coverage: probe.coverage,
             projections: probe.projections,
             note: undefined,
-            ...(settled.phase === "failed" ? { error: settled.message } : {}),
-          });
+          };
+          patchMutation(
+            spec.commandId,
+            settled.phase === "failed" ? { ...patch, error: settled.message } : patch,
+          );
           if (settled.phase !== "pending") {
             setAnnouncement(settled.message);
             return;
@@ -189,21 +192,33 @@ export function App() {
   const run = useCallback(
     async (spec: CommandSpec) => {
       commands.current.set(spec.commandId, spec);
-      setMutations((current) =>
-        [
-          {
-            commandId: spec.commandId,
-            issueId: spec.issueId,
-            projectId: spec.projectId,
-            label: spec.label,
-            patch: spec.patch,
-            ...(spec.insert === undefined ? {} : { insert: spec.insert }),
-            phase: "syncing" as const,
-            startedAt: Date.now(),
-          },
+      setMutations((current) => {
+        const started: Mutation =
+          spec.insert === undefined
+            ? {
+                commandId: spec.commandId,
+                issueId: spec.issueId,
+                projectId: spec.projectId,
+                label: spec.label,
+                patch: spec.patch,
+                phase: "syncing",
+                startedAt: Date.now(),
+              }
+            : {
+                commandId: spec.commandId,
+                issueId: spec.issueId,
+                projectId: spec.projectId,
+                label: spec.label,
+                patch: spec.patch,
+                insert: spec.insert,
+                phase: "syncing",
+                startedAt: Date.now(),
+              };
+        return [
+          started,
           ...current.filter((mutation) => mutation.commandId !== spec.commandId),
-        ].slice(0, MUTATION_HISTORY),
-      );
+        ].slice(0, MUTATION_HISTORY);
+      });
       setBanner(undefined);
 
       try {
@@ -636,7 +651,7 @@ export function App() {
               void api
                 .repair(workspaceId, activeProjectId)
                 .then(() => setAnnouncement("Repair pass completed."))
-                .catch((error: unknown) => setBanner(String(error)));
+                .catch((error) => setBanner(String(error)));
             }}
           />
         )}
