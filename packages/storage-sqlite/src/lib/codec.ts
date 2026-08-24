@@ -71,24 +71,28 @@ export function recordToRow(record: StreamRecord): StreamColumnValue[] {
 
 /** Rebuild a `StreamRecord` from a stored row, dropping NULL optionals. */
 export function rowToRecord(row: StreamRow): StreamRecord {
+  const config: StreamRecord["config"] = {
+    contentType: row.content_type,
+    createdAt: row.created_at,
+  };
+  if (row.ttl_seconds !== null) config.ttlSeconds = row.ttl_seconds;
+  if (row.expires_at !== null) config.expiresAt = row.expires_at;
+
+  const lifecycle: StreamRecord["lifecycle"] = {
+    closed: row.closed === 1,
+    softDeleted: row.soft_deleted === 1,
+  };
+  if (row.last_seq !== null) lifecycle.lastSeq = row.last_seq;
+  if (row.closed_at !== null) lifecycle.closedAt = row.closed_at;
+  if (row.forked_from !== null) lifecycle.forkedFrom = row.forked_from;
+  if (row.fork_offset !== null) lifecycle.forkOffset = row.fork_offset;
+  if (row.fork_sub_offset !== null) lifecycle.forkSubOffset = row.fork_sub_offset;
+  if (row.expires_at_ms !== null) lifecycle.expiresAtMs = row.expires_at_ms;
+
   return {
     id: row.stream_id,
-    config: {
-      contentType: row.content_type,
-      createdAt: row.created_at,
-      ...(row.ttl_seconds !== null ? { ttlSeconds: row.ttl_seconds } : {}),
-      ...(row.expires_at !== null ? { expiresAt: row.expires_at } : {}),
-    },
-    lifecycle: {
-      closed: row.closed === 1,
-      softDeleted: row.soft_deleted === 1,
-      ...(row.last_seq !== null ? { lastSeq: row.last_seq } : {}),
-      ...(row.closed_at !== null ? { closedAt: row.closed_at } : {}),
-      ...(row.forked_from !== null ? { forkedFrom: row.forked_from } : {}),
-      ...(row.fork_offset !== null ? { forkOffset: row.fork_offset } : {}),
-      ...(row.fork_sub_offset !== null ? { forkSubOffset: row.fork_sub_offset } : {}),
-      ...(row.expires_at_ms !== null ? { expiresAtMs: row.expires_at_ms } : {}),
-    },
+    config,
+    lifecycle,
     currentOffset: row.current_offset,
     counter: row.counter,
   };
