@@ -16,9 +16,20 @@ import {
   scope,
   selectors,
   source,
+  stateSourceMode,
   stateSink,
   view,
 } from "@streamsy/views";
+import {
+  LabelRow,
+  ProjectRow,
+  UserRow,
+  WorkspaceMetadataRow,
+  type LabelRow as LabelRowType,
+  type ProjectRow as ProjectRowType,
+  type UserRow as UserRowType,
+  type WorkspaceMetadataRow as WorkspaceMetadataRowType,
+} from "./catalog.ts";
 
 /** Selectors over one canonical fact, the fold state, and the maintained row. */
 const x = selectors<IssueEventType, IssueEventType, IssueRowType>();
@@ -30,6 +41,39 @@ export const issueEvents = source("issue-tracker.issue-events", {
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
   partitionBy: x.row.workspaceId,
   mode: factSourceMode(x.row.eventId, x.row.sequence),
+});
+
+const project = selectors<ProjectRowType>();
+const user = selectors<UserRowType>();
+const label = selectors<LabelRowType>();
+const workspace = selectors<WorkspaceMetadataRowType>();
+
+export const projects = source("issue-tracker.projects", {
+  schema: ProjectRow,
+  schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
+  partitionBy: project.row.workspaceId,
+  mode: stateSourceMode(project.row.projectId),
+});
+
+export const users = source("issue-tracker.users", {
+  schema: UserRow,
+  schemaRef: { name: "issue-tracker.UserRow", version: 1 },
+  partitionBy: user.row.workspaceId,
+  mode: stateSourceMode(user.row.userId),
+});
+
+export const labels = source("issue-tracker.labels", {
+  schema: LabelRow,
+  schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
+  partitionBy: label.row.workspaceId,
+  mode: stateSourceMode(label.row.labelId),
+});
+
+export const workspaceMetadata = source("issue-tracker.workspace-metadata", {
+  schema: WorkspaceMetadataRow,
+  schemaRef: { name: "issue-tracker.WorkspaceMetadataRow", version: 1 },
+  partitionBy: workspace.row.workspaceId,
+  mode: stateSourceMode(workspace.row.workspaceId),
 });
 
 export const issueLifecycle = reducer(
@@ -87,4 +131,8 @@ export const boardIssues = stateSink("issue-tracker.board-issues", {
 export const streamNames = {
   issueEvents: (workspaceId: string): string => `workspaces/${workspaceId}/issue-events`,
   boardState: (workspaceId: string): string => `state/workspaces/${workspaceId}/issues`,
+  projects: (workspaceId: string): string => `state/workspaces/${workspaceId}/projects`,
+  users: (workspaceId: string): string => `state/workspaces/${workspaceId}/users`,
+  labels: (workspaceId: string): string => `state/workspaces/${workspaceId}/labels`,
+  metadata: (workspaceId: string): string => `state/workspaces/${workspaceId}/metadata`,
 } as const;

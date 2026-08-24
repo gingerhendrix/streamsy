@@ -8,7 +8,16 @@
  */
 import { describe, expect, test } from "bun:test";
 import { compilePlan, encodePlan, planHash } from "@streamsy/views";
-import { boardIssues, issueEvents, issueLifecycle, issues } from "../domain/declaration.ts";
+import {
+  boardIssues,
+  issueEvents,
+  issueLifecycle,
+  issues,
+  labels,
+  projects,
+  users,
+  workspaceMetadata,
+} from "../domain/declaration.ts";
 
 describe("the issue-tracker declaration", () => {
   test("every declaration node is frozen", () => {
@@ -33,6 +42,21 @@ describe("the issue-tracker declaration", () => {
       status: { kind: "reference", scope: "event", path: ["status"] },
       updatedAt: { kind: "reference", scope: "event", path: ["occurredAt"] },
     });
+  });
+
+  test("catalog sources declare independent State modes", () => {
+    expect([projects, users, labels, workspaceMetadata].map((source) => source.mode.kind)).toEqual([
+      "state",
+      "state",
+      "state",
+      "state",
+    ]);
+    expect(projects.mode.operation).toEqual({
+      path: ["headers", "operation"],
+      upsert: ["insert", "update", "upsert"],
+      delete: "delete",
+    });
+    expect(new Set([projects.name, users.name, labels.name, workspaceMetadata.name]).size).toBe(4);
   });
 
   test("plan encoding is canonical, so an equal plan hashes equally", () => {
