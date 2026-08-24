@@ -1,0 +1,41 @@
+{
+  "name": "@streamsy/views-ir",
+  "version": "0.2.1",
+  "description": "Serializable contracts for Streamsy incrementally maintained views.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/views-ir"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

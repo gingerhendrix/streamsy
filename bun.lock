@@ -272,6 +272,14 @@
         "typescript": "catalog:",
       },
     },
+    "packages/views-ir": {
+      "name": "@streamsy/views-ir",
+      "version": "0.2.1",
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
@@ -1034,6 +1042,8 @@
     "@streamsy/storage-fs": ["@streamsy/storage-fs@workspace:packages/storage-fs"],
 
     "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
+
+    "@streamsy/views-ir": ["@streamsy/views-ir@workspace:packages/views-ir"],
 
     "@tanstack/db": ["@tanstack/db@0.6.8", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@tanstack/db-ivm": "0.1.18", "@tanstack/pacer-lite": "^0.2.1" }, "peerDependencies": { "typescript": ">=4.7" } }, "sha512-1dzwxYH7jizvpOzVsVmxZ8dGwMPDaA+YcinEmAszoUYF7mgSL0RiIiGHFBAc0WyVvHES7vSHg6x0WslX8C+TTQ=="],
 
