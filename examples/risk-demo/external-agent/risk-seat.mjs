@@ -57,6 +57,39 @@ function fail(message, code = 1) {
   throw error;
 }
 
+const STRING_TAG = "[object String]";
+
+/** Dependency-free JSON boundary predicates used before protocol values flow inward. */
+function isString(value) {
+  return Object.prototype.toString.call(value) === STRING_TAG;
+}
+
+function isJsonObject(value) {
+  return (
+    value !== null &&
+    value !== undefined &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function requiredString(value, field, context) {
+  if (!isString(value)) fail(`${context} is missing ${field}`);
+  return value;
+}
+
+function parseSessionState(value) {
+  if (!isJsonObject(value)) fail("invalid session state");
+  requiredString(value.origin, "origin", "session state");
+  requiredString(value.gameId, "gameId", "session state");
+  requiredString(value.playerId, "playerId", "session state");
+  requiredString(value.capability, "capability", "session state");
+  if (value.cursor !== null && value.cursor !== undefined && !isString(value.cursor)) {
+    fail("invalid session cursor");
+  }
+  return value;
+}
+
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   const options = {};
@@ -95,16 +128,7 @@ async function ensureStateDir(directory) {
 
 async function readSession(directory) {
   const file = path.join(directory, SESSION_FILE);
-  const session = JSON.parse(await readFile(file, "utf8"));
-  if (
-    typeof session.origin !== "string" ||
-    typeof session.gameId !== "string" ||
-    typeof session.playerId !== "string" ||
-    typeof session.capability !== "string"
-  ) {
-    fail("invalid session state");
-  }
-  return session;
+  return parseSessionState(JSON.parse(await readFile(file, "utf8")));
 }
 
 async function appendEvidence(directory, kind, fields = {}) {
@@ -124,7 +148,7 @@ function sha256(value) {
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") {
+  if (isJsonObject(value)) {
     return Object.fromEntries(
       Object.entries(value)
         .toSorted(([left], [right]) => left.localeCompare(right))
@@ -135,13 +159,11 @@ function stable(value) {
 }
 
 function samePrimitive(actual, expected) {
-  return typeof actual === typeof expected && actual === expected;
+  return actual === expected;
 }
 
 function indexValues(values) {
-  return new Map(
-    [...new Set(values.filter((value) => typeof value === "string"))].map((id, i) => [id, i]),
-  );
+  return new Map([...new Set(values.filter(isString))].map((id, i) => [id, i]));
 }
 
 function flattenLegalChoices(legalActions) {
@@ -233,7 +255,7 @@ export function buildModelContract(decision, board) {
   const players = indexValues(playerIds);
   const continents = indexValues(continentIds);
   const modelReinforcement = (reinforcement) =>
-    reinforcement && typeof reinforcement === "object"
+    isJsonObject(reinforcement)
       ? {
           base: reinforcement.base,
           continents: (reinforcement.continents ?? []).map((bonus) => ({
@@ -244,18 +266,20 @@ export function buildModelContract(decision, board) {
           remaining: reinforcement.remaining,
         }
       : undefined;
-  const selectionChoices = resolution.map((choice, choiceIndex) => ({
-    choiceIndex,
-    type: choice.type,
-    ...(choice.territoryId === undefined
-      ? {}
-      : { territoryIndex: territories.get(choice.territoryId) }),
-    ...(choice.from === undefined ? {} : { fromTerritoryIndex: territories.get(choice.from) }),
-    ...(choice.to === undefined ? {} : { toTerritoryIndex: territories.get(choice.to) }),
-    ...(choice.scalar === undefined
-      ? {}
-      : { [choice.scalar.name]: { min: choice.scalar.min, max: choice.scalar.max } }),
-  }));
+  const selectionChoices = resolution.map((choice, choiceIndex) => {
+    const selectionChoice = { choiceIndex, type: choice.type };
+    if (choice.territoryId !== undefined) {
+      selectionChoice.territoryIndex = territories.get(choice.territoryId);
+    }
+    if (choice.from !== undefined) {
+      selectionChoice.fromTerritoryIndex = territories.get(choice.from);
+    }
+    if (choice.to !== undefined) selectionChoice.toTerritoryIndex = territories.get(choice.to);
+    if (choice.scalar !== undefined) {
+      selectionChoice[choice.scalar.name] = { min: choice.scalar.min, max: choice.scalar.max };
+    }
+    return selectionChoice;
+  });
   return {
     observation: {
       mode: decision.mode,
@@ -271,27 +295,31 @@ export function buildModelContract(decision, board) {
         phase: board.phase,
         round: board.round,
         activePlayerIndex: players.get(board.activePlayerId),
-        players: (board.players ?? []).map((player) => ({
-          playerIndex: players.get(player.id),
-          controller: player.controller,
-          eliminated: player.eliminated,
-          ...(player.remainingArmies === undefined
-            ? {}
-            : { remainingArmies: player.remainingArmies }),
-        })),
-        territories: (board.territories ?? []).map((territory) => ({
-          territoryIndex: territories.get(territory.id),
-          ownerPlayerIndex: players.get(territory.ownerId),
-          armies: territory.armies,
-          continentIndex: continents.get(territory.continentId),
-          ...(Array.isArray(territory.adjacentTerritoryIds)
-            ? {
-                adjacentTerritoryIndexes: territory.adjacentTerritoryIds.map((id) =>
-                  territories.get(id),
-                ),
-              }
-            : {}),
-        })),
+        players: (board.players ?? []).map((player) => {
+          const modelPlayer = {
+            playerIndex: players.get(player.id),
+            controller: player.controller,
+            eliminated: player.eliminated,
+          };
+          if (player.remainingArmies !== undefined) {
+            modelPlayer.remainingArmies = player.remainingArmies;
+          }
+          return modelPlayer;
+        }),
+        territories: (board.territories ?? []).map((territory) => {
+          const modelTerritory = {
+            territoryIndex: territories.get(territory.id),
+            ownerPlayerIndex: players.get(territory.ownerId),
+            armies: territory.armies,
+            continentIndex: continents.get(territory.continentId),
+          };
+          if (Array.isArray(territory.adjacentTerritoryIds)) {
+            modelTerritory.adjacentTerritoryIndexes = territory.adjacentTerritoryIds.map((id) =>
+              territories.get(id),
+            );
+          }
+          return modelTerritory;
+        }),
         continents: (board.continents ?? []).map((continent) => ({
           continentIndex: continents.get(continent.id),
           territoryIndexes: continent.territoryIds.map((id) => territories.get(id)),
@@ -315,7 +343,7 @@ function exactKeys(value, expected) {
 
 /** Resolve a model selection without accepting or reproducing canonical IDs. */
 export function resolveModelSelection(selection, resolution) {
-  if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+  if (!isJsonObject(selection)) {
     return { ok: false, reason: "CHOICE_NOT_OBJECT" };
   }
   if (!Number.isInteger(selection.choiceIndex)) {
@@ -383,7 +411,7 @@ export function resolveModelSelection(selection, resolution) {
 
 /** Validate transport shape against the server-published legal action space. */
 export function actionIsLegal(action, legalActions) {
-  if (!action || typeof action !== "object" || Array.isArray(action)) return false;
+  if (!isJsonObject(action)) return false;
   const legal = legalActions.find((candidate) => candidate.type === action.type);
   if (!legal) return false;
   switch (action.type) {
@@ -393,9 +421,7 @@ export function actionIsLegal(action, legalActions) {
       let total = 0;
       for (const placement of action.placements) {
         if (
-          !placement ||
-          typeof placement !== "object" ||
-          Array.isArray(placement) ||
+          !isJsonObject(placement) ||
           !legal.territoryIds.includes(placement.territoryId) ||
           seen.has(placement.territoryId) ||
           !Number.isInteger(placement.armies) ||
@@ -599,11 +625,12 @@ async function nextActions({ url, headers, signal }) {
  */
 async function reportFinished(directory, session, counts, resumed = false) {
   const winner = session.finished.winner;
-  await appendEvidence(directory, "finished", {
+  const evidence = {
     ...counts,
     winner,
-    ...(resumed ? { resumed: true } : {}),
-  });
+  };
+  if (resumed) evidence.resumed = true;
+  await appendEvidence(directory, "finished", evidence);
   process.stdout.write(`${JSON.stringify({ status: "finished", ...counts, winner })}\n`);
 }
 
@@ -618,10 +645,11 @@ async function initialize(options) {
       ? await readFile(path.resolve(String(options["seat-file"])), "utf8")
       : String(options.seat),
   );
-  const { origin, gameId, playerId, token: capability } = seat;
-  if (![origin, gameId, playerId, capability].every((value) => typeof value === "string")) {
-    fail("seat descriptor is missing origin, gameId, playerId, or token");
-  }
+  if (!isJsonObject(seat)) fail("seat descriptor must be a JSON object");
+  const origin = requiredString(seat.origin, "origin", "seat descriptor");
+  const gameId = requiredString(seat.gameId, "gameId", "seat descriptor");
+  const playerId = requiredString(seat.playerId, "playerId", "seat descriptor");
+  const capability = requiredString(seat.token, "token", "seat descriptor");
   const privateUrl = new URL(origin);
   if (
     privateUrl.protocol !== "https:" &&
@@ -816,7 +844,7 @@ async function chooseSelection(harness, prompt, directory, timeoutMs, budget, si
   if (!json) return { failureCode: "MODEL_OUTPUT_NOT_JSON" };
   try {
     let choice = JSON.parse(json);
-    for (let depth = 0; depth < 3 && typeof choice?.selectionJson === "string"; depth += 1) {
+    for (let depth = 0; depth < 3 && isString(choice?.selectionJson); depth += 1) {
       choice = JSON.parse(choice.selectionJson);
     }
     return { selection: choice?.selection ?? choice };
@@ -984,7 +1012,12 @@ async function runLoop(options) {
 
     try {
       const inflight = JSON.parse(await readFile(path.join(directory, INFLIGHT_FILE), "utf8"));
-      if (typeof inflight.body !== "string" || sha256(inflight.body) !== inflight.bodySha256) {
+      if (
+        !isJsonObject(inflight) ||
+        !isString(inflight.body) ||
+        !isString(inflight.bodySha256) ||
+        sha256(inflight.body) !== inflight.bodySha256
+      ) {
         fail("invalid in-flight command state");
       }
       const payload = JSON.parse(inflight.body);
