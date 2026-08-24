@@ -13,20 +13,33 @@ import {
 
 type User = { id: string; name: string };
 
+type UserSourceValue = {} | null | undefined;
+
+interface UserCandidate {
+  readonly id?: UserSourceValue;
+  readonly name?: UserSourceValue;
+}
+
+function isUserCandidate(value: UserSourceValue): value is UserCandidate {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
+
+function isStringValue(value: UserSourceValue): value is string {
+  return (
+    value !== null && value !== undefined && Object(value) !== value && value.constructor === String
+  );
+}
+
+function parseUser(value: UserSourceValue): User {
+  if (!isUserCandidate(value)) throw new Error("invalid user");
+  const { id, name } = value;
+  if (!isStringValue(id) || !isStringValue(name)) throw new Error("invalid user");
+  return { id, name };
+}
+
 const userCodec: JsonCodec<User> = {
-  encode(value) {
-    if (typeof value.id !== "string" || typeof value.name !== "string")
-      throw new Error("invalid user");
-    return value;
-  },
-  decode(value) {
-    if (!value || typeof value !== "object") throw new Error("invalid user");
-    const candidate = value as Partial<User>;
-    if (typeof candidate.id !== "string" || typeof candidate.name !== "string") {
-      throw new Error("invalid user");
-    }
-    return { id: candidate.id, name: candidate.name };
-  },
+  encode: (value) => value,
+  decode: parseUser,
 };
 
 /**
@@ -124,7 +137,7 @@ describe("DurableStateProtocol", () => {
     const durable = createDurableStateProtocol(protocol, {
       users: {
         schema: userCodec,
-        primaryKey: (value: unknown) => `user:${userCodec.decode(value).id}`,
+        primaryKey: (value: User) => `user:${value.id}`,
       },
     });
 

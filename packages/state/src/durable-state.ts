@@ -75,7 +75,8 @@ export type ControlMessage = {
   headers: { control: DurableStateControl; offset?: string };
 };
 
-export type DurableStateMessage<RowMap extends Record<string, unknown>> =
+export type DurableStateValue = {} | null | undefined;
+export type DurableStateMessage<RowMap extends object> =
   | { [Type in keyof RowMap & string]: ChangeMessage<Type, RowMap[Type]> }[keyof RowMap & string]
   | ControlMessage;
 
@@ -85,14 +86,16 @@ export interface DurableStateCollectionDef<T> {
   primaryKey: string | ((value: T) => string);
 }
 
-export type DurableStateSchemaMap = Record<string, DurableStateCollectionDef<unknown>>;
+export type DurableStateSchemaMap<S extends object = object> = {
+  [K in keyof S]: DurableStateCollectionDef<CollectionValue<S[K]>>;
+};
 export type CollectionValue<Def> = Def extends DurableStateCollectionDef<infer T> ? T : never;
-export type ValuesByWireType<S extends DurableStateSchemaMap> = {
+export type ValuesByWireType<S extends DurableStateSchemaMap<S>> = {
   [K in keyof S as S[K]["type"] extends string ? S[K]["type"] : K & string]: CollectionValue<S[K]>;
 };
 
 export type DurableStateCreateOptions = Omit<CreateOptions, "contentType" | "initialData">;
-export type DurableStateCreateResult<S extends DurableStateSchemaMap> =
+export type DurableStateCreateResult<S extends DurableStateSchemaMap<S>> =
   | {
       status: "created";
       stream: DurableStateStream<S>;
@@ -121,38 +124,123 @@ export type DurableStateCreateResult<S extends DurableStateSchemaMap> =
       errorMessage?: string;
     }
   | { status: "not-supported"; feature: string; message?: string };
-export type DurableStateGetResult<S extends DurableStateSchemaMap> =
+export type DurableStateGetResult<S extends DurableStateSchemaMap<S>> =
   | { status: "ok"; stream: DurableStateStream<S> }
   | { status: "not-found" }
   | { status: "gone" }
   | { status: "not-supported"; feature: string; message?: string }
   | { status: "content-type-conflict"; contentType: string; expectedContentType: string };
 
-type CollectionRuntime = {
+interface PreparedCollectionValue {
+  readonly key: string;
+  readonly value: DurableStateValue;
+}
+
+interface CollectionRuntime {
+  readonly key: string;
+  readonly wireType: string;
+  decode(value: DurableStateValue): DurableStateValue;
+  prepare(value: DurableStateValue, explicitKey?: string): PreparedCollectionValue;
+}
+
+interface DurableStateWireHeaders {
+  readonly control?: DurableStateValue;
+  readonly operation?: DurableStateValue;
+}
+
+interface DurableStateWireMessage {
+  readonly headers?: DurableStateValue;
+  readonly type?: DurableStateValue;
+  readonly key?: DurableStateValue;
+  readonly value?: DurableStateValue;
+  readonly old_value?: DurableStateValue;
+}
+
+interface MutableDurableStateChangeMessage {
+  type: string;
   key: string;
-  wireType: string;
-  codec: JsonCodec<unknown>;
-  primaryKey: DurableStateCollectionDef<unknown>["primaryKey"];
-};
-
-const operations = new Set<string>(["insert", "update", "upsert", "delete"]);
-const controls = new Set<string>(["snapshot-start", "snapshot-end", "reset"]);
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  value?: DurableStateValue;
+  old_value?: DurableStateValue;
+  headers: DurableStateChangeHeaders;
 }
 
-function hasOwn(obj: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(obj, key);
+function isWireObject(value: DurableStateValue): boolean {
+  return (
+    value !== null &&
+    Object(value) === value &&
+    Object.prototype.toString.call(value) !== "[object Function]" &&
+    !Array.isArray(value)
+  );
 }
 
-function buildRuntime(schema: DurableStateSchemaMap): CollectionRuntime[] {
-  return Object.entries(schema).map(([key, def]) => ({
-    key,
-    wireType: def.type ?? key,
-    codec: normalizeJsonCodec(def.schema),
-    primaryKey: def.primaryKey,
-  }));
+function isWireMessage(value: DurableStateValue): value is DurableStateWireMessage {
+  return isWireObject(value);
+}
+
+function isWireHeaders(value: DurableStateValue): value is DurableStateWireHeaders {
+  return isWireObject(value);
+}
+
+function isWireString(value: DurableStateValue): value is string {
+  return (
+    value !== null && value !== undefined && Object(value) !== value && value.constructor === String
+  );
+}
+
+function isPrimaryKeyFunction<T>(
+  primaryKey: string | ((value: T) => string),
+): primaryKey is (value: T) => string {
+  return primaryKey.constructor === Function;
+}
+
+function parseOperation(value: DurableStateValue): DurableStateOperationWithExtensions {
+  if (!isWireString(value)) throw new Error("Invalid Durable State operation");
+  switch (value) {
+    case "insert":
+    case "update":
+    case "upsert":
+    case "delete":
+      return value;
+    default:
+      throw new Error("Invalid Durable State operation");
+  }
+}
+
+function parseControl(value: DurableStateValue): DurableStateControl {
+  if (!isWireString(value)) throw new Error("Invalid Durable State control message");
+  switch (value) {
+    case "snapshot-start":
+    case "snapshot-end":
+    case "reset":
+      return value;
+    default:
+      throw new Error("Invalid Durable State control message");
+  }
+}
+
+function buildRuntime<S extends DurableStateSchemaMap<S>>(schema: S): CollectionRuntime[] {
+  const runtime: CollectionRuntime[] = [];
+  for (const key in schema) {
+    const def = schema[key];
+    const codec = normalizeJsonCodec(def.schema);
+    const primaryKey = def.primaryKey;
+    runtime.push({
+      key,
+      wireType: def.type ?? key,
+      decode(value) {
+        return codec.decode(value);
+      },
+      prepare(value, explicitKey) {
+        const decoded = codec.decode(value);
+        if (explicitKey !== undefined) return { key: explicitKey, value: decoded };
+        if (isPrimaryKeyFunction(primaryKey)) {
+          return { key: primaryKey(decoded), value: decoded };
+        }
+        return { key: keyFromValue(primaryKey, decoded), value: decoded };
+      },
+    });
+  }
+  return runtime;
 }
 
 /**
@@ -177,12 +265,20 @@ function requireByWireType(runtime: CollectionRuntime[], wireType: string): Coll
   return def;
 }
 
-function keyFromValue(def: CollectionRuntime, value: unknown): string {
-  if (typeof def.primaryKey === "function") return def.primaryKey(value);
-  if (!isObject(value))
-    throw new Error(`Cannot extract primary key ${def.primaryKey} from non-object value`);
-  const key = value[def.primaryKey];
-  if (typeof key !== "string") throw new Error(`Primary key ${def.primaryKey} must be a string`);
+function keyFromValue(primaryKey: string, value: DurableStateValue): string {
+  if (!isWireMessage(value))
+    throw new Error(`Cannot extract primary key ${primaryKey} from non-object value`);
+  let owner: object | null = value;
+  let key: DurableStateValue;
+  while (owner !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, primaryKey);
+    if (descriptor !== undefined) {
+      key = "value" in descriptor ? descriptor.value : descriptor.get?.call(value);
+      break;
+    }
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (!isWireString(key)) throw new Error(`Primary key ${primaryKey} must be a string`);
   return key;
 }
 
@@ -196,15 +292,16 @@ function keyFromValue(def: CollectionRuntime, value: unknown): string {
  * control message is proven to carry a known `control` header and no `type` or
  * `key`.
  */
-function validateMessage(runtime: CollectionRuntime[], value: unknown): Record<string, unknown> {
-  if (!isObject(value)) throw new Error("Durable State message must be an object");
+function validateMessage(
+  runtime: CollectionRuntime[],
+  value: DurableStateValue,
+): DurableStateWireMessage {
+  if (!isWireMessage(value)) throw new Error("Durable State message must be an object");
   const headers = value.headers;
-  if (!isObject(headers)) throw new Error("Durable State message requires headers object");
+  if (!isWireHeaders(headers)) throw new Error("Durable State message requires headers object");
 
   if ("control" in headers) {
-    if (typeof headers.control !== "string" || !controls.has(headers.control)) {
-      throw new Error("Invalid Durable State control message");
-    }
+    parseControl(headers.control);
     if ("type" in value || "key" in value) {
       throw new Error("Durable State control messages must not include type or key");
     }
@@ -213,26 +310,21 @@ function validateMessage(runtime: CollectionRuntime[], value: unknown): Record<s
 
   const type = value.type;
   const key = value.key;
-  const operation = headers.operation;
-  if (typeof type !== "string" || type.length === 0)
+  if (!isWireString(type) || type.length === 0)
     throw new Error("Change message type must be a string");
-  if (typeof key !== "string" || key.length === 0)
+  if (!isWireString(key) || key.length === 0)
     throw new Error("Change message key must be a string");
-  if (typeof operation !== "string" || !operations.has(operation)) {
-    throw new Error("Invalid Durable State operation");
-  }
+  const operation = parseOperation(headers.operation);
 
   const def = requireByWireType(runtime, type);
 
   if (operation === "insert" || operation === "update" || operation === "upsert") {
-    if (!hasOwn(value, "value")) throw new Error(`${operation} message requires value`);
-    def.codec.decode(value.value);
-  } else {
-    if (hasOwn(value, "value") && value.value !== null) {
-      throw new Error("delete message value must be null when present");
-    }
+    if (!Object.hasOwn(value, "value")) throw new Error(`${operation} message requires value`);
+    def.decode(value.value);
+  } else if (Object.hasOwn(value, "value") && value.value !== null) {
+    throw new Error("delete message value must be null when present");
   }
-  if (hasOwn(value, "old_value")) def.codec.decode(value.old_value);
+  if (Object.hasOwn(value, "old_value")) def.decode(value.old_value);
   return value;
 }
 
@@ -253,16 +345,17 @@ function validateMessage(runtime: CollectionRuntime[], value: unknown): Record<s
  * unchecked narrowing in the package; every other path reaches the typed union
  * through this function.
  */
-function toDurableStateMessage<S extends DurableStateSchemaMap>(
+function toDurableStateMessage<S extends DurableStateSchemaMap<S>>(
   runtime: CollectionRuntime[],
-  value: unknown,
+  value: DurableStateValue,
 ): DurableStateMessage<ValuesByWireType<S>> {
   const validated = validateMessage(runtime, value);
+  // SAFETY: `validateMessage` proves the schema-to-runtime invariant documented above.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Runtime-proven by `validateMessage`; see the invariant documented above.
   return validated as DurableStateMessage<ValuesByWireType<S>>;
 }
 
-function durableStateCodec<S extends DurableStateSchemaMap>(
+function durableStateCodec<S extends DurableStateSchemaMap<S>>(
   runtime: CollectionRuntime[],
 ): JsonCodec<DurableStateMessage<ValuesByWireType<S>>> {
   return {
@@ -275,7 +368,7 @@ function durableStateCodec<S extends DurableStateSchemaMap>(
   };
 }
 
-export interface DurableState<S extends DurableStateSchemaMap> {
+export interface DurableState<S extends DurableStateSchemaMap<S>> {
   append(message: DurableStateMessage<ValuesByWireType<S>>): Promise<AppendResult>;
   insert<K extends keyof S & string>(
     type: K,
@@ -308,7 +401,7 @@ export interface DurableState<S extends DurableStateSchemaMap> {
   reset(options?: { offset?: string; headers?: DurableStateControlHeaders }): Promise<AppendResult>;
 }
 
-export class DurableStateProtocol<S extends DurableStateSchemaMap> {
+export class DurableStateProtocol<S extends DurableStateSchemaMap<S>> {
   readonly protocol: StreamProtocolFactory;
   readonly json: JsonProtocol<DurableStateMessage<ValuesByWireType<S>>>;
   readonly schema: S;
@@ -341,14 +434,14 @@ export class DurableStateProtocol<S extends DurableStateSchemaMap> {
   }
 }
 
-export function createDurableStateProtocol<S extends DurableStateSchemaMap>(
+export function createDurableStateProtocol<S extends DurableStateSchemaMap<S>>(
   protocol: StreamProtocolFactory,
   schema: S,
 ): DurableStateProtocol<S> {
   return new DurableStateProtocol(protocol, schema);
 }
 
-export class DurableStateStream<S extends DurableStateSchemaMap> {
+export class DurableStateStream<S extends DurableStateSchemaMap<S>> {
   readonly json: JsonStream<DurableStateMessage<ValuesByWireType<S>>>;
   readonly stream: ProtocolStream;
   readonly id: StreamId;
@@ -415,14 +508,14 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
     } = {},
   ): DurableStateMessage<ValuesByWireType<S>> {
     const def = requireByKey(this.runtime, type);
-    const validated = def.codec.decode(value);
-    const message: Record<string, unknown> = {
+    const prepared = def.prepare(value, options.key);
+    const message: MutableDurableStateChangeMessage = {
       type: def.wireType,
-      key: options.key ?? keyFromValue(def, validated),
-      value: validated,
+      key: prepared.key,
+      value: prepared.value,
       headers: { ...options.headers, operation },
     };
-    if (options.oldValue !== undefined) message.old_value = def.codec.decode(options.oldValue);
+    if (options.oldValue !== undefined) message.old_value = def.decode(options.oldValue);
     return toDurableStateMessage<S>(this.runtime, message);
   }
 
@@ -432,12 +525,12 @@ export class DurableStateStream<S extends DurableStateSchemaMap> {
     options: { oldValue?: CollectionValue<S[K]>; headers?: DurableStateUserHeaders } = {},
   ): DurableStateMessage<ValuesByWireType<S>> {
     const def = requireByKey(this.runtime, type);
-    const message: Record<string, unknown> = {
+    const message: MutableDurableStateChangeMessage = {
       type: def.wireType,
       key,
       headers: { ...options.headers, operation: "delete" },
     };
-    if (options.oldValue !== undefined) message.old_value = def.codec.decode(options.oldValue);
+    if (options.oldValue !== undefined) message.old_value = def.decode(options.oldValue);
     return toDurableStateMessage<S>(this.runtime, message);
   }
 
