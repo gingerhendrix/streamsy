@@ -17,7 +17,7 @@ export const SCHEMA_VERSION = "issue-tracker-projections/1";
 
 export type HostKind = "local" | "cloudflare";
 
-export interface AppConfigShape {
+export interface AppConfigValues {
   /** Which executable edge is running the application. */
   readonly host: HostKind;
   /** Deployment identity: the Alchemy stage on Cloudflare, `local` otherwise. */
@@ -25,7 +25,7 @@ export interface AppConfigShape {
   readonly schemaVersion: string;
 }
 
-export class AppConfig extends Context.Service<AppConfig, AppConfigShape>()(
+export class AppConfig extends Context.Service<AppConfig, AppConfigValues>()(
   "issue-tracker-projections/AppConfig",
 ) {}
 
@@ -55,5 +55,5 @@ export const layerFromEnv: Layer.Layer<AppConfig> = Layer.effect(
 );
 
 /** Supply a concrete configuration, for hosts and tests that already have one. */
-export const layer = (config: Omit<AppConfigShape, "schemaVersion">): Layer.Layer<AppConfig> =>
+export const layer = (config: Omit<AppConfigValues, "schemaVersion">): Layer.Layer<AppConfig> =>
   Layer.succeed(AppConfig, AppConfig.of({ ...config, schemaVersion: SCHEMA_VERSION }));

@@ -28,12 +28,12 @@ const encoder = new TextEncoder();
 /** How many command lanes one runtime keeps derived. */
 const PRODUCER_CAPACITY = 4_096;
 
-export interface CommandProducersShape {
+export interface CommandProducerResolver {
   /** Derive the bounded, deterministic producer lane for one command id. */
   readonly forCommand: (commandId: string) => Effect.Effect<ClientProducerOptions, InvalidRequest>;
 }
 
-export class CommandProducers extends Context.Service<CommandProducers, CommandProducersShape>()(
+export class CommandProducers extends Context.Service<CommandProducers, CommandProducerResolver>()(
   "issue-tracker-projections/CommandProducers",
 ) {}
 

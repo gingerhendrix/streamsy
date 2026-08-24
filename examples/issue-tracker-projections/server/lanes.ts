@@ -28,12 +28,12 @@ interface LaneKey {
   readonly target: string;
 }
 
-export interface ProjectionLanesShape {
+export interface ProjectionLaneResolver {
   readonly issueDetail: (workspaceId: string, issueId: string) => Effect.Effect<ProducerLane>;
   readonly projectBoard: (workspaceId: string, projectId: string) => Effect.Effect<ProducerLane>;
 }
 
-export class ProjectionLanes extends Context.Service<ProjectionLanes, ProjectionLanesShape>()(
+export class ProjectionLanes extends Context.Service<ProjectionLanes, ProjectionLaneResolver>()(
   "issue-tracker-projections/ProjectionLanes",
 ) {}
 

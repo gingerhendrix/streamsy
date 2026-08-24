@@ -18,11 +18,13 @@ export interface WakeMessage {
   readonly issueId?: string;
 }
 
-export interface WakeShape {
+export interface WakeDispatcher {
   readonly wake: (message: WakeMessage) => Effect.Effect<void>;
 }
 
-export class Wake extends Context.Service<Wake, WakeShape>()("issue-tracker-projections/Wake") {}
+export class Wake extends Context.Service<Wake, WakeDispatcher>()(
+  "issue-tracker-projections/Wake",
+) {}
 
 /** No background lane. Repair and the next request are the only convergence. */
 export const layerDisabled: Layer.Layer<Wake> = Layer.succeed(

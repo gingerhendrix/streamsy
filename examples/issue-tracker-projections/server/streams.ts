@@ -33,7 +33,7 @@ export interface WorkspaceBindings {
   readonly board: (workspaceId: string, projectId: string) => StreamBinding;
 }
 
-export interface StreamsShape {
+export interface WorkspaceStreams {
   /**
    * The resolved protocol client. Exposed for the few callers that legitimately
    * need the handle itself — the browser-facing HTTP routes and tests — not for
@@ -45,7 +45,7 @@ export interface StreamsShape {
   readonly ensure: (streamId: string) => Effect.Effect<void, StreamUnavailable>;
 }
 
-export class Streams extends Context.Service<Streams, StreamsShape>()(
+export class Streams extends Context.Service<Streams, WorkspaceStreams>()(
   "issue-tracker-projections/Streams",
 ) {}
 
