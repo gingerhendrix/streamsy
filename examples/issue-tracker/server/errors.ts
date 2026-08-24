@@ -72,17 +72,12 @@ export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("St
   detail: Schema.String,
 }) {}
 
-/**
- * A resume token that this sink will not honour.
- *
- * `fallback` is the recovery the sink guarantees, so a consumer recovers by
- * typed policy rather than by guessing what to do with a 409.
- */
-export class SessionResumeExpired extends Schema.TaggedError<SessionResumeExpired>()(
-  "SessionResumeExpired",
+/** A resume offset outside retained history, with the sink's recovery policy. */
+export class SessionResumeUnavailable extends Schema.TaggedError<SessionResumeUnavailable>()(
+  "SessionResumeUnavailable",
   {
     sink: Schema.String,
-    reason: Schema.Literals(["malformed", "expired", "wrong-sink", "out-of-window"]),
+    reason: Schema.Literal("out-of-window"),
     fallback: Schema.Literal("snapshot-then-live"),
   },
 ) {}
@@ -102,5 +97,5 @@ export type ApplicationError =
   | MaintenanceFault
   | StoreRestorePoison
   | StoreUnavailable
-  | SessionResumeExpired
+  | SessionResumeUnavailable
   | Unauthorized;

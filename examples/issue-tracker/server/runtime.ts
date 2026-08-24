@@ -41,6 +41,6 @@ export const applicationLayer = (
     Commands.layer,
     options.store,
     GatewayModule.layer(options.gateway),
-    sinkLayer(options.protocol).pipe(Layer.provide(options.config)),
+    sinkLayer(options.protocol),
     options.config,
   );

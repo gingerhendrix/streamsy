@@ -83,8 +83,8 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
         Effect.succeed(fail(500, "state-restore-poison", `${error.table}/${error.key}`)),
       StoreUnavailable: (error) => Effect.succeed(fail(503, "store-unavailable", error.operation)),
       Unauthorized: (error) => Effect.succeed(fail(403, "unauthorized", error.required)),
-      SessionResumeExpired: (error) =>
-        Effect.succeed(fail(409, "resume-expired", error.reason, error.fallback)),
+      SessionResumeUnavailable: (error) =>
+        Effect.succeed(fail(409, "resume-unavailable", error.reason, error.fallback)),
     }),
     Effect.catchCause((cause) => Effect.succeed(errorResponse(cause))),
   );

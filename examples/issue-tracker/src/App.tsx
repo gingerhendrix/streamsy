@@ -247,12 +247,7 @@ function CreateIssueForm(props: {
   );
 }
 
-/**
- * What the badge is allowed to say.
- *
- * `Live` means the sink answered and minted a resume token for what this
- * session has received — not that a timer elapsed.
- */
+/** `Live` means the sink answered successfully for this session. */
 function SyncBadge(props: {
   readonly status: SinkStatus;
   readonly rows: number;
@@ -269,9 +264,9 @@ function SyncBadge(props: {
     <p className="badge" data-state={props.status.kind} data-rows={props.rows}>
       <span>{label}</span>
       <span className="rows">{props.rows} issues</span>
-      {props.status.kind === "live" && props.status.resume !== undefined ? (
-        <span className="resume" title={props.status.resume}>
-          resume token held
+      {props.status.kind === "live" && props.status.offset !== undefined ? (
+        <span className="offset" title={props.status.offset}>
+          offset held
         </span>
       ) : undefined}
       {props.status.kind === "failed" ? (

@@ -62,9 +62,8 @@ export const SinkSessionResponse = Schema.Struct({
   transport: Schema.Literal("durable-state"),
   fallback: Schema.Literal("snapshot-then-live"),
   scope: Schema.String,
-  /** Resume token for the sink's current tail. */
-  resume: Schema.String,
-  expiresInSeconds: Schema.Number,
+  /** Native Durable Streams offset at the sink's current tail. */
+  offset: Schema.String,
 });
 export type SinkSessionResponse = typeof SinkSessionResponse.Type;
 
@@ -87,7 +86,7 @@ export type HealthResponse = typeof HealthResponse.Type;
 export const ApiError = Schema.Struct({
   error: Schema.String,
   detail: Schema.optionalKey(Schema.String),
-  /** Present when the failure has a declared recovery, such as a stale resume token. */
+  /** Present when the failure has a declared recovery, such as an unavailable offset. */
   fallback: Schema.optionalKey(Schema.String),
 });
 export type ApiError = typeof ApiError.Type;

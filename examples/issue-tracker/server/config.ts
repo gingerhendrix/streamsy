@@ -20,10 +20,6 @@ export interface AppConfigValues {
   readonly deployment: string;
   readonly schemaVersion: string;
   readonly planHash: string;
-  /** How long a minted sink resume token stays valid. */
-  readonly resumeTokenTtlSeconds: number;
-  /** The signing secret for sink resume tokens. */
-  readonly resumeTokenSecret: string;
 }
 
 export class AppConfig extends Context.Service<AppConfig, AppConfigValues>()(
@@ -32,14 +28,6 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigValues>()(
 
 const deploymentConfig = Config.string("ISSUE_TRACKER_DEPLOYMENT").pipe(
   Config.withDefault("local"),
-);
-
-const resumeTtlConfig = Config.int("ISSUE_TRACKER_RESUME_TTL_SECONDS").pipe(
-  Config.withDefault(900),
-);
-
-const resumeSecretConfig = Config.string("ISSUE_TRACKER_RESUME_SECRET").pipe(
-  Config.withDefault("issue-tracker-local-development-secret"),
 );
 
 /**
@@ -56,8 +44,6 @@ export const layerFromEnv: Layer.Layer<AppConfig> = Layer.effect(
       deployment: yield* deploymentConfig,
       schemaVersion: SCHEMA_VERSION,
       planHash: PLAN_HASH,
-      resumeTokenTtlSeconds: yield* resumeTtlConfig,
-      resumeTokenSecret: yield* resumeSecretConfig,
     });
   }).pipe(Effect.orDie),
 );
@@ -73,7 +59,5 @@ export const layer = (values: AppConfigOverrides = {}): Layer.Layer<AppConfig> =
       deployment: values.deployment ?? "local",
       schemaVersion: SCHEMA_VERSION,
       planHash: PLAN_HASH,
-      resumeTokenTtlSeconds: values.resumeTokenTtlSeconds ?? 900,
-      resumeTokenSecret: values.resumeTokenSecret ?? "issue-tracker-test-secret",
     }),
   );

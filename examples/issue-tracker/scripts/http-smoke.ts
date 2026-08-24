@@ -4,7 +4,7 @@
  * HTTP smoke.
  *
  * Starts a real Bun server backed by on-disk SQLite, drives the whole slice
- * over the network, restarts the host, and checks the sink's resume contract
+ * over the network, restarts the host, and checks offset-based sink resume
  * with the ordinary Durable Streams client. It asserts; a failure exits
  * non-zero.
  */
@@ -131,12 +131,12 @@ try {
   check("a move reaches the live consumer without a refresh", live);
   connection.close();
 
-  // === the sink's resume contract ===
+  // === offset-based sink resume ===
   const session = (await (
     await fetch(`${running.origin}/api/workspaces/main/sink-session`)
-  ).json()) as { resume: string; fallback: string };
+  ).json()) as { offset: string; fallback: string };
   const suffixBefore = await fetch(
-    `${running.origin}/state/workspaces/main/issues?scope=${SCOPE}&resume=${encodeURIComponent(session.resume)}`,
+    `${running.origin}/state/workspaces/main/issues?scope=${SCOPE}&offset=${encodeURIComponent(session.offset)}`,
   );
   const emptySuffix = (await suffixBefore.json()) as unknown[];
   check("resuming at the tail replays nothing", emptySuffix.length === 0, emptySuffix);
@@ -145,16 +145,16 @@ try {
     commandId: "smoke-after-resume",
     issueId: "smoke-later",
     projectId: "streamsy",
-    title: "Appended after the token",
+    title: "Appended after the offset",
     status: "backlog",
   });
   const suffix = (await (
     await fetch(
-      `${running.origin}/state/workspaces/main/issues?scope=${SCOPE}&resume=${encodeURIComponent(session.resume)}`,
+      `${running.origin}/state/workspaces/main/issues?scope=${SCOPE}&offset=${encodeURIComponent(session.offset)}`,
     )
   ).json()) as { type?: string; key?: string }[];
   check(
-    "a resume token replays exactly the suffix",
+    "a native offset replays exactly the suffix",
     suffix
       .filter((message) => message.type === "issue")
       .every((message) => message.key === "smoke-later"),
@@ -191,41 +191,6 @@ try {
       afterRestartBody.maintenance.folded === 0,
     afterRestartBody,
   );
-
-  // === expired resume tokens ===
-  const shortLived = start({ resumeTokenTtlSeconds: 0 });
-  try {
-    await post(shortLived.origin, "/api/workspaces/main/seed", {});
-    const stale = (await (
-      await fetch(`${shortLived.origin}/api/workspaces/main/sink-session`)
-    ).json()) as { resume: string };
-    const rejected = await fetch(
-      `${shortLived.origin}/state/workspaces/main/issues?scope=${SCOPE}&resume=${encodeURIComponent(stale.resume)}`,
-    );
-    const rejectedBody = (await rejected.json()) as { error: string; fallback: string };
-    check(
-      "an expired token is refused with its declared fallback",
-      rejected.status === 409 &&
-        rejectedBody.error === "resume-expired" &&
-        rejectedBody.fallback === "snapshot-then-live",
-      rejectedBody,
-    );
-
-    // The browser binding takes that fallback by itself.
-    const recovering = createBoardConnection({
-      workspaceId: "main",
-      origin: shortLived.origin,
-      onStatus: () => undefined,
-    });
-    await recovering.preload();
-    check(
-      "the browser binding recovers by snapshot-then-live",
-      (recovering.db.collections.issues.toArray as unknown[]).length === 4,
-    );
-    recovering.close();
-  } finally {
-    await stop(shortLived);
-  }
 
   console.log(`\n${checks.length} checks passed`);
 } finally {

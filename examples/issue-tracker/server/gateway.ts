@@ -2,7 +2,7 @@
  * The raw Durable Streams HTTP surface, as a service.
  *
  * The sink route does not re-implement the streams protocol: it authorizes the
- * request, translates its own resume token into a protocol offset, and hands
+ * request, preserves its native resume offset, and hands
  * the rewritten request to the same handler the host serves under `/streams`.
  * Owning the route while borrowing the transport is what makes the sink a
  * public contract rather than a second protocol.

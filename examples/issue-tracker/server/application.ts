@@ -125,13 +125,8 @@ export const listIssues = Effect.fn("Application.listIssues")(function* (workspa
   return yield* store.rows(workspaceId);
 });
 
-/**
- * The sink session contract: where the product lives, and a resume token for
- * its current tail.
- */
+/** The sink session contract: where the product lives and its current offset. */
 export const sinkSession = Effect.fn("Application.sinkSession")(function* (workspaceId: string) {
-  const config = yield* AppConfig;
-  const sink = yield* IssueSink;
   const streams = yield* Streams;
   yield* ensureWorkspace(workspaceId);
   yield* advance(workspaceId);
@@ -146,8 +141,7 @@ export const sinkSession = Effect.fn("Application.sinkSession")(function* (works
     transport: boardIssues.protocol.transport,
     fallback: boardIssues.protocol.fallback,
     scope: boardIssues.auth.value,
-    resume: yield* sink.mintResume(workspaceId, offset),
-    expiresInSeconds: config.resumeTokenTtlSeconds,
+    offset,
   };
 });
 

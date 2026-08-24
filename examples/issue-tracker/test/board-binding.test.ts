@@ -5,8 +5,8 @@
  * This is the browser's own path: a caller-owned `DurableStream` pointed at the
  * declared sink route, wrapped by `createStreamDB`, feeding TanStack DB
  * collections. It runs against a real Bun server so the transport, the scope
- * param, the resume header and the Durable State messages are all the ones a
- * page would see.
+ * param, native offsets and Durable State messages are all the ones a page
+ * would see.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createBoardConnection, sortRows, type BoardConnection } from "../src/lib/board-db.ts";

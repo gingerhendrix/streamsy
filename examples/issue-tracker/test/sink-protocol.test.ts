@@ -3,7 +3,7 @@
  * The `stateSink`'s public contract.
  *
  * Everything the declaration promises — the route, the scope, the Durable State
- * transport, `resume: true`, and `fallback: "snapshot-then-live"` — is checked
+ * transport, native offset resume, and `fallback: "snapshot-then-live"` — is checked
  * here against the real route, not a description of it.
  */
 import { afterEach, describe, expect, test } from "bun:test";
@@ -18,8 +18,8 @@ afterEach(async () => {
   await Promise.all(open.splice(0).map((instance) => instance.close()));
 });
 
-function fresh(options: { readonly resumeTokenTtlSeconds?: number } = {}): Host {
-  const created = host(options);
+function fresh(): Host {
+  const created = host();
   open.push(created);
   return created;
 }
@@ -34,7 +34,7 @@ interface StateMessage {
 async function read(
   instance: Host,
   query: string,
-): Promise<{ status: number; messages: StateMessage[]; resume: string | undefined; body: string }> {
+): Promise<{ status: number; messages: StateMessage[]; offset: string | undefined; body: string }> {
   const response = await instance.fetch(new Request(`http://localhost${SINK}${query}`));
   const body = await response.text();
   return {
@@ -43,7 +43,7 @@ async function read(
     // `StateMessage` names only the optional fields these assertions read.
     // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
     messages: response.ok ? (JSON.parse(body) as StateMessage[]) : [],
-    resume: response.headers.get("x-streamsy-resume") ?? undefined,
+    offset: response.headers.get("stream-next-offset") ?? undefined,
     body,
   };
 }
@@ -72,10 +72,10 @@ describe("the board-issues state sink", () => {
       .filter((message) => message.type === "issue")
       .map((message) => message.key);
     expect(keys).toContain("seed-plan");
-    expect(snapshot.resume).toBeString();
+    expect(snapshot.offset).toBeString();
   });
 
-  test("a resume token replays only the suffix appended after it", async () => {
+  test("a native offset replays only the suffix appended after it", async () => {
     const instance = fresh();
     await call(
       instance,
@@ -86,8 +86,7 @@ describe("the board-issues state sink", () => {
 
     const first = await read(instance, `?scope=${SCOPE}`);
     expect(first.messages.some((message) => message.key === "issue-1")).toBe(true);
-    const token = first.resume;
-    expect(token).toBeString();
+    expect(first.offset).toBeString();
 
     await call(
       instance,
@@ -98,75 +97,31 @@ describe("the board-issues state sink", () => {
 
     const suffix = await read(
       instance,
-      `?scope=${SCOPE}&resume=${encodeURIComponent(token ?? "")}`,
+      `?scope=${SCOPE}&offset=${encodeURIComponent(first.offset ?? "")}`,
     );
     expect(suffix.status).toBe(200);
     const keys = suffix.messages
       .filter((message) => message.type === "issue")
       .map((message) => message.key);
     expect(keys).toEqual(["issue-2"]);
-    expect(suffix.resume).not.toBe(token);
+    expect(suffix.offset).not.toBe(first.offset);
   });
 
-  test("an expired token is a typed failure carrying the declared fallback", async () => {
-    // A zero-second lifetime makes the token stale the moment it is minted, so
-    // the expiry path is reachable without waiting on a clock.
-    const instance = fresh({ resumeTokenTtlSeconds: 0 });
-    await call(
-      instance,
-      "POST",
-      "/api/workspaces/main/issues",
-      createIssueBody("cmd-1", "issue-1", "Present"),
-    );
-    const session = await json(
-      await call(instance, "GET", "/api/workspaces/main/sink-session"),
-      SinkSessionResponse,
-    );
+  test("an invalid offset declares snapshot-then-live fallback", async () => {
+    const instance = fresh();
+    await call(instance, "POST", "/api/workspaces/main/seed");
 
-    const rejected = await read(
-      instance,
-      `?scope=${SCOPE}&resume=${encodeURIComponent(session.resume)}`,
-    );
-    expect(rejected.status).toBe(409);
-    expect(JSON.parse(rejected.body)).toMatchObject({
-      error: "resume-expired",
-      detail: "expired",
+    const refused = await read(instance, `?scope=${SCOPE}&offset=not-an-offset`);
+    expect(refused.status).toBe(409);
+    expect(JSON.parse(refused.body)).toMatchObject({
+      error: "resume-unavailable",
+      detail: "out-of-window",
       fallback: "snapshot-then-live",
     });
 
-    // The declared fallback works: reading without the token rebuilds the whole
-    // product.
-    const rebuilt = await read(instance, `?scope=${SCOPE}`);
+    const rebuilt = await read(instance, `?scope=${SCOPE}&offset=-1`);
     expect(rebuilt.status).toBe(200);
-    expect(rebuilt.messages.some((message) => message.key === "issue-1")).toBe(true);
-  });
-
-  test("a tampered token is refused rather than trusted", async () => {
-    const instance = fresh();
-    await call(instance, "POST", "/api/workspaces/main/seed");
-    const session = await json(
-      await call(instance, "GET", "/api/workspaces/main/sink-session"),
-      SinkSessionResponse,
-    );
-    const tampered = `${session.resume.split(".")[0] ?? ""}.not-the-signature`;
-    const refused = await read(instance, `?scope=${SCOPE}&resume=${encodeURIComponent(tampered)}`);
-    expect(refused.status).toBe(409);
-    expect(JSON.parse(refused.body)).toMatchObject({ detail: "malformed" });
-  });
-
-  test("a token minted for another workspace is refused", async () => {
-    const instance = fresh();
-    await call(instance, "POST", "/api/workspaces/other/seed");
-    const session = await json(
-      await call(instance, "GET", "/api/workspaces/other/sink-session"),
-      SinkSessionResponse,
-    );
-    const refused = await read(
-      instance,
-      `?scope=${SCOPE}&resume=${encodeURIComponent(session.resume)}`,
-    );
-    expect(refused.status).toBe(409);
-    expect(JSON.parse(refused.body)).toMatchObject({ detail: "wrong-sink" });
+    expect(rebuilt.messages.some((message) => message.key === "seed-plan")).toBe(true);
   });
 
   test("the session contract reports the declaration, not a restatement of it", async () => {

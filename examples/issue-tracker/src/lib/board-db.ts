@@ -27,9 +27,6 @@ import { boardIssues } from "../../domain/declaration.ts";
 import { IssueRow } from "../../domain/issue.ts";
 import type { IssueRow as IssueRowType } from "../../domain/issue.ts";
 
-/** Header the sink answers with; mirrored from `server/sink-http.ts`. */
-const RESUME_HEADER = "x-streamsy-resume";
-
 /**
  * The consumer half of the sink contract.
  *
@@ -48,7 +45,7 @@ export type BoardDb = StreamDB<typeof boardCollections>;
 
 export type SinkStatus =
   | { readonly kind: "connecting" }
-  | { readonly kind: "live"; readonly resume: string | undefined }
+  | { readonly kind: "live"; readonly offset: string | undefined }
   | { readonly kind: "resetting"; readonly reason: string }
   | { readonly kind: "failed"; readonly detail: string };
 
@@ -67,15 +64,12 @@ export interface BoardConnectionOptions {
 /**
  * Open one sink session.
  *
- * The fetch wrapper is where the sink's resume contract lives on the client:
- * it presents the newest token when a session starts from the beginning,
- * records the token the sink mints for every response, and — on the sink's
- * typed `resume-expired` answer — drops the token and takes the declared
- * `snapshot-then-live` fallback rather than failing the session.
+ * Durable Streams carries its native `offset` between reads. If retained
+ * history no longer contains that offset, the sink returns its declared 409
+ * fallback and this wrapper retries from `-1` for snapshot-then-live recovery.
  */
 export function createBoardConnection(options: BoardConnectionOptions): BoardConnection {
   const route = boardIssues.route.replace(":workspaceId", encodeURIComponent(options.workspaceId));
-  let resume: string | undefined;
 
   // Typed as the fetch shape `DurableStream` accepts. Bun's ambient `fetch`
   // type carries extra members the browser does not have, so the wrapper is
@@ -86,26 +80,21 @@ export function createBoardConnection(options: BoardConnectionOptions): BoardCon
     // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
     const request = new Request(input as RequestInfo, init);
     const url = new URL(request.url);
-    const offset = url.searchParams.get("offset");
-    const fromStart = offset === null || offset === "-1";
-    if (resume !== undefined && fromStart) url.searchParams.set("resume", resume);
-
     let response = await globalThis.fetch(new Request(url, request));
 
-    if (response.status === 409) {
-      // The sink declares `snapshot-then-live` for a token it will not honour,
-      // so the recovery is to forget the token and read the product again.
-      resume = undefined;
+    if (response.status === 409 && url.searchParams.get("offset") !== null) {
       const reason = await response.clone().text();
       options.onStatus({ kind: "resetting", reason: reason.slice(0, 200) });
-      url.searchParams.delete("resume");
       url.searchParams.set("offset", "-1");
       response = await globalThis.fetch(new Request(url, request));
     }
 
-    const minted = response.headers.get(RESUME_HEADER);
-    if (minted !== null) resume = minted;
-    if (response.ok) options.onStatus({ kind: "live", resume });
+    if (response.ok) {
+      options.onStatus({
+        kind: "live",
+        offset: response.headers.get("stream-next-offset") ?? undefined,
+      });
+    }
     return response;
   };
 

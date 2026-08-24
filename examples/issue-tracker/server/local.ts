@@ -46,7 +46,6 @@ export interface LocalHostOptions {
   /** Put both the durable log and the maintained state on disk in this directory. */
   readonly databaseDirectory?: string;
   readonly deployment?: string;
-  readonly resumeTokenTtlSeconds?: number;
 }
 
 export function createLocalHost(options: LocalHostOptions = {}) {
@@ -66,11 +65,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       ? memoryLayer()
       : sqliteLayer({ filename: join(options.databaseDirectory, "view.sqlite") }));
 
-  const deployment = options.deployment ?? "local";
-  const configValues: AppConfigOverrides =
-    options.resumeTokenTtlSeconds === undefined
-      ? { deployment }
-      : { deployment, resumeTokenTtlSeconds: options.resumeTokenTtlSeconds };
+  const configValues: AppConfigOverrides = { deployment: options.deployment ?? "local" };
 
   const runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never> =
     ManagedRuntime.make(
