@@ -35,7 +35,7 @@ export class ReadHttpService {
         ? this.deps.sse.execute(ctx.stream, effectiveOffset, query.cursor)
         : this.deps.longPoll.execute(ctx, effectiveOffset, query.cursor, query.offset === "now");
     }
-    return this.handleCatchUp(ctx, effectiveOffset, query.offset ?? "-1");
+    return this.handleCatchUp(ctx, effectiveOffset, query.offset ?? "-1", query.batchSize);
   }
 
   private async resolveNowOffset(
@@ -76,8 +76,9 @@ export class ReadHttpService {
     ctx: BoundHttpRouteContext,
     offset: string | undefined,
     startOffset: string,
+    batchSize: number | undefined,
   ): Promise<Response> {
-    const result = await ctx.stream.read({ offset });
+    const result = await ctx.stream.read({ offset, limit: batchSize });
     if (result.status === "not-found") return this.deps.responses.notFound();
     if (result.status === "gone") return this.deps.responses.gone();
     const etag = this.deps.etags.forCatchUp(

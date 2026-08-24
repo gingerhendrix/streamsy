@@ -31,6 +31,7 @@ export async function officialRead<T extends JsonValue>(
         onError: client.options.onError,
         sseResilience: client.options.sseResilience,
         warnOnHttp: client.options.warnOnHttp,
+        batchSize: options.batchSize,
       });
       return { status: "ok", session: wrapResponse<T>(response, signal) };
     },

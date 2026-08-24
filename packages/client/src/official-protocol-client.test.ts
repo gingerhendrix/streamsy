@@ -130,6 +130,24 @@ describe("officialProtocolClient", () => {
     await client.close();
   });
 
+  it("passes bounded catch-up batch size through the HTTP adapter", async () => {
+    const { client } = makeHarness();
+    const json = client.stream("bounded-json");
+    await json.create({ contentType: "application/json" });
+    const first = await json.append('{"n":1}', { contentType: "application/json" });
+    await json.append('{"n":2}', { contentType: "application/json" });
+    if (first.status !== "appended") throw new Error("expected append");
+    const session = await okSession(await json.read<{ n: number }>({ batchSize: 1 }));
+    const iterator = session[Symbol.asyncIterator]();
+    expect((await iterator.next()).value).toMatchObject({
+      kind: "json",
+      items: [{ n: 1 }],
+      offset: first.offset,
+      upToDate: false,
+    });
+    await client.close();
+  });
+
   it("appends only the bytes a partial view covers and copies them off the caller's buffer", async () => {
     const { client } = makeHarness();
     const bytes = client.stream("partial");

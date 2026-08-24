@@ -2,7 +2,6 @@
 
 import type { ReadOptions, ReadResult } from "../types/protocol.ts";
 import type { StoredMessage, StreamRecord } from "../types/storage.ts";
-import { compareOffsets } from "./helpers/offset-generator.ts";
 
 export type ReadChain = (record: StreamRecord, afterOffset?: string) => Promise<StoredMessage[]>;
 
@@ -23,11 +22,13 @@ export class ReadService {
 
     const normalizedOffset =
       options.offset === "now" ? record.currentOffset : normalizeReadOffset(options.offset);
-    const messages = await this.deps.readChain(record, normalizedOffset);
-    const lastOffset =
-      messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
+    const chain = await this.deps.readChain(record, normalizedOffset);
+    const messages =
+      options.limit === undefined || options.limit >= chain.length
+        ? chain
+        : chain.slice(0, Math.max(0, options.limit));
     const nextOffset =
-      compareOffsets(lastOffset, record.currentOffset) > 0 ? lastOffset : record.currentOffset;
+      messages.length > 0 ? messages[messages.length - 1]!.offset : record.currentOffset;
     const upToDate = nextOffset === record.currentOffset;
     return {
       status: "ok",

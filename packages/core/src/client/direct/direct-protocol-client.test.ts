@@ -142,6 +142,33 @@ describe("directProtocolClient", () => {
     await client.close();
   });
 
+  it("bounds catch-up batches without skipping their native offsets", async () => {
+    const { client } = makeClient();
+    const json = client.stream("bounded-json");
+    await json.create({ contentType: "application/json" });
+    const first = await json.append('{"n":1}', { contentType: "application/json" });
+    const second = await json.append('{"n":2}', { contentType: "application/json" });
+    if (first.status !== "appended" || second.status !== "appended") {
+      throw new Error("expected appends");
+    }
+    const read = await json.read<{ n: number }>({ batchSize: 1 });
+    if (read.status !== "ok") throw new Error("expected ok");
+    const iterator = read.session[Symbol.asyncIterator]();
+    expect((await iterator.next()).value).toMatchObject({
+      kind: "json",
+      items: [{ n: 1 }],
+      offset: first.offset,
+      upToDate: false,
+    });
+    expect((await iterator.next()).value).toMatchObject({
+      kind: "json",
+      items: [{ n: 2 }],
+      offset: second.offset,
+      upToDate: true,
+    });
+    await client.close();
+  });
+
   it("cancels live sessions and reports client-closed after client close", async () => {
     const { client } = makeClient();
     const handle = client.stream("live");

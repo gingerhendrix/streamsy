@@ -151,6 +151,8 @@ export interface ReadStreamOptions extends ClientRequestOptions {
   offset?: StreamOffset;
   /** false is catch-up only. Live modes continue until EOF, cancel, or error. */
   live?: ClientLiveMode;
+  /** Streamsy extension: bound each catch-up batch to this many messages. */
+  batchSize?: number;
 }
 
 export interface StreamBatchMeta {

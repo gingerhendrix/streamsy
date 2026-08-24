@@ -47,7 +47,7 @@ async function pump<T extends JsonValue>(
   const finish = () => session.end(signal.aborted ? { status: "cancelled" } : { status: "done" });
   try {
     while (!signal.aborted) {
-      const result = await stream.read({ offset });
+      const result = await stream.read({ offset, limit: options.batchSize });
       if (result.status !== "ok") return session.end(readFailure(result));
       const batch = encodeBatch<T>(contentType, result.messages, {
         offset: result.nextOffset,

@@ -42,6 +42,7 @@ export interface OfficialReadConfig {
   onError?: StreamErrorHandler;
   sseResilience?: SSEResilienceOptions;
   warnOnHttp?: boolean;
+  batchSize?: number;
 }
 
 export function openReadStream<T = unknown>(
@@ -50,7 +51,10 @@ export function openReadStream<T = unknown>(
   return readOfficialStream<T>({
     url: config.url,
     headers: config.headers,
-    params: config.params,
+    params:
+      config.batchSize === undefined
+        ? config.params
+        : { ...config.params, batch_size: String(config.batchSize) },
     fetch: config.fetch,
     signal: config.signal,
     backoffOptions: config.backoffOptions,

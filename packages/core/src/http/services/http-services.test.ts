@@ -82,6 +82,37 @@ describe("append expectedOffset over HTTP (Streamsy extension)", () => {
   });
 });
 
+describe("bounded catch-up over HTTP (Streamsy extension)", () => {
+  it("returns one message and its exact native offset for batch_size=1", async () => {
+    const protocol = new StreamProtocol({ storage: { adapter: createMemoryStorageAdapter() } });
+    const handler = new HttpHandler({ protocol });
+    await handler.fetch(
+      new Request("http://x/json", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const first = await handler.fetch(
+      new Request("http://x/json", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"n":1}',
+      }),
+    );
+    await handler.fetch(
+      new Request("http://x/json", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"n":2}',
+      }),
+    );
+    const read = await handler.fetch(new Request("http://x/json?batch_size=1"));
+    expect(await read.json()).toEqual([{ n: 1 }]);
+    expect(read.headers.get("stream-next-offset")).toBe(first.headers.get("stream-next-offset"));
+    expect(read.headers.get("stream-up-to-date")).toBeNull();
+  });
+});
+
 const ZERO = "0000000000000000_0000000000000000";
 
 async function sourceHandler(body: string, contentType = "text/plain"): Promise<HttpHandler> {

@@ -71,6 +71,8 @@ export interface AppendOptions {
 
 export interface ReadOptions {
   offset?: string;
+  /** Bound a catch-up response to at most this many stored messages. */
+  limit?: number;
 }
 
 /**
