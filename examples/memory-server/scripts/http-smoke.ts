@@ -14,7 +14,7 @@ class SmokeError extends Error {
   }
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new SmokeError(message);
   }
@@ -26,7 +26,7 @@ async function text(response: Response): Promise<string> {
 
 function requiredHeader(response: Response, name: string): string {
   const value = response.headers.get(name);
-  assert(value, `Expected response header ${name}`);
+  assert(value !== null && value.length > 0, `Expected response header ${name}`);
   return value;
 }
 
@@ -55,7 +55,7 @@ async function waitForServer(): Promise<void> {
 }
 
 async function readSseUntilControl(response: Response): Promise<string> {
-  assert(response.body, "Expected SSE response body");
+  assert(response.body !== null, "Expected SSE response body");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
