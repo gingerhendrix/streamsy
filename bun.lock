@@ -85,6 +85,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
+        "@effect/platform-bun": "4.0.0-rc.109",
         "@effect/platform-node": "4.0.0-rc.109",
         "@streamsy/storage-sqlite": "workspace:*",
         "@types/bun": "^1.2.0",
@@ -399,6 +400,8 @@
     "@effect/ai-anthropic": ["@effect/ai-anthropic@4.0.0-rc.109", "", { "peerDependencies": { "effect": "^4.0.0-rc.109" } }, "sha512-o/KINUP4iTAGQrE5+arEzXqHGesdT5WGxtn2Tjkcnv+0HbdSef7iLaAiZHxDeViq8e97ahbvB0d7i64wmtkR4g=="],
 
     "@effect/ai-openai": ["@effect/ai-openai@4.0.0-rc.109", "", { "peerDependencies": { "effect": "^4.0.0-rc.109" } }, "sha512-S0lPmZROva8G6CDVAPYVAbztMnTQe+WO/TY9hXDdN4w/OdhcFN1YMVCX70gV8CrqHMZU7XPkghE9ZkA5Dw+4GA=="],
+
+    "@effect/platform-bun": ["@effect/platform-bun@4.0.0-rc.109", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-rc.109" }, "peerDependencies": { "effect": "^4.0.0-rc.109" } }, "sha512-fOOGilEBTKOYjRrOcblSiX5GdQOmR46ETTyMmkQoqYhmx+iAMKImM5YoCm10QDMWtbzerT4oeDKUJivXvOC20w=="],
 
     "@effect/platform-node": ["@effect/platform-node@4.0.0-rc.109", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-rc.109", "mime": "^4.1.0", "undici": "^8.7.0" }, "peerDependencies": { "effect": "^4.0.0-rc.109", "redis": ">=5.0.0 <7.0.0" } }, "sha512-LE/GTh6MCZ0uzbEFH9WmxQkC9snjWuFyh8vW04AAgbKKxSHXsepHSK9RcE/2oYKr6RhrOTD0C2wC0i+J9qoe2g=="],
 
