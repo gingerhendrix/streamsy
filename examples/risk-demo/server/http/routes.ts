@@ -13,10 +13,11 @@ import {
   OptionalCommandRequestSchema,
   RenamePlayerRequestSchema,
   RenamePlayerResponse,
+  type PublicControllerInput,
 } from "../../src/application/api.ts";
 import { agentPlayInstructions, agentSeatDescriptor } from "../../src/application/agent-play.ts";
 import { PlayCommand, type Command } from "../../src/domain/commands.ts";
-import { Schema, SchemaIssue } from "effect";
+import { Result, Schema, SchemaIssue } from "effect";
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import { buildDecisionContext } from "../../src/application/decision.ts";
 import { MAP_VERSION, generateMapSeed } from "../../src/domain/map.ts";
@@ -31,7 +32,14 @@ import {
   submitCommand,
   type SubmitResult,
 } from "../game/command-service.ts";
-import { error, json, readJsonBody, statusForCode, type ErrorCode, type Route } from "./router.ts";
+import {
+  decodeJsonBody,
+  error,
+  json,
+  statusForCode,
+  type ErrorCode,
+  type Route,
+} from "./router.ts";
 import { BOARD_GENERATION, boardStreamId, eventStreamId } from "../game/names.ts";
 import { openApiDocument } from "./openapi.ts";
 import { catchUpActions, readActions } from "../game/action-notifier.ts";
@@ -56,12 +64,13 @@ type AnyRejected = Extract<SubmitResult, { status: "rejected" }>;
  * of canonical history as the whole result of the move.
  */
 function ackBody(result: AnyAccepted, turnId?: string): CommandAck {
-  return {
+  const ack: CommandAck = {
     status: result.status,
     commandId: result.commandId,
-    ...(turnId ? { turnId } : {}),
     eventOffset: result.sourceOffset,
   };
+  if (turnId) ack.turnId = turnId;
+  return ack;
 }
 
 /**
@@ -86,7 +95,7 @@ function rejection(result: AnyRejected, guideToState = false): Response {
   return error(statusForCode(code), code, message, extra);
 }
 
-function controllerOf(value: unknown): PlayerController {
+function controllerOf(value: PublicControllerInput | undefined): PlayerController {
   if (value === "agent") return "external-agent";
   if (value === "bot") return "bot";
   return "human";
@@ -98,15 +107,8 @@ function controllerOf(value: unknown): PlayerController {
  * unauthenticated create/join must refuse *both* spellings rather than letting
  * the internal one fall through `controllerOf`'s default to a human seat.
  */
-function requestsAgentSeat(value: unknown): boolean {
+function requestsAgentSeat(value: PublicControllerInput | undefined): boolean {
   return value === "agent" || value === "external-agent";
-}
-
-function decodeBody<A>(schema: Schema.Decoder<A, never>, value: unknown): A | Response {
-  const decoded = Schema.decodeUnknownOption(schema)(value);
-  return decoded._tag === "Some"
-    ? decoded.value
-    : error(400, "BAD_REQUEST", "The request body does not match the expected contract.");
 }
 
 export function createRiskRoutes(ctx: AppContext): Route[] {
@@ -123,7 +125,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   }
 
   async function createGame(request: Request): Promise<Response> {
-    const body = decodeBody(CreateGameRequestSchema, (await readJsonBody(request)) ?? {});
+    const body = await decodeJsonBody(request, CreateGameRequestSchema);
     if (body instanceof Response) return body;
     const caller = await ctx.authenticateCapability(request);
     if (caller?.role === "agent") {
@@ -139,12 +141,12 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     // The landing page asks for no name at all — the creator names themselves in
     // the lobby — so the provisional default is load-bearing, not a fallback for
     // a field somebody left blank.
-    const requestedName = typeof body.name === "string" ? body.name : "";
-    const requestedColor = typeof body.color === "string" ? body.color : undefined;
+    const requestedName = body.name ?? "";
+    const requestedColor = body.color;
     const name = normalizePlayerName(requestedName) || "Host";
     const gameId = ctx.createGameId();
     const hostPlayerId = randomId("p");
-    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
+    const commandId = body.commandId ?? randomId("cmd");
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "create-game",
       commandId,
@@ -153,8 +155,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
       hostName: name,
       hostColor: requestedColor,
       hostController: controllerOf(body.controller),
-      mapSeed:
-        typeof body.mapSeed === "string" ? body.mapSeed : generateMapSeed(ctx.commandService.rng),
+      mapSeed: body.mapSeed ?? generateMapSeed(ctx.commandService.rng),
     });
     if (result.status === "rejected") return rejection(result);
 
@@ -197,7 +198,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
   async function joinGame(request: Request, params: Record<string, string>): Promise<Response> {
     const gameId = params.gameId!;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const body = decodeBody(JoinGameRequestSchema, (await readJsonBody(request)) ?? {});
+    const body = await decodeJsonBody(request, JoinGameRequestSchema);
     if (body instanceof Response) return body;
     const caller = await ctx.authenticateCapability(request);
     if (caller?.role === "agent") {
@@ -210,11 +211,11 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         "The host must open agent seats with POST /agent-seats.",
       );
     }
-    const requestedName = typeof body.name === "string" ? body.name : "";
-    const requestedColor = typeof body.color === "string" ? body.color : undefined;
+    const requestedName = body.name ?? "";
+    const requestedColor = body.color;
     const name = normalizePlayerName(requestedName) || "Player";
     const playerId = randomId("p");
-    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
+    const commandId = body.commandId ?? randomId("cmd");
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "join-game",
       commandId,
@@ -262,7 +263,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (cap.role === "agent") {
       return error(403, "FORBIDDEN", "Agent capabilities cannot rename seats.");
     }
-    const body = decodeBody(RenamePlayerRequestSchema, (await readJsonBody(request)) ?? {});
+    const body = await decodeJsonBody(request, RenamePlayerRequestSchema);
     if (body instanceof Response) return body;
 
     if (cap.playerId !== playerId) {
@@ -275,7 +276,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
 
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "rename-player",
-      commandId: typeof body.commandId === "string" ? body.commandId : randomId("cmd"),
+      commandId: body.commandId ?? randomId("cmd"),
       playerId,
       name: body.name,
     });
@@ -308,11 +309,11 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     if (cap.role === "agent") {
       return error(403, "FORBIDDEN", "An agent seat is played to the end, not given up.");
     }
-    const body = decodeBody(OptionalCommandRequestSchema, (await readJsonBody(request)) ?? {});
+    const body = await decodeJsonBody(request, OptionalCommandRequestSchema);
     if (body instanceof Response) return body;
     const result = await submitCommand(ctx.commandService, eventStreamId(gameId), {
       type: "leave-game",
-      commandId: typeof body.commandId === "string" ? body.commandId : randomId("cmd"),
+      commandId: body.commandId ?? randomId("cmd"),
       playerId: cap.playerId,
     });
     if (result.status === "rejected") return rejection(result);
@@ -325,9 +326,9 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId, "host");
     if (cap instanceof Response) return cap;
-    const body = decodeBody(OptionalCommandRequestSchema, (await readJsonBody(request)) ?? {});
+    const body = await decodeJsonBody(request, OptionalCommandRequestSchema);
     if (body instanceof Response) return body;
-    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
+    const commandId = body.commandId ?? randomId("cmd");
     // The map is generated inside `decide` — after the command log has
     // deduped `commandId` and before the canonical append — so a start that
     // loses its CAS refolds and is rejected as already started, never regenerated.
@@ -348,12 +349,12 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const cap = await ctx.requireCapability(request, gameId, "host");
     if (cap instanceof Response) return cap;
     if (!ctx.stores.games.get(gameId)) return error(404, "GAME_NOT_FOUND", "Unknown game.");
-    const body = decodeBody(AgentSeatRequestSchema, (await readJsonBody(request)) ?? {});
+    const body = await decodeJsonBody(request, AgentSeatRequestSchema);
     if (body instanceof Response) return body;
-    const commandId = typeof body.commandId === "string" ? body.commandId : randomId("cmd");
-    let playerId = typeof body.playerId === "string" ? body.playerId : undefined;
-    let name = normalizePlayerName(typeof body.name === "string" ? body.name : "") || "Agent";
-    let color = typeof body.color === "string" ? body.color : "";
+    const commandId = body.commandId ?? randomId("cmd");
+    let playerId = body.playerId;
+    let name = normalizePlayerName(body.name ?? "") || "Agent";
+    let color = body.color ?? "";
 
     if (playerId) {
       // Delegation converts an *existing* seat into an agent seat, and the only
@@ -386,7 +387,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         commandId,
         playerId,
         name,
-        color: typeof body.color === "string" ? body.color : undefined,
+        color: body.color,
         controller: "external-agent",
       });
       if (joined.status === "rejected") return rejection(joined);
@@ -437,8 +438,8 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
         color,
         eliminated,
       })),
-      ...(state.pendingInteraction ? { pendingInteraction: state.pendingInteraction } : {}),
     };
+    if (state.pendingInteraction) response.pendingInteraction = state.pendingInteraction;
     return json(response);
   }
 
@@ -539,9 +540,7 @@ export function createRiskRoutes(ctx: AppContext): Route[] {
     const gameId = params.gameId!;
     const cap = await ctx.requireCapability(request, gameId);
     if (cap instanceof Response) return cap;
-    const raw = await readJsonBody(request);
-
-    const parsed = buildPlayCommand(raw, cap.playerId);
+    const parsed = await buildPlayCommand(request, cap.playerId);
     if (!parsed.ok)
       return error(400, "INVALID_ACTION", `Command validation failed. ${STATE_GUIDANCE}`, {
         details: parsed.details,
@@ -678,27 +677,30 @@ function validationPath(issue: SchemaIssue.Issue): string {
   const path = [...firstIssuePath(issue)];
   // Placement errors have historically identified the complete placement item,
   // not one field inside it. Preserve that public detail while Schema owns validation.
-  if (path[0] === "action" && path[1] === "placements" && typeof path[2] === "number") {
+  if (path[0] === "action" && path[1] === "placements" && Schema.is(Schema.Number)(path[2])) {
     path.length = 3;
   }
   if (path.length === 0) return "body";
   return path
-    .map((part, index) =>
-      typeof part === "number" ? `[${part}]` : `${index === 0 ? "" : "."}${String(part)}`,
-    )
+    .map((part, index) => {
+      if (Schema.is(Schema.Number)(part)) return `[${part}]`;
+      return `${index === 0 ? "" : "."}${String(part)}`;
+    })
     .join("");
 }
 
-function buildPlayCommand(value: unknown, playerId: string): ParsedPlayCommand {
-  const decoded = Schema.decodeUnknownResult(PlayCommand, { reportInput: true })(value);
-  if (decoded._tag === "Failure") {
+async function buildPlayCommand(request: Request, playerId: string): Promise<ParsedPlayCommand> {
+  // A malformed or absent JSON body is reported through the command schema.
+  const input = await request.json().catch(() => null);
+  const decoded = Schema.decodeUnknownResult(PlayCommand, { reportInput: true })(input);
+  if (Result.isFailure(decoded)) {
     return {
       ok: false,
       details: [
         {
           path: validationPath(decoded.failure.issue),
           expected: formatSchemaIssue(decoded.failure.issue),
-          received: value,
+          received: input,
         },
       ],
     };

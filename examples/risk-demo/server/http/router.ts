@@ -8,9 +8,15 @@ import {
   isApiErrorCode,
   statusForErrorCode,
   type ApiErrorCode,
+  type ApiErrorResponse,
 } from "../../src/application/api.ts";
+import { Option, Schema } from "effect";
 
-export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
+export function json(
+  data: NonNullable<unknown>,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { "content-type": "application/json", ...headers },
@@ -26,12 +32,13 @@ export function text(data: string, status = 200, headers: Record<string, string>
 
 /** Domain/transport error body with a stable machine-readable code. */
 export type ErrorCode = ApiErrorCode;
+type ErrorExtra = Pick<ApiErrorResponse["error"], "currentTurnId" | "details">;
 
 export function error(
   status: number,
   code: ErrorCode,
   message: string,
-  extra: Record<string, unknown> = {},
+  extra: ErrorExtra = {},
 ): Response {
   return json({ status: "rejected", error: { code, message, ...extra } }, status);
 }
@@ -86,10 +93,15 @@ export function createRouter(routes: Route[]): (request: Request) => Promise<Res
   };
 }
 
-export async function readJsonBody(request: Request): Promise<unknown> {
-  try {
-    return await request.json();
-  } catch {
-    return null;
-  }
+export async function decodeJsonBody<A>(
+  request: Request,
+  schema: Schema.Decoder<A>,
+): Promise<A | Response> {
+  // Keep the established empty-body behavior. Schemas with required fields
+  // reject this value; optional command envelopes accept it.
+  const input = await request.json().catch(() => ({}));
+  const decoded = Schema.decodeUnknownOption(schema)(input);
+  return Option.isSome(decoded)
+    ? decoded.value
+    : error(400, "BAD_REQUEST", "The request body does not match the expected contract.");
 }

@@ -40,7 +40,7 @@ export type ApiErrorCode =
   | "PROJECTION_UNAVAILABLE"
   | "INTERNAL";
 
-const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
+const FRIENDLY_ERRORS = {
   GAME_NOT_FOUND: "That game could not be found. Check the invite link and try again.",
   GAME_ALREADY_EXISTS: "This game already exists.",
   GAME_ALREADY_STARTED: "This game has already started.",
@@ -77,7 +77,7 @@ const FRIENDLY_ERRORS: Record<ApiErrorCode, string> = {
   AGENT_SEAT_REQUIRES_HOST: "Agent seats must be created by the human host.",
   PROJECTION_UNAVAILABLE: "The live board is temporarily unavailable.",
   INTERNAL: "Something unexpected happened. Please try again.",
-};
+} satisfies Record<ApiErrorCode, string>;
 
 export function friendlyError(code: ApiErrorCode, fallback?: string): string {
   return FRIENDLY_ERRORS[code] ?? fallback ?? "The move was rejected.";
@@ -309,7 +309,8 @@ export interface BoardRows {
 
 const MutableArray = <S extends Schema.Top>(schema: S) => Schema.mutable(Schema.Array(schema));
 const OptionalText = Schema.optionalKey(Schema.String);
-const PublicController = Schema.Literals(["human", "bot", "agent", "external-agent"]);
+export const PublicControllerInput = Schema.Literals(["human", "bot", "agent", "external-agent"]);
+export type PublicControllerInput = typeof PublicControllerInput.Type;
 const ReinforcementStateSchema = Schema.Struct({
   base: Schema.Int,
   continents: MutableArray(Schema.Struct({ continentId: Schema.String, bonus: Schema.Int })),
@@ -364,14 +365,14 @@ export const CreateGameRequestSchema = Schema.Struct({
   name: OptionalText,
   color: OptionalText,
   commandId: OptionalText,
-  controller: Schema.optionalKey(PublicController),
+  controller: Schema.optionalKey(PublicControllerInput),
   mapSeed: OptionalText,
 });
 export const JoinGameRequestSchema = Schema.Struct({
   name: OptionalText,
   color: OptionalText,
   commandId: OptionalText,
-  controller: Schema.optionalKey(PublicController),
+  controller: Schema.optionalKey(PublicControllerInput),
 });
 export const RenamePlayerRequestSchema = Schema.Struct({
   name: Schema.String,

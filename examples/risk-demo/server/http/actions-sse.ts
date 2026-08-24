@@ -26,6 +26,7 @@ import {
   ACTIONS_STREAM_TIMEOUT_MS,
   actionsControlFrame,
   actionsDataFrame,
+  type ActionsControl,
 } from "../../src/application/actions-stream.ts";
 import type { AgentMessage } from "../game/action-notifier.ts";
 
@@ -118,11 +119,11 @@ export function actionsStreamResponse(options: ActionsStreamOptions): Response {
           // and close, rather than holding a connection nothing will ever fill.
           const closed = page.messages.at(-1)?.type === "GameOver";
           if (page.messages.length > 0 && !write(actionsDataFrame(page.messages))) return;
-          const control = {
+          const control: ActionsControl = {
             nextOffset: cursor,
             upToDate: page.upToDate,
-            ...(closed ? { closed: true } : {}),
           };
+          if (closed) control.closed = true;
           if (!write(actionsControlFrame(control))) return;
           if (closed) {
             stop();
