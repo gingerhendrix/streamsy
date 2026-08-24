@@ -5,8 +5,15 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The same fixture resolves that database path with the Node-compatible path API.
 import { join } from "node:path";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import type { JsonValue } from "@streamsy/core";
 import { afterEach, describe, expect, test } from "bun:test";
-import type { BoardResponse, MutationResponse } from "../shared/api.ts";
+import {
+  BoardResponse,
+  MutationResponse,
+  ProjectsResponse,
+  RepairResponse,
+} from "../shared/api.ts";
+import { Schema } from "effect";
 import { createLocalHost } from "../server/local.ts";
 
 type Host = ReturnType<typeof createLocalHost>;
@@ -27,15 +34,13 @@ function tempDatabase(): string {
   return join(mkdtempSync(join(tmpdir(), "issue-tracker-recovery-")), "state.sqlite");
 }
 
-async function call(host: Host, method: string, path: string, body?: unknown): Promise<Response> {
-  return host.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      ...(body === undefined
-        ? {}
-        : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-    }),
-  );
+async function call(host: Host, method: string, path: string, body?: JsonValue): Promise<Response> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  return host.fetch(new Request(`http://localhost${path}`, init));
 }
 
 /**
@@ -45,10 +50,13 @@ async function call(host: Host, method: string, path: string, body?: unknown): P
  * server builds that contract from the shared Schemas, and the assertions in
  * this suite are what check it.
  */
-async function json<T>(response: Response): Promise<T> {
+async function json<S extends Schema.ConstraintDecoder<unknown>>(
+  response: Response,
+  schema: S,
+): Promise<S["Type"]> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 500)}`);
-  return JSON.parse(text);
+  return Schema.decodeUnknownSync(schema)(JSON.parse(text));
 }
 
 async function setup(host: Host): Promise<MutationResponse> {
@@ -57,13 +65,14 @@ async function setup(host: Host): Promise<MutationResponse> {
     projectKey: "SHIP",
     name: "Launch",
   });
-  return json<MutationResponse>(
+  return json(
     await call(host, "POST", "/api/workspaces/main/issues", {
       commandId: "cmd-1",
       issueId: "issue-1",
       projectId: "launch",
       title: "Survive a restart",
     }),
+    MutationResponse,
   );
 }
 
@@ -77,25 +86,28 @@ describe("durable recovery", () => {
     open.splice(open.indexOf(first), 1);
 
     const restarted = hostFor(filename);
-    const board = await json<BoardResponse>(
+    const board = await json(
       await call(restarted, "GET", "/api/workspaces/main/projects/launch/board"),
+      BoardResponse,
     );
     expect(board.rows.map((row) => row.issueId)).toEqual(["issue-1"]);
 
     // A further command on the restarted host resumes strictly after durable
     // lineage and still proves the whole chain.
-    const moved = await json<MutationResponse>(
+    const moved = await json(
       await call(restarted, "POST", "/api/workspaces/main/issues/issue-1/commands", {
         commandId: "cmd-2",
         type: "status",
         status: "done",
       }),
+      MutationResponse,
     );
     expect(moved.coverage.status).toBe("proven");
     expect(moved.detail?.status).toBe("done");
 
-    const repaired = await json<{ repaired: string[] }>(
+    const repaired = await json(
       await call(restarted, "POST", "/api/workspaces/main/projects/launch/repair"),
+      RepairResponse,
     );
     expect(repaired.repaired).toEqual(["issue-1"]);
   });
@@ -104,21 +116,24 @@ describe("durable recovery", () => {
     const filename = tempDatabase();
     const host = hostFor(filename);
     await setup(host);
-    const before = await json<BoardResponse>(
+    const before = await json(
       await call(host, "GET", "/api/workspaces/main/projects/launch/board"),
+      BoardResponse,
     );
     await call(host, "POST", "/api/workspaces/main/projects/launch/repair");
     await call(host, "POST", "/api/workspaces/main/projects/launch/repair");
-    const after = await json<BoardResponse>(
+    const after = await json(
       await call(host, "GET", "/api/workspaces/main/projects/launch/board"),
+      BoardResponse,
     );
     expect(after).toEqual(before);
   });
 
   test("an unseeded workspace reports no projects rather than failing", async () => {
     const host = hostFor(tempDatabase());
-    const projects = await json<{ projects: unknown[] }>(
+    const projects = await json(
       await call(host, "GET", "/api/workspaces/empty/projects"),
+      ProjectsResponse,
     );
     expect(projects.projects).toEqual([]);
     expect((await call(host, "GET", "/api/workspaces/empty/projects/none/board")).status).toBe(404);

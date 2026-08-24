@@ -19,7 +19,7 @@ import {
   FanInRecovery,
   recoverDerivedStateHistory,
 } from "@streamsy/experimental/ivm-mesh";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { ProjectionLanes } from "../server/lanes.ts";
 import { createLocalHost } from "../server/local.ts";
@@ -30,7 +30,8 @@ import {
   runProjectBoard,
 } from "../server/projections.ts";
 import { Streams } from "../server/streams.ts";
-import type { ApiError } from "../shared/api.ts";
+import { ApiError } from "../shared/api.ts";
+import type { BoardRow, IssueDetail } from "../shared/model.ts";
 
 type Host = ReturnType<typeof createLocalHost>;
 
@@ -50,15 +51,13 @@ const WORKSPACE = "poison";
 const PROJECT = "launch";
 const ISSUE = "issue-1";
 
-async function call(host: Host, method: string, path: string, body?: unknown): Promise<Response> {
-  return host.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      ...(body === undefined
-        ? {}
-        : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-    }),
-  );
+async function call(host: Host, method: string, path: string, body?: JsonValue): Promise<Response> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  return host.fetch(new Request(`http://localhost${path}`, init));
 }
 
 /** A seeded workspace with one issue, so both targets carry valid lineage. */
@@ -78,7 +77,8 @@ async function seeded(host: Host): Promise<void> {
 }
 
 /** A JSON record as it appears in a durable State stream. */
-type JsonRecord = { readonly [key: string]: JsonValue };
+const JsonRecord = Schema.Record(Schema.String, Schema.Json);
+const decodeJsonRecord = Schema.decodeUnknownSync(JsonRecord);
 
 /**
  * Restate a typed mesh event as the durable JSON record the append API takes.
@@ -86,16 +86,11 @@ type JsonRecord = { readonly [key: string]: JsonValue };
  * The round trip is the encoding the transport performs anyway, so the row
  * these tests commit is the row the kernel itself would have written.
  */
-function meshFact(event: object): JsonValue {
-  const encoded: unknown = JSON.parse(JSON.stringify(event));
-  if (typeof encoded !== "object" || encoded === null || Array.isArray(encoded)) {
-    throw new TypeError("a mesh event must encode to a JSON object");
-  }
-  // Every value reachable here came out of `JSON.parse`, so it is a JsonValue.
-  return { ...encoded };
+function meshFact(event: JsonValue): JsonValue {
+  return decodeJsonRecord(JSON.parse(JSON.stringify(event)));
 }
 
-const validDetail: JsonRecord = {
+const validDetail: IssueDetail = {
   issueId: ISSUE,
   issueKey: "SHIP-100",
   projectId: PROJECT,
@@ -108,7 +103,7 @@ const validDetail: JsonRecord = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
-const validRow: JsonRecord = {
+const validRow: BoardRow = {
   issueId: ISSUE,
   issueKey: "SHIP-100",
   title: "Restore me",
@@ -285,7 +280,7 @@ describe("typed restore poison from durable history", () => {
       `/api/workspaces/${WORKSPACE}/projects/${PROJECT}/board`,
     );
     expect(response.status).toBe(500);
-    const body: ApiError = await response.json();
+    const body = Schema.decodeUnknownSync(ApiError)(await response.json());
     expect(body.error).toBe("state-restore-poison");
   });
 });

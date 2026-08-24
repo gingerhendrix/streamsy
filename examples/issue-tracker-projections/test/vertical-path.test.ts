@@ -1,11 +1,14 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns this file's control flow: every `test` and `afterEach` callback is a Promise the runner awaits, and the shared helpers are Promise-native drivers over the host's Web `fetch` handler. The behaviour under test is the Effect application behind that HTTP surface, which the host's own ManagedRuntime runs. */
 import { afterEach, describe, expect, test } from "vitest";
-import type {
+import type { JsonValue } from "@streamsy/core";
+import { Schema } from "effect";
+import {
   BoardResponse,
   CoverageResponse,
   MutationResponse,
   ProjectsResponse,
   RepairResponse,
+  SeedResponse,
 } from "../shared/api.ts";
 import { createLocalHost } from "../server/local.ts";
 
@@ -23,15 +26,13 @@ function newHost(): Host {
   return host;
 }
 
-async function call(host: Host, method: string, path: string, body?: unknown): Promise<Response> {
-  return host.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      ...(body === undefined
-        ? {}
-        : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-    }),
-  );
+async function call(host: Host, method: string, path: string, body?: JsonValue): Promise<Response> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  return host.fetch(new Request(`http://localhost${path}`, init));
 }
 
 /**
@@ -41,10 +42,13 @@ async function call(host: Host, method: string, path: string, body?: unknown): P
  * server builds that contract from the shared Schemas, and the assertions in
  * this suite are what check it.
  */
-async function json<T>(response: Response): Promise<T> {
+async function json<S extends Schema.ConstraintDecoder<unknown>>(
+  response: Response,
+  schema: S,
+): Promise<S["Type"]> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 500)}`);
-  return JSON.parse(text);
+  return Schema.decodeUnknownSync(schema)(JSON.parse(text));
 }
 
 async function workspace(host: Host, workspaceId: string, projectId = "launch"): Promise<void> {
@@ -59,13 +63,14 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
   test("a created issue returns an exact ack and proves both hops", async () => {
     const host = newHost();
     await workspace(host, "w1");
-    const created = await json<MutationResponse>(
+    const created = await json(
       await call(host, "POST", "/api/workspaces/w1/issues", {
         commandId: "cmd-1",
         issueId: "issue-1",
         projectId: "launch",
         title: "Prove the path",
       }),
+      MutationResponse,
     );
 
     expect(created.ack.stream).toBe("workspaces/w1/issues/issue-1/events");
@@ -87,17 +92,19 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
       projectId: "launch",
       title: "Prove the path",
     });
-    const moved = await json<MutationResponse>(
+    const moved = await json(
       await call(host, "POST", "/api/workspaces/w2/issues/issue-1/commands", {
         commandId: "cmd-2",
         type: "status",
         status: "in-progress",
       }),
+      MutationResponse,
     );
     expect(moved.coverage.status).toBe("proven");
 
-    const board = await json<BoardResponse>(
+    const board = await json(
       await call(host, "GET", "/api/workspaces/w2/projects/launch/board"),
+      BoardResponse,
     );
     expect(board.rows).toHaveLength(1);
     expect(board.rows[0]).toMatchObject({ issueId: "issue-1", status: "in-progress" });
@@ -109,27 +116,30 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
   test("a repeated command reconciles to the original offset", async () => {
     const host = newHost();
     await workspace(host, "w3");
-    const first = await json<MutationResponse>(
+    const first = await json(
       await call(host, "POST", "/api/workspaces/w3/issues", {
         commandId: "cmd-1",
         issueId: "issue-1",
         projectId: "launch",
         title: "Prove the path",
       }),
+      MutationResponse,
     );
-    const again = await json<MutationResponse>(
+    const again = await json(
       await call(host, "POST", "/api/workspaces/w3/issues", {
         commandId: "cmd-1",
         issueId: "issue-1",
         projectId: "launch",
         title: "Prove the path",
       }),
+      MutationResponse,
     );
     expect(again.reconciled).toBe(true);
     expect(again.ack.position).toBe(first.ack.position);
 
-    const board = await json<BoardResponse>(
+    const board = await json(
       await call(host, "GET", "/api/workspaces/w3/projects/launch/board"),
+      BoardResponse,
     );
     expect(board.rows).toHaveLength(1);
   });
@@ -155,11 +165,13 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
       title: "Platform work",
     });
 
-    const launch = await json<BoardResponse>(
+    const launch = await json(
       await call(host, "GET", "/api/workspaces/w4/projects/launch/board"),
+      BoardResponse,
     );
-    const platform = await json<BoardResponse>(
+    const platform = await json(
       await call(host, "GET", "/api/workspaces/w4/projects/platform/board"),
+      BoardResponse,
     );
     expect(launch.rows.map((row) => row.issueId)).toEqual(["issue-1"]);
     expect(platform.rows.map((row) => row.issueId)).toEqual(["issue-2"]);
@@ -215,8 +227,9 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
       name: "Launch",
     });
 
-    const listed = await json<ProjectsResponse>(
+    const listed = await json(
       await call(host, "GET", "/api/workspaces/w6/projects"),
+      ProjectsResponse,
     );
     expect(listed.projects).toEqual([{ projectId: "launch", projectKey: "SHIP", name: "Launch" }]);
   });
@@ -254,19 +267,20 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
     });
 
     // No immediate pass runs, so the response must not claim proven coverage.
-    const deferred = await json<MutationResponse>(
+    const deferred = await json(
       await call(host, "POST", "/api/workspaces/w8/issues/issue-1/commands?projections=deferred", {
         commandId: "cmd-2",
         type: "status",
         status: "done",
       }),
+      MutationResponse,
     );
     expect(deferred.coverage.status).not.toBe("proven");
     expect(deferred.projections.map((pass) => pass.outcome)).toEqual(["deferred", "deferred"]);
     expect(deferred.ack.position.length).toBeGreaterThan(0);
 
     // The read-only probe agrees before any catch-up work has been done.
-    const before = await json<CoverageResponse>(
+    const before = await json(
       await call(
         host,
         "GET",
@@ -274,15 +288,17 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
           deferred.ack.position,
         )}`,
       ),
+      CoverageResponse,
     );
     expect(before.coverage.status).not.toBe("proven");
 
-    const repaired = await json<RepairResponse>(
+    const repaired = await json(
       await call(host, "POST", "/api/workspaces/w8/projects/launch/repair"),
+      RepairResponse,
     );
     expect(repaired.projections.every((pass) => pass.outcome === "caught-up")).toBe(true);
 
-    const after = await json<CoverageResponse>(
+    const after = await json(
       await call(
         host,
         "GET",
@@ -290,11 +306,13 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
           deferred.ack.position,
         )}`,
       ),
+      CoverageResponse,
     );
     expect(after.coverage.status).toBe("proven");
 
-    const board = await json<BoardResponse>(
+    const board = await json(
       await call(host, "GET", "/api/workspaces/w8/projects/launch/board"),
+      BoardResponse,
     );
     expect(board.rows[0]).toMatchObject({ issueId: "issue-1", status: "done" });
   });
@@ -319,13 +337,14 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
   test("every settled command reports a classified pass for both projections", async () => {
     const host = newHost();
     await workspace(host, "w10");
-    const created = await json<MutationResponse>(
+    const created = await json(
       await call(host, "POST", "/api/workspaces/w10/issues", {
         commandId: "cmd-1",
         issueId: "issue-1",
         projectId: "launch",
         title: "Prove the path",
       }),
+      MutationResponse,
     );
     expect(created.projections).toEqual([
       { label: "issue-detail", status: "caught-up", outcome: "caught-up" },
@@ -335,16 +354,13 @@ describe("IssueEvents → IssueDetail → ProjectBoard", () => {
 
   test("the seeded workspace is complete and idempotent", async () => {
     const host = newHost();
-    const first = await json<{ issues: string[] }>(
-      await call(host, "POST", "/api/workspaces/main/seed"),
-    );
-    const second = await json<{ issues: string[] }>(
-      await call(host, "POST", "/api/workspaces/main/seed"),
-    );
+    const first = await json(await call(host, "POST", "/api/workspaces/main/seed"), SeedResponse);
+    const second = await json(await call(host, "POST", "/api/workspaces/main/seed"), SeedResponse);
     expect(second.issues).toEqual(first.issues);
 
-    const board = await json<BoardResponse>(
+    const board = await json(
       await call(host, "GET", "/api/workspaces/main/projects/launch/board"),
+      BoardResponse,
     );
     expect(board.rows).toHaveLength(3);
     expect(new Set(board.rows.map((row) => row.status))).toEqual(

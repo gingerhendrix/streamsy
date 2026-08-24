@@ -19,44 +19,48 @@ import { readFileSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The same reads resolve those paths relative to this test file with the Node-compatible path API.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import stack, { Api, ProjectionWakes, STACK_NAME, StreamDO } from "../alchemy.run.ts";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+type InspectedResource = typeof Api | typeof stack;
 
-const readJson = (path: string): unknown =>
-  JSON.parse(readFileSync(join(packageDir, path), "utf8"));
+const DeclaredPackage = Schema.Struct({
+  devDependencies: Schema.Struct({ alchemy: Schema.String }),
+});
+const InstalledPackage = Schema.Struct({ version: Schema.String });
+
+const readJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  path: string,
+  schema: S,
+): S["Type"] =>
+  Schema.decodeUnknownSync(schema)(JSON.parse(readFileSync(join(packageDir, path), "utf8")));
 
 /**
- * Read one nested field of an unknown value, failing the test with the path it
- * could not follow. The Alchemy resource internals below are deliberately
- * untyped, so every probe of them goes through here rather than an assertion.
+ * Decode one nested string owned by an Alchemy resource, failing the test with
+ * the path it could not follow. Property descriptors work for callable Effects
+ * as well as ordinary objects and avoid asserting over Alchemy's internals.
  */
-function field(root: unknown, ...path: readonly string[]): unknown {
+function stringField(root: InspectedResource, ...path: readonly string[]): string {
   let current = root;
-  for (const key of path) {
-    // An Alchemy resource is a callable Effect, so a function is readable too.
-    if (current === null || (typeof current !== "object" && typeof current !== "function")) {
-      throw new TypeError(`${path.join(".")} is not readable`);
+  for (const [index, key] of path.entries()) {
+    const value = Object.getOwnPropertyDescriptor(current, key)?.value;
+    if (index === path.length - 1) {
+      return Schema.decodeUnknownSync(Schema.String)(value);
     }
-    current = Reflect.get(current, key);
+    if (!(value instanceof Object)) throw new TypeError(`${path.join(".")} is not readable`);
+    current = value;
   }
-  return current;
-}
-
-function stringField(root: unknown, ...path: readonly string[]): string {
-  const value = field(root, ...path);
-  if (typeof value !== "string") throw new TypeError(`${path.join(".")} must be a string`);
-  return value;
+  throw new TypeError("a field path must not be empty");
 }
 
 describe("Alchemy v2 deployment program", () => {
   test("the example depends on Alchemy v2, not the 0.x line", () => {
-    const declared = stringField(readJson("package.json"), "devDependencies", "alchemy");
+    const declared = readJson("package.json", DeclaredPackage).devDependencies.alchemy;
     expect(declared.startsWith("2.")).toBe(true);
 
-    const installed = stringField(readJson("node_modules/alchemy/package.json"), "version");
+    const installed = readJson("node_modules/alchemy/package.json", InstalledPackage).version;
     expect(Number.parseInt(installed.split(".")[0]!, 10)).toBe(2);
   });
 
@@ -87,8 +91,8 @@ describe("Alchemy v2 deployment program", () => {
   test("the stack is wired with a providers layer and a state layer", () => {
     // Both are required by v2; a stack missing either dies with a named error.
     expect(stringField(stack, "stackName")).toBe(STACK_NAME);
-    expect(field(stack, "providers")).toBeDefined();
-    expect(field(stack, "state")).toBeDefined();
+    expect(Object.getOwnPropertyDescriptor(stack, "providers")?.value).toBeDefined();
+    expect(Object.getOwnPropertyDescriptor(stack, "state")?.value).toBeDefined();
   });
 
   /**

@@ -20,6 +20,7 @@ import {
   directProtocolClient,
   StreamProtocol,
   type StreamProtocolClient,
+  type JsonValue,
 } from "@streamsy/core";
 import { ConfigProvider, Effect, Layer, ManagedRuntime, Ref } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
@@ -78,15 +79,13 @@ function testRuntime(overrides: {
   return runtime;
 }
 
-async function call(host: Host, method: string, path: string, body?: unknown): Promise<Response> {
-  return host.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      ...(body === undefined
-        ? {}
-        : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-    }),
-  );
+async function call(host: Host, method: string, path: string, body?: JsonValue): Promise<Response> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  return host.fetch(new Request(`http://localhost${path}`, init));
 }
 
 describe("application operations are Effect descriptions", () => {
@@ -133,12 +132,13 @@ describe("Schema decodes the HTTP boundary", () => {
 
     // An unknown status literal, an unknown team member, and a wrong-typed
     // field are all rejected by the request schema.
-    for (const body of [
+    const invalidBodies: readonly JsonValue[] = [
       { commandId: "c1", issueId: "issue-1", projectId: "launch", title: "x", status: "shipped" },
       { commandId: "c2", issueId: "issue-2", projectId: "launch", title: "x", creatorId: "nobody" },
       { commandId: "c3", issueId: "issue-3", projectId: "launch", title: 42 },
       { commandId: "c4", issueId: "issue-4", projectId: "launch" },
-    ]) {
+    ];
+    for (const body of invalidBodies) {
       const response = await call(host, "POST", "/api/workspaces/arch/issues", body);
       expect([response.status, JSON.stringify(body)]).toEqual([400, JSON.stringify(body)]);
     }
