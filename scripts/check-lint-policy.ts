@@ -43,11 +43,36 @@ interface Diagnostic {
   filename: string;
 }
 
-const isDiagnosticReport = (value: unknown): value is { diagnostics: Array<Diagnostic> } =>
-  typeof value === "object" &&
-  value !== null &&
-  "diagnostics" in value &&
-  Array.isArray(value.diagnostics);
+interface DiagnosticReport {
+  diagnostics: Array<Diagnostic>;
+}
+
+const parseDiagnosticReport = (text: string, source: string): DiagnosticReport => {
+  const value: unknown = JSON.parse(text);
+  if (
+    !(value instanceof Object) ||
+    !("diagnostics" in value) ||
+    !Array.isArray(value.diagnostics)
+  ) {
+    throw new Error(`oxlint JSON output had no diagnostics array for ${source}`);
+  }
+
+  const rawDiagnostics: Array<unknown> = value.diagnostics;
+  const diagnostics: Array<Diagnostic> = [];
+  for (const diagnostic of rawDiagnostics) {
+    if (!(diagnostic instanceof Object) || !("code" in diagnostic) || !("filename" in diagnostic)) {
+      throw new Error(`oxlint JSON output had an invalid diagnostic for ${source}`);
+    }
+
+    const code = String(diagnostic.code);
+    const filename = String(diagnostic.filename);
+    if (diagnostic.code !== code || diagnostic.filename !== filename) {
+      throw new Error(`oxlint JSON output had an invalid diagnostic for ${source}`);
+    }
+    diagnostics.push({ code, filename });
+  }
+  return { diagnostics };
+};
 
 const lint = (args: Array<string>): Array<Diagnostic> => {
   const result = spawnSync("./node_modules/.bin/oxlint", [...args, "-f", "json"], {
@@ -62,11 +87,7 @@ const lint = (args: Array<string>): Array<Diagnostic> => {
       `oxlint did not produce JSON for ${args.join(" ")}:\n${stdout}\n${result.stderr}`,
     );
   }
-  const parsed: unknown = JSON.parse(stdout);
-  if (!isDiagnosticReport(parsed)) {
-    throw new Error(`oxlint JSON output had no diagnostics array for ${args.join(" ")}`);
-  }
-  return parsed.diagnostics;
+  return parseDiagnosticReport(stdout, args.join(" ")).diagnostics;
 };
 
 const normalise = (filename: string): string => filename.replace(/^\.\//, "");
