@@ -12,7 +12,7 @@
  * controls retain the turn context that produced them.
  */
 
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import type { PlayerController } from "../domain/events.ts";
 
 import type { CombatView } from "./combat-view.ts";
@@ -25,41 +25,57 @@ import {
   type RevealPlan,
   type SeatMode,
 } from "./presentation.ts";
+import { customStyle } from "./shared.tsx";
 
 /** Pip positions on a 100×100 die face, by value. */
-const PIPS: Record<number, Array<[number, number]>> = {
-  1: [[50, 50]],
-  2: [
-    [30, 30],
-    [70, 70],
+const PIPS = new Map<number, Array<[number, number]>>([
+  [1, [[50, 50]]],
+  [
+    2,
+    [
+      [30, 30],
+      [70, 70],
+    ],
   ],
-  3: [
-    [28, 28],
-    [50, 50],
-    [72, 72],
+  [
+    3,
+    [
+      [28, 28],
+      [50, 50],
+      [72, 72],
+    ],
   ],
-  4: [
-    [30, 30],
-    [70, 30],
-    [30, 70],
-    [70, 70],
+  [
+    4,
+    [
+      [30, 30],
+      [70, 30],
+      [30, 70],
+      [70, 70],
+    ],
   ],
-  5: [
-    [30, 30],
-    [70, 30],
-    [50, 50],
-    [30, 70],
-    [70, 70],
+  [
+    5,
+    [
+      [30, 30],
+      [70, 30],
+      [50, 50],
+      [30, 70],
+      [70, 70],
+    ],
   ],
-  6: [
-    [30, 26],
-    [70, 26],
-    [30, 50],
-    [70, 50],
-    [30, 74],
-    [70, 74],
+  [
+    6,
+    [
+      [30, 26],
+      [70, 26],
+      [30, 50],
+      [70, 50],
+      [30, 74],
+      [70, 74],
+    ],
   ],
-};
+]);
 
 export function Die(props: {
   /** `null` renders a face-down silhouette — never an invented face. */
@@ -69,12 +85,10 @@ export function Die(props: {
   outcome?: "won" | "lost" | null;
   reveal?: RevealPlan;
 }) {
-  /* oxlint-disable typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this declaration contains only local string values. */
-  const style = {
+  const style = customStyle({
     "--die": props.color,
     "--reveal-ms": `${props.reveal?.durationMs ?? 0}ms`,
-  } as CSSProperties;
-  /* oxlint-enable typescript/no-unsafe-type-assertion */
+  });
   const classes = [
     "die",
     props.side,
@@ -96,7 +110,7 @@ export function Die(props: {
         {props.value === null ? (
           <path d="M34 34 L66 66 M66 34 L34 66" className="die-hidden-mark" />
         ) : (
-          (PIPS[props.value] ?? []).map(([cx, cy], index) => (
+          (PIPS.get(props.value) ?? []).map(([cx, cy], index) => (
             <circle key={index} cx={cx} cy={cy} r="9" className="die-pip" />
           ))
         )}
@@ -173,11 +187,7 @@ export function CombatCard(props: CombatCardProps) {
 
       <div className="dice-rows">
         <div className="dice-row">
-          <span
-            className="dice-side"
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
-            style={{ "--player": attackerColor } as CSSProperties}
-          >
+          <span className="dice-side" style={customStyle({ "--player": attackerColor })}>
             {names.player(combat.attackerId)}
             <small>attacking</small>
           </span>
@@ -200,11 +210,7 @@ export function CombatCard(props: CombatCardProps) {
         </div>
 
         <div className="dice-row">
-          <span
-            className="dice-side"
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
-            style={{ "--player": defenderColor } as CSSProperties}
-          >
+          <span className="dice-side" style={customStyle({ "--player": defenderColor })}>
             {defenderName}
             <small>defending {names.territory(combat.to)}</small>
           </span>

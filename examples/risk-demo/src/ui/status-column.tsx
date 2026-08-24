@@ -12,7 +12,7 @@
  * disagrees with the map beside it.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type {
   ProjectedContinent,
@@ -30,6 +30,7 @@ import {
   playerStrengthLabel,
   type NameLookup,
 } from "./presentation.ts";
+import { customStyle } from "./shared.tsx";
 
 /** How many past moves the feed keeps on screen; the stream itself is unbounded. */
 const HISTORY_LIMIT = 14;
@@ -59,8 +60,7 @@ function PlayerStandings(props: {
             <li
               key={player.id}
               className={classes}
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-              style={{ "--player": player.color } as CSSProperties}
+              style={customStyle({ "--player": player.color })}
             >
               <span className="standing-top">
                 <span className="player-color" style={{ background: player.color }} />
@@ -104,8 +104,7 @@ function ContinentStandings(props: {
           <li
             key={standing.continentId}
             className={standing.controllerId ? "continent-row held" : "continent-row"}
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-            style={{ "--player": props.colorOf(standing.controllerId) } as CSSProperties}
+            style={customStyle({ "--player": props.colorOf(standing.controllerId) })}
           >
             <span className="continent-top">
               <b>{standing.name}</b>
@@ -124,8 +123,7 @@ function ContinentStandings(props: {
                   }
                   data-territory-id={occupation.territoryId}
                   key={occupation.territoryId}
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-                  style={{ "--occupant": props.colorOf(occupation.ownerId) } as CSSProperties}
+                  style={customStyle({ "--occupant": props.colorOf(occupation.ownerId) })}
                 />
               ))}
             </span>

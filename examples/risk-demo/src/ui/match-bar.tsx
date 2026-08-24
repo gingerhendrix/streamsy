@@ -11,11 +11,12 @@
  * architectural status the game surface keeps.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type { ProjectedPlayer } from "../board/projection.ts";
 import type { GamePhase } from "../domain/aggregate.ts";
 import { PHASE_LABELS } from "./presentation.ts";
+import { customStyle } from "./shared.tsx";
 
 export interface MatchBarProps {
   gameId: string;
@@ -42,11 +43,7 @@ export function MatchBar(props: MatchBarProps) {
         </span>
       </a>
 
-      <div
-        className="match-state"
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
-        style={{ "--player": activeColor } as CSSProperties}
-      >
+      <div className="match-state" style={customStyle({ "--player": activeColor })}>
         <span className="match-fact">
           <small>Round</small>
           <b>{props.round || "—"}</b>

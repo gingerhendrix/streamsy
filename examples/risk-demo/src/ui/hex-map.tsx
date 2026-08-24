@@ -29,10 +29,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { customStyle } from "./shared.tsx";
 
 import type { ProjectedContinent, ProjectedHex } from "../board/projection.ts";
 import type { AttackTrace } from "./attack-trace.ts";
@@ -156,21 +156,21 @@ export interface HexMapProps {
   children?: ReactNode;
 }
 
-const TERRAIN_FILL: Record<Terrain, string> = {
+const TERRAIN_FILL = {
   plains: "#a3a17a",
   forest: "#6f7955",
   hills: "#9a8963",
   desert: "#b5a276",
   mountains: "#77776b",
-};
+} satisfies Record<Terrain, string>;
 
-const TERRAIN_INK: Record<Terrain, string> = {
+const TERRAIN_INK = {
   plains: "#68694f",
   forest: "#39452d",
   hills: "#5c5139",
   desert: "#756540",
   mountains: "#45463f",
-};
+} satisfies Record<Terrain, string>;
 
 /**
  * A distinct texture per terrain, so the taxonomy survives an owner overlay and
@@ -536,8 +536,7 @@ export function HexMap(props: HexMapProps) {
                   className={`highlight ${state}`}
                   d={geometry.outlines.get(territory.id) ?? ""}
                   fillRule="evenodd"
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-                  style={{ "--owner": props.colorOf(territory.ownerId) } as CSSProperties}
+                  style={customStyle({ "--owner": props.colorOf(territory.ownerId) })}
                 />
               );
             })}
@@ -584,8 +583,7 @@ export function HexMap(props: HexMapProps) {
                     cx={anchor.x}
                     cy={anchor.y}
                     r={BADGE_RADIUS}
-                    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-                    style={{ "--owner": props.colorOf(territory.ownerId) } as CSSProperties}
+                    style={customStyle({ "--owner": props.colorOf(territory.ownerId) })}
                   />
                   <text
                     className="army-count"

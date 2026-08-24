@@ -14,7 +14,7 @@
  * Attack: both an open declaration and its resolved dice stay inside that phase.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type { ProjectedPlayer, ProjectedTurn } from "../board/projection.ts";
 import type { GamePhase } from "../domain/aggregate.ts";
@@ -30,6 +30,7 @@ import {
   type NameLookup,
   type PhaseState,
 } from "./presentation.ts";
+import { customStyle } from "./shared.tsx";
 
 /**
  * What the column shows once the map has an owner.
@@ -178,11 +179,7 @@ export function TurnColumn(props: TurnColumnProps) {
     ) : undefined;
   return (
     <aside className="turn-column" aria-label="Current turn">
-      <div
-        className="column-head"
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits the local --player custom property.
-        style={{ "--player": activeColor } as CSSProperties}
-      >
+      <div className="column-head" style={customStyle({ "--player": activeColor })}>
         <span className="eyebrow">Current turn</span>
         <h2>{props.statusLine}</h2>
         {props.activePlayer && (

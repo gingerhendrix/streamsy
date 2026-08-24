@@ -68,7 +68,7 @@ function seatFromMoves(
 export function combatView(sources: CombatSources): CombatView | null {
   const { combat } = sources;
   if (combat) {
-    return {
+    const view: CombatView = {
       attackId: combat.attackId,
       status: combat.status,
       attackerId: combat.attackerId,
@@ -78,19 +78,19 @@ export function combatView(sources: CombatSources): CombatView | null {
       attackerDice: combat.attackerDice,
       attackerRolls: combat.attackerRolls,
       defenderDice: combat.defenderDice,
-      ...(combat.defenderRolls ? { defenderRolls: combat.defenderRolls } : {}),
-      ...(combat.attackerLosses === undefined ? {} : { attackerLosses: combat.attackerLosses }),
-      ...(combat.defenderLosses === undefined ? {} : { defenderLosses: combat.defenderLosses }),
-      ...(combat.territoryCaptured === undefined
-        ? {}
-        : { territoryCaptured: combat.territoryCaptured }),
-      ...(combat.resolutionSource ? { resolutionSource: combat.resolutionSource } : {}),
-      ...(combat.status === "awaiting-defense"
-        ? { defenseDeadlineAt: combat.defenseDeadlineAt, declaredAt: combat.declaredAt }
-        : {}),
-      ...(combat.minArmies === undefined ? {} : { minArmies: combat.minArmies }),
-      ...(combat.maxArmies === undefined ? {} : { maxArmies: combat.maxArmies }),
     };
+    if (combat.defenderRolls) view.defenderRolls = combat.defenderRolls;
+    if (combat.attackerLosses !== undefined) view.attackerLosses = combat.attackerLosses;
+    if (combat.defenderLosses !== undefined) view.defenderLosses = combat.defenderLosses;
+    if (combat.territoryCaptured !== undefined) view.territoryCaptured = combat.territoryCaptured;
+    if (combat.resolutionSource) view.resolutionSource = combat.resolutionSource;
+    if (combat.status === "awaiting-defense") {
+      view.defenseDeadlineAt = combat.defenseDeadlineAt;
+      view.declaredAt = combat.declaredAt;
+    }
+    if (combat.minArmies !== undefined) view.minArmies = combat.minArmies;
+    if (combat.maxArmies !== undefined) view.maxArmies = combat.maxArmies;
+    return view;
   }
 
   const dice = sources.turn?.latestDice;
@@ -100,11 +100,9 @@ export function combatView(sources: CombatSources): CombatView | null {
   const attackerId =
     seatFromMoves(sources.moves, dice.attackId, "AttackDeclared") ?? sources.turn?.playerId;
   const defenderId = seatFromMoves(sources.moves, dice.attackId, "AttackResolved");
-  return {
+  const view: CombatView = {
     attackId: dice.attackId,
     status: "resolved",
-    ...(attackerId ? { attackerId } : {}),
-    ...(defenderId ? { defenderId } : {}),
     from: dice.from,
     to: dice.to,
     attackerDice: dice.attackerRolls.length,
@@ -116,4 +114,7 @@ export function combatView(sources: CombatSources): CombatView | null {
     territoryCaptured: dice.territoryCaptured,
     resolutionSource: dice.resolutionSource,
   };
+  if (attackerId) view.attackerId = attackerId;
+  if (defenderId) view.defenderId = defenderId;
+  return view;
 }

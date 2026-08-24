@@ -115,11 +115,11 @@ export function dicePairs(
 }
 
 /** Attribution for every non-human defence path. */
-const AUTO_ROLL_LABELS: Record<Exclude<DefenseResolutionSource, "human">, string> = {
+const AUTO_ROLL_LABELS = {
   bot: "Bot rolled",
   agent: "Agent rolled",
   timeout: "Auto-rolled after timeout",
-};
+} satisfies Record<Exclude<DefenseResolutionSource, "human">, string>;
 
 /** How the defence roll was authorised — never implying a human clicked when none did. */
 export function resolutionLabel(source: DefenseResolutionSource, defenderName: string): string {
@@ -281,11 +281,11 @@ export function turnLedger(turn: ProjectedTurn, names: NameLookup): LedgerEntry[
 /** Canonical phase order — the order a turn happens in, and the order it reads in. */
 export const PHASE_ORDER: readonly GamePhase[] = ["reinforce", "attack", "fortify"];
 
-export const PHASE_LABELS: Record<GamePhase, string> = {
+export const PHASE_LABELS = {
   reinforce: "Reinforce",
   attack: "Attack",
   fortify: "Fortify",
-};
+} satisfies Record<GamePhase, string>;
 
 /**
  * How a phase section presents itself: the phase in progress is the only one that
@@ -302,11 +302,11 @@ export function phaseState(phase: GamePhase, current: GamePhase | undefined): Ph
   return index < currentIndex ? "completed" : "upcoming";
 }
 
-export const PHASE_STATE_LABELS: Record<PhaseState, string> = {
+export const PHASE_STATE_LABELS = {
   completed: "Completed",
   active: "Now",
   upcoming: "Later",
-};
+} satisfies Record<PhaseState, string>;
 
 /**
  * What this phase is asking of the reader right now.
@@ -557,13 +557,13 @@ export function moveDetail(move: ProjectedMove, names: NameLookup): string | nul
 // Map details card
 // ---------------------------------------------------------------------------
 
-export const TERRAIN_LABELS: Record<Terrain, string> = {
+export const TERRAIN_LABELS = {
   plains: "Plains",
   forest: "Forest",
   hills: "Hills",
   desert: "Desert",
   mountains: "Mountains",
-};
+} satisfies Record<Terrain, string>;
 
 /** `"3 Forest · 2 Hills"` — terrain is visual-only in current, so this is character, not maths. */
 export function terrainMix(terrains: readonly Terrain[]): string {

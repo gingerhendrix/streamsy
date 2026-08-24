@@ -25,6 +25,11 @@ export interface Point {
   readonly y: number;
 }
 
+export interface InsetSegment {
+  readonly from: Point;
+  readonly to: Point;
+}
+
 /**
  * Edge-order neighbour offsets: edge `i` runs from corner `i` to corner `i + 1`
  * and faces `EDGE_NEIGHBORS[i]`. This is the same six directions as
@@ -190,7 +195,7 @@ export function insetSegment(
   to: Point,
   startInset: number,
   endInset: number,
-): { from: Point; to: Point } {
+): InsetSegment {
   const span = Math.hypot(to.x - from.x, to.y - from.y);
   const total = startInset + endInset;
   if (span === 0 || total <= 0) return { from, to };

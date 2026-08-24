@@ -76,6 +76,20 @@ export interface ApiResult<T> {
   body: T | ApiErrorResponse;
 }
 
+type ApiRequestBody = {} | null;
+
+export type CustomStyle = CSSProperties & {
+  "--die"?: string;
+  "--occupant"?: string;
+  "--owner"?: string;
+  "--player"?: string;
+  "--reveal-ms"?: string;
+};
+
+export function customStyle(style: CustomStyle): CustomStyle {
+  return style;
+}
+
 export const STORAGE_KEY = "risk-demo-identity";
 
 export function loadIdentity(): Identity | null {
@@ -110,10 +124,10 @@ export async function api<T>(
   schema: Schema.Decoder<T>,
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: ApiRequestBody } = {},
 ): Promise<ApiResult<T>> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  const headers = new Headers({ "content-type": "application/json" });
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   const response = await fetch(path, {
     method,
     headers,
@@ -129,11 +143,11 @@ export async function api<T>(
   };
 }
 
-export function isError(body: unknown): body is ApiErrorResponse {
+export function isError(body: NonNullable<unknown>): body is ApiErrorResponse {
   return isApiErrorResponse(body);
 }
 
-export function errorMessage(body: unknown, fallback: string): string {
+export function errorMessage(body: NonNullable<unknown>, fallback: string): string {
   if (!isError(body)) return fallback;
   return friendlyError(body.error.code, body.error.message);
 }
@@ -209,9 +223,9 @@ export function PlayerFields(props: { name: string; onName(value: string): void 
 }
 
 export function PlayerChip(props: { name: string; color: string; label?: string }) {
+  const style: CustomStyle = { "--player": props.color };
   return (
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- React CSSProperties omits application-defined CSS custom properties; this object contains only locally declared style values.
-    <span className="active-chip" style={{ "--player": props.color } as CSSProperties}>
+    <span className="active-chip" style={style}>
       {props.label ?? props.name}
     </span>
   );
