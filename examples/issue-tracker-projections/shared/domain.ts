@@ -89,6 +89,28 @@ export const ProjectMembershipFact = Schema.Union([
 ]);
 export type ProjectMembershipFact = Schema.Schema.Type<typeof ProjectMembershipFact>;
 
+/**
+ * Common envelope of the application-owned rows stored in State streams.
+ *
+ * Keys and values remain optional because delete facts omit `value`, while the
+ * issue-detail stream does not need a key during restore. More specific owners
+ * validate those fields after this external JSON boundary has been decoded.
+ */
+export const StateFact = Schema.Struct({
+  type: Schema.String,
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(Schema.Json),
+  headers: Schema.optionalKey(
+    Schema.Struct({
+      operation: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+export type StateFact = Schema.Schema.Type<typeof StateFact>;
+
+export const decodeStateFact = Schema.decodeUnknownSync(StateFact);
+export const isStateFact = Schema.is(StateFact);
+
 /** Fold one issue event into detail state. A missing creation is a domain fault. */
 export function evolveIssue(current: IssueDetail | undefined, event: IssueEvent): IssueDetail {
   if (event.type === "IssueCreated") {

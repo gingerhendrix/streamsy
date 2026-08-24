@@ -5,7 +5,8 @@
  */
 import { createLocalHost } from "../server/local.ts";
 import { SEEDED_ISSUE_IDS, SEEDED_PROJECT_IDS } from "../server/seed.ts";
-import type { BoardResponse } from "../shared/api.ts";
+import { BoardResponse, SeedResponse } from "../shared/api.ts";
+import { Schema } from "effect";
 
 const host = createLocalHost();
 
@@ -21,7 +22,7 @@ try {
 
   let total = 0;
   for (const projectId of SEEDED_PROJECT_IDS) {
-    const board: BoardResponse = await get(`/api/workspaces/main/projects/${projectId}/board`);
+    const board = await get(`/api/workspaces/main/projects/${projectId}/board`, BoardResponse);
     const keys = new Set(board.rows.map((row) => row.issueId));
     assert(keys.size === board.rows.length, `${projectId} board must not repeat rows`);
     total += board.rows.length;
@@ -33,20 +34,29 @@ try {
   await host.close();
 }
 
-async function post(path: string): Promise<any> {
-  return unwrap(await host.fetch(new Request(`http://localhost${path}`, { method: "POST" })));
+async function post(path: string): Promise<SeedResponse> {
+  return unwrap(
+    await host.fetch(new Request(`http://localhost${path}`, { method: "POST" })),
+    SeedResponse,
+  );
 }
 
-async function get(path: string): Promise<any> {
-  return unwrap(await host.fetch(new Request(`http://localhost${path}`)));
+async function get<S extends Schema.ConstraintDecoder<unknown>>(
+  path: string,
+  schema: S,
+): Promise<S["Type"]> {
+  return unwrap(await host.fetch(new Request(`http://localhost${path}`)), schema);
 }
 
-async function unwrap(response: Response): Promise<any> {
+async function unwrap<S extends Schema.ConstraintDecoder<unknown>>(
+  response: Response,
+  schema: S,
+): Promise<S["Type"]> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 400)}`);
-  return JSON.parse(text);
+  return Schema.decodeUnknownSync(schema)(JSON.parse(text));
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }

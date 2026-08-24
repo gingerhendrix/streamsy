@@ -5,6 +5,7 @@
  * reconciles through the producer tuple instead of duplicating issues.
  */
 import { Effect } from "effect";
+import type { SeedResponse } from "../shared/api.ts";
 import type { IssuePriority, IssueStatus } from "../shared/domain.ts";
 import type { MemberId } from "../shared/requests.ts";
 import { createIssue, createProject, issueCommand, listProjects } from "./application.ts";
@@ -139,7 +140,7 @@ export const seedWorkspace = Effect.fn("Seed.workspace")(function* (workspaceId:
     workspaceId,
     projects: projects.map((project) => project.projectId),
     issues: ISSUES.map((issue) => issue.issueId),
-  };
+  } satisfies SeedResponse;
 });
 
 export const SEEDED_PROJECT_IDS = PROJECTS.map((project) => project.projectId);

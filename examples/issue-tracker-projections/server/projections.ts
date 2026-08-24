@@ -29,6 +29,7 @@ import {
   recoverDerivedState,
   type CatchUpFanInResult,
   type CatchUpStateResult,
+  type ChainHop,
   type ChainedCoverage,
   type MembershipChange,
 } from "@streamsy/experimental/ivm-mesh";
@@ -39,10 +40,12 @@ import {
   boardRow,
   decodeBoardRow,
   decodeIssueDetail,
+  decodeStateFact,
   evolveIssue,
   ISSUE_DETAIL_COLLECTION,
   IssueEvent,
   ProjectMembershipFact,
+  isStateFact,
   streamNames,
   type BoardRow,
   type IssueDetail,
@@ -87,11 +90,12 @@ function boardRemoval(issueId: string): JsonValue {
  */
 export function restoreDetail(initial: DetailState, facts: readonly JsonValue[]): DetailState {
   let state = initial;
-  for (const fact of facts) {
-    if (!isRecord(fact) || fact.type !== ISSUE_DETAIL_COLLECTION) {
+  for (const encoded of facts) {
+    const fact = decodeStateFact(encoded);
+    if (fact.type !== ISSUE_DETAIL_COLLECTION) {
       throw new TypeError("Unexpected fact in the issue-detail State stream");
     }
-    if (isRecord(fact.headers) && fact.headers.operation === "delete") {
+    if (fact.headers?.operation === "delete") {
       state = undefined;
       continue;
     }
@@ -102,11 +106,12 @@ export function restoreDetail(initial: DetailState, facts: readonly JsonValue[])
 
 export function restoreBoard(initial: BoardState, facts: readonly JsonValue[]): BoardState {
   let board = initial;
-  for (const fact of facts) {
-    if (!isRecord(fact) || fact.type !== BOARD_ROW_COLLECTION || typeof fact.key !== "string") {
+  for (const encoded of facts) {
+    const fact = decodeStateFact(encoded);
+    if (fact.type !== BOARD_ROW_COLLECTION || fact.key === undefined) {
       throw new TypeError("Unexpected fact in the project-board State stream");
     }
-    if (isRecord(fact.headers) && fact.headers.operation === "delete") {
+    if (fact.headers?.operation === "delete") {
       const { [fact.key]: _removed, ...rest } = board;
       board = rest;
       continue;
@@ -165,16 +170,16 @@ export const runProjectBoard = Effect.fn("Projections.projectBoard")(function* (
       return batch.items.map((item): MembershipChange => {
         const fact = decodeMembershipFact(item);
         const member = streams.bindings.issueDetail(workspaceId, fact.issueId).identity;
-        return fact.type === "IssueJoined"
-          ? { type: "join", member, ...(fact.from === null ? {} : { from: fact.from }) }
-          : { type: "leave", member };
+        if (fact.type === "IssueLeft") return { type: "leave", member };
+        if (fact.from === null) return { type: "join", member };
+        return { type: "join", member, from: fact.from };
       });
     },
     resolveMember: (identity) => resolveDetailMember(streams, workspaceId, identity),
     decodeMember(batch) {
       if (batch.kind !== "json") throw new TypeError("Issue detail State must be JSON");
       return batch.items.flatMap((item) =>
-        isRecord(item) && item.type === ISSUE_DETAIL_COLLECTION && isRecord(item.value)
+        isStateFact(item) && item.type === ISSUE_DETAIL_COLLECTION && item.value !== undefined
           ? [decodeIssueDetail(item.value)]
           : [],
       );
@@ -239,12 +244,10 @@ export function classifyPass(
   const report = (
     outcome: ProjectionPassReport["outcome"],
     detail?: string,
-  ): ProjectionPassReport => ({
-    label,
-    status: result.status,
-    outcome,
-    ...(detail === undefined ? {} : { detail }),
-  });
+  ): ProjectionPassReport => {
+    if (detail === undefined) return { label, status: result.status, outcome };
+    return { label, status: result.status, outcome, detail };
+  };
   switch (result.status) {
     case "caught-up":
       return report("caught-up");
@@ -265,10 +268,10 @@ export function classifyPass(
   }
 }
 
-const MESH_ERROR_DETAIL: Readonly<Record<string, string>> = {
-  StateRestorePoison: "durable target State could not be restored into typed application state",
-  ProjectionPoison: "the projection could not process a boundary",
-};
+const MESH_ERROR_DETAIL = new Map([
+  ["StateRestorePoison", "durable target State could not be restored into typed application state"],
+  ["ProjectionPoison", "the projection could not process a boundary"],
+]);
 
 /** A typed mesh error — poison included — is a fault, never a silent success. */
 export function faultedPass(
@@ -280,7 +283,7 @@ export function faultedPass(
     label,
     status: tag,
     outcome: "faulted",
-    detail: MESH_ERROR_DETAIL[tag] ?? "the projection pass failed",
+    detail: MESH_ERROR_DETAIL.get(tag) ?? "the projection pass failed",
   };
 }
 
@@ -336,26 +339,23 @@ export const proveChain = Effect.fn("Projections.proveChain")(function* (options
   const eventsIdentity = streams.bindings.issueEvents(workspaceId, options.issueId).identity;
   const boardIdentity = streams.bindings.board(workspaceId, options.projectId).identity;
 
-  const coverage = chainedCoverage(options.ack, [
-    {
-      label: "issue-detail",
-      ...(detailThrough === null || detailOutput === null
-        ? {}
-        : {
-            watermark: sourceWatermark(eventsIdentity, detailThrough),
-            output: sourceAck(detailIdentity, detailOutput),
-          }),
-    },
-    {
-      label: "project-board",
-      ...(boardThrough === null || boardOutput === null
-        ? {}
-        : {
-            watermark: sourceWatermark(detailIdentity, boardThrough),
-            output: sourceAck(boardIdentity, boardOutput),
-          }),
-    },
-  ]);
+  const detailHop: ChainHop =
+    detailThrough === null || detailOutput === null
+      ? { label: "issue-detail" }
+      : {
+          label: "issue-detail",
+          watermark: sourceWatermark(eventsIdentity, detailThrough),
+          output: sourceAck(detailIdentity, detailOutput),
+        };
+  const boardHop: ChainHop =
+    boardThrough === null || boardOutput === null
+      ? { label: "project-board" }
+      : {
+          label: "project-board",
+          watermark: sourceWatermark(detailIdentity, boardThrough),
+          output: sourceAck(boardIdentity, boardOutput),
+        };
+  const coverage = chainedCoverage(options.ack, [detailHop, boardHop]);
 
   return {
     coverage,
@@ -387,7 +387,3 @@ export const readBoard = Effect.fn("Projections.readBoard")(function* (
     boardStream: streamNames.board(workspaceId, projectId),
   };
 });
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

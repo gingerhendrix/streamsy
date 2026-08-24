@@ -11,13 +11,23 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { JsonValue } from "@streamsy/core";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import type {
+import { Schema } from "effect";
+import {
   BoardResponse,
   CoverageResponse,
+  HealthResponse,
   MutationResponse,
   RepairResponse,
 } from "../shared/api.ts";
+import {
+  type BoardResponse as BoardResponseValue,
+  type CoverageResponse as CoverageResponseValue,
+  type MutationResponse as MutationResponseValue,
+  type RepairResponse as RepairResponseValue,
+} from "../shared/api.ts";
+import { IssueDetailSchema } from "../shared/model.ts";
 import { createLocalHost } from "../server/local.ts";
 
 const filename = join(mkdtempSync(join(tmpdir(), "issue-tracker-projections-")), "state.sqlite");
@@ -28,7 +38,7 @@ const issueId = "smokeissue";
 let host = createLocalHost({ adapter: createSqliteStorageAdapter({ filename }) });
 
 try {
-  const health = await json(await call("GET", "/health"));
+  const health = await json(await call("GET", "/health"), HealthResponse);
   assert(health.status === "ok", "health must be ok");
 
   await call("POST", `/api/workspaces/${workspaceId}/projects`, {
@@ -37,7 +47,7 @@ try {
     name: "Smoke",
   });
 
-  const created: MutationResponse = await json(
+  const created: MutationResponseValue = await json(
     await call("POST", `/api/workspaces/${workspaceId}/issues`, {
       commandId: "smoke-create",
       issueId,
@@ -46,6 +56,7 @@ try {
       priority: "high",
       creatorId: "ada",
     }),
+    MutationResponse,
   );
   assert(created.ack.position.length > 0, "create must return an exact source acknowledgement");
   assert(
@@ -54,7 +65,7 @@ try {
   );
 
   // A repeated command reconciles through its producer tuple to the same offset.
-  const repeated: MutationResponse = await json(
+  const repeated: MutationResponseValue = await json(
     await call("POST", `/api/workspaces/${workspaceId}/issues`, {
       commandId: "smoke-create",
       issueId,
@@ -63,6 +74,7 @@ try {
       priority: "high",
       creatorId: "ada",
     }),
+    MutationResponse,
   );
   assert(repeated.reconciled, "a repeated create must be reconciled, not appended again");
   assert(
@@ -85,10 +97,11 @@ try {
     { commandId: "smoke-done", type: "status", status: "done" },
   ] as const;
 
-  const applied: MutationResponse[] = [];
+  const applied: MutationResponseValue[] = [];
   for (const command of commands) {
-    const response: MutationResponse = await json(
+    const response: MutationResponseValue = await json(
       await call("POST", `/api/workspaces/${workspaceId}/issues/${issueId}/commands`, command),
+      MutationResponse,
     );
     assert(
       response.coverage.status === "proven",
@@ -104,8 +117,9 @@ try {
   assert(settled.detail?.comments.length === 1, "comment must be durable");
   assert(settled.detail?.status === "done", "status movement must be durable");
 
-  const board: BoardResponse = await json(
+  const board: BoardResponseValue = await json(
     await call("GET", `/api/workspaces/${workspaceId}/projects/${projectId}/board`),
+    BoardResponse,
   );
   assert(board.rows.length === 1, "board must contain the created issue");
   assert(board.rows[0]!.status === "done", "board must reflect the final status");
@@ -120,14 +134,16 @@ try {
   await host.close();
   host = createLocalHost({ adapter: createSqliteStorageAdapter({ filename }) });
 
-  const afterRestart: BoardResponse = await json(
+  const afterRestart: BoardResponseValue = await json(
     await call("GET", `/api/workspaces/${workspaceId}/projects/${projectId}/board`),
+    BoardResponse,
   );
   assert(afterRestart.rows.length === 1, "board must survive a host restart");
   assert(afterRestart.rows[0]!.status === "done", "restarted board must keep the final status");
 
   const repaired = await json(
     await call("POST", `/api/workspaces/${workspaceId}/projects/${projectId}/repair`),
+    RepairResponse,
   );
   assert(
     Array.isArray(repaired.repaired) && repaired.repaired.includes(issueId),
@@ -136,18 +152,20 @@ try {
 
   const detailAfterRepair = await json(
     await call("GET", `/api/workspaces/${workspaceId}/issues/${issueId}`),
+    IssueDetailSchema,
   );
   assert(detailAfterRepair.issueId === issueId, "recovered detail must survive restart");
 
   // Convergence without the mutation request. `?projections=deferred` skips the
   // immediate passes, so this is exactly the shape of a lost immediate pass:
   // the command is durable and unproven, and only repair can prove it.
-  const deferred: MutationResponse = await json(
+  const deferred: MutationResponseValue = await json(
     await call(
       "POST",
       `/api/workspaces/${workspaceId}/issues/${issueId}/commands?projections=deferred`,
       { commandId: "smoke-deferred", type: "priority", priority: "low" },
     ),
+    MutationResponse,
   );
   assert(
     deferred.coverage.status !== "proven",
@@ -161,20 +179,27 @@ try {
   const coveragePath = `/api/workspaces/${workspaceId}/issues/${issueId}/coverage?position=${encodeURIComponent(
     deferred.ack.position,
   )}`;
-  const beforeRepair: CoverageResponse = await json(await call("GET", coveragePath));
+  const beforeRepair: CoverageResponseValue = await json(
+    await call("GET", coveragePath),
+    CoverageResponse,
+  );
   assert(
     beforeRepair.coverage.status !== "proven",
     "a read-only probe must not prove an uncaught-up chain",
   );
 
-  const converged: RepairResponse = await json(
+  const converged: RepairResponseValue = await json(
     await call("POST", `/api/workspaces/${workspaceId}/projects/${projectId}/repair`),
+    RepairResponse,
   );
   assert(
     converged.projections.every((pass) => pass.outcome === "caught-up"),
     `repair must catch every pass up, got ${JSON.stringify(converged.projections)}`,
   );
-  const afterRepair: CoverageResponse = await json(await call("GET", coveragePath));
+  const afterRepair: CoverageResponseValue = await json(
+    await call("GET", coveragePath),
+    CoverageResponse,
+  );
   assert(
     afterRepair.coverage.status === "proven",
     `coverage.status must be proven after repair, got ${afterRepair.coverage.status}`,
@@ -185,15 +210,13 @@ try {
   await host.close();
 }
 
-function call(method: string, path: string, body?: unknown): Promise<Response> {
-  return host.fetch(
-    new Request(`http://localhost${path}`, {
-      method,
-      ...(body === undefined
-        ? {}
-        : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-    }),
-  );
+function call(method: string, path: string, body?: JsonValue): Promise<Response> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  return host.fetch(new Request(`http://localhost${path}`, init));
 }
 
 /**
@@ -203,12 +226,15 @@ function call(method: string, path: string, body?: unknown): Promise<Response> {
  * server builds that contract from the shared Schemas, and the assertions in
  * this smoke are what check it.
  */
-async function json<T = any>(response: Response): Promise<T> {
+async function json<S extends Schema.ConstraintDecoder<unknown>>(
+  response: Response,
+  schema: S,
+): Promise<S["Type"]> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 400)}`);
-  return JSON.parse(text);
+  return Schema.decodeUnknownSync(schema)(JSON.parse(text));
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }

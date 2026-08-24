@@ -29,8 +29,8 @@ export class AppConfig extends Context.Service<AppConfig, AppConfigValues>()(
   "issue-tracker-projections/AppConfig",
 ) {}
 
-const hostConfig = Config.literals(["local", "cloudflare"] as const, "ISSUE_TRACKER_HOST").pipe(
-  Config.withDefault("local" as HostKind),
+const hostConfig = Config.literals(["local", "cloudflare"], "ISSUE_TRACKER_HOST").pipe(
+  Config.withDefault("local"),
 );
 
 const deploymentConfig = Config.string("ISSUE_TRACKER_DEPLOYMENT").pipe(

@@ -72,14 +72,14 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   };
 }
 
-const CONTENT_TYPES: Readonly<Record<string, string>> = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".map": "application/json",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-};
+const CONTENT_TYPES = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".map", "application/json"],
+  [".json", "application/json"],
+  [".svg", "image/svg+xml"],
+]);
 
 const MISSING_BUILD = `<!doctype html><meta charset="utf-8"><title>Build required</title>
 <body style="font:14px system-ui;padding:24px;background:#0f1115;color:#e6e9ef">
@@ -96,16 +96,16 @@ async function serveAsset(pathname: string): Promise<Response> {
     if (!existsSync(shell)) {
       return new Response(MISSING_BUILD, {
         status: 200,
-        headers: { "content-type": CONTENT_TYPES[".html"]! },
+        headers: { "content-type": CONTENT_TYPES.get(".html") ?? "text/html; charset=utf-8" },
       });
     }
     return new Response(await readFile(shell), {
-      headers: { "content-type": CONTENT_TYPES[".html"]! },
+      headers: { "content-type": CONTENT_TYPES.get(".html") ?? "text/html; charset=utf-8" },
     });
   }
   const extension = file.slice(file.lastIndexOf("."));
   return new Response(await readFile(file), {
-    headers: { "content-type": CONTENT_TYPES[extension] ?? "application/octet-stream" },
+    headers: { "content-type": CONTENT_TYPES.get(extension) ?? "application/octet-stream" },
   });
 }
 

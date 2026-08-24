@@ -10,6 +10,7 @@
  * that can reach the defect handler is a genuine bug — not an expected
  * validation outcome.
  */
+import type { JsonValue } from "@streamsy/core";
 import { Cause, Effect, Schema } from "effect";
 import type { ApiError } from "../shared/api.ts";
 import {
@@ -30,18 +31,21 @@ import {
   requireDetail,
   syncIssue,
   type ApplicationServices,
+  type CommandOptions,
 } from "./application.ts";
 import { InvalidRequest, MalformedBody } from "./errors.ts";
 import { seedWorkspace } from "./seed.ts";
 
-const json = (body: unknown, status = 200): Response =>
+const json = (body: JsonValue, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 
-const fail = (status: number, error: string, detail?: string): Response =>
-  json({ error, ...(detail === undefined ? {} : { detail }) } satisfies ApiError, status);
+const fail = (status: number, error: string, detail?: string): Response => {
+  if (detail === undefined) return json({ error } satisfies ApiError, status);
+  return json({ error, detail } satisfies ApiError, status);
+};
 
 /**
  * Read a JSON body and decode it into the declared request shape.
@@ -70,7 +74,7 @@ const body = <S extends Schema.Top>(schema: S, request: Request) =>
  * the acknowledgement are unchanged; only the latency optimisation is dropped,
  * so a caller can exercise queue or repair convergence deliberately.
  */
-function commandOptions(url: URL): { readonly deferProjections: boolean } {
+function commandOptions(url: URL): CommandOptions {
   return { deferProjections: url.searchParams.get("projections") === "deferred" };
 }
 

@@ -6,9 +6,12 @@
  * disposable workspace, never resets shared state, and reports the workspace id
  * so the evidence can be traced.
  */
-import type {
+import type { JsonValue } from "@streamsy/core";
+import { Schema } from "effect";
+import {
   BoardResponse,
   CoverageResponse,
+  HealthResponse,
   MutationResponse,
   RepairResponse,
 } from "../shared/api.ts";
@@ -21,7 +24,7 @@ const workspaceId = `smoke${suffix}`;
 const projectId = `proj${suffix}`;
 const issueId = `issue${suffix}`;
 
-const health = await json(await call("GET", "/health"));
+const health = await json(await call("GET", "/health"), HealthResponse);
 assert(health.status === "ok", "health must be ok");
 console.log(`deployment ${health.deployment} schema ${health.schemaVersion}`);
 
@@ -43,7 +46,7 @@ await call("POST", `/api/workspaces/${workspaceId}/projects`, {
   name: "Deployment smoke",
 });
 
-const created: MutationResponse = await json(
+const created = await json(
   await call("POST", `/api/workspaces/${workspaceId}/issues`, {
     commandId: `${suffix}-create`,
     issueId,
@@ -51,18 +54,20 @@ const created: MutationResponse = await json(
     title: "Deployment smoke",
     priority: "high",
   }),
+  MutationResponse,
 );
 assert(created.ack.position.length > 0, "create must return an exact acknowledgement");
 
 // The command that matters: `?projections=deferred` skips both immediate
 // passes, so this exercises exactly the case a lost immediate pass produces.
 // Durability and the acknowledgement are unchanged.
-const updated: MutationResponse = await json(
+const updated = await json(
   await call(
     "POST",
     `/api/workspaces/${workspaceId}/issues/${issueId}/commands?projections=deferred`,
     { commandId: `${suffix}-done`, type: "status", status: "done" },
   ),
+  MutationResponse,
 );
 assert(updated.coverage.hops.length === 2, "coverage must report both hops");
 assert(updated.ack.position.length > 0, "a deferred command must still be acknowledged exactly");
@@ -79,15 +84,17 @@ const coveragePath = `/api/workspaces/${workspaceId}/issues/${issueId}/coverage?
   updated.ack.position,
 )}`;
 for (let attempt = 0; attempt < 10; attempt++) {
-  const repaired: RepairResponse = await json(
+  const repaired = await json(
     await call("POST", `/api/workspaces/${workspaceId}/projects/${projectId}/repair`),
+    RepairResponse,
   );
   const faulted = repaired.projections.filter((pass) => pass.outcome === "faulted");
   assert(faulted.length === 0, `repair reported faulted passes: ${JSON.stringify(faulted)}`);
 
-  const probe: CoverageResponse = await json(await call("GET", coveragePath));
-  const board: BoardResponse = await json(
+  const probe = await json(await call("GET", coveragePath), CoverageResponse);
+  const board = await json(
     await call("GET", `/api/workspaces/${workspaceId}/projects/${projectId}/board`),
+    BoardResponse,
   );
   if (
     probe.coverage.status === "proven" &&
@@ -114,8 +121,9 @@ assert(streamed.status === 200, `public board stream read must succeed, got ${st
 // the same durable rows. It does not force a new Worker isolate or a Durable
 // Object eviction, so it is not evidence of cold re-entry. Deploying a new
 // version, or waiting out an isolate, is the only way to test that here.
-const reread: BoardResponse = await json(
+const reread = await json(
   await call("GET", `/api/workspaces/${workspaceId}/projects/${projectId}/board`),
+  BoardResponse,
 );
 assert(
   reread.rows.length === converged.rows.length,
@@ -139,13 +147,13 @@ console.log(
   ),
 );
 
-function call(method: string, path: string, body?: unknown): Promise<Response> {
-  return fetch(`${base}${path}`, {
-    method,
-    ...(body === undefined
-      ? {}
-      : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
-  });
+function call(method: string, path: string, body?: JsonValue): Promise<Response> {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "content-type": "application/json" };
+  }
+  return fetch(`${base}${path}`, init);
 }
 
 /**
@@ -155,12 +163,15 @@ function call(method: string, path: string, body?: unknown): Promise<Response> {
  * server builds that contract from the shared Schemas, and the assertions in
  * this smoke are what check it.
  */
-async function json<T = any>(response: Response): Promise<T> {
+async function json<S extends Schema.ConstraintDecoder<unknown>>(
+  response: Response,
+  schema: S,
+): Promise<S["Type"]> {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 400)}`);
-  return JSON.parse(text);
+  return Schema.decodeUnknownSync(schema)(JSON.parse(text));
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }

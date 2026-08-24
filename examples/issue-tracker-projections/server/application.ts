@@ -21,7 +21,7 @@ import {
   DerivedStateHistoryLive,
   FanInRecoveryLive,
 } from "@streamsy/experimental/ivm-mesh";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Option, Schema } from "effect";
 import type {
   BoardResponse,
   CoverageReport,
@@ -35,7 +35,9 @@ import type {
 import {
   decodeIssueDetail,
   decodeProject,
+  isStateFact,
   PROJECT_COLLECTION,
+  ProjectMembershipFact,
   streamNames,
   TEAM,
   type IssueDetail,
@@ -94,6 +96,7 @@ export type ApplicationServices =
 
 /** A workspace id is a stream path segment, so it is decoded like any other. */
 const decodeIdentifier = Schema.decodeUnknownEffect(Identifier);
+const decodeMembershipFactOption = Schema.decodeUnknownOption(ProjectMembershipFact);
 
 const identifier = Effect.fnUntraced(function* (field: string, value: string) {
   return yield* decodeIdentifier(value).pipe(
@@ -122,12 +125,11 @@ const readAllScoped = (binding: StreamBinding) => readAllItems(binding).pipe(Eff
 export const listProjects = Effect.fn("Application.listProjects")(function* (workspaceId: string) {
   const streams = yield* Streams;
   const read = yield* readAllScoped(streams.bindings.projects(workspaceId));
-  if (read.status !== "ok") return [] as readonly Project[];
+  if (read.status !== "ok") return [];
   const projects = new Map<string, Project>();
   for (const item of read.items) {
-    if (!isRecord(item) || item.type !== PROJECT_COLLECTION || typeof item.key !== "string")
-      continue;
-    if (isRecord(item.headers) && item.headers.operation === "delete") {
+    if (!isStateFact(item) || item.type !== PROJECT_COLLECTION || item.key === undefined) continue;
+    if (item.headers?.operation === "delete") {
       projects.delete(item.key);
       continue;
     }
@@ -211,7 +213,10 @@ const nextIssueKey = Effect.fn("Application.nextIssueKey")(function* (
   const read = yield* readAllScoped(streams.bindings.membership(workspaceId, projectId));
   const joins =
     read.status === "ok"
-      ? read.items.filter((item) => isRecord(item) && item.type === "IssueJoined").length
+      ? read.items.filter((item) => {
+          const fact = decodeMembershipFactOption(item);
+          return Option.isSome(fact) && fact.value.type === "IssueJoined";
+        }).length
       : 0;
   return `${projectKey}-${100 + joins}`;
 });
@@ -348,11 +353,8 @@ const settle = Effect.fn("Application.settle")(function* (input: {
   readonly deferProjections: boolean;
 }) {
   const { workspaceId } = input;
-  const projections = input.deferProjections
-    ? ([
-        deferredPass("issue-detail"),
-        deferredPass("project-board"),
-      ] as readonly ProjectionPassReport[])
+  const projections: readonly ProjectionPassReport[] = input.deferProjections
+    ? [deferredPass("issue-detail"), deferredPass("project-board")]
     : [
         yield* runPass("issue-detail", runIssueDetail(workspaceId, input.issueId)),
         yield* runPass("project-board", runProjectBoard(workspaceId, input.projectId)),
@@ -452,9 +454,7 @@ function coverageReport(
   input: { readonly issueId: string; readonly projectId: string; readonly ack: SourceAck },
   probe: ChainProbe,
 ): CoverageReport {
-  return {
-    status: probe.coverage.status,
-    ...(probe.coverage.status === "proven" ? {} : { blockedAt: probe.coverage.blockedAt }),
+  const common: Pick<CoverageReport, "ack" | "hops"> = {
     ack: { stream: input.ack.identity.name, position: input.ack.position },
     hops: [
       {
@@ -471,6 +471,14 @@ function coverageReport(
       },
     ],
   };
+  if (probe.coverage.status === "proven") {
+    return { status: probe.coverage.status, ...common };
+  }
+  return {
+    status: probe.coverage.status,
+    blockedAt: probe.coverage.blockedAt,
+    ...common,
+  };
 }
 
 export const loadDetail = Effect.fn("Application.loadDetail")(function* (
@@ -482,8 +490,8 @@ export const loadDetail = Effect.fn("Application.loadDetail")(function* (
   if (read.status !== "ok") return undefined;
   let detail: IssueDetail | undefined;
   for (const item of read.items) {
-    if (!isRecord(item) || item.type !== "issue-detail") continue;
-    if (isRecord(item.headers) && item.headers.operation === "delete") {
+    if (!isStateFact(item) || item.type !== "issue-detail") continue;
+    if (item.headers?.operation === "delete") {
       detail = undefined;
       continue;
     }
@@ -516,9 +524,10 @@ export const repairProject = Effect.fn("Application.repairProject")(function* (
   const active = new Set<string>();
   if (membership.status === "ok") {
     for (const item of membership.items) {
-      if (!isRecord(item) || typeof item.issueId !== "string") continue;
-      if (item.type === "IssueJoined") active.add(item.issueId);
-      if (item.type === "IssueLeft") active.delete(item.issueId);
+      const fact = decodeMembershipFactOption(item);
+      if (Option.isNone(fact)) continue;
+      if (fact.value.type === "IssueJoined") active.add(fact.value.issueId);
+      if (fact.value.type === "IssueLeft") active.delete(fact.value.issueId);
     }
   }
   const members = Array.from(active).toSorted();
@@ -614,8 +623,4 @@ export function projectsResponse(
   projects: readonly Project[],
 ): ProjectsResponse {
   return { workspaceId, projects };
-}
-
-function isRecord(value: unknown): value is Record<string, JsonValue> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

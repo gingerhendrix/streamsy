@@ -81,6 +81,13 @@ export const HealthResponse = Schema.Struct({
 });
 export type HealthResponse = typeof HealthResponse.Type;
 
+export const SeedResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  projects: Schema.Array(Schema.String),
+  issues: Schema.Array(Schema.String),
+});
+export type SeedResponse = typeof SeedResponse.Type;
+
 export const ApiError = Schema.Struct({
   error: Schema.String,
   detail: Schema.optionalKey(Schema.String),
