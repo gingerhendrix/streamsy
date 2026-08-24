@@ -162,7 +162,7 @@ export function buildDecisionContext(
   const turnId =
     state.status === "playing" && activePlayerId ? buildTurnId(state.round, activePlayerId) : "";
 
-  return {
+  const decision = {
     gameId: state.gameId ?? "",
     player: { id: self.id, name: self.name, color: self.color, controller: self.controller },
     mode: decisionMode(state, playerId),
@@ -173,7 +173,6 @@ export function buildDecisionContext(
       phase: state.phase ?? "setup",
       reinforcement: state.reinforcement,
     },
-    ...(state.pendingInteraction ? { pendingInteraction: state.pendingInteraction } : {}),
     board: {
       sourceStreamId: watermark.sourceStreamId,
       sourceThroughOffset: watermark.sourceThroughOffset,
@@ -194,5 +193,8 @@ export function buildDecisionContext(
         .toSorted(byId),
     },
     legalMoves: legalActions(state, playerId),
-  };
+  } satisfies Omit<DecisionContext, "pendingInteraction">;
+  return state.pendingInteraction
+    ? { ...decision, pendingInteraction: state.pendingInteraction }
+    : decision;
 }

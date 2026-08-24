@@ -254,10 +254,7 @@ export function adjacentTo(index: MapIndex, id: string): readonly string[] {
 }
 
 /** Terrain mix of a territory, as counts keyed by terrain type. Presentation only. */
-export function territoryTerrainMix(
-  index: MapIndex,
-  territoryId: string,
-): Partial<Record<Terrain, number>> {
+export function territoryTerrainMix(index: MapIndex, territoryId: string) {
   const territory = index.territoryById.get(territoryId);
   if (!territory) return {};
   const mix: Partial<Record<Terrain, number>> = {};

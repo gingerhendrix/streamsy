@@ -24,6 +24,8 @@
  * Continent value breaks ties, but never outranks being able to move at all.
  */
 
+import type { GameAction } from "../../src/domain/commands.ts";
+
 /** Ownership and armies as `/decision` reports them. */
 export interface StrategyTerritory {
   id: string;
@@ -67,6 +69,11 @@ export interface StrategyContext {
   ownerOf(id: string): string | undefined;
   neighbours(id: string): string[];
 }
+
+type ReinforceCommandAction = Extract<GameAction, { type: "reinforce" }>;
+type AttackCommandAction = Extract<GameAction, { type: "declare-attack" }>;
+type OccupyCommandAction = Extract<GameAction, { type: "occupy-territory" }>;
+type FortifyCommandAction = Extract<GameAction, { type: "fortify" }>;
 
 export function strategyContext(
   playerId: string,
@@ -144,7 +151,7 @@ const byId = (a: { id: string }, b: { id: string }): number => (a.id < b.id ? -1
 export function chooseReinforce(
   ctx: StrategyContext,
   action: ReinforceAction,
-): Record<string, unknown> {
+): ReinforceCommandAction {
   const pool = action.pool;
   const scored = action.territoryIds
     .map((id) => ({
@@ -171,7 +178,7 @@ export function chooseReinforce(
   // With no border at all (every country interior), any placement is equivalent.
   return {
     type: "reinforce",
-    placements: [{ territoryId: best?.id ?? action.territoryIds[0], armies: pool }],
+    placements: [{ territoryId: best?.id ?? action.territoryIds[0]!, armies: pool }],
   };
 }
 
@@ -183,7 +190,7 @@ export function chooseReinforce(
 export function chooseAttack(
   ctx: StrategyContext,
   action: AttackAction,
-): Record<string, unknown> | null {
+): AttackCommandAction | null {
   const best = action.choices
     .map((choice) => ({
       choice,
@@ -211,7 +218,7 @@ export function chooseAttack(
  * then push a bounded share of the available garrison forward instead of leaving
  * a token holding to be retaken next turn.
  */
-export function chooseOccupy(ctx: StrategyContext, action: OccupyAction): Record<string, unknown> {
+export function chooseOccupy(ctx: StrategyContext, action: OccupyAction): OccupyCommandAction {
   const exposed = enemyNeighbours(ctx, action.to).length;
   const armies =
     exposed > 0
@@ -238,7 +245,7 @@ const BORDER_GARRISON = 3;
 export function chooseFortify(
   ctx: StrategyContext,
   action: FortifyAction,
-): Record<string, unknown> | null {
+): FortifyCommandAction | null {
   const sources = action.choices
     .map((choice) => {
       const border = enemyNeighbours(ctx, choice.from).length > 0;

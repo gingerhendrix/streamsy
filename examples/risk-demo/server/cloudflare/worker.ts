@@ -13,8 +13,8 @@ const GAME_ID_PATTERN = /^game_[0-9a-f]{24}$/;
 
 export interface RiskWorkerEnv {
   GAME: {
-    idFromName(name: string): unknown;
-    get(id: unknown): { fetch(request: Request): Promise<Response> };
+    idFromName(name: string): NonNullable<unknown>;
+    get(id: NonNullable<unknown>): { fetch(request: Request): Promise<Response> };
   };
   ASSETS: { fetch(request: Request): Promise<Response> };
 }
@@ -24,7 +24,7 @@ function randomGameId(): string {
   return `game_${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function json(body: unknown, status = 200): Response {
+function json(body: NonNullable<unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },

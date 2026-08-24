@@ -40,7 +40,7 @@ export interface CommandLogOptions<State, Event, Command, Rejection> {
   decide(state: State, command: Command): CommandDecision<Event, Rejection>;
   commandIdOf(command: Command): string;
   eventCommandIdOf(event: Event): string;
-  payloadOf(command: Command): unknown;
+  payloadOf(command: Command): JsonSourceValue;
   store?: CommandLogStore<Event, Rejection>;
   maxAttempts?: number;
 }
@@ -56,8 +56,9 @@ export async function readCommandHistory<Event>(options: CommandHistoryOptions<E
   const json = createJsonProtocol(options.protocol, options.eventSchema);
   const got = await json.get(options.streamId);
   if (got.status === "not-found") {
+    const events: Event[] = [];
     return {
-      events: [] as Event[],
+      events,
       head: ZERO_OFFSET,
       byCommand: new Map<string, { events: Event[]; lastOffset: string }>(),
     };
@@ -79,7 +80,9 @@ export async function readCommandHistory<Event>(options: CommandHistoryOptions<E
   return { events: history.values, head: history.head, byCommand };
 }
 
-async function hashPayload(payload: unknown): Promise<string> {
+type JsonSourceValue = {} | null | undefined;
+
+async function hashPayload(payload: JsonSourceValue): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -101,8 +104,10 @@ export function createCommandLog<State, Event, Command, Rejection>(
         throw new CommandIdReuseError(commandId);
       }
       if (cached.status === "rejected") {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The generic rejection value is created and returned unchanged by this command-log instance; the library surface preserves the caller's Rejection type.
-        return { status: "rejected", commandId, error: cached.error as Rejection };
+        if (cached.error === undefined) {
+          throw new Error(`rejected command ${commandId} has no stored error`);
+        }
+        return { status: "rejected", commandId, error: cached.error };
       }
       return {
         status: "duplicate",

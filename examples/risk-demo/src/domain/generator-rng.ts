@@ -133,9 +133,13 @@ export function createSubstream(seed: string, name: Substream): IntRng {
 export type Substreams = Readonly<Record<Substream, IntRng>>;
 
 /** Derive every named substream for a seed. Streams are mutually independent. */
-export function createSubstreams(seed: string): Substreams {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The entries are constructed for every closed SUBSTREAMS key immediately above; the assertion preserves that key-indexed public type.
-  const streams = {} as Record<Substream, IntRng>;
-  for (const name of SUBSTREAMS) streams[name] = createSubstream(seed, name);
-  return streams;
+export function createSubstreams(seed: string) {
+  return {
+    land: createSubstream(seed, "land"),
+    territories: createSubstream(seed, "territories"),
+    continents: createSubstream(seed, "continents"),
+    terrain: createSubstream(seed, "terrain"),
+    names: createSubstream(seed, "names"),
+    setup: createSubstream(seed, "setup"),
+  } satisfies Substreams;
 }

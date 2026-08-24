@@ -41,7 +41,7 @@ import {
 } from "@streamsy/experimental/ivm-mesh";
 
 import { GameEvent, type GameEvent as GameEventType } from "../domain/events.ts";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import { boardProjectionTxId } from "./transaction.ts";
 import {
   BOARD_META_KEY,
@@ -153,16 +153,14 @@ function restoreBoard(
 ): BoardMaterialized {
   const { generation, sourceStreamId } = options;
   let prior = initial;
+  const decodeMetaIdentity = Schema.decodeUnknownOption(
+    Schema.Struct({ type: Schema.Literal(BOARD_META_TYPE), key: Schema.Literal(BOARD_META_KEY) }),
+  );
   const decodeMetaFact = Schema.decodeUnknownOption(BoardMetaFactSchema);
   for (const fact of facts) {
-    if (typeof fact !== "object" || fact === null || Array.isArray(fact)) continue;
-    if (
-      Reflect.get(fact, "type") !== BOARD_META_TYPE ||
-      Reflect.get(fact, "key") !== BOARD_META_KEY
-    )
-      continue;
+    if (Option.isNone(decodeMetaIdentity(fact))) continue;
     const decoded = decodeMetaFact(fact);
-    if (decoded._tag === "None") throw new Error("board projectionMeta row is malformed");
+    if (Option.isNone(decoded)) throw new Error("board projectionMeta row is malformed");
     const value = decoded.value.value;
     // The checkpoint row is the only thing standing between durable output and
     // this reducer's state, so check that it actually belongs here rather than
@@ -205,11 +203,14 @@ function rowKey(row: DurableStateProjectionRow): string {
   return `${row.type}\0${row.key}`;
 }
 
-function equal(left: unknown, right: unknown): boolean {
+function equal(
+  left: DurableStateProjectionRow["value"],
+  right: DurableStateProjectionRow["value"],
+): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function encodeRowValue(type: string, value: unknown): JsonValue {
+function encodeRowValue(type: string, value: DurableStateProjectionRow["value"]): JsonValue {
   const schema = {
     game: ProjectedGameSchema,
     player: ProjectedPlayerSchema,

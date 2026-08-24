@@ -36,7 +36,8 @@ import {
   type ActionRequired,
   type AgentMessage,
 } from "../game/action-notifier.ts";
-import { PlayCommand } from "../../src/domain/commands.ts";
+import { PlayCommand, type GameAction } from "../../src/domain/commands.ts";
+import type { LegalAction } from "../../src/application/legal-actions.ts";
 import { Schema } from "effect";
 import {
   chooseAttack,
@@ -70,6 +71,8 @@ export interface BotState {
   inflight?: { body: string; cursorAfter?: string };
 }
 
+export type BotAction = GameAction & { readonly armies?: number };
+
 export interface CreateBotOptions {
   call: HttpCall;
   /** Supply to let `awaitTurn(ms)` block on the SSE stream instead of re-reading. */
@@ -80,7 +83,7 @@ export interface CreateBotOptions {
   /** Mutated in place; snapshot `{ cursor }` to simulate a restart. */
   state?: BotState;
   /** Optional observer hook after each successful command; used to pace the live demo. */
-  onCommandCommitted?: (action: Record<string, unknown>) => void | Promise<void>;
+  onCommandCommitted?: (action: BotAction) => void | Promise<void>;
   /**
    * Called whenever durable state changes — before a command is posted, and
    * again once it settles. A runner that only persists between turns would lose
@@ -96,9 +99,9 @@ export interface Bot {
    * the latest wake seen. With `waitMs` and an `openStream`, block on the SSE
    * stream for up to that long; otherwise read one immediate page.
    */
-  awaitTurn(waitMs?: number): Promise<any>;
+  awaitTurn(waitMs?: number): Promise<AgentMessage | null>;
   /** Take one action if this bot has a legal one right now. */
-  step(): Promise<Record<string, unknown> | null>;
+  step(): Promise<BotAction | null>;
   /** Play until this bot has nothing legal left (turn passed, or waiting). */
   playTurn(maxSteps?: number): Promise<void>;
   /** Resolve a pending defence if one is waiting on this bot. */
@@ -149,7 +152,7 @@ interface Decision {
     territories: readonly TerritoryView[];
     players: readonly { id: string; remainingArmies?: number; eliminated: boolean }[];
   };
-  legalMoves: readonly any[];
+  legalMoves: readonly LegalAction[];
 }
 
 function boardFingerprint(playerId: string, decision: Decision): string {
@@ -167,7 +170,7 @@ async function chooseAction(
   playerId: string,
   decision: Decision,
   loadMap: () => Promise<MapView | null>,
-): Promise<Record<string, unknown> | null> {
+): Promise<BotAction | null> {
   // Defence first: it is the only out-of-turn action, the deadline is ticking,
   // and it needs no map at all.
   const defense = decision.legalMoves.find((a) => a.type === "roll-defense");
@@ -377,12 +380,12 @@ export function createBot(options: CreateBotOptions): Bot {
    * the board. A duplicate wake, a retry, and a lost race with the canonical
    * timeout therefore all end in the same place — one recorded roll.
    */
-  function commandIdFor(action: Record<string, unknown>, decision: Decision): string {
-    if (action.type === "roll-defense") return `bot-defense:${String(action.attackId)}`;
+  function commandIdFor(action: BotAction, decision: Decision): string {
+    if (action.type === "roll-defense") return `bot-defense:${action.attackId}`;
     return `${playerId}:${decision.turn.id}:${boardFingerprint(playerId, decision)}`;
   }
 
-  async function step(): Promise<Record<string, unknown> | null> {
+  async function step(): Promise<BotAction | null> {
     await resumeInflight();
     if (!pendingMessage) await awaitTurn();
     const decision: Decision | null = pendingMessage
@@ -438,12 +441,7 @@ export function createBot(options: CreateBotOptions): Bot {
   async function playTurn(maxSteps = 300): Promise<void> {
     for (let taken = 0; taken < maxSteps; taken += 1) {
       const action = await step();
-      if (
-        !action ||
-        action.type === "end-turn" ||
-        action.type === "fortify" ||
-        action.type === "skip-fortifications"
-      ) {
+      if (!action || action.type === "fortify" || action.type === "skip-fortifications") {
         return;
       }
     }

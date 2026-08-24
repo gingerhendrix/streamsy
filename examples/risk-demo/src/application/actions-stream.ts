@@ -83,6 +83,10 @@ export interface SseFrame {
   data: string;
 }
 
+export interface SseParser {
+  push(chunk: string): SseFrame[];
+}
+
 /**
  * Incremental SSE parser.
  *
@@ -92,7 +96,7 @@ export interface SseFrame {
  * newlines, per the EventSource specification, which is what makes the array
  * framing above legal rather than merely conventional.
  */
-export function createSseParser(): { push(chunk: string): SseFrame[] } {
+export function createSseParser(): SseParser {
   let buffer = "";
   let event = "";
   let data: string[] = [];
@@ -132,13 +136,15 @@ export function createSseParser(): { push(chunk: string): SseFrame[] } {
  * `control` event that names the offset they read through: a client must never
  * advance its cursor past messages it has not also received.
  */
-export function createActionsDecoder(): { push(chunk: string): ActionsBatch<unknown>[] };
-export function createActionsDecoder<T>(schema: Schema.Decoder<T>): {
+export interface ActionsDecoder<T> {
   push(chunk: string): ActionsBatch<T>[];
-};
-export function createActionsDecoder(schema: Schema.Decoder<unknown> = Schema.Unknown): {
-  push(chunk: string): ActionsBatch<unknown>[];
-} {
+}
+
+export function createActionsDecoder(): ActionsDecoder<unknown>;
+export function createActionsDecoder<T>(schema: Schema.Decoder<T>): ActionsDecoder<T>;
+export function createActionsDecoder(
+  schema: Schema.Decoder<unknown> = Schema.Unknown,
+): ActionsDecoder<unknown> {
   const parser = createSseParser();
   let pending: unknown[] = [];
   const decodeMessages = Schema.decodeUnknownSync(Schema.Array(schema));

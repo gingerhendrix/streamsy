@@ -23,12 +23,13 @@ export interface CatchUpDerivedOptions<Source, Key, Output> {
 }
 
 const DEFAULT_MAX_ATTEMPTS = 8;
+type JsonSourceValue = {} | null | undefined;
 
 function assertDurablePrefix<Output>(
   streamId: string,
   desired: readonly Output[],
   history: JsonReadAllResult<Output>,
-  encode: (value: Output) => unknown,
+  encode: (value: Output) => JsonSourceValue,
 ): void {
   if (history.messages.length > desired.length) {
     throw new Error(

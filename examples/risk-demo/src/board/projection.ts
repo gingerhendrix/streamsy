@@ -639,14 +639,15 @@ export function projectEvent(
   applyEvent(state, event);
 
   const playerId = movePlayerId(event);
-  state.moves.push({
+  const move: ProjectedMove = {
     id: moveId(ordinal),
     commandId: event.commandId,
     kind: event.type,
-    ...(playerId === undefined ? {} : { playerId }),
     sourceOffset,
     ...moveDetail(event, previous),
-  });
+  };
+  if (playerId !== undefined) move.playerId = playerId;
+  state.moves.push(move);
   if (state.moves.length > MOVE_FEED_LIMIT) {
     state.moves.splice(0, state.moves.length - MOVE_FEED_LIMIT);
   }

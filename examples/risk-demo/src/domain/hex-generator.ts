@@ -936,14 +936,15 @@ export function generateHexMap(request: GenerateMapRequest): GeneratedMap {
 // ---------------------------------------------------------------------------
 
 /** Canonical JSON: object keys in code-unit order, so the encoding is stable. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Object.keys follows a non-null object guard immediately above; the assertion only exposes string indexing for recursive canonicalization.
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+type CanonicalValue = {} | null | undefined;
+
+export function canonicalJson(value: CanonicalValue): string {
+  const keys = new Set<string>();
+  JSON.stringify(value, (key, child) => {
+    keys.add(key);
+    return child;
+  });
+  return JSON.stringify(value, [...keys].toSorted()) ?? "null";
 }
 
 /**

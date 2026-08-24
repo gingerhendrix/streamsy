@@ -82,8 +82,7 @@ export function createTimeoutScheduler(): TimerScheduler {
         Math.max(0, delayMs),
       );
       // Never hold the process open for a game nobody is watching.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Bun and Node timer handles may expose unref while browser numeric handles do not; this platform guard checks the optional method before calling it.
-      (handle as unknown as { unref?: () => void }).unref?.();
+      handle.unref?.();
       timers.set(timerId, handle);
     },
     cancel(timerId) {
@@ -167,7 +166,7 @@ export interface DefenseTimerDeps {
   scheduler?: TimerScheduler;
   now?: () => number;
   /** Reported when a fired timer throws, so a demo run surfaces the failure. */
-  onError?: (error: unknown, context: { gameId: string; attackId: string }) => void;
+  onError?: (error: Error, context: { gameId: string; attackId: string }) => void;
 }
 
 export interface DefenseTimers {
@@ -230,8 +229,9 @@ export function createDefenseTimers(deps: DefenseTimerDeps): DefenseTimers {
     scheduler.schedule(timerId, Math.max(0, pending.defenseDeadlineAt - now()), () =>
       fire(gameId, pending.attackId).then(
         () => undefined,
-        (error: unknown) => {
-          deps.onError?.(error, { gameId, attackId: pending.attackId });
+        (error) => {
+          const reported = error instanceof Error ? error : new Error(String(error));
+          deps.onError?.(reported, { gameId, attackId: pending.attackId });
         },
       ),
     );

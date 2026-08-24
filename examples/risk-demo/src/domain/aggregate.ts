@@ -442,10 +442,12 @@ export function foldAggregate(events: readonly GameEvent[]): AggregateState {
  * Exposed for the decision layer so `TurnEnded` records the same values the fold
  * will re-derive.
  */
-export function nextTurn(
-  state: AggregateState,
-  finishingPlayerId: string,
-): { nextPlayerId: string; round: number } {
+export interface NextTurn {
+  nextPlayerId: string;
+  round: number;
+}
+
+export function nextTurn(state: AggregateState, finishingPlayerId: string): NextTurn {
   const order = activePlayers(state);
   const fromIndex = order.indexOf(finishingPlayerId);
   const nextIndex = (fromIndex + 1) % order.length;
