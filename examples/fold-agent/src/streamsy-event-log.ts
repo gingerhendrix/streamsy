@@ -43,9 +43,9 @@ import {
   CreateStreamsLive,
   ReadStreams,
   ReadStreamsLive,
-  type AppendStreamsShape,
-  type CreateStreamsShape,
-  type ReadStreamsShape,
+  type AppendStreamsService,
+  type CreateStreamsService,
+  type ReadStreamsService,
   type StreamCreateError,
   type StreamReadError,
 } from "@streamsy/experimental/effect";
@@ -147,7 +147,7 @@ const decodeEntryAt = (operation: "entries" | "subscribe", value: unknown, expec
  * failure or interruption cancels it exactly once.
  */
 const readAll = (
-  read: ReadStreamsShape,
+  read: ReadStreamsService,
   binding: StreamBinding,
   operation: "entries" | "subscribe",
 ): Effect.Effect<
@@ -197,7 +197,7 @@ const encodeEntry = (entry: LogEntry) =>
 
 /** Create the durable stream for a fresh session through the Effect capability. */
 const createLogStream = (
-  create: CreateStreamsShape,
+  create: CreateStreamsService,
   binding: StreamBinding,
 ): Effect.Effect<void, EventLogError> =>
   Effect.gen(function* () {
@@ -226,9 +226,9 @@ const makeService = (
   ids: IdsService,
 ): Effect.Effect<EventLogService, EventLogError, CreateStreams | ReadStreams | AppendStreams> =>
   Effect.gen(function* () {
-    const create: CreateStreamsShape = yield* CreateStreams;
-    const read: ReadStreamsShape = yield* ReadStreams;
-    const append: AppendStreamsShape = yield* AppendStreams;
+    const create: CreateStreamsService = yield* CreateStreams;
+    const read: ReadStreamsService = yield* ReadStreams;
+    const append: AppendStreamsService = yield* AppendStreams;
 
     if (mode === "create") yield* createLogStream(create, binding);
 
@@ -397,7 +397,7 @@ export const readFoldLog = (
   capabilities?: Layer.Layer<ReadStreams>,
 ): Effect.Effect<ReadonlyArray<LogEntry>, EventLogError> =>
   Effect.gen(function* () {
-    const read: ReadStreamsShape = yield* ReadStreams;
+    const read: ReadStreamsService = yield* ReadStreams;
     const log = yield* readAll(read, binding, "entries");
     return log.entries;
     // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Inspection is its own entry point: it runs without any runtime or session and must be self-contained.
