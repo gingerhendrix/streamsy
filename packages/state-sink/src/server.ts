@@ -84,6 +84,16 @@ export function handleStateSink<
       });
     }
 
+    const receivedContract = request.headers.get(STATE_SINK_CONTRACT_HEADER);
+    if (receivedContract !== null && receivedContract !== sink.fingerprint) {
+      return errorResponse(409, {
+        _tag: "ResumeRejected",
+        sink: sink.name,
+        reason: "contract-changed",
+        recovery: sink.protocol.fallback,
+      });
+    }
+
     const receivedGeneration = request.headers.get(STATE_SINK_AUTHORIZATION_GENERATION_HEADER);
     if (receivedGeneration !== null && receivedGeneration !== authorization.generation) {
       return errorResponse(409, {

@@ -81,4 +81,43 @@ describe("state-sink server handling", () => {
     });
     expect(reads).toBe(0);
   });
+
+  test("a supplied contract mismatch is typed after authorization and before data access", async () => {
+    let authorized = false;
+    let reads = 0;
+    const response = await Effect.runPromise(
+      handleStateSink(
+        sink,
+        new Request("http://localhost/state/main/rows", {
+          headers: { "x-streamsy-state-sink-contract": "retired-contract" },
+        }),
+        {
+          snapshot: () => {
+            reads += 1;
+            return Effect.succeed({ rows: [], offset: "-1" });
+          },
+          suffix: () => {
+            reads += 1;
+            return Effect.succeed(new Response("[]"));
+          },
+        },
+      ).pipe(
+        Effect.provide(
+          authorizerLayer(() => {
+            authorized = true;
+            return Effect.succeed({ generation: "g1" });
+          }),
+        ),
+      ),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      _tag: "ResumeRejected",
+      sink: "test.rows",
+      reason: "contract-changed",
+      recovery: "snapshot-then-live",
+    });
+    expect(authorized).toBe(true);
+    expect(reads).toBe(0);
+  });
 });

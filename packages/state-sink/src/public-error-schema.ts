@@ -30,6 +30,7 @@ export const StateSinkPublicErrorSchema = Schema.Union([
       "history-unavailable",
       "protocol-incompatible",
       "authorization-generation-changed",
+      "contract-changed",
     ]),
     recovery: Recovery,
   }),

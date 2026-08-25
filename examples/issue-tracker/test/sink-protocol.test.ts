@@ -153,6 +153,18 @@ describe("the board-issues state sink", () => {
       _tag: "ResumeRejected",
       reason: "authorization-generation-changed",
     });
+
+    const contract = await read(instance, "", {
+      "x-streamsy-scope": SCOPE,
+      "x-streamsy-state-sink-contract": "retired-contract",
+    });
+    expect(contract.status).toBe(409);
+    expect(JSON.parse(contract.body)).toEqual({
+      _tag: "ResumeRejected",
+      sink: "issue-tracker.board-issues",
+      reason: "contract-changed",
+      recovery: "snapshot-then-live",
+    });
   });
 
   test("the session contract reports the declaration, not a restatement of it", async () => {
