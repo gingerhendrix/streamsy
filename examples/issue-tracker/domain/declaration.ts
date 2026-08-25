@@ -9,7 +9,16 @@
  */
 import { IssueEvent, IssueRow } from "./issue.ts";
 import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
-import { from, reducer, scope, selectors, source, stateSink, view } from "@streamsy/views";
+import {
+  factSourceMode,
+  from,
+  reducer,
+  scope,
+  selectors,
+  source,
+  stateSink,
+  view,
+} from "@streamsy/views";
 
 /** Selectors over one canonical fact, the fold state, and the maintained row. */
 const x = selectors<IssueEventType, IssueEventType, IssueRowType>();
@@ -19,9 +28,8 @@ const out = selectors<IssueRowType>();
 export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
-  key: x.row.eventId,
-  order: x.row.sequence,
   partitionBy: x.row.workspaceId,
+  mode: factSourceMode(x.row.eventId, x.row.sequence),
 });
 
 export const issueLifecycle = reducer(

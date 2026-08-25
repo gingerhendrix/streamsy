@@ -5,11 +5,13 @@
 import {
   aggregate,
   defineView,
+  factSourceMode,
   from,
   joinSelectors,
   parameter,
   selectors,
   source,
+  stateSourceMode,
 } from "@streamsy/views";
 import {
   AssigneeQueueRow,
@@ -48,49 +50,43 @@ const activity = selectors<IssueEventType>();
 export const issueRows = source("issue-tracker.issues", {
   schema: IssueRow,
   schemaRef: { name: "issue-tracker.IssueRow", version: 1 },
-  key: issue.row.issueId,
-  order: issue.row.updatedAt,
   partitionBy: issue.row.workspaceId,
+  mode: stateSourceMode(issue.row.issueId),
 });
 
 export const projects = source("issue-tracker.projects", {
   schema: ProjectRow,
   schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
-  key: project.row.projectId,
-  order: project.row.revision,
   partitionBy: project.row.workspaceId,
+  mode: stateSourceMode(project.row.projectId),
 });
 
 export const users = source("issue-tracker.users", {
   schema: UserRow,
   schemaRef: { name: "issue-tracker.UserRow", version: 1 },
-  key: user.row.userId,
-  order: user.row.revision,
   partitionBy: user.row.workspaceId,
+  mode: stateSourceMode(user.row.userId),
 });
 
 export const labels = source("issue-tracker.labels", {
   schema: LabelRow,
   schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
-  key: label.row.labelId,
-  order: label.row.revision,
   partitionBy: label.row.workspaceId,
+  mode: stateSourceMode(label.row.labelId),
 });
 
 export const issueLabels = source("issue-tracker.issue-labels", {
   schema: IssueLabelRow,
   schemaRef: { name: "issue-tracker.IssueLabelRow", version: 1 },
-  key: issueLabel.key(issueLabel.row.issueId, issueLabel.row.labelId),
-  order: issueLabel.row.revision,
   partitionBy: issueLabel.row.issueId,
+  mode: stateSourceMode(issueLabel.key(issueLabel.row.issueId, issueLabel.row.labelId)),
 });
 
 export const issueActivity = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
-  key: activity.row.eventId,
-  order: activity.row.sequence,
   partitionBy: activity.row.workspaceId,
+  mode: factSourceMode(activity.row.eventId, activity.row.sequence),
 });
 
 const projectId = parameter("projectId", Identifier, {

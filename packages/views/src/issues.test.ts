@@ -12,15 +12,14 @@ const source = (id = "source", sourceId = id): RelationNode => ({
   id,
   sourceId,
   schema,
-  key: reference,
-  order: reference,
   partitionBy: reference,
+  mode: { kind: "facts", key: reference, order: reference },
 });
 const plan = (
   nodes: readonly RelationNode[],
   output = nodes.at(-1)?.id ?? "missing",
 ): RelationPlan => ({
-  version: 1,
+  version: 2,
   name: "fixture",
   nodes,
   output,
@@ -127,7 +126,7 @@ describe("plan issue collection", () => {
     expect(
       codes(plan([source(), { ...top, limit: { kind: "literal", value: -1 }, maximum: 10 }])),
     ).toContain("invalid-top-limit");
-    expect(codes({ ...plan([source()]), version: 2 } as unknown as RelationPlan)).toContain(
+    expect(codes({ ...plan([source()]), version: 1 } as unknown as RelationPlan)).toContain(
       "unsupported-plan-version",
     );
     const nonJson = { ...plan([source()]), runtime: new Date() } as RelationPlan;

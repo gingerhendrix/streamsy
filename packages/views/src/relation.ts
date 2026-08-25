@@ -8,6 +8,9 @@ import type {
   RelationPlan,
   RowKey,
   SortTerm,
+  SourceMode,
+  StateSourceMode,
+  FactSourceMode,
 } from "@streamsy/views-ir";
 import {
   literal,
@@ -26,23 +29,39 @@ type Selected<Fields extends Readonly<Record<string, Expression>>> = {
   readonly [K in keyof Fields]: ExpressionValue<Fields[K]>;
 };
 
-export interface SourceSpec<S extends Schema.Top> {
+export interface SourceSpec<S extends Schema.Top, Mode extends SourceMode = SourceMode> {
   readonly schema: S;
   readonly schemaRef: DescriptorRef;
-  readonly key: Expression;
-  readonly order: Expression;
   readonly partitionBy: Expression;
+  readonly mode: Mode;
 }
 
-export interface SourceDeclaration<S extends Schema.Top = Schema.Top> extends SourceSpec<S> {
+export interface SourceDeclaration<
+  S extends Schema.Top = Schema.Top,
+  Mode extends SourceMode = SourceMode,
+> extends SourceSpec<S, Mode> {
   readonly kind: "source";
   readonly name: string;
 }
 
-export const source = <S extends Schema.Top>(
+export const source = <S extends Schema.Top, Mode extends SourceMode>(
   name: string,
-  spec: SourceSpec<S>,
-): SourceDeclaration<S> => deepFreeze({ kind: "source", name, ...spec });
+  spec: SourceSpec<S, Mode>,
+): SourceDeclaration<S, Mode> => deepFreeze({ kind: "source", name, ...spec });
+
+export const factSourceMode = (key: Expression, order: Expression): FactSourceMode =>
+  deepFreeze({ kind: "facts", key, order });
+
+export const stateSourceMode = (key: Expression): StateSourceMode =>
+  deepFreeze({
+    kind: "state",
+    key,
+    operation: {
+      path: ["headers", "operation"],
+      upsert: ["insert", "update", "upsert"],
+      delete: "delete",
+    },
+  });
 
 export type EvolveBranch = Readonly<Record<string, Expression>>;
 export type EvolveBranchBuilder<Event, State> = (x: {
@@ -274,8 +293,8 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
       readonly order: Expression;
       readonly reducer: ReducerDeclaration;
     }) => {
-      if (expression.kind !== "source-relation") {
-        throw new TypeError("reduceByKey is only available directly on a source");
+      if (expression.kind !== "source-relation" || expression.source.mode.kind !== "facts") {
+        throw new TypeError("reduceByKey is only available directly on a fact source");
       }
       return builder(
         deepFreeze({ kind: "reduce-by-key", input: expression, ...spec }),
@@ -396,9 +415,8 @@ export function compilePlan(
         id: relation.source.name,
         schema: relation.source.schemaRef,
         sourceId: relation.source.name,
-        key: relation.source.key,
-        order: relation.source.order,
         partitionBy: relation.source.partitionBy,
+        mode: relation.source.mode,
       });
     }
     if (relation.kind === "reduce-by-key") {
@@ -480,7 +498,7 @@ export function compilePlan(
         : { schema: value.schemaRef, maximum: value.maximum };
   }
   const plan = {
-    version: 1,
+    version: 2,
     name,
     nodes,
     output,

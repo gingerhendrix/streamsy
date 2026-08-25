@@ -1,5 +1,6 @@
 import type {
   DescriptorRef,
+  Expression,
   GroupedAggregateNode,
   JsonObject,
   JsonValue,
@@ -34,7 +35,14 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
   for (const node of input.plan.nodes) {
     switch (node.kind) {
       case "source":
-        relations.set(node.id, input.sources[node.sourceId] ?? input.sources[node.id] ?? []);
+        relations.set(
+          node.id,
+          sourceRows(
+            input.sources[node.sourceId] ?? input.sources[node.id] ?? [],
+            node.mode.key,
+            parameters,
+          ),
+        );
         break;
       case "filter":
         relations.set(
@@ -113,6 +121,19 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
     rows: sortRows(rows(relations, input.plan.output)),
     ordered: ordered.get(input.plan.output) ?? [],
   };
+}
+
+function sourceRows(
+  source: readonly StateRow[],
+  keyExpression: Expression,
+  parameters: JsonObject,
+): readonly StateRow[] {
+  for (const entry of source) {
+    const key = asRowKey(evaluate(keyExpression, { row: entry.row, parameter: parameters }));
+    if (encodeRowKey(key) !== encodeRowKey(entry.key))
+      throw new TypeError("source row key disagrees with the source mode key expression");
+  }
+  return source;
 }
 
 function recomputeAggregate(

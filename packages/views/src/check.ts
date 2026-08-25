@@ -64,7 +64,7 @@ export function collectPlanIssues(input: CheckInput): readonly PlanIssue[] {
     add("non-json-plan-value", "$plan", cause instanceof Error ? cause.message : String(cause));
   }
 
-  if (plan.version !== 1)
+  if (plan.version !== 2)
     add("unsupported-plan-version", "version", `unsupported plan version ${String(plan.version)}`);
   const nodes = Array.isArray(plan.nodes) ? plan.nodes : [];
   const ids = new Set<string>();
@@ -199,8 +199,8 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
   switch (node.kind) {
     case "source":
       return [
-        ["key", node.key],
-        ["order", node.order],
+        ["mode.key", node.mode.key],
+        ...(node.mode.kind === "facts" ? [["mode.order", node.mode.order] as const] : []),
         ["partitionBy", node.partitionBy],
       ];
     case "filter":

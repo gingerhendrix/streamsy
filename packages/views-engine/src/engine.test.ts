@@ -8,6 +8,7 @@ import type {
 } from "@streamsy/views-ir";
 import { maintainGraph } from "./engine.ts";
 import { OperatorFault } from "./errors.ts";
+import { fullRecompute } from "./reference.ts";
 import { planRequirements } from "./requirements.ts";
 import type { OperatorStateSnapshot } from "./state.ts";
 
@@ -23,12 +24,27 @@ const source = (id: string): RelationNode => ({
   id,
   sourceId: id,
   schema,
-  key: ref("row", "id"),
-  order: ref("row", "id"),
   partitionBy: ref("row", "projectId"),
+  mode: {
+    kind: "state",
+    key: ref("row", "id"),
+    operation: {
+      path: ["headers", "operation"],
+      upsert: ["insert", "update", "upsert"],
+      delete: "delete",
+    },
+  },
+});
+const factSource = (id: string): RelationNode => ({
+  kind: "source",
+  id,
+  sourceId: id,
+  schema,
+  partitionBy: ref("row", "workspaceId"),
+  mode: { kind: "facts", key: ref("row", "id"), order: ref("row", "sequence") },
 });
 const plan = (name: string, nodes: readonly RelationNode[], output: string): RelationPlan => ({
-  version: 1,
+  version: 2,
   name,
   nodes,
   output,
@@ -121,6 +137,59 @@ describe("stateless transformations and graph routing", () => {
         ],
       }),
     ).toThrow(OperatorFault);
+  });
+
+  it("treats state inputs as normalized keyed rows without inventing fact order", () => {
+    const statePlan = plan(
+      "state-source",
+      [
+        source("issues"),
+        {
+          kind: "project",
+          id: "state-output",
+          input: "issues",
+          schema,
+          fields: { id: ref("row", "id"), projectId: ref("row", "projectId") },
+        },
+      ],
+      "state-output",
+    );
+    const row = { id: "i1", projectId: "p1", sequence: "not-an-order-contract" };
+    const result = maintainGraph({
+      plan: statePlan,
+      inputs: [{ sourceId: "issues", changes: [change("i1", undefined, row)] }],
+    });
+    expect(result.rows).toEqual([{ key: "i1", row: { id: "i1", projectId: "p1" } }]);
+    expect(planRequirements(statePlan)[0]?.inputFields["issues"]).toEqual(["id", "projectId"]);
+    expect(() =>
+      maintainGraph({
+        plan: statePlan,
+        inputs: [{ sourceId: "issues", changes: [change("wrong", undefined, row)] }],
+      }),
+    ).toThrow(/source mode key expression/);
+    expect(() =>
+      fullRecompute({ plan: statePlan, sources: { issues: [{ key: "wrong", row }] } }),
+    ).toThrow(/source mode key expression/);
+
+    const facts = plan(
+      "fact-source",
+      [
+        factSource("events"),
+        {
+          kind: "project",
+          id: "fact-output",
+          input: "events",
+          schema,
+          fields: { id: ref("row", "id") },
+        },
+      ],
+      "fact-output",
+    );
+    expect(planRequirements(facts)[0]?.inputFields["events"]).toEqual([
+      "id",
+      "sequence",
+      "workspaceId",
+    ]);
   });
 
   it("wraps projection decode faults with the node, key, and phase", () => {

@@ -27,8 +27,8 @@ describe("the issue-tracker declaration", () => {
   });
 
   test("selectors compile to inspectable reference expressions", () => {
-    expect(issueEvents.key).toEqual({ kind: "reference", scope: "row", path: ["eventId"] });
-    expect(issueEvents.order).toEqual({ kind: "reference", scope: "row", path: ["sequence"] });
+    expect(issueEvents.mode.key).toEqual({ kind: "reference", scope: "row", path: ["eventId"] });
+    expect(issueEvents.mode.order).toEqual({ kind: "reference", scope: "row", path: ["sequence"] });
     expect(issueLifecycle.evolve["IssueStatusChanged"]).toEqual({
       status: { kind: "reference", scope: "event", path: ["status"] },
       updatedAt: { kind: "reference", scope: "event", path: ["occurredAt"] },
@@ -42,7 +42,7 @@ describe("the issue-tracker declaration", () => {
   });
 
   test("preserves the accepted Slice 1 canonical plan and hash", () => {
-    expect(planHash(issues.plan)).toBe("5100f293");
+    expect(planHash(issues.plan)).toBe("08119a76");
     expect(encodePlan(issues.plan)).toContain('"output":"issue-tracker.issues"');
   });
 
