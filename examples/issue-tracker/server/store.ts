@@ -29,7 +29,7 @@ import {
   type StoreError,
   type ViewStoreService,
 } from "@streamsy/views-store";
-import { Clock, Context, Effect, Layer } from "effect";
+import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { planHash } from "@streamsy/views";
 import {
   maintainGraph,
@@ -612,8 +612,7 @@ function reconcileSourceInputs(
 }
 
 function decodeBoardChange(change: Change<JsonObject>): Change<ProjectBoardCard, string> {
-  if (typeof change.key !== "string") throw new TypeError("project board key is not a string");
-  const key = change.key;
+  const key = Schema.decodeUnknownSync(Schema.String)(change.key);
   if (change.kind === "enter")
     return { kind: "enter", key, after: decodeProjectBoardCard(change.after) };
   if (change.kind === "update")
