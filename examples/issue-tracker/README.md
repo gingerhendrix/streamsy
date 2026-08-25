@@ -30,7 +30,7 @@ older hand-built projection API through an adapter.
 export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   partitionBy: x.row.workspaceId,
-  mode: { kind: "facts", key: x.row.eventId, order: x.row.sequence },
+  mode: factSourceMode(x.row.eventId, x.row.sequence),
 });
 
 export const issues = view(
@@ -58,17 +58,10 @@ serializable `RelationPlan`, hashes that plan canonically, and
 `views/engine.ts` is a pure interpreter of the plan. `GET /health` reports the
 plan hash, so two hosts can be compared by inspection.
 
-`@streamsy/views-ir` supplies the shared JSON-only contract promoted from the
-`contracts-spike-minimal` stream (commit `11742f6`), narrowed to the vocabulary
-this slice executes. Nodes the slice does not run — filter, project, key, left
-join, grouped aggregate, top-N — are deliberately absent rather than declared
-and unimplemented.
-
-This branch also carries the smallest local source-mode compatibility contract
-needed while A1 owns the public `@streamsy/views-ir` and `@streamsy/views`
-packages. It encodes `facts` and `state` modes in plan version 2. Integration
-should replace this local shape with A1's contract rather than publishing a
-second IR.
+`@streamsy/views-ir` supplies A1's published JSON-only RelationPlan v2 contract,
+including the full authoring vocabulary and explicit `facts` and `state` source
+modes. The application consumes that contract through `@streamsy/views`; it no
+longer carries a local public IR or DSL compatibility layer.
 
 ## State sources
 

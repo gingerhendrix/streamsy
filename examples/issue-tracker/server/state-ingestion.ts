@@ -3,6 +3,7 @@
 import type { JsonValue, ReadStreamOptions } from "@streamsy/core";
 import type { StreamBinding } from "@streamsy/experimental/binding";
 import { ReadStreams } from "@streamsy/experimental/effect";
+import type { Change } from "@streamsy/views-ir";
 import { Effect, Schema } from "effect";
 import {
   catalog,
@@ -11,7 +12,6 @@ import {
   type CatalogRow,
 } from "../domain/catalog.ts";
 import { labels, projects, users, workspaceMetadata } from "../domain/declaration.ts";
-import type { Change } from "../views/contracts.ts";
 import { SourcePoison, UnsupportedStateOperation } from "./errors.ts";
 import { IssueStore } from "./store.ts";
 import { Streams, type WorkspaceBindings } from "./streams.ts";
