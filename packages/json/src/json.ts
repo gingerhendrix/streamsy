@@ -94,7 +94,7 @@ export type JsonReadNextResult<T> =
   | (Omit<Extract<ReadNextResult, { messages: StoredMessage[] }>, "messages"> & {
       messages: JsonStoredMessage<T>[];
     })
-  | Exclude<ReadNextResult, { messages: StoredMessage[] }>
+  | NotSupportedResult
   | { status: "invalid-json"; error: unknown; offset?: string };
 
 const encoder = new TextEncoder();
