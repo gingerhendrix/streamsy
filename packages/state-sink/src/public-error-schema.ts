@@ -5,11 +5,6 @@ const Recovery = Schema.Literal("snapshot-then-live");
 /** Server-side schema for the browser-safe public error union. */
 export const StateSinkPublicErrorSchema = Schema.Union([
   Schema.Struct({
-    _tag: Schema.Literal("SinkUnauthorized"),
-    sink: Schema.String,
-    required: Schema.String,
-  }),
-  Schema.Struct({
     _tag: Schema.Literal("InvalidSinkParams"),
     sink: Schema.String,
     parameter: Schema.String,
@@ -29,7 +24,6 @@ export const StateSinkPublicErrorSchema = Schema.Union([
       "invalid-offset",
       "history-unavailable",
       "protocol-incompatible",
-      "authorization-generation-changed",
       "contract-changed",
     ]),
     recovery: Recovery,

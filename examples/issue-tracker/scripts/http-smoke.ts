@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
 import { createBoardConnection } from "../src/lib/board-db.ts";
 
-const SCOPE = "issue-tracker:workspace";
 const checks: string[] = [];
 
 function check(label: string, condition: boolean, detail?: unknown): void {
@@ -174,13 +173,10 @@ try {
 
   // === offset-based sink resume ===
   const session = (await (
-    await fetch(`${running.origin}/api/workspaces/main/sink-session`, {
-      headers: { "x-streamsy-scope": SCOPE },
-    })
+    await fetch(`${running.origin}/api/workspaces/main/sink-session`)
   ).json()) as { offset: string; fallback: string };
   const suffixBefore = await fetch(
     `${running.origin}/state/workspaces/main/issues?offset=${encodeURIComponent(session.offset)}`,
-    { headers: { "x-streamsy-scope": SCOPE } },
   );
   const emptySuffix = (await suffixBefore.json()) as unknown[];
   check("resuming at the tail replays nothing", emptySuffix.length === 0, emptySuffix);
@@ -195,7 +191,6 @@ try {
   const suffix = (await (
     await fetch(
       `${running.origin}/state/workspaces/main/issues?offset=${encodeURIComponent(session.offset)}`,
-      { headers: { "x-streamsy-scope": SCOPE } },
     )
   ).json()) as { type?: string; key?: string }[];
   check(
@@ -205,9 +200,6 @@ try {
       .every((message) => message.key === "smoke-later"),
     suffix,
   );
-
-  const unauthorized = await fetch(`${running.origin}/state/workspaces/main/issues`);
-  check("the declared scope is enforced", unauthorized.status === 403);
 
   // === restart ===
   await stop(running);

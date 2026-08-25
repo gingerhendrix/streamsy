@@ -6,7 +6,6 @@ import {
 } from "@durable-streams/state/db";
 import {
   decodeStateSinkPublicError,
-  STATE_SINK_AUTHORIZATION_GENERATION_HEADER,
   STATE_SINK_CONTRACT_HEADER,
   STATE_SINK_RESET_HEADER,
   STATE_SINK_RESET_VALUE,
@@ -20,10 +19,6 @@ export type StateSinkStatus =
   | { readonly kind: "live"; readonly offset?: string }
   | { readonly kind: "resetting"; readonly reason: string }
   | { readonly kind: "failed"; readonly error: StateSinkPublicError | Error };
-
-export interface SinkAuthorizationProvider {
-  readonly headers: () => HeadersInit | Promise<HeadersInit>;
-}
 
 export interface StateSinkClientDescriptor<
   Row extends object,
@@ -63,14 +58,12 @@ export function createStateSinkBinding<
   const createTransport = (options: {
     readonly params: Params;
     readonly origin: string | URL;
-    readonly authorization: SinkAuthorizationProvider;
     readonly resumeStore: ResumeStore;
     readonly onStatus: (status: StateSinkStatus) => void;
     readonly fetch?: typeof globalThis.fetch;
   }): StateSinkTransport<Row> => {
     let rows = (): readonly Row[] => [];
     let latest: StateSinkResume | undefined;
-    let generation: string | undefined;
     const fetchImplementation = options.fetch ?? globalThis.fetch;
 
     const guardedFetch = async (
@@ -79,21 +72,8 @@ export function createStateSinkBinding<
     ): Promise<Response> => {
       const request = new Request(input, init);
       const headers = new Headers(request.headers);
-      const authorizationHeaders = new Headers(await options.authorization.headers());
-      authorizationHeaders.forEach((value, name) => headers.set(name, value));
       headers.set(STATE_SINK_VERSION_HEADER, String(descriptor.protocolVersion));
       headers.set(STATE_SINK_CONTRACT_HEADER, descriptor.contractFingerprint);
-
-      const stored = latest ?? (await options.resumeStore.load());
-      if (
-        stored?.protocolVersion === descriptor.protocolVersion &&
-        stored.contractFingerprint === descriptor.contractFingerprint
-      ) {
-        generation = stored.authorizationGeneration;
-      }
-      if (generation !== undefined) {
-        headers.set(STATE_SINK_AUTHORIZATION_GENERATION_HEADER, generation);
-      }
 
       let response = await fetchImplementation(new Request(request, { headers }));
       if (response.status === 409) {
@@ -106,9 +86,7 @@ export function createStateSinkBinding<
           options.onStatus({ kind: "resetting", reason: error.reason });
           await options.resumeStore.clear();
           latest = undefined;
-          generation = undefined;
           const resetHeaders = new Headers(headers);
-          resetHeaders.delete(STATE_SINK_AUTHORIZATION_GENERATION_HEADER);
           resetHeaders.set(STATE_SINK_RESET_HEADER, STATE_SINK_RESET_VALUE);
           const resetUrl = new URL(request.url);
           resetUrl.searchParams.set("offset", "-1");
@@ -124,15 +102,12 @@ export function createStateSinkBinding<
         return response;
       }
 
-      const responseGeneration = response.headers.get(STATE_SINK_AUTHORIZATION_GENERATION_HEADER);
-      if (responseGeneration !== null) generation = responseGeneration;
       const offset = response.headers.get("stream-next-offset") ?? undefined;
       if (offset !== undefined) {
         latest = {
           offset,
           protocolVersion: descriptor.protocolVersion,
           contractFingerprint: descriptor.contractFingerprint,
-          authorizationGeneration: generation,
         };
       }
       options.onStatus({ kind: "live", offset });
@@ -169,12 +144,10 @@ export function createStateSinkBinding<
       stream: options.transport.stream,
       state: descriptor.state,
       onBatch: (batch) => {
-        const generation = options.transport.latestResume()?.authorizationGeneration;
         const resume: StateSinkResume = {
           offset: batch.offset,
           protocolVersion: descriptor.protocolVersion,
           contractFingerprint: descriptor.contractFingerprint,
-          authorizationGeneration: generation,
         };
         options.transport.commitResume(resume);
         queueMicrotask(() => {

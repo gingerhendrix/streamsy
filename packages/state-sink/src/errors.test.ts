@@ -21,10 +21,11 @@ describe("browser-safe state-sink public error decoding", () => {
   test("rejects missing and incorrectly typed required fields", () => {
     expect(() =>
       decodeStateSinkPublicError({
-        _tag: "SinkUnauthorized",
+        _tag: "InvalidSinkParams",
         sink: "test.rows",
+        parameter: "workspaceId",
       }),
-    ).toThrow("required must be a string");
+    ).toThrow("detail must be a string");
     expect(() =>
       decodeStateSinkPublicError({
         _tag: "ProtocolVersionUnsupported",

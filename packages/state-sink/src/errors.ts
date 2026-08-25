@@ -1,5 +1,4 @@
 export const STATE_SINK_ERROR_TAGS = [
-  "SinkUnauthorized",
   "InvalidSinkParams",
   "ProtocolVersionUnsupported",
   "ResumeRejected",
@@ -14,11 +13,9 @@ export type ResumeRejectedReason =
   | "invalid-offset"
   | "history-unavailable"
   | "protocol-incompatible"
-  | "authorization-generation-changed"
   | "contract-changed";
 
 export type StateSinkPublicError =
-  | { readonly _tag: "SinkUnauthorized"; readonly sink: string; readonly required: string }
   | {
       readonly _tag: "InvalidSinkParams";
       readonly sink: string;
@@ -48,8 +45,6 @@ export function decodeStateSinkPublicError(value: unknown): StateSinkPublicError
   const tag = requireString(record, "_tag");
   const sink = requireString(record, "sink");
   switch (tag) {
-    case "SinkUnauthorized":
-      return { _tag: tag, sink, required: requireString(record, "required") };
     case "InvalidSinkParams":
       return {
         _tag: tag,
@@ -125,7 +120,6 @@ function requireResumeReason(record: object): ResumeRejectedReason {
     case "invalid-offset":
     case "history-unavailable":
     case "protocol-incompatible":
-    case "authorization-generation-changed":
     case "contract-changed":
       return reason;
     default:

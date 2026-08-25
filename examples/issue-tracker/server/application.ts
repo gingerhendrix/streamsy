@@ -17,7 +17,6 @@ import {
   ReadStreams,
   ReadStreamsLive,
 } from "@streamsy/experimental/effect";
-import type { StateSinkAuthorizer } from "@streamsy/state-sink/effect";
 import { Clock, Effect, Layer } from "effect";
 import type { CreateIssueRequest, ChangeStatusRequest } from "../shared/api.ts";
 import type { CatalogUpsertRequest } from "../shared/api.ts";
@@ -53,7 +52,6 @@ export type ApplicationServices =
   | IssueSink
   | IssueStore
   | ReadStreams
-  | StateSinkAuthorizer
   | Streams;
 
 /** The mesh capabilities this application uses, in one layer. */
@@ -248,11 +246,9 @@ export const sinkSession = Effect.fn("Application.sinkSession")(function* (works
     route: boardIssues.compiledRoute.build({ workspaceId }),
     transport: boardIssues.protocol.transport,
     fallback: boardIssues.protocol.fallback,
-    required: boardIssues.auth.required,
     protocolVersion: boardIssues.protocol.sessionVersion,
     durableStateVersion: boardIssues.protocol.durableStateVersion,
     contractFingerprint: boardIssues.fingerprint,
-    authorizationGeneration: "local-v1",
     offset,
   };
 });

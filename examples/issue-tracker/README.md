@@ -58,7 +58,6 @@ export const boardIssues = defineStateSink({
     resume: true,
     fallback: "snapshot-then-live",
   },
-  auth: { policy: "issue-tracker.workspace", required: "issue-tracker:workspace" },
 });
 ```
 
@@ -127,7 +126,7 @@ server/store.ts         IssueStore + the memory layer
 server/store-sqlite.ts  the SQLite layer: one transactional advance
 server/maintenance.ts   suffix -> decode -> engine -> commit -> publish
 server/sink.ts          the stateSink runtime
-server/sink-http.ts     checked route + authorization + native offset capabilities
+server/sink-http.ts     checked route + native offset capabilities
 server/gateway.ts       the Durable Streams HTTP surface the route borrows
 server/application.ts   command and query workflows
 server/router.ts        the trust boundary: decode, call, translate by _tag
@@ -162,10 +161,7 @@ server/runtime.ts       the application Layer, assembled once
   `stream-next-offset`. Presenting that value as `?offset=` replays exactly the
   missing suffix. If retained history no longer contains the offset, the sink
   returns a typed `409 ResumeRejected` with `recovery: "snapshot-then-live"`.
-  The native offset is never treated as an authorization credential.
-- **Authorization precedes data access.** The Effect authorizer runs before a
-  snapshot or suffix capability. The local example uses an explicit header and
-  reports an authorization generation independently from the transport offset.
+  The native offset is only a transport cursor.
 - **Fallback resets first.** The server emits `reset`, snapshot boundaries and
   authoritative rows. The browser adapter lowers the installed library's
   invalid reset call to same-batch deletes followed by snapshot upserts, so a
@@ -244,8 +240,7 @@ would have been dishonest.
   fold, because the engine's sort is stable over it. Assigning `sequence` from an
   append acknowledgement is the fix, and it belongs with the multi-writer work.
 - **Retired history cannot be produced locally.** The example has no retention,
-  so `history-unavailable` is mapped but cannot be generated. Invalid offsets,
-  protocol incompatibility and authorization-generation change all exercise
-  the same explicit recovery policy.
+  so `history-unavailable` is mapped but cannot be generated. Invalid offsets
+  and protocol incompatibility exercise the same explicit recovery policy.
 - **No deployment.** Durable Objects, Alchemy, R2 snapshots and the Cloudflare
   host are out of scope for slice 1 and are not present in this example.

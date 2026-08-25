@@ -27,7 +27,7 @@ import {
 import { AppConfig } from "./config.ts";
 import { InvalidRequest, MalformedBody } from "./errors.ts";
 import type { StreamGateway } from "./gateway.ts";
-import { authorizeBoardSink, handleSinkRequest, matchBoardSink } from "./sink-http.ts";
+import { handleSinkRequest, matchBoardSink } from "./sink-http.ts";
 
 const json = (body: JsonValue, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -97,9 +97,6 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
       StoreRestorePoison: (error) =>
         Effect.succeed(fail(500, "state-restore-poison", `${error.table}/${error.key}`)),
       StoreUnavailable: (error) => Effect.succeed(fail(503, "store-unavailable", error.operation)),
-      SinkAuthorizationDenied: (error) => Effect.succeed(fail(403, "unauthorized", error.required)),
-      SinkAuthorizationUnavailable: (error) =>
-        Effect.succeed(fail(503, "authorization-unavailable", error.detail)),
     }),
     Effect.catchCause((cause) => Effect.succeed(errorResponse(cause))),
   );
@@ -132,7 +129,6 @@ const route = (request: Request) =>
 
     if (rest[0] === "sink-session" && rest.length === 1) {
       if (request.method !== "GET") return fail(405, "method-not-allowed");
-      yield* authorizeBoardSink(request, workspaceId);
       return json(yield* sinkSession(workspaceId));
     }
 

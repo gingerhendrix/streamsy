@@ -129,7 +129,6 @@ export const boardIssues = defineStateSink({
     resume: true,
     fallback: "snapshot-then-live",
   },
-  auth: { policy: "issue-tracker.workspace", required: "issue-tracker:workspace" },
   errors: STATE_SINK_ERROR_TAGS,
 });
 

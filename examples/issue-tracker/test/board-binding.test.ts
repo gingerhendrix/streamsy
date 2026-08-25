@@ -4,7 +4,7 @@
  *
  * This is the browser's own path: a caller-owned `DurableStream` pointed at the
  * declared sink route, wrapped by `createStreamDB`, feeding TanStack DB
- * collections. It runs against a real Bun server so the transport, the scope
+ * collections. It runs against a real Bun server so the transport, route
  * param, native offsets and Durable State messages are all the ones a page
  * would see.
  */

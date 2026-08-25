@@ -2,7 +2,6 @@ export interface StateSinkResume {
   readonly offset: string;
   readonly protocolVersion: number;
   readonly contractFingerprint: string;
-  readonly authorizationGeneration?: string;
 }
 
 export interface ResumeStore {

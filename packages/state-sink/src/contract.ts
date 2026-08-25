@@ -14,11 +14,6 @@ export interface StateSinkProtocol {
   readonly fallback: "snapshot-then-live";
 }
 
-export interface StateSinkAuthorizationContract {
-  readonly policy: string;
-  readonly required: string;
-}
-
 export interface StateSinkCollection<Row, Key extends keyof Row & string> {
   readonly name: string;
   readonly type: string;
@@ -39,7 +34,6 @@ export interface StateSinkSpec<
   readonly params: Params;
   readonly collection: StateSinkCollection<Row, Key>;
   readonly protocol: StateSinkProtocol;
-  readonly auth: StateSinkAuthorizationContract;
   readonly errors?: readonly StateSinkErrorTag[];
 }
 
@@ -91,7 +85,6 @@ export function defineStateSink<
     key: spec.key,
     collection: spec.collection,
     protocol: spec.protocol,
-    auth: spec.auth,
     errors: spec.errors ?? [],
   });
   return Object.freeze({ ...spec, kind: "checked-state-sink", fingerprint, compiledRoute });
@@ -104,7 +97,6 @@ interface ContractFingerprintInput {
   readonly key: string;
   readonly collection: object;
   readonly protocol: StateSinkProtocol;
-  readonly auth: StateSinkAuthorizationContract;
   readonly errors: readonly StateSinkErrorTag[];
 }
 

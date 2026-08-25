@@ -5,7 +5,6 @@ import {
   type StateSinkConnection,
   type StateSinkStatus,
 } from "@streamsy/tanstack-db";
-import { boardIssues } from "../../domain/declaration.ts";
 import {
   boardIssuesBinding,
   type BoardIssuesParams,
@@ -34,9 +33,6 @@ export function createBoardConnection(options: BoardConnectionOptions): BoardCon
   const transport = boardIssuesBinding.createTransport({
     params: { workspaceId: options.workspaceId },
     origin: options.origin,
-    authorization: {
-      headers: () => ({ "x-streamsy-scope": boardIssues.auth.required }),
-    },
     resumeStore,
     onStatus: options.onStatus,
     fetch: options.fetch,

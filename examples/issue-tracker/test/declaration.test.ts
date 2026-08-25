@@ -86,7 +86,6 @@ describe("the issue-tracker declaration", () => {
       resume: true,
       fallback: "snapshot-then-live",
     });
-    expect(boardIssues.auth.required).toBe("issue-tracker:workspace");
     expect(boardIssues.fingerprint).toMatch(/^[0-9a-f]{8}$/);
     expect(boardIssues.from.name).toBe(projectBoard.name);
   });

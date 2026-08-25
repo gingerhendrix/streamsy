@@ -1,39 +1,13 @@
 /** Framework-neutral checked state-sink handling adapted to the local gateway. */
-import {
-  authorizerLayer,
-  handleStateSink,
-  SinkAuthorizationDenied,
-  StateSinkAuthorizer,
-  StateSinkSourceFailure,
-} from "@streamsy/state-sink/effect";
-import { Effect, Layer } from "effect";
+import { handleStateSink, StateSinkSourceFailure } from "@streamsy/state-sink/effect";
+import { Effect } from "effect";
 import { boardIssues, streamNames } from "../domain/declaration.ts";
 import { StreamGateway } from "./gateway.ts";
 import { advance } from "./maintenance.ts";
 import { IssueStore } from "./store.ts";
 import { ensureWorkspace, Streams } from "./streams.ts";
 
-export const SCOPE_HEADER = "x-streamsy-scope";
-export const LOCAL_AUTHORIZATION_GENERATION = "local-v1";
-
-export const localSinkAuthorizerLayer: Layer.Layer<StateSinkAuthorizer> = authorizerLayer(
-  Effect.fn("IssueTracker.authorizeSink")(function* ({ request, sink }) {
-    if (request.headers.get(SCOPE_HEADER) !== sink.auth.required) {
-      return yield* new SinkAuthorizationDenied({ required: sink.auth.required });
-    }
-    return { generation: LOCAL_AUTHORIZATION_GENERATION, subject: "local-example" };
-  }),
-);
-
 export const matchBoardSink = (pathname: string) => boardIssues.compiledRoute.match(pathname);
-
-export const authorizeBoardSink = Effect.fn("IssueTracker.authorizeBoardSink")(function* (
-  request: Request,
-  workspaceId: string,
-) {
-  const authorizer = yield* StateSinkAuthorizer;
-  return yield* authorizer.authorize({ request, sink: boardIssues, params: { workspaceId } });
-});
 
 export const handleSinkRequest = (request: Request) =>
   handleStateSink(boardIssues, request, {

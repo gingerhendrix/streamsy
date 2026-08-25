@@ -2,7 +2,6 @@ import { Effect, Schema } from "effect";
 import type { CheckedStateSink } from "./contract.ts";
 import type { StateSinkPublicError } from "./errors.ts";
 import {
-  STATE_SINK_AUTHORIZATION_GENERATION_HEADER,
   STATE_SINK_CONTRACT_HEADER,
   STATE_SINK_RESET_HEADER,
   STATE_SINK_RESET_VALUE,
@@ -10,12 +9,6 @@ import {
 } from "./protocol.ts";
 import type { SinkParamCodecs } from "./route.ts";
 import type { DecodedSinkParams } from "./route.ts";
-import {
-  SinkAuthorizationDenied,
-  SinkAuthorizationUnavailable,
-  StateSinkAuthorizer,
-  type AuthorizedSinkContext,
-} from "./authorization.ts";
 
 export class StateSinkSourceFailure extends Schema.TaggedError<StateSinkSourceFailure>()(
   "StateSinkSourceFailure",
@@ -33,12 +26,10 @@ export interface StateSinkSnapshot<Row> {
 export interface StateSinkServerCapabilities<Row, Params, Requirements = never> {
   readonly snapshot: (
     params: Params,
-    authorization: AuthorizedSinkContext,
   ) => Effect.Effect<StateSinkSnapshot<Row>, StateSinkSourceFailure, Requirements>;
   readonly suffix: (
     request: Request,
     params: Params,
-    authorization: AuthorizedSinkContext,
   ) => Effect.Effect<Response, StateSinkSourceFailure, Requirements>;
 }
 
@@ -51,7 +42,7 @@ export function handleStateSink<
   sink: CheckedStateSink<Row, Key, Params>,
   request: Request,
   capabilities: StateSinkServerCapabilities<Row, DecodedSinkParams<Params>, Requirements>,
-): Effect.Effect<Response, never, StateSinkAuthorizer | Requirements> {
+): Effect.Effect<Response, never, Requirements> {
   const matched = sink.compiledRoute.match(new URL(request.url).pathname);
   if (matched.kind === "mismatch") return Effect.succeed(errorResponse(404, invalid(sink.name)));
   if (matched.kind === "invalid") {
@@ -66,13 +57,6 @@ export function handleStateSink<
   }
 
   return Effect.gen(function* () {
-    const authorizer = yield* StateSinkAuthorizer;
-    const authorization = yield* authorizer.authorize({
-      request,
-      sink,
-      params: matched.params,
-    });
-
     const receivedVersion = request.headers.get(STATE_SINK_VERSION_HEADER) ?? "1";
     if (receivedVersion !== String(sink.protocol.sessionVersion)) {
       return errorResponse(409, {
@@ -94,22 +78,12 @@ export function handleStateSink<
       });
     }
 
-    const receivedGeneration = request.headers.get(STATE_SINK_AUTHORIZATION_GENERATION_HEADER);
-    if (receivedGeneration !== null && receivedGeneration !== authorization.generation) {
-      return errorResponse(409, {
-        _tag: "ResumeRejected",
-        sink: sink.name,
-        reason: "authorization-generation-changed",
-        recovery: sink.protocol.fallback,
-      });
-    }
-
     if (request.headers.get(STATE_SINK_RESET_HEADER) === STATE_SINK_RESET_VALUE) {
-      const snapshot = yield* capabilities.snapshot(matched.params, authorization);
-      return snapshotResponse(sink, snapshot, authorization);
+      const snapshot = yield* capabilities.snapshot(matched.params);
+      return snapshotResponse(sink, snapshot);
     }
 
-    const response = yield* capabilities.suffix(request, matched.params, authorization);
+    const response = yield* capabilities.suffix(request, matched.params);
     const offset = new URL(request.url).searchParams.get("offset");
     if (offset !== null && offset !== "-1" && [400, 404, 410].includes(response.status)) {
       return errorResponse(409, {
@@ -119,25 +93,9 @@ export function handleStateSink<
         recovery: sink.protocol.fallback,
       });
     }
-    return withSessionHeaders(response, sink, authorization);
+    return withSessionHeaders(response, sink);
   }).pipe(
     Effect.catchTags({
-      SinkAuthorizationDenied: (error: SinkAuthorizationDenied) =>
-        Effect.succeed(
-          errorResponse(403, {
-            _tag: "SinkUnauthorized",
-            sink: sink.name,
-            required: error.required,
-          }),
-        ),
-      SinkAuthorizationUnavailable: (error: SinkAuthorizationUnavailable) =>
-        Effect.succeed(
-          errorResponse(503, {
-            _tag: "TransportUnavailable",
-            sink: sink.name,
-            detail: error.detail,
-          }),
-        ),
       StateSinkSourceFailure: (error: StateSinkSourceFailure) =>
         Effect.succeed(
           errorResponse(503, {
@@ -154,11 +112,7 @@ function snapshotResponse<
   Row extends object,
   Key extends keyof Row & string,
   Params extends SinkParamCodecs,
->(
-  sink: CheckedStateSink<Row, Key, Params>,
-  snapshot: StateSinkSnapshot<Row>,
-  authorization: AuthorizedSinkContext,
-): Response {
+>(sink: CheckedStateSink<Row, Key, Params>, snapshot: StateSinkSnapshot<Row>): Response {
   const messages: object[] = [
     { headers: { control: "reset" } },
     { headers: { control: "snapshot-start" } },
@@ -170,7 +124,7 @@ function snapshotResponse<
     })),
     { headers: { control: "snapshot-end" } },
   ];
-  const headers = sessionHeaders(sink, authorization);
+  const headers = sessionHeaders(sink);
   headers.set("content-type", "application/json");
   headers.set("stream-next-offset", snapshot.offset);
   headers.set("stream-up-to-date", "true");
@@ -182,13 +136,9 @@ function withSessionHeaders<
   Row extends object,
   Key extends keyof Row & string,
   Params extends SinkParamCodecs,
->(
-  response: Response,
-  sink: CheckedStateSink<Row, Key, Params>,
-  authorization: AuthorizedSinkContext,
-): Response {
+>(response: Response, sink: CheckedStateSink<Row, Key, Params>): Response {
   const headers = new Headers(response.headers);
-  sessionHeaders(sink, authorization).forEach((value, name) => headers.set(name, value));
+  sessionHeaders(sink).forEach((value, name) => headers.set(name, value));
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -200,11 +150,10 @@ function sessionHeaders<
   Row extends object,
   Key extends keyof Row & string,
   Params extends SinkParamCodecs,
->(sink: CheckedStateSink<Row, Key, Params>, authorization: AuthorizedSinkContext): Headers {
+>(sink: CheckedStateSink<Row, Key, Params>): Headers {
   return new Headers({
     [STATE_SINK_VERSION_HEADER]: String(sink.protocol.sessionVersion),
     [STATE_SINK_CONTRACT_HEADER]: sink.fingerprint,
-    [STATE_SINK_AUTHORIZATION_GENERATION_HEADER]: authorization.generation,
   });
 }
 

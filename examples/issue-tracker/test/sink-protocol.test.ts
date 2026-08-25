@@ -2,7 +2,7 @@
 /**
  * The `stateSink`'s public contract.
  *
- * Everything the declaration promises — the route, the scope, the Durable State
+ * Everything the declaration promises — the route, the Durable State
  * transport, native offset resume, and `fallback: "snapshot-then-live"` — is checked
  * here against the real route, not a description of it.
  */
@@ -11,8 +11,6 @@ import { SinkSessionResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, type Host } from "./support.ts";
 
 const SINK = "/state/workspaces/main/issues";
-const SCOPE = "issue-tracker:workspace";
-
 const open: Host[] = [];
 afterEach(async () => {
   await Promise.all(open.splice(0).map((instance) => instance.close()));
@@ -34,7 +32,7 @@ interface StateMessage {
 async function read(
   instance: Host,
   query: string,
-  headers: HeadersInit = { "x-streamsy-scope": SCOPE },
+  headers: HeadersInit = {},
 ): Promise<{ status: number; messages: StateMessage[]; offset: string | undefined; body: string }> {
   const response = await instance.fetch(
     new Request(`http://localhost${SINK}${query}`, { headers }),
@@ -52,16 +50,6 @@ async function read(
 }
 
 describe("the board-issues state sink", () => {
-  test("the declared scope is required", async () => {
-    const instance = fresh();
-    const denied = await read(instance, "", {});
-    expect(denied.status).toBe(403);
-    expect(JSON.parse(denied.body)).toMatchObject({
-      _tag: "SinkUnauthorized",
-      required: SCOPE,
-    });
-  });
-
   test("a fresh session reads a snapshot bounded by control messages", async () => {
     const instance = fresh();
     await call(instance, "POST", "/api/workspaces/main/seed");
@@ -123,7 +111,6 @@ describe("the board-issues state sink", () => {
     });
 
     const rebuilt = await read(instance, "?offset=-1", {
-      "x-streamsy-scope": SCOPE,
       "x-streamsy-state-sink-reset": "snapshot",
     });
     expect(rebuilt.status).toBe(200);
@@ -131,10 +118,9 @@ describe("the board-issues state sink", () => {
     expect(rebuilt.messages.some((message) => message.key === "seed-plan")).toBe(true);
   });
 
-  test("protocol and authorization-generation changes declare reset policy", async () => {
+  test("protocol and contract changes declare reset policy", async () => {
     const instance = fresh();
     const protocol = await read(instance, "", {
-      "x-streamsy-scope": SCOPE,
       "x-streamsy-state-sink-version": "2",
     });
     expect(protocol.status).toBe(409);
@@ -144,18 +130,7 @@ describe("the board-issues state sink", () => {
       recovery: "snapshot-then-live",
     });
 
-    const generation = await read(instance, "?offset=0_0", {
-      "x-streamsy-scope": SCOPE,
-      "x-streamsy-authorization-generation": "retired",
-    });
-    expect(generation.status).toBe(409);
-    expect(JSON.parse(generation.body)).toMatchObject({
-      _tag: "ResumeRejected",
-      reason: "authorization-generation-changed",
-    });
-
     const contract = await read(instance, "", {
-      "x-streamsy-scope": SCOPE,
       "x-streamsy-state-sink-contract": "retired-contract",
     });
     expect(contract.status).toBe(409);
@@ -170,11 +145,7 @@ describe("the board-issues state sink", () => {
   test("the session contract reports the declaration, not a restatement of it", async () => {
     const instance = fresh();
     const session = await json(
-      await instance.fetch(
-        new Request("http://localhost/api/workspaces/main/sink-session", {
-          headers: { "x-streamsy-scope": SCOPE },
-        }),
-      ),
+      await instance.fetch(new Request("http://localhost/api/workspaces/main/sink-session")),
       SinkSessionResponse,
     );
     expect(session).toMatchObject({
@@ -182,10 +153,8 @@ describe("the board-issues state sink", () => {
       route: SINK,
       transport: "durable-state",
       fallback: "snapshot-then-live",
-      required: SCOPE,
       protocolVersion: 1,
       durableStateVersion: 1,
-      authorizationGeneration: "local-v1",
     });
   });
 });

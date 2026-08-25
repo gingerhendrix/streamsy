@@ -16,7 +16,6 @@ const checked = defineStateSink({
     resume: true,
     fallback: "snapshot-then-live",
   },
-  auth: { policy: "fixture", required: "rows:read" },
 });
 
 const row: RowOf<typeof checked> = { id: "id", label: "label" };

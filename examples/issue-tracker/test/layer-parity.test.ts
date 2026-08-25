@@ -11,8 +11,6 @@ import { describe, expect, test } from "bun:test";
 import { CatalogRowsResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 
-const SCOPE = "issue-tracker:workspace";
-
 interface Published {
   readonly type?: string;
   readonly key?: string;
@@ -93,11 +91,7 @@ async function product(instance: Host): Promise<Product> {
     await call(instance, "GET", "/api/workspaces/main/issues"),
     IssuesResponse,
   );
-  const sink = await instance.fetch(
-    new Request("http://localhost/state/workspaces/main/issues", {
-      headers: { "x-streamsy-scope": SCOPE },
-    }),
-  );
+  const sink = await instance.fetch(new Request("http://localhost/state/workspaces/main/issues"));
   // SAFETY: a 2xx from the sink route is a Durable State message array;
   // `Published` names only the optional fields this comparison reads.
   // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
