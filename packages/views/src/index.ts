@@ -1,8 +1,17 @@
-export { aggregate, joinSelectors, literal, parameterReference, selectors } from "./expression.ts";
+export {
+  aggregate,
+  joinSelectors,
+  keyExpression,
+  literal,
+  parameterReference,
+  selectors,
+} from "./expression.ts";
 export type {
   AggregateValue,
   BooleanExpression,
+  DeclaredKey,
   ExpressionValue,
+  KeyFieldsOf,
   Reference,
   Selectors,
   TypedAggregateExpression,
@@ -30,6 +39,7 @@ export type {
   RelationBuilder,
   RelationExpression,
   Scope,
+  SourceCollection,
   SourceDeclaration,
   SourceSpec,
   StateSinkDeclaration,

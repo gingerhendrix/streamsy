@@ -14,25 +14,39 @@ export interface StateSinkProtocol {
   readonly fallback: "snapshot-then-live";
 }
 
-export interface StateSinkCollection<Row, Key extends keyof Row & string> {
+/**
+ * The public collection a sink publishes.
+ *
+ * The declaration names it and tags its wire type. Its primary key is not
+ * declared here: it is the key of the relation the sink publishes, so a sink
+ * and its relation cannot disagree about what identifies a row.
+ */
+export interface StateSinkCollection {
   readonly name: string;
   readonly type: string;
-  readonly primaryKey: Key;
 }
+
+/** The part of a keyed relation a sink needs: the key its rows are declared by. */
+export interface StateSinkRelation<Key extends string = string> {
+  readonly key: Key;
+}
+
+/** The key a relation declares, narrowed to a field of the sink's row. */
+export type SinkKeyOf<Row, From> = (From extends StateSinkRelation<infer Key> ? Key : never) &
+  keyof Row &
+  string;
 
 export interface StateSinkSpec<
   Row,
-  Key extends keyof Row & string,
   Params extends SinkParamCodecs,
-  From = unknown,
+  From extends StateSinkRelation = StateSinkRelation,
 > {
   readonly name: string;
   readonly from: From;
   readonly row: StateSinkRowCodec<Row>;
-  readonly key: Key;
   readonly route: string;
   readonly params: Params;
-  readonly collection: StateSinkCollection<Row, Key>;
+  readonly collection: StateSinkCollection;
   readonly protocol: StateSinkProtocol;
   readonly errors?: readonly StateSinkErrorTag[];
 }
@@ -41,9 +55,12 @@ export interface CheckedStateSink<
   Row,
   Key extends keyof Row & string,
   Params extends SinkParamCodecs,
-  From = unknown,
-> extends StateSinkSpec<Row, Key, Params, From> {
+  From extends StateSinkRelation = StateSinkRelation,
+> extends StateSinkSpec<Row, Params, From> {
   readonly kind: "checked-state-sink";
+  /** The relation's declared key, carried so consumers read one key, not two. */
+  readonly key: Key;
+  readonly collection: StateSinkCollection & { readonly primaryKey: Key };
   readonly fingerprint: string;
   readonly compiledRoute: ReturnType<typeof compileSinkRoute<Params>>;
 }
@@ -64,30 +81,37 @@ type ExactRouteParams<Route extends string, Params extends SinkParamCodecs> =
 
 export function defineStateSink<
   Row,
-  const Key extends keyof Row & string,
   const Route extends string,
   const Params extends SinkParamCodecs,
-  From,
+  From extends StateSinkRelation<keyof Row & string>,
 >(
-  spec: StateSinkSpec<Row, Key, Params, From> & { readonly route: Route } & ExactRouteParams<
+  spec: StateSinkSpec<Row, Params, From> & { readonly route: Route } & ExactRouteParams<
       Route,
       Params
     >,
-): CheckedStateSink<Row, Key, Params, From> {
-  if (spec.collection.primaryKey !== spec.key) {
-    throw new Error("state-sink collection primary key must match the declared key");
-  }
+): CheckedStateSink<Row, SinkKeyOf<Row, From>, Params, From> {
+  // SAFETY: `From` is constrained to declare a key of `Row`, so the relation's declared key is that field name.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-known-value-widening
+  const key = spec.from.key as SinkKeyOf<Row, From>;
+  const collection = { ...spec.collection, primaryKey: key };
   const compiledRoute = compileSinkRoute(spec.route, spec.params);
   const fingerprint = hashContract({
     name: spec.name,
     route: spec.route,
     params: compiledRoute.parameterNames,
-    key: spec.key,
-    collection: spec.collection,
+    key,
+    collection,
     protocol: spec.protocol,
     errors: spec.errors ?? [],
   });
-  return Object.freeze({ ...spec, kind: "checked-state-sink", fingerprint, compiledRoute });
+  return Object.freeze({
+    ...spec,
+    kind: "checked-state-sink",
+    key,
+    collection: Object.freeze(collection),
+    fingerprint,
+    compiledRoute,
+  });
 }
 
 interface ContractFingerprintInput {

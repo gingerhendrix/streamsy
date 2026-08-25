@@ -6,16 +6,18 @@ import type {
   ParameterDescriptor,
   RelationNode,
   RelationPlan,
-  RowKey,
   SortTerm,
 } from "@streamsy/views-ir";
 import {
+  keyExpression,
   literal,
   parameterReference,
   selectors,
   type AggregateValue,
   type BooleanExpression,
+  type DeclaredKey,
   type ExpressionValue,
+  type KeyFieldsOf,
   type Reference,
   type TypedExpression,
   type TypedAggregateExpression,
@@ -26,29 +28,52 @@ type Selected<Fields extends Readonly<Record<string, Expression>>> = {
   readonly [K in keyof Fields]: ExpressionValue<Fields[K]>;
 };
 
+/**
+ * The Durable State collection a source is published under.
+ *
+ * `name` is the collection a host reads and writes, `type` is the wire tag on
+ * every message in it. Declaring them here keeps a catalog's schema, type and
+ * primary-key metadata derived from the same declaration that keys the plan.
+ */
+export interface SourceCollection {
+  readonly name: string;
+  readonly type: string;
+}
+
 export interface SourceSpec<
   S extends Schema.Top,
   Mode extends "facts" | "state" = "facts" | "state",
+  Key extends DeclaredKey = DeclaredKey,
 > {
   readonly schema: S;
   readonly schemaRef: DescriptorRef;
   readonly partitionBy: Expression;
-  readonly key: Expression;
+  /** The declared key: one row field name, or an ordered tuple of them. */
+  readonly key: Key;
   readonly mode: Mode;
+  readonly collection?: SourceCollection;
 }
 
-export interface SourceDeclaration<
+export type SourceDeclaration<
   S extends Schema.Top = Schema.Top,
-  Mode extends "facts" | "state" = "facts" | "state",
-> extends SourceSpec<S, Mode> {
+  Spec extends SourceSpec<S> = SourceSpec<S>,
+> = Spec & {
   readonly kind: "source";
   readonly name: string;
-}
+  /** The declared key lowered to the expression the plan carries. */
+  readonly keyExpression: Expression;
+};
 
-export const source = <S extends Schema.Top, Mode extends "facts" | "state">(
+export const source = <S extends Schema.Top, const Spec extends SourceSpec<S>>(
   name: string,
-  spec: SourceSpec<S, Mode>,
-): SourceDeclaration<S, Mode> => deepFreeze({ kind: "source", name, ...spec });
+  spec: Spec & SourceSpec<S> & { readonly key: KeyFieldsOf<SchemaType<S>> },
+): SourceDeclaration<S, Spec> =>
+  deepFreeze({
+    kind: "source" as const,
+    name,
+    ...spec,
+    keyExpression: keyExpression(spec.key),
+  });
 
 export type EvolveBranch = Readonly<Record<string, Expression>>;
 export type EvolveBranchBuilder<Event, State> = (x: {
@@ -185,7 +210,6 @@ export interface RelationBuilder<Row> {
   readonly select: <Fields extends Readonly<Record<string, Expression>>>(
     fields: Fields,
   ) => RelationBuilder<Selected<Fields>>;
-  readonly keyBy: <Key extends RowKey>(key: TypedExpression<Key>) => RelationBuilder<Row>;
   readonly join: <S extends Schema.Top, Alias extends string>(
     other: SourceDeclaration<S> | RelationBuilder<S["Type"]>,
     spec: JoinSpec & { readonly as: Alias },
@@ -199,7 +223,7 @@ export interface RelationBuilder<Row> {
   ) => GroupedBuilder<Selected<Fields>>;
   readonly top: (spec: TopSpec) => RelationBuilder<Row>;
   readonly reduceByKey: <State extends Schema.Top>(spec: {
-    readonly key: Expression;
+    readonly key: KeyFieldsOf<Row>;
     readonly reducer: ReducerDeclaration<State>;
   }) => RelationBuilder<State["Type"]>;
 }
@@ -225,7 +249,6 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
       builder(deepFreeze({ kind: "filter", input: expression, predicate })),
     select: (fields: Readonly<Record<string, Expression>>) =>
       builder(deepFreeze({ kind: "project", input: expression, fields })) as never,
-    keyBy: (key: Expression) => builder(deepFreeze({ kind: "key", input: expression, key })),
     join: (other: SourceDeclaration<Schema.Top> | RelationBuilder<unknown>, spec: JoinSpec) =>
       builder(
         deepFreeze({
@@ -273,12 +296,17 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
             };
       return builder(deepFreeze(top));
     },
-    reduceByKey: (spec: { readonly key: Expression; readonly reducer: ReducerDeclaration }) => {
+    reduceByKey: (spec: { readonly key: DeclaredKey; readonly reducer: ReducerDeclaration }) => {
       if (expression.kind !== "source-relation" || expression.source.mode !== "facts") {
         throw new TypeError("reduceByKey is only available directly on a fact source");
       }
       return builder(
-        deepFreeze({ kind: "reduce-by-key", input: expression, ...spec }),
+        deepFreeze({
+          kind: "reduce-by-key",
+          input: expression,
+          key: keyExpression(spec.key),
+          reducer: spec.reducer,
+        }),
       ) as RelationBuilder<unknown>;
     },
   }) as RelationBuilder<Row>;
@@ -289,25 +317,31 @@ export const from = <S extends Schema.Top>(
 ): RelationBuilder<SchemaType<S>> =>
   builder(deepFreeze({ kind: "source-relation", source: input }));
 
-export interface ViewSpec<S extends Schema.Top> {
+export interface ViewSpec<S extends Schema.Top, Key extends DeclaredKey = DeclaredKey> {
   readonly schema: S;
   readonly schemaRef: DescriptorRef;
-  readonly key: Expression;
+  /** The declared output key: one row field name, or an ordered tuple of them. */
+  readonly key: Key;
 }
 
-export interface ViewDeclaration<S extends Schema.Top = Schema.Top> extends ViewSpec<S> {
+export interface ViewDeclaration<
+  S extends Schema.Top = Schema.Top,
+  Key extends DeclaredKey = DeclaredKey,
+> extends ViewSpec<S, Key> {
   readonly kind: "view";
   readonly name: string;
+  /** The declared key lowered to the expression the plan's keying node carries. */
+  readonly keyExpression: Expression;
   readonly expression: RelationExpression<SchemaType<S>>;
   readonly parameters: Readonly<Record<string, ParameterDeclaration<Schema.Top>>>;
   readonly plan: RelationPlan;
 }
 
-export const view = <S extends Schema.Top>(
+export const view = <S extends Schema.Top, const Key extends KeyFieldsOf<SchemaType<S>>>(
   name: string,
-  spec: ViewSpec<S>,
+  spec: ViewSpec<S, Key>,
   expression: RelationExpression<SchemaType<S>> | RelationBuilder<SchemaType<S>>,
-): ViewDeclaration<S> => makeView(name, spec, asRelation(expression), {});
+): ViewDeclaration<S, Key> => makeView(name, spec, asRelation(expression), {});
 
 export interface ParameterDeclaration<S extends Schema.Top> {
   readonly kind: "parameter";
@@ -340,14 +374,15 @@ type ParameterValues<P extends Readonly<Record<string, ParameterDeclaration<Sche
 export const defineView = <
   S extends Schema.Top,
   P extends Readonly<Record<string, ParameterDeclaration<Schema.Top>>>,
+  const Key extends KeyFieldsOf<SchemaType<S>>,
 >(spec: {
   readonly name: string;
   readonly params: P;
   readonly schema: S;
   readonly schemaRef: DescriptorRef;
-  readonly key: Expression;
+  readonly key: Key;
   readonly query: (params: ParameterValues<P>) => RelationBuilder<SchemaType<S>>;
-}): ViewDeclaration<S> => {
+}): ViewDeclaration<S, Key> => {
   const values: Record<string, TypedExpression<unknown>> = {};
   for (const name of Object.keys(spec.params)) values[name] = parameterReference(name);
   // SAFETY: values is built from exactly the keys of P, and each reference carries that parameter's decoded type only at compile time.
@@ -362,14 +397,43 @@ function asRelation<Row>(
   return "expression" in value ? value.expression : value;
 }
 
-function makeView<S extends Schema.Top>(
+function makeView<S extends Schema.Top, Key extends DeclaredKey>(
   name: string,
-  spec: ViewSpec<S>,
-  expression: RelationExpression<SchemaType<S>>,
+  spec: ViewSpec<S, Key>,
+  query: RelationExpression<SchemaType<S>>,
   parameters: Readonly<Record<string, ParameterDeclaration<Schema.Top>>>,
-): ViewDeclaration<S> {
+): ViewDeclaration<S, Key> {
+  const lowered = keyExpression(spec.key);
+  const expression = keyOutput(query, lowered);
   const plan = compilePlan(name, expression, spec.schemaRef, parameters);
-  return deepFreeze({ kind: "view", name, ...spec, expression, parameters, plan });
+  return deepFreeze({
+    kind: "view",
+    name,
+    ...spec,
+    keyExpression: lowered,
+    expression,
+    parameters,
+    plan,
+  });
+}
+
+/**
+ * Key a view's output with its declared key.
+ *
+ * Keying is a property of the output relation, not a step a query writes for
+ * itself, so the declared key is lowered exactly once. It is placed beneath any
+ * trailing bounded-order operators, which order and partition rows that are
+ * already keyed, and it is skipped when the query is keyed by construction.
+ */
+function keyOutput<Row>(
+  expression: RelationExpression<Row>,
+  key: Expression,
+): RelationExpression<Row> {
+  if (expression.kind === "key" || expression.kind === "reduce-by-key") return expression;
+  if (expression.kind === "top-n") {
+    return deepFreeze({ ...expression, input: keyOutput(expression.input, key) });
+  }
+  return deepFreeze({ kind: "key", input: expression, key });
 }
 
 export function compilePlan(
@@ -397,7 +461,7 @@ export function compilePlan(
         schema: relation.source.schemaRef,
         sourceId: relation.source.name,
         partitionBy: relation.source.partitionBy,
-        key: relation.source.key,
+        key: relation.source.keyExpression,
         mode: relation.source.mode,
       });
     }

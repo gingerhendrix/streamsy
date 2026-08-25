@@ -10,17 +10,16 @@ interface Row {
 
 const sink = defineStateSink({
   name: "test.rows",
-  from: { schema: "test" },
+  from: { schema: "test", key: "id" },
   row: {
     decode: (value: unknown): Row => {
       if (!(value instanceof Object) || !("id" in value)) throw new Error("row has no id");
       return { id: String(value.id) };
     },
   },
-  key: "id",
   route: "/state/:workspaceId/rows",
   params: { workspaceId: { decode: (value: string) => value } },
-  collection: { name: "rows", type: "row", primaryKey: "id" },
+  collection: { name: "rows", type: "row" },
   protocol: {
     sessionVersion: 1,
     durableStateVersion: 1,

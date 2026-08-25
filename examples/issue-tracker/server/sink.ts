@@ -25,8 +25,9 @@ import { AppendRejected, StreamUnavailable } from "./errors.ts";
  * The sink's public collection map.
  *
  * `type: "issue"` is the wire tag a consumer's TanStack DB collection binds to,
- * and `primaryKey: "issueId"` is the sink's declared key expression made
- * concrete. Both are part of the contract, not implementation detail.
+ * and its primary key is the key `projectBoard` declares, carried through the
+ * sink rather than restated here. Both are part of the contract, not
+ * implementation detail.
  */
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- This codec IS the JSON wire boundary the rule points at: `encode` hands a decoded row to the protocol's JSON writer, and `decode` runs the declared `IssueRow` schema over whatever the wire produced. */
 export const boardStateSchema = {

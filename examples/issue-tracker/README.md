@@ -30,27 +30,26 @@ older hand-built projection API through an adapter.
 export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   partitionBy: x.row.workspaceId,
-  key: x.row.eventId,
+  key: "eventId",
   mode: "facts",
 });
 
 export const issues = view(
   "issue-tracker.issues",
-  { schema: IssueRow, key: out.row.issueId },
+  { schema: IssueRow, key: "issueId" },
   from(issueEvents).reduceByKey({
-    key: x.row.issueId,
+    key: "issueId",
     reducer: issueLifecycle,
   }),
 );
 
 export const boardIssues = defineStateSink({
   name: "issue-tracker.board-issues",
-  from: issues,
-  row: { decode: decodeIssueRow },
-  key: "issueId",
+  from: projectBoard,
+  row: { decode: decodeProjectBoardCard },
   route: "/state/workspaces/:workspaceId/issues",
   params: { workspaceId: { decode: decodeIdentifier } },
-  collection: { name: "issues", type: "issue", primaryKey: "issueId" },
+  collection: { name: "issues", type: "issue" },
   protocol: {
     sessionVersion: 1,
     durableStateVersion: 1,
@@ -60,6 +59,11 @@ export const boardIssues = defineStateSink({
   },
 });
 ```
+
+A collection's key is declared once, as a row field name. That declaration
+lowers to the plan's key expression, and the sink reads its collection primary
+key from the relation it publishes, so the plan, the Durable State wire, and the
+generated TanStack DB binding cannot disagree about what identifies a row.
 
 Everything it builds is frozen, inert data. `@streamsy/views` lowers it to a
 serializable `RelationPlan`, hashes that plan canonically, and
@@ -82,6 +86,11 @@ state/workspaces/{workspaceId}/users
 state/workspaces/{workspaceId}/labels
 state/workspaces/{workspaceId}/metadata
 ```
+
+`domain/catalog.ts` declares those four collections beside their row schemas.
+Each declaration names its wire collection and type and names its key field, and
+the schema/type/primary-key table the protocol reader binds is derived from
+those declarations rather than restated.
 
 The shared `@streamsy/state` protocol reader validates each State envelope and
 decodes its row through the catalog's schema/type/primary-key table. Ingestion

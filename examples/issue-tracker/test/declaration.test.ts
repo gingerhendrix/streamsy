@@ -9,6 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { compilePlan, encodePlan, planHash } from "@streamsy/views";
 import { projectBoard } from "../domain/views.ts";
+import { catalog } from "../domain/catalog.ts";
 import {
   boardIssues,
   issueEvents,
@@ -37,10 +38,25 @@ describe("the issue-tracker declaration", () => {
   });
 
   test("selectors compile to inspectable reference expressions", () => {
-    expect(issueEvents.key).toEqual({ kind: "reference", scope: "row", path: ["eventId"] });
     expect(issueLifecycle.evolve["IssueStatusChanged"]).toEqual({
       status: { kind: "reference", scope: "event", path: ["status"] },
       updatedAt: { kind: "reference", scope: "event", path: ["occurredAt"] },
+    });
+  });
+
+  test("a declared key field lowers to the plan's key expression", () => {
+    expect(issueEvents.key).toBe("eventId");
+    expect(issueEvents.keyExpression).toEqual({
+      kind: "reference",
+      scope: "row",
+      path: ["eventId"],
+    });
+    const [sourceNode, reduceNode] = issues.plan.nodes;
+    expect(sourceNode?.kind === "source" && sourceNode.key).toEqual(issueEvents.keyExpression);
+    expect(reduceNode?.kind === "reduce-by-key" && reduceNode.key).toEqual({
+      kind: "reference",
+      scope: "row",
+      path: ["issueId"],
     });
   });
 
@@ -51,8 +67,27 @@ describe("the issue-tracker declaration", () => {
       "state",
       "state",
     ]);
-    expect(projects.key).toEqual({ kind: "reference", scope: "row", path: ["projectId"] });
+    expect(projects.key).toBe("projectId");
+    expect(projects.keyExpression).toEqual({
+      kind: "reference",
+      scope: "row",
+      path: ["projectId"],
+    });
     expect(new Set([projects.name, users.name, labels.name, workspaceMetadata.name]).size).toBe(4);
+  });
+
+  test("the catalog table is derived from the same declarations", () => {
+    const declarations = [
+      ["projects", projects],
+      ["users", users],
+      ["labels", labels],
+      ["metadata", workspaceMetadata],
+    ] as const;
+    for (const [name, declaration] of declarations) {
+      expect(declaration.collection.name).toBe(name);
+      expect(catalog[name].type).toBe(declaration.collection.type);
+      expect(catalog[name].primaryKey).toBe(declaration.key);
+    }
   });
 
   test("plan encoding is canonical, so an equal plan hashes equally", () => {
@@ -83,5 +118,17 @@ describe("the issue-tracker declaration", () => {
     });
     expect(boardIssues.fingerprint).toMatch(/^[0-9a-f]{8}$/);
     expect(boardIssues.from.name).toBe(projectBoard.name);
+  });
+
+  test("the sink's collection key is the key its relation declares", () => {
+    expect(projectBoard.key).toBe("issueId");
+    expect(boardIssues.key).toBe(projectBoard.key);
+    expect(boardIssues.collection).toEqual({
+      name: "issues",
+      type: "issue",
+      primaryKey: "issueId",
+    });
+    const keyNode = projectBoard.plan.nodes.find((node) => node.kind === "key");
+    expect(keyNode?.key).toEqual(projectBoard.keyExpression);
   });
 });

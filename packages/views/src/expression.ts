@@ -256,6 +256,34 @@ export const joinSelectors = <Left, Right>(): {
 export const parameterReference = <T>(name: string): TypedExpression<T> =>
   reference<T>("parameter", [name]);
 
+/**
+ * A declared row key: one field name, or an ordered tuple of field names.
+ *
+ * Declarations name key fields instead of building key expressions, so one
+ * declaration can drive the plan key expression, a catalog's primary-key
+ * metadata, and a sink's public collection metadata at once.
+ */
+export type DeclaredKey = string | readonly string[];
+
+/** The key fields a row type actually has. */
+export type KeyFieldsOf<Row> = (keyof Row & string) | readonly (keyof Row & string)[];
+
+/**
+ * Lower a declared key to its canonical row-scoped expression.
+ *
+ * One field lowers to the field reference. An ordered tuple lowers to the
+ * composite `key` operator, preserving the declared field order.
+ */
+export const keyExpression = (declared: DeclaredKey): Expression => {
+  const fields = [declared].flat();
+  return Array.isArray(declared)
+    ? variadic<readonly RowKeyValue[]>(
+        "key",
+        fields.map((field) => reference<RowKeyValue>("row", [field])),
+      )
+    : reference<unknown>("row", fields);
+};
+
 export const aggregate = Object.freeze({
   count: (): TypedAggregateExpression<number> =>
     Object.freeze({ kind: "aggregate", function: "count" }),

@@ -28,7 +28,7 @@ const fixtureSource = source("fixture", {
   schema: fixtureSchema,
   schemaRef: { name: "FixtureRow", version: 1 },
   partitionBy: x.row.id,
-  key: x.row.id,
+  key: "id",
   mode: "facts",
 });
 // @ts-expect-error filters require boolean expressions

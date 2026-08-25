@@ -23,7 +23,7 @@ const rows = source("example.rows", {
   schema: Row,
   schemaRef: { name: "example.Row", version: 1 },
   partitionBy: x.row.projectId,
-  key: x.row.id,
+  key: "id",
   mode: "facts",
 });
 
@@ -31,11 +31,10 @@ describe("relation compilation", () => {
   it("lowers filters, projections, keys and bounded top deterministically", () => {
     const declaration = view(
       "example.ranked",
-      { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: x.row.id },
+      { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: "id" },
       from(rows)
         .where(x.row.score.gt(0))
         .select({ id: x.row.id, projectId: x.row.projectId, score: x.row.score })
-        .keyBy(x.row.id)
         .top({ by: [x.row.score.desc(), x.row.id.asc()], limit: 10 }),
     );
     expect(declaration.plan.nodes.map((node) => node.kind)).toEqual([
@@ -57,11 +56,10 @@ describe("relation compilation", () => {
     expect(declaration.plan).toEqual(
       view(
         "example.ranked",
-        { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: x.row.id },
+        { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: "id" },
         from(rows)
           .where(x.row.score.gt(0))
           .select({ id: x.row.id, projectId: x.row.projectId, score: x.row.score })
-          .keyBy(x.row.id)
           .top({ by: [x.row.score.desc(), x.row.id.asc()], limit: 10 }),
       ).plan,
     );
@@ -73,17 +71,17 @@ describe("relation compilation", () => {
       schema: Row,
       schemaRef: { name: "example.Row", version: 1 },
       partitionBy: x.row.projectId,
-      key: x.row.id,
+      key: "id",
       mode: "state",
     });
     const factPlan = view(
       "example.source-mode",
-      { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: x.row.id },
+      { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: "id" },
       from(facts),
     ).plan;
     const statePlan = view(
       "example.source-mode",
-      { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: x.row.id },
+      { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: "id" },
       from(state),
     ).plan;
     expect(factPlan.version).toBe(3);
@@ -91,7 +89,7 @@ describe("relation compilation", () => {
     expect(statePlan.nodes[0]).toMatchObject({ mode: "state", key: x.row.id });
     expect(Object.isFrozen(statePlan.nodes[0])).toBe(true);
     expect(planHash(factPlan)).not.toBe(planHash(statePlan));
-    expect(() => from(state).reduceByKey({ key: x.row.id, reducer: {} as never })).toThrow(
+    expect(() => from(state).reduceByKey({ key: "id", reducer: {} as never })).toThrow(
       "fact source",
     );
   });
@@ -104,7 +102,7 @@ describe("relation compilation", () => {
       params: { projectId, limit },
       schema: Row,
       schemaRef: { name: "example.Row", version: 1 },
-      key: x.row.id,
+      key: "id",
       query: (params) =>
         from(rows)
           .where(x.row.projectId.eq(params.projectId))

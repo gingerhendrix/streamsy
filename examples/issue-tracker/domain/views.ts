@@ -30,7 +30,6 @@ import type {
   IssueEvent as IssueEventType,
   IssueLabelRow as IssueLabelRowType,
   IssueRow as IssueRowType,
-  LabelCountRow as LabelCountRowType,
   LabelRow as LabelRowType,
   ProjectBoardCard as ProjectBoardCardType,
   ProjectRow as ProjectRowType,
@@ -49,7 +48,7 @@ export const issueRows = source("issue-tracker.issues", {
   schema: IssueRow,
   schemaRef: { name: "issue-tracker.IssueRow", version: 1 },
   partitionBy: issue.row.workspaceId,
-  key: issue.row.issueId,
+  key: "issueId",
   mode: "state",
 });
 
@@ -57,7 +56,7 @@ export const projects = source("issue-tracker.projects", {
   schema: ProjectRow,
   schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
   partitionBy: project.row.workspaceId,
-  key: project.row.projectId,
+  key: "projectId",
   mode: "state",
 });
 
@@ -65,7 +64,7 @@ export const users = source("issue-tracker.users", {
   schema: UserRow,
   schemaRef: { name: "issue-tracker.UserRow", version: 1 },
   partitionBy: user.row.workspaceId,
-  key: user.row.userId,
+  key: "userId",
   mode: "state",
 });
 
@@ -73,7 +72,7 @@ export const labels = source("issue-tracker.labels", {
   schema: LabelRow,
   schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
   partitionBy: label.row.workspaceId,
-  key: label.row.labelId,
+  key: "labelId",
   mode: "state",
 });
 
@@ -81,7 +80,7 @@ export const issueLabels = source("issue-tracker.issue-labels", {
   schema: IssueLabelRow,
   schemaRef: { name: "issue-tracker.IssueLabelRow", version: 1 },
   partitionBy: issueLabel.row.issueId,
-  key: issueLabel.key(issueLabel.row.issueId, issueLabel.row.labelId),
+  key: ["issueId", "labelId"],
   mode: "state",
 });
 
@@ -89,7 +88,7 @@ export const issueActivity = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
   partitionBy: activity.row.workspaceId,
-  key: activity.row.eventId,
+  key: "eventId",
   mode: "facts",
 });
 
@@ -119,7 +118,7 @@ export const projectBoard = defineView({
   params: { projectId },
   schema: ProjectBoardCard,
   schemaRef: { name: "issue-tracker.ProjectBoardCard", version: 1 },
-  key: boardCard.row.issueId,
+  key: "issueId",
   query: (params) =>
     from(issueRows)
       .where(issue.row.projectId.eq(params.projectId))
@@ -140,7 +139,6 @@ export const projectBoard = defineView({
         assignee: board.row.assigneeId.orElse("unassigned"),
         updatedAt: board.row.updatedAt,
       })
-      .keyBy(boardCard.row.issueId)
       .top({
         by: [boardCard.row.updatedAt.desc(), boardCard.row.issueId.asc()],
         partitionBy: [boardCard.row.status],
@@ -158,7 +156,7 @@ export const assigneeQueue = defineView({
   params: { assigneeId },
   schema: AssigneeQueueRow,
   schemaRef: { name: "issue-tracker.AssigneeQueueRow", version: 1 },
-  key: queueRow.row.issueId,
+  key: "issueId",
   query: (params) =>
     from(issueRows)
       .where(issue.row.assigneeId.isPresent())
@@ -175,7 +173,6 @@ export const assigneeQueue = defineView({
         status: queue.row.status,
         updatedAt: queue.row.updatedAt,
       })
-      .keyBy(queueRow.row.issueId)
       .top({ by: [queueRow.row.updatedAt.desc(), queueRow.row.issueId.asc()], limit: 100 }),
 });
 
@@ -184,14 +181,13 @@ type MembershipWithIssue = IssueLabelRowType & { readonly issue: IssueRowType };
 const membershipLabel = joinSelectors<MembershipWithIssue, LabelRowType>();
 type LabelJoined = MembershipWithIssue & { readonly label: LabelRowType };
 const labelJoined = selectors<LabelJoined>();
-const labelCount = selectors<LabelCountRowType>();
 
 export const labelCounts = defineView({
   name: "issue-tracker.label-counts",
   params: { projectId },
   schema: LabelCountRow,
   schemaRef: { name: "issue-tracker.LabelCountRow", version: 1 },
-  key: labelCount.row.labelId,
+  key: "labelId",
   query: (params) =>
     from(issueLabels)
       .join(issueRows, {
@@ -207,8 +203,7 @@ export const labelCounts = defineView({
         labelId: labelJoined.row.label.labelId,
         labelName: labelJoined.row.label.name,
       })
-      .aggregate({ issueCount: aggregate.count() })
-      .keyBy(labelCount.row.labelId),
+      .aggregate({ issueCount: aggregate.count() }),
 });
 
 const recent = selectors<RecentActivityRowType>();
@@ -218,7 +213,7 @@ export const recentActivity = defineView({
   params: { workspaceId, limit: activityLimit },
   schema: RecentActivityRow,
   schemaRef: { name: "issue-tracker.RecentActivityRow", version: 1 },
-  key: recent.row.eventId,
+  key: "eventId",
   query: (params) =>
     from(issueActivity)
       .where(activity.row.workspaceId.eq(params.workspaceId))
@@ -230,7 +225,6 @@ export const recentActivity = defineView({
         sequence: activity.row.sequence,
         occurredAt: activity.row.occurredAt,
       })
-      .keyBy(recent.row.eventId)
       .top({ by: [recent.row.sequence.desc(), recent.row.eventId.asc()], limit: params.limit }),
 });
 

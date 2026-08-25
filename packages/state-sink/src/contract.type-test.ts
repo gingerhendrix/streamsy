@@ -3,12 +3,11 @@ import { defineStateSink, type KeyOf, type ParamsOf, type RowOf } from "./index.
 
 const checked = defineStateSink({
   name: "type.fixture",
-  from: {},
+  from: { key: "id" },
   row: { decode: (_value: unknown) => ({ id: "id", label: "label" }) },
-  key: "id",
   route: "/state/:workspaceId/rows",
   params: { workspaceId: { decode: (value: string) => value } },
-  collection: { name: "rows", type: "row", primaryKey: "id" },
+  collection: { name: "rows", type: "row" },
   protocol: {
     sessionVersion: 1,
     durableStateVersion: 1,
@@ -33,7 +32,34 @@ void badKey;
 
 // @ts-expect-error the checked route and parameter codec names must match exactly
 defineStateSink({
-  ...checked,
+  name: "type.fixture.route",
+  from: { key: "id" },
+  row: { decode: (_value: unknown) => ({ id: "id", label: "label" }) },
   route: "/state/:workspaceId/rows",
   params: { workspace: { decode: (value: string) => value } },
+  collection: { name: "rows", type: "row" },
+  protocol: {
+    sessionVersion: 1,
+    durableStateVersion: 1,
+    transport: "durable-state",
+    resume: true,
+    fallback: "snapshot-then-live",
+  },
+});
+
+defineStateSink({
+  name: "type.fixture.key",
+  // @ts-expect-error the relation must declare a key that is a field of the sink's row
+  from: { key: "missing" },
+  row: { decode: (_value: unknown) => ({ id: "id", label: "label" }) },
+  route: "/state/:workspaceId/rows",
+  params: { workspaceId: { decode: (value: string) => value } },
+  collection: { name: "rows", type: "row" },
+  protocol: {
+    sessionVersion: 1,
+    durableStateVersion: 1,
+    transport: "durable-state",
+    resume: true,
+    fallback: "snapshot-then-live",
+  },
 });

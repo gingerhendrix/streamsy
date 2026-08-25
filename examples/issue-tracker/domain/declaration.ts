@@ -11,66 +11,25 @@ import { defineStateSink, STATE_SINK_ERROR_TAGS } from "@streamsy/state-sink";
 import { decodeIdentifier, decodeProjectBoardCard, IssueEvent, IssueRow } from "./issue.ts";
 import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
 import { from, reducer, selectors, source, view } from "@streamsy/views";
-import {
-  LabelRow,
-  ProjectRow,
-  UserRow,
-  WorkspaceMetadataRow,
-  type LabelRow as LabelRowType,
-  type ProjectRow as ProjectRowType,
-  type UserRow as UserRowType,
-  type WorkspaceMetadataRow as WorkspaceMetadataRowType,
-} from "./catalog.ts";
 import { projectBoard } from "./views.ts";
+
+/**
+ * The four Durable State catalog sources are declared beside their row schemas
+ * in `catalog.ts`, because one declaration there drives both their plan keys
+ * and the host's schema/type/primary-key table. They are re-exported so this
+ * module stays the whole declaration surface.
+ */
+export { labels, projects, users, workspaceMetadata } from "./catalog.ts";
 
 /** Selectors over one canonical fact, the fold state, and the maintained row. */
 const x = selectors<IssueEventType, IssueEventType, IssueRowType>();
-/** Selectors over the maintained relation's own rows. */
-const out = selectors<IssueRowType>();
 
 export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
   partitionBy: x.row.workspaceId,
-  key: x.row.eventId,
+  key: "eventId",
   mode: "facts",
-});
-
-const project = selectors<ProjectRowType>();
-const user = selectors<UserRowType>();
-const label = selectors<LabelRowType>();
-const workspace = selectors<WorkspaceMetadataRowType>();
-
-export const projects = source("issue-tracker.projects", {
-  schema: ProjectRow,
-  schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
-  partitionBy: project.row.workspaceId,
-  key: project.row.projectId,
-  mode: "state",
-});
-
-export const users = source("issue-tracker.users", {
-  schema: UserRow,
-  schemaRef: { name: "issue-tracker.UserRow", version: 1 },
-  partitionBy: user.row.workspaceId,
-  key: user.row.userId,
-  mode: "state",
-});
-
-export const labels = source("issue-tracker.labels", {
-  schema: LabelRow,
-  schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
-  partitionBy: label.row.workspaceId,
-  key: label.row.labelId,
-  mode: "state",
-});
-
-export const workspaceMetadata = source("issue-tracker.workspace-metadata", {
-  schema: WorkspaceMetadataRow,
-  schemaRef: { name: "issue-tracker.WorkspaceMetadataRow", version: 1 },
-  partitionBy: workspace.row.workspaceId,
-  key: workspace.row.workspaceId,
-  mode: "state",
 });
 
 export const issueLifecycle = reducer(
@@ -102,10 +61,10 @@ export const issues = view(
   {
     schema: IssueRow,
     schemaRef: { name: "issue-tracker.IssueRow", version: 1 },
-    key: out.row.issueId,
+    key: "issueId",
   },
   from(issueEvents).reduceByKey({
-    key: x.row.issueId,
+    key: "issueId",
     reducer: issueLifecycle,
   }),
 );
@@ -114,10 +73,9 @@ export const boardIssues = defineStateSink({
   name: "issue-tracker.board-issues",
   from: projectBoard,
   row: { decode: decodeProjectBoardCard },
-  key: "issueId",
   route: "/state/workspaces/:workspaceId/issues",
   params: { workspaceId: { decode: decodeIdentifier } },
-  collection: { name: "issues", type: "issue", primaryKey: "issueId" },
+  collection: { name: "issues", type: "issue" },
   protocol: {
     sessionVersion: 1,
     durableStateVersion: 1,
