@@ -65,6 +65,7 @@
         "@streamsy/storage-sqlite": "workspace:*",
         "@streamsy/tanstack-db": "workspace:*",
         "@streamsy/views": "workspace:*",
+        "@streamsy/views-engine": "workspace:*",
         "@streamsy/views-ir": "workspace:*",
         "@streamsy/views-store": "workspace:*",
         "@tanstack/db": "0.6.8",
@@ -352,6 +353,7 @@
     "@durable-streams/client": "^0.2.6",
     "@effect/platform-node": "4.0.0-rc.109",
     "@tanstack/db": "0.6.8",
+    "@tanstack/react-db": "0.1.83",
     "effect": "4.0.0-rc.109",
   },
   "catalog": {
@@ -1004,7 +1006,7 @@
 
     "@tanstack/pacer-lite": ["@tanstack/pacer-lite@0.2.2", "", {}, "sha512-eQ1MyLKCHyXiH7NbdmB80W77OhiMgGBUb+qDx/8WMGbwg5Lf/NlfD0TfNYAqY77i8V3AxoDoYdICrQE5ADw4Yw=="],
 
-    "@tanstack/react-db": ["@tanstack/react-db@0.1.96", "", { "dependencies": { "@tanstack/db": "0.7.0", "use-sync-external-store": "^1.6.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-NIjRiFH9KqNnWRtixFal22KA+9b2ktBxI7TbW7xIVa2/sKOHSxFcPAkz6HEC3V7O9PfDTh3j8aezj02CxjHrLw=="],
+    "@tanstack/react-db": ["@tanstack/react-db@0.1.83", "", { "dependencies": { "@tanstack/db": "0.6.5", "use-sync-external-store": "^1.6.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-LNV0C7OARazooT2hLTr5anXo6tbEyX2rHZQ0j9HZ/iNBI+Tx/y19o5Nd3ooyAYz5LEHJJxb8iM8ZTVB/diGnXw=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg=="],
 

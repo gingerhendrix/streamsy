@@ -231,3 +231,11 @@ export const recentActivity = defineView({
 });
 
 export const a1Views = Object.freeze([projectBoard, assigneeQueue, labelCounts, recentActivity]);
+
+/** The Integration 1 host registry: these checked declarations are executable A2 plans. */
+export const executableViews = Object.freeze({
+  projectBoard,
+  assigneeQueue,
+  labelCounts,
+  recentActivity,
+});

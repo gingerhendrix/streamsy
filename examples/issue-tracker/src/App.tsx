@@ -127,24 +127,50 @@ function Board(props: {
         </p>
       )}
 
-      <div className="columns">
-        {BOARD_COLUMNS.map((column) => (
-          <Column
-            key={column.status}
-            label={column.label}
-            status={column.status}
-            rows={rows.filter((row) => row.status === column.status)}
-            busy={busy}
-            onMove={(issueId, next) =>
-              run(() =>
-                changeStatus(props.workspaceId, issueId, {
-                  commandId: newCommandId("move"),
-                  status: next,
-                }),
-              )
-            }
-          />
-        ))}
+      <div className="board-layout">
+        <aside className="sidebar" aria-label="Board counts">
+          <h2>Board counts</h2>
+          <dl>
+            {BOARD_COLUMNS.map((column) => (
+              <div key={column.status}>
+                <dt>{column.label}</dt>
+                <dd data-count-status={column.status}>
+                  {rows.filter((row) => row.status === column.status).length}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <h2>Projects</h2>
+          <dl>
+            {[...new Set(rows.map((row) => row.projectId))].toSorted().map((projectId) => (
+              <div key={projectId}>
+                <dt>{projectId}</dt>
+                <dd data-count-project={projectId}>
+                  {rows.filter((row) => row.projectId === projectId).length}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </aside>
+        <div className="columns">
+          {BOARD_COLUMNS.map((column) => (
+            <Column
+              key={column.status}
+              label={column.label}
+              status={column.status}
+              rows={rows.filter((row) => row.status === column.status)}
+              busy={busy}
+              onMove={(issueId, next) =>
+                run(() =>
+                  changeStatus(props.workspaceId, issueId, {
+                    commandId: newCommandId("move"),
+                    status: next,
+                  }),
+                )
+              }
+            />
+          ))}
+        </div>
       </div>
     </main>
   );
@@ -166,6 +192,12 @@ function Column(props: {
         {props.rows.map((row) => (
           <li key={row.issueId} className="card" data-issue={row.issueId}>
             <p className="title">{row.title}</p>
+            <p className="metadata">
+              <span data-project={row.projectId}>{row.projectId}</span>
+              <span data-assignee={row.assigneeId ?? "unassigned"}>
+                {row.assigneeId ?? "Unassigned"}
+              </span>
+            </p>
             <label>
               <span className="visually-hidden">Status for {row.title}</span>
               <select

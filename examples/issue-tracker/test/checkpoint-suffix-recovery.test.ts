@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Effect } from "effect";
+import { planHash } from "@streamsy/views";
+import type { JsonObject } from "@streamsy/views-ir";
 import { recover, type JsonValue } from "@streamsy/views-store";
 import { migrateViewStore, sqliteService } from "@streamsy/views-store/sqlite";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueEvent, type IssueRow } from "../domain/issue.ts";
-import type { JsonObject } from "../views/contracts.ts";
 import { maintain } from "../views/engine.ts";
-import { planHash } from "../views/plan.ts";
 
 const created: IssueEvent = {
   type: "IssueCreated",
