@@ -286,6 +286,17 @@
         "vitest": "^4.0.16",
       },
     },
+    "packages/views-engine": {
+      "name": "@streamsy/views-engine",
+      "version": "0.2.1",
+      "dependencies": {
+        "@streamsy/views-ir": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "packages/views-ir": {
       "name": "@streamsy/views-ir",
       "version": "0.2.1",
@@ -1058,6 +1069,8 @@
     "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
 
     "@streamsy/views": ["@streamsy/views@workspace:packages/views"],
+
+    "@streamsy/views-engine": ["@streamsy/views-engine@workspace:packages/views-engine"],
 
     "@streamsy/views-ir": ["@streamsy/views-ir@workspace:packages/views-ir"],
 
