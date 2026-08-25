@@ -1,0 +1,42 @@
+{
+  "name": "@streamsy/tanstack-db",
+  "version": "0.1.0",
+  "description": "Browser-safe Durable State and TanStack DB bindings for checked Streamsy sinks.",
+  "license": "MIT",
+  "bin": {
+    "streamsy-state-sink": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./codegen": {
+      "types": "./dist/codegen.d.ts",
+      "import": "./dist/codegen.js",
+      "default": "./dist/codegen.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts src/codegen.ts src/cli.ts --format esm --dts --out-dir dist --clean --external @durable-streams/client --external @durable-streams/state --external @durable-streams/state/db --external @streamsy/state-sink",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test src",
+    "generate:check": "bun test src/codegen.test.ts"
+  },
+  "dependencies": {
+    "@durable-streams/client": "^0.2.6",
+    "@durable-streams/state": "^0.3.1",
+    "@streamsy/state-sink": "workspace:*",
+    "@tanstack/db": "0.6.8"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:"
+  }
+}
