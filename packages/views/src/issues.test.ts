@@ -13,13 +13,14 @@ const source = (id = "source", sourceId = id): RelationNode => ({
   sourceId,
   schema,
   partitionBy: reference,
-  mode: { kind: "facts", key: reference, order: reference },
+  key: reference,
+  mode: "facts",
 });
 const plan = (
   nodes: readonly RelationNode[],
   output = nodes.at(-1)?.id ?? "missing",
 ): RelationPlan => ({
-  version: 2,
+  version: 3,
   name: "fixture",
   nodes,
   output,

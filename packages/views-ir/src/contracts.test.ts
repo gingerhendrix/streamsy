@@ -65,7 +65,7 @@ describe("views IR contracts", () => {
     const ref = { kind: "reference", scope: "row", path: ["id"] } as const;
     const schema = { name: "example.Row", version: 1 } as const;
     const plan: RelationPlan = {
-      version: 2,
+      version: 3,
       name: "example.view",
       parameters: { limit: { schema: { name: "example.Limit", version: 1 }, maximum: 20 } },
       nodes: [
@@ -75,7 +75,8 @@ describe("views IR contracts", () => {
           schema,
           sourceId: "source",
           partitionBy: ref,
-          mode: { kind: "facts", key: ref, order: ref },
+          key: ref,
+          mode: "facts",
         },
         {
           kind: "project",

@@ -1,10 +1,9 @@
 /**
  * The engine is a pure function, so it is tested as one.
  *
- * The properties under test are the ones recovery rests on: the same suffix in
- * a different arrival order converges on the same rows, a no-op fold emits no
- * change, and a fold that cannot produce a declared row fails typed instead of
- * writing a partial one.
+ * The properties under test are the ones recovery rests on: durable stream
+ * order determines a fold, a no-op fold emits no change, and a fold that cannot
+ * produce a declared row fails typed instead of writing a partial one.
  */
 import { describe, expect, test } from "bun:test";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
@@ -77,11 +76,12 @@ describe("maintain", () => {
     expect(third.changes).toHaveLength(0);
   });
 
-  test("the declared source order decides the result, not arrival order", () => {
+  test("durable stream arrival order decides the result", () => {
     const facts = [created("a", 0), moved("a", 1, "todo"), moved("a", 2, "done")];
     const forwards = run(facts);
-    const backwards = run([...facts].reverse());
-    expect(backwards.rows.get("a")).toEqual(forwards.rows.get("a"));
+    const outOfSequence = run([facts[0]!, facts[2]!, facts[1]!]);
+    expect(forwards.rows.get("a")?.status).toBe("done");
+    expect(outOfSequence.rows.get("a")?.status).toBe("todo");
   });
 
   test("independent keys are maintained independently", () => {

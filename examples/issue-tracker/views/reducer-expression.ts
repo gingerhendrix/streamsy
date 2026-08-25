@@ -60,15 +60,6 @@ export function evaluateKey(expression: Expression, scopes: Scopes): string {
   return value;
 }
 
-export function evaluateOrder(expression: Expression, scopes: Scopes): number {
-  const value = evaluate(expression, scopes);
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JsonValue is already parsed; source ordering deliberately accepts only its finite-number arm.
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new ExpressionEvaluationError(expression, "a source order must be a finite number");
-  }
-  return value;
-}
-
 function describe(value: JsonValue): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "an array";

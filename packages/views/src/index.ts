@@ -11,13 +11,11 @@ export type {
 export {
   compilePlan,
   defineView,
-  factSourceMode,
   from,
   parameter,
   reducer,
   scope,
   source,
-  stateSourceMode,
   stateSink,
   view,
 } from "./relation.ts";

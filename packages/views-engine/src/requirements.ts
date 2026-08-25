@@ -105,10 +105,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
 
   switch (node.kind) {
     case "source":
-      inputFields[node.sourceId] = fields(
-        [node.mode.key, ...(node.mode.kind === "facts" ? [node.mode.order] : []), node.partitionBy],
-        "row",
-      );
+      inputFields[node.sourceId] = fields([node.key, node.partitionBy], "row");
       break;
     case "filter":
       inputFields[node.input] = fields([node.predicate], "row");
@@ -154,7 +151,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
       orderedOutput = true;
       break;
     case "reduce-by-key":
-      inputFields[node.input] = fields([node.key, node.order], "row");
+      inputFields[node.input] = fields([node.key], "row");
       intrinsicState = "accumulators";
       break;
   }

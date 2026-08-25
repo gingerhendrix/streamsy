@@ -37,8 +37,7 @@ describe("the issue-tracker declaration", () => {
   });
 
   test("selectors compile to inspectable reference expressions", () => {
-    expect(issueEvents.mode.key).toEqual({ kind: "reference", scope: "row", path: ["eventId"] });
-    expect(issueEvents.mode.order).toEqual({ kind: "reference", scope: "row", path: ["sequence"] });
+    expect(issueEvents.key).toEqual({ kind: "reference", scope: "row", path: ["eventId"] });
     expect(issueLifecycle.evolve["IssueStatusChanged"]).toEqual({
       status: { kind: "reference", scope: "event", path: ["status"] },
       updatedAt: { kind: "reference", scope: "event", path: ["occurredAt"] },
@@ -46,17 +45,13 @@ describe("the issue-tracker declaration", () => {
   });
 
   test("catalog sources declare independent State modes", () => {
-    expect([projects, users, labels, workspaceMetadata].map((source) => source.mode.kind)).toEqual([
+    expect([projects, users, labels, workspaceMetadata].map((source) => source.mode)).toEqual([
       "state",
       "state",
       "state",
       "state",
     ]);
-    expect(projects.mode.operation).toEqual({
-      path: ["headers", "operation"],
-      upsert: ["insert", "update", "upsert"],
-      delete: "delete",
-    });
+    expect(projects.key).toEqual({ kind: "reference", scope: "row", path: ["projectId"] });
     expect(new Set([projects.name, users.name, labels.name, workspaceMetadata.name]).size).toBe(4);
   });
 
@@ -67,7 +62,7 @@ describe("the issue-tracker declaration", () => {
   });
 
   test("preserves the accepted Slice 1 canonical plan and hash", () => {
-    expect(planHash(issues.plan)).toBe("08119a76");
+    expect(planHash(issues.plan)).toBe("8e6c39ef");
     expect(encodePlan(issues.plan)).toContain('"output":"issue-tracker.issues"');
   });
 

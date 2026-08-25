@@ -26,18 +26,11 @@ const source = (id: string): RelationNode => ({
   sourceId: id,
   schema,
   partitionBy: ref("row", "workspaceId"),
-  mode: {
-    kind: "state",
-    key: ref("row", "id"),
-    operation: {
-      path: ["headers", "operation"],
-      upsert: ["insert", "update", "upsert"],
-      delete: "delete",
-    },
-  },
+  key: ref("row", "id"),
+  mode: "state",
 });
 const makePlan = (name: string, nodes: readonly RelationNode[], output: string): RelationPlan => ({
-  version: 2,
+  version: 3,
   name,
   nodes,
   output,

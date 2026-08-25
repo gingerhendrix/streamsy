@@ -1,12 +1,5 @@
 import type { Schema } from "effect";
-import {
-  factSourceMode,
-  from,
-  parameter,
-  selectors,
-  source,
-  type TypedExpression,
-} from "./index.ts";
+import { from, parameter, selectors, source, type TypedExpression } from "./index.ts";
 
 interface FixtureRow {
   readonly id: string;
@@ -35,7 +28,8 @@ const fixtureSource = source("fixture", {
   schema: fixtureSchema,
   schemaRef: { name: "FixtureRow", version: 1 },
   partitionBy: x.row.id,
-  mode: factSourceMode(x.row.id, x.row.count),
+  key: x.row.id,
+  mode: "facts",
 });
 // @ts-expect-error filters require boolean expressions
 from(fixtureSource).where(x.row.count);

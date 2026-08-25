@@ -5,13 +5,11 @@
 import {
   aggregate,
   defineView,
-  factSourceMode,
   from,
   joinSelectors,
   parameter,
   selectors,
   source,
-  stateSourceMode,
 } from "@streamsy/views";
 import {
   AssigneeQueueRow,
@@ -51,42 +49,48 @@ export const issueRows = source("issue-tracker.issues", {
   schema: IssueRow,
   schemaRef: { name: "issue-tracker.IssueRow", version: 1 },
   partitionBy: issue.row.workspaceId,
-  mode: stateSourceMode(issue.row.issueId),
+  key: issue.row.issueId,
+  mode: "state",
 });
 
 export const projects = source("issue-tracker.projects", {
   schema: ProjectRow,
   schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
   partitionBy: project.row.workspaceId,
-  mode: stateSourceMode(project.row.projectId),
+  key: project.row.projectId,
+  mode: "state",
 });
 
 export const users = source("issue-tracker.users", {
   schema: UserRow,
   schemaRef: { name: "issue-tracker.UserRow", version: 1 },
   partitionBy: user.row.workspaceId,
-  mode: stateSourceMode(user.row.userId),
+  key: user.row.userId,
+  mode: "state",
 });
 
 export const labels = source("issue-tracker.labels", {
   schema: LabelRow,
   schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
   partitionBy: label.row.workspaceId,
-  mode: stateSourceMode(label.row.labelId),
+  key: label.row.labelId,
+  mode: "state",
 });
 
 export const issueLabels = source("issue-tracker.issue-labels", {
   schema: IssueLabelRow,
   schemaRef: { name: "issue-tracker.IssueLabelRow", version: 1 },
   partitionBy: issueLabel.row.issueId,
-  mode: stateSourceMode(issueLabel.key(issueLabel.row.issueId, issueLabel.row.labelId)),
+  key: issueLabel.key(issueLabel.row.issueId, issueLabel.row.labelId),
+  mode: "state",
 });
 
 export const issueActivity = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
   partitionBy: activity.row.workspaceId,
-  mode: factSourceMode(activity.row.eventId, activity.row.sequence),
+  key: activity.row.eventId,
+  mode: "facts",
 });
 
 const projectId = parameter("projectId", Identifier, {

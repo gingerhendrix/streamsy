@@ -25,15 +25,8 @@ const source = (id: string): RelationNode => ({
   sourceId: id,
   schema,
   partitionBy: ref("row", "projectId"),
-  mode: {
-    kind: "state",
-    key: ref("row", "id"),
-    operation: {
-      path: ["headers", "operation"],
-      upsert: ["insert", "update", "upsert"],
-      delete: "delete",
-    },
-  },
+  key: ref("row", "id"),
+  mode: "state",
 });
 const factSource = (id: string): RelationNode => ({
   kind: "source",
@@ -41,10 +34,11 @@ const factSource = (id: string): RelationNode => ({
   sourceId: id,
   schema,
   partitionBy: ref("row", "workspaceId"),
-  mode: { kind: "facts", key: ref("row", "id"), order: ref("row", "sequence") },
+  key: ref("row", "id"),
+  mode: "facts",
 });
 const plan = (name: string, nodes: readonly RelationNode[], output: string): RelationPlan => ({
-  version: 2,
+  version: 3,
   name,
   nodes,
   output,
@@ -166,10 +160,10 @@ describe("stateless transformations and graph routing", () => {
         plan: statePlan,
         inputs: [{ sourceId: "issues", changes: [change("wrong", undefined, row)] }],
       }),
-    ).toThrow(/source mode key expression/);
+    ).toThrow(/source key expression/);
     expect(() =>
       fullRecompute({ plan: statePlan, sources: { issues: [{ key: "wrong", row }] } }),
-    ).toThrow(/source mode key expression/);
+    ).toThrow(/source key expression/);
 
     const facts = plan(
       "fact-source",
@@ -185,11 +179,7 @@ describe("stateless transformations and graph routing", () => {
       ],
       "fact-output",
     );
-    expect(planRequirements(facts)[0]?.inputFields["events"]).toEqual([
-      "id",
-      "sequence",
-      "workspaceId",
-    ]);
+    expect(planRequirements(facts)[0]?.inputFields["events"]).toEqual(["id", "workspaceId"]);
   });
 
   it("wraps projection decode faults with the node, key, and phase", () => {

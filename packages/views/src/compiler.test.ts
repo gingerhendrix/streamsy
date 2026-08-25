@@ -11,8 +11,6 @@ import {
   planHash,
   selectors,
   source,
-  factSourceMode,
-  stateSourceMode,
   view,
 } from "./index.ts";
 
@@ -25,7 +23,8 @@ const rows = source("example.rows", {
   schema: Row,
   schemaRef: { name: "example.Row", version: 1 },
   partitionBy: x.row.projectId,
-  mode: factSourceMode(x.row.id, x.row.score),
+  key: x.row.id,
+  mode: "facts",
 });
 
 describe("relation compilation", () => {
@@ -74,7 +73,8 @@ describe("relation compilation", () => {
       schema: Row,
       schemaRef: { name: "example.Row", version: 1 },
       partitionBy: x.row.projectId,
-      mode: stateSourceMode(x.row.id),
+      key: x.row.id,
+      mode: "state",
     });
     const factPlan = view(
       "example.source-mode",
@@ -86,23 +86,14 @@ describe("relation compilation", () => {
       { schema: Row, schemaRef: { name: "example.Row", version: 1 }, key: x.row.id },
       from(state),
     ).plan;
-    expect(factPlan.version).toBe(2);
-    expect(factPlan.nodes[0]).toMatchObject({ mode: { kind: "facts" } });
-    expect(statePlan.nodes[0]).toMatchObject({
-      mode: {
-        kind: "state",
-        operation: {
-          path: ["headers", "operation"],
-          upsert: ["insert", "update", "upsert"],
-          delete: "delete",
-        },
-      },
-    });
+    expect(factPlan.version).toBe(3);
+    expect(factPlan.nodes[0]).toMatchObject({ mode: "facts", key: x.row.id });
+    expect(statePlan.nodes[0]).toMatchObject({ mode: "state", key: x.row.id });
     expect(Object.isFrozen(statePlan.nodes[0])).toBe(true);
     expect(planHash(factPlan)).not.toBe(planHash(statePlan));
-    expect(() =>
-      from(state).reduceByKey({ key: x.row.id, order: x.row.score, reducer: {} as never }),
-    ).toThrow("fact source");
+    expect(() => from(state).reduceByKey({ key: x.row.id, reducer: {} as never })).toThrow(
+      "fact source",
+    );
   });
 
   it("records parameter metadata and enforced top bounds", async () => {
@@ -133,7 +124,7 @@ describe("relation compilation", () => {
 describe("checking and canonical identity", () => {
   const schema = { name: "example.Row", version: 1 } as const;
   const raw = (overrides: Partial<RelationPlan> = {}): RelationPlan => ({
-    version: 2,
+    version: 3,
     name: "bad",
     nodes: [
       {
@@ -142,11 +133,8 @@ describe("checking and canonical identity", () => {
         schema,
         sourceId: "rows",
         partitionBy: { kind: "reference", scope: "row", path: ["projectId"] },
-        mode: {
-          kind: "facts",
-          key: { kind: "reference", scope: "row", path: ["id"] },
-          order: { kind: "reference", scope: "row", path: ["score"] },
-        },
+        key: { kind: "reference", scope: "row", path: ["id"] },
+        mode: "facts",
       },
       {
         kind: "top-n",
@@ -188,7 +176,7 @@ describe("checking and canonical identity", () => {
       output: first.output,
       nodes: first.nodes,
       name: first.name,
-      version: 2,
+      version: 3,
     } as RelationPlan;
     expect(encodePlan(first)).toBe(encodePlan(reordered));
     expect(planHash(first)).toBe(planHash(reordered));

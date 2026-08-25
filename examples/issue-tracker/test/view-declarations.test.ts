@@ -20,10 +20,10 @@ describe("the four inert A1 proof declarations", () => {
       expect(checked.hash).toBe(planHash(declaration.plan));
     }
     expect(hashes).toEqual({
-      "issue-tracker.project-board": "f43ff233",
-      "issue-tracker.assignee-queue": "3be3347a",
-      "issue-tracker.label-counts": "237f20bd",
-      "issue-tracker.recent-activity": "ee7cffc2",
+      "issue-tracker.project-board": "edca38c1",
+      "issue-tracker.assignee-queue": "96aad5c3",
+      "issue-tracker.label-counts": "af99679b",
+      "issue-tracker.recent-activity": "428ac64e",
     });
   });
 
@@ -79,7 +79,8 @@ describe("the four inert A1 proof declarations", () => {
       (node) => node.kind === "source" && node.sourceId === "issue-tracker.issue-labels",
     );
     expect(source).toMatchObject({
-      mode: { kind: "state", key: { kind: "variadic", operator: "key" } },
+      mode: "state",
+      key: { kind: "variadic", operator: "key" },
     });
     expect(labelCounts.plan.nodes.filter((node) => node.kind === "inner-join")).toHaveLength(2);
     expect(labelCounts.plan.nodes.find((node) => node.kind === "grouped-aggregate")).toMatchObject({

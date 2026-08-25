@@ -13,12 +13,12 @@
  */
 import type { Change, Expression, JsonObject, JsonValue, RelationPlan } from "@streamsy/views-ir";
 import type { ReducerDeclaration } from "@streamsy/views";
-import { evaluate, evaluateKey, evaluateOrder } from "./reducer-expression.ts";
+import { evaluate, evaluateKey } from "./reducer-expression.ts";
 
 /** A source item that the reducer cannot fold. Always a declaration or data bug. */
 export class ReducerFault extends TypeError {
   constructor(
-    readonly phase: "key" | "order" | "branch" | "evolve" | "decode",
+    readonly phase: "key" | "branch" | "evolve" | "decode",
     readonly sourceKey: string,
     cause: unknown,
   ) {
@@ -60,11 +60,12 @@ export function maintain<Row>(input: MaintainInput<Row>): MaintainResult<Row> {
     throw new TypeError(`plan ${input.plan.name} has no reduce-by-key output`);
   }
 
-  const ordered = sortBySourceOrder(node.order, input.items);
   const before = new Map<string, Row | undefined>();
   const after = new Map<string, Row>();
 
-  for (const item of ordered) {
+  // Fact reducers follow durable stream arrival order. Producers that require
+  // a domain order must append facts in that order.
+  for (const item of input.items) {
     const key = keyOf(node.key, item);
     if (!before.has(key)) before.set(key, input.current.get(key));
     const previous = after.get(key) ?? input.current.get(key);
@@ -131,31 +132,11 @@ function fold<Row>(
   }
 }
 
-/**
- * Sort by the declared source order.
- *
- * The sort is stable and `items` arrive in durable stream order, so two facts
- * that declare the same `sequence` keep the order the log already fixed. That
- * makes a replay of the same suffix converge on the same rows without the
- * declaration having to invent a second tie-breaker.
- */
-function sortBySourceOrder(order: Expression, items: readonly JsonObject[]): readonly JsonObject[] {
-  return [...items].sort((left, right) => orderOf(order, left) - orderOf(order, right));
-}
-
 function keyOf(expression: Expression, item: JsonObject): string {
   try {
     return evaluateKey(expression, { row: item, event: item });
   } catch (cause) {
     throw new ReducerFault("key", JSON.stringify(item).slice(0, 120), cause);
-  }
-}
-
-function orderOf(expression: Expression, item: JsonObject): number {
-  try {
-    return evaluateOrder(expression, { row: item, event: item });
-  } catch (cause) {
-    throw new ReducerFault("order", JSON.stringify(item).slice(0, 120), cause);
   }
 }
 

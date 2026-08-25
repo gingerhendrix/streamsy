@@ -10,15 +10,7 @@
 import { defineStateSink, STATE_SINK_ERROR_TAGS } from "@streamsy/state-sink";
 import { decodeIdentifier, decodeProjectBoardCard, IssueEvent, IssueRow } from "./issue.ts";
 import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
-import {
-  factSourceMode,
-  from,
-  reducer,
-  selectors,
-  source,
-  stateSourceMode,
-  view,
-} from "@streamsy/views";
+import { from, reducer, selectors, source, view } from "@streamsy/views";
 import {
   LabelRow,
   ProjectRow,
@@ -40,7 +32,8 @@ export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   schemaRef: { name: "issue-tracker.IssueEvent", version: 1 },
   partitionBy: x.row.workspaceId,
-  mode: factSourceMode(x.row.eventId, x.row.sequence),
+  key: x.row.eventId,
+  mode: "facts",
 });
 
 const project = selectors<ProjectRowType>();
@@ -52,28 +45,32 @@ export const projects = source("issue-tracker.projects", {
   schema: ProjectRow,
   schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
   partitionBy: project.row.workspaceId,
-  mode: stateSourceMode(project.row.projectId),
+  key: project.row.projectId,
+  mode: "state",
 });
 
 export const users = source("issue-tracker.users", {
   schema: UserRow,
   schemaRef: { name: "issue-tracker.UserRow", version: 1 },
   partitionBy: user.row.workspaceId,
-  mode: stateSourceMode(user.row.userId),
+  key: user.row.userId,
+  mode: "state",
 });
 
 export const labels = source("issue-tracker.labels", {
   schema: LabelRow,
   schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
   partitionBy: label.row.workspaceId,
-  mode: stateSourceMode(label.row.labelId),
+  key: label.row.labelId,
+  mode: "state",
 });
 
 export const workspaceMetadata = source("issue-tracker.workspace-metadata", {
   schema: WorkspaceMetadataRow,
   schemaRef: { name: "issue-tracker.WorkspaceMetadataRow", version: 1 },
   partitionBy: workspace.row.workspaceId,
-  mode: stateSourceMode(workspace.row.workspaceId),
+  key: workspace.row.workspaceId,
+  mode: "state",
 });
 
 export const issueLifecycle = reducer(
@@ -109,7 +106,6 @@ export const issues = view(
   },
   from(issueEvents).reduceByKey({
     key: x.row.issueId,
-    order: x.row.sequence,
     reducer: issueLifecycle,
   }),
 );

@@ -39,7 +39,7 @@ export function fullRecompute(input: FullRecomputeInput): FullRecomputeResult {
           node.id,
           sourceRows(
             input.sources[node.sourceId] ?? input.sources[node.id] ?? [],
-            node.mode.key,
+            node.key,
             parameters,
           ),
         );
@@ -131,7 +131,7 @@ function sourceRows(
   for (const entry of source) {
     const key = asRowKey(evaluate(keyExpression, { row: entry.row, parameter: parameters }));
     if (encodeRowKey(key) !== encodeRowKey(entry.key))
-      throw new TypeError("source row key disagrees with the source mode key expression");
+      throw new TypeError("source row key disagrees with the source key expression");
   }
   return source;
 }

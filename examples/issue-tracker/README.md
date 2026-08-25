@@ -30,7 +30,8 @@ older hand-built projection API through an adapter.
 export const issueEvents = source("issue-tracker.issue-events", {
   schema: IssueEvent,
   partitionBy: x.row.workspaceId,
-  mode: factSourceMode(x.row.eventId, x.row.sequence),
+  key: x.row.eventId,
+  mode: "facts",
 });
 
 export const issues = view(
@@ -38,7 +39,6 @@ export const issues = view(
   { schema: IssueRow, key: out.row.issueId },
   from(issueEvents).reduceByKey({
     key: x.row.issueId,
-    order: x.row.sequence,
     reducer: issueLifecycle,
   }),
 );

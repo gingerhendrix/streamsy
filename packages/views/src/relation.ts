@@ -8,9 +8,6 @@ import type {
   RelationPlan,
   RowKey,
   SortTerm,
-  SourceMode,
-  StateSourceMode,
-  FactSourceMode,
 } from "@streamsy/views-ir";
 import {
   literal,
@@ -29,39 +26,29 @@ type Selected<Fields extends Readonly<Record<string, Expression>>> = {
   readonly [K in keyof Fields]: ExpressionValue<Fields[K]>;
 };
 
-export interface SourceSpec<S extends Schema.Top, Mode extends SourceMode = SourceMode> {
+export interface SourceSpec<
+  S extends Schema.Top,
+  Mode extends "facts" | "state" = "facts" | "state",
+> {
   readonly schema: S;
   readonly schemaRef: DescriptorRef;
   readonly partitionBy: Expression;
+  readonly key: Expression;
   readonly mode: Mode;
 }
 
 export interface SourceDeclaration<
   S extends Schema.Top = Schema.Top,
-  Mode extends SourceMode = SourceMode,
+  Mode extends "facts" | "state" = "facts" | "state",
 > extends SourceSpec<S, Mode> {
   readonly kind: "source";
   readonly name: string;
 }
 
-export const source = <S extends Schema.Top, Mode extends SourceMode>(
+export const source = <S extends Schema.Top, Mode extends "facts" | "state">(
   name: string,
   spec: SourceSpec<S, Mode>,
 ): SourceDeclaration<S, Mode> => deepFreeze({ kind: "source", name, ...spec });
-
-export const factSourceMode = (key: Expression, order: Expression): FactSourceMode =>
-  deepFreeze({ kind: "facts", key, order });
-
-export const stateSourceMode = (key: Expression): StateSourceMode =>
-  deepFreeze({
-    kind: "state",
-    key,
-    operation: {
-      path: ["headers", "operation"],
-      upsert: ["insert", "update", "upsert"],
-      delete: "delete",
-    },
-  });
 
 export type EvolveBranch = Readonly<Record<string, Expression>>;
 export type EvolveBranchBuilder<Event, State> = (x: {
@@ -167,7 +154,6 @@ interface ReduceByKeyRelation<Row> {
   readonly kind: "reduce-by-key";
   readonly input: SourceRelation<unknown>;
   readonly key: Expression;
-  readonly order: Expression;
   readonly reducer: ReducerDeclaration;
   readonly _row?: Row;
 }
@@ -214,7 +200,6 @@ export interface RelationBuilder<Row> {
   readonly top: (spec: TopSpec) => RelationBuilder<Row>;
   readonly reduceByKey: <State extends Schema.Top>(spec: {
     readonly key: Expression;
-    readonly order: Expression;
     readonly reducer: ReducerDeclaration<State>;
   }) => RelationBuilder<State["Type"]>;
 }
@@ -288,12 +273,8 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
             };
       return builder(deepFreeze(top));
     },
-    reduceByKey: (spec: {
-      readonly key: Expression;
-      readonly order: Expression;
-      readonly reducer: ReducerDeclaration;
-    }) => {
-      if (expression.kind !== "source-relation" || expression.source.mode.kind !== "facts") {
+    reduceByKey: (spec: { readonly key: Expression; readonly reducer: ReducerDeclaration }) => {
+      if (expression.kind !== "source-relation" || expression.source.mode !== "facts") {
         throw new TypeError("reduceByKey is only available directly on a fact source");
       }
       return builder(
@@ -416,6 +397,7 @@ export function compilePlan(
         schema: relation.source.schemaRef,
         sourceId: relation.source.name,
         partitionBy: relation.source.partitionBy,
+        key: relation.source.key,
         mode: relation.source.mode,
       });
     }
@@ -427,7 +409,6 @@ export function compilePlan(
         schema: relation.reducer.stateRef,
         input,
         key: relation.key,
-        order: relation.order,
         reducer: relation.reducer.ref,
       });
     }
@@ -498,7 +479,7 @@ export function compilePlan(
         : { schema: value.schemaRef, maximum: value.maximum };
   }
   const plan = {
-    version: 2,
+    version: 3,
     name,
     nodes,
     output,

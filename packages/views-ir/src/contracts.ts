@@ -102,33 +102,12 @@ interface RelationNodeBase {
   readonly schema: DescriptorRef;
 }
 
-export interface FactSourceMode {
-  readonly kind: "facts";
-  readonly key: Expression;
-  readonly order: Expression;
-}
-
-export type StateOperation = "insert" | "update" | "upsert" | "delete";
-
-export interface StateOperationContract {
-  readonly path: readonly string[];
-  readonly upsert: readonly Exclude<StateOperation, "delete">[];
-  readonly delete: Extract<StateOperation, "delete">;
-}
-
-export interface StateSourceMode {
-  readonly kind: "state";
-  readonly key: Expression;
-  readonly operation: StateOperationContract;
-}
-
-export type SourceMode = FactSourceMode | StateSourceMode;
-
 export interface SourceNode extends RelationNodeBase {
   readonly kind: "source";
   readonly sourceId: string;
   readonly partitionBy: Expression;
-  readonly mode: SourceMode;
+  readonly key: Expression;
+  readonly mode: "facts" | "state";
 }
 
 export interface FilterNode extends RelationNodeBase {
@@ -185,7 +164,6 @@ export interface ReduceByKeyNode extends RelationNodeBase {
   readonly kind: "reduce-by-key";
   readonly input: string;
   readonly key: Expression;
-  readonly order: Expression;
   readonly reducer: DescriptorRef;
 }
 
@@ -201,7 +179,7 @@ export type RelationNode =
   | ReduceByKeyNode;
 
 export interface RelationPlan {
-  readonly version: 2;
+  readonly version: 3;
   readonly name: string;
   readonly parameters?: Readonly<Record<string, ParameterDescriptor>>;
   readonly nodes: readonly RelationNode[];
