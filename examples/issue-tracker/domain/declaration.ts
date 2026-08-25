@@ -8,7 +8,7 @@
  * different thing and the host must say so.
  */
 import { defineStateSink, STATE_SINK_ERROR_TAGS } from "@streamsy/state-sink";
-import { decodeIdentifier, decodeIssueRow, IssueEvent, IssueRow } from "./issue.ts";
+import { decodeIdentifier, decodeProjectBoardCard, IssueEvent, IssueRow } from "./issue.ts";
 import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
 import {
   factSourceMode,
@@ -29,6 +29,7 @@ import {
   type UserRow as UserRowType,
   type WorkspaceMetadataRow as WorkspaceMetadataRowType,
 } from "./catalog.ts";
+import { projectBoard } from "./views.ts";
 
 /** Selectors over one canonical fact, the fold state, and the maintained row. */
 const x = selectors<IssueEventType, IssueEventType, IssueRowType>();
@@ -115,8 +116,8 @@ export const issues = view(
 
 export const boardIssues = defineStateSink({
   name: "issue-tracker.board-issues",
-  from: issues,
-  row: { decode: decodeIssueRow },
+  from: projectBoard,
+  row: { decode: decodeProjectBoardCard },
   key: "issueId",
   route: "/state/workspaces/:workspaceId/issues",
   params: { workspaceId: { decode: decodeIdentifier } },

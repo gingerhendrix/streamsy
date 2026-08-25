@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { compilePlan, encodePlan, planHash } from "@streamsy/views";
+import { projectBoard } from "../domain/views.ts";
 import {
   boardIssues,
   issueEvents,
@@ -87,6 +88,6 @@ describe("the issue-tracker declaration", () => {
     });
     expect(boardIssues.auth.required).toBe("issue-tracker:workspace");
     expect(boardIssues.fingerprint).toMatch(/^[0-9a-f]{8}$/);
-    expect(boardIssues.from.name).toBe(issues.name);
+    expect(boardIssues.from.name).toBe(projectBoard.name);
   });
 });

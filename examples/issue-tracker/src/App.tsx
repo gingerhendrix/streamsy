@@ -8,7 +8,8 @@
  */
 import { useLiveQuery } from "@tanstack/react-db";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BOARD_COLUMNS, type IssueRow, type IssueStatus } from "../domain/issue.ts";
+import { BOARD_COLUMNS, type IssueStatus } from "../domain/issue.ts";
+import type { BoardIssuesRow } from "./generated/board-issues.ts";
 import {
   changeStatus,
   createIssue,
@@ -70,7 +71,7 @@ function Board(props: {
   // declared `IssueRow`; StreamDB decodes every row through it before writing,
   // so the live query can only yield rows that schema accepted.
   // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-  const rows = sortRows((data ?? []) as readonly IssueRow[]);
+  const rows = sortRows(data ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -179,7 +180,7 @@ function Board(props: {
 function Column(props: {
   readonly label: string;
   readonly status: IssueStatus;
-  readonly rows: readonly IssueRow[];
+  readonly rows: readonly BoardIssuesRow[];
   readonly busy: boolean;
   readonly onMove: (issueId: string, status: IssueStatus) => void;
 }): React.JSX.Element {
@@ -194,8 +195,8 @@ function Column(props: {
             <p className="title">{row.title}</p>
             <p className="metadata">
               <span data-project={row.projectId}>{row.projectId}</span>
-              <span data-assignee={row.assigneeId ?? "unassigned"}>
-                {row.assigneeId ?? "Unassigned"}
+              <span data-assignee={row.assignee}>
+                {row.assignee === "unassigned" ? "Unassigned" : row.assignee}
               </span>
             </p>
             <label>

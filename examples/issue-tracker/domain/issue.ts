@@ -117,6 +117,7 @@ export const ProjectBoardCard = Schema.Struct({
   updatedAt: Timestamp,
 });
 export type ProjectBoardCard = typeof ProjectBoardCard.Type;
+export const decodeProjectBoardCard = Schema.decodeUnknownSync(ProjectBoardCard);
 
 export const AssigneeQueueRow = Schema.Struct({
   issueId: Identifier,

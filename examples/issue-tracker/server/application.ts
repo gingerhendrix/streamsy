@@ -92,6 +92,7 @@ export const createIssue = Effect.fn("Application.createIssue")(function* (
   workspaceId: string,
   request: CreateIssueRequest,
 ) {
+  yield* ensureDefaultProject(workspaceId);
   const intent: CommandIntent = {
     workspaceId,
     commandId: request.commandId,
@@ -168,6 +169,16 @@ export const listCatalog = Effect.fn("Application.listCatalog")(function* (
   yield* ensureWorkspace(workspaceId);
   const report = yield* catchUpStateSource(collection, workspaceId);
   const rows = yield* store.stateRows(stateSourceId(collection), collection, workspaceId);
+  if ((collection === "projects" || collection === "users") && report.changes.length > 0) {
+    const board = yield* store.maintainBoard(workspaceId, [
+      {
+        sourceId: `issue-tracker.${collection}`,
+        changes: report.changes.map((change) => JSON.parse(JSON.stringify(change))),
+      },
+    ]);
+    const sink = yield* IssueSink;
+    yield* sink.publish(workspaceId, board.changes);
+  }
   return { report, rows };
 });
 
@@ -203,6 +214,23 @@ export const upsertCatalog = Effect.fn("Application.upsertCatalog")(function* (
     return yield* new AppendRejected({ stream: binding.streamId, status: appended.status });
   }
   return yield* listCatalog(workspaceId, collection);
+});
+
+const ensureDefaultProject = Effect.fn("Application.ensureDefaultProject")(function* (
+  workspaceId: string,
+) {
+  const existing = yield* listCatalog(workspaceId, "projects");
+  if (existing.rows.some((row) => "projectId" in row && row.projectId === "streamsy")) return;
+  yield* upsertCatalog(workspaceId, "projects", {
+    key: "streamsy",
+    value: {
+      projectId: "streamsy",
+      workspaceId,
+      key: "STR",
+      name: "Streamsy",
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    },
+  });
 });
 
 /** The sink session contract: where the product lives and its current offset. */

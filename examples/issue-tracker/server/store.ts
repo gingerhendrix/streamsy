@@ -31,9 +31,16 @@ import {
 } from "@streamsy/views-store";
 import { Clock, Context, Effect, Layer } from "effect";
 import { planHash } from "@streamsy/views";
+import {
+  maintainGraph,
+  type OperatorStateSnapshot,
+  type SourceChanges,
+} from "@streamsy/views-engine";
 import type { Change, JsonObject } from "@streamsy/views-ir";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
+import { decodeProjectBoardCard, type ProjectBoardCard } from "../domain/issue.ts";
+import { projectBoard } from "../domain/views.ts";
 import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
 import {
   CommandIdConflict,
@@ -41,6 +48,11 @@ import {
   StoreRestorePoison,
   StoreUnavailable,
 } from "./errors.ts";
+import {
+  decodeOperatorSnapshot,
+  operatorMaintenanceCommit,
+  operatorSnapshotRef,
+} from "./operator-store-adapter.ts";
 
 /** What the view has consumed, and what the sink has published. */
 export interface ViewProgress {
@@ -153,6 +165,19 @@ export interface IssueStoreService {
       items: readonly JsonObject[],
     ) => Effect.Effect<RecoveryFoldResult, MaintenanceFault>,
   ) => Effect.Effect<RecoveryFoldResult, StoreUnavailable | StoreRestorePoison | MaintenanceFault>;
+  readonly maintainBoard: (
+    workspaceId: string,
+    inputs: readonly SourceChanges[],
+  ) => Effect.Effect<
+    {
+      readonly rows: readonly ProjectBoardCard[];
+      readonly changes: readonly Change<ProjectBoardCard, string>[];
+    },
+    StoreUnavailable | StoreRestorePoison
+  >;
+  readonly boardRows: (
+    workspaceId: string,
+  ) => Effect.Effect<readonly ProjectBoardCard[], StoreUnavailable | StoreRestorePoison>;
 }
 
 export class IssueStore extends Context.Service<IssueStore, IssueStoreService>()(
@@ -315,6 +340,17 @@ export function issueStoreAdapter(
   preload: MemoryStoreOptions["preload"] = {},
 ): IssueStoreService {
   const recoveryTaken = new Set<string>();
+  const boardHash = planHash(projectBoard.plan);
+  const boardIdentity = (workspaceId: string) => ({
+    planName: projectBoard.name,
+    planHash: boardHash,
+    partition: workspaceId,
+    sourceId: "issue-tracker.enriched-inputs",
+  });
+  const boardRelation = (workspaceId: string) => ({
+    ...boardIdentity(workspaceId),
+    id: projectBoard.name,
+  });
   return IssueStore.of({
     progress: Effect.fn("IssueStore.progress")(function* (workspaceId: string) {
       const checkpoint = yield* mapStoreUnavailable(
@@ -469,7 +505,125 @@ export function issueStoreAdapter(
       if (result === undefined) return yield* Effect.die("recovery folded no result");
       return result;
     }),
+    maintainBoard: Effect.fn("IssueStore.maintainBoard")(function* (workspaceId, inputs) {
+      const identity = boardIdentity(workspaceId);
+      const cursor = yield* mapStoreUnavailable(
+        "boardProgress",
+        viewStore.sourceProgress(identity),
+      );
+      const stored = yield* mapStoreUnavailable(
+        "boardSnapshot",
+        viewStore.getOperatorValue(
+          operatorSnapshotRef(projectBoard.plan, boardHash, workspaceId, identity.sourceId),
+          "state",
+        ),
+      );
+      const state = decodeOperatorSnapshot(projectBoard.plan, stored);
+      const reconciled = reconcileSourceInputs(state, inputs);
+      if (state !== undefined && reconciled.every((input) => input.changes.length === 0)) {
+        const snapshot = yield* mapStoreError(
+          "boardRows",
+          viewStore.snapshotRows(boardRelation(workspaceId)),
+        );
+        return {
+          rows: snapshot.rows.map((row) => decodeProjectBoardCard(row.value)),
+          changes: [],
+        };
+      }
+      const result = maintainGraph({
+        plan: projectBoard.plan,
+        state,
+        parameters: { projectId: "streamsy" },
+        inputs: reconciled,
+      });
+      yield* mapStoreUnavailable(
+        "maintainBoard",
+        viewStore.commit(
+          operatorMaintenanceCommit({
+            plan: projectBoard.plan,
+            planHash: boardHash,
+            partition: workspaceId,
+            sourceId: identity.sourceId,
+            expectedCursor: cursor,
+            afterExclusiveCursor: String(result.state.revision),
+            batchId: `revision-${result.state.revision}`,
+            committedAtMs: result.state.revision,
+            expectedRevision: state?.revision ?? 0,
+            patch: result.patch,
+            snapshot: result.state,
+            relationId: projectBoard.name,
+            changes: result.changes,
+          }),
+        ),
+      );
+      return {
+        rows: result.rows.map((row) => decodeProjectBoardCard(row.row)),
+        changes: result.changes.map((change) => decodeBoardChange(change)),
+      };
+    }),
+    boardRows: Effect.fn("IssueStore.boardRows")(function* (workspaceId) {
+      const snapshot = yield* mapStoreError(
+        "boardRows",
+        viewStore.snapshotRows(boardRelation(workspaceId)),
+      );
+      return yield* Effect.forEach(snapshot.rows, (row) =>
+        Effect.try({
+          try: () => decodeProjectBoardCard(row.value),
+          catch: (cause) =>
+            new StoreRestorePoison({
+              table: "project_board",
+              key: JSON.stringify(row.key),
+              detail: cause instanceof Error ? cause.message : String(cause),
+            }),
+        }),
+      );
+    }),
   });
+}
+
+function reconcileSourceInputs(
+  state: OperatorStateSnapshot | undefined,
+  inputs: readonly SourceChanges[],
+): readonly SourceChanges[] {
+  if (state === undefined) return inputs;
+  return inputs.map((input) => {
+    const relation = state.relations.find((candidate) => candidate.relationId === input.sourceId);
+    const current = new Map(
+      (relation?.rows ?? []).map((row) => [JSON.stringify(row.key), row.row] as const),
+    );
+    const changes: Change<JsonObject>[] = [];
+    for (const change of input.changes) {
+      const key = JSON.stringify(change.key);
+      const before = current.get(key);
+      if (change.kind === "exit") {
+        if (before !== undefined) changes.push({ kind: "exit", key: change.key, before });
+        current.delete(key);
+        continue;
+      }
+      if (before === undefined) {
+        changes.push({ kind: "enter", key: change.key, after: change.after });
+      } else if (JSON.stringify(before) !== JSON.stringify(change.after)) {
+        changes.push({ kind: "update", key: change.key, before, after: change.after });
+      }
+      current.set(key, change.after);
+    }
+    return { sourceId: input.sourceId, changes };
+  });
+}
+
+function decodeBoardChange(change: Change<JsonObject>): Change<ProjectBoardCard, string> {
+  if (typeof change.key !== "string") throw new TypeError("project board key is not a string");
+  const key = change.key;
+  if (change.kind === "enter")
+    return { kind: "enter", key, after: decodeProjectBoardCard(change.after) };
+  if (change.kind === "update")
+    return {
+      kind: "update",
+      key,
+      before: decodeProjectBoardCard(change.before),
+      after: decodeProjectBoardCard(change.after),
+    };
+  return { kind: "exit", key, before: decodeProjectBoardCard(change.before) };
 }
 
 const PLAN_HASH = planHash(issues.plan);

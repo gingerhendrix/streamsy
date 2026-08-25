@@ -12,7 +12,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { memoryResumeStore } from "@streamsy/tanstack-db";
 import { Effect } from "effect";
 import { createBoardConnection, sortRows, type BoardConnection } from "../src/lib/board-db.ts";
-import type { IssueRow } from "../domain/issue.ts";
+import type { BoardIssuesRow } from "../src/generated/board-issues.ts";
 import { IssueSink } from "../server/sink.ts";
 import { call, createIssueBody, host, type Host } from "./support.ts";
 
@@ -51,20 +51,20 @@ function connect(fixture: Fixture): BoardConnection {
   return connection;
 }
 
-function rowsOf(connection: BoardConnection): readonly IssueRow[] {
+function rowsOf(connection: BoardConnection): readonly BoardIssuesRow[] {
   // SAFETY: the collection's schema is the declared `IssueRow`, and StreamDB
   // decodes every row through it before writing, so `toArray` cannot contain a
   // value that schema rejected.
   // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-  return sortRows(connection.db.collections.issues.toArray as readonly IssueRow[]);
+  return sortRows(connection.db.collections.issues.toArray);
 }
 
 /** Wait for the synchronized collection to satisfy a predicate, or fail loudly. */
 async function until(
   connection: BoardConnection,
-  predicate: (rows: readonly IssueRow[]) => boolean,
+  predicate: (rows: readonly BoardIssuesRow[]) => boolean,
   what: string,
-): Promise<readonly IssueRow[]> {
+): Promise<readonly BoardIssuesRow[]> {
   const deadline = Date.now() + 10_000;
   for (;;) {
     const rows = rowsOf(connection);
@@ -165,12 +165,13 @@ describe("the TanStack DB board binding", () => {
       "/api/workspaces/main/issues",
       createIssueBody("cmd-current", "issue-current", "Authoritative row", "todo"),
     );
-    const stale: IssueRow = {
+    const stale: BoardIssuesRow = {
       issueId: "issue-stale",
-      workspaceId: "main",
       projectId: "streamsy",
+      projectName: "Streamsy",
       title: "Must disappear on reset",
       status: "backlog",
+      assignee: "unassigned",
       updatedAt: "2026-08-25T00:00:00.000Z",
     };
     await fixture.instance.runtime.runPromise(

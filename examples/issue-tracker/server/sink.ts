@@ -17,7 +17,7 @@ import {
 } from "@streamsy/state";
 import { Context, Effect, Layer } from "effect";
 import { boardIssues, streamNames } from "../domain/declaration.ts";
-import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
+import { decodeProjectBoardCard, type ProjectBoardCard } from "../domain/issue.ts";
 import type { Change } from "@streamsy/views-ir";
 import { AppendRejected, StreamUnavailable } from "./errors.ts";
 
@@ -32,8 +32,8 @@ import { AppendRejected, StreamUnavailable } from "./errors.ts";
 export const boardStateSchema = {
   [boardIssues.collection.name]: {
     schema: {
-      encode: (value: IssueRow): unknown => value,
-      decode: (value: unknown): IssueRow => decodeIssueRow(value),
+      encode: (value: ProjectBoardCard): unknown => value,
+      decode: (value: unknown): ProjectBoardCard => decodeProjectBoardCard(value),
     },
     type: boardIssues.collection.type,
     primaryKey: boardIssues.collection.primaryKey,
@@ -50,12 +50,12 @@ export interface IssueSinkService {
   /** Publish keyed changes as live Durable State messages. */
   readonly publish: (
     workspaceId: string,
-    changes: readonly Change<IssueRow, string>[],
+    changes: readonly Change<ProjectBoardCard, string>[],
   ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
   /** Re-publish the complete current relation as a fresh snapshot. */
   readonly republish: (
     workspaceId: string,
-    rows: readonly IssueRow[],
+    rows: readonly ProjectBoardCard[],
   ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
 }
 
@@ -111,7 +111,7 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
 
         publish: Effect.fn("IssueSink.publish")(function* (
           workspaceId: string,
-          changes: readonly Change<IssueRow, string>[],
+          changes: readonly Change<ProjectBoardCard, string>[],
         ) {
           if (changes.length === 0) return;
           const stream = yield* open(workspaceId);
@@ -130,7 +130,7 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
 
         republish: Effect.fn("IssueSink.republish")(function* (
           workspaceId: string,
-          rows: readonly IssueRow[],
+          rows: readonly ProjectBoardCard[],
         ) {
           const stream = yield* open(workspaceId);
           yield* appended(workspaceId, () => stream.state.snapshotStart());

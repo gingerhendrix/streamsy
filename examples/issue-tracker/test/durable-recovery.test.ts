@@ -60,8 +60,10 @@ describe("durable recovery", () => {
       )
       .get();
     const batchesBefore = before
-      .query<{ count: number }, []>("SELECT COUNT(*) count FROM streamsy_view_change_batches")
-      .get()?.count;
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) count FROM streamsy_view_change_batches WHERE plan_name = ?",
+      )
+      .get("issue-tracker.issues")?.count;
     before.close(false);
     expect(checkpoint?.source_cursor).not.toBe(uncheckpointed.ack.offset);
     expect(batchesBefore).toBe(3);
@@ -86,8 +88,10 @@ describe("durable recovery", () => {
     const after = new Database(filename);
     expect(
       after
-        .query<{ count: number }, []>("SELECT COUNT(*) count FROM streamsy_view_change_batches")
-        .get()?.count,
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) count FROM streamsy_view_change_batches WHERE plan_name = ?",
+        )
+        .get("issue-tracker.issues")?.count,
     ).toBe(batchesBefore);
     after.close(false);
   });

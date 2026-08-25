@@ -73,6 +73,12 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   // Publication is a separate durable step, so its progress is read again
   // rather than assumed from the commit above.
   const after = yield* store.progress(workspaceId);
+  const board = yield* store.maintainBoard(workspaceId, [
+    {
+      sourceId: "issue-tracker.issues",
+      changes: changes.map((change) => JSON.parse(JSON.stringify(change))),
+    },
+  ]);
   if (after.checkpoint === undefined || after.published === after.checkpoint) {
     return report(workspaceId, checkpoint, suffix.items.length, changes, "none");
   }
@@ -83,7 +89,7 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   const inSync =
     after.published !== undefined && after.published === before.checkpoint && changes.length > 0;
   if (inSync) {
-    yield* sink.publish(workspaceId, changes);
+    yield* sink.publish(workspaceId, board.changes);
     yield* store.markPublished(workspaceId, after.checkpoint);
     return report(workspaceId, checkpoint, suffix.items.length, changes, "changes");
   }
@@ -91,7 +97,7 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   // Either the sink has never been published, or publication fell behind by
   // more than this pass. Rebuild it from the durable rows and let consumers
   // reset — convergence, not a replay of messages nobody recorded.
-  yield* sink.republish(workspaceId, yield* store.rows(workspaceId));
+  yield* sink.republish(workspaceId, board.rows);
   yield* store.markPublished(workspaceId, after.checkpoint);
   return report(workspaceId, checkpoint, suffix.items.length, changes, "snapshot");
 

@@ -6,8 +6,11 @@ import {
   type StateSinkStatus,
 } from "@streamsy/tanstack-db";
 import { boardIssues } from "../../domain/declaration.ts";
-import type { IssueRow } from "../../domain/issue.ts";
-import { boardIssuesBinding, type BoardIssuesParams } from "../generated/board-issues.ts";
+import {
+  boardIssuesBinding,
+  type BoardIssuesParams,
+  type BoardIssuesRow,
+} from "../generated/board-issues.ts";
 
 export type BoardDb = StateSinkConnection<typeof boardIssuesBinding.descriptor.state>["db"];
 export type SinkStatus = StateSinkStatus;
@@ -46,7 +49,7 @@ export function createBoardConnection(options: BoardConnectionOptions): BoardCon
   };
 }
 
-export function sortRows(rows: readonly IssueRow[]): readonly IssueRow[] {
+export function sortRows(rows: readonly BoardIssuesRow[]): readonly BoardIssuesRow[] {
   return [...rows].sort(
     (left, right) =>
       right.updatedAt.localeCompare(left.updatedAt) || left.issueId.localeCompare(right.issueId),

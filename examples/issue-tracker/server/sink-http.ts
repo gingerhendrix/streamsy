@@ -8,9 +8,9 @@ import {
 } from "@streamsy/state-sink/effect";
 import { Effect, Layer } from "effect";
 import { boardIssues, streamNames } from "../domain/declaration.ts";
-import { listIssues } from "./application.ts";
 import { StreamGateway } from "./gateway.ts";
 import { advance } from "./maintenance.ts";
+import { IssueStore } from "./store.ts";
 import { ensureWorkspace, Streams } from "./streams.ts";
 
 export const SCOPE_HEADER = "x-streamsy-scope";
@@ -39,11 +39,19 @@ export const handleSinkRequest = (request: Request) =>
   handleStateSink(boardIssues, request, {
     snapshot: Effect.fn("IssueTracker.sinkSnapshot")(function* ({ workspaceId }) {
       const streams = yield* Streams;
-      const rows = yield* listIssues(workspaceId).pipe(
+      yield* advance(workspaceId).pipe(
         Effect.mapError(
           (error) => new StateSinkSourceFailure({ phase: "snapshot", detail: String(error) }),
         ),
       );
+      const store = yield* IssueStore;
+      const rows = yield* store
+        .boardRows(workspaceId)
+        .pipe(
+          Effect.mapError(
+            (error) => new StateSinkSourceFailure({ phase: "snapshot", detail: String(error) }),
+          ),
+        );
       const head = yield* Effect.promise((signal) =>
         streams.client.stream(streamNames.boardState(workspaceId)).head({ signal }),
       );
