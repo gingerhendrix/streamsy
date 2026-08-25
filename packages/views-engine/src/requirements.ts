@@ -42,7 +42,7 @@ export function planRequirements(plan: RelationPlan): readonly OperatorRequireme
     for (const value of values) demand.add(value);
     downstream.set(relationId, demand);
   };
-  for (const node of [...plan.nodes].reverse()) {
+  for (const node of plan.nodes.toReversed()) {
     const requirement = local.get(node.id)!;
     const output = downstream.get(node.id) ?? new Set<string>();
     const inputFields: Record<string, readonly string[]> = {};

@@ -181,7 +181,7 @@ describe("inner and left joins", () => {
     const p1 = { id: "p1", projectId: "workspace", name: "One" };
     const p2 = { id: "p2", projectId: "workspace", name: "Two" };
     let state: OperatorStateSnapshot | undefined;
-    ({ state } = maintainGraph({
+    const enteredIssues = maintainGraph({
       plan: graph,
       state,
       inputs: [
@@ -190,7 +190,11 @@ describe("inner and left joins", () => {
           changes: [change("p1", undefined, p1), change("p2", undefined, p2)],
         },
       ],
-    }));
+    });
+    state = enteredIssues.state;
+    expect(
+      enteredIssues.patch.operatorIndexes.some((mutation) => mutation.operation === "put"),
+    ).toBe(true);
     const i1 = { id: "i1", projectId: "p1", title: "First" };
     const i2 = { id: "i2", projectId: "p1", title: "Second" };
     ({ state } = maintainGraph({
@@ -209,6 +213,7 @@ describe("inner and left joins", () => {
     expect(result.rows).toHaveLength(2);
     expect(result.changes.map((item) => item.kind)).toEqual(["exit", "enter"]);
     expect(result.operations.indexLookups).toBeLessThanOrEqual(2);
+    expect(JSON.parse(JSON.stringify(result.state))).toEqual(result.state);
   });
 
   it("replaces an unmatched row on first match and restores it after the final match", () => {
@@ -232,6 +237,9 @@ describe("inner and left joins", () => {
       inputs: [{ sourceId: "projects", changes: [change("p1", project, undefined)] }],
     });
     expect(result.rows[0]?.key).toEqual(["unmatched", "s2:i1"]);
+    expect(result.patch.operatorIndexes.some((mutation) => mutation.operation === "delete")).toBe(
+      true,
+    );
   });
 
   it("shares compatible arrangements and retains only declared join fields", () => {
@@ -315,9 +323,28 @@ describe("inner and left joins", () => {
       ],
       "project-join",
     );
-    const result = maintainGraph({ plan: graph, inputs: [] });
+    const result = maintainGraph({
+      plan: graph,
+      inputs: [
+        {
+          sourceId: "issues",
+          changes: [
+            change("i1", undefined, {
+              id: "i1",
+              projectId: "p1",
+              deadDescription: "must not enter an arrangement",
+            }),
+          ],
+        },
+      ],
+    });
     expect(planRequirements(graph).flatMap((item) => item.arrangements)).toHaveLength(4);
     expect(result.state.arrangements).toHaveLength(3);
+    expect(result.state.arrangements.find((item) => item.relationId === "issues")).toMatchObject({
+      retainedFields: ["projectId"],
+      entries: [{ value: "p1", rowKeys: ["i1"] }],
+    });
+    expect(JSON.stringify(result.state.arrangements)).not.toContain("deadDescription");
   });
 });
 
