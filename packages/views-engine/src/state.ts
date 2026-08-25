@@ -70,7 +70,7 @@ export interface OperatorStateSnapshot {
   readonly tops: readonly TopState[];
 }
 
-/** Opaque value mutation accepted by A4's operatorValues seam. */
+/** Transaction-neutral value mutation. A host maps `id` to its durable namespace. */
 export type OperatorValueMutation =
   | {
       readonly id: string;
@@ -80,7 +80,7 @@ export type OperatorValueMutation =
     }
   | { readonly id: string; readonly operation: "delete"; readonly key: RowKey };
 
-/** Opaque ordered/exact index mutation accepted by A4's operatorIndexes seam. */
+/** Transaction-neutral index mutation. A host maps `id` to its durable namespace. */
 export type OperatorIndexMutation =
   | {
       readonly id: string;
