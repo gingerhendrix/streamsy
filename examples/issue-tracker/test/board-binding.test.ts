@@ -28,8 +28,7 @@ const connections: BoardConnection[] = [];
 afterEach(async () => {
   for (const connection of connections.splice(0)) connection.close();
   for (const fixture of fixtures.splice(0)) {
-    await fixture.server.stop(true);
-    await fixture.instance.close();
+    await Promise.all([fixture.server.stop(true), fixture.instance.close()]);
   }
 });
 
