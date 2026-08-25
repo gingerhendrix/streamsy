@@ -43,7 +43,12 @@ import { advance, type MaintenanceReport } from "./maintenance.ts";
 import { IssueSink } from "./sink.ts";
 import { IssueStore, type CommandReceipt } from "./store.ts";
 import { ensureWorkspace, Streams } from "./streams.ts";
-import { catchUpStateSource, stateSourceBinding, stateSourceId } from "./state-ingestion.ts";
+import {
+  catchUpStateSource,
+  StateSourceProtocol,
+  stateSourceBinding,
+  stateSourceId,
+} from "./state-ingestion.ts";
 
 export type ApplicationServices =
   | AppConfig
@@ -52,6 +57,7 @@ export type ApplicationServices =
   | IssueSink
   | IssueStore
   | ReadStreams
+  | StateSourceProtocol
   | Streams;
 
 /** The mesh capabilities this application uses, in one layer. */

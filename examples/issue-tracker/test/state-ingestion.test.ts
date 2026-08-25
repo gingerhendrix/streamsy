@@ -115,6 +115,41 @@ describe("State source ingestion", () => {
     expect(after.rows).toEqual([rows.projects]);
   });
 
+  test("validates a whole protocol batch before committing rows or checkpoint", async () => {
+    const instance = fresh();
+    const stream = instance.client.stream(streamNames.projects("main"));
+    await stream.create({ contentType: "application/json" });
+    await stream.appendJsonBatch([
+      {
+        type: "project",
+        key: "p1",
+        value: rows.projects,
+        headers: { operation: "upsert" },
+      },
+      {
+        type: "project",
+        key: "wrong",
+        value: { ...rows.projects, projectId: "p2" },
+        headers: { operation: "upsert" },
+      },
+    ]);
+
+    const poisoned = await call(instance, "GET", "/api/workspaces/main/catalog/projects");
+    expect(poisoned.status).toBe(500);
+    expect(await poisoned.json()).toMatchObject({ error: "source-poison" });
+
+    const state = await instance.runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* IssueStore;
+        return {
+          checkpoint: yield* store.stateCheckpoint(stateSourceId("projects"), "main"),
+          rows: yield* store.stateRows(stateSourceId("projects"), "projects", "main"),
+        };
+      }),
+    );
+    expect(state).toEqual({ checkpoint: undefined, rows: [] });
+  });
+
   test("State delete is a typed unsupported operation and does not advance", async () => {
     const instance = fresh();
     await instance.client

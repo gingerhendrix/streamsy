@@ -57,14 +57,32 @@ export interface DecodedCatalogRow {
   readonly workspaceId: string;
 }
 
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- The callback is the catalog's named JSON parse boundary and every supplied decoder is built from the adjacent Effect schema.
+const codec = <A extends object>(decode: (value: unknown) => A) => ({
+  encode: (value: A): A => value,
+  decode,
+});
+
 export const catalog = {
-  projects: { type: "project", schema: ProjectRow, key: (row: ProjectRow) => row.projectId },
-  users: { type: "user", schema: UserRow, key: (row: UserRow) => row.userId },
-  labels: { type: "label", schema: LabelRow, key: (row: LabelRow) => row.labelId },
+  projects: {
+    type: "project",
+    schema: codec(Schema.decodeUnknownSync(ProjectRow)),
+    primaryKey: (row: ProjectRow) => row.projectId,
+  },
+  users: {
+    type: "user",
+    schema: codec(Schema.decodeUnknownSync(UserRow)),
+    primaryKey: (row: UserRow) => row.userId,
+  },
+  labels: {
+    type: "label",
+    schema: codec(Schema.decodeUnknownSync(LabelRow)),
+    primaryKey: (row: LabelRow) => row.labelId,
+  },
   metadata: {
     type: "workspace",
-    schema: WorkspaceMetadataRow,
-    key: (row: WorkspaceMetadataRow) => row.workspaceId,
+    schema: codec(Schema.decodeUnknownSync(WorkspaceMetadataRow)),
+    primaryKey: (row: WorkspaceMetadataRow) => row.workspaceId,
   },
 } as const;
 
@@ -72,21 +90,47 @@ export const catalog = {
 export function decodeCatalogRow(collection: CatalogCollection, value: unknown): DecodedCatalogRow {
   switch (collection) {
     case "projects": {
-      const row = Schema.decodeUnknownSync(ProjectRow)(value);
-      return { row, key: row.projectId, workspaceId: row.workspaceId };
+      const row = catalog.projects.schema.decode(value);
+      return catalogRow(collection, row);
     }
     case "users": {
-      const row = Schema.decodeUnknownSync(UserRow)(value);
-      return { row, key: row.userId, workspaceId: row.workspaceId };
+      const row = catalog.users.schema.decode(value);
+      return catalogRow(collection, row);
     }
     case "labels": {
-      const row = Schema.decodeUnknownSync(LabelRow)(value);
-      return { row, key: row.labelId, workspaceId: row.workspaceId };
+      const row = catalog.labels.schema.decode(value);
+      return catalogRow(collection, row);
     }
     case "metadata": {
-      const row = Schema.decodeUnknownSync(WorkspaceMetadataRow)(value);
-      return { row, key: row.workspaceId, workspaceId: row.workspaceId };
+      const row = catalog.metadata.schema.decode(value);
+      return catalogRow(collection, row);
     }
+  }
+  collection satisfies never;
+  throw new TypeError("unknown catalog collection");
+}
+
+/** Recover the identity fields from a row already decoded by the catalog's protocol schema. */
+export function catalogRow(collection: CatalogCollection, row: CatalogRow): DecodedCatalogRow {
+  switch (collection) {
+    case "projects":
+      if (!("projectId" in row)) throw new TypeError("expected a project row");
+      return {
+        row,
+        key: catalog.projects.primaryKey(row),
+        workspaceId: row.workspaceId,
+      };
+    case "users":
+      if (!("userId" in row)) throw new TypeError("expected a user row");
+      return { row, key: catalog.users.primaryKey(row), workspaceId: row.workspaceId };
+    case "labels":
+      if (!("labelId" in row)) throw new TypeError("expected a label row");
+      return { row, key: catalog.labels.primaryKey(row), workspaceId: row.workspaceId };
+    case "metadata":
+      if ("projectId" in row || "userId" in row || "labelId" in row) {
+        throw new TypeError("expected a workspace metadata row");
+      }
+      return { row, key: catalog.metadata.primaryKey(row), workspaceId: row.workspaceId };
   }
   collection satisfies never;
   throw new TypeError("unknown catalog collection");

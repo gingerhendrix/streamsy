@@ -17,6 +17,7 @@ import type { AppConfig } from "./config.ts";
 import * as GatewayModule from "./gateway.ts";
 import type { StreamGateway } from "./gateway.ts";
 import { sinkLayer } from "./sink.ts";
+import { stateSourceProtocolLayer } from "./state-ingestion.ts";
 import type { IssueStore } from "./store.ts";
 import * as StreamsModule from "./streams.ts";
 
@@ -42,5 +43,6 @@ export const applicationLayer = (
     options.store,
     GatewayModule.layer(options.gateway),
     sinkLayer(options.protocol),
+    stateSourceProtocolLayer(options.protocol),
     options.config,
   );

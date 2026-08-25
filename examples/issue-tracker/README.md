@@ -83,10 +83,12 @@ state/workspaces/{workspaceId}/labels
 state/workspaces/{workspaceId}/metadata
 ```
 
-Each source decodes the State envelope, checks its collection, key, workspace,
-and typed row, then commits current rows with that source's native checkpoint in
-one application-store transaction. A bad immutable boundary is fail-stop: rows
-and checkpoint remain unchanged. `delete` is decoded and returned as the typed
+The shared `@streamsy/state` protocol reader validates each State envelope and
+decodes its row through the catalog's schema/type/primary-key table. Ingestion
+then checks the expected collection, envelope key, and workspace before it
+commits current rows with that source's native checkpoint in one
+application-store transaction. A bad immutable boundary is fail-stop: rows and
+checkpoint remain unchanged. `delete` is decoded and returned as the typed
 `UnsupportedStateOperation`; A3 intentionally implements upserts only.
 
 Catalog rows are available at
