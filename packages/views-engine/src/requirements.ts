@@ -105,10 +105,7 @@ function requirementsFor(node: RelationNode): OperatorRequirements {
 
   switch (node.kind) {
     case "source":
-      inputFields[node.sourceId] = fields(
-        [node.mode.key, ...(node.mode.kind === "facts" ? [node.mode.order] : []), node.partitionBy],
-        "row",
-      );
+      inputFields[node.sourceId] = fields([node.key, node.order, node.partitionBy], "row");
       break;
     case "filter":
       inputFields[node.input] = fields([node.predicate], "row");

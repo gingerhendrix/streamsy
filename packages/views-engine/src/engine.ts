@@ -188,7 +188,7 @@ function validateSourceKey(
         ? [change.before]
         : [change.before, change.after];
   for (const row of rows) {
-    const key = asRowKey(evaluate(source.mode.key, { row, parameter: parameters }));
+    const key = asRowKey(evaluate(source.key, { row, parameter: parameters }));
     if (encodeRowKey(key) !== encodeRowKey(change.key))
       throw fault(
         plan,

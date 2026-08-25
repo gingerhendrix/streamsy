@@ -23,15 +23,12 @@ const source = (id: string): RelationNode => ({
   id,
   sourceId: id,
   schema,
+  key: ref("row", "id"),
+  order: ref("row", "id"),
   partitionBy: ref("row", "projectId"),
-  mode: {
-    kind: "state",
-    key: ref("row", "id"),
-    operation: { path: [], upsert: ["upsert"], delete: "delete" },
-  },
 });
 const plan = (name: string, nodes: readonly RelationNode[], output: string): RelationPlan => ({
-  version: 2,
+  version: 1,
   name,
   nodes,
   output,
