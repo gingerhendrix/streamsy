@@ -10,15 +10,15 @@ import type {
 } from "./contracts.ts";
 import { ViewCheckpointIncompatible, ViewCursorConflict } from "./errors.ts";
 
-export interface RecoverySource<Item> {
+export interface RecoverySource<Item, SourceError = StoreError> {
   readonly readAfter: (
     cursor: string | undefined,
   ) => Effect.Effect<
     { readonly items: readonly Item[]; readonly afterExclusiveCursor: string | undefined },
-    StoreError
+    SourceError
   >;
 }
-export interface RecoveryFold<Item> {
+export interface RecoveryFold<Item, FoldError = StoreError> {
   readonly fold: (
     state: ReadonlyMap<string, JsonValue>,
     items: readonly Item[],
@@ -27,14 +27,14 @@ export interface RecoveryFold<Item> {
       readonly state: ReadonlyMap<string, { readonly key: RowKey; readonly value: JsonValue }>;
       readonly commit: Omit<MaintenanceCommit, "expectedCursor" | "afterExclusiveCursor">;
     },
-    StoreError
+    FoldError
   >;
 }
-export interface RecoverOptions<Item> {
+export interface RecoverOptions<Item, SourceError = StoreError, FoldError = StoreError> {
   readonly store: ViewStoreService;
   readonly checkpoint: CheckpointDescriptor;
-  readonly source: RecoverySource<Item>;
-  readonly reducer: RecoveryFold<Item>;
+  readonly source: RecoverySource<Item, SourceError>;
+  readonly reducer: RecoveryFold<Item, FoldError>;
   readonly initialState?: ReadonlyMap<string, JsonValue>;
   readonly saveCheckpoint?: boolean;
   readonly now?: () => number;
@@ -47,9 +47,12 @@ export interface RecoveryResult {
 }
 
 /** Backend-neutral checkpoint-plus-after-exclusive-suffix recovery orchestration. */
-export const recover = <Item>(
-  options: RecoverOptions<Item>,
-): Effect.Effect<RecoveryResult, StoreError | ViewCursorConflict | ViewCheckpointIncompatible> =>
+export const recover = <Item, SourceError = StoreError, FoldError = StoreError>(
+  options: RecoverOptions<Item, SourceError, FoldError>,
+): Effect.Effect<
+  RecoveryResult,
+  StoreError | ViewCursorConflict | ViewCheckpointIncompatible | SourceError | FoldError
+> =>
   Effect.gen(function* () {
     const checkpoint = yield* options.store.loadCheckpoint(options.checkpoint);
     const state = new Map<string, JsonValue>(options.initialState ?? []);

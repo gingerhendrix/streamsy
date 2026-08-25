@@ -47,21 +47,24 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   let changes: readonly Change<IssueRow, string>[] = [];
 
   if (suffix.items.length > 0) {
-    const keys = touchedKeys(issues.plan, suffix.items);
-    const current =
+    const result =
       recovery === undefined
-        ? yield* store.reducerStates(workspaceId, keys)
-        : yield* restoreCheckpoint(recovery.entries);
-    const result = yield* fold(current, suffix.items);
+        ? yield* Effect.gen(function* () {
+            const keys = touchedKeys(issues.plan, suffix.items);
+            const current = yield* store.reducerStates(workspaceId, keys);
+            const folded = yield* fold(current, suffix.items);
+            yield* store.commit(workspaceId, {
+              expectedCheckpoint: before.checkpoint,
+              checkpoint: suffix.cursor,
+              rows: folded.rows,
+              nextSequence: suffix.maxSequence + 1,
+              changes: folded.changes,
+            });
+            return folded;
+          })
+        : yield* store.recoverSuffix(workspaceId, suffix, fold);
     changes = result.changes;
     checkpoint = suffix.cursor;
-    yield* store.commit(workspaceId, {
-      expectedCheckpoint: before.checkpoint,
-      checkpoint: suffix.cursor,
-      rows: result.rows,
-      nextSequence: suffix.maxSequence + 1,
-      changes,
-    });
     if ((suffix.maxSequence + 1) % 2 === 0) {
       yield* store.saveCheckpoint(workspaceId, suffix.cursor);
     }
@@ -199,26 +202,3 @@ const fold = (current: ReadonlyMap<string, IssueRow>, items: readonly JsonObject
         detail: cause instanceof Error ? cause.message : String(cause),
       }),
   });
-
-const restoreCheckpoint = (
-  entries: readonly {
-    readonly key: string | number | boolean | null | readonly JsonValue[];
-    readonly value: JsonValue;
-  }[],
-) =>
-  Effect.forEach(entries, (entry) =>
-    Effect.try({
-      try: () => {
-        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Checkpoint RowKey is a decoded closed union; this issue reducer accepts only its string arm.
-        if (typeof entry.key !== "string")
-          throw new TypeError("issue checkpoint key is not a string");
-        return [entry.key, decodeIssueRow(entry.value)] as const;
-      },
-      catch: (cause) =>
-        new MaintenanceFault({
-          view: issues.name,
-          phase: "decode",
-          detail: cause instanceof Error ? cause.message : String(cause),
-        }),
-    }),
-  ).pipe(Effect.map((rows) => new Map(rows)));

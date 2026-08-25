@@ -22,6 +22,7 @@
 import {
   makeMemoryBacking,
   memoryService,
+  recover as recoverView,
   type Checkpoint,
   type JsonValue,
   type StoredChange,
@@ -30,11 +31,16 @@ import {
 } from "@streamsy/views-store";
 import { Clock, Context, Effect, Layer } from "effect";
 import { planHash } from "@streamsy/views";
-import type { Change } from "@streamsy/views-ir";
+import type { Change, JsonObject } from "@streamsy/views-ir";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
 import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
-import { CommandIdConflict, StoreRestorePoison, StoreUnavailable } from "./errors.ts";
+import {
+  CommandIdConflict,
+  MaintenanceFault,
+  StoreRestorePoison,
+  StoreUnavailable,
+} from "./errors.ts";
 
 /** What the view has consumed, and what the sink has published. */
 export interface ViewProgress {
@@ -76,6 +82,16 @@ export interface CommitInput {
 export interface StateCommitInput {
   readonly checkpoint: string;
   readonly rows: ReadonlyMap<string, CatalogRow>;
+}
+
+export interface RecoverySuffix {
+  readonly items: readonly JsonObject[];
+  readonly cursor: string;
+  readonly maxSequence: number;
+}
+export interface RecoveryFoldResult {
+  readonly rows: ReadonlyMap<string, IssueRow>;
+  readonly changes: readonly Change<IssueRow, string>[];
 }
 
 export interface IssueStoreService {
@@ -129,6 +145,14 @@ export interface IssueStoreService {
     workspaceId: string,
     sourceCursor: string,
   ) => Effect.Effect<void, StoreUnavailable | StoreRestorePoison>;
+  readonly recoverSuffix: (
+    workspaceId: string,
+    suffix: RecoverySuffix,
+    fold: (
+      current: ReadonlyMap<string, IssueRow>,
+      items: readonly JsonObject[],
+    ) => Effect.Effect<RecoveryFoldResult, MaintenanceFault>,
+  ) => Effect.Effect<RecoveryFoldResult, StoreUnavailable | StoreRestorePoison | MaintenanceFault>;
 }
 
 export class IssueStore extends Context.Service<IssueStore, IssueStoreService>()(
@@ -393,6 +417,58 @@ export function issueStoreAdapter(
     stateCheckpoint: boundary.stateCheckpoint,
     stateRows: boundary.stateRows,
     commitState: boundary.commitState,
+    recoverSuffix: Effect.fn("IssueStore.recoverSuffix")(function* (workspaceId, suffix, fold) {
+      let result: RecoveryFoldResult | undefined;
+      yield* recoverView<JsonObject, never, MaintenanceFault | StoreRestorePoison>({
+        store: viewStore,
+        checkpoint: checkpointDescriptor(workspaceId),
+        source: {
+          readAfter: () =>
+            Effect.succeed({
+              items: suffix.items,
+              afterExclusiveCursor: suffix.cursor,
+            }),
+        },
+        reducer: {
+          fold: (state, items) =>
+            Effect.gen(function* () {
+              const current = new Map<string, IssueRow>();
+              for (const value of state.values()) {
+                const row = yield* decodeStoredRow("checkpoint_entries", "recovery", value);
+                current.set(row.issueId, row);
+              }
+              const folded = yield* fold(current, items);
+              result = folded;
+              return {
+                state: new Map(
+                  [...folded.rows].map(([key, row]) => [key, { key, value: encodeRow(row) }]),
+                ),
+                commit: {
+                  identity: identity(workspaceId),
+                  batchId: suffix.cursor,
+                  committedAtMs: suffix.maxSequence + 1,
+                  rows: [...folded.rows].map(([key, row]) => ({
+                    kind: "put" as const,
+                    namespace: relationRef(workspaceId),
+                    key,
+                    value: encodeRow(row),
+                  })),
+                  reducerStates: [...folded.rows].map(([key, row]) => ({
+                    kind: "put" as const,
+                    namespace: reducerRef(workspaceId),
+                    key,
+                    value: encodeRow(row),
+                  })),
+                  changes: folded.changes.map(encodeChange),
+                },
+              };
+            }),
+        },
+      }).pipe(Effect.mapError(recoveryError("recoverSuffix")));
+      yield* boundary.updateNextSequence(workspaceId, suffix.maxSequence + 1);
+      if (result === undefined) return yield* Effect.die("recovery folded no result");
+      return result;
+    }),
   });
 }
 
@@ -458,3 +534,11 @@ const mapStoreUnavailable = <A>(operation: string, effect: Effect.Effect<A, Stor
   effect.pipe(
     Effect.mapError((error) => new StoreUnavailable({ operation, detail: JSON.stringify(error) })),
   );
+
+const recoveryError =
+  (operation: string) => (error: StoreError | MaintenanceFault | StoreRestorePoison) => {
+    if (error instanceof MaintenanceFault || error instanceof StoreRestorePoison) return error;
+    return error._tag === "ViewStateRestorePoison"
+      ? new StoreRestorePoison({ table: error.table, key: error.key, detail: error.detail })
+      : new StoreUnavailable({ operation, detail: JSON.stringify(error) });
+  };
