@@ -77,7 +77,10 @@ try {
     .waitFor();
 
   const counts = await Promise.all([left.locator(".card").count(), right.locator(".card").count()]);
-  assert(counts[0] === counts[1] && counts[0] >= 5, `rendered counts diverged: ${counts}`);
+  assert(
+    counts[0] === counts[1] && counts[0] >= 5,
+    `rendered counts diverged: ${counts.join(" vs ")}`,
+  );
   assert(problems.length === 0, `browser problems: ${problems.join(" | ")}`);
 
   await left.screenshot({ path: join(scratch, "browser-left.png"), fullPage: true });

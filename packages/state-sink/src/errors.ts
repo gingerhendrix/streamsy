@@ -41,6 +41,7 @@ export type StateSinkPublicError =
   | { readonly _tag: "TransportUnavailable"; readonly sink: string; readonly detail: string }
   | { readonly _tag: "WireDecodeFailed"; readonly sink: string; readonly detail: string };
 
+/* oxlint-disable-next-line anti-slop/no-unknown-parameters -- This function is the public HTTP error decoder boundary. */
 export function decodeStateSinkPublicError(value: unknown): StateSinkPublicError {
   if (!(value instanceof Object) || !("_tag" in value)) {
     throw new Error("state-sink error response has no _tag");
@@ -49,5 +50,7 @@ export function decodeStateSinkPublicError(value: unknown): StateSinkPublicError
   if (!STATE_SINK_ERROR_TAGS.some((candidate) => candidate === tag)) {
     throw new Error(`unknown state-sink error: ${tag}`);
   }
+  // SAFETY: `_tag` was checked against the closed public-error tag set above;
+  // package integration decodes the tag-specific payload through the server schema.
   return value as StateSinkPublicError;
 }

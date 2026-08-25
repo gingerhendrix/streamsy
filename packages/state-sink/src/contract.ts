@@ -2,6 +2,7 @@ import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "
 import type { StateSinkErrorTag, StateSinkPublicError } from "./errors.ts";
 
 export interface StateSinkRowCodec<Row> {
+  /* oxlint-disable-next-line anti-slop/no-unknown-parameters -- This decoder is the sink row's external wire boundary. */
   readonly decode: (value: unknown) => Row;
 }
 
@@ -96,7 +97,18 @@ export function defineStateSink<
   return Object.freeze({ ...spec, kind: "checked-state-sink", fingerprint, compiledRoute });
 }
 
-function hashContract(value: object): string {
+interface ContractFingerprintInput {
+  readonly name: string;
+  readonly route: string;
+  readonly params: readonly string[];
+  readonly key: string;
+  readonly collection: object;
+  readonly protocol: StateSinkProtocol;
+  readonly auth: StateSinkAuthorizationContract;
+  readonly errors: readonly StateSinkErrorTag[];
+}
+
+function hashContract(value: ContractFingerprintInput): string {
   const input = JSON.stringify(value);
   let hash = 0x811c9dc5;
   for (let index = 0; index < input.length; index += 1) {

@@ -36,7 +36,7 @@ export function createBoardConnection(options: BoardConnectionOptions): BoardCon
     },
     resumeStore,
     onStatus: options.onStatus,
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    fetch: options.fetch,
   });
   const connection = boardIssuesBinding.connect({ transport, resumeStore });
   return {

@@ -132,7 +132,7 @@ export function createStateSinkBinding<
           offset,
           protocolVersion: descriptor.protocolVersion,
           contractFingerprint: descriptor.contractFingerprint,
-          ...(generation === undefined ? {} : { authorizationGeneration: generation }),
+          authorizationGeneration: generation,
         };
       }
       options.onStatus({ kind: "live", offset });
@@ -143,6 +143,8 @@ export function createStateSinkBinding<
       url: new URL(descriptor.route.build(options.params), options.origin).toString(),
       contentType: "application/json",
       warnOnHttp: false,
+      // SAFETY: DurableStream calls only the standard fetch signature implemented
+      // by guardedFetch; Bun's ambient type adds a `preconnect` property it never uses.
       fetch: guardedFetch as typeof globalThis.fetch,
     });
 
@@ -172,7 +174,7 @@ export function createStateSinkBinding<
           offset: batch.offset,
           protocolVersion: descriptor.protocolVersion,
           contractFingerprint: descriptor.contractFingerprint,
-          ...(generation === undefined ? {} : { authorizationGeneration: generation }),
+          authorizationGeneration: generation,
         };
         options.transport.commitResume(resume);
         queueMicrotask(() => {
@@ -181,7 +183,11 @@ export function createStateSinkBinding<
       },
     });
     const collection = db.collections[descriptor.collection.name];
-    options.transport.attachRows(() => collection.toArray as readonly Row[]);
+    options.transport.attachRows(() => {
+      // SAFETY: the generated Definition collection schema decodes Row before
+      // values enter this collection, and descriptor.name selects that collection.
+      return collection.toArray as readonly Row[];
+    });
     return {
       db,
       preload: () => db.preload(),
@@ -230,6 +236,7 @@ export async function lowerResetResponse<Row extends object>(
   });
 }
 
+/* oxlint-disable anti-slop/no-unknown-parameters -- These helpers parse the reset snapshot's external JSON message array. */
 function isReset(value: unknown): boolean {
   return control(value) === "reset";
 }
@@ -244,3 +251,4 @@ function control(value: unknown): string | undefined {
   if (!(headers instanceof Object) || !("control" in headers)) return undefined;
   return String(headers.control);
 }
+/* oxlint-enable anti-slop/no-unknown-parameters */

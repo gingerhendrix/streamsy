@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-parameters -- The test codec exercises the server's external row boundary. */
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import { authorizerLayer, SinkAuthorizationDenied } from "./authorization.ts";

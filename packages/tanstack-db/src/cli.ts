@@ -38,6 +38,8 @@ function required(values: readonly string[], name: string): string {
   return value;
 }
 
+// The CLI dynamically imports user code, so this predicate is its parse boundary.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Explained above.
 function isCheckedSink(value: unknown): value is StateSinkCodegenInput["sink"] {
   return (
     value instanceof Object &&

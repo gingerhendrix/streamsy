@@ -44,6 +44,8 @@ export function compileSinkRoute<Codecs extends SinkParamCodecs>(
     if (!seen.has(name)) throw new Error(`sink parameter is absent from its route: ${name}`);
   }
 
+  // SAFETY: every selected segment is a parameter whose name was checked
+  // against `codecs` while the route was compiled.
   const parameterNames = segments
     .filter(
       (segment): segment is Extract<Segment, { readonly kind: "parameter" }> =>
@@ -115,5 +117,7 @@ function matchRoute<Params>(
       return { kind: "invalid", parameter: segment.name, detail: String(cause) };
     }
   }
+  // SAFETY: every compiled parameter was decoded through its named codec and
+  // the compiler rejects missing or extra codec names.
   return { kind: "matched", params: params as Params };
 }
