@@ -9,8 +9,11 @@
  * would see.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { memoryResumeStore } from "@streamsy/tanstack-db";
+import { Effect } from "effect";
 import { createBoardConnection, sortRows, type BoardConnection } from "../src/lib/board-db.ts";
 import type { IssueRow } from "../domain/issue.ts";
+import { IssueSink } from "../server/sink.ts";
 import { call, createIssueBody, host, type Host } from "./support.ts";
 
 interface Fixture {
@@ -78,7 +81,14 @@ describe("the TanStack DB board binding", () => {
     const fixture = serve();
     await call(fixture.instance, "POST", "/api/workspaces/main/seed");
 
-    const connection = connect(fixture);
+    const resumeStore = memoryResumeStore();
+    const connection = createBoardConnection({
+      workspaceId: "main",
+      origin: fixture.origin,
+      onStatus: () => undefined,
+      resumeStore,
+    });
+    connections.push(connection);
     await connection.preload();
 
     const rows = rowsOf(connection);
@@ -89,6 +99,8 @@ describe("the TanStack DB board binding", () => {
       "seed-scale",
     ]);
     expect(rows.every((row) => row.title.length > 0)).toBe(true);
+    await Bun.sleep(0);
+    expect((await resumeStore.load())?.offset).toBeString();
   });
 
   test("two live sessions converge on a create and a move without a refresh", async () => {
@@ -143,5 +155,61 @@ describe("the TanStack DB board binding", () => {
     const rows = rowsOf(later);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("in_progress");
+  });
+
+  test("an invalid live offset resets first and removes a stale local row", async () => {
+    const fixture = serve();
+    await call(
+      fixture.instance,
+      "POST",
+      "/api/workspaces/main/issues",
+      createIssueBody("cmd-current", "issue-current", "Authoritative row", "todo"),
+    );
+    const stale: IssueRow = {
+      issueId: "issue-stale",
+      workspaceId: "main",
+      projectId: "streamsy",
+      title: "Must disappear on reset",
+      status: "backlog",
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    };
+    await fixture.instance.runtime.runPromise(
+      Effect.gen(function* () {
+        const sink = yield* IssueSink;
+        yield* sink.publish("main", [{ kind: "enter", key: stale.issueId, after: stale }]);
+      }),
+    );
+
+    let sinkReads = 0;
+    const statuses: string[] = [];
+    const connection = createBoardConnection({
+      workspaceId: "main",
+      origin: fixture.origin,
+      onStatus: (status) => statuses.push(status.kind),
+      // SAFETY: the adapter calls only the standard fetch signature; Bun's
+      // ambient type adds `preconnect`, which this deterministic test wrapper
+      // does not need to implement.
+      fetch: ((input, init) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/state/")) {
+          sinkReads += 1;
+          if (sinkReads === 2) url.searchParams.set("offset", "not-an-offset");
+        }
+        return globalThis.fetch(new Request(url, request));
+      }) as typeof globalThis.fetch,
+    });
+    connections.push(connection);
+    await connection.preload();
+    await until(
+      connection,
+      (rows) =>
+        statuses.includes("resetting") &&
+        rows.some((row) => row.issueId === "issue-current") &&
+        rows.every((row) => row.issueId !== "issue-stale"),
+      "reset-first stale-row removal",
+    );
+    expect(statuses).toContain("resetting");
+    expect(rowsOf(connection).map((row) => row.issueId)).toEqual(["issue-current"]);
   });
 });

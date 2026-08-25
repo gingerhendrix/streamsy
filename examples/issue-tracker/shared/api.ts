@@ -78,7 +78,11 @@ export const SinkSessionResponse = Schema.Struct({
   route: Schema.String,
   transport: Schema.Literal("durable-state"),
   fallback: Schema.Literal("snapshot-then-live"),
-  scope: Schema.String,
+  required: Schema.String,
+  protocolVersion: Schema.Literal(1),
+  durableStateVersion: Schema.Literal(1),
+  contractFingerprint: Schema.String,
+  authorizationGeneration: Schema.String,
   /** Native Durable Streams offset at the sink's current tail. */
   offset: Schema.String,
 });

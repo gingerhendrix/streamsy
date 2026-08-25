@@ -77,13 +77,16 @@ describe("the issue-tracker declaration", () => {
 
   test("the sink declares its own public contract", () => {
     expect(boardIssues.route).toBe("/state/workspaces/:workspaceId/issues");
-    expect(boardIssues.params).toEqual(["workspaceId"]);
+    expect(Object.keys(boardIssues.params)).toEqual(["workspaceId"]);
     expect(boardIssues.protocol).toEqual({
+      sessionVersion: 1,
+      durableStateVersion: 1,
       transport: "durable-state",
       resume: true,
       fallback: "snapshot-then-live",
     });
-    expect(boardIssues.auth.value).toBe("issue-tracker:workspace");
+    expect(boardIssues.auth.required).toBe("issue-tracker:workspace");
+    expect(boardIssues.fingerprint).toMatch(/^[0-9a-f]{8}$/);
     expect(boardIssues.from.name).toBe(issues.name);
   });
 });

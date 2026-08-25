@@ -174,10 +174,13 @@ try {
 
   // === offset-based sink resume ===
   const session = (await (
-    await fetch(`${running.origin}/api/workspaces/main/sink-session`)
+    await fetch(`${running.origin}/api/workspaces/main/sink-session`, {
+      headers: { "x-streamsy-scope": SCOPE },
+    })
   ).json()) as { offset: string; fallback: string };
   const suffixBefore = await fetch(
-    `${running.origin}/state/workspaces/main/issues?scope=${SCOPE}&offset=${encodeURIComponent(session.offset)}`,
+    `${running.origin}/state/workspaces/main/issues?offset=${encodeURIComponent(session.offset)}`,
+    { headers: { "x-streamsy-scope": SCOPE } },
   );
   const emptySuffix = (await suffixBefore.json()) as unknown[];
   check("resuming at the tail replays nothing", emptySuffix.length === 0, emptySuffix);
@@ -191,7 +194,8 @@ try {
   });
   const suffix = (await (
     await fetch(
-      `${running.origin}/state/workspaces/main/issues?scope=${SCOPE}&offset=${encodeURIComponent(session.offset)}`,
+      `${running.origin}/state/workspaces/main/issues?offset=${encodeURIComponent(session.offset)}`,
+      { headers: { "x-streamsy-scope": SCOPE } },
     )
   ).json()) as { type?: string; key?: string }[];
   check(

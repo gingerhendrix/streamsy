@@ -101,21 +101,6 @@ export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("St
   detail: Schema.String,
 }) {}
 
-/** A resume offset outside retained history, with the sink's recovery policy. */
-export class SessionResumeUnavailable extends Schema.TaggedError<SessionResumeUnavailable>()(
-  "SessionResumeUnavailable",
-  {
-    sink: Schema.String,
-    reason: Schema.Literal("out-of-window"),
-    fallback: Schema.Literal("snapshot-then-live"),
-  },
-) {}
-
-/** The request carries no scope, or not the scope the sink declares. */
-export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {
-  required: Schema.String,
-}) {}
-
 export type ApplicationError =
   | InvalidRequest
   | MalformedBody
@@ -129,6 +114,4 @@ export type ApplicationError =
   | UnsupportedStateOperation
   | MaintenanceFault
   | StoreRestorePoison
-  | StoreUnavailable
-  | SessionResumeUnavailable
-  | Unauthorized;
+  | StoreUnavailable;

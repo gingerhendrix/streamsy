@@ -94,7 +94,9 @@ async function product(instance: Host): Promise<Product> {
     IssuesResponse,
   );
   const sink = await instance.fetch(
-    new Request(`http://localhost/state/workspaces/main/issues?scope=${SCOPE}`),
+    new Request("http://localhost/state/workspaces/main/issues", {
+      headers: { "x-streamsy-scope": SCOPE },
+    }),
   );
   // SAFETY: a 2xx from the sink route is a Durable State message array;
   // `Published` names only the optional fields this comparison reads.

@@ -43,13 +43,22 @@ export const issues = view(
   }),
 );
 
-export const boardIssues = stateSink("issue-tracker.board-issues", {
+export const boardIssues = defineStateSink({
+  name: "issue-tracker.board-issues",
   from: issues,
-  key: out.row.issueId,
+  row: { decode: decodeIssueRow },
+  key: "issueId",
   route: "/state/workspaces/:workspaceId/issues",
-  params: ["workspaceId"],
-  protocol: { transport: "durable-state", resume: true, fallback: "snapshot-then-live" },
-  auth: scope("issue-tracker:workspace"),
+  params: { workspaceId: { decode: decodeIdentifier } },
+  collection: { name: "issues", type: "issue", primaryKey: "issueId" },
+  protocol: {
+    sessionVersion: 1,
+    durableStateVersion: 1,
+    transport: "durable-state",
+    resume: true,
+    fallback: "snapshot-then-live",
+  },
+  auth: { policy: "issue-tracker.workspace", required: "issue-tracker:workspace" },
 });
 ```
 
@@ -118,7 +127,7 @@ server/store.ts         IssueStore + the memory layer
 server/store-sqlite.ts  the SQLite layer: one transactional advance
 server/maintenance.ts   suffix -> decode -> engine -> commit -> publish
 server/sink.ts          the stateSink runtime
-server/sink-http.ts     the sink route: scope, native offset, fallback
+server/sink-http.ts     checked route + authorization + native offset capabilities
 server/gateway.ts       the Durable Streams HTTP surface the route borrows
 server/application.ts   command and query workflows
 server/router.ts        the trust boundary: decode, call, translate by _tag
@@ -152,8 +161,15 @@ server/runtime.ts       the application Layer, assembled once
 - **Resume uses the transport cursor.** Every Durable Streams response carries
   `stream-next-offset`. Presenting that value as `?offset=` replays exactly the
   missing suffix. If retained history no longer contains the offset, the sink
-  returns `409 resume-unavailable` with `fallback: "snapshot-then-live"`, and
-  the browser binding retries from `-1`.
+  returns a typed `409 ResumeRejected` with `recovery: "snapshot-then-live"`.
+  The native offset is never treated as an authorization credential.
+- **Authorization precedes data access.** The Effect authorizer runs before a
+  snapshot or suffix capability. The local example uses an explicit header and
+  reports an authorization generation independently from the transport offset.
+- **Fallback resets first.** The server emits `reset`, snapshot boundaries and
+  authoritative rows. The browser adapter lowers the installed library's
+  invalid reset call to same-batch deletes followed by snapshot upserts, so a
+  stale local row disappears before the session returns live.
 
 ## Local development
 
@@ -183,6 +199,7 @@ bun run --cwd examples/issue-tracker typecheck
 bun run --cwd examples/issue-tracker test
 bun run --cwd examples/issue-tracker build
 bun run --cwd examples/issue-tracker smoke:http
+bun run --cwd examples/issue-tracker smoke:ui
 ```
 
 `smoke:http` starts a real server on SQLite, drives the slice over the network,
@@ -195,35 +212,40 @@ Each of these is a place where the drafted DSL could not be implemented as
 written against the installed packages, or where implementing it as written
 would have been dishonest.
 
-| Draft                                                   | Implemented                                                   | Why                                                                                                                                                                                                                                     |
-| ------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `x.row.title` on one untyped `x`                        | `selectors<Row, Event, State>()` returning typed references   | An untyped index signature yields `T \| undefined` under `noUncheckedIndexedAccess`, and typing the scopes makes a renamed field a compile error instead of a fold-time one                                                             |
-| `evolve: { IssueCreated: { … } }`                       | `evolve: { IssueCreated: (x) => ({ … }) }`                    | The builder runs once at declaration time and returns the same inert record, but it lets each branch read _its own_ event type — `IssueStatusChanged` has no `title` and now cannot reference one                                       |
-| `occurredAt: Schema.DateTimeUtc`                        | ISO-8601 string, pattern-checked                              | The same value crosses the event stream, a SQLite column, the Durable State wire and a TanStack DB row; a string keeps all four identical                                                                                               |
-| `params: { workspaceId: x.route.workspaceId }`          | `params: ["workspaceId"]`                                     | A `route` expression scope would have exactly one legal shape; listing names keeps the expression vocabulary to scopes that can be evaluated                                                                                            |
-| `durableStateCollection(sink, { database: durableDb })` | caller-constructed `DurableStream` passed to `createStreamDB` | The installed `@durable-streams/state` has no caller-supplied database parameter; the caller-owned object it accepts is the stream handle. Ownership stays explicit and the sink contract still supplies route, scope, wire tag and key |
-| composite `RowKey` in the spike IR                      | `RowKey = string`                                             | Keeps the SQLite primary key, the Durable State message key and the TanStack DB collection key one value with no encoding step                                                                                                          |
+| Draft                                                   | Implemented                                                 | Why                                                                                                                                                                                                                               |
+| ------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `x.row.title` on one untyped `x`                        | `selectors<Row, Event, State>()` returning typed references | An untyped index signature yields `T \| undefined` under `noUncheckedIndexedAccess`, and typing the scopes makes a renamed field a compile error instead of a fold-time one                                                       |
+| `evolve: { IssueCreated: { … } }`                       | `evolve: { IssueCreated: (x) => ({ … }) }`                  | The builder runs once at declaration time and returns the same inert record, but it lets each branch read _its own_ event type — `IssueStatusChanged` has no `title` and now cannot reference one                                 |
+| `occurredAt: Schema.DateTimeUtc`                        | ISO-8601 string, pattern-checked                            | The same value crosses the event stream, a SQLite column, the Durable State wire and a TanStack DB row; a string keeps all four identical                                                                                         |
+| `params: { workspaceId: x.route.workspaceId }`          | checked codec map `{ workspaceId: { decode } }`             | The accepted slice has no general route-expression IR. The narrow sink contract keeps exact compile-time parameter names and validates decoded path values without competing with A1's expression contract                        |
+| `durableStateCollection(sink, { database: durableDb })` | supplied `DurableStream` plus returned `StreamDB` session   | `@durable-streams/state@0.3.1` accepts a pre-built stream but no pre-existing database. The caller owns that stream, the returned session, resume storage and disposal; the adapter does not claim unsupported database injection |
+| composite `RowKey` in the spike IR                      | `RowKey = string`                                           | Keeps the SQLite primary key, the Durable State message key and the TanStack DB collection key one value with no encoding step                                                                                                    |
 
 ## Evidence limits, stated precisely
 
-- **The browser does not resume across a page reload.** The caller-owned local
-  database in this slice is in-memory TanStack DB, so a reload is a fresh
-  snapshot-then-live read — which is correct, because there is no retained
-  local state for a suffix to be applied to. Native offset suffix replay is
-  exercised against the real route by `test/sink-protocol.test.ts` and
-  `smoke:http`. Persisting the local replica so a reload can resume is follow-up
-  work.
-- **The snapshot re-publication does not emit `reset`.** This relation has no
-  exits, so a complete set of upserts is already a complete rebuild. It is also
-  a workaround: `@durable-streams/state` calls TanStack DB's `truncate()`
-  without an open sync transaction when a `reset` is the first thing a session
-  sees, which throws. `reset` belongs to the first view that can drop a row, and
-  that upstream path needs fixing before then.
 - **Receipt recovery is bounded.** A workspace with more than 10,000 canonical
   issue events returns `command-recovery-exhausted` until a later indexed receipt
   authority replaces the A3 scan.
-- **`out-of-window` is reachable but not exercised.** The sink maps an offset
-  it can no longer serve to the declared snapshot fallback. Nothing in this
-  slice trims history, so no test produces that reason.
+- **The browser does not resume across a page reload.** The local StreamDB is
+  in memory, so a reload has no retained rows to receive a suffix. The adapter
+  records the last committed native offset behind `ResumeStore`, but correctly
+  starts a fresh snapshot until upstream supports a persistent/injected local
+  database. In-session reconnect and exact suffix replay are covered.
+- **Reset is lowered, not passed to upstream unchanged.** In
+  `@durable-streams/state@0.3.1`, a reset-first event calls TanStack DB
+  `truncate()` before `begin()`, which throws `NoPendingSyncTransactionWriteError`.
+  The adapter preserves reset-first protocol semantics by translating it into
+  deletes for the caller-owned collection's current keys and authoritative
+  upserts in one sync batch. The integration test proves stale-row removal.
+- **Concurrent commands can propose the same `sequence`.** Numbering is read
+  from the last committed fold, and the maintenance pass runs inside the command,
+  so sequential commands are strictly ordered. Two genuinely concurrent commands
+  can both read the same next value; the durable stream order still decides the
+  fold, because the engine's sort is stable over it. Assigning `sequence` from an
+  append acknowledgement is the fix, and it belongs with the multi-writer work.
+- **Retired history cannot be produced locally.** The example has no retention,
+  so `history-unavailable` is mapped but cannot be generated. Invalid offsets,
+  protocol incompatibility and authorization-generation change all exercise
+  the same explicit recovery policy.
 - **No deployment.** Durable Objects, Alchemy, R2 snapshots and the Cloudflare
   host are out of scope for slice 1 and are not present in this example.

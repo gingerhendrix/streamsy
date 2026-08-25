@@ -27,7 +27,7 @@ import {
 import { AppConfig } from "./config.ts";
 import { InvalidRequest, MalformedBody } from "./errors.ts";
 import type { StreamGateway } from "./gateway.ts";
-import { handleSinkRequest, sinkWorkspaceId } from "./sink-http.ts";
+import { authorizeBoardSink, handleSinkRequest, matchBoardSink } from "./sink-http.ts";
 
 const json = (body: JsonValue, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -97,9 +97,9 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
       StoreRestorePoison: (error) =>
         Effect.succeed(fail(500, "state-restore-poison", `${error.table}/${error.key}`)),
       StoreUnavailable: (error) => Effect.succeed(fail(503, "store-unavailable", error.operation)),
-      Unauthorized: (error) => Effect.succeed(fail(403, "unauthorized", error.required)),
-      SessionResumeUnavailable: (error) =>
-        Effect.succeed(fail(409, "resume-unavailable", error.reason, error.fallback)),
+      SinkAuthorizationDenied: (error) => Effect.succeed(fail(403, "unauthorized", error.required)),
+      SinkAuthorizationUnavailable: (error) =>
+        Effect.succeed(fail(503, "authorization-unavailable", error.detail)),
     }),
     Effect.catchCause((cause) => Effect.succeed(errorResponse(cause))),
   );
@@ -110,12 +110,12 @@ const route = (request: Request) =>
 
     if (url.pathname === "/health") return json(yield* health());
 
-    const sinkWorkspace = sinkWorkspaceId(url.pathname);
-    if (sinkWorkspace !== undefined) {
+    const sinkMatch = matchBoardSink(url.pathname);
+    if (sinkMatch.kind !== "mismatch") {
       if (request.method !== "GET" && request.method !== "HEAD") {
         return fail(405, "method-not-allowed");
       }
-      return yield* handleSinkRequest(request, sinkWorkspace);
+      return yield* handleSinkRequest(request);
     }
 
     const segments = apiSegments(url);
@@ -132,6 +132,7 @@ const route = (request: Request) =>
 
     if (rest[0] === "sink-session" && rest.length === 1) {
       if (request.method !== "GET") return fail(405, "method-not-allowed");
+      yield* authorizeBoardSink(request, workspaceId);
       return json(yield* sinkSession(workspaceId));
     }
 

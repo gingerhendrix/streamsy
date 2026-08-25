@@ -73,6 +73,7 @@ export type IssueRow = typeof IssueRow.Type;
 export const decodeIssueEvent = Schema.decodeUnknownSync(IssueEvent);
 export const encodeIssueEventJson = Schema.encodeUnknownSync(Schema.fromJsonString(IssueEvent));
 export const decodeIssueRow = Schema.decodeUnknownSync(IssueRow);
+export const decodeIdentifier = Schema.decodeUnknownSync(Identifier);
 
 /** Supporting A1 relation rows. Their ingestion and runtime maintenance belong to later tracks. */
 export const ProjectRow = Schema.Struct({

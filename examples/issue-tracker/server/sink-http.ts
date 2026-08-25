@@ -1,71 +1,78 @@
-/**
- * The `stateSink` route.
- *
- * `boardIssues` declares `route`, `auth`, `protocol.resume` and
- * `protocol.fallback`. This module applies that declaration to the ordinary
- * Durable Streams read protocol. The client sends the native `offset` cursor.
- * An offset outside retained history gets the declared snapshot fallback.
- */
-import { Effect } from "effect";
+/** Framework-neutral checked state-sink handling adapted to the local gateway. */
+import {
+  authorizerLayer,
+  handleStateSink,
+  SinkAuthorizationDenied,
+  StateSinkAuthorizer,
+  StateSinkSourceFailure,
+} from "@streamsy/state-sink/effect";
+import { Effect, Layer } from "effect";
 import { boardIssues, streamNames } from "../domain/declaration.ts";
-import { SessionResumeUnavailable, Unauthorized } from "./errors.ts";
+import { listIssues } from "./application.ts";
 import { StreamGateway } from "./gateway.ts";
 import { advance } from "./maintenance.ts";
-import { ensureWorkspace } from "./streams.ts";
+import { ensureWorkspace, Streams } from "./streams.ts";
 
 export const SCOPE_HEADER = "x-streamsy-scope";
+export const LOCAL_AUTHORIZATION_GENERATION = "local-v1";
 
-/** `/state/workspaces/{workspaceId}/issues` → the workspace id, or undefined. */
-export function sinkWorkspaceId(pathname: string): string | undefined {
-  const template = boardIssues.route.split("/").filter((segment) => segment.length > 0);
-  const actual = pathname.split("/").filter((segment) => segment.length > 0);
-  if (template.length !== actual.length) return undefined;
-  let workspaceId: string | undefined;
-  for (const [index, segment] of template.entries()) {
-    const value = actual[index];
-    if (value === undefined) return undefined;
-    if (segment.startsWith(":")) {
-      if (segment !== ":workspaceId") return undefined;
-      workspaceId = decodeURIComponent(value);
-      continue;
+export const localSinkAuthorizerLayer: Layer.Layer<StateSinkAuthorizer> = authorizerLayer(
+  Effect.fn("IssueTracker.authorizeSink")(function* ({ request, sink }) {
+    if (request.headers.get(SCOPE_HEADER) !== sink.auth.required) {
+      return yield* new SinkAuthorizationDenied({ required: sink.auth.required });
     }
-    if (segment !== value) return undefined;
-  }
-  return workspaceId;
-}
+    return { generation: LOCAL_AUTHORIZATION_GENERATION, subject: "local-example" };
+  }),
+);
 
-/** Serve one sink request for a resolved workspace. */
-export const handleSinkRequest = Effect.fn("Sink.handleRequest")(function* (
+export const matchBoardSink = (pathname: string) => boardIssues.compiledRoute.match(pathname);
+
+export const authorizeBoardSink = Effect.fn("IssueTracker.authorizeBoardSink")(function* (
   request: Request,
   workspaceId: string,
 ) {
-  const gateway = yield* StreamGateway;
-  const url = new URL(request.url);
-  const scope = url.searchParams.get("scope") ?? request.headers.get(SCOPE_HEADER);
-  if (scope !== boardIssues.auth.value) {
-    return yield* new Unauthorized({ required: boardIssues.auth.value });
-  }
-
-  if (url.searchParams.get("live") === null) {
-    yield* ensureWorkspace(workspaceId);
-    yield* advance(workspaceId);
-  }
-
-  const offset = url.searchParams.get("offset");
-  const target = new URL(request.url);
-  target.pathname = `${gateway.prefix}/${streamNames.boardState(workspaceId)}`;
-  target.searchParams.delete("scope");
-
-  const proxied = yield* gateway.fetch(
-    new Request(target, { method: request.method, headers: request.headers }),
-  );
-
-  if (offset !== null && offset !== "-1" && [400, 404, 410].includes(proxied.status)) {
-    return yield* new SessionResumeUnavailable({
-      sink: boardIssues.name,
-      reason: "out-of-window",
-      fallback: boardIssues.protocol.fallback,
-    });
-  }
-  return proxied;
+  const authorizer = yield* StateSinkAuthorizer;
+  return yield* authorizer.authorize({ request, sink: boardIssues, params: { workspaceId } });
 });
+
+export const handleSinkRequest = (request: Request) =>
+  handleStateSink(boardIssues, request, {
+    snapshot: Effect.fn("IssueTracker.sinkSnapshot")(function* ({ workspaceId }) {
+      const streams = yield* Streams;
+      const rows = yield* listIssues(workspaceId).pipe(
+        Effect.mapError(
+          (error) => new StateSinkSourceFailure({ phase: "snapshot", detail: String(error) }),
+        ),
+      );
+      const head = yield* Effect.promise((signal) =>
+        streams.client.stream(streamNames.boardState(workspaceId)).head({ signal }),
+      );
+      if (head.status !== "ok") {
+        return yield* new StateSinkSourceFailure({
+          phase: "snapshot",
+          detail: `head returned ${head.status}`,
+        });
+      }
+      return { rows, offset: head.offset ?? "-1" };
+    }),
+    suffix: Effect.fn("IssueTracker.sinkSuffix")(function* (incoming, { workspaceId }) {
+      const gateway = yield* StreamGateway;
+      if (new URL(incoming.url).searchParams.get("live") === null) {
+        yield* ensureWorkspace(workspaceId).pipe(
+          Effect.mapError(
+            (error) => new StateSinkSourceFailure({ phase: "suffix", detail: String(error) }),
+          ),
+        );
+        yield* advance(workspaceId).pipe(
+          Effect.mapError(
+            (error) => new StateSinkSourceFailure({ phase: "suffix", detail: String(error) }),
+          ),
+        );
+      }
+      const target = new URL(incoming.url);
+      target.pathname = `${gateway.prefix}/${streamNames.boardState(workspaceId)}`;
+      return yield* gateway.fetch(
+        new Request(target, { method: incoming.method, headers: incoming.headers }),
+      );
+    }),
+  });

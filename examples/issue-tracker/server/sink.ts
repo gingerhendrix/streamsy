@@ -16,7 +16,7 @@ import {
   type DurableStateStream,
 } from "@streamsy/state";
 import { Context, Effect, Layer } from "effect";
-import { streamNames } from "../domain/declaration.ts";
+import { boardIssues, streamNames } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
 import type { Change } from "@streamsy/views-ir";
 import { AppendRejected, StreamUnavailable } from "./errors.ts";
@@ -30,13 +30,13 @@ import { AppendRejected, StreamUnavailable } from "./errors.ts";
  */
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- This codec IS the JSON wire boundary the rule points at: `encode` hands a decoded row to the protocol's JSON writer, and `decode` runs the declared `IssueRow` schema over whatever the wire produced. */
 export const boardStateSchema = {
-  issues: {
+  [boardIssues.collection.name]: {
     schema: {
       encode: (value: IssueRow): unknown => value,
       decode: (value: unknown): IssueRow => decodeIssueRow(value),
     },
-    type: "issue",
-    primaryKey: "issueId",
+    type: boardIssues.collection.type,
+    primaryKey: boardIssues.collection.primaryKey,
   },
 } as const;
 /* oxlint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns */

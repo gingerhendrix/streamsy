@@ -7,17 +7,16 @@
  * change makes `issues.plan` hash differently, the maintained state is a
  * different thing and the host must say so.
  */
-import { IssueEvent, IssueRow } from "./issue.ts";
+import { defineStateSink, STATE_SINK_ERROR_TAGS } from "@streamsy/state-sink";
+import { decodeIdentifier, decodeIssueRow, IssueEvent, IssueRow } from "./issue.ts";
 import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
 import {
   factSourceMode,
   from,
   reducer,
-  scope,
   selectors,
   source,
   stateSourceMode,
-  stateSink,
   view,
 } from "@streamsy/views";
 import {
@@ -114,17 +113,23 @@ export const issues = view(
   }),
 );
 
-export const boardIssues = stateSink("issue-tracker.board-issues", {
+export const boardIssues = defineStateSink({
+  name: "issue-tracker.board-issues",
   from: issues,
-  key: out.row.issueId,
+  row: { decode: decodeIssueRow },
+  key: "issueId",
   route: "/state/workspaces/:workspaceId/issues",
-  params: ["workspaceId"],
+  params: { workspaceId: { decode: decodeIdentifier } },
+  collection: { name: "issues", type: "issue", primaryKey: "issueId" },
   protocol: {
+    sessionVersion: 1,
+    durableStateVersion: 1,
     transport: "durable-state",
     resume: true,
     fallback: "snapshot-then-live",
   },
-  auth: scope("issue-tracker:workspace"),
+  auth: { policy: "issue-tracker.workspace", required: "issue-tracker:workspace" },
+  errors: STATE_SINK_ERROR_TAGS,
 });
 
 /** Durable stream names. Identity and stream id are kept equal so lineage reads by inspection. */

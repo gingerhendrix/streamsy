@@ -61,9 +61,12 @@
         "@streamsy/experimental": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/state": "workspace:*",
+        "@streamsy/state-sink": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
+        "@streamsy/tanstack-db": "workspace:*",
         "@streamsy/views": "workspace:*",
         "@streamsy/views-ir": "workspace:*",
+        "@streamsy/views-store": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",
         "effect": "4.0.0-rc.109",
@@ -240,6 +243,17 @@
         "vitest": "^4.0.16",
       },
     },
+    "packages/state-sink": {
+      "name": "@streamsy/state-sink",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "4.0.0-rc.109",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
+      },
+    },
     "packages/storage-durable-object": {
       "name": "@streamsy/storage-durable-object",
       "version": "0.2.1",
@@ -268,6 +282,23 @@
       "version": "0.2.1",
       "dependencies": {
         "@streamsy/core": "0.2.1",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/tanstack-db": {
+      "name": "@streamsy/tanstack-db",
+      "version": "0.1.0",
+      "bin": {
+        "streamsy-state-sink": "./dist/cli.js",
+      },
+      "dependencies": {
+        "@durable-streams/client": "^0.2.6",
+        "@durable-streams/state": "^0.3.1",
+        "@streamsy/state-sink": "workspace:*",
+        "@tanstack/db": "0.6.8",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -949,11 +980,15 @@
 
     "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
 
+    "@streamsy/state-sink": ["@streamsy/state-sink@workspace:packages/state-sink"],
+
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
 
     "@streamsy/storage-fs": ["@streamsy/storage-fs@workspace:packages/storage-fs"],
 
     "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
+
+    "@streamsy/tanstack-db": ["@streamsy/tanstack-db@workspace:packages/tanstack-db"],
 
     "@streamsy/views": ["@streamsy/views@workspace:packages/views"],
 

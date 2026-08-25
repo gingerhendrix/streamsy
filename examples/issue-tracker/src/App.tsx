@@ -40,7 +40,10 @@ export function App(): React.JSX.Element {
     });
     setConnection(opened);
     opened.preload().catch((cause: unknown) => {
-      setStatus({ kind: "failed", detail: cause instanceof Error ? cause.message : String(cause) });
+      setStatus({
+        kind: "failed",
+        error: cause instanceof Error ? cause : new Error(String(cause)),
+      });
     });
     // The application owns the session, so the application closes it.
     return () => {
@@ -270,7 +273,11 @@ function SyncBadge(props: {
         </span>
       ) : undefined}
       {props.status.kind === "failed" ? (
-        <span className="rows">{props.status.detail}</span>
+        <span className="rows">
+          {props.status.error instanceof Error
+            ? props.status.error.message
+            : props.status.error._tag}
+        </span>
       ) : undefined}
     </p>
   );
