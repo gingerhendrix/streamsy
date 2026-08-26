@@ -23,9 +23,15 @@ import type {
   StreamProtocolClient,
   StreamProtocolHandle,
 } from "@streamsy/core";
+import type { OutboxStore } from "@streamsy/effect-sink";
+import type { SourceChanges } from "@streamsy/views-engine";
+import { Effect, Layer } from "effect";
+import { issueLabelMemberships, labels } from "../domain/declaration.ts";
 import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
 import { ExchangeStatusResponse, InboxResponse, TransitionFeedResponse } from "../shared/api.ts";
-import { LabelCountsResponse } from "../shared/api.ts";
+import { IssueLabelsResponse, IssuesResponse, LabelCountsResponse } from "../shared/api.ts";
+import { StoreUnavailable } from "../server/errors.ts";
+import { IssueStore, memoryLayer } from "../server/store.ts";
 import { call, host, json, temporaryDirectory, type Host } from "./support.ts";
 
 const open: Host[] = [];
@@ -371,3 +377,224 @@ function loseFeedAppendResponse() {
     }),
   };
 }
+
+/**
+ * Graph-product input delivery across a mid-pass failure.
+ *
+ * A maintenance pass commits its source relations one at a time and only then
+ * folds them into the two operator graphs. Everything in between — the
+ * transition feed, the catalog catch-up, the sink appends — can fail, and when
+ * it did the changes those graphs still owed existed nowhere but in the pass's
+ * local variables. The next pass read an empty suffix, so a published product
+ * stayed wrong until the same key happened to change again.
+ *
+ * Each test here commits one input leg, fails the pass before the graph that
+ * consumes it, and then reads the *published product* rather than the relation
+ * the pass folded. The relations always recovered; these are the assertions
+ * that were missing.
+ */
+describe("graph products recover inputs committed by a failed pass", () => {
+  test("the board sink serves an issue change committed before a mid-pass failure", async () => {
+    const dropped = dropFeedAppends();
+    const instance = track(host({ applicationClient: (client) => dropped.wrap(client) }));
+    await call(instance, "POST", "/api/workspaces/main/seed");
+
+    // The row commit lands, the feed append does not, and the pass dies before
+    // the board graph has folded anything.
+    dropped.dropping = true;
+    expect((await move(instance, "seed-plan", "todo", "lost-1")).status).toBe(503);
+    dropped.dropping = false;
+
+    // The relation recovered — it always did.
+    const rows = await json(
+      await call(instance, "GET", "/api/workspaces/main/issues"),
+      IssuesResponse,
+    );
+    expect(rows.rows.find((row) => row.issueId === "seed-plan")?.status).toBe("todo");
+
+    // The published product recovers too, which is the new law.
+    const card = latest(await stateMessages(instance, BOARD_SINK), "issue", "seed-plan");
+    expect(card?.value?.status).toBe("todo");
+  });
+
+  test("the label-count sink serves a membership committed before a mid-pass failure", async () => {
+    /**
+     * The membership relation commits on its own checkpoint, several steps
+     * before either graph folds anything. Refusing the label-count commit for
+     * exactly the pass that is delivering that membership puts the failure in
+     * the window the product used to lose it in.
+     */
+    const faulty: LabelCountFault = {};
+    const instance = track(host({ store: faultyLabelCountStore(faulty) }));
+    await call(instance, "POST", "/api/workspaces/main/seed");
+    expect(countOf(await counts(instance), "docs")).toBe(1);
+
+    faulty.refuse = delivering(issueLabelMemberships.name);
+    const attached = await call(
+      instance,
+      "POST",
+      "/api/workspaces/main/issues/seed-maintain/labels",
+      { commandId: "lost-attach-1", labelId: "docs" },
+    );
+    expect(attached.status).toBe(503);
+
+    // The membership relation itself is committed and complete.
+    faulty.refuse = undefined;
+    const memberships = await json(
+      await call(instance, "GET", "/api/workspaces/main/issue-labels"),
+      IssueLabelsResponse,
+    );
+    expect(
+      memberships.rows.some(
+        (row) => row.issueId === "seed-maintain" && row.labelId === "docs" && row.attached,
+      ),
+    ).toBe(true);
+
+    // And the product that never saw it catches up from committed history.
+    expect(countOf(await counts(instance), "docs")).toBe(2);
+    const published = latest(
+      await stateMessages(instance, LABEL_COUNT_SINK),
+      "label-count",
+      "docs",
+    );
+    expect(published?.value?.issueCount).toBe(2);
+  });
+
+  test("the label-count sink serves catalog data ingested before a mid-pass failure", async () => {
+    /**
+     * The catalog leg's window is the one the other two fixtures cannot reach:
+     * ingestion is the *last* thing a pass commits before the graphs fold, so
+     * the failure has to sit between that commit and the label-count graph's
+     * own. The store seam the host already exposes is what puts it there.
+     */
+    const faulty: LabelCountFault = {};
+    const instance = track(host({ store: faultyLabelCountStore(faulty) }));
+    await call(instance, "POST", "/api/workspaces/main/seed");
+    expect(nameOf(await counts(instance), "docs")).toBe("Docs");
+
+    faulty.refuse = delivering(labels.name);
+    const renamed = await call(instance, "POST", "/api/workspaces/main/catalog/labels", {
+      key: "docs",
+      value: {
+        labelId: "docs",
+        workspaceId: "main",
+        name: "Documentation",
+        color: "#4573d6",
+        updatedAt: "2026-08-26T00:00:00.000Z",
+      },
+    });
+    expect(renamed.status).toBe(503);
+
+    // The catalog collection itself is committed and serves the new name.
+    faulty.refuse = undefined;
+    const catalogRows = await call(instance, "GET", "/api/workspaces/main/catalog/labels");
+    expect(await catalogRows.json()).toMatchObject({
+      rows: expect.arrayContaining([
+        expect.objectContaining({ labelId: "docs", name: "Documentation" }),
+      ]),
+    });
+
+    // And so does the joined product, which never saw the ingestion at all.
+    expect(nameOf(await counts(instance), "docs")).toBe("Documentation");
+    const published = latest(
+      await stateMessages(instance, LABEL_COUNT_SINK),
+      "label-count",
+      "docs",
+    );
+    expect(published?.value?.labelName).toBe("Documentation");
+  });
+
+  test("a product only re-reads what it has not consumed, so a quiet pass publishes nothing", async () => {
+    /**
+     * At-least-once delivery is only safe if it converges. The positions are
+     * what make it converge: a pass with no new committed input delivers no
+     * input, so the graph revision does not move and the sink is not appended
+     * to. Two consecutive quiet passes leave the published stream byte-equal.
+     */
+    const instance = track(host());
+    await call(instance, "POST", "/api/workspaces/main/seed");
+    const first = await stateMessages(instance, LABEL_COUNT_SINK);
+    await counts(instance);
+    await counts(instance);
+    expect(await stateMessages(instance, LABEL_COUNT_SINK)).toEqual(first);
+  });
+});
+
+const BOARD_SINK = "/state/workspaces/main/issues";
+const LABEL_COUNT_SINK = "/state/workspaces/main/label-counts";
+
+interface PublishedStateMessage {
+  readonly type?: string;
+  readonly key?: string;
+  readonly value?: {
+    readonly status?: string;
+    readonly labelName?: string;
+    readonly issueCount?: number;
+  };
+}
+
+/** Every message the sink's own State stream currently carries. */
+async function stateMessages(
+  instance: Host,
+  path: string,
+): Promise<readonly PublishedStateMessage[]> {
+  const response = await call(instance, "GET", path);
+  if (!response.ok) throw new Error(`${path}: ${response.status}`);
+  // SAFETY: a 2xx from a checked State route is a Durable State message array,
+  // and `PublishedStateMessage` names only the optional fields read here.
+  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
+  return JSON.parse(await response.text()) as PublishedStateMessage[];
+}
+
+/** The current value of one key: the last message the stream carries for it. */
+const latest = (
+  messages: readonly PublishedStateMessage[],
+  type: string,
+  key: string,
+): PublishedStateMessage | undefined =>
+  messages.filter((message) => message.type === type && message.key === key).at(-1);
+
+const countOf = (listed: LabelCountsResponse, labelId: string): number | undefined =>
+  listed.rows.find((row) => row.labelId === labelId)?.issueCount;
+const nameOf = (listed: LabelCountsResponse, labelId: string): string | undefined =>
+  listed.rows.find((row) => row.labelId === labelId)?.labelName;
+
+/**
+ * A memory store whose label-count graph maintenance can be made to fail.
+ *
+ * It wraps the real store rather than replacing it, so everything the pass does
+ * before the graph — the issue commit, the membership commit, the catalog
+ * commit — is the production path, and only the one step under test refuses.
+ */
+interface LabelCountFault {
+  /** Refuse the label-count graph commit for exactly the delivery under test. */
+  refuse?: (inputs: readonly SourceChanges[]) => boolean;
+}
+
+function faultyLabelCountStore(state: LabelCountFault): Layer.Layer<IssueStore | OutboxStore> {
+  const wrapped = Layer.effect(
+    IssueStore,
+    Effect.gen(function* () {
+      const inner = yield* IssueStore;
+      return IssueStore.of({
+        ...inner,
+        maintainLabelCounts: (workspaceId, inputs, positions) =>
+          state.refuse?.(inputs) === true
+            ? Effect.fail(
+                new StoreUnavailable({
+                  operation: "maintainLabelCounts",
+                  detail: "injected mid-pass failure",
+                }),
+              )
+            : inner.maintainLabelCounts(workspaceId, inputs, positions),
+      });
+    }),
+  );
+  return wrapped.pipe(Layer.provideMerge(memoryLayer()));
+}
+
+/** Refuse only a pass that is actually delivering this source's changes. */
+const delivering =
+  (sourceId: string) =>
+  (inputs: readonly SourceChanges[]): boolean =>
+    inputs.some((input) => input.sourceId === sourceId && input.changes.length > 0);

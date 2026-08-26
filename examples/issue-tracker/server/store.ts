@@ -26,6 +26,7 @@ import {
   type Checkpoint,
   type HistoryPosition,
   type JsonValue,
+  type RowKey,
   type StoredChange,
   type StoreError,
   type ViewStoreService,
@@ -43,7 +44,7 @@ import {
   type OperatorStateSnapshot,
   type SourceChanges,
 } from "@streamsy/views-engine";
-import type { Change, JsonObject } from "@streamsy/views-ir";
+import { isJsonObject, type Change, type JsonObject } from "@streamsy/views-ir";
 import {
   issueLabelLifecycle,
   issueLabelMemberships,
@@ -59,6 +60,7 @@ import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../do
 import type { CommandKind } from "./commands.ts";
 import {
   CommandIdConflict,
+  GraphHistoryExpired,
   MaintenanceFault,
   StoreRestorePoison,
   StoreUnavailable,
@@ -153,6 +155,41 @@ export interface GraphResult<Row> {
   readonly previousRevision: number;
 }
 
+/**
+ * Which committed relation history one graph input leg reads.
+ *
+ * Both legs are fact relations *this store commits*, so their change history is
+ * written in the same transaction as their rows. That is what makes graph input
+ * delivery recoverable at all: a batch that exists to deliver is a batch whose
+ * rows landed.
+ */
+export type GraphHistoryLeg = "issues" | "memberships";
+
+/** Which operator-graph product a durable input position belongs to. */
+export type GraphProductId = "board" | "label-counts";
+
+/**
+ * How far one graph product has consumed each of its input legs.
+ *
+ * Keyed by the leg's source id, and written in the *same* commit as the
+ * operator state it produced. A pass that commits a source relation and then
+ * dies before the graph commit leaves the position where it was, so the next
+ * pass delivers those inputs again. Delivery is at-least-once, which is safe
+ * because the graph reconciles every delivered change against the rows it
+ * already holds.
+ *
+ * The values are opaque per leg: a JSON {@link HistoryPosition} for a committed
+ * relation, and a State source checkpoint for a catalog collection. Nothing
+ * outside this store reads them as anything but equal-or-not.
+ */
+export type GraphInputPositions = Readonly<Record<string, string>>;
+
+/** One committed change batch, in the shape an operator graph consumes. */
+export interface GraphInputBatch {
+  readonly position: HistoryPosition;
+  readonly changes: readonly Change<JsonObject>[];
+}
+
 /** One atomic advance of the maintained membership relation. */
 export interface MembershipCommitInput {
   readonly expectedCheckpoint: string | undefined;
@@ -232,6 +269,7 @@ export interface IssueStoreService {
   readonly maintainBoard: (
     workspaceId: string,
     inputs: readonly SourceChanges[],
+    positions: GraphInputPositions,
   ) => Effect.Effect<GraphResult<ProjectBoardCard>, StoreUnavailable | StoreRestorePoison>;
   readonly boardRows: (
     workspaceId: string,
@@ -254,6 +292,7 @@ export interface IssueStoreService {
   readonly maintainLabelCounts: (
     workspaceId: string,
     inputs: readonly SourceChanges[],
+    positions: GraphInputPositions,
   ) => Effect.Effect<GraphResult<LabelCountRow>, StoreUnavailable | StoreRestorePoison>;
   /** The revision of one graph product already durably on its sink, if any. */
   readonly graphPublished: (
@@ -265,6 +304,39 @@ export interface IssueStoreService {
     product: string,
     revision: string,
   ) => Effect.Effect<void, StoreUnavailable>;
+  /** What one graph product has durably consumed from each of its input legs. */
+  readonly graphInputPositions: (
+    workspaceId: string,
+    product: GraphProductId,
+  ) => Effect.Effect<GraphInputPositions, StoreUnavailable | StoreRestorePoison>;
+  /** The last committed batch of one input leg, or nothing when it has never committed. */
+  readonly graphHistoryHead: (
+    workspaceId: string,
+    leg: GraphHistoryLeg,
+  ) => Effect.Effect<HistoryPosition | undefined, StoreUnavailable>;
+  /**
+   * The whole current relation as `enter` changes.
+   *
+   * This is the bootstrap delivery a product uses when it has no recorded
+   * position yet — an upgraded database, or a graph built before its leg had
+   * one. It is exact rather than approximate because neither fact relation ever
+   * exits: the fold produces `enter` and `update` only, so a full set of enters
+   * reconciles to precisely the rows the graph is missing.
+   */
+  readonly graphHistorySnapshot: (
+    workspaceId: string,
+    leg: GraphHistoryLeg,
+  ) => Effect.Effect<readonly Change<JsonObject>[], StoreUnavailable | StoreRestorePoison>;
+  /** Committed change batches of one input leg after `position`. */
+  readonly graphHistoryChanges: (
+    workspaceId: string,
+    leg: GraphHistoryLeg,
+    position: HistoryPosition | undefined,
+    limit: number,
+  ) => Effect.Effect<
+    readonly GraphInputBatch[],
+    StoreUnavailable | StoreRestorePoison | GraphHistoryExpired
+  >;
   readonly labelCountRows: (
     workspaceId: string,
   ) => Effect.Effect<readonly LabelCountRow[], StoreUnavailable | StoreRestorePoison>;
@@ -513,6 +585,24 @@ function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct
     sourceId: product.sourceId,
   });
   const relation = (workspaceId: string) => ({ ...identity(workspaceId), id: product.name });
+  const inputsRef = (workspaceId: string) => ({ ...identity(workspaceId), id: GRAPH_INPUTS_ID });
+
+  /**
+   * What this product has already consumed from each input leg.
+   *
+   * It lives beside the operator snapshot, under the product's own identity, so
+   * it is per product by construction: two graphs reading the same relation
+   * each keep their own position and neither can consume the other's.
+   */
+  const inputPositions = Effect.fn("IssueStore.graphInputPositions")(function* (
+    workspaceId: string,
+  ) {
+    const stored = yield* mapStoreUnavailable(
+      "graphInputPositions",
+      viewStore.getOperatorValue(inputsRef(workspaceId), GRAPH_INPUTS_KEY),
+    );
+    return yield* decodeInputPositions(product.name, stored);
+  });
 
   const decodeChange = (change: Change<JsonObject>): Change<Row, string> => {
     const key = Schema.decodeUnknownSync(Schema.String)(change.key);
@@ -549,6 +639,7 @@ function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct
   const maintain = Effect.fn("IssueStore.graphMaintain")(function* (
     workspaceId: string,
     inputs: readonly SourceChanges[],
+    positions: GraphInputPositions,
   ) {
     const id = identity(workspaceId);
     const cursor = yield* mapStoreUnavailable("graphProgress", viewStore.sourceProgress(id));
@@ -562,7 +653,20 @@ function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct
     const state = decodeOperatorSnapshot(product.plan, stored);
     const reconciled = reconcileSourceInputs(state, inputs);
     const previousRevision = state?.revision ?? 0;
-    if (state !== undefined && reconciled.every((input) => input.changes.length === 0)) {
+    /**
+     * A pass that delivered nothing new commits nothing — but "nothing new"
+     * now includes the positions. A batch of inputs that reconciles away still
+     * has to move the positions past it, or the leg would re-read the same
+     * batches every pass until the retention window dropped them and the
+     * product wedged.
+     */
+    const consumed = yield* inputPositions(workspaceId);
+    const positionsMoved = !samePositions(consumed, positions);
+    if (
+      state !== undefined &&
+      !positionsMoved &&
+      reconciled.every((input) => input.changes.length === 0)
+    ) {
       return {
         rows: yield* rows(workspaceId),
         changes: [],
@@ -593,6 +697,9 @@ function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct
           snapshot: result.state,
           relationId: product.name,
           changes: result.changes,
+          // The position and the state it produced land together or neither
+          // does. That is the whole mechanism.
+          extraValues: [{ id: GRAPH_INPUTS_ID, key: GRAPH_INPUTS_KEY, value: positions }],
         }),
       ),
     );
@@ -604,8 +711,43 @@ function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct
     };
   });
 
-  return { rows, maintain };
+  return { rows, maintain, inputPositions };
 }
+
+/** Where a product's durable input positions live, beside its operator state. */
+const GRAPH_INPUTS_ID = "__graph_inputs__";
+const GRAPH_INPUTS_KEY = "positions";
+
+const samePositions = (left: GraphInputPositions, right: GraphInputPositions): boolean => {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) if (left[key] !== right[key]) return false;
+  return true;
+};
+
+/**
+ * Decode the durable positions record.
+ *
+ * A value the shape no longer admits is typed poison rather than an empty
+ * record: silently starting from nothing here would re-deliver the whole
+ * retained history as if that were the intent.
+ */
+const RecordedPositions = Schema.Record(Schema.String, Schema.String);
+
+const decodeInputPositions = (
+  product: string,
+  value: JsonValue | undefined,
+): Effect.Effect<GraphInputPositions, StoreRestorePoison> => {
+  if (value === undefined) return Effect.succeed({});
+  return Effect.try({
+    try: () => Schema.decodeUnknownSync(RecordedPositions)(value),
+    catch: (cause) =>
+      new StoreRestorePoison({
+        table: GRAPH_INPUTS_ID,
+        key: product,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+};
 
 export function issueStoreAdapter(
   viewStore: ViewStoreService,
@@ -785,10 +927,65 @@ export function issueStoreAdapter(
       if (result === undefined) return yield* Effect.die("recovery folded no result");
       return result;
     }),
-    maintainBoard: (workspaceId, inputs) => board.maintain(workspaceId, inputs),
+    maintainBoard: (workspaceId, inputs, positions) =>
+      board.maintain(workspaceId, inputs, positions),
     boardRows: (workspaceId) => board.rows(workspaceId),
-    maintainLabelCounts: (workspaceId, inputs) => counts.maintain(workspaceId, inputs),
+    maintainLabelCounts: (workspaceId, inputs, positions) =>
+      counts.maintain(workspaceId, inputs, positions),
     labelCountRows: (workspaceId) => counts.rows(workspaceId),
+    graphInputPositions: (workspaceId, product) =>
+      product === "board" ? board.inputPositions(workspaceId) : counts.inputPositions(workspaceId),
+    graphHistoryHead: Effect.fn("IssueStore.graphHistoryHead")(function* (workspaceId, leg) {
+      const bounds = yield* mapStoreUnavailable(
+        "graphHistoryHead",
+        viewStore.historyBounds(legIdentity(workspaceId, leg), legRelationName(leg)),
+      );
+      return bounds.latest === undefined
+        ? undefined
+        : { epoch: bounds.epoch, sequence: bounds.latest };
+    }),
+    graphHistorySnapshot: Effect.fn("IssueStore.graphHistorySnapshot")(
+      function* (workspaceId, leg) {
+        const snapshot = yield* mapStoreError(
+          "graphHistorySnapshot",
+          viewStore.snapshotRows(legRelationRef(workspaceId, leg)),
+        );
+        return yield* Effect.forEach(snapshot.rows, (row) =>
+          Effect.all([
+            graphRowKey(legRelationName(leg), row.key),
+            graphRowValue(legRelationName(leg), row.key, row.value),
+          ]).pipe(
+            Effect.map(([key, after]): Change<JsonObject> => ({ kind: "enter", key, after })),
+          ),
+        );
+      },
+    ),
+    graphHistoryChanges: Effect.fn("IssueStore.graphHistoryChanges")(
+      function* (workspaceId, leg, position, limit) {
+        const relationName = legRelationName(leg);
+        const batches = yield* viewStore
+          .changesAfter(legIdentity(workspaceId, leg), position, limit, relationName)
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "ViewHistoryExpired"
+                ? new GraphHistoryExpired({
+                    workspaceId,
+                    product: relationName,
+                    detail: `change history no longer reaches ${JSON.stringify(position)}`,
+                  })
+                : new StoreUnavailable({
+                    operation: "graphHistoryChanges",
+                    detail: JSON.stringify(error),
+                  }),
+            ),
+          );
+        return yield* Effect.forEach(batches, (batch) =>
+          Effect.forEach(batch.changes, (change) => graphInputChange(relationName, change)).pipe(
+            Effect.map((changes): GraphInputBatch => ({ position: batch.position, changes })),
+          ),
+        );
+      },
+    ),
 
     membershipProgress: Effect.fn("IssueStore.membershipProgress")(function* (workspaceId) {
       return yield* mapStoreUnavailable(
@@ -905,6 +1102,85 @@ function reconcileSourceInputs(
     return { sourceId: input.sourceId, changes };
   });
 }
+
+/** The committed relation one graph input leg reads, named once for all three readers. */
+const legIdentity = (workspaceId: string, leg: GraphHistoryLeg) =>
+  leg === "issues" ? identity(workspaceId) : membershipIdentity(workspaceId);
+const legRelationRef = (workspaceId: string, leg: GraphHistoryLeg) =>
+  leg === "issues" ? relationRef(workspaceId) : membershipRelationRef(workspaceId);
+const legRelationName = (leg: GraphHistoryLeg): string =>
+  leg === "issues" ? issues.name : issueLabelMemberships.name;
+
+/**
+ * A durable relation value, as the object an operator graph consumes.
+ *
+ * Every committed row of both legs is a JSON object, so a value that is not one
+ * is durable state a declaration change left behind — typed poison, never a row
+ * folded into a published product.
+ */
+const graphRowValue = (
+  relationId: string,
+  key: RowKey,
+  value: JsonValue,
+): Effect.Effect<JsonObject, StoreRestorePoison> =>
+  Effect.try({
+    try: () => {
+      if (!isJsonObject(value)) throw new TypeError("committed relation value is not an object");
+      return value;
+    },
+    catch: (cause) =>
+      new StoreRestorePoison({
+        table: relationId,
+        key: JSON.stringify(key),
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+
+/**
+ * The row key of a committed change, as the graph's key domain.
+ *
+ * Both legs declare a string key, so a durable key that is not one belongs to a
+ * relation this product does not consume — typed poison rather than a
+ * stringified object silently joined against nothing.
+ */
+const graphRowKey = (relationId: string, key: RowKey): Effect.Effect<string, StoreRestorePoison> =>
+  Effect.try({
+    try: () => Schema.decodeUnknownSync(Schema.String)(key),
+    catch: (cause) =>
+      new StoreRestorePoison({
+        table: relationId,
+        key: JSON.stringify(key),
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+
+const graphInputChange = (
+  relationId: string,
+  change: StoredChange,
+): Effect.Effect<Change<JsonObject>, StoreRestorePoison> =>
+  Effect.gen(function* () {
+    const key = yield* graphRowKey(relationId, change.key);
+    if (change.kind === "enter") {
+      return {
+        kind: "enter",
+        key,
+        after: yield* graphRowValue(relationId, change.key, change.after),
+      } satisfies Change<JsonObject>;
+    }
+    if (change.kind === "update") {
+      return {
+        kind: "update",
+        key,
+        before: yield* graphRowValue(relationId, change.key, change.before),
+        after: yield* graphRowValue(relationId, change.key, change.after),
+      } satisfies Change<JsonObject>;
+    }
+    return {
+      kind: "exit",
+      key,
+      before: yield* graphRowValue(relationId, change.key, change.before),
+    } satisfies Change<JsonObject>;
+  });
 
 const PLAN_HASH = planHash(issues.plan);
 const identity = (workspaceId: string) => ({

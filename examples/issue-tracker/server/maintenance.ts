@@ -11,7 +11,8 @@
  */
 import type { JsonValue, ReadStreamOptions } from "@streamsy/core";
 import { ReadStreams } from "@streamsy/experimental/effect";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { catalogRow, type CatalogCollection } from "../domain/catalog.ts";
 import {
   boardLabelCounts,
   issueLabelLifecycle,
@@ -31,11 +32,24 @@ import {
   type IssueRow,
 } from "../domain/issue.ts";
 import type { Change, JsonObject } from "@streamsy/views-ir";
+import type { SourceChanges } from "@streamsy/views-engine";
 import { maintain, ReducerFault, touchedKeys } from "../views/engine.ts";
-import { AppendRejected, MaintenanceFault, SourcePoison, StreamUnavailable } from "./errors.ts";
+import {
+  AppendRejected,
+  MaintenanceFault,
+  SourcePoison,
+  StoreRestorePoison,
+  StreamUnavailable,
+} from "./errors.ts";
 import { IssueSink } from "./sink.ts";
-import { IssueStore, type GraphResult } from "./store.ts";
-import { catchUpStateSource, stateSourceId, type StateIngestionReport } from "./state-ingestion.ts";
+import {
+  IssueStore,
+  type GraphHistoryLeg,
+  type GraphInputPositions,
+  type GraphProductId,
+  type GraphResult,
+} from "./store.ts";
+import { catchUpStateSource, type StateIngestionReport } from "./state-ingestion.ts";
 import { publishTransitions } from "./transitions.ts";
 import { Streams, type WorkspaceBindings } from "./streams.ts";
 
@@ -108,7 +122,7 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
    * first, so its progress is independent: a crash between the two commits
    * leaves each one resuming from what it actually folded.
    */
-  const memberships = yield* advanceMemberships(workspaceId);
+  yield* advanceMemberships(workspaceId);
 
   /**
    * The transition feed is brought up to the *committed* change history, which
@@ -125,33 +139,31 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
    * that disagrees with the collection endpoint serving the same rows.
    */
   const catalogReports = yield* catchUpJoinedCatalog(workspaceId);
-  const catalogChanges = {
-    projects: encodeChanges(catalogReports, projects.name),
-    users: encodeChanges(catalogReports, users.name),
-    labels: encodeChanges(catalogReports, labels.name),
-  };
 
   const after = yield* store.progress(workspaceId);
-  const board = yield* store.maintainBoard(workspaceId, [
-    {
-      sourceId: "issue-tracker.issues",
-      changes: changes.map((change) => JSON.parse(JSON.stringify(change))),
-    },
-    { sourceId: projects.name, changes: catalogChanges.projects },
-    { sourceId: users.name, changes: catalogChanges.users },
-  ]);
 
-  const counts = yield* store.maintainLabelCounts(workspaceId, [
-    {
-      sourceId: issueLabelMemberships.name,
-      changes: memberships.map((change) => JSON.parse(JSON.stringify(change))),
-    },
-    {
-      sourceId: "issue-tracker.issues",
-      changes: changes.map((change) => JSON.parse(JSON.stringify(change))),
-    },
-    { sourceId: labels.name, changes: catalogChanges.labels },
-  ]);
+  /**
+   * Both graphs are fed from *durable* sources behind their own positions, not
+   * from the local variables above.
+   *
+   * The variables are what the pass happened to fold, and a pass can commit a
+   * source relation and then fail before a graph consumes it — the transition
+   * feed, the catalog catch-up and the sink appends all sit in between. When
+   * that happened the changes existed nowhere but memory, so the next pass read
+   * an empty suffix and the published product stayed wrong until the same key
+   * changed again. Reading each leg back from what is committed, behind a
+   * position that only advances inside the graph's own commit, makes the
+   * delivery at-least-once instead of best-effort.
+   */
+  const boardInputs = yield* graphInputs(workspaceId, "board", BOARD_LEGS);
+  const board = yield* store.maintainBoard(workspaceId, boardInputs.inputs, boardInputs.positions);
+
+  const countInputs = yield* graphInputs(workspaceId, "label-counts", LABEL_COUNT_LEGS);
+  const counts = yield* store.maintainLabelCounts(
+    workspaceId,
+    countInputs.inputs,
+    countInputs.positions,
+  );
   yield* publishGraph(workspaceId, boardLabelCounts.name, counts, {
     publish: (rows) => sink.publishLabelCounts(workspaceId, rows),
     republish: (rows) => sink.republishLabelCounts(workspaceId, rows),
@@ -192,14 +204,141 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
   }
 });
 
-/** One collection's ingested changes, in the shape the operator graph consumes. */
-function encodeChanges(
-  reports: readonly StateIngestionReport[],
-  sourceId: string,
-): readonly Change<JsonObject>[] {
-  const found = reports.find((report) => stateSourceId(report.collection) === sourceId);
-  return (found?.changes ?? []).map((change) => JSON.parse(JSON.stringify(change)));
-}
+/**
+ * How many committed batches one graph input leg drains per pass.
+ *
+ * It matches the store's own `keepLastBatches` retention, so a pass always
+ * drains everything the history still holds and a leg can never fall behind the
+ * window by accumulating a backlog it declined to read.
+ */
+const GRAPH_INPUT_BATCHES = 256;
+
+/** One input leg of a graph product, and where its durable position comes from. */
+type GraphLegSpec =
+  | { readonly kind: "history"; readonly sourceId: string; readonly leg: GraphHistoryLeg }
+  | { readonly kind: "catalog"; readonly sourceId: string; readonly collection: CatalogCollection };
+
+const BOARD_LEGS: readonly GraphLegSpec[] = [
+  { kind: "history", sourceId: issues.name, leg: "issues" },
+  { kind: "catalog", sourceId: projects.name, collection: "projects" },
+  { kind: "catalog", sourceId: users.name, collection: "users" },
+];
+
+const LABEL_COUNT_LEGS: readonly GraphLegSpec[] = [
+  { kind: "history", sourceId: issueLabelMemberships.name, leg: "memberships" },
+  { kind: "history", sourceId: issues.name, leg: "issues" },
+  { kind: "catalog", sourceId: labels.name, collection: "labels" },
+];
+
+/**
+ * Read one product's whole input set back from durable state.
+ *
+ * Every leg answers the same two questions — what has this product not consumed
+ * yet, and what position would say it has — so the positions the graph commit
+ * writes are exactly the positions these reads were taken at. A leg that
+ * answers "nothing new" leaves its recorded position untouched.
+ */
+const graphInputs = Effect.fn("Maintenance.graphInputs")(function* (
+  workspaceId: string,
+  product: GraphProductId,
+  legs: readonly GraphLegSpec[],
+) {
+  const store = yield* IssueStore;
+  const recorded = yield* store.graphInputPositions(workspaceId, product);
+  const positions = new Map(Object.entries(recorded));
+  const inputs: SourceChanges[] = [];
+  for (const spec of legs) {
+    const resolved =
+      spec.kind === "history"
+        ? yield* historyLeg(workspaceId, spec, recorded)
+        : yield* catalogLeg(workspaceId, spec, recorded);
+    inputs.push({ sourceId: spec.sourceId, changes: resolved.changes });
+    if (resolved.position !== undefined) positions.set(spec.sourceId, resolved.position);
+  }
+  return { inputs, positions: Object.fromEntries(positions) };
+});
+
+/**
+ * A leg fed from a committed relation's change history.
+ *
+ * With no recorded position the leg has never been delivered under this
+ * mechanism — a database written before it existed, or a graph whose product is
+ * new — and the honest delivery is the whole relation, because reading "from
+ * the start" of a bounded history would silently mean "from whatever survived
+ * retention". Once a position exists the leg is incremental.
+ */
+const historyLeg = Effect.fn("Maintenance.historyLeg")(function* (
+  workspaceId: string,
+  spec: { readonly sourceId: string; readonly leg: GraphHistoryLeg },
+  recorded: GraphInputPositions,
+) {
+  const store = yield* IssueStore;
+  const at = recorded[spec.sourceId];
+  if (at === undefined) {
+    const head = yield* store.graphHistoryHead(workspaceId, spec.leg);
+    const changes = yield* store.graphHistorySnapshot(workspaceId, spec.leg);
+    return { changes, position: head === undefined ? undefined : JSON.stringify(head) };
+  }
+  const batches = yield* store.graphHistoryChanges(
+    workspaceId,
+    spec.leg,
+    yield* decodeHistoryPosition(spec.sourceId, at),
+    GRAPH_INPUT_BATCHES,
+  );
+  const last = batches.at(-1);
+  return {
+    changes: batches.flatMap((batch) => batch.changes),
+    position: last === undefined ? undefined : JSON.stringify(last.position),
+  };
+});
+
+/**
+ * A leg fed from an ingested State collection.
+ *
+ * Ingestion keeps rows and a checkpoint but no change history, so the delivery
+ * is the whole collection whenever the graph's recorded checkpoint is behind
+ * ingestion's. That is exact rather than approximate: a catalog row never
+ * exits — deletes are refused at ingestion — so a full set of enters reconciles
+ * to precisely the rows the graph is missing. It is also cheap, because a
+ * workspace catalog is small and the read happens only when the checkpoint has
+ * actually moved.
+ */
+const catalogLeg = Effect.fn("Maintenance.catalogLeg")(function* (
+  workspaceId: string,
+  spec: { readonly sourceId: string; readonly collection: CatalogCollection },
+  recorded: GraphInputPositions,
+) {
+  const store = yield* IssueStore;
+  const checkpoint = yield* store.stateCheckpoint(spec.sourceId, workspaceId);
+  if (checkpoint === undefined || recorded[spec.sourceId] === checkpoint) {
+    return { changes: [], position: checkpoint };
+  }
+  const rows = yield* store.stateRows(spec.sourceId, spec.collection, workspaceId);
+  const changes = rows.map((row): Change<JsonObject> => {
+    const decoded = catalogRow(spec.collection, row);
+    // SAFETY: `catalogRow` has just accepted this row through the collection's
+    // declared Schema, and every catalog schema is a struct of JSON scalars, so
+    // its JSON encoding is a `JsonObject` by construction.
+    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
+    const after = JSON.parse(JSON.stringify(decoded.row)) as JsonObject;
+    return { kind: "enter", key: decoded.key, after };
+  });
+  return { changes, position: checkpoint };
+});
+
+const RecordedHistoryPosition = Schema.Struct({ epoch: Schema.Number, sequence: Schema.Number });
+
+/** A recorded position that no longer parses is durable corruption, never a restart from zero. */
+const decodeHistoryPosition = (sourceId: string, value: string) =>
+  Effect.try({
+    try: () => Schema.decodeUnknownSync(RecordedHistoryPosition)(JSON.parse(value)),
+    catch: (cause) =>
+      new StoreRestorePoison({
+        table: "__graph_inputs__",
+        key: sourceId,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
 /**
  * Fold every membership fact after the relation's own checkpoint.

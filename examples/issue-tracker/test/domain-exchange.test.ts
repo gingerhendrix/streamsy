@@ -16,11 +16,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { ExchangeStatusResponse, InboxResponse, IssuesResponse } from "../shared/api.ts";
 import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
 import { assignmentInbox, EXCHANGE_CURSOR_DOMAIN } from "../domain/exchange.ts";
+import { runExchange, type ExchangeSession } from "../server/exchange.ts";
 import { ExchangeCursorStore } from "../server/exchange-store.ts";
+import { globalLayer } from "../server/global-domain.ts";
+import { PartitionUnavailable } from "../server/host-errors.ts";
 import { sourceRegistryMemoryLayer } from "../server/source-registry.ts";
 import { InboxStore } from "../server/inbox-store.ts";
 import { partitionPath } from "../server/host.ts";
@@ -406,5 +409,51 @@ describe("the user and global domain routes", () => {
     expect((await call(instance, "POST", "/api/global/exchange", {})).status).toBe(405);
     expect((await call(instance, "GET", "/api/global/nothing")).status).toBe(404);
     expect((await call(instance, "GET", "/api/global")).status).toBe(404);
+  });
+});
+
+/**
+ * Scheduling fairness when a source's pass fails.
+ *
+ * The cold-source policy orders by *least recently exchanged*, and the exchange
+ * used to record a visit for every scheduled source including the ones whose
+ * pass failed. A source that fails every pass would then rotate to the back of
+ * the queue for having been attempted, so the `ceil(n/2)` completeness bound
+ * would hold only for passes that worked. Nothing durable is lost either way —
+ * a failed pass moves no cursor — but the retry order is the product claim.
+ */
+describe("cold-source scheduling and failed passes", () => {
+  test("a source whose pass failed is not recorded as exchanged", async () => {
+    const runtime = ManagedRuntime.make(globalLayer());
+    let clock = 1_000;
+    const known = [workspaceKey("alpha"), workspaceKey("beta")];
+    const session: ExchangeSession = {
+      openSources: () => [],
+      knownSources: () => known,
+      now: () => (clock += 1_000),
+      // Every workspace refuses to open, so every scheduled pass fails.
+      leaseWorkspace: (workspaceId) =>
+        new PartitionUnavailable({ partition: workspaceId, detail: "closed for the test" }),
+      leaseUser: (userId) =>
+        new PartitionUnavailable({ partition: userId, detail: "closed for the test" }),
+      leaseGlobal: () => ({
+        key: globalKey(),
+        runPromise: (effect) => runtime.runPromise(effect),
+        release: () => undefined,
+      }),
+    };
+
+    try {
+      const first = await runExchange(session, { coldSources: 1 });
+      expect(first.map((report) => report.source.id)).toEqual(["alpha"]);
+      expect(first.every((report) => report.failed)).toBe(true);
+
+      // `alpha` is still the least recently *exchanged* source, so it is the one
+      // the next pass retries rather than the one it skips.
+      const second = await runExchange(session, { coldSources: 1 });
+      expect(second.map((report) => report.source.id)).toEqual(["alpha"]);
+    } finally {
+      await runtime.dispose();
+    }
   });
 });

@@ -64,7 +64,15 @@ export const ExchangeCursor = Schema.Struct({
   source: PartitionKey,
   /** Source records consumed, in arrival order. Not an offset, and not a checkpoint. */
   arrival: Sequence,
-  /** Records this exchange actually applied. Reported, never resumed from. */
+  /**
+   * Rows this exchange has written into destination inboxes.
+   *
+   * At-least-once, and reported rather than resumed from. Delivery is made safe
+   * by `inboxId` idempotence rather than by this counter, so a page replayed
+   * after a crash between the inbox write and this cursor write is counted
+   * twice: the number can exceed the distinct rows that exist. Read it as work
+   * done, never as a row count.
+   */
   applied: Sequence,
 });
 export type ExchangeCursor = typeof ExchangeCursor.Type;

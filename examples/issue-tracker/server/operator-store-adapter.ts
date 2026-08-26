@@ -26,6 +26,18 @@ export interface OperatorCommitInput {
   readonly snapshot: OperatorStateSnapshot;
   readonly relationId: string;
   readonly changes: readonly Change<JsonObject>[];
+  /**
+   * Extra operator values written in the *same* commit as the graph state.
+   *
+   * This is what lets a caller keep a durable position of its own beside the
+   * operator snapshot without inventing a second transaction: the position and
+   * the state it describes land together or neither does.
+   */
+  readonly extraValues?: readonly {
+    readonly id: string;
+    readonly key: RowKey;
+    readonly value: JsonValue;
+  }[];
 }
 
 export function operatorMaintenanceCommit(input: OperatorCommitInput): MaintenanceCommit {
@@ -78,6 +90,12 @@ export function operatorMaintenanceCommit(input: OperatorCommitInput): Maintenan
       key: "state",
       value: input.snapshot as unknown as JsonValue,
     },
+    ...(input.extraValues ?? []).map((extra) => ({
+      kind: "put" as const,
+      namespace: namespace(extra.id),
+      key: extra.key,
+      value: extra.value,
+    })),
   ];
   const operatorIndexes: IndexMutation[] = input.patch.operatorIndexes.map((mutation) =>
     mutation.operation === "delete"

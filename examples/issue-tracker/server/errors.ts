@@ -81,7 +81,14 @@ export class SourcePoison extends Schema.TaggedError<SourcePoison>()("SourcePois
   detail: Schema.String,
 }) {}
 
-/** A State delete reached an A3 relation that intentionally supports upserts only. */
+/**
+ * A State delete reached an A3 relation that intentionally supports upserts only.
+ *
+ * This is an *ingestion* rule and covers only the four catalog collections. It
+ * says nothing about what the application's own checked State sinks publish:
+ * those are relations this host maintains, and a row that exits one is written
+ * out as a State delete so a resuming client learns the key is gone.
+ */
 export class UnsupportedStateOperation extends Schema.TaggedError<UnsupportedStateOperation>()(
   "UnsupportedStateOperation",
   {
@@ -122,6 +129,23 @@ export class TransitionHistoryExpired extends Schema.TaggedError<TransitionHisto
   { workspaceId: Schema.String, detail: Schema.String },
 ) {}
 
+/**
+ * The committed change history no longer reaches back to the graph inputs a
+ * published product still owes.
+ *
+ * The operator graphs are fed *from* the committed change history behind their
+ * own durable input positions, for exactly the reason the transition feed is:
+ * a pass can commit a source relation and then die before the graph consumes
+ * it. The retention window is what makes recovering that batch possible, and a
+ * batch that has fallen out of it is fail-stop rather than skipped — a graph
+ * that silently misses an input serves a wrong row that only self-heals if the
+ * same key changes again, which is worse than a refused pass.
+ */
+export class GraphHistoryExpired extends Schema.TaggedError<GraphHistoryExpired>()(
+  "GraphHistoryExpired",
+  { workspaceId: Schema.String, product: Schema.String, detail: Schema.String },
+) {}
+
 /** The maintained-state store itself failed. Never a validation outcome. */
 export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("StoreUnavailable", {
   operation: Schema.String,
@@ -142,5 +166,6 @@ export type ApplicationError =
   | UnsupportedStateOperation
   | MaintenanceFault
   | TransitionHistoryExpired
+  | GraphHistoryExpired
   | StoreRestorePoison
   | StoreUnavailable;

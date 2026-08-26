@@ -119,6 +119,8 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
         ),
       TransitionHistoryExpired: (error) =>
         Effect.succeed(fail(500, "transition-history-expired", error.detail)),
+      GraphHistoryExpired: (error) =>
+        Effect.succeed(fail(500, "graph-history-expired", `${error.product}: ${error.detail}`)),
       MaintenanceFault: (error) =>
         Effect.succeed(fail(500, "maintenance-fault", `${error.phase}: ${error.detail}`)),
       StoreRestorePoison: (error) =>

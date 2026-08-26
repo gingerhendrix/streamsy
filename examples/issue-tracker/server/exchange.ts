@@ -94,7 +94,15 @@ export interface ExchangePassReport {
   readonly source: PartitionKey;
   /** Records read from the source in this pass. */
   readonly scanned: number;
-  /** Rows written to destination partitions. */
+  /**
+   * Rows written into destination inboxes by this pass.
+   *
+   * At-least-once, and reported rather than resumed from: a host that dies
+   * between the inbox write and the cursor write replays the page, rewrites the
+   * same rows and counts them again. The inbox itself stays exactly-once by
+   * `inboxId`, so this can exceed the number of distinct rows that exist. See
+   * {@link ExchangeCursor.applied}.
+   */
   readonly applied: number;
   readonly destinations: number;
   readonly fromArrival: number;
@@ -147,7 +155,21 @@ export async function runExchange(
   for (const source of scheduled) {
     reports.push(await runExchangePass(session, source, options));
   }
-  await recordVisits(session, scheduled);
+  /**
+   * Only a pass that succeeded counts as an exchange.
+   *
+   * The scheduler orders cold sources by *least recently exchanged*, so
+   * touching a source whose pass failed would rotate it to the back of the
+   * queue for having been attempted. A source that fails every pass would then
+   * be retried no sooner than a healthy one, and the `ceil(n/2)` completeness
+   * bound would hold only for passes that happened to work. The cursor of a
+   * failed pass never moved either, so nothing is lost by leaving its visit
+   * unrecorded.
+   */
+  await recordVisits(
+    session,
+    reports.filter((report) => !report.failed).map((report) => report.source),
+  );
   return reports;
 }
 
@@ -183,7 +205,7 @@ async function scheduleSources(
   }
 }
 
-/** Record that every visited source has just been looked at. */
+/** Record that every successfully exchanged source has just been exchanged. */
 async function recordVisits(
   session: ExchangeSession,
   visited: readonly PartitionKey[],
@@ -286,7 +308,9 @@ export async function runExchangePass(
       applied += await user.runPromise(applyInbox(userId, rows));
     }
 
-    // Only now, with every destination written, does the position move.
+    // Only now, with every destination written, does the position move. The
+    // count accumulates writes, not distinct rows: a replayed page rewrites the
+    // same inbox rows idempotently and counts them a second time.
     const advanced: ExchangeCursor = {
       ...cursor,
       arrival: page.arrival,

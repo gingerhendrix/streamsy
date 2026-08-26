@@ -204,6 +204,19 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
           yield* appended(workspaceId, () => stream.state.snapshotEnd());
         }),
 
+        /**
+         * Publish the label-count deltas, exits included.
+         *
+         * An exit here *is* a State delete on the sink's own stream, and that is
+         * deliberate — it is the checked sink's normal exit protocol, the same
+         * one the board has used since Integration 1, and it is what tells a
+         * resuming client that a key left the relation. It is the opposite
+         * direction from the delete rule the catalog states: a `delete` envelope
+         * arriving on an *ingested* State collection is still refused as
+         * `UnsupportedStateOperation`, because exclusion from a maintained
+         * relation belongs in the plan where it is declared and checkable.
+         * Inbound deletes are rejected; outbound exits are published.
+         */
         publishLabelCounts: Effect.fn("IssueSink.publishLabelCounts")(function* (
           workspaceId: string,
           changes: readonly Change<LabelCountRow, string>[],
