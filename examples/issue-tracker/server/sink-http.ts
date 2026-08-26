@@ -9,6 +9,7 @@ import {
 import { Effect } from "effect";
 import {
   boardIssues,
+  boardLabelCounts,
   issueTransitions,
   streamNames,
   workspaceSummary,
@@ -66,6 +67,67 @@ export const handleSinkRequest = (request: Request) =>
       }
       const target = new URL(incoming.url);
       target.pathname = `${gateway.prefix}/${streamNames.boardState(workspaceId)}`;
+      return yield* gateway.fetch(
+        new Request(target, { method: incoming.method, headers: incoming.headers }),
+      );
+    }),
+  });
+
+export const matchLabelCountSink = (pathname: string) =>
+  boardLabelCounts.compiledRoute.match(pathname);
+
+/**
+ * Serve the label-count product through its own checked State sink.
+ *
+ * It is the same two capabilities the board sink has and for the same reasons:
+ * a snapshot of the durable rows with the State stream's current offset, and a
+ * suffix proxied to the gateway so resume is the transport's own. What differs
+ * is only which relation and which stream.
+ */
+export const handleLabelCountSinkRequest = (request: Request) =>
+  handleStateSink(boardLabelCounts, request, {
+    snapshot: Effect.fn("IssueTracker.labelCountSnapshot")(function* ({ workspaceId }) {
+      const streams = yield* Streams;
+      yield* advance(workspaceId).pipe(
+        Effect.mapError(
+          (error) => new StateSinkSourceFailure({ phase: "snapshot", detail: String(error) }),
+        ),
+      );
+      const store = yield* IssueStore;
+      const rows = yield* store
+        .labelCountRows(workspaceId)
+        .pipe(
+          Effect.mapError(
+            (error) => new StateSinkSourceFailure({ phase: "snapshot", detail: String(error) }),
+          ),
+        );
+      const head = yield* Effect.promise((signal) =>
+        streams.client.stream(streamNames.labelCountState(workspaceId)).head({ signal }),
+      );
+      if (head.status !== "ok") {
+        return yield* new StateSinkSourceFailure({
+          phase: "snapshot",
+          detail: `head returned ${head.status}`,
+        });
+      }
+      return { rows, offset: head.offset ?? "-1" };
+    }),
+    suffix: Effect.fn("IssueTracker.labelCountSuffix")(function* (incoming, { workspaceId }) {
+      const gateway = yield* StreamGateway;
+      if (new URL(incoming.url).searchParams.get("live") === null) {
+        yield* ensureWorkspace(workspaceId).pipe(
+          Effect.mapError(
+            (error) => new StateSinkSourceFailure({ phase: "suffix", detail: String(error) }),
+          ),
+        );
+        yield* advance(workspaceId).pipe(
+          Effect.mapError(
+            (error) => new StateSinkSourceFailure({ phase: "suffix", detail: String(error) }),
+          ),
+        );
+      }
+      const target = new URL(incoming.url);
+      target.pathname = `${gateway.prefix}/${streamNames.labelCountState(workspaceId)}`;
       return yield* gateway.fetch(
         new Request(target, { method: incoming.method, headers: incoming.headers }),
       );

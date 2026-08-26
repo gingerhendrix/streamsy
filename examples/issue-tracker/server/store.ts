@@ -24,6 +24,7 @@ import {
   memoryService,
   recover as recoverView,
   type Checkpoint,
+  type HistoryPosition,
   type JsonValue,
   type StoredChange,
   type StoreError,
@@ -43,10 +44,17 @@ import {
   type SourceChanges,
 } from "@streamsy/views-engine";
 import type { Change, JsonObject } from "@streamsy/views-ir";
-import { issueLifecycle, issues } from "../domain/declaration.ts";
+import {
+  issueLabelLifecycle,
+  issueLabelMemberships,
+  issueLifecycle,
+  issues,
+} from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
+import { decodeIssueLabelRow, type IssueLabelRow } from "../domain/issue.ts";
+import { decodeLabelCountRow, type LabelCountRow } from "../domain/issue.ts";
 import { decodeProjectBoardCard, type ProjectBoardCard } from "../domain/issue.ts";
-import { projectBoard } from "../domain/views.ts";
+import { labelCounts, projectBoard } from "../domain/views.ts";
 import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
 import type { CommandKind } from "./commands.ts";
 import {
@@ -54,6 +62,7 @@ import {
   MaintenanceFault,
   StoreRestorePoison,
   StoreUnavailable,
+  TransitionHistoryExpired,
 } from "./errors.ts";
 import {
   decodeOperatorSnapshot,
@@ -111,6 +120,45 @@ export interface RecoverySuffix {
 export interface RecoveryFoldResult {
   readonly rows: ReadonlyMap<string, IssueRow>;
   readonly changes: readonly Change<IssueRow, string>[];
+}
+
+/**
+ * How far the transition feed has been written, and on which producer sequence.
+ *
+ * The position is an A4 {@link HistoryPosition} over the committed change
+ * history — not a native Durable Streams offset, and not an exchange arrival
+ * index. It names a *batch this store committed*, which is exactly what the
+ * feed publisher needs to know it has caught up. The two domains never meet:
+ * the feed's own consumers resume by native offset, and that offset is never
+ * read or written here.
+ */
+export interface TransitionProgress {
+  /** The last committed change batch whose transitions are durably on the feed. */
+  readonly position: HistoryPosition | undefined;
+  /** The producer sequence the last feed append used. Zero means none yet. */
+  readonly sequence: number;
+}
+
+/**
+ * One maintenance step of an operator-graph product.
+ *
+ * `revision` is the graph's own committed revision — a counter over operator
+ * state, not a source cursor and not a stream offset. It is what tells a
+ * publisher whether the rows it holds are the rows the sink already carries.
+ */
+export interface GraphResult<Row> {
+  readonly rows: readonly Row[];
+  readonly changes: readonly Change<Row, string>[];
+  readonly revision: number;
+  readonly previousRevision: number;
+}
+
+/** One atomic advance of the maintained membership relation. */
+export interface MembershipCommitInput {
+  readonly expectedCheckpoint: string | undefined;
+  readonly checkpoint: string;
+  readonly rows: ReadonlyMap<string, IssueLabelRow>;
+  readonly changes: readonly Change<IssueLabelRow, string>[];
 }
 
 export interface IssueStoreService {
@@ -184,16 +232,64 @@ export interface IssueStoreService {
   readonly maintainBoard: (
     workspaceId: string,
     inputs: readonly SourceChanges[],
-  ) => Effect.Effect<
-    {
-      readonly rows: readonly ProjectBoardCard[];
-      readonly changes: readonly Change<ProjectBoardCard, string>[];
-    },
-    StoreUnavailable | StoreRestorePoison
-  >;
+  ) => Effect.Effect<GraphResult<ProjectBoardCard>, StoreUnavailable | StoreRestorePoison>;
   readonly boardRows: (
     workspaceId: string,
   ) => Effect.Effect<readonly ProjectBoardCard[], StoreUnavailable | StoreRestorePoison>;
+  /** After-exclusive cursor of the membership relation's own source. */
+  readonly membershipProgress: (
+    workspaceId: string,
+  ) => Effect.Effect<string | undefined, StoreUnavailable>;
+  readonly membershipStates: (
+    workspaceId: string,
+    keys: readonly string[],
+  ) => Effect.Effect<ReadonlyMap<string, IssueLabelRow>, StoreUnavailable | StoreRestorePoison>;
+  readonly membershipRows: (
+    workspaceId: string,
+  ) => Effect.Effect<readonly IssueLabelRow[], StoreUnavailable | StoreRestorePoison>;
+  readonly membershipCommit: (
+    workspaceId: string,
+    input: MembershipCommitInput,
+  ) => Effect.Effect<void, StoreUnavailable>;
+  readonly maintainLabelCounts: (
+    workspaceId: string,
+    inputs: readonly SourceChanges[],
+  ) => Effect.Effect<GraphResult<LabelCountRow>, StoreUnavailable | StoreRestorePoison>;
+  /** The revision of one graph product already durably on its sink, if any. */
+  readonly graphPublished: (
+    workspaceId: string,
+    product: string,
+  ) => Effect.Effect<string | undefined, StoreUnavailable>;
+  readonly markGraphPublished: (
+    workspaceId: string,
+    product: string,
+    revision: string,
+  ) => Effect.Effect<void, StoreUnavailable>;
+  readonly labelCountRows: (
+    workspaceId: string,
+  ) => Effect.Effect<readonly LabelCountRow[], StoreUnavailable | StoreRestorePoison>;
+  /**
+   * Committed change batches of `issue-tracker.issues` after `position`.
+   *
+   * This is what makes the transition feed recoverable: the changes were
+   * written in the same atomic commit as the rows, so a feed rebuilt from them
+   * cannot contain a transition whose row commit did not land.
+   */
+  readonly committedIssueChanges: (
+    workspaceId: string,
+    position: HistoryPosition | undefined,
+    limit: number,
+  ) => Effect.Effect<
+    readonly { readonly position: HistoryPosition; readonly changes: readonly StoredChange[] }[],
+    StoreUnavailable | TransitionHistoryExpired
+  >;
+  readonly transitionProgress: (
+    workspaceId: string,
+  ) => Effect.Effect<TransitionProgress, StoreUnavailable>;
+  readonly markTransitionsPublished: (
+    workspaceId: string,
+    progress: TransitionProgress,
+  ) => Effect.Effect<void, StoreUnavailable>;
 }
 
 export class IssueStore extends Context.Service<IssueStore, IssueStoreService>()(
@@ -219,6 +315,7 @@ export const restoreRow = (
 interface WorkspaceMemory {
   published?: string;
   nextSequence: number;
+  transitions: TransitionProgress;
 }
 
 interface StateSourceMemory {
@@ -249,6 +346,10 @@ export interface IssueStoreBoundary {
   readonly stateCheckpoint: IssueStoreService["stateCheckpoint"];
   readonly stateRows: IssueStoreService["stateRows"];
   readonly commitState: IssueStoreService["commitState"];
+  readonly transitionProgress: IssueStoreService["transitionProgress"];
+  readonly markTransitionsPublished: IssueStoreService["markTransitionsPublished"];
+  readonly graphPublished: IssueStoreService["graphPublished"];
+  readonly markGraphPublished: IssueStoreService["markGraphPublished"];
 }
 
 export interface MemoryStoreOptions {
@@ -277,12 +378,16 @@ export const memoryLayer = (
     const workspaces = new Map<string, WorkspaceMemory>();
     const receipts = new Map<string, CommandReceipt>();
     const stateSources = new Map<string, StateSourceMemory>();
+    const graphPublications = new Map<string, string>();
     const viewStore = memoryService(makeMemoryBacking());
 
     const workspace = (workspaceId: string): WorkspaceMemory => {
       const existing = workspaces.get(workspaceId);
       if (existing !== undefined) return existing;
-      const created: WorkspaceMemory = { nextSequence: 0 };
+      const created: WorkspaceMemory = {
+        nextSequence: 0,
+        transitions: { position: undefined, sequence: 0 },
+      };
       workspaces.set(workspaceId, created);
       return created;
     };
@@ -330,6 +435,17 @@ export const memoryLayer = (
           });
           return undefined;
         }),
+      graphPublished: (workspaceId, product) =>
+        Effect.sync(() => graphPublications.get(`${workspaceId}\u0000${product}`)),
+      markGraphPublished: (workspaceId, product, revision) =>
+        Effect.sync(() => {
+          graphPublications.set(`${workspaceId}\u0000${product}`, revision);
+        }),
+      transitionProgress: (workspaceId) => Effect.sync(() => workspace(workspaceId).transitions),
+      markTransitionsPublished: (workspaceId, progress) =>
+        Effect.sync(() => {
+          workspace(workspaceId).transitions = progress;
+        }),
       stateCheckpoint: (sourceId, partitionId) =>
         Effect.sync(() => stateSource(sourceId, partitionId).checkpoint),
       stateRows: (sourceId, collection, partitionId) =>
@@ -363,22 +479,157 @@ export const memoryLayer = (
   return Layer.merge(store, outboxStoreLayer(outbox));
 };
 
+/**
+ * One operator-graph product, maintained and read back through the A4 store.
+ *
+ * The board and the label counts are the same thing twice — a parameterised
+ * plan, its own operator state, and a relation of decoded rows — so they are
+ * one helper rather than two copies. What differs between them is the plan, the
+ * decoder and the input source id, and those are exactly the arguments.
+ */
+interface GraphProduct<Row> {
+  readonly plan: typeof projectBoard.plan;
+  readonly name: string;
+  readonly hash: string;
+  readonly sourceId: string;
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  /**
+   * The declared schema that turns committed JSON back into a row.
+   *
+   * This IS the parse boundary the unknown-parameter rule points at: the store
+   * holds what the commit wrote, and nothing above it may see a row the schema
+   * has not accepted.
+   */
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Justified immediately above.
+  readonly decode: (value: unknown) => Row;
+  readonly table: string;
+}
+
+function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct<Row>) {
+  const identity = (workspaceId: string) => ({
+    planName: product.name,
+    planHash: product.hash,
+    partition: workspaceId,
+    sourceId: product.sourceId,
+  });
+  const relation = (workspaceId: string) => ({ ...identity(workspaceId), id: product.name });
+
+  const decodeChange = (change: Change<JsonObject>): Change<Row, string> => {
+    const key = Schema.decodeUnknownSync(Schema.String)(change.key);
+    if (change.kind === "enter") return { kind: "enter", key, after: product.decode(change.after) };
+    if (change.kind === "update") {
+      return {
+        kind: "update",
+        key,
+        before: product.decode(change.before),
+        after: product.decode(change.after),
+      };
+    }
+    return { kind: "exit", key, before: product.decode(change.before) };
+  };
+
+  const rows = Effect.fn("IssueStore.graphRows")(function* (workspaceId: string) {
+    const snapshot = yield* mapStoreError(
+      "graphRows",
+      viewStore.snapshotRows(relation(workspaceId)),
+    );
+    return yield* Effect.forEach(snapshot.rows, (row) =>
+      Effect.try({
+        try: () => product.decode(row.value),
+        catch: (cause) =>
+          new StoreRestorePoison({
+            table: product.table,
+            key: JSON.stringify(row.key),
+            detail: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }),
+    );
+  });
+
+  const maintain = Effect.fn("IssueStore.graphMaintain")(function* (
+    workspaceId: string,
+    inputs: readonly SourceChanges[],
+  ) {
+    const id = identity(workspaceId);
+    const cursor = yield* mapStoreUnavailable("graphProgress", viewStore.sourceProgress(id));
+    const stored = yield* mapStoreUnavailable(
+      "graphSnapshot",
+      viewStore.getOperatorValue(
+        operatorSnapshotRef(product.plan, product.hash, workspaceId, id.sourceId),
+        "state",
+      ),
+    );
+    const state = decodeOperatorSnapshot(product.plan, stored);
+    const reconciled = reconcileSourceInputs(state, inputs);
+    const previousRevision = state?.revision ?? 0;
+    if (state !== undefined && reconciled.every((input) => input.changes.length === 0)) {
+      return {
+        rows: yield* rows(workspaceId),
+        changes: [],
+        revision: previousRevision,
+        previousRevision,
+      };
+    }
+    const result = maintainGraph({
+      plan: product.plan,
+      state,
+      parameters: product.parameters,
+      inputs: reconciled,
+    });
+    yield* mapStoreUnavailable(
+      "graphCommit",
+      viewStore.commit(
+        operatorMaintenanceCommit({
+          plan: product.plan,
+          planHash: product.hash,
+          partition: workspaceId,
+          sourceId: id.sourceId,
+          expectedCursor: cursor,
+          afterExclusiveCursor: String(result.state.revision),
+          batchId: `revision-${result.state.revision}`,
+          committedAtMs: result.state.revision,
+          expectedRevision: state?.revision ?? 0,
+          patch: result.patch,
+          snapshot: result.state,
+          relationId: product.name,
+          changes: result.changes,
+        }),
+      ),
+    );
+    return {
+      rows: result.rows.map((row) => product.decode(row.row)),
+      changes: result.changes.map(decodeChange),
+      revision: result.state.revision,
+      previousRevision,
+    };
+  });
+
+  return { rows, maintain };
+}
+
 export function issueStoreAdapter(
   viewStore: ViewStoreService,
   boundary: IssueStoreBoundary,
   preload: MemoryStoreOptions["preload"] = {},
 ): IssueStoreService {
   const recoveryTaken = new Set<string>();
-  const boardHash = planHash(projectBoard.plan);
-  const boardIdentity = (workspaceId: string) => ({
-    planName: projectBoard.name,
-    planHash: boardHash,
-    partition: workspaceId,
+  const board = graphMaintainer<ProjectBoardCard>(viewStore, {
+    plan: projectBoard.plan,
+    name: projectBoard.name,
+    hash: planHash(projectBoard.plan),
     sourceId: "issue-tracker.enriched-inputs",
+    parameters: { projectId: DEFAULT_PROJECT_ID },
+    decode: decodeProjectBoardCard,
+    table: "project_board",
   });
-  const boardRelation = (workspaceId: string) => ({
-    ...boardIdentity(workspaceId),
-    id: projectBoard.name,
+  const counts = graphMaintainer<LabelCountRow>(viewStore, {
+    plan: labelCounts.plan,
+    name: labelCounts.name,
+    hash: planHash(labelCounts.plan),
+    sourceId: "issue-tracker.label-inputs",
+    parameters: { projectId: DEFAULT_PROJECT_ID },
+    decode: decodeLabelCountRow,
+    table: "label_counts",
   });
   return IssueStore.of({
     progress: Effect.fn("IssueStore.progress")(function* (workspaceId: string) {
@@ -534,79 +785,94 @@ export function issueStoreAdapter(
       if (result === undefined) return yield* Effect.die("recovery folded no result");
       return result;
     }),
-    maintainBoard: Effect.fn("IssueStore.maintainBoard")(function* (workspaceId, inputs) {
-      const identity = boardIdentity(workspaceId);
-      const cursor = yield* mapStoreUnavailable(
-        "boardProgress",
-        viewStore.sourceProgress(identity),
+    maintainBoard: (workspaceId, inputs) => board.maintain(workspaceId, inputs),
+    boardRows: (workspaceId) => board.rows(workspaceId),
+    maintainLabelCounts: (workspaceId, inputs) => counts.maintain(workspaceId, inputs),
+    labelCountRows: (workspaceId) => counts.rows(workspaceId),
+
+    membershipProgress: Effect.fn("IssueStore.membershipProgress")(function* (workspaceId) {
+      return yield* mapStoreUnavailable(
+        "membershipProgress",
+        viewStore.sourceProgress(membershipIdentity(workspaceId)),
       );
-      const stored = yield* mapStoreUnavailable(
-        "boardSnapshot",
-        viewStore.getOperatorValue(
-          operatorSnapshotRef(projectBoard.plan, boardHash, workspaceId, identity.sourceId),
-          "state",
-        ),
-      );
-      const state = decodeOperatorSnapshot(projectBoard.plan, stored);
-      const reconciled = reconcileSourceInputs(state, inputs);
-      if (state !== undefined && reconciled.every((input) => input.changes.length === 0)) {
-        const snapshot = yield* mapStoreError(
-          "boardRows",
-          viewStore.snapshotRows(boardRelation(workspaceId)),
+    }),
+    membershipStates: Effect.fn("IssueStore.membershipStates")(function* (workspaceId, keys) {
+      const restored = new Map<string, IssueLabelRow>();
+      for (const key of keys) {
+        const value = yield* mapStoreError(
+          "membershipStates",
+          viewStore.getReducerState(membershipReducerRef(workspaceId), key),
         );
-        return {
-          rows: snapshot.rows.map((row) => decodeProjectBoardCard(row.value)),
-          changes: [],
-        };
+        if (value !== undefined) {
+          restored.set(key, yield* decodeStoredMembership("reducer_state", key, value));
+        }
       }
-      const result = maintainGraph({
-        plan: projectBoard.plan,
-        state,
-        parameters: { projectId: "streamsy" },
-        inputs: reconciled,
-      });
+      return restored;
+    }),
+    membershipRows: Effect.fn("IssueStore.membershipRows")(function* (workspaceId) {
+      const snapshot = yield* mapStoreError(
+        "membershipRows",
+        viewStore.snapshotRows(membershipRelationRef(workspaceId)),
+      );
+      const rows: IssueLabelRow[] = [];
+      for (const row of snapshot.rows) {
+        rows.push(yield* decodeStoredMembership("view_rows", JSON.stringify(row.key), row.value));
+      }
+      return rows.toSorted((left, right) => left.membershipId.localeCompare(right.membershipId));
+    }),
+    membershipCommit: Effect.fn("IssueStore.membershipCommit")(function* (workspaceId, input) {
       yield* mapStoreUnavailable(
-        "maintainBoard",
+        "membershipCommit",
         viewStore.commit(
-          operatorMaintenanceCommit({
-            plan: projectBoard.plan,
-            planHash: boardHash,
-            partition: workspaceId,
-            sourceId: identity.sourceId,
-            expectedCursor: cursor,
-            afterExclusiveCursor: String(result.state.revision),
-            batchId: `revision-${result.state.revision}`,
-            committedAtMs: result.state.revision,
-            expectedRevision: state?.revision ?? 0,
-            patch: result.patch,
-            snapshot: result.state,
-            relationId: projectBoard.name,
-            changes: result.changes,
-          }),
+          {
+            identity: membershipIdentity(workspaceId),
+            expectedCursor: input.expectedCheckpoint,
+            afterExclusiveCursor: input.checkpoint,
+            batchId: input.checkpoint,
+            committedAtMs: input.rows.size,
+            rows: [...input.rows].map(([key, row]) => ({
+              kind: "put" as const,
+              namespace: membershipRelationRef(workspaceId),
+              key,
+              value: encodeMembership(row),
+            })),
+            reducerStates: [...input.rows].map(([key, row]) => ({
+              kind: "put" as const,
+              namespace: membershipReducerRef(workspaceId),
+              key,
+              value: encodeMembership(row),
+            })),
+            changes: input.changes.map(encodeMembershipChange),
+          },
+          { keepLastBatches: 256 },
         ),
       );
-      return {
-        rows: result.rows.map((row) => decodeProjectBoardCard(row.row)),
-        changes: result.changes.map((change) => decodeBoardChange(change)),
-      };
     }),
-    boardRows: Effect.fn("IssueStore.boardRows")(function* (workspaceId) {
-      const snapshot = yield* mapStoreError(
-        "boardRows",
-        viewStore.snapshotRows(boardRelation(workspaceId)),
-      );
-      return yield* Effect.forEach(snapshot.rows, (row) =>
-        Effect.try({
-          try: () => decodeProjectBoardCard(row.value),
-          catch: (cause) =>
-            new StoreRestorePoison({
-              table: "project_board",
-              key: JSON.stringify(row.key),
-              detail: cause instanceof Error ? cause.message : String(cause),
-            }),
-        }),
-      );
-    }),
+
+    committedIssueChanges: Effect.fn("IssueStore.committedIssueChanges")(
+      function* (workspaceId, position, limit) {
+        const batches = yield* viewStore
+          .changesAfter(identity(workspaceId), position, limit, issues.name)
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "ViewHistoryExpired"
+                ? new TransitionHistoryExpired({
+                    workspaceId,
+                    detail: `change history no longer reaches ${JSON.stringify(position)}`,
+                  })
+                : new StoreUnavailable({
+                    operation: "committedIssueChanges",
+                    detail: JSON.stringify(error),
+                  }),
+            ),
+          );
+        return batches.map((batch) => ({ position: batch.position, changes: batch.changes }));
+      },
+    ),
+    transitionProgress: boundary.transitionProgress,
+    markTransitionsPublished: boundary.markTransitionsPublished,
+    graphPublished: boundary.graphPublished,
+    markGraphPublished: boundary.markGraphPublished,
   });
 }
 
@@ -640,20 +906,6 @@ function reconcileSourceInputs(
   });
 }
 
-function decodeBoardChange(change: Change<JsonObject>): Change<ProjectBoardCard, string> {
-  const key = Schema.decodeUnknownSync(Schema.String)(change.key);
-  if (change.kind === "enter")
-    return { kind: "enter", key, after: decodeProjectBoardCard(change.after) };
-  if (change.kind === "update")
-    return {
-      kind: "update",
-      key,
-      before: decodeProjectBoardCard(change.before),
-      after: decodeProjectBoardCard(change.after),
-    };
-  return { kind: "exit", key, before: decodeProjectBoardCard(change.before) };
-}
-
 const PLAN_HASH = planHash(issues.plan);
 const identity = (workspaceId: string) => ({
   planName: issues.name,
@@ -671,6 +923,70 @@ const checkpointDescriptor = (workspaceId: string) => ({
   reducerId: issueLifecycle.ref.name,
   reducerVersion: issueLifecycle.ref.version,
 });
+
+/** The project both graph products are parameterised at. See §"known limits". */
+export const DEFAULT_PROJECT_ID = "streamsy";
+
+const MEMBERSHIP_PLAN_HASH = planHash(issueLabelMemberships.plan);
+const membershipIdentity = (workspaceId: string) => ({
+  planName: issueLabelMemberships.name,
+  planHash: MEMBERSHIP_PLAN_HASH,
+  partition: workspaceId,
+  sourceId: "issue-tracker.issue-label-events",
+});
+const membershipRelationRef = (workspaceId: string) => ({
+  ...membershipIdentity(workspaceId),
+  id: issueLabelMemberships.name,
+});
+const membershipReducerRef = (workspaceId: string) => ({
+  ...membershipIdentity(workspaceId),
+  id: issueLabelLifecycle.ref.name,
+});
+
+function encodeMembership(row: IssueLabelRow): JsonValue {
+  return {
+    membershipId: row.membershipId,
+    issueId: row.issueId,
+    labelId: row.labelId,
+    workspaceId: row.workspaceId,
+    attached: row.attached,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function encodeMembershipChange(change: Change<IssueLabelRow, string>): StoredChange {
+  if (change.kind === "enter") {
+    return {
+      ...change,
+      relationId: issueLabelMemberships.name,
+      after: encodeMembership(change.after),
+    };
+  }
+  if (change.kind === "update") {
+    return {
+      ...change,
+      relationId: issueLabelMemberships.name,
+      before: encodeMembership(change.before),
+      after: encodeMembership(change.after),
+    };
+  }
+  return {
+    ...change,
+    relationId: issueLabelMemberships.name,
+    before: encodeMembership(change.before),
+  };
+}
+
+const decodeStoredMembership = (table: string, key: string, value: JsonValue) =>
+  Effect.try({
+    try: () => decodeIssueLabelRow(value),
+    catch: (cause) =>
+      new StoreRestorePoison({
+        table,
+        key,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
 function encodeRow(row: IssueRow): JsonValue {
   const encoded = {

@@ -1,68 +1,120 @@
 /**
- * The board.
+ * The application.
  *
- * Four columns, one card per maintained row, and nothing reconstructed from a
- * command response: every card comes from the TanStack DB collection that the
- * sink keeps synchronized. That is the point of the slice — open two windows
- * and they agree, because they are reading the same durable product.
+ * Two things are on screen and they are not the same kind of thing, which is
+ * the whole point of the assembly:
+ *
+ * - The **board** and the **label counts** are checked State sinks. Each has a
+ *   generated TanStack DB binding, a contract fingerprint and a resumable
+ *   session, so two windows converge without polling and a reset rebuilds
+ *   exactly what the server says. Nothing on screen is reconstructed from a
+ *   command response.
+ * - The **read models** — per-issue labels, the activity feed, the summary,
+ *   notifications and the user inbox — are polled. Three of them could not be
+ *   live today for a stated reason (the inbox lives in a partition with no
+ *   durable stream storage; the feed and summary are their own sink kinds), and
+ *   the panels say so rather than implying convergence they do not have.
  */
 import { useLiveQuery } from "@tanstack/react-db";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, type IssueStatus } from "../domain/issue.ts";
 import type { BoardIssuesRow } from "./generated/board-issues.ts";
 import {
+  attachLabel,
   changeStatus,
   createIssue,
+  detachLabel,
+  fetchInbox,
+  fetchWorkspaceReadModels,
   newCommandId,
   seedWorkspace,
   type CommandAck,
+  type WorkspaceReadModels,
 } from "./lib/api.ts";
+import type { InboxRow } from "../domain/inbox.ts";
 import {
   createBoardConnection,
   sortRows,
   type BoardConnection,
   type SinkStatus,
 } from "./lib/board-db.ts";
+import {
+  createLabelCountsConnection,
+  sortLabelCounts,
+  type LabelCountsConnection,
+} from "./lib/label-counts-db.ts";
+
+/** How often the polled read models refresh when nothing else happens. */
+const READ_MODEL_INTERVAL_MS = 2_000;
 
 function workspaceFromLocation(): string {
   return new URLSearchParams(window.location.search).get("workspace") ?? "main";
 }
 
+/** Which user's inbox this window watches. The inbox is a cross-workspace product. */
+function userFromLocation(): string {
+  return new URLSearchParams(window.location.search).get("user") ?? "ada";
+}
+
 export function App(): React.JSX.Element {
   const workspaceId = useMemo(workspaceFromLocation, []);
+  const userId = useMemo(userFromLocation, []);
   const [status, setStatus] = useState<SinkStatus>({ kind: "connecting" });
+  const [countStatus, setCountStatus] = useState<SinkStatus>({ kind: "connecting" });
   const [connection, setConnection] = useState<BoardConnection | undefined>(undefined);
+  const [counts, setCounts] = useState<LabelCountsConnection | undefined>(undefined);
 
   useEffect(() => {
-    const opened = createBoardConnection({
+    const board = createBoardConnection({
       workspaceId,
       origin: window.location.origin,
       onStatus: setStatus,
     });
-    setConnection(opened);
-    opened.preload().catch((cause: unknown) => {
+    const labelCounts = createLabelCountsConnection({
+      workspaceId,
+      origin: window.location.origin,
+      onStatus: setCountStatus,
+    });
+    setConnection(board);
+    setCounts(labelCounts);
+    const failed = (cause: unknown) => {
       setStatus({
         kind: "failed",
         error: cause instanceof Error ? cause : new Error(String(cause)),
       });
-    });
-    // The application owns the session, so the application closes it.
+    };
+    board.preload().catch(failed);
+    labelCounts.preload().catch(failed);
     return () => {
-      opened.close();
+      board.close();
+      labelCounts.close();
       setConnection(undefined);
+      setCounts(undefined);
     };
   }, [workspaceId]);
 
-  if (connection === undefined) {
+  if (connection === undefined || counts === undefined) {
     return <main className="shell">Opening the board…</main>;
   }
-  return <Board workspaceId={workspaceId} connection={connection} status={status} />;
+  return (
+    <Board
+      workspaceId={workspaceId}
+      userId={userId}
+      connection={connection}
+      counts={counts}
+      status={status}
+      countStatus={countStatus}
+    />
+  );
 }
 
 function Board(props: {
   readonly workspaceId: string;
+  readonly userId: string;
   readonly connection: BoardConnection;
+  readonly counts: LabelCountsConnection;
   readonly status: SinkStatus;
+  readonly countStatus: SinkStatus;
 }): React.JSX.Element {
   const { data } = useLiveQuery((query) =>
     query.from({ issue: props.connection.db.collections.issues }),
@@ -72,13 +124,58 @@ function Board(props: {
   // so the live query can only yield rows that schema accepted.
   // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
   const rows = sortRows(data ?? []);
+  const { data: countData } = useLiveQuery((query) =>
+    query.from({ labelCount: props.counts.db.collections.labelCounts }),
+  );
+  // SAFETY: same argument as the board's rows, against the label-count sink's
+  // own declared schema.
+  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
+  const labelCounts = sortLabelCounts(countData ?? []);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [models, setModels] = useState<WorkspaceReadModels | undefined>(undefined);
+  const [inbox, setInbox] = useState<readonly InboxRow[] | undefined>(undefined);
+  const [refreshedAt, setRefreshedAt] = useState<string | undefined>(undefined);
 
+  const { workspaceId, userId } = props;
+  const refresh = useCallback(async () => {
+    const [next, rowsForUser] = await Promise.all([
+      fetchWorkspaceReadModels(workspaceId),
+      fetchInbox(userId),
+    ]);
+    setModels(next);
+    setInbox(rowsForUser);
+    setRefreshedAt(new Date().toISOString());
+  }, [workspaceId, userId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      refresh().catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    };
+    tick();
+    const timer = setInterval(tick, READ_MODEL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [refresh]);
+
+  /**
+   * Every command refreshes the polled panels as soon as it is acknowledged.
+   *
+   * The live collections need no such nudge; these do, and doing it here rather
+   * than waiting for the interval is what makes a label attach feel like one
+   * action instead of two.
+   */
   const run = (work: () => Promise<CommandAck | void>) => {
     setBusy(true);
     setError(undefined);
     work()
+      .then(() => refresh())
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       })
@@ -86,6 +183,15 @@ function Board(props: {
         setBusy(false);
       });
   };
+
+  const labelsByIssue = new Map<string, readonly string[]>();
+  for (const membership of models?.issueLabels ?? []) {
+    if (!membership.attached) continue;
+    labelsByIssue.set(membership.issueId, [
+      ...(labelsByIssue.get(membership.issueId) ?? []),
+      membership.labelId,
+    ]);
+  }
 
   return (
     <main className="shell">
@@ -141,6 +247,26 @@ function Board(props: {
               </div>
             ))}
           </dl>
+
+          <h2>
+            Label counts <LiveDot status={props.countStatus} />
+          </h2>
+          <dl data-panel="label-counts">
+            {labelCounts.length === 0 ? (
+              <div>
+                <dt>No labels</dt>
+                <dd data-count-label="none">0</dd>
+              </div>
+            ) : (
+              labelCounts.map((row) => (
+                <div key={row.labelId}>
+                  <dt>{row.labelName}</dt>
+                  <dd data-count-label={row.labelId}>{row.issueCount}</dd>
+                </div>
+              ))
+            )}
+          </dl>
+
           <h2>Projects</h2>
           <dl>
             {[...new Set(rows.map((row) => row.projectId))].toSorted().map((projectId) => (
@@ -153,6 +279,7 @@ function Board(props: {
             ))}
           </dl>
         </aside>
+
         <div className="columns">
           {BOARD_COLUMNS.map((column) => (
             <Column
@@ -160,6 +287,8 @@ function Board(props: {
               label={column.label}
               status={column.status}
               rows={rows.filter((row) => row.status === column.status)}
+              labelsByIssue={labelsByIssue}
+              labelCatalog={models?.labelCatalog ?? []}
               busy={busy}
               onMove={(issueId, next) =>
                 run(() =>
@@ -169,11 +298,154 @@ function Board(props: {
                   }),
                 )
               }
+              onAttach={(issueId, labelId) =>
+                run(() =>
+                  attachLabel(props.workspaceId, issueId, {
+                    commandId: newCommandId("attach"),
+                    labelId,
+                  }),
+                )
+              }
+              onDetach={(issueId, labelId) =>
+                run(() =>
+                  detachLabel(props.workspaceId, issueId, {
+                    commandId: newCommandId("detach"),
+                    labelId,
+                  }),
+                )
+              }
             />
           ))}
         </div>
       </div>
+
+      <WorkspacePanels
+        userId={props.userId}
+        models={models}
+        inbox={inbox}
+        refreshedAt={refreshedAt}
+      />
     </main>
+  );
+}
+
+/**
+ * The polled half of the application, in one place.
+ *
+ * Grouping them is not cosmetic: every panel here is a read model rather than a
+ * checked sink, they all refresh on the same signal, and the footer says when
+ * that last happened. A reader can tell at a glance which parts of this screen
+ * converge on their own and which are a snapshot from a moment ago.
+ */
+function WorkspacePanels(props: {
+  readonly userId: string;
+  readonly models: WorkspaceReadModels | undefined;
+  readonly inbox: readonly InboxRow[] | undefined;
+  readonly refreshedAt: string | undefined;
+}): React.JSX.Element {
+  const summary = props.models?.summary;
+  const notifications = props.models?.notifications;
+  return (
+    <section className="panels" aria-label="Workspace read models">
+      <article data-panel="summary">
+        <h2>Summary</h2>
+        {summary === undefined ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <dl>
+            <div>
+              <dt>Issues</dt>
+              <dd data-summary="total">{summary.issues.total}</dd>
+            </div>
+            <div>
+              <dt>Labels</dt>
+              <dd data-summary="labels">{summary.catalog.labels}</dd>
+            </div>
+            <div>
+              <dt>Plan</dt>
+              <dd data-summary="plan-hash">{summary.planHash}</dd>
+            </div>
+          </dl>
+        )}
+      </article>
+
+      <article data-panel="inbox">
+        <h2>Inbox for {props.userId}</h2>
+        <p className="muted">
+          Cross-workspace, served by the user partition. Polled, not resumable.
+        </p>
+        <ul>
+          {(props.inbox ?? []).slice(0, 8).map((row) => (
+            <li key={row.inboxId} data-inbox={row.inboxId}>
+              <span data-inbox-workspace={row.workspaceId}>{row.workspaceId}</span>
+              {" · "}
+              <span>{row.issueId}</span>
+            </li>
+          ))}
+          {props.inbox !== undefined && props.inbox.length === 0 ? (
+            <li className="muted" data-inbox="empty">
+              Nothing assigned yet
+            </li>
+          ) : undefined}
+        </ul>
+      </article>
+
+      <article data-panel="activity">
+        <h2>Activity</h2>
+        <p className="muted">The declared transition feed, in arrival order.</p>
+        <ul>
+          {(props.models?.activity ?? [])
+            .slice(-8)
+            .toReversed()
+            .map((event, index) => (
+              <li key={`${event.issueId}-${event.occurredAt}-${String(index)}`}>
+                <span data-activity-change={event.change}>{event.change}</span>
+                {" · "}
+                <span>{event.title}</span>
+                {" · "}
+                <span>{event.status}</span>
+              </li>
+            ))}
+        </ul>
+      </article>
+
+      <article data-panel="notifications">
+        <h2>Notifications</h2>
+        {notifications === undefined ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <dl>
+            <div>
+              <dt>Pending</dt>
+              <dd data-outbox="pending">{notifications.pending}</dd>
+            </div>
+            <div>
+              <dt>Delivered</dt>
+              <dd data-outbox="delivered">{notifications.delivered}</dd>
+            </div>
+            <div>
+              <dt>Dead</dt>
+              <dd data-outbox="dead">{notifications.dead}</dd>
+            </div>
+          </dl>
+        )}
+      </article>
+
+      <p className="muted refreshed" data-refreshed={props.refreshedAt ?? ""}>
+        {props.refreshedAt === undefined
+          ? "Read models have not refreshed yet"
+          : `Read models refreshed at ${props.refreshedAt}`}
+      </p>
+    </section>
+  );
+}
+
+/** Whether a checked sink session is live, shown beside the product it feeds. */
+function LiveDot(props: { readonly status: SinkStatus }): React.JSX.Element {
+  return (
+    <span className="dot" data-live={props.status.kind}>
+      {props.status.kind === "live" ? "live" : props.status.kind}
+    </span>
   );
 }
 
@@ -181,8 +453,12 @@ function Column(props: {
   readonly label: string;
   readonly status: IssueStatus;
   readonly rows: readonly BoardIssuesRow[];
+  readonly labelsByIssue: ReadonlyMap<string, readonly string[]>;
+  readonly labelCatalog: readonly { readonly labelId: string; readonly name: string }[];
   readonly busy: boolean;
   readonly onMove: (issueId: string, status: IssueStatus) => void;
+  readonly onAttach: (issueId: string, labelId: string) => void;
+  readonly onDetach: (issueId: string, labelId: string) => void;
 }): React.JSX.Element {
   return (
     <section className="column" data-status={props.status} aria-label={props.label}>
@@ -190,36 +466,77 @@ function Column(props: {
         {props.label} <span className="count">{props.rows.length}</span>
       </h2>
       <ul>
-        {props.rows.map((row) => (
-          <li key={row.issueId} className="card" data-issue={row.issueId}>
-            <p className="title">{row.title}</p>
-            <p className="metadata">
-              <span data-project={row.projectId}>{row.projectId}</span>
-              <span data-assignee={row.assignee}>
-                {row.assignee === "unassigned" ? "Unassigned" : row.assignee}
-              </span>
-            </p>
-            <label>
-              <span className="visually-hidden">Status for {row.title}</span>
-              <select
-                value={row.status}
-                disabled={props.busy}
-                onChange={(changed) => {
-                  // SAFETY: every option this select renders comes from
-                  // `BOARD_COLUMNS`, so its value is one of the declared statuses.
-                  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-                  props.onMove(row.issueId, changed.target.value as IssueStatus);
-                }}
-              >
-                {BOARD_COLUMNS.map((column) => (
-                  <option key={column.status} value={column.status}>
-                    {column.label}
-                  </option>
+        {props.rows.map((row) => {
+          const attached = props.labelsByIssue.get(row.issueId) ?? [];
+          const available = props.labelCatalog.filter((label) => !attached.includes(label.labelId));
+          return (
+            <li key={row.issueId} className="card" data-issue={row.issueId}>
+              <p className="title">{row.title}</p>
+              <p className="metadata">
+                <span data-project={row.projectId}>{row.projectId}</span>
+                <span data-assignee={row.assignee}>
+                  {row.assignee === "unassigned" ? "Unassigned" : row.assignee}
+                </span>
+              </p>
+              <p className="labels">
+                {attached.map((labelId) => (
+                  <button
+                    key={labelId}
+                    type="button"
+                    className="chip"
+                    data-label={labelId}
+                    disabled={props.busy}
+                    title={`Remove ${labelId}`}
+                    onClick={() => {
+                      props.onDetach(row.issueId, labelId);
+                    }}
+                  >
+                    {labelId} ×
+                  </button>
                 ))}
-              </select>
-            </label>
-          </li>
-        ))}
+              </p>
+              <label>
+                <span className="visually-hidden">Add a label to {row.title}</span>
+                <select
+                  className="add-label"
+                  value=""
+                  disabled={props.busy || available.length === 0}
+                  onChange={(changed) => {
+                    if (changed.target.value.length === 0) return;
+                    props.onAttach(row.issueId, changed.target.value);
+                  }}
+                >
+                  <option value="">Add label…</option>
+                  {available.map((label) => (
+                    <option key={label.labelId} value={label.labelId}>
+                      {label.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="visually-hidden">Status for {row.title}</span>
+                <select
+                  className="issue-status"
+                  value={row.status}
+                  disabled={props.busy}
+                  onChange={(changed) => {
+                    // SAFETY: the option values are `BOARD_COLUMNS`' own
+                    // statuses, so a select can only report one of them.
+                    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
+                    props.onMove(row.issueId, changed.target.value as IssueStatus);
+                  }}
+                >
+                  {BOARD_COLUMNS.map((column) => (
+                    <option key={column.status} value={column.status}>
+                      {column.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

@@ -19,8 +19,12 @@ import { StreamUnavailable } from "./errors.ts";
 export interface WorkspaceBindings {
   /** The canonical append-only source of issue facts for one workspace. */
   readonly issueEvents: (workspaceId: string) => StreamBinding;
+  /** The canonical append-only source of issue-label membership facts. */
+  readonly issueLabelEvents: (workspaceId: string) => StreamBinding;
   /** The Durable State stream the `stateSink` publishes. */
   readonly boardState: (workspaceId: string) => StreamBinding;
+  /** The Durable State stream the label-count `stateSink` publishes. */
+  readonly labelCountState: (workspaceId: string) => StreamBinding;
   readonly projects: (workspaceId: string) => StreamBinding;
   readonly users: (workspaceId: string) => StreamBinding;
   readonly labels: (workspaceId: string) => StreamBinding;
@@ -51,7 +55,10 @@ export function bindByName(client: StreamProtocolClient, name: string): StreamBi
 export function workspaceBindings(client: StreamProtocolClient): WorkspaceBindings {
   return {
     issueEvents: (workspaceId) => bindByName(client, streamNames.issueEvents(workspaceId)),
+    issueLabelEvents: (workspaceId) =>
+      bindByName(client, streamNames.issueLabelEvents(workspaceId)),
     boardState: (workspaceId) => bindByName(client, streamNames.boardState(workspaceId)),
+    labelCountState: (workspaceId) => bindByName(client, streamNames.labelCountState(workspaceId)),
     projects: (workspaceId) => bindByName(client, streamNames.projects(workspaceId)),
     users: (workspaceId) => bindByName(client, streamNames.users(workspaceId)),
     labels: (workspaceId) => bindByName(client, streamNames.labels(workspaceId)),
@@ -87,7 +94,9 @@ export const ensureWorkspace = Effect.fn("Streams.ensureWorkspace")(function* (
 ) {
   const streams = yield* Streams;
   yield* streams.ensure(streamNames.issueEvents(workspaceId));
+  yield* streams.ensure(streamNames.issueLabelEvents(workspaceId));
   yield* streams.ensure(streamNames.boardState(workspaceId));
+  yield* streams.ensure(streamNames.labelCountState(workspaceId));
   yield* streams.ensure(streamNames.projects(workspaceId));
   yield* streams.ensure(streamNames.users(workspaceId));
   yield* streams.ensure(streamNames.labels(workspaceId));

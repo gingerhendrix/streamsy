@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS view_progress (
   workspace_id TEXT PRIMARY KEY, checkpoint TEXT, published TEXT,
   next_sequence INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS graph_publication (
+  workspace_id TEXT NOT NULL,
+  product      TEXT NOT NULL,
+  revision     TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, product)
+);
+CREATE TABLE IF NOT EXISTS transition_progress (
+  workspace_id      TEXT PRIMARY KEY,
+  history_epoch     INTEGER,
+  history_sequence  INTEGER,
+  producer_sequence INTEGER NOT NULL DEFAULT 0
+);
 ${COMMAND_RECEIPTS_SCHEMA}
 CREATE TABLE IF NOT EXISTS source_state_rows (
   source_id    TEXT NOT NULL,
@@ -84,6 +96,12 @@ interface ReceiptRow {
 
 interface StateProgressRow {
   readonly checkpoint: string | null;
+}
+
+interface TransitionProgressRow {
+  readonly history_epoch: number | null;
+  readonly history_sequence: number | null;
+  readonly producer_sequence: number;
 }
 
 interface ValueRow {
@@ -221,6 +239,25 @@ function boundary(database: Database, outbox: OutboxBacking): IssueStoreBoundary
     "INSERT INTO source_progress (source_id, partition_id, checkpoint) VALUES (?, ?, ?)" +
       " ON CONFLICT (source_id, partition_id) DO UPDATE SET checkpoint = excluded.checkpoint",
   );
+  const selectGraphPublication = database.query<{ readonly revision: string }, [string, string]>(
+    "SELECT revision FROM graph_publication WHERE workspace_id = ? AND product = ?",
+  );
+  const upsertGraphPublication = database.query<never, [string, string, string]>(
+    "INSERT INTO graph_publication (workspace_id, product, revision) VALUES (?, ?, ?)" +
+      " ON CONFLICT (workspace_id, product) DO UPDATE SET revision = excluded.revision",
+  );
+  const selectTransitions = database.query<TransitionProgressRow, [string]>(
+    "SELECT history_epoch, history_sequence, producer_sequence" +
+      " FROM transition_progress WHERE workspace_id = ?",
+  );
+  const upsertTransitions = database.query<never, [string, number | null, number | null, number]>(
+    "INSERT INTO transition_progress" +
+      " (workspace_id, history_epoch, history_sequence, producer_sequence)" +
+      " VALUES (?, ?, ?, ?) ON CONFLICT (workspace_id) DO UPDATE SET" +
+      " history_epoch = excluded.history_epoch," +
+      " history_sequence = excluded.history_sequence," +
+      " producer_sequence = excluded.producer_sequence",
+  );
 
   /**
    * The receipt and the deliveries it implies, in one transaction.
@@ -310,6 +347,34 @@ function boundary(database: Database, outbox: OutboxBacking): IssueStoreBoundary
           });
         }
         return undefined;
+      }),
+    graphPublished: (workspaceId, product) =>
+      sqlite(
+        "graphPublished",
+        () => selectGraphPublication.get(workspaceId, product)?.revision ?? undefined,
+      ),
+    markGraphPublished: (workspaceId, product, revision) =>
+      sqlite("markGraphPublished", () => {
+        upsertGraphPublication.run(workspaceId, product, revision);
+      }),
+    transitionProgress: (workspaceId) =>
+      sqlite("transitionProgress", () => {
+        const row = selectTransitions.get(workspaceId);
+        if (row === null || row === undefined) return { position: undefined, sequence: 0 };
+        const position =
+          row.history_epoch === null || row.history_sequence === null
+            ? undefined
+            : { epoch: row.history_epoch, sequence: row.history_sequence };
+        return { position, sequence: row.producer_sequence };
+      }),
+    markTransitionsPublished: (workspaceId, progress) =>
+      sqlite("markTransitionsPublished", () => {
+        upsertTransitions.run(
+          workspaceId,
+          progress.position?.epoch ?? null,
+          progress.position?.sequence ?? null,
+          progress.sequence,
+        );
       }),
     stateCheckpoint: (sourceId, partitionId) =>
       sqlite(

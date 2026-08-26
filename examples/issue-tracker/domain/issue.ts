@@ -95,37 +95,79 @@ export const encodeIssueEventJson = Schema.encodeUnknownSync(Schema.fromJsonStri
 export const decodeIssueRow = Schema.decodeUnknownSync(IssueRow);
 export const decodeIdentifier = Schema.decodeUnknownSync(Identifier);
 
-/** Supporting A1 relation rows. Their ingestion and runtime maintenance belong to later tracks. */
-export const ProjectRow = Schema.Struct({
-  projectId: Identifier,
-  workspaceId: Identifier,
-  name: Title,
-  revision: Sequence,
-});
-export type ProjectRow = typeof ProjectRow.Type;
+/**
+ * One issue-label membership fact.
+ *
+ * Membership is its own canonical fact family on its own durable stream, and
+ * that is a consequence of the declaration language rather than a preference.
+ * `reduceByKey` is only available directly on a fact source — a plan cannot
+ * filter a stream before folding it — so one stream cannot feed two relations
+ * keyed by different things. `issue-tracker.issues` is keyed by `issueId` and a
+ * membership is keyed by an (issue, label) pair, so they are two fact families
+ * and two streams. See `integration-2-decisions.md`.
+ *
+ * Attaching and detaching are two named facts rather than one fact carrying a
+ * flag, because "Ada removed the `bug` label" is what happened. `attached` is
+ * written into the maintained row by the reducer as a literal, so the row still
+ * folds with references and literals alone.
+ */
+export const MEMBERSHIP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
+export const MembershipId = Schema.String.check(Schema.isPattern(MEMBERSHIP_ID_PATTERN));
 
-export const UserRow = Schema.Struct({
-  userId: Identifier,
-  workspaceId: Identifier,
-  displayName: Title,
-  revision: Sequence,
-});
-export type UserRow = typeof UserRow.Type;
+/** The membership one (issue, label) pair has. Derived, so a replay cannot duplicate it. */
+export function membershipIdOf(issueId: string, labelId: string): string {
+  return `${issueId}.${labelId}`;
+}
 
-export const LabelRow = Schema.Struct({
-  labelId: Identifier,
+const membershipFact = {
+  eventId: Identifier,
   workspaceId: Identifier,
-  name: Title,
-  revision: Sequence,
-});
-export type LabelRow = typeof LabelRow.Type;
-
-export const IssueLabelRow = Schema.Struct({
   issueId: Identifier,
   labelId: Identifier,
-  revision: Sequence,
+  /** The row key this fact folds into. Derived at the command edge, checked here. */
+  membershipId: MembershipId,
+  sequence: Sequence,
+  occurredAt: Timestamp,
+} as const;
+
+export const LabelAttached = Schema.Struct({
+  type: Schema.Literal("LabelAttached"),
+  ...membershipFact,
+});
+
+export const LabelDetached = Schema.Struct({
+  type: Schema.Literal("LabelDetached"),
+  ...membershipFact,
+});
+
+export const IssueLabelEvent = Schema.Union([LabelAttached, LabelDetached]);
+export type IssueLabelEvent = typeof IssueLabelEvent.Type;
+
+export const decodeIssueLabelEvent = Schema.decodeUnknownSync(IssueLabelEvent);
+export const encodeIssueLabelEventJson = Schema.encodeUnknownSync(
+  Schema.fromJsonString(IssueLabelEvent),
+);
+
+/**
+ * One maintained issue-label membership.
+ *
+ * A detached membership stays in the relation as `attached: false` rather than
+ * leaving it. That is deliberate: the fold language produces `enter` and
+ * `update` changes only, and — more importantly — the tracker rejects Durable
+ * State deletes, so a product that removed rows here would need delete
+ * semantics it has decided not to have. Readers filter on `attached`, and
+ * `issue-tracker.label-counts` does exactly that.
+ */
+export const IssueLabelRow = Schema.Struct({
+  membershipId: MembershipId,
+  issueId: Identifier,
+  labelId: Identifier,
+  workspaceId: Identifier,
+  attached: Schema.Boolean,
+  updatedAt: Timestamp,
 });
 export type IssueLabelRow = typeof IssueLabelRow.Type;
+export const decodeIssueLabelRow = Schema.decodeUnknownSync(IssueLabelRow);
 
 export const ProjectBoardCard = Schema.Struct({
   issueId: Identifier,
@@ -197,12 +239,20 @@ export const AssigneeQueueRow = Schema.Struct({
 });
 export type AssigneeQueueRow = typeof AssigneeQueueRow.Type;
 
+/**
+ * One label and how many attached issues it has in one project.
+ *
+ * The shape is unchanged from the inert A1 declaration, which is why its
+ * descriptor is still version 1 even though Integration 2 publishes it: what a
+ * version records is the shape of the value, not whether anyone reads it.
+ */
 export const LabelCountRow = Schema.Struct({
   labelId: Identifier,
   labelName: Title,
   issueCount: Schema.Int,
 });
 export type LabelCountRow = typeof LabelCountRow.Type;
+export const decodeLabelCountRow = Schema.decodeUnknownSync(LabelCountRow);
 
 export const RecentActivityRow = Schema.Struct({
   eventId: Identifier,

@@ -5,10 +5,16 @@ import { executableViews } from "../domain/views.ts";
 const project = {
   projectId: "streamsy",
   workspaceId: "main",
+  key: "STR",
   name: "Streamsy",
-  revision: 1,
+  updatedAt: "2026-08-25T09:00:00.000Z",
 };
-const user = { userId: "u1", workspaceId: "main", displayName: "Ada", revision: 1 };
+const user = {
+  userId: "u1",
+  workspaceId: "main",
+  name: "Ada",
+  updatedAt: "2026-08-25T09:00:00.000Z",
+};
 const issue = {
   issueId: "i1",
   workspaceId: "main",
@@ -42,7 +48,7 @@ test("registered project board updates joins incrementally and matches full reco
   });
   expect(initial.rows[0]?.row).toMatchObject({ projectName: "Streamsy", assignee: "u1" });
 
-  const renamed = { ...project, name: "Streamsy Platform", revision: 2 };
+  const renamed = { ...project, name: "Streamsy Platform", updatedAt: "2026-08-25T09:30:00.000Z" };
   const updated = maintainGraph({
     plan,
     state: initial.state,
@@ -71,8 +77,21 @@ test("registered project board updates joins incrementally and matches full reco
 
 test("registered label counts retract and exact top promotes the next candidate", () => {
   const countPlan = executableViews.labelCounts.plan;
-  const label = { labelId: "bug", workspaceId: "main", name: "Bug", revision: 1 };
-  const membership = { issueId: "i1", labelId: "bug", revision: 1 };
+  const label = {
+    labelId: "bug",
+    workspaceId: "main",
+    name: "Bug",
+    color: "#d64545",
+    updatedAt: "2026-08-25T09:00:00.000Z",
+  };
+  const membership = {
+    membershipId: "i1.bug",
+    issueId: "i1",
+    labelId: "bug",
+    workspaceId: "main",
+    attached: true,
+    updatedAt: "2026-08-25T10:00:00.000Z",
+  };
   const counted = maintainGraph({
     plan: countPlan,
     parameters: { projectId: "streamsy" },
@@ -87,11 +106,19 @@ test("registered label counts retract and exact top promotes the next candidate"
       },
       {
         sourceId: "issue-tracker.issue-labels",
-        changes: [{ kind: "enter", key: ["i1", "bug"], after: membership }],
+        changes: [{ kind: "enter", key: "i1.bug", after: membership }],
       },
     ],
   });
   expect(counted.rows[0]?.row.issueCount).toBe(1);
+
+  /**
+   * Detaching is an *update* to `attached`, not an exit: the membership stays
+   * in the relation. The count still retracts, because the plan filters on
+   * `attached` before it joins — which is exactly the property the runtime
+   * depends on for a label removal to be visible.
+   */
+  const detached = { ...membership, attached: false, updatedAt: "2026-08-25T10:05:00.000Z" };
   const retracted = maintainGraph({
     plan: countPlan,
     state: counted.state,
@@ -99,7 +126,7 @@ test("registered label counts retract and exact top promotes the next candidate"
     inputs: [
       {
         sourceId: "issue-tracker.issue-labels",
-        changes: [{ kind: "exit", key: ["i1", "bug"], before: membership }],
+        changes: [{ kind: "update", key: "i1.bug", before: membership, after: detached }],
       },
     ],
   });

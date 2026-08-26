@@ -1,0 +1,139 @@
+{
+  "workspaceId": "acme",
+  "note": "A recorded workspace: canonical facts exactly as a producer appended them, replayed straight onto the durable streams. Sequence 3 arrives before sequence 2 on purpose, so the arrival-order law is exercised by the recording rather than only by a unit test.",
+  "catalog": {
+    "projects": [
+      {
+        "projectId": "streamsy",
+        "workspaceId": "acme",
+        "key": "STR",
+        "name": "Streamsy",
+        "updatedAt": "2026-08-20T09:00:00.000Z"
+      }
+    ],
+    "users": [
+      {
+        "userId": "ada",
+        "workspaceId": "acme",
+        "name": "Ada",
+        "updatedAt": "2026-08-20T09:00:00.000Z"
+      },
+      {
+        "userId": "grace",
+        "workspaceId": "acme",
+        "name": "Grace",
+        "updatedAt": "2026-08-20T09:00:00.000Z"
+      }
+    ],
+    "labels": [
+      {
+        "labelId": "bug",
+        "workspaceId": "acme",
+        "name": "Bug",
+        "color": "#d64545",
+        "updatedAt": "2026-08-20T09:00:00.000Z"
+      },
+      {
+        "labelId": "docs",
+        "workspaceId": "acme",
+        "name": "Docs",
+        "color": "#4573d6",
+        "updatedAt": "2026-08-20T09:00:00.000Z"
+      }
+    ]
+  },
+  "issueEvents": [
+    {
+      "type": "IssueCreated",
+      "eventId": "r-1",
+      "workspaceId": "acme",
+      "issueId": "acme-1",
+      "sequence": 0,
+      "occurredAt": "2026-08-20T10:00:00.000Z",
+      "title": "Recorded: declare the view",
+      "projectId": "streamsy",
+      "status": "backlog"
+    },
+    {
+      "type": "IssueCreated",
+      "eventId": "r-2",
+      "workspaceId": "acme",
+      "issueId": "acme-2",
+      "sequence": 1,
+      "occurredAt": "2026-08-20T10:01:00.000Z",
+      "title": "Recorded: maintain the rows",
+      "projectId": "streamsy",
+      "status": "todo"
+    },
+    {
+      "type": "IssueStatusChanged",
+      "eventId": "r-4",
+      "workspaceId": "acme",
+      "issueId": "acme-1",
+      "sequence": 3,
+      "occurredAt": "2026-08-20T10:03:00.000Z",
+      "status": "done"
+    },
+    {
+      "type": "IssueStatusChanged",
+      "eventId": "r-3",
+      "workspaceId": "acme",
+      "issueId": "acme-1",
+      "sequence": 2,
+      "occurredAt": "2026-08-20T10:02:00.000Z",
+      "status": "in_progress"
+    },
+    {
+      "type": "IssueAssigned",
+      "eventId": "r-5",
+      "workspaceId": "acme",
+      "issueId": "acme-2",
+      "sequence": 4,
+      "occurredAt": "2026-08-20T10:04:00.000Z",
+      "status": "todo",
+      "assigneeId": "grace"
+    }
+  ],
+  "issueLabelEvents": [
+    {
+      "type": "LabelAttached",
+      "eventId": "rl-1",
+      "workspaceId": "acme",
+      "issueId": "acme-1",
+      "labelId": "docs",
+      "membershipId": "acme-1.docs",
+      "sequence": 0,
+      "occurredAt": "2026-08-20T10:05:00.000Z"
+    },
+    {
+      "type": "LabelAttached",
+      "eventId": "rl-2",
+      "workspaceId": "acme",
+      "issueId": "acme-2",
+      "labelId": "docs",
+      "membershipId": "acme-2.docs",
+      "sequence": 1,
+      "occurredAt": "2026-08-20T10:06:00.000Z"
+    },
+    {
+      "type": "LabelAttached",
+      "eventId": "rl-3",
+      "workspaceId": "acme",
+      "issueId": "acme-2",
+      "labelId": "bug",
+      "membershipId": "acme-2.bug",
+      "sequence": 2,
+      "occurredAt": "2026-08-20T10:07:00.000Z"
+    },
+    {
+      "type": "LabelDetached",
+      "eventId": "rl-4",
+      "workspaceId": "acme",
+      "issueId": "acme-1",
+      "labelId": "docs",
+      "membershipId": "acme-1.docs",
+      "sequence": 3,
+      "occurredAt": "2026-08-20T10:08:00.000Z"
+    }
+  ]
+}

@@ -7,12 +7,17 @@
     "dev": "bun run build && bun --hot server/local.ts",
     "start": "bun server/local.ts",
     "build": "bun run generate:check && bun run scripts/build.ts",
-    "generate": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardIssues --output $PWD/src/generated/board-issues.ts",
-    "generate:check": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardIssues --output $PWD/src/generated/board-issues.ts --check",
+    "generate": "bun run generate:board && bun run generate:label-counts",
+    "generate:board": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardIssues --output $PWD/src/generated/board-issues.ts",
+    "generate:label-counts": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardLabelCounts --output $PWD/src/generated/label-counts.ts",
+    "generate:check": "bun run generate:check:board && bun run generate:check:label-counts",
+    "generate:check:board": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardIssues --output $PWD/src/generated/board-issues.ts --check",
+    "generate:check:label-counts": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardLabelCounts --output $PWD/src/generated/label-counts.ts --check",
     "typecheck": "tsc --noEmit",
     "test": "bun test test",
     "smoke:http": "bun run scripts/http-smoke.ts",
-    "smoke:ui": "bun run scripts/ui-smoke.ts"
+    "smoke:ui": "bun run scripts/ui-smoke.ts",
+    "app:full": "bun run scripts/full-app.ts"
   },
   "dependencies": {
     "@durable-streams/client": "^0.2.6",

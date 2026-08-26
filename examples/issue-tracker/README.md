@@ -1,8 +1,10 @@
 # issue-tracker
 
-The Streamsy issue tracker. This is slice 1 of the incrementally maintained
-view DSL: one declaration carried end to end, from an HTTP command to a live
-React board.
+The Streamsy issue tracker. It carries one declaration end to end, from an HTTP
+command to a live React board — and, since Integration 2, it is the whole local
+application rather than one vertical slice: three domains, two checked State
+sinks, a stream sink, a document sink, an effect sink, and a cross-workspace
+inbox no single partition could serve.
 
 ```text
 HTTP issue command
@@ -15,6 +17,42 @@ HTTP issue command
 -> caller-owned DurableStream + TanStack DB
 -> React board
 ```
+
+## What is on screen
+
+| Surface       | Kind                                               | How it converges                                                        |
+| ------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| Issue board   | checked `stateSink` + generated binding            | Live: Durable State session, native-offset resume, reset-first fallback |
+| Label counts  | checked `stateSink` + generated binding            | Live, the same way. Its own route, collection and fingerprint           |
+| Issue labels  | read model over the maintained membership relation | Polled, refreshed after every command                                   |
+| Activity      | `streamSink` feed, in arrival order                | Polled                                                                  |
+| Summary       | `documentSink` with a declared cache policy        | Polled                                                                  |
+| Notifications | `effectSink` outbox state                          | Polled                                                                  |
+| Inbox         | the _user_ domain's product, fed by the exchange   | Polled — see "Evidence limits"                                          |
+
+## Label membership
+
+Membership is a **second canonical fact family** on its own durable stream,
+`workspaces/{workspaceId}/issue-label-events`, folded by its own reducer into
+`issue-tracker.issue-labels` and joined by the `issue-tracker.label-counts` plan.
+
+It is a separate stream because of what the declaration language can express,
+not by preference: `reduceByKey` is only available directly on a fact source, so
+one stream cannot feed two relations keyed by different things. An issue is
+keyed by `issueId`; a membership is keyed by an (issue, label) pair.
+
+```bash
+# attach
+curl -X POST .../api/workspaces/main/issues/seed-plan/labels \
+  -d '{"commandId":"c1","labelId":"bug"}'
+# detach
+curl -X POST .../api/workspaces/main/issues/seed-plan/labels/detach \
+  -d '{"commandId":"c2","labelId":"bug"}'
+```
+
+Detaching needs **no Durable State delete**. A detached membership stays in the
+relation as `attached: false`, and the label-count plan filters it out before it
+joins. Deletes remain decoded and rejected everywhere in this example.
 
 `examples/issue-tracker-demo` remains the simple baseline.
 `examples/issue-tracker-projections` is the direct predecessor: this example
@@ -160,6 +198,17 @@ server/runtime.ts       the application Layer, assembled once
   between committing and appending — the sink is rebuilt from the durable rows
   rather than replaying messages nobody recorded. Durable rows are the
   authority.
+- **The transition feed is atomic with the rows it describes.** It is published
+  _from_ the committed change history, which is written in the same transaction
+  as the rows, on a producer lane whose sequence is durable. A crash before the
+  append leaves the batch owed and the next pass publishes it; a crash after the
+  append replays the same sequence and the protocol answers `duplicate`. If the
+  change history no longer reaches back to an owed batch, the pass fails
+  `transition-history-expired` rather than leaving a hole in the log.
+- **The exchange reads a durable source registry.** Every workspace the host has
+  opened is registered in the global partition, and each pass reopens a bounded
+  number of closed ones, least recently exchanged first. An inbox therefore
+  converges whether or not anyone is looking at the workspace feeding it.
 - **Deterministic order.** The engine sorts by the declared `order` expression
   with a stable sort over durable stream order, so replaying a suffix converges
   on the same rows regardless of arrival order.
@@ -207,7 +256,13 @@ bun run --cwd examples/issue-tracker test
 bun run --cwd examples/issue-tracker build
 bun run --cwd examples/issue-tracker smoke:http
 bun run --cwd examples/issue-tracker smoke:ui
+bun run --cwd examples/issue-tracker app:full
 ```
+
+`app:full` is the Integration 2 acceptance script. It replays a recorded
+workspace by appending canonical facts straight onto the durable streams — no
+command path — drives a second workspace with live commands, asserts every
+product surface agrees, and re-checks all of it after a whole-host restart.
 
 `smoke:http` starts a real server on SQLite, drives the slice over the network,
 restarts the host against the same databases, and checks native offset resume
@@ -253,5 +308,15 @@ would have been dishonest.
 - **Retired history cannot be produced locally.** The example has no retention,
   so `history-unavailable` is mapped but cannot be generated. Invalid offsets
   and protocol incompatibility exercise the same explicit recovery policy.
+- **The inbox is polled, not live.** It is served by the _user_ partition, which
+  owns an inbox and nothing else — no durable stream storage, so no State stream
+  to publish and no session to resume. Giving it one would double that domain's
+  storage surface and add a fifth contract fingerprint for a product whose only
+  writer is the host's own exchange tick. The browser refreshes it on an
+  interval and says so on screen. Recorded in `integration-2-decisions.md`.
+- **Both graph products are parameterised at one project.** The board and the
+  label counts are maintained at `projectId: "streamsy"`, which is what the
+  seeded workspace uses. Parameterising them per request needs one operator
+  state per parameter binding, which is scale work rather than assembly work.
 - **No deployment.** Durable Objects, Alchemy, R2 snapshots and the Cloudflare
-  host are out of scope for slice 1 and are not present in this example.
+  host are out of scope and are not present in this example.

@@ -9,28 +9,51 @@
  * arrives out of domain sequence is visible as the transition it actually
  * caused.
  *
- * Publication is a separate durable append from the row commit that produced
- * it. A process that dies between the two loses the transitions of that one
- * batch while keeping its rows, because the rows are the authority.
+ * **Publication is driven from the committed change history, not from the
+ * in-memory batch.** That closes the Wave B-i gap where a process dying between
+ * the row commit and the feed append kept the rows and lost that batch's
+ * transitions. Two properties do it, and both are needed:
  *
- * The Effect sink's outbox is deliberately *not* used to close that gap, even
- * though both tracks now live in one tree. The outbox delivers external effects
- * at least once, keyed and retried, with a dead-letter terminus; this feed is a
- * replayable log whose contract is arrival order and native-offset resume. A
- * dead-lettered transition would be an undetectable hole in that log, which is
- * worse than losing a whole batch. The outbox also enqueues from the command
- * receipt, so it could not carry facts appended straight to the durable source
- * — which the feed's own ordering test does. Closing this atomically is
- * Integration 2 work; see `verification-wave-bi-integration.md`.
+ * - The changes were written in the *same atomic commit* as the rows, so a
+ *   batch that exists to publish is a batch whose rows landed. A crash before
+ *   the append leaves the batch owed, and the next pass finds it.
+ * - The append runs on a **producer lane** whose sequence is durable, so a
+ *   crash *after* the append and before the marker moves replays the same
+ *   sequence, the protocol answers `duplicate`, and no transition is written
+ *   twice. Delivery is at-least-once; the feed is exactly-once.
+ *
+ * The recovery window is the store's change-history retention, and a batch that
+ * has fallen out of it is {@link TransitionHistoryExpired} — fail-stop, because
+ * a silently missing transition is a hole in a log whose whole contract is that
+ * it has none. In practice at most one batch is ever owed, because every
+ * maintenance pass publishes.
+ *
+ * The Effect sink's outbox is deliberately still not used here. The outbox
+ * delivers external effects at least once with a dead-letter terminus; this
+ * feed is a replayable log whose contract is arrival order and native-offset
+ * resume, and a dead-lettered transition would be exactly the hole above.
  */
 import { defaultOffsetGenerator, type JsonValue, type ReadStreamOptions } from "@streamsy/core";
 import { AppendStreams, ReadStreams } from "@streamsy/experimental/effect";
 import type { StreamSinkPage } from "@streamsy/sinks/effect";
 import type { Change } from "@streamsy/views-ir";
-import { Effect } from "effect";
-import { issueTransitions } from "../domain/declaration.ts";
-import { decodeIssueTransition, type IssueRow, type IssueTransition } from "../domain/issue.ts";
-import { AppendRejected, SourcePoison, StreamUnavailable } from "./errors.ts";
+import { Effect, Schema } from "effect";
+import { issues, issueTransitions } from "../domain/declaration.ts";
+import {
+  decodeIssueRow,
+  decodeIssueTransition,
+  type IssueRow,
+  type IssueTransition,
+} from "../domain/issue.ts";
+import type { StoredChange } from "@streamsy/views-store";
+import {
+  AppendRejected,
+  MaintenanceFault,
+  SourcePoison,
+  StreamUnavailable,
+  type TransitionHistoryExpired,
+} from "./errors.ts";
+import { IssueStore } from "./store.ts";
 import { Streams } from "./streams.ts";
 
 /** One page of the feed is bounded, so a consumer's catch-up read stays finite. */
@@ -70,28 +93,129 @@ export function transitionsOf(
   });
 }
 
-/** Append one maintenance pass's transitions, in the order the fold produced them. */
-export const publishTransitions = Effect.fn("Transitions.publish")(function* (
-  workspaceId: string,
-  changes: readonly Change<IssueRow, string>[],
-) {
-  const transitions = transitionsOf(changes);
-  if (transitions.length === 0) return 0;
+/**
+ * The producer lane the feed is written on.
+ *
+ * One lane per feed stream, and the stream is already per workspace, so the id
+ * is a constant. The epoch never moves: a second writer would be a second host
+ * owning one workspace partition, which the host's keying forbids.
+ */
+export const TRANSITION_PRODUCER_ID = "issue-tracker-transitions";
+
+/** How many committed batches one publication pass drains. */
+export const TRANSITION_PUBLISH_BATCHES = 64;
+
+/**
+ * Bring the feed up to every change batch the store has committed.
+ *
+ * Returns how many transitions this pass appended. Zero is the steady state on
+ * a pass that folded nothing.
+ */
+export const publishTransitions = Effect.fn("Transitions.publish")(function* (workspaceId: string) {
+  const store = yield* IssueStore;
   const streams = yield* Streams;
   const appends = yield* AppendStreams;
   const binding = streams.bindings.issueTransitions(workspaceId);
-  const appended = yield* appends
-    .appendJsonBatch(binding, transitions.map(encodeTransition))
-    .pipe(
-      Effect.mapError(
-        (error) => new StreamUnavailable({ streamId: binding.streamId, status: String(error) }),
-      ),
+
+  let progress = yield* store.transitionProgress(workspaceId);
+  let published = 0;
+
+  for (;;) {
+    const batches = yield* store.committedIssueChanges(
+      workspaceId,
+      progress.position,
+      TRANSITION_PUBLISH_BATCHES,
     );
-  if (appended.status !== "appended" && appended.status !== "duplicate") {
-    return yield* new AppendRejected({ stream: binding.streamId, status: appended.status });
+    if (batches.length === 0) return published;
+
+    for (const batch of batches) {
+      const transitions = transitionsOf(yield* restoreChanges(workspaceId, batch.changes));
+      if (transitions.length > 0) {
+        const appended = yield* appends
+          .appendJsonBatch(binding, transitions.map(encodeTransition), {
+            producer: {
+              producerId: TRANSITION_PRODUCER_ID,
+              producerEpoch: 0,
+              producerSeq: progress.sequence,
+            },
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new StreamUnavailable({ streamId: binding.streamId, status: String(error) }),
+            ),
+          );
+        // `duplicate` is the recovery path succeeding: this batch was appended
+        // before the marker moved, and the lane refused to write it twice.
+        if (appended.status !== "appended" && appended.status !== "duplicate") {
+          return yield* new AppendRejected({
+            stream: binding.streamId,
+            status: appended.status,
+          });
+        }
+        published += transitions.length;
+        progress = { position: batch.position, sequence: progress.sequence + 1 };
+      } else {
+        progress = { position: batch.position, sequence: progress.sequence };
+      }
+      yield* store.markTransitionsPublished(workspaceId, progress);
+    }
+    if (batches.length < TRANSITION_PUBLISH_BATCHES) return published;
   }
-  return transitions.length;
 });
+
+/**
+ * Decode one committed batch back into typed relation changes.
+ *
+ * The history holds the same JSON the commit wrote, so a value that no longer
+ * decodes is a declaration change that left durable state behind — a fault,
+ * never a transition quietly dropped from the feed.
+ */
+const restoreChanges = Effect.fn("Transitions.restoreChanges")(function* (
+  workspaceId: string,
+  stored: readonly StoredChange[],
+) {
+  const changes: Change<IssueRow, string>[] = [];
+  for (const change of stored) {
+    if (change.relationId !== issues.name) continue;
+    // The `issues` relation declares `key: "issueId"`, so the commit wrote a
+    // string. `RowKey` admits composites for relations that declare them; this
+    // one does not, and the declared key is what decides.
+    const key = decodeIssueRowKey(change.key);
+    changes.push(
+      yield* Effect.try({
+        try: (): Change<IssueRow, string> => {
+          if (change.kind === "enter") {
+            return { kind: "enter", key, after: decodeIssueRow(change.after) };
+          }
+          if (change.kind === "update") {
+            return {
+              kind: "update",
+              key,
+              before: decodeIssueRow(change.before),
+              after: decodeIssueRow(change.after),
+            };
+          }
+          return { kind: "exit", key, before: decodeIssueRow(change.before) };
+        },
+        catch: (cause) =>
+          new MaintenanceFault({
+            view: issues.name,
+            phase: "transitions",
+            detail: `${workspaceId}/${key}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      }),
+    );
+  }
+  return changes;
+});
+
+/** What a publication pass can fail with, named once for the callers that map it. */
+export type TransitionPublishError =
+  | StreamUnavailable
+  | AppendRejected
+  | MaintenanceFault
+  | TransitionHistoryExpired;
 
 /** A read that could not resume, separated from a feed that is simply unavailable. */
 export class TransitionReadFailure {
@@ -207,6 +331,15 @@ const decodeTransition = (sourceId: string, position: string, value: JsonValue) 
         detail: cause instanceof Error ? cause.message : String(cause),
       }),
   });
+
+/**
+ * The row key of a committed `issue-tracker.issues` change.
+ *
+ * `RowKey` admits composites for relations that declare them; this relation
+ * declares `key: "issueId"`, so a value that is not a string is a change from a
+ * relation this feed does not publish — a fault, not a stringified object.
+ */
+const decodeIssueRowKey = Schema.decodeUnknownSync(Schema.String);
 
 /** The wire shape of one transition. Written out, so an added row field cannot leak into the feed. */
 function encodeTransition(transition: IssueTransition): JsonValue {

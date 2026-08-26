@@ -67,11 +67,12 @@ import { drainNotifications } from "./application.ts";
 import type { ApplicationServices } from "./application.ts";
 import {
   runExchange,
+  type ExchangePassOptions,
   type ExchangePassReport,
   type ExchangeSession,
   type PartitionLease,
 } from "./exchange.ts";
-import type { ExchangeCursorStore } from "./exchange-store.ts";
+
 import type { StreamGateway } from "./gateway.ts";
 import { globalLayer, handleGlobalRequest, type GlobalServices } from "./global-domain.ts";
 import {
@@ -118,6 +119,8 @@ export interface ExchangePolicy {
   readonly mode?: "manual" | "interval";
   /** Upper bound on records read from one source in one pass. */
   readonly limit?: number;
+  /** How many closed registered sources one pass may reopen. Zero disables it. */
+  readonly coldSources?: number;
 }
 
 export interface WorkspaceHostOptions {
@@ -135,8 +138,8 @@ export interface WorkspaceHostOptions {
   readonly store?: (workspaceId: string) => Layer.Layer<IssueStore | OutboxStore>;
   /** Per-user-partition inbox storage. A factory, for the same reason. */
   readonly inbox?: (userId: string) => Layer.Layer<InboxStore>;
-  /** The global partition's exchange cursor storage. */
-  readonly exchangeStore?: () => Layer.Layer<ExchangeCursorStore>;
+  /** The global partition's exchange cursors and source registry. */
+  readonly exchangeStore?: () => Layer.Layer<GlobalServices>;
   readonly notifications?: NotificationTargetOptions;
   /** Test/host adapter seam for transport fault injection, per partition. */
   readonly applicationClient?: (
@@ -374,6 +377,14 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   const partitions = new Map<string, DomainPartition>();
   /** Survives a close, so `opens` still counts a key that was restarted. */
   const openCounts = new Map<string, number>();
+  /**
+   * Every workspace this process has opened, whether or not it is open now.
+   *
+   * The exchange registers from this rather than from the open set: a workspace
+   * that was idled out before the first pass ran is still a source, and losing
+   * it would make an inbox's completeness depend on request timing.
+   */
+  const knownWorkspaces = new Set<string>();
   const totals = {
     opened: 0,
     closed: 0,
@@ -410,6 +421,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
       const opens = (openCounts.get(id) ?? 0) + 1;
       openCounts.set(id, opens);
       const created = build(key, opens);
+      if (key.kind === "workspace") knownWorkspaces.add(key.id);
       partitions.set(id, created);
       totals.opened += 1;
       return created;
@@ -698,10 +710,12 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
    * reopen storage on a timer to look for work.
    */
   const session: ExchangeSession = {
+    now,
     openSources: () =>
       [...partitions.values()]
         .filter((partition) => partition.kind === "workspace" && partition.closing === undefined)
         .map((partition) => partition.key),
+    knownSources: () => [...knownWorkspaces].map(workspaceKey),
     leaseWorkspace: (workspaceId) =>
       takeLease<ApplicationServices | StreamGateway>(workspaceKey(workspaceId)),
     leaseUser: (userId) => takeLease<UserServices>(userKey(userId)),
@@ -711,8 +725,12 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   /** One exchange pass over every open source. Reports are counted, never thrown. */
   async function exchange(): Promise<readonly ExchangePassReport[]> {
     if (closing !== undefined) return [];
-    const limit = options.exchange?.limit;
-    const reports = await runExchange(session, limit === undefined ? {} : { limit });
+    const passOptions: ExchangePassOptions = {};
+    if (options.exchange?.limit !== undefined) passOptions.limit = options.exchange.limit;
+    if (options.exchange?.coldSources !== undefined) {
+      passOptions.coldSources = options.exchange.coldSources;
+    }
+    const reports = await runExchange(session, passOptions);
     for (const report of reports) {
       exchangeCounters.passes += 1;
       exchangeCounters.scanned += report.scanned;

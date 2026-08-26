@@ -14,26 +14,78 @@
  * replay every workspace into every inbox is not something to ship first and
  * protect later.
  */
+import { Database } from "bun:sqlite";
 import type { JsonValue } from "@streamsy/core";
-import { Cause, Effect, Layer } from "effect";
-import { ExchangeCursorStore, exchangeMemoryLayer, exchangeSqliteLayer } from "./exchange-store.ts";
+import { Cause, Context, Effect, Layer } from "effect";
+import { partitionKeyString } from "../domain/domains.ts";
+import {
+  EXCHANGE_SCHEMA,
+  exchangeCursorService,
+  ExchangeCursorStore,
+  exchangeMemoryLayer,
+} from "./exchange-store.ts";
+import {
+  ExchangeSourceRegistry,
+  sourceRegistryMemoryLayer,
+  sourceRegistryService,
+  SOURCE_REGISTRY_SCHEMA,
+} from "./source-registry.ts";
 
-export type GlobalServices = ExchangeCursorStore;
+export type GlobalServices = ExchangeCursorStore | ExchangeSourceRegistry;
 
 export interface GlobalLayerOptions {
   /** Where the cursors live. Memory when the host has no data directory. */
   readonly filename?: string;
 }
 
-export const globalLayer = (options: GlobalLayerOptions = {}): Layer.Layer<GlobalServices> =>
-  options.filename === undefined
-    ? exchangeMemoryLayer()
-    : exchangeSqliteLayer({ filename: options.filename });
+/**
+ * The global partition's one connection.
+ *
+ * Cursors and the source registry are two surfaces over one file for the same
+ * reason the workspace's rows and outbox are: they are one partition's durable
+ * state, and a partition owns one connection. Naming the connection is what
+ * lets two layers share it without either one owning the other.
+ */
+class GlobalDatabase extends Context.Service<GlobalDatabase, Database>()(
+  "issue-tracker/GlobalDatabase",
+) {}
+
+const databaseLayer = (filename: string): Layer.Layer<GlobalDatabase> =>
+  Layer.effect(
+    GlobalDatabase,
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        const database = new Database(filename, { create: true });
+        database.exec("PRAGMA journal_mode = WAL");
+        database.exec(EXCHANGE_SCHEMA);
+        database.exec(SOURCE_REGISTRY_SCHEMA);
+        return database;
+      }),
+      (database) => Effect.sync(() => database.close(false)),
+    ),
+  );
+
+export const globalLayer = (options: GlobalLayerOptions = {}): Layer.Layer<GlobalServices> => {
+  const filename = options.filename;
+  if (filename === undefined) {
+    return Layer.merge(exchangeMemoryLayer(), sourceRegistryMemoryLayer());
+  }
+  return Layer.merge(
+    Layer.effect(ExchangeCursorStore, Effect.map(GlobalDatabase, exchangeCursorService)),
+    Layer.effect(ExchangeSourceRegistry, Effect.map(GlobalDatabase, sourceRegistryService)),
+  ).pipe(Layer.provide(databaseLayer(filename)));
+};
 
 /** Every exchange position this host holds. */
 export const listExchangeCursors = Effect.fn("GlobalDomain.listExchangeCursors")(function* () {
   const cursors = yield* ExchangeCursorStore;
   return yield* cursors.list();
+});
+
+/** Every source this host's exchange is responsible for. */
+export const listExchangeSources = Effect.fn("GlobalDomain.listExchangeSources")(function* () {
+  const registry = yield* ExchangeSourceRegistry;
+  return yield* registry.list();
 });
 
 /** Route one request that the global partition owns. */
@@ -73,6 +125,19 @@ const route = (request: Request) =>
           source: { kind: cursor.source.kind, id: cursor.source.id },
           arrival: cursor.arrival,
           applied: cursor.applied,
+        })),
+      });
+    }
+    if (segments[0] === "sources" && segments.length === 1) {
+      if (request.method !== "GET") return fail(405, "method-not-allowed");
+      const sources = yield* listExchangeSources();
+      return json({
+        sources: sources.map((source) => ({
+          partition: partitionKeyString(source.key),
+          kind: source.key.kind,
+          id: source.key.id,
+          registeredAtMs: source.registeredAtMs,
+          lastExchangedAtMs: source.lastExchangedAtMs,
         })),
       });
     }

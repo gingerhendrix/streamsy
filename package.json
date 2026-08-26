@@ -48,6 +48,7 @@
     "smoke:issue-tracker-projections": "bun run --cwd examples/issue-tracker-projections smoke:http",
     "smoke:issue-tracker-slice": "bun run --cwd examples/issue-tracker smoke:http",
     "test:issue-tracker-slice": "bun run --cwd examples/issue-tracker test",
+    "app:issue-tracker": "bun run --cwd examples/issue-tracker app:full",
     "test:issue-tracker-demo": "bun run --cwd examples/issue-tracker-demo test",
     "test:issue-tracker-projections": "bun run --cwd examples/issue-tracker-projections test",
     "test:hex-domination": "bun run --cwd examples/risk-demo test",

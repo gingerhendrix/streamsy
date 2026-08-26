@@ -19,13 +19,23 @@ if (!existsSync(playwrightModule) || !existsSync(chromiumExecutable)) {
   throw new Error("The UI smoke requires the installed Playwright module and Chromium executable");
 }
 
+/** The two Playwright shapes this script uses. The module itself is loaded dynamically. */
+interface PlaywrightLocator {
+  readonly waitFor: (options?: { readonly timeout?: number }) => Promise<void>;
+}
+interface PlaywrightPage {
+  readonly locator: (selector: string) => PlaywrightLocator;
+}
+
 const playwright = await import(pathToFileURL(playwrightModule).href);
 const scratch =
   process.env.STREAMSY_A5_SCRATCH ??
   "/home/gareth/Documents/Personal/scratch/2026-08-24-streamsy-a5-state-sink";
 mkdirSync(scratch, { recursive: true });
 
-const host = createLocalHost();
+// `exchange: interval` is what feeds the inbox panel: the browser cannot drive a
+// host-level pass, so the demonstration runs the host the way a person would.
+const host = createLocalHost({ delivery: { mode: "interval" }, exchange: { mode: "interval" } });
 const server = Bun.serve({ port: 0, fetch: host.fetch, idleTimeout: 30 });
 const origin = `http://localhost:${server.port}`;
 const workspace = "browser-smoke";
@@ -55,9 +65,18 @@ try {
     left.goto(`${origin}/?workspace=${workspace}`),
     right.goto(`${origin}/?workspace=${workspace}`),
   ]);
+  /**
+   * A card by its title.
+   *
+   * Scoped to `li.card p.title`, because the activity panel names the same
+   * issues: an unscoped text match resolves to two elements once the polled
+   * panels have refreshed.
+   */
+  const cardTitled = (target: PlaywrightPage, title: string): PlaywrightLocator =>
+    target.locator(`li.card p.title:text-is("${title}")`);
   await Promise.all([
-    left.getByText("Declare the issue view", { exact: true }).waitFor(),
-    right.getByText("Declare the issue view", { exact: true }).waitFor(),
+    cardTitled(left, "Declare the issue view").waitFor(),
+    cardTitled(right, "Declare the issue view").waitFor(),
   ]);
   assert((await left.locator(".badge > span").first().textContent()) === "Live", "left is live");
   assert((await right.locator(".badge > span").first().textContent()) === "Live", "right is live");
@@ -66,12 +85,12 @@ try {
   await left.locator('select[name="status"]').selectOption("todo");
   await left.locator('button[type="submit"]').click();
   await Promise.all([
-    left.getByText("Two browser clients converge", { exact: true }).waitFor(),
-    right.getByText("Two browser clients converge", { exact: true }).waitFor(),
+    cardTitled(left, "Two browser clients converge").waitFor(),
+    cardTitled(right, "Two browser clients converge").waitFor(),
   ]);
 
   const leftCard = left.locator('li.card:has-text("Two browser clients converge")');
-  await leftCard.locator("select").selectOption("done");
+  await leftCard.locator("select.issue-status").selectOption("done");
   await right
     .locator('section[data-status="done"] li.card:has-text("Two browser clients converge")')
     .waitFor();
@@ -81,6 +100,37 @@ try {
     counts[0] === counts[1] && counts[0] >= 5,
     `rendered counts diverged: ${counts.join(" vs ")}`,
   );
+
+  /**
+   * The second checked State sink, driven the same way: attach a label in one
+   * window and assert the *other* window's label count moves without a reload.
+   * The seeded workspace already has `infra` on two issues, so the assertion is
+   * a change rather than an appearance.
+   */
+  const infraBefore = Number(
+    await right.locator('[data-count-label="infra"]').first().textContent(),
+  );
+  await leftCard.locator("select.add-label").selectOption("infra");
+  await right.locator(`[data-count-label="infra"]:text-is("${String(infraBefore + 1)}")`).waitFor();
+  await leftCard.locator('button.chip[data-label="infra"]').click();
+  await right.locator(`[data-count-label="infra"]:text-is("${String(infraBefore)}")`).waitFor();
+
+  /**
+   * The cross-workspace inbox: a polled read model, so the assertion waits for a
+   * refresh rather than for a push. Asserting it here is what keeps the product
+   * claim honest — the panel is visible and it converges, just not live.
+   */
+  await fetch(`${origin}/api/workspaces/${workspace}/issues/seed-plan/assignee`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ commandId: "ui-smoke-assign", assigneeId: "ada" }),
+  });
+  await left.locator(`[data-inbox="${workspace}.ui-smoke-assign"]`).waitFor({ timeout: 15_000 });
+  await right.locator(`[data-inbox="${workspace}.ui-smoke-assign"]`).waitFor({ timeout: 15_000 });
+
+  const summary = await left.locator('[data-summary="total"]').first().textContent();
+  assert(Number(summary) === counts[0], `summary total ${String(summary)} != ${counts[0]}`);
+
   assert(problems.length === 0, `browser problems: ${problems.join(" | ")}`);
 
   await left.screenshot({ path: join(scratch, "browser-left.png"), fullPage: true });

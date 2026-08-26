@@ -202,3 +202,82 @@ button[type="submit"],
   white-space: nowrap;
   border: 0;
 }
+
+/* Labels on a card, and the picker that adds one. */
+.card .labels {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 4px;
+}
+.chip {
+  background: #2a3140;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The polled read models, kept visually apart from the live board. */
+.panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.panels article {
+  background: #1d212a;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.panels h2 {
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.panels ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.panels dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 12px;
+}
+.panels dl > div {
+  display: flex;
+  justify-content: space-between;
+}
+.panels dt,
+.panels dd {
+  margin: 0;
+}
+.muted {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0 0 6px;
+}
+.refreshed {
+  grid-column: 1 / -1;
+}
+.dot {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.dot[data-live="live"] {
+  color: #6fd08c;
+}

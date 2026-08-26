@@ -13,7 +13,13 @@ import type { ClientProducerOptions } from "@streamsy/core";
 import type { StreamBinding } from "@streamsy/experimental/binding";
 import { AppendStreams, type AppendOutcome } from "@streamsy/experimental/effect";
 import { Cache, Context, Effect, Layer } from "effect";
-import { encodeIssueEventJson, type IssueEvent } from "../domain/issue.ts";
+import {
+  encodeIssueEventJson,
+  encodeIssueLabelEventJson,
+  membershipIdOf,
+  type IssueEvent,
+  type IssueLabelEvent,
+} from "../domain/issue.ts";
 import { AppendRejected, InvalidRequest } from "./errors.ts";
 
 export type CommandAppend =
@@ -22,7 +28,12 @@ export type CommandAppend =
   | { readonly status: "reconciled"; readonly offset: string }
   | { readonly status: "contention"; readonly actualOffset: string };
 
-export type CommandKind = "create-issue" | "change-status" | "assign-issue";
+export type CommandKind =
+  | "create-issue"
+  | "change-status"
+  | "assign-issue"
+  | "attach-label"
+  | "detach-label";
 
 export interface CommandIntent {
   readonly workspaceId: string;
@@ -83,15 +94,14 @@ export const layer: Layer.Layer<CommandProducers> = Layer.effect(
   }),
 );
 
-/** Append one canonical issue event on the command's own producer lane. */
-export const appendIssueEvent = Effect.fn("Commands.appendIssueEvent")(function* (
+/** Append one canonical fact on the command's own producer lane. */
+export const appendFact = Effect.fn("Commands.appendFact")(function* (
   source: StreamBinding,
-  event: IssueEvent,
+  payload: string,
   producer: ClientProducerOptions,
   expectedOffset: string,
 ) {
   const appends = yield* AppendStreams;
-  const payload = yield* Effect.sync(() => encodeIssueEventJson(event));
   const result = yield* appends.append(source, payload, {
     contentType: "application/json",
     producer,
@@ -99,6 +109,9 @@ export const appendIssueEvent = Effect.fn("Commands.appendIssueEvent")(function*
   });
   return yield* classify(source, result);
 });
+
+export const encodeIssueFact = (event: IssueEvent): string => encodeIssueEventJson(event);
+export const encodeLabelFact = (event: IssueLabelEvent): string => encodeIssueLabelEventJson(event);
 
 /**
  * Acceptance and producer reconciliation are the only success cases. Every
@@ -139,6 +152,28 @@ export const hashCommandIntent = Effect.fn("Commands.hashCommandIntent")(functio
   );
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 });
+
+/**
+ * The membership fact's canonical intent.
+ *
+ * `targetId` is the membership rather than the issue, because that is what the
+ * command is about: two commands attaching two different labels to one issue
+ * are two different intents, and a retry of either must reconcile only to
+ * itself.
+ */
+export function intentFromLabelEvent(event: IssueLabelEvent): CommandIntent {
+  return {
+    workspaceId: event.workspaceId,
+    commandId: event.eventId,
+    commandKind: event.type === "LabelAttached" ? "attach-label" : "detach-label",
+    targetId: event.membershipId,
+    payload: { issueId: event.issueId, labelId: event.labelId },
+  };
+}
+
+/** The membership a label command names. Derived once, so the fact and the row agree. */
+export const membershipTarget = (issueId: string, labelId: string): string =>
+  membershipIdOf(issueId, labelId);
 
 export function intentFromEvent(event: IssueEvent): CommandIntent {
   if (event.type === "IssueCreated") {

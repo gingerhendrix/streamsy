@@ -12,15 +12,32 @@
 import type { JsonValue, ReadStreamOptions } from "@streamsy/core";
 import { ReadStreams } from "@streamsy/experimental/effect";
 import { Effect } from "effect";
-import { issueLifecycle, issues } from "../domain/declaration.ts";
-import { decodeIssueEvent, decodeIssueRow, type IssueRow } from "../domain/issue.ts";
+import {
+  boardLabelCounts,
+  issueLabelLifecycle,
+  issueLabelMemberships,
+  issueLifecycle,
+  issues,
+  labels,
+  projects,
+  users,
+} from "../domain/declaration.ts";
+import {
+  decodeIssueEvent,
+  decodeIssueLabelEvent,
+  decodeIssueLabelRow,
+  decodeIssueRow,
+  type IssueLabelRow,
+  type IssueRow,
+} from "../domain/issue.ts";
 import type { Change, JsonObject } from "@streamsy/views-ir";
 import { maintain, ReducerFault, touchedKeys } from "../views/engine.ts";
-import { MaintenanceFault, SourcePoison } from "./errors.ts";
+import { AppendRejected, MaintenanceFault, SourcePoison, StreamUnavailable } from "./errors.ts";
 import { IssueSink } from "./sink.ts";
-import { IssueStore } from "./store.ts";
+import { IssueStore, type GraphResult } from "./store.ts";
+import { catchUpStateSource, stateSourceId, type StateIngestionReport } from "./state-ingestion.ts";
 import { publishTransitions } from "./transitions.ts";
-import { Streams } from "./streams.ts";
+import { Streams, type WorkspaceBindings } from "./streams.ts";
 
 export interface MaintenanceReport {
   readonly workspaceId: string;
@@ -30,6 +47,17 @@ export interface MaintenanceReport {
   readonly changes: readonly Change<IssueRow, string>[];
   /** How the sink was brought up to the committed checkpoint. */
   readonly publication: "none" | "changes" | "snapshot";
+  /**
+   * What the joined catalog collections ingested during this pass.
+   *
+   * The pass owns the catalog catch-up because both graph products join it, so
+   * it is also the only thing that can report what was folded. A reader that
+   * did its own catch-up afterwards would always report zero — the pass would
+   * already have consumed the suffix.
+   */
+  readonly catalog: readonly StateIngestionReport[];
+  /** Transitions appended to the declared feed by this pass. */
+  readonly transitions: number;
 }
 
 /**
@@ -42,7 +70,10 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
 
   const before = yield* store.progress(workspaceId);
   const recovery = yield* store.takeRecoveryCheckpoint(workspaceId);
-  const suffix = yield* readSuffix(workspaceId, recovery?.sourceCursor ?? before.checkpoint);
+  const suffix = yield* readSuffix(
+    (bindings) => bindings.issueEvents(workspaceId),
+    recovery?.sourceCursor ?? before.checkpoint,
+  );
 
   let checkpoint = before.checkpoint;
   let changes: readonly Change<IssueRow, string>[] = [];
@@ -71,17 +102,34 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
     }
   }
 
-  // Publication is a separate durable step, so its progress is read again
-  // rather than assumed from the commit above.
   /**
-   * The transition feed is written from the same changes, in the same order.
-   * It is a separate durable append from the row commit above, so a crash
-   * between them keeps the rows and loses that batch's transitions; the rows
-   * are the authority. The Effect sink's outbox is not reused here — it carries
-   * external effects, not a replayable log — so this stays a known Integration 2
-   * gap rather than a forced merge of two delivery contracts.
+   * The membership relation folds from its own canonical stream, on its own
+   * checkpoint. It is a second fact family rather than a second reader of the
+   * first, so its progress is independent: a crash between the two commits
+   * leaves each one resuming from what it actually folded.
    */
-  yield* publishTransitions(workspaceId, changes);
+  const memberships = yield* advanceMemberships(workspaceId);
+
+  /**
+   * The transition feed is brought up to the *committed* change history, which
+   * is written in the same atomic commit as the rows. That is what makes a
+   * crash between the two survivable: the batch is still owed and the next pass
+   * finds it, and the producer lane refuses to write it twice.
+   */
+  const transitions = yield* publishTransitions(workspaceId);
+
+  /**
+   * The catalog is caught up here rather than in each reader, because both
+   * graph products join it: the board needs projects and users, the label
+   * counts need labels. A product derived from a stale catalog is a product
+   * that disagrees with the collection endpoint serving the same rows.
+   */
+  const catalogReports = yield* catchUpJoinedCatalog(workspaceId);
+  const catalogChanges = {
+    projects: encodeChanges(catalogReports, projects.name),
+    users: encodeChanges(catalogReports, users.name),
+    labels: encodeChanges(catalogReports, labels.name),
+  };
 
   const after = yield* store.progress(workspaceId);
   const board = yield* store.maintainBoard(workspaceId, [
@@ -89,14 +137,30 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
       sourceId: "issue-tracker.issues",
       changes: changes.map((change) => JSON.parse(JSON.stringify(change))),
     },
+    { sourceId: projects.name, changes: catalogChanges.projects },
+    { sourceId: users.name, changes: catalogChanges.users },
   ]);
+
+  const counts = yield* store.maintainLabelCounts(workspaceId, [
+    {
+      sourceId: issueLabelMemberships.name,
+      changes: memberships.map((change) => JSON.parse(JSON.stringify(change))),
+    },
+    {
+      sourceId: "issue-tracker.issues",
+      changes: changes.map((change) => JSON.parse(JSON.stringify(change))),
+    },
+    { sourceId: labels.name, changes: catalogChanges.labels },
+  ]);
+  yield* publishGraph(workspaceId, boardLabelCounts.name, counts, {
+    publish: (rows) => sink.publishLabelCounts(workspaceId, rows),
+    republish: (rows) => sink.republishLabelCounts(workspaceId, rows),
+  });
+
   if (after.checkpoint === undefined || after.published === after.checkpoint) {
     return report(workspaceId, checkpoint, suffix.items.length, changes, "none");
   }
 
-  // `undefined === undefined` on a workspace's first pass would look "in sync"
-  // while the sink has no snapshot boundary at all, so a never-published sink
-  // is explicitly not in sync.
   const inSync =
     after.published !== undefined && after.published === before.checkpoint && changes.length > 0;
   if (inSync) {
@@ -105,9 +169,6 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
     return report(workspaceId, checkpoint, suffix.items.length, changes, "changes");
   }
 
-  // Either the sink has never been published, or publication fell behind by
-  // more than this pass. Rebuild it from the durable rows and let consumers
-  // reset — convergence, not a replay of messages nobody recorded.
   yield* sink.republish(workspaceId, board.rows);
   yield* store.markPublished(workspaceId, after.checkpoint);
   return report(workspaceId, checkpoint, suffix.items.length, changes, "snapshot");
@@ -119,8 +180,126 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
     published: readonly Change<IssueRow, string>[],
     publication: MaintenanceReport["publication"],
   ): MaintenanceReport {
-    return { workspaceId: id, checkpoint: cursor, folded, changes: published, publication };
+    return {
+      workspaceId: id,
+      checkpoint: cursor,
+      folded,
+      changes: published,
+      publication,
+      catalog: catalogReports,
+      transitions,
+    };
   }
+});
+
+/** One collection's ingested changes, in the shape the operator graph consumes. */
+function encodeChanges(
+  reports: readonly StateIngestionReport[],
+  sourceId: string,
+): readonly Change<JsonObject>[] {
+  const found = reports.find((report) => stateSourceId(report.collection) === sourceId);
+  return (found?.changes ?? []).map((change) => JSON.parse(JSON.stringify(change)));
+}
+
+/**
+ * Fold every membership fact after the relation's own checkpoint.
+ *
+ * It reuses the same interpreter the issue relation uses, because it is the
+ * same shape of work: a fact source, a reducer, one keyed relation. What
+ * differs is only which stream, which reducer and which decoder.
+ */
+const advanceMemberships = Effect.fn("Maintenance.advanceMemberships")(function* (
+  workspaceId: string,
+) {
+  const store = yield* IssueStore;
+  const checkpoint = yield* store.membershipProgress(workspaceId);
+  const suffix = yield* readSuffix(
+    (bindings) => bindings.issueLabelEvents(workspaceId),
+    checkpoint,
+    decodeIssueLabelEvent,
+  );
+  if (suffix.items.length === 0) return [];
+
+  const keys = touchedKeys(issueLabelMemberships.plan, suffix.items);
+  const current = yield* store.membershipStates(workspaceId, keys);
+  const folded = yield* Effect.try({
+    try: () =>
+      maintain<IssueLabelRow>({
+        plan: issueLabelMemberships.plan,
+        reducer: issueLabelLifecycle,
+        decodeRow: decodeIssueLabelRow,
+        current,
+        items: suffix.items,
+      }),
+    catch: (cause) =>
+      new MaintenanceFault({
+        view: issueLabelMemberships.name,
+        phase: cause instanceof ReducerFault ? cause.phase : "plan",
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+  yield* store.membershipCommit(workspaceId, {
+    expectedCheckpoint: checkpoint,
+    checkpoint: suffix.cursor,
+    rows: folded.rows,
+    changes: folded.changes,
+  });
+  return folded.changes;
+});
+
+/** The catalog collections the two graph products join, brought to their tails. */
+const catchUpJoinedCatalog = Effect.fn("Maintenance.catchUpJoinedCatalog")(function* (
+  workspaceId: string,
+) {
+  const reports: StateIngestionReport[] = [];
+  for (const collection of ["projects", "users", "labels"] as const) {
+    reports.push(yield* catchUpStateSource(collection, workspaceId));
+  }
+  return reports;
+});
+
+/**
+ * Bring one graph product's sink up to the graph's committed revision.
+ *
+ * The revision is the product's own durable identity, so the decision is exact:
+ * nothing to do when the sink already carries this revision, the batch's
+ * changes when the sink carries exactly the revision they were computed from,
+ * and a full snapshot otherwise — which is what a process that died between the
+ * graph commit and the append gets, and is safe because a snapshot replaces
+ * rather than accumulates.
+ */
+const publishGraph = Effect.fn("Maintenance.publishGraph")(function* <Row>(
+  workspaceId: string,
+  product: string,
+  result: GraphResult<Row>,
+  sink: {
+    readonly publish: (
+      changes: readonly Change<Row, string>[],
+    ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
+    readonly republish: (
+      rows: readonly Row[],
+    ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
+  },
+) {
+  const store = yield* IssueStore;
+  const published = yield* store.graphPublished(workspaceId, product);
+  const revision = String(result.revision);
+  if (published === revision) return "none" as const;
+  if (published === String(result.previousRevision)) {
+    // The sink already carries the revision these changes were computed from,
+    // so the deltas are exactly what it is missing. A revision that moved
+    // without producing any is a graph step no consumer can observe.
+    if (result.changes.length === 0) {
+      yield* store.markGraphPublished(workspaceId, product, revision);
+      return "none" as const;
+    }
+    yield* sink.publish(result.changes);
+    yield* store.markGraphPublished(workspaceId, product, revision);
+    return "changes" as const;
+  }
+  yield* sink.republish(result.rows);
+  yield* store.markGraphPublished(workspaceId, product, revision);
+  return "snapshot" as const;
 });
 
 interface SourceSuffix {
@@ -137,11 +316,12 @@ interface SourceSuffix {
  * command path needs a pass that finishes.
  */
 const readSuffix = Effect.fn("Maintenance.readSuffix")(function* (
-  workspaceId: string,
+  bind: (bindings: WorkspaceBindings) => ReturnType<WorkspaceBindings["issueEvents"]>,
   checkpoint: string | undefined,
+  decode: (value: JsonValue) => { readonly sequence: number } = decodeIssueEvent,
 ) {
   const streams = yield* Streams;
-  const binding = streams.bindings.issueEvents(workspaceId);
+  const binding = bind(streams.bindings);
 
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -171,7 +351,7 @@ const readSuffix = Effect.fn("Maintenance.readSuffix")(function* (
           });
         }
         for (const value of batch.items) {
-          const event = yield* decodeSourceItem(binding.streamId, batch.offset, value);
+          const event = yield* decodeSourceItem(binding.streamId, batch.offset, value, decode);
           // SAFETY: `event` is a value the declared source schema accepted, so
           // it is a JSON object whose fields are exactly the ones the source
           // declares — which is what the engine reads through its scopes.
@@ -190,9 +370,14 @@ const readSuffix = Effect.fn("Maintenance.readSuffix")(function* (
 });
 
 /** A durable fact the declared source schema rejects is typed poison, never a served row. */
-const decodeSourceItem = (sourceId: string, position: string, value: JsonValue) =>
+const decodeSourceItem = (
+  sourceId: string,
+  position: string,
+  value: JsonValue,
+  decode: (input: JsonValue) => { readonly sequence: number },
+) =>
   Effect.try({
-    try: () => decodeIssueEvent(value),
+    try: () => decode(value),
     catch: (cause) =>
       new SourcePoison({
         sourceId,

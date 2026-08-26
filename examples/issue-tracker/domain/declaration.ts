@@ -19,14 +19,22 @@ import {
 import {
   decodeIdentifier,
   decodeIssueTransition,
+  decodeLabelCountRow,
   decodeProjectBoardCard,
   decodeWorkspaceSummary,
   IssueEvent,
+  IssueLabelEvent,
+  IssueLabelRow,
   IssueRow,
 } from "./issue.ts";
-import type { IssueEvent as IssueEventType, IssueRow as IssueRowType } from "./issue.ts";
-import { changes, from, reducer, selectors, source, view } from "@streamsy/views";
-import { projectBoard } from "./views.ts";
+import type {
+  IssueEvent as IssueEventType,
+  IssueLabelEvent as IssueLabelEventType,
+  IssueLabelRow as IssueLabelRowType,
+  IssueRow as IssueRowType,
+} from "./issue.ts";
+import { changes, from, literal, reducer, selectors, source, view } from "@streamsy/views";
+import { labelCounts, projectBoard } from "./views.ts";
 
 /**
  * The four Durable State catalog sources are declared beside their row schemas
@@ -98,6 +106,71 @@ export const issues = view(
   }),
 );
 
+/**
+ * The membership fact source, and the relation it folds into.
+ *
+ * Membership is a second canonical fact family on its own durable stream. The
+ * declaration language is what makes that necessary rather than optional:
+ * `reduceByKey` is only available directly on a fact source, so a plan cannot
+ * filter one stream into two relations keyed by different fields. An issue is
+ * keyed by `issueId`; a membership is keyed by an (issue, label) pair. Two
+ * keys, two fact families, two streams.
+ */
+const m = selectors<IssueLabelEventType, IssueLabelEventType, IssueLabelRowType>();
+
+export const issueLabelEvents = source("issue-tracker.issue-label-events", {
+  schema: IssueLabelEvent,
+  schemaRef: { name: "issue-tracker.IssueLabelEvent", version: 1 },
+  partitionBy: m.row.workspaceId,
+  key: "eventId",
+  mode: "facts",
+});
+
+/**
+ * `attached` is written as a literal rather than read off the fact.
+ *
+ * The two facts are already distinguished by their own tags, so a redundant
+ * boolean on the wire would be a second place for the same truth to be told —
+ * and a place it could be told wrongly. A literal in the evolve branch keeps
+ * the fold inside the reference-and-literal language the interpreter executes.
+ */
+export const issueLabelLifecycle = reducer(
+  { name: "issue-tracker.issue-label-lifecycle", version: 1 },
+  {
+    state: IssueLabelRow,
+    stateRef: { name: "issue-tracker.IssueLabelRow", version: 2 },
+    input: IssueLabelEvent,
+    discriminator: "type",
+    evolve: {
+      LabelAttached: (e) => ({
+        membershipId: e.event.membershipId,
+        issueId: e.event.issueId,
+        labelId: e.event.labelId,
+        workspaceId: e.event.workspaceId,
+        attached: literal(true),
+        updatedAt: e.event.occurredAt,
+      }),
+      LabelDetached: (e) => ({
+        attached: literal(false),
+        updatedAt: e.event.occurredAt,
+      }),
+    },
+  },
+);
+
+export const issueLabelMemberships = view(
+  "issue-tracker.issue-labels",
+  {
+    schema: IssueLabelRow,
+    schemaRef: { name: "issue-tracker.IssueLabelRow", version: 2 },
+    key: "membershipId",
+  },
+  from(issueLabelEvents).reduceByKey({
+    key: "membershipId",
+    reducer: issueLabelLifecycle,
+  }),
+);
+
 export const boardIssues = defineStateSink({
   name: "issue-tracker.board-issues",
   from: projectBoard,
@@ -105,6 +178,33 @@ export const boardIssues = defineStateSink({
   route: "/state/workspaces/:workspaceId/issues",
   params: { workspaceId: { decode: decodeIdentifier } },
   collection: { name: "issues", type: "issue" },
+  protocol: {
+    sessionVersion: 1,
+    durableStateVersion: 1,
+    transport: "durable-state",
+    resume: true,
+    fallback: "snapshot-then-live",
+  },
+  errors: STATE_SINK_ERROR_TAGS,
+});
+
+/**
+ * Live label counts, published the same way the board is.
+ *
+ * This is the second checked State sink and the second contract fingerprint the
+ * tracker has. It exists because "the label-count plan is tested" and "a person
+ * can see label counts change" are different claims, and Integration 2 owes the
+ * second one. It publishes into the workspace partition, which already owns
+ * durable stream storage, a State publisher and a maintained-state store — so
+ * the machinery this sink needs is the machinery the board already has.
+ */
+export const boardLabelCounts = defineStateSink({
+  name: "issue-tracker.board-label-counts",
+  from: labelCounts,
+  row: { decode: decodeLabelCountRow },
+  route: "/state/workspaces/:workspaceId/label-counts",
+  params: { workspaceId: { decode: decodeIdentifier } },
+  collection: { name: "labelCounts", type: "label-count" },
   protocol: {
     sessionVersion: 1,
     durableStateVersion: 1,
@@ -163,7 +263,9 @@ export const workspaceSummary = defineDocumentSink({
 /** Durable stream names. Identity and stream id are kept equal so lineage reads by inspection. */
 export const streamNames = {
   issueEvents: (workspaceId: string): string => `workspaces/${workspaceId}/issue-events`,
+  issueLabelEvents: (workspaceId: string): string => `workspaces/${workspaceId}/issue-label-events`,
   boardState: (workspaceId: string): string => `state/workspaces/${workspaceId}/issues`,
+  labelCountState: (workspaceId: string): string => `state/workspaces/${workspaceId}/label-counts`,
   projects: (workspaceId: string): string => `state/workspaces/${workspaceId}/projects`,
   users: (workspaceId: string): string => `state/workspaces/${workspaceId}/users`,
   labels: (workspaceId: string): string => `state/workspaces/${workspaceId}/labels`,

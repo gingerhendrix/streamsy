@@ -40,7 +40,7 @@ export class ExchangeCursorStore extends Context.Service<
   ExchangeCursorStoreService
 >()("issue-tracker/ExchangeCursorStore") {}
 
-const EXCHANGE_SCHEMA = `CREATE TABLE IF NOT EXISTS exchange_cursors (
+export const EXCHANGE_SCHEMA = `CREATE TABLE IF NOT EXISTS exchange_cursors (
   exchange TEXT NOT NULL,
   source   TEXT NOT NULL,
   value    TEXT NOT NULL,
@@ -131,7 +131,7 @@ export const exchangeSqliteLayer = (options: {
     ).pipe(Effect.map(exchangeCursorService)),
   );
 
-function exchangeCursorService(database: Database): ExchangeCursorStoreService {
+export function exchangeCursorService(database: Database): ExchangeCursorStoreService {
   const selectCursor = database.query<CursorValueRow, [string, string]>(
     "SELECT exchange, source, value FROM exchange_cursors WHERE exchange = ? AND source = ?",
   );

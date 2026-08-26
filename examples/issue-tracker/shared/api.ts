@@ -10,7 +10,15 @@ import { Schema } from "effect";
 import { DomainKind } from "../domain/domains.ts";
 import { EXCHANGE_CURSOR_DOMAIN } from "../domain/exchange.ts";
 import { InboxRow } from "../domain/inbox.ts";
-import { Identifier, IssueRow, IssueStatus, IssueTransition, Title } from "../domain/issue.ts";
+import {
+  Identifier,
+  IssueLabelRow,
+  IssueRow,
+  IssueStatus,
+  IssueTransition,
+  LabelCountRow,
+  Title,
+} from "../domain/issue.ts";
 import { AssignmentNotification } from "../domain/notifications.ts";
 import { CatalogCollection } from "../domain/catalog.ts";
 
@@ -35,6 +43,19 @@ export const AssignIssueRequest = Schema.Struct({
 });
 export type AssignIssueRequest = typeof AssignIssueRequest.Type;
 
+/**
+ * One membership command.
+ *
+ * The issue is in the path and the label is in the body, which is the same
+ * split `assignIssue` uses: the path names what is being changed, the body
+ * names what it is being changed to.
+ */
+export const LabelMembershipRequest = Schema.Struct({
+  commandId: Identifier,
+  labelId: Identifier,
+});
+export type LabelMembershipRequest = typeof LabelMembershipRequest.Type;
+
 export const Ack = Schema.Struct({ stream: Schema.String, offset: Schema.String });
 
 export const MaintenanceReportBody = Schema.Struct({
@@ -57,6 +78,46 @@ export const CommandResponse = Schema.Struct({
   row: Schema.NullOr(IssueRow),
 });
 export type CommandResponse = typeof CommandResponse.Type;
+
+export const LabelCommandResponse = Schema.Struct({
+  commandId: Schema.String,
+  workspaceId: Schema.String,
+  issueId: Schema.String,
+  labelId: Schema.String,
+  membershipId: Schema.String,
+  attached: Schema.Boolean,
+  eventId: Schema.String,
+  sequence: Schema.Number,
+  ack: Ack,
+  reconciled: Schema.Boolean,
+  maintenance: MaintenanceReportBody,
+  row: Schema.NullOr(IssueLabelRow),
+});
+export type LabelCommandResponse = typeof LabelCommandResponse.Type;
+
+/** Every membership the workspace maintains, attached or not. */
+export const IssueLabelsResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  relation: Schema.String,
+  rows: Schema.Array(IssueLabelRow),
+});
+export type IssueLabelsResponse = typeof IssueLabelsResponse.Type;
+
+/**
+ * The maintained label counts, as a plain read model.
+ *
+ * The live product is the checked State sink; this endpoint exists so a script
+ * or a test can assert the counts without binding a session, and so the two can
+ * be compared.
+ */
+export const LabelCountsResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  view: Schema.String,
+  sink: Schema.String,
+  contractFingerprint: Schema.String,
+  rows: Schema.Array(LabelCountRow),
+});
+export type LabelCountsResponse = typeof LabelCountsResponse.Type;
 
 export const IssuesResponse = Schema.Struct({
   workspaceId: Schema.String,
@@ -116,12 +177,21 @@ export const SinkSessionResponse = Schema.Struct({
   contractFingerprint: Schema.String,
   /** Native Durable Streams offset at the sink's current tail. */
   offset: Schema.String,
+  /** The workspace's second checked State product, named in the same round trip. */
+  labelCounts: Schema.Struct({
+    sink: Schema.String,
+    route: Schema.String,
+    contractFingerprint: Schema.String,
+    offset: Schema.String,
+  }),
 });
 export type SinkSessionResponse = typeof SinkSessionResponse.Type;
 
 export const SeedResponse = Schema.Struct({
   workspaceId: Schema.String,
   issues: Schema.Array(Schema.String),
+  /** The catalog labels a seeded workspace opens onto. */
+  labels: Schema.Array(Schema.String),
   seeded: Schema.Boolean,
 });
 export type SeedResponse = typeof SeedResponse.Type;

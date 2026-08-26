@@ -24,7 +24,7 @@ import type { Layer, ManagedRuntime } from "effect";
 import { workspaceKey } from "../domain/domains.ts";
 import type { ApplicationServices } from "./application.ts";
 import type { StreamGateway } from "./gateway.ts";
-import type { ExchangeCursorStore } from "./exchange-store.ts";
+import type { GlobalServices } from "./global-domain.ts";
 import {
   createWorkspaceHost,
   type DeliveryPolicy,
@@ -57,8 +57,8 @@ export interface LocalHostOptions {
   readonly applicationClient?: (client: StreamProtocolClient) => StreamProtocolClient;
   /** Per-user-partition inbox storage. A factory: two users never share one. */
   readonly inbox?: (userId: string) => Layer.Layer<InboxStore>;
-  /** The global partition's exchange cursor storage. */
-  readonly exchangeStore?: () => Layer.Layer<ExchangeCursorStore>;
+  /** The global partition's exchange cursors and source registry. */
+  readonly exchangeStore?: () => Layer.Layer<GlobalServices>;
   readonly partitions?: PartitionPolicy;
   readonly delivery?: DeliveryPolicy;
   readonly exchange?: ExchangePolicy;

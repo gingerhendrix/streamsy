@@ -13,7 +13,12 @@
 import { Effect } from "effect";
 import { handleStateSink } from "@streamsy/state-sink/effect";
 import { handleDocumentSink, handleStreamSink } from "@streamsy/sinks/effect";
-import { boardIssues, issueTransitions, workspaceSummary } from "../domain/declaration.ts";
+import {
+  boardIssues,
+  boardLabelCounts,
+  issueTransitions,
+  workspaceSummary,
+} from "../domain/declaration.ts";
 import {
   globalKey,
   isDomainId,
@@ -57,6 +62,27 @@ export type RouteResolution =
 
 const SINK_PREFIXES = ["/state/", "/feed/", "/document/"] as const;
 
+/** Every checked sink route this host serves, in the order it tries them. */
+const CHECKED_SINKS = [boardIssues, boardLabelCounts, issueTransitions, workspaceSummary] as const;
+
+/**
+ * Whether a path names this sink's route, ignoring parameter values.
+ *
+ * The compiled matcher walks segments left to right, so a route whose parameter
+ * comes *before* a distinguishing literal reports an undecodable parameter
+ * rather than a mismatch. Two State sinks now share
+ * `/state/workspaces/:workspaceId/…`, so without this an unusable workspace id
+ * on the label-count route would be refused in the board sink's name — telling
+ * the caller about a contract it was not using. Comparing literal segments
+ * picks the sink the caller actually named.
+ */
+function namesRoute(template: string, pathname: string): boolean {
+  const expected = template.startsWith("/") ? template.slice(1).split("/") : [];
+  const actual = pathname.startsWith("/") ? pathname.slice(1).split("/") : [];
+  if (expected.length !== actual.length) return false;
+  return expected.every((segment, index) => segment.startsWith(":") || segment === actual[index]);
+}
+
 /**
  * Resolve one path to its owner.
  *
@@ -73,13 +99,12 @@ export function resolveRoute(pathname: string, streamsPrefix = "/streams"): Rout
     return resolveStreamPath(pathname.slice(streamsPrefix.length), pathname);
   }
 
-  for (const matched of [
-    boardIssues.compiledRoute.match(pathname),
-    issueTransitions.compiledRoute.match(pathname),
-    workspaceSummary.compiledRoute.match(pathname),
-  ]) {
+  for (const sink of CHECKED_SINKS) {
+    const matched = sink.compiledRoute.match(pathname);
     if (matched.kind === "matched") return workspace(matched.params.workspaceId, "application");
-    if (matched.kind === "invalid") return { kind: "sink-params" };
+    if (matched.kind === "invalid" && namesRoute(sink.route, pathname)) {
+      return { kind: "sink-params" };
+    }
   }
 
   if (pathname.startsWith("/api/")) return resolveApiPath(pathname);
@@ -202,7 +227,7 @@ function decodeSegment(segment: string): string {
  */
 export function invalidSinkParamsResponse(request: Request): Response {
   const pathname = new URL(request.url).pathname;
-  if (boardIssues.compiledRoute.match(pathname).kind === "invalid") {
+  if (namesRoute(boardIssues.route, pathname)) {
     return Effect.runSync(
       handleStateSink(boardIssues, request, {
         snapshot: () => unreachableCapability("board-issues.snapshot"),
@@ -210,7 +235,15 @@ export function invalidSinkParamsResponse(request: Request): Response {
       }),
     );
   }
-  if (issueTransitions.compiledRoute.match(pathname).kind === "invalid") {
+  if (namesRoute(boardLabelCounts.route, pathname)) {
+    return Effect.runSync(
+      handleStateSink(boardLabelCounts, request, {
+        snapshot: () => unreachableCapability("board-label-counts.snapshot"),
+        suffix: () => unreachableCapability("board-label-counts.suffix"),
+      }),
+    );
+  }
+  if (namesRoute(issueTransitions.route, pathname)) {
     return Effect.runSync(
       handleStreamSink(issueTransitions, request, {
         read: () => unreachableCapability("issue-transitions.read"),

@@ -31,6 +31,17 @@ export class UnknownIssue extends Schema.TaggedError<UnknownIssue>()("UnknownIss
   issueId: Schema.String,
 }) {}
 
+/**
+ * A membership command named a label the workspace catalog does not hold.
+ *
+ * It is a 404 rather than a durable fact: the label-count product joins the
+ * catalog, so a membership on an unknown label would count nothing at all and
+ * read as a broken plan rather than a rejected request.
+ */
+export class UnknownLabel extends Schema.TaggedError<UnknownLabel>()("UnknownLabel", {
+  labelId: Schema.String,
+}) {}
+
 /** A durable stream could not be created or is not usable. */
 export class StreamUnavailable extends Schema.TaggedError<StreamUnavailable>()(
   "StreamUnavailable",
@@ -95,6 +106,22 @@ export class StoreRestorePoison extends Schema.TaggedError<StoreRestorePoison>()
   { table: Schema.String, key: Schema.String, detail: Schema.String },
 ) {}
 
+/**
+ * The committed change history no longer reaches back to the transitions the
+ * feed still owes.
+ *
+ * The feed is published *from* the committed change history, so this is the one
+ * way the two can come apart: a crash after a row commit and before the feed
+ * append leaves one batch owed, and the history retention window is what makes
+ * recovering it possible. It is fail-stop rather than skipped, because a
+ * silently missing transition is a hole in a log whose whole contract is that
+ * it has none.
+ */
+export class TransitionHistoryExpired extends Schema.TaggedError<TransitionHistoryExpired>()(
+  "TransitionHistoryExpired",
+  { workspaceId: Schema.String, detail: Schema.String },
+) {}
+
 /** The maintained-state store itself failed. Never a validation outcome. */
 export class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("StoreUnavailable", {
   operation: Schema.String,
@@ -105,6 +132,7 @@ export type ApplicationError =
   | InvalidRequest
   | MalformedBody
   | UnknownIssue
+  | UnknownLabel
   | StreamUnavailable
   | AppendRejected
   | CommandIdConflict
@@ -113,5 +141,6 @@ export type ApplicationError =
   | SourcePoison
   | UnsupportedStateOperation
   | MaintenanceFault
+  | TransitionHistoryExpired
   | StoreRestorePoison
   | StoreUnavailable;

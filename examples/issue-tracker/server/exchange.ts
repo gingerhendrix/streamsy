@@ -48,6 +48,7 @@ import { partitionKeyEquals, partitionKeyString, type PartitionKey } from "../do
 import type { ApplicationServices } from "./application.ts";
 import { readAssignmentActivity, EXCHANGE_SOURCE_PAGE_LIMIT } from "./exchange-source.ts";
 import { ExchangeCursorStore } from "./exchange-store.ts";
+import { ExchangeSourceRegistry } from "./source-registry.ts";
 import type { StreamGateway } from "./gateway.ts";
 import type { GlobalServices } from "./global-domain.ts";
 import { hostFailureReport, type HostFailure } from "./host-errors.ts";
@@ -70,6 +71,16 @@ export interface PartitionLease<R> {
 export interface ExchangeSession {
   /** Source candidates: the workspace partitions this host currently holds open. */
   readonly openSources: () => readonly PartitionKey[];
+  /**
+   * Every workspace partition this host has opened, open or not.
+   *
+   * Registration reads this rather than the open set, because a workspace that
+   * has just been idled out is still a source — and the pass that would have
+   * registered it may not have run before it closed.
+   */
+  readonly knownSources: () => readonly PartitionKey[];
+  /** The host's clock, so a scheduling policy is driven rather than awaited. */
+  readonly now: () => number;
   readonly leaseWorkspace: (
     workspaceId: string,
   ) => PartitionLease<ApplicationServices | StreamGateway> | HostFailure;
@@ -94,23 +105,119 @@ export interface ExchangePassReport {
 
 export interface ExchangePassOptions {
   /** Upper bound on records read from one source in one pass. */
-  readonly limit?: number;
+  limit?: number;
+  /**
+   * How many *closed* registered sources one pass may reopen.
+   *
+   * Reopening cold storage costs a partition slot and a database handle, so it
+   * is budgeted rather than unbounded. Zero restores B4's behaviour exactly:
+   * only what the host already holds open is exchanged.
+   */
+  coldSources?: number;
 }
+
+/** How many closed sources a pass reopens when the caller says nothing. */
+export const DEFAULT_COLD_SOURCES_PER_PASS = 2;
 
 const isLease = <R>(value: PartitionLease<R> | HostFailure): value is PartitionLease<R> =>
   !("_tag" in value);
 
-/** One pass over every source this host currently holds open. */
+/**
+ * One pass over the sources this host is responsible for.
+ *
+ * Responsibility is the registry, not the open set: every workspace the host
+ * has ever opened stays a source, so an inbox converges whether or not anyone
+ * is currently looking at the workspace that feeds it. Open sources are always
+ * visited; a bounded number of cold ones are reopened per pass, least recently
+ * exchanged first, so every registered source is reached within a bounded
+ * number of passes rather than by luck.
+ *
+ * Registration and scheduling both run in the global partition, which the pass
+ * already leases — so this adds no new cross-domain reach.
+ */
 export async function runExchange(
   session: ExchangeSession,
   options: ExchangePassOptions = {},
 ): Promise<readonly ExchangePassReport[]> {
+  const open = session.openSources();
+  const budget = options.coldSources ?? DEFAULT_COLD_SOURCES_PER_PASS;
+  const scheduled = await scheduleSources(session, open, budget);
+
   const reports: ExchangePassReport[] = [];
-  for (const source of session.openSources()) {
+  for (const source of scheduled) {
     reports.push(await runExchangePass(session, source, options));
   }
+  await recordVisits(session, scheduled);
   return reports;
 }
+
+/**
+ * The sources this pass will visit.
+ *
+ * A failure to reach the registry is not a reason to exchange nothing: the open
+ * sources are still sources, and refusing them would turn a bookkeeping outage
+ * into a stalled product. The pass degrades to B4's behaviour instead.
+ */
+async function scheduleSources(
+  session: ExchangeSession,
+  open: readonly PartitionKey[],
+  coldBudget: number,
+): Promise<readonly PartitionKey[]> {
+  const global = session.leaseGlobal();
+  if (!isLease(global)) return open;
+  try {
+    const now = session.now();
+    await global.runPromise(registerSources(session.knownSources(), now)).catch(() => undefined);
+    if (coldBudget <= 0) return open;
+    const registered = await global.runPromise(listSources()).catch(() => []);
+    const cold: PartitionKey[] = [];
+    for (const source of registered) {
+      if (cold.length >= coldBudget) break;
+      if (source.key.kind !== "workspace") continue;
+      if (open.some((candidate) => partitionKeyEquals(candidate, source.key))) continue;
+      cold.push(source.key);
+    }
+    return [...open, ...cold];
+  } finally {
+    global.release();
+  }
+}
+
+/** Record that every visited source has just been looked at. */
+async function recordVisits(
+  session: ExchangeSession,
+  visited: readonly PartitionKey[],
+): Promise<void> {
+  if (visited.length === 0) return;
+  const global = session.leaseGlobal();
+  if (!isLease(global)) return;
+  try {
+    const now = session.now();
+    for (const source of visited) {
+      await global.runPromise(touchSource(source, now)).catch(() => undefined);
+    }
+  } finally {
+    global.release();
+  }
+}
+
+const registerSources = (keys: readonly PartitionKey[], atMs: number) =>
+  Effect.gen(function* () {
+    const registry = yield* ExchangeSourceRegistry;
+    yield* registry.register(keys, atMs);
+  });
+
+const listSources = () =>
+  Effect.gen(function* () {
+    const registry = yield* ExchangeSourceRegistry;
+    return yield* registry.list();
+  });
+
+const touchSource = (key: PartitionKey, atMs: number) =>
+  Effect.gen(function* () {
+    const registry = yield* ExchangeSourceRegistry;
+    yield* registry.touch(key, atMs);
+  });
 
 /** One pass over one source. Every failure is a report, never a throw. */
 export async function runExchangePass(

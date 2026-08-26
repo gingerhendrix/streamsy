@@ -16,8 +16,13 @@ import {
   type DurableStateStream,
 } from "@streamsy/state";
 import { Context, Effect, Layer } from "effect";
-import { boardIssues, streamNames } from "../domain/declaration.ts";
-import { decodeProjectBoardCard, type ProjectBoardCard } from "../domain/issue.ts";
+import { boardIssues, boardLabelCounts, streamNames } from "../domain/declaration.ts";
+import {
+  decodeLabelCountRow,
+  decodeProjectBoardCard,
+  type LabelCountRow,
+  type ProjectBoardCard,
+} from "../domain/issue.ts";
 import type { Change } from "@streamsy/views-ir";
 import { AppendRejected, StreamUnavailable } from "./errors.ts";
 
@@ -40,10 +45,24 @@ export const boardStateSchema = {
     primaryKey: boardIssues.collection.primaryKey,
   },
 } as const;
+
+/** The label-count sink's public collection map, derived the same way. */
+export const labelCountStateSchema = {
+  [boardLabelCounts.collection.name]: {
+    schema: {
+      encode: (value: LabelCountRow): unknown => value,
+      decode: (value: unknown): LabelCountRow => decodeLabelCountRow(value),
+    },
+    type: boardLabelCounts.collection.type,
+    primaryKey: boardLabelCounts.collection.primaryKey,
+  },
+} as const;
 /* oxlint-enable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns */
 
 export type BoardStateProtocol = DurableStateProtocol<typeof boardStateSchema>;
 export type BoardStateStream = DurableStateStream<typeof boardStateSchema>;
+export type LabelCountStateProtocol = DurableStateProtocol<typeof labelCountStateSchema>;
+export type LabelCountStateStream = DurableStateStream<typeof labelCountStateSchema>;
 
 export interface IssueSinkService {
   /** Create the sink's State stream when it does not exist yet. */
@@ -58,6 +77,14 @@ export interface IssueSinkService {
     workspaceId: string,
     rows: readonly ProjectBoardCard[],
   ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
+  readonly publishLabelCounts: (
+    workspaceId: string,
+    changes: readonly Change<LabelCountRow, string>[],
+  ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
+  readonly republishLabelCounts: (
+    workspaceId: string,
+    rows: readonly LabelCountRow[],
+  ) => Effect.Effect<void, StreamUnavailable | AppendRejected>;
 }
 
 export class IssueSink extends Context.Service<IssueSink, IssueSinkService>()(
@@ -69,6 +96,40 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
     IssueSink,
     Effect.sync(() => {
       const state: BoardStateProtocol = createDurableStateProtocol(protocol, boardStateSchema);
+      const countState: LabelCountStateProtocol = createDurableStateProtocol(
+        protocol,
+        labelCountStateSchema,
+      );
+
+      const openCounts = (
+        workspaceId: string,
+      ): Effect.Effect<LabelCountStateStream, StreamUnavailable> => {
+        const streamId = streamNames.labelCountState(workspaceId);
+        return Effect.promise(() => countState.get(streamId)).pipe(
+          Effect.flatMap((result) =>
+            result.status === "ok"
+              ? Effect.succeed(result.stream)
+              : Effect.fail(new StreamUnavailable({ streamId, status: result.status })),
+          ),
+        );
+      };
+
+      const appendedCount = (
+        workspaceId: string,
+        run: () => Promise<{ status: string }>,
+      ): Effect.Effect<void, AppendRejected> =>
+        Effect.promise(run).pipe(
+          Effect.flatMap((result) =>
+            result.status === "appended"
+              ? Effect.void
+              : Effect.fail(
+                  new AppendRejected({
+                    stream: streamNames.labelCountState(workspaceId),
+                    status: result.status,
+                  }),
+                ),
+          ),
+        );
 
       const open = (workspaceId: string): Effect.Effect<BoardStateStream, StreamUnavailable> => {
         const streamId = streamNames.boardState(workspaceId);
@@ -141,6 +202,39 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
             );
           }
           yield* appended(workspaceId, () => stream.state.snapshotEnd());
+        }),
+
+        publishLabelCounts: Effect.fn("IssueSink.publishLabelCounts")(function* (
+          workspaceId: string,
+          changes: readonly Change<LabelCountRow, string>[],
+        ) {
+          if (changes.length === 0) return;
+          const stream = yield* openCounts(workspaceId);
+          for (const change of changes) {
+            if (change.kind === "exit") {
+              yield* appendedCount(workspaceId, () =>
+                stream.state.delete("labelCounts", change.key, { oldValue: change.before }),
+              );
+              continue;
+            }
+            yield* appendedCount(workspaceId, () =>
+              stream.state.upsert("labelCounts", change.after, { key: change.key }),
+            );
+          }
+        }),
+
+        republishLabelCounts: Effect.fn("IssueSink.republishLabelCounts")(function* (
+          workspaceId: string,
+          rows: readonly LabelCountRow[],
+        ) {
+          const stream = yield* openCounts(workspaceId);
+          yield* appendedCount(workspaceId, () => stream.state.snapshotStart());
+          for (const row of rows) {
+            yield* appendedCount(workspaceId, () =>
+              stream.state.upsert("labelCounts", row, { key: row.labelId }),
+            );
+          }
+          yield* appendedCount(workspaceId, () => stream.state.snapshotEnd());
         }),
       });
     }),

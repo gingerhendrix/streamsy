@@ -8,7 +8,8 @@
  */
 import type { JsonValue } from "@streamsy/core";
 import { Cause, Effect, Schema } from "effect";
-import { issues } from "../domain/declaration.ts";
+import { boardLabelCounts, issueLabelMemberships, issues } from "../domain/declaration.ts";
+import { labelCounts as labelCountsView } from "../domain/views.ts";
 import { CatalogCollection } from "../domain/catalog.ts";
 import type { ApiError } from "../shared/api.ts";
 import {
@@ -16,30 +17,38 @@ import {
   CatalogUpsertRequest,
   ChangeStatusRequest,
   CreateIssueRequest,
+  LabelMembershipRequest,
 } from "../shared/api.ts";
 import { decodeAssignmentNotification } from "../domain/notifications.ts";
 import {
   assignIssue,
+  attachLabel,
   changeStatus,
   createIssue,
+  detachLabel,
   drainNotifications,
+  listIssueLabels,
   listIssues,
   listCatalog,
+  listLabelCounts,
   listNotifications,
   seedWorkspace,
   sinkSession,
   upsertCatalog,
   type ApplicationServices,
   type CommandResult,
+  type LabelCommandResult,
 } from "./application.ts";
 import { AppConfig } from "./config.ts";
 import { InvalidRequest, MalformedBody } from "./errors.ts";
 import type { StreamGateway } from "./gateway.ts";
 import {
+  handleLabelCountSinkRequest,
   handleSinkRequest,
   handleTransitionFeedRequest,
   handleWorkspaceSummaryRequest,
   matchBoardSink,
+  matchLabelCountSink,
   matchSummarySink,
   matchTransitionSink,
 } from "./sink-http.ts";
@@ -90,6 +99,7 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
       InvalidRequest: (error) => Effect.succeed(fail(400, "invalid-request", error.detail)),
       MalformedBody: (error) => Effect.succeed(fail(400, "invalid-json", error.detail)),
       UnknownIssue: (error) => Effect.succeed(fail(404, "unknown-issue", error.issueId)),
+      UnknownLabel: (error) => Effect.succeed(fail(404, "unknown-label", error.labelId)),
       AppendRejected: (error) => Effect.succeed(fail(409, "append-rejected", error.status)),
       CommandIdConflict: (error) =>
         Effect.succeed(fail(409, "command-id-conflict", error.commandId)),
@@ -107,6 +117,8 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
         Effect.succeed(
           fail(500, "unsupported-state-operation", `${error.collection}/${error.key}: delete`),
         ),
+      TransitionHistoryExpired: (error) =>
+        Effect.succeed(fail(500, "transition-history-expired", error.detail)),
       MaintenanceFault: (error) =>
         Effect.succeed(fail(500, "maintenance-fault", `${error.phase}: ${error.detail}`)),
       StoreRestorePoison: (error) =>
@@ -126,6 +138,11 @@ const route = (request: Request) =>
     if (sinkMatch.kind !== "mismatch") {
       if (!readMethod(request)) return fail(405, "method-not-allowed");
       return yield* handleSinkRequest(request);
+    }
+
+    if (matchLabelCountSink(url.pathname).kind !== "mismatch") {
+      if (!readMethod(request)) return fail(405, "method-not-allowed");
+      return yield* handleLabelCountSinkRequest(request);
     }
 
     if (matchTransitionSink(url.pathname).kind !== "mismatch") {
@@ -201,6 +218,26 @@ const route = (request: Request) =>
       });
     }
 
+    if (rest[0] === "issue-labels" && rest.length === 1) {
+      if (request.method !== "GET") return fail(405, "method-not-allowed");
+      return json({
+        workspaceId,
+        relation: issueLabelMemberships.name,
+        rows: yield* listIssueLabels(workspaceId),
+      });
+    }
+
+    if (rest[0] === "label-counts" && rest.length === 1) {
+      if (request.method !== "GET") return fail(405, "method-not-allowed");
+      return json({
+        workspaceId,
+        view: labelCountsView.name,
+        sink: boardLabelCounts.name,
+        contractFingerprint: boardLabelCounts.fingerprint,
+        rows: yield* listLabelCounts(workspaceId),
+      });
+    }
+
     if (rest[0] === "notifications" && rest.length === 1) {
       if (request.method !== "GET") return fail(405, "method-not-allowed");
       const listed = yield* listNotifications(workspaceId);
@@ -253,6 +290,28 @@ const route = (request: Request) =>
       return json(commandBody(assigned));
     }
 
+    if (rest[0] === "issues" && rest[1] !== undefined && rest[2] === "labels") {
+      if (rest.length === 3) {
+        if (request.method !== "POST") return fail(405, "method-not-allowed");
+        const attached = yield* attachLabel(
+          workspaceId,
+          rest[1],
+          yield* body(LabelMembershipRequest, request),
+        );
+        return json(labelCommandBody(attached));
+      }
+      if (rest.length === 4 && rest[3] === "detach") {
+        if (request.method !== "POST") return fail(405, "method-not-allowed");
+        const detached = yield* detachLabel(
+          workspaceId,
+          rest[1],
+          yield* body(LabelMembershipRequest, request),
+        );
+        return json(labelCommandBody(detached));
+      }
+      return fail(404, "not-found");
+    }
+
     if (
       rest[0] === "issues" &&
       rest[1] !== undefined &&
@@ -277,6 +336,29 @@ function commandBody(result: CommandResult): JsonValue {
     commandId: result.commandId,
     workspaceId: result.workspaceId,
     issueId: result.issueId,
+    eventId: result.eventId,
+    sequence: result.sequence,
+    ack: result.ack,
+    reconciled: result.reconciled,
+    maintenance: {
+      checkpoint: result.maintenance.checkpoint ?? null,
+      folded: result.maintenance.folded,
+      changed: result.maintenance.changes.length,
+      publication: result.maintenance.publication,
+    },
+    row: result.row ?? null,
+  };
+}
+
+/** Project the membership workflow result onto the declared wire contract. */
+function labelCommandBody(result: LabelCommandResult): JsonValue {
+  return {
+    commandId: result.commandId,
+    workspaceId: result.workspaceId,
+    issueId: result.issueId,
+    labelId: result.labelId,
+    membershipId: result.membershipId,
+    attached: result.attached,
     eventId: result.eventId,
     sequence: result.sequence,
     ack: result.ack,

@@ -1,6 +1,14 @@
 /**
- * Four inert A1 proof declarations. They compile and check, but no Slice 1 host
- * registers or executes their post-reducer operators.
+ * The A1 proof declarations, and the two Integration 2 executes as product.
+ *
+ * Every relation these views join is declared exactly once. The catalog's
+ * `projects`, `users` and `labels` sources are imported from `catalog.ts`
+ * rather than restated here: before Integration 2 this module declared its own
+ * `issue-tracker.ProjectRow`, `issue-tracker.UserRow` and
+ * `issue-tracker.LabelRow` sources whose shapes differed from the catalog rows
+ * the host actually ingests, so one descriptor named two shapes and a plan
+ * claimed a row it never saw. The contract-freeze audit removed the duplicates;
+ * see `integration-2-decisions.md`.
  */
 import {
   aggregate,
@@ -18,29 +26,28 @@ import {
   IssueLabelRow,
   IssueRow,
   LabelCountRow,
-  LabelRow,
   ProjectBoardCard,
-  ProjectRow,
   RecentActivityRow,
   Sequence,
-  UserRow,
 } from "./issue.ts";
 import type {
   AssigneeQueueRow as AssigneeQueueRowType,
   IssueEvent as IssueEventType,
   IssueLabelRow as IssueLabelRowType,
   IssueRow as IssueRowType,
-  LabelRow as LabelRowType,
   ProjectBoardCard as ProjectBoardCardType,
-  ProjectRow as ProjectRowType,
   RecentActivityRow as RecentActivityRowType,
-  UserRow as UserRowType,
 } from "./issue.ts";
+import { labels, projects, users } from "./catalog.ts";
+import type {
+  LabelRow as LabelRowType,
+  ProjectRow as ProjectRowType,
+  UserRow as UserRowType,
+} from "./catalog.ts";
+
+export { labels, projects, users };
 
 const issue = selectors<IssueRowType>();
-const project = selectors<ProjectRowType>();
-const user = selectors<UserRowType>();
-const label = selectors<LabelRowType>();
 const issueLabel = selectors<IssueLabelRowType>();
 const activity = selectors<IssueEventType>();
 
@@ -52,35 +59,18 @@ export const issueRows = source("issue-tracker.issues", {
   mode: "state",
 });
 
-export const projects = source("issue-tracker.projects", {
-  schema: ProjectRow,
-  schemaRef: { name: "issue-tracker.ProjectRow", version: 1 },
-  partitionBy: project.row.workspaceId,
-  key: "projectId",
-  mode: "state",
-});
-
-export const users = source("issue-tracker.users", {
-  schema: UserRow,
-  schemaRef: { name: "issue-tracker.UserRow", version: 1 },
-  partitionBy: user.row.workspaceId,
-  key: "userId",
-  mode: "state",
-});
-
-export const labels = source("issue-tracker.labels", {
-  schema: LabelRow,
-  schemaRef: { name: "issue-tracker.LabelRow", version: 1 },
-  partitionBy: label.row.workspaceId,
-  key: "labelId",
-  mode: "state",
-});
-
+/**
+ * The maintained membership relation, read as state.
+ *
+ * It is partitioned by workspace like every other relation in this
+ * application, and keyed by the derived `membershipId` the canonical fact
+ * carries, so the plan's key and the fold's key are the same declared field.
+ */
 export const issueLabels = source("issue-tracker.issue-labels", {
   schema: IssueLabelRow,
-  schemaRef: { name: "issue-tracker.IssueLabelRow", version: 1 },
-  partitionBy: issueLabel.row.issueId,
-  key: ["issueId", "labelId"],
+  schemaRef: { name: "issue-tracker.IssueLabelRow", version: 2 },
+  partitionBy: issueLabel.row.workspaceId,
+  key: "membershipId",
   mode: "state",
 });
 
@@ -168,7 +158,7 @@ export const assigneeQueue = defineView({
       .select({
         issueId: queue.row.issueId,
         assigneeId: queue.row.assigneeId.value,
-        assigneeName: queue.row.assignee.displayName,
+        assigneeName: queue.row.assignee.name,
         title: queue.row.title,
         status: queue.row.status,
         updatedAt: queue.row.updatedAt,
@@ -190,6 +180,9 @@ export const labelCounts = defineView({
   key: "labelId",
   query: (params) =>
     from(issueLabels)
+      // A detached membership stays in the relation, so the count is over the
+      // attached ones. Without this the relation's tombstones would be counted.
+      .where(issueLabel.row.attached.eq(true))
       .join(issueRows, {
         on: membershipIssue.left.issueId.eq(membershipIssue.right.issueId),
         as: "issue",

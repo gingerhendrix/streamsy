@@ -21,6 +21,7 @@ import { ExchangeStatusResponse, InboxResponse, IssuesResponse } from "../shared
 import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
 import { assignmentInbox, EXCHANGE_CURSOR_DOMAIN } from "../domain/exchange.ts";
 import { ExchangeCursorStore } from "../server/exchange-store.ts";
+import { sourceRegistryMemoryLayer } from "../server/source-registry.ts";
 import { InboxStore } from "../server/inbox-store.ts";
 import { partitionPath } from "../server/host.ts";
 import { call, host, json, temporaryDirectory, type Host } from "./support.ts";
@@ -153,20 +154,23 @@ describe("cross-domain exchange", () => {
     const instance = track(
       host({
         exchangeStore: () =>
-          Layer.sync(ExchangeCursorStore, () =>
-            ExchangeCursorStore.of({
-              read: (exchange, version, source) =>
-                Effect.succeed({
-                  domain: EXCHANGE_CURSOR_DOMAIN,
-                  exchange,
-                  version,
-                  source,
-                  arrival: 0,
-                  applied: 0,
-                }),
-              advance: () => Effect.void,
-              list: () => Effect.succeed([]),
-            }),
+          Layer.merge(
+            Layer.sync(ExchangeCursorStore, () =>
+              ExchangeCursorStore.of({
+                read: (exchange, version, source) =>
+                  Effect.succeed({
+                    domain: EXCHANGE_CURSOR_DOMAIN,
+                    exchange,
+                    version,
+                    source,
+                    arrival: 0,
+                    applied: 0,
+                  }),
+                advance: () => Effect.void,
+                list: () => Effect.succeed([]),
+              }),
+            ),
+            sourceRegistryMemoryLayer(),
           ),
       }),
     );

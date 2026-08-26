@@ -19,10 +19,19 @@ describe("the four inert A1 proof declarations", () => {
       expect(Object.isFrozen(declaration.plan.nodes)).toBe(true);
       expect(checked.hash).toBe(planHash(declaration.plan));
     }
+    /**
+     * `project-board` and `recent-activity` are byte-identical to their Wave B-i
+     * identities: swapping the duplicate `projects`/`users` source declarations
+     * for the catalog's own moved no field the plan encodes. `assignee-queue`
+     * and `label-counts` moved, and both moves are the contract-freeze audit
+     * fixing something that was wrong — a projection of `displayName`, a field
+     * the ingested user row never had, and a count that did not exclude
+     * detached memberships. See `integration-2-decisions.md`.
+     */
     expect(hashes).toEqual({
       "issue-tracker.project-board": "edca38c1",
-      "issue-tracker.assignee-queue": "96aad5c3",
-      "issue-tracker.label-counts": "af99679b",
+      "issue-tracker.assignee-queue": "662bbf73",
+      "issue-tracker.label-counts": "06f6f6ba",
       "issue-tracker.recent-activity": "428ac64e",
     });
   });
@@ -74,13 +83,24 @@ describe("the four inert A1 proof declarations", () => {
     expect(assigneeQueue.plan.nodes.some((node) => node.kind === "inner-join")).toBe(true);
   });
 
-  test("label counts use a composite-key source, two joins and grouped count", () => {
+  test("label counts read attached memberships, two joins and a grouped count", () => {
     const source = labelCounts.plan.nodes.find(
       (node) => node.kind === "source" && node.sourceId === "issue-tracker.issue-labels",
     );
     expect(source).toMatchObject({
       mode: "state",
-      key: { kind: "variadic", operator: "key" },
+      key: { kind: "reference", scope: "row", path: ["membershipId"] },
+      partitionBy: { kind: "reference", scope: "row", path: ["workspaceId"] },
+    });
+    // A detached membership stays in the relation, so the plan filters it out
+    // before it is joined or counted.
+    expect(labelCounts.plan.nodes.filter((node) => node.kind === "filter")[0]).toMatchObject({
+      predicate: {
+        kind: "binary",
+        operator: "equal",
+        left: { kind: "reference", scope: "row", path: ["attached"] },
+        right: { kind: "literal", value: true },
+      },
     });
     expect(labelCounts.plan.nodes.filter((node) => node.kind === "inner-join")).toHaveLength(2);
     expect(labelCounts.plan.nodes.find((node) => node.kind === "grouped-aggregate")).toMatchObject({

@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
 import { createBoardConnection } from "../src/lib/board-db.ts";
+import { createLabelCountsConnection } from "../src/lib/label-counts-db.ts";
 
 const checks: string[] = [];
 
@@ -348,6 +349,99 @@ try {
     metrics,
   );
 
+  // === label membership and the second checked State sink ===
+  const seededLabels = (await (
+    await fetch(`${running.origin}/api/workspaces/main/label-counts`)
+  ).json()) as { rows: { labelId: string; issueCount: number }[]; contractFingerprint: string };
+  const countOf = (rows: { labelId: string; issueCount: number }[], labelId: string): number =>
+    rows.find((row) => row.labelId === labelId)?.issueCount ?? 0;
+  check(
+    "a seeded workspace opens onto live label counts",
+    countOf(seededLabels.rows, "infra") === 2 && countOf(seededLabels.rows, "docs") === 1,
+    seededLabels,
+  );
+
+  /**
+   * The label-count binding is the second generated client contract, and it is
+   * bound here over the real network exactly as the browser binds it — so what
+   * this check proves is the published product, not the read model beside it.
+   */
+  const countsConnection = createLabelCountsConnection({
+    workspaceId: "main",
+    origin: running.origin,
+    onStatus: () => undefined,
+  });
+  await countsConnection.preload();
+  const boundCounts = [...countsConnection.db.collections.labelCounts.entries()].map(
+    ([, row]) => row,
+  );
+  check(
+    "the generated label-count binding holds the maintained counts",
+    countOf(boundCounts, "infra") === 2,
+    boundCounts,
+  );
+
+  const attached = (await (
+    await post(running.origin, "/api/workspaces/main/issues/seed-plan/labels", {
+      commandId: "smoke-attach",
+      labelId: "bug",
+    })
+  ).json()) as { membershipId: string; attached: boolean; reconciled: boolean };
+  check(
+    "attaching a label appends a membership fact",
+    attached.membershipId === "seed-plan.bug" && attached.attached && !attached.reconciled,
+    attached,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const liveCounts = [...countsConnection.db.collections.labelCounts.entries()].map(([, r]) => r);
+  check(
+    "the attach reaches the live consumer without a refresh",
+    countOf(liveCounts, "bug") === 2,
+    liveCounts,
+  );
+
+  const retriedAttach = (await (
+    await post(running.origin, "/api/workspaces/main/issues/seed-plan/labels", {
+      commandId: "smoke-attach",
+      labelId: "bug",
+    })
+  ).json()) as { reconciled: boolean };
+  check("a retried membership command appends nothing", retriedAttach.reconciled, retriedAttach);
+
+  const detached = (await (
+    await post(running.origin, "/api/workspaces/main/issues/seed-plan/labels/detach", {
+      commandId: "smoke-detach",
+      labelId: "bug",
+    })
+  ).json()) as { attached: boolean };
+  const afterDetach = (await (
+    await fetch(`${running.origin}/api/workspaces/main/label-counts`)
+  ).json()) as { rows: { labelId: string; issueCount: number }[] };
+  check(
+    "detaching removes the count with no State delete",
+    !detached.attached && countOf(afterDetach.rows, "bug") === 1,
+    afterDetach,
+  );
+  const memberships = (await (
+    await fetch(`${running.origin}/api/workspaces/main/issue-labels`)
+  ).json()) as { rows: { membershipId: string; attached: boolean }[] };
+  check(
+    "the detached membership stays in the relation, marked detached",
+    memberships.rows.find((row) => row.membershipId === "seed-plan.bug")?.attached === false,
+    memberships.rows,
+  );
+  countsConnection.close();
+
+  const bothSinks = (await (
+    await fetch(`${running.origin}/api/workspaces/main/sink-session`)
+  ).json()) as { labelCounts: { sink: string; contractFingerprint: string } };
+  check(
+    "the sink session names both checked State contracts",
+    bothSinks.labelCounts.sink === "issue-tracker.board-label-counts" &&
+      bothSinks.labelCounts.contractFingerprint === seededLabels.contractFingerprint,
+    bothSinks,
+  );
+
   // === the cross-domain exchange: two workspaces into one user inbox ===
   const opsAssigned = (await (
     await post(running.origin, "/api/workspaces/ops/issues/seed-plan/assignee", {
@@ -448,6 +542,54 @@ try {
     exchangedAfterRestart.length === 2 &&
       exchangedAfterRestart.every((report) => !report.failed && report.applied === 0),
     exchangedAfterRestart,
+  );
+
+  const labelsAfterRestart = (await (
+    await fetch(`${running.origin}/api/workspaces/main/label-counts`)
+  ).json()) as { rows: { labelId: string; issueCount: number }[] };
+  check(
+    "label counts survive the restart",
+    labelsAfterRestart.rows.find((row) => row.labelId === "infra")?.issueCount === 2 &&
+      labelsAfterRestart.rows.find((row) => row.labelId === "bug")?.issueCount === 1,
+    labelsAfterRestart,
+  );
+
+  /**
+   * The cold-source policy, over the network: give every partition up, then run
+   * one exchange pass and assert it still found its source. Before Integration 2
+   * this pass had nothing to read at all.
+   */
+  await post(running.origin, "/api/workspaces/main/issues/seed-scale/assignee", {
+    commandId: "smoke-assign-cold",
+    assigneeId: "grace",
+  });
+  await running.host.host.sweepIdle(Date.now() + 3_600_000);
+  check(
+    "every partition was given up before the cold pass",
+    running.host.host.openPartitions().length === 0,
+    running.host.host.openPartitions(),
+  );
+  const coldPass = await running.host.host.exchange();
+  const graceInbox = (await (await fetch(`${running.origin}/api/users/grace/inbox`)).json()) as {
+    rows: { issueId: string }[];
+  };
+  check(
+    "a closed workspace is still exchanged into its assignee's inbox",
+    coldPass.some((report) => report.source.id === "main" && report.applied === 1) &&
+      graceInbox.rows.some((row) => row.issueId === "seed-scale"),
+    { coldPass, graceInbox },
+  );
+
+  const registered = (await (await fetch(`${running.origin}/api/global/sources`)).json()) as {
+    sources: { partition: string }[];
+  };
+  check(
+    "the durable source registry survived the restart",
+    registered.sources
+      .map((source) => source.partition)
+      .toSorted()
+      .join(",") === "workspace:main,workspace:ops",
+    registered,
   );
 
   check(
