@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function -- `bun:test` owns this file's control flow; the behaviour under test is the Effect application across a process restart against on-disk SQLite. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- `bun:test` owns this file's control flow; the behaviour under test is the Effect application across a process restart against on-disk SQLite. */
 /**
  * Restart recovery.
  *
@@ -9,7 +9,9 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { partitionPath } from "../server/host.ts";
 import { CommandResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 
@@ -52,7 +54,7 @@ describe("durable recovery", () => {
     );
     await close(first);
 
-    const filename = join(directory, "view.sqlite");
+    const filename = join(partitionPath(directory, "main"), "view.sqlite");
     const before = new Database(filename);
     const checkpoint = before
       .query<{ source_cursor: string }, []>(
@@ -204,7 +206,9 @@ describe("durable recovery", () => {
 
   test("upgrades Slice 1 receipts to the workspace-scoped application schema", async () => {
     const directory = temporaryDirectory("issue-tracker-receipt-migration");
-    const filename = join(directory, "view.sqlite");
+    const partition = partitionPath(directory, "main");
+    mkdirSync(partition, { recursive: true });
+    const filename = join(partition, "view.sqlite");
     const legacy = new Database(filename, { create: true });
     legacy.exec(`CREATE TABLE command_receipts (
       command_id TEXT PRIMARY KEY,

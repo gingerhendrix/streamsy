@@ -22,12 +22,7 @@ import { Clock, Effect, Layer } from "effect";
 import type { AssignIssueRequest, CreateIssueRequest, ChangeStatusRequest } from "../shared/api.ts";
 import type { CatalogUpsertRequest } from "../shared/api.ts";
 import { catalog, decodeCatalogRow, type CatalogCollection } from "../domain/catalog.ts";
-import {
-  assignmentNotifications,
-  boardIssues,
-  issues,
-  streamNames,
-} from "../domain/declaration.ts";
+import { assignmentNotifications, boardIssues, streamNames } from "../domain/declaration.ts";
 import type { IssueEvent, IssueRow, IssueStatus } from "../domain/issue.ts";
 import { AppConfig } from "./config.ts";
 import {
@@ -88,17 +83,6 @@ export interface CommandResult {
 }
 
 const COMMAND_CAS_ATTEMPTS = 8;
-
-export const health = Effect.fn("Application.health")(function* () {
-  const config = yield* AppConfig;
-  return {
-    status: "ok" as const,
-    deployment: config.deployment,
-    schemaVersion: config.schemaVersion,
-    view: issues.name,
-    planHash: config.planHash,
-  };
-});
 
 /** Create one issue: `IssueCreated` onto the workspace's canonical stream. */
 export const createIssue = Effect.fn("Application.createIssue")(function* (

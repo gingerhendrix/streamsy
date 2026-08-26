@@ -1,116 +1,116 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/node-builtin-import, effecttsgo/process-env -- This is the Bun executable edge: Web fetch handlers, Node-compatible static-asset reads, the listen port read from the process environment, and one startup line on the terminal. Application work runs through the single ManagedRuntime this file owns. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/node-builtin-import -- This is the executable edge: it serves files from disk to `Bun.serve`'s Promise-native `fetch` and reports to the invoking terminal. */
 /**
  * Local Bun host.
  *
- * A thin executable edge: resolve storage into a protocol client, own exactly
- * one `ManagedRuntime` for the host's lifetime, dispose it on close, and serve
- * static files. It contains no application logic and runs Effects only at the
- * request boundary.
+ * A thin executable edge over the keyed multi-workspace host in `host.ts`: it
+ * decides where the data lives, serves the browser bundle, and — when run as a
+ * program — drives effect delivery on a timer and shuts every partition down
+ * cleanly.
  *
- * `storage` and `store` are the two host choices. Passing a SQLite adapter and
- * a SQLite store makes the same application durable across a restart; passing
- * neither keeps it entirely in memory.
+ * `createLocalHost` is the single-workspace *view* of that host. It keeps the
+ * shape the tests and the smoke scripts drive (`adapter`, `client`, `runtime`),
+ * resolving each against one default workspace, while requests for any other
+ * workspace still open their own isolated partition. Passing `adapter` or
+ * `store` explicitly pins the host to that one workspace, because a single
+ * adapter or store value cannot be two partitions' durable state.
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  directProtocolClient,
-  StreamProtocol,
-  type StorageAdapter,
-  type StreamProtocolClient,
-} from "@streamsy/core";
+import type { StorageAdapter, StreamProtocolClient } from "@streamsy/core";
 import type { OutboxStore } from "@streamsy/effect-sink";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
-import { Layer, ManagedRuntime } from "effect";
-import * as AppConfigModule from "./config.ts";
-import type { AppConfigOverrides } from "./config.ts";
-import type { StreamGateway } from "./gateway.ts";
-import { handle } from "./router.ts";
-import { applicationLayer, type ApplicationLayerOptions } from "./runtime.ts";
+import type { Layer, ManagedRuntime } from "effect";
 import type { ApplicationServices } from "./application.ts";
+import type { StreamGateway } from "./gateway.ts";
+import {
+  createWorkspaceHost,
+  type DeliveryPolicy,
+  type PartitionPolicy,
+  type WorkspaceHost,
+} from "./host.ts";
 import type { NotificationTargetOptions } from "./notifications.ts";
-import { memoryLayer } from "./store.ts";
-import { sqliteLayer } from "./store-sqlite.ts";
 import type { IssueStore } from "./store.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** `bun run build` emits the browser bundle here. */
 const assetDir = join(here, "..", "dist", "assets");
 
+/** The workspace `adapter`, `client` and `runtime` resolve to. */
+export const DEFAULT_WORKSPACE_ID = "main";
+
 export interface LocalHostOptions {
-  /** Durable-stream storage. Defaults to memory, or SQLite under `databaseDirectory`. */
+  /** Durable-stream storage for the default workspace. Pins the host to it. */
   readonly adapter?: StorageAdapter;
-  /** Maintained state and the effect-sink outbox. Defaults to memory, or SQLite under `databaseDirectory`. */
+  /** Maintained state and the effect-sink outbox for the default workspace. Pins the host to it. */
   readonly store?: Layer.Layer<IssueStore | OutboxStore>;
   /** Where assignment notifications land. Defaults to the in-process log. */
   readonly notifications?: NotificationTargetOptions;
-  /** Put both the durable log and the maintained state on disk in this directory. */
+  /** Put every workspace's durable log and maintained state under this directory. */
   readonly databaseDirectory?: string;
   readonly deployment?: string;
   /** Test/host adapter seam for transport fault injection around application calls. */
   readonly applicationClient?: (client: StreamProtocolClient) => StreamProtocolClient;
+  readonly partitions?: PartitionPolicy;
+  readonly delivery?: DeliveryPolicy;
+  readonly now?: () => number;
+  /** Which workspace the single-workspace accessors resolve to. */
+  readonly defaultWorkspaceId?: string;
 }
 
-export function createLocalHost(options: LocalHostOptions = {}) {
-  const adapter =
-    options.adapter ??
-    (options.databaseDirectory === undefined
-      ? createMemoryStorageAdapter()
-      : createSqliteStorageAdapter({
-          filename: join(options.databaseDirectory, "streams.sqlite"),
-        }));
-  const protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 5_000 });
-  const client = directProtocolClient(protocol);
-  const applicationClient = options.applicationClient?.(client) ?? client;
-  const gateway = createHttpHandler({ protocol, pathPrefix: "/streams" });
-  const store =
-    options.store ??
-    (options.databaseDirectory === undefined
-      ? memoryLayer()
-      : sqliteLayer({ filename: join(options.databaseDirectory, "view.sqlite") }));
+export interface LocalHost {
+  /** The keyed host underneath. Multi-workspace lifecycle and metrics live here. */
+  readonly host: WorkspaceHost;
+  readonly workspaceId: string;
+  /** The default workspace's durable-stream storage. Opens the partition on first read. */
+  readonly adapter: StorageAdapter;
+  readonly client: StreamProtocolClient;
+  readonly runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never>;
+  readonly fetch: (request: Request) => Promise<Response>;
+  readonly close: () => Promise<void>;
+}
 
-  const configValues: AppConfigOverrides = { deployment: options.deployment ?? "local" };
-
-  const layerOptions: ApplicationLayerOptions = {
-    client: applicationClient,
-    protocol,
-    gateway,
-    store,
-    config: AppConfigModule.layer(configValues),
+export function createLocalHost(options: LocalHostOptions = {}): LocalHost {
+  const workspaceId = options.defaultWorkspaceId ?? DEFAULT_WORKSPACE_ID;
+  // Bound once, so the per-partition factories the keyed host wants are built
+  // from values rather than from repeated optional reads.
+  const pinnedAdapter = options.adapter;
+  const pinnedStore = options.store;
+  const wrapClient = options.applicationClient;
+  const host = createWorkspaceHost({
+    databaseDirectory: options.databaseDirectory,
+    deployment: options.deployment,
+    adapter: pinnedAdapter === undefined ? undefined : () => pinnedAdapter,
+    store: pinnedStore === undefined ? undefined : () => pinnedStore,
     notifications: options.notifications,
+    applicationClient: wrapClient === undefined ? undefined : (client) => wrapClient(client),
+    partitions: options.partitions,
+    delivery: options.delivery,
+    now: options.now,
+    fallback: (request) => serveAsset(new URL(request.url).pathname),
+  });
+
+  /** Open the default partition, or report why the host cannot. */
+  const partition = () => {
+    const opened = host.partition(workspaceId);
+    if ("_tag" in opened) throw new Error(`${opened._tag}: ${workspaceId}`);
+    return opened;
   };
 
-  const runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never> =
-    ManagedRuntime.make(applicationLayer(layerOptions));
-
-  async function fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith("/streams/")) return gateway.fetch(request);
-    if (
-      url.pathname === "/health" ||
-      url.pathname.startsWith("/api/") ||
-      url.pathname.startsWith("/state/") ||
-      url.pathname.startsWith("/feed/") ||
-      url.pathname.startsWith("/document/")
-    ) {
-      return runtime.runPromise(handle(request));
-    }
-    return serveAsset(url.pathname);
-  }
-
   return {
-    adapter,
-    client,
-    runtime,
-    fetch,
-    async close() {
-      await runtime.dispose();
-      await client.close();
+    host,
+    workspaceId,
+    get adapter() {
+      return partition().adapter;
     },
+    get client() {
+      return partition().client;
+    },
+    get runtime() {
+      return partition().runtime;
+    },
+    fetch: host.fetch,
+    close: host.close,
   };
 }
 
@@ -153,13 +153,22 @@ async function serveAsset(pathname: string): Promise<Response> {
 
 if (import.meta.main) {
   const dataDirectory = process.env.ISSUE_TRACKER_DATA;
+  // A running host drives its own effect delivery; nothing else would.
+  const started: LocalHostOptions = { delivery: { mode: "interval" } };
   const host = createLocalHost(
-    dataDirectory === undefined ? {} : { databaseDirectory: dataDirectory },
+    dataDirectory === undefined ? started : { ...started, databaseDirectory: dataDirectory },
   );
   const server = Bun.serve({
     port: Number(process.env.PORT ?? 8788),
     fetch: host.fetch,
     idleTimeout: 30,
   });
+  const shutdown = async (): Promise<void> => {
+    await server.stop(true);
+    await host.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
   console.log(`issue-tracker listening on http://localhost:${server.port}`);
 }

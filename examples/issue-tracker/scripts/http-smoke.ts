@@ -305,6 +305,49 @@ try {
     conditional.status,
   );
 
+  // === a second workspace in the same host ===
+  const opsSeed = (await (await post(running.origin, "/api/workspaces/ops/seed", {})).json()) as {
+    seeded: boolean;
+    issues: string[];
+  };
+  check(
+    "a second workspace seeds in the same host",
+    opsSeed.seeded && opsSeed.issues.length === 4,
+    opsSeed,
+  );
+
+  const opsIssues = (await (await fetch(`${running.origin}/api/workspaces/ops/issues`)).json()) as {
+    rows: { issueId: string }[];
+  };
+  check(
+    "the second workspace holds only its own rows",
+    opsIssues.rows.length === 4 && !opsIssues.rows.some((row) => row.issueId === "smoke-issue"),
+    opsIssues.rows.map((row) => row.issueId),
+  );
+
+  const opsSummary = (await (
+    await fetch(`${running.origin}/document/workspaces/ops/summary`)
+  ).json()) as { workspaceId: string; issues: { total: number } };
+  check(
+    "each workspace's document sink is served from its own partition",
+    opsSummary.workspaceId === "ops" && opsSummary.issues.total === 4,
+    opsSummary,
+  );
+
+  const metrics = (await (await fetch(`${running.origin}/host/metrics`)).json()) as {
+    open: number;
+    workspaces: { workspaceId: string; requests: number }[];
+  };
+  check(
+    "host metrics report one partition per live workspace",
+    metrics.open === 2 &&
+      metrics.workspaces
+        .map((entry) => entry.workspaceId)
+        .toSorted()
+        .join(",") === "main,ops",
+    metrics,
+  );
+
   // === restart ===
   await stop(running);
   running = start({ databaseDirectory: directory });

@@ -23,7 +23,6 @@ import {
   changeStatus,
   createIssue,
   drainNotifications,
-  health,
   listIssues,
   listCatalog,
   listNotifications,
@@ -122,8 +121,6 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
 const route = (request: Request) =>
   Effect.gen(function* () {
     const url = new URL(request.url);
-
-    if (url.pathname === "/health") return json(yield* health());
 
     const sinkMatch = matchBoardSink(url.pathname);
     if (sinkMatch.kind !== "mismatch") {
