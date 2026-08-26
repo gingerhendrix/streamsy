@@ -11,13 +11,22 @@ import { Cause, Effect, Schema } from "effect";
 import { issues } from "../domain/declaration.ts";
 import { CatalogCollection } from "../domain/catalog.ts";
 import type { ApiError } from "../shared/api.ts";
-import { CatalogUpsertRequest, ChangeStatusRequest, CreateIssueRequest } from "../shared/api.ts";
 import {
+  AssignIssueRequest,
+  CatalogUpsertRequest,
+  ChangeStatusRequest,
+  CreateIssueRequest,
+} from "../shared/api.ts";
+import { decodeAssignmentNotification } from "../domain/notifications.ts";
+import {
+  assignIssue,
   changeStatus,
   createIssue,
+  drainNotifications,
   health,
   listIssues,
   listCatalog,
+  listNotifications,
   seedWorkspace,
   sinkSession,
   upsertCatalog,
@@ -97,6 +106,8 @@ export const handle = (request: Request): Effect.Effect<Response, never, RouterS
       StoreRestorePoison: (error) =>
         Effect.succeed(fail(500, "state-restore-poison", `${error.table}/${error.key}`)),
       StoreUnavailable: (error) => Effect.succeed(fail(503, "store-unavailable", error.operation)),
+      OutboxUnavailable: (error) =>
+        Effect.succeed(fail(503, "outbox-unavailable", error.operation)),
     }),
     Effect.catchCause((cause) => Effect.succeed(errorResponse(cause))),
   );
@@ -176,6 +187,58 @@ const route = (request: Request) =>
         changed: listed.report.changes.length,
         rows: listed.rows,
       });
+    }
+
+    if (rest[0] === "notifications" && rest.length === 1) {
+      if (request.method !== "GET") return fail(405, "method-not-allowed");
+      const listed = yield* listNotifications(workspaceId);
+      return json({
+        workspaceId,
+        sink: listed.sink,
+        contractFingerprint: listed.contractFingerprint,
+        pending: listed.entries.filter((entry) => entry.state === "pending").length,
+        delivered: listed.entries.filter((entry) => entry.state === "delivered").length,
+        dead: listed.entries.filter((entry) => entry.state === "dead").length,
+        outbox: listed.entries.map((entry) => ({
+          id: entry.id,
+          idempotencyKey: entry.idempotencyKey,
+          state: entry.state,
+          attempts: entry.attempts,
+          nextAttemptAtMs: entry.nextAttemptAtMs,
+          lastError: entry.lastError ?? null,
+          deadLetterReason: entry.deadLetterReason ?? null,
+          payload: decodeAssignmentNotification(JSON.parse(entry.payload)),
+        })),
+        notified: [...listed.notified],
+      });
+    }
+
+    if (rest[0] === "notifications" && rest[1] === "drain" && rest.length === 2) {
+      if (request.method !== "POST") return fail(405, "method-not-allowed");
+      const report = yield* drainNotifications(workspaceId);
+      return json({
+        workspaceId,
+        sink: report.sink,
+        claimed: report.claimed,
+        delivered: report.delivered,
+        retried: report.retried,
+        deadLettered: report.deadLettered,
+      });
+    }
+
+    if (
+      rest[0] === "issues" &&
+      rest[1] !== undefined &&
+      rest[2] === "assignee" &&
+      rest.length === 3
+    ) {
+      if (request.method !== "POST") return fail(405, "method-not-allowed");
+      const assigned = yield* assignIssue(
+        workspaceId,
+        rest[1],
+        yield* body(AssignIssueRequest, request),
+      );
+      return json(commandBody(assigned));
     }
 
     if (

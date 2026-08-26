@@ -29,6 +29,12 @@ import {
   type StoreError,
   type ViewStoreService,
 } from "@streamsy/views-store";
+import {
+  makeMemoryOutboxBacking,
+  outboxStoreLayer,
+  OutboxStore,
+  type OutboxDraft,
+} from "@streamsy/effect-sink";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { planHash } from "@streamsy/views";
 import {
@@ -42,6 +48,7 @@ import { decodeIssueRow, type IssueRow } from "../domain/issue.ts";
 import { decodeProjectBoardCard, type ProjectBoardCard } from "../domain/issue.ts";
 import { projectBoard } from "../domain/views.ts";
 import { decodeCatalogRow, type CatalogCollection, type CatalogRow } from "../domain/catalog.ts";
+import type { CommandKind } from "./commands.ts";
 import {
   CommandIdConflict,
   MaintenanceFault,
@@ -65,7 +72,7 @@ export interface ViewProgress {
 export interface CommandReceipt {
   readonly commandId: string;
   readonly workspaceId: string;
-  readonly commandKind: "create-issue" | "change-status";
+  readonly commandKind: CommandKind;
   readonly targetId: string;
   readonly requestHash: string;
   readonly eventId: string;
@@ -129,8 +136,17 @@ export interface IssueStoreService {
     workspaceId: string,
     commandId: string,
   ) => Effect.Effect<CommandReceipt | undefined, StoreUnavailable>;
+  /**
+   * Record one accepted command and the deliveries it implies, together.
+   *
+   * The receipt is the application's exactly-once record of an accepted
+   * command, so it is also the only place an effect-sink enqueue can be made
+   * exactly-once without inventing a second reconciliation mechanism. Both
+   * writes land or neither does.
+   */
   readonly recordReceipt: (
     receipt: CommandReceipt,
+    deliveries?: readonly OutboxDraft[],
   ) => Effect.Effect<void, StoreUnavailable | CommandIdConflict>;
   /** Next source sequence for a workspace: one past the highest folded event. */
   readonly nextSequence: (workspaceId: string) => Effect.Effect<number, StoreUnavailable>;
@@ -228,6 +244,7 @@ export interface IssueStoreBoundary {
   ) => Effect.Effect<CommandReceipt | undefined, StoreUnavailable>;
   readonly recordReceipt: (
     receipt: CommandReceipt,
+    deliveries: readonly OutboxDraft[],
   ) => Effect.Effect<void, StoreUnavailable | CommandIdConflict>;
   readonly stateCheckpoint: IssueStoreService["stateCheckpoint"];
   readonly stateRows: IssueStoreService["stateRows"];
@@ -250,8 +267,13 @@ export interface MemoryStoreOptions {
  * It is not a stub: it implements the same commit ordering and the same typed
  * restore path as SQLite, so the declaration runs unchanged on both.
  */
-export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<IssueStore> =>
-  Layer.sync(IssueStore, () => {
+export const memoryLayer = (
+  options: MemoryStoreOptions = {},
+): Layer.Layer<IssueStore | OutboxStore> => {
+  // One backing per store, shared by the receipt boundary and the delivery
+  // runtime — the same object, so an enqueue is visible to the next drain.
+  const outbox = makeMemoryOutboxBacking();
+  const store = Layer.sync(IssueStore, () => {
     const workspaces = new Map<string, WorkspaceMemory>();
     const receipts = new Map<string, CommandReceipt>();
     const stateSources = new Map<string, StateSourceMemory>();
@@ -290,7 +312,7 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
         }),
       receipt: (workspaceId, commandId) =>
         Effect.sync(() => receipts.get(`${workspaceId}\u0000${commandId}`)),
-      recordReceipt: (receipt) =>
+      recordReceipt: (receipt, deliveries) =>
         Effect.gen(function* () {
           const key = `${receipt.workspaceId}\u0000${receipt.commandId}`;
           const existing = receipts.get(key);
@@ -300,7 +322,12 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
               commandId: receipt.commandId,
             });
           }
-          receipts.set(key, receipt);
+          // One synchronous step, so the memory host has the same all-or-nothing
+          // receipt-and-enqueue boundary the SQLite transaction gives.
+          yield* Effect.sync(() => {
+            receipts.set(key, receipt);
+            if (deliveries.length > 0) outbox.enqueue(deliveries);
+          });
           return undefined;
         }),
       stateCheckpoint: (sourceId, partitionId) =>
@@ -333,6 +360,8 @@ export const memoryLayer = (options: MemoryStoreOptions = {}): Layer.Layer<Issue
     };
     return issueStoreAdapter(viewStore, boundary, options.preload);
   });
+  return Layer.merge(store, outboxStoreLayer(outbox));
+};
 
 export function issueStoreAdapter(
   viewStore: ViewStoreService,
@@ -422,7 +451,7 @@ export function issueStoreAdapter(
     }),
     markPublished: boundary.markPublished,
     receipt: boundary.receipt,
-    recordReceipt: boundary.recordReceipt,
+    recordReceipt: (receipt, deliveries = []) => boundary.recordReceipt(receipt, deliveries),
     nextSequence: Effect.fn("IssueStore.nextSequence")(function* (workspaceId) {
       return (yield* boundary.progress(workspaceId)).nextSequence;
     }),
@@ -644,7 +673,7 @@ const checkpointDescriptor = (workspaceId: string) => ({
 });
 
 function encodeRow(row: IssueRow): JsonValue {
-  return {
+  const encoded = {
     issueId: row.issueId,
     workspaceId: row.workspaceId,
     projectId: row.projectId,
@@ -652,6 +681,11 @@ function encodeRow(row: IssueRow): JsonValue {
     status: row.status,
     updatedAt: row.updatedAt,
   };
+  // `assigneeId` is an optional key, so the durable value carries it only when
+  // the row does. Writing `assigneeId: undefined` instead would give an
+  // unassigned row a field, and the schema would then reject its own encoding.
+  if (row.assigneeId === undefined) return encoded;
+  return { ...encoded, assigneeId: row.assigneeId };
 }
 function encodeChange(change: Change<IssueRow, string>): StoredChange {
   if (change.kind === "enter")

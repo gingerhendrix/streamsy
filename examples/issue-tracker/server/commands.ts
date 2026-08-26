@@ -22,7 +22,7 @@ export type CommandAppend =
   | { readonly status: "reconciled"; readonly offset: string }
   | { readonly status: "contention"; readonly actualOffset: string };
 
-export type CommandKind = "create-issue" | "change-status";
+export type CommandKind = "create-issue" | "change-status" | "assign-issue";
 
 export interface CommandIntent {
   readonly workspaceId: string;
@@ -152,6 +152,15 @@ export function intentFromEvent(event: IssueEvent): CommandIntent {
         status: event.status,
         title: event.title,
       },
+    };
+  }
+  if (event.type === "IssueAssigned") {
+    return {
+      workspaceId: event.workspaceId,
+      commandId: event.eventId,
+      commandKind: "assign-issue",
+      targetId: event.issueId,
+      payload: { assigneeId: event.assigneeId, status: event.status },
     };
   }
   return {

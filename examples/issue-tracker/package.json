@@ -18,6 +18,7 @@
     "@durable-streams/client": "^0.2.6",
     "@durable-streams/state": "^0.3.1",
     "@streamsy/core": "workspace:*",
+    "@streamsy/effect-sink": "workspace:*",
     "@streamsy/experimental": "workspace:*",
     "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",

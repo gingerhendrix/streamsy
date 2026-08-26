@@ -11,6 +11,7 @@ import { compilePlan, encodePlan, planHash } from "@streamsy/views";
 import { projectBoard } from "../domain/views.ts";
 import { catalog } from "../domain/catalog.ts";
 import {
+  assignmentNotifications,
   boardIssues,
   issueEvents,
   issueLifecycle,
@@ -118,6 +119,41 @@ describe("the issue-tracker declaration", () => {
     });
     expect(boardIssues.fingerprint).toMatch(/^[0-9a-f]{8}$/);
     expect(boardIssues.from.name).toBe(projectBoard.name);
+  });
+
+  test("the effect sink declares a delivery contract, not a route", () => {
+    expect(assignmentNotifications.kind).toBe("checked-effect-sink");
+    expect(Object.isFrozen(assignmentNotifications)).toBe(true);
+    expect(assignmentNotifications.key).toBe(issues.key);
+    expect(assignmentNotifications.handler).toEqual({
+      name: "issue-tracker.notify-assignee",
+      version: 1,
+    });
+    expect(assignmentNotifications.delivery).toEqual({
+      maxAttempts: 3,
+      initialBackoffMs: 250,
+      backoffFactor: 4,
+      maxBackoffMs: 30_000,
+    });
+    expect(assignmentNotifications.fingerprint).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  test("the effect sink's idempotency key is a function of durable facts only", () => {
+    const notification = {
+      workspaceId: "main",
+      issueId: "issue-1",
+      assigneeId: "ada",
+      title: "Declare the issue view",
+      status: "todo" as const,
+      eventId: "assign-1",
+      occurredAt: "2026-08-25T00:00:00.000Z",
+    };
+    expect(assignmentNotifications.idempotencyKey(notification)).toBe("main/assign-1");
+    expect(assignmentNotifications.partitionBy(notification)).toBe("main");
+    // Fields that are not part of the delivery's identity cannot change it.
+    expect(
+      assignmentNotifications.idempotencyKey({ ...notification, status: "done", title: "Renamed" }),
+    ).toBe("main/assign-1");
   });
 
   test("the sink's collection key is the key its relation declares", () => {

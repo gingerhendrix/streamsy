@@ -1,14 +1,22 @@
 /** SQLite application boundary over the generic maintained-view store. */
 import { Database } from "bun:sqlite";
 import {
+  OutboxStore,
+  outboxStore,
+  type OutboxBacking,
+  type OutboxDraft,
+} from "@streamsy/effect-sink";
+import { createSqliteOutboxBacking } from "@streamsy/effect-sink/sqlite";
+import {
   importLegacyIssueStore,
   migrateViewStore,
   sqliteService,
 } from "@streamsy/views-store/sqlite";
-import { Effect, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { planHash } from "@streamsy/views";
 import { decodeCatalogRow, type CatalogRow } from "../domain/catalog.ts";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
+import type { CommandKind } from "./commands.ts";
 import { CommandIdConflict, StoreRestorePoison, StoreUnavailable } from "./errors.ts";
 import {
   IssueStore,
@@ -66,7 +74,7 @@ interface ProgressRow {
 interface ReceiptRow {
   readonly command_id: string;
   readonly workspace_id: string;
-  readonly command_kind: "create-issue" | "change-status";
+  readonly command_kind: CommandKind;
   readonly target_id: string;
   readonly request_hash: string;
   readonly event_id: string;
@@ -114,9 +122,21 @@ export interface SqliteStoreOptions {
   readonly filename: string;
 }
 
-export const sqliteLayer = (options: SqliteStoreOptions): Layer.Layer<IssueStore> =>
+/**
+ * The open database, as its own scoped service.
+ *
+ * The maintained-state store and the effect sink's outbox are two surfaces over
+ * one file, and they must be: an atomic receipt-and-enqueue is only possible if
+ * both run on the same connection. Naming the connection is what lets two
+ * layers share it without either one owning the other.
+ */
+class IssueDatabase extends Context.Service<IssueDatabase, Database>()(
+  "issue-tracker/IssueDatabase",
+) {}
+
+const databaseLayer = (options: SqliteStoreOptions): Layer.Layer<IssueDatabase> =>
   Layer.effect(
-    IssueStore,
+    IssueDatabase,
     Effect.acquireRelease(
       Effect.sync(() => {
         const database = new Database(options.filename, { create: true });
@@ -137,12 +157,31 @@ export const sqliteLayer = (options: SqliteStoreOptions): Layer.Layer<IssueStore
         return database;
       }),
       (database) => Effect.sync(() => database.close(false)),
-    ).pipe(
-      Effect.map((database) => issueStoreAdapter(sqliteService(database), boundary(database))),
     ),
   );
 
-function boundary(database: Database): IssueStoreBoundary {
+export const sqliteLayer = (options: SqliteStoreOptions): Layer.Layer<IssueStore | OutboxStore> =>
+  Layer.merge(
+    Layer.effect(
+      IssueStore,
+      Effect.gen(function* () {
+        const database = yield* IssueDatabase;
+        return issueStoreAdapter(
+          sqliteService(database),
+          boundary(database, createSqliteOutboxBacking(database)),
+        );
+      }),
+    ),
+    Layer.effect(
+      OutboxStore,
+      Effect.gen(function* () {
+        const database = yield* IssueDatabase;
+        return outboxStore(createSqliteOutboxBacking(database));
+      }),
+    ),
+  ).pipe(Layer.provide(databaseLayer(options)));
+
+function boundary(database: Database, outbox: OutboxBacking): IssueStoreBoundary {
   const selectProgress = database.query<ProgressRow, [string]>(
     "SELECT published, next_sequence FROM view_progress WHERE workspace_id = ?",
   );
@@ -181,6 +220,29 @@ function boundary(database: Database): IssueStoreBoundary {
   const upsertSourceProgress = database.query<never, [string, string, string]>(
     "INSERT INTO source_progress (source_id, partition_id, checkpoint) VALUES (?, ?, ?)" +
       " ON CONFLICT (source_id, partition_id) DO UPDATE SET checkpoint = excluded.checkpoint",
+  );
+
+  /**
+   * The receipt and the deliveries it implies, in one transaction.
+   *
+   * `ON CONFLICT DO NOTHING` on both writes makes the whole step idempotent, so
+   * a retried command that reaches here again re-derives the same rows and
+   * changes nothing.
+   */
+  const commitReceipt = database.transaction(
+    (receipt: CommandReceipt, deliveries: readonly OutboxDraft[]) => {
+      insertReceipt.run(
+        receipt.workspaceId,
+        receipt.commandId,
+        receipt.commandKind,
+        receipt.targetId,
+        receipt.requestHash,
+        receipt.eventId,
+        receipt.eventSequence,
+        receipt.eventOffset,
+      );
+      if (deliveries.length > 0) outbox.enqueue(deliveries);
+    },
   );
 
   const commitStateTransaction = database.transaction(
@@ -226,20 +288,9 @@ function boundary(database: Database): IssueStoreBoundary {
           eventOffset: row.event_offset,
         } satisfies CommandReceipt;
       }),
-    recordReceipt: (receipt) =>
+    recordReceipt: (receipt, deliveries) =>
       Effect.gen(function* () {
-        yield* sqlite("recordReceipt", () =>
-          insertReceipt.run(
-            receipt.workspaceId,
-            receipt.commandId,
-            receipt.commandKind,
-            receipt.targetId,
-            receipt.requestHash,
-            receipt.eventId,
-            receipt.eventSequence,
-            receipt.eventOffset,
-          ),
-        );
+        yield* sqlite("recordReceipt", () => commitReceipt(receipt, deliveries));
         const stored = yield* sqlite("recordReceipt.verify", () =>
           selectReceipt.get(receipt.workspaceId, receipt.commandId),
         );

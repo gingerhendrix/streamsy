@@ -56,7 +56,27 @@ export const IssueStatusChanged = Schema.Struct({
   status: IssueStatus,
 });
 
-export const IssueEvent = Schema.Union([IssueCreated, IssueStatusChanged]);
+/**
+ * Assignment, as a canonical fact.
+ *
+ * It carries `status` even though assignment does not change it. Every reader
+ * of the event union projects `status` — the recent-activity view does it
+ * directly — so a variant without it would make a total projection partial and
+ * push a branch into every consumer. The value is the issue's status at the
+ * moment the assignment was accepted, read from the maintained row.
+ */
+export const IssueAssigned = Schema.Struct({
+  type: Schema.Literal("IssueAssigned"),
+  eventId: Identifier,
+  workspaceId: Identifier,
+  issueId: Identifier,
+  sequence: Sequence,
+  occurredAt: Timestamp,
+  status: IssueStatus,
+  assigneeId: Identifier,
+});
+
+export const IssueEvent = Schema.Union([IssueCreated, IssueStatusChanged, IssueAssigned]);
 export type IssueEvent = typeof IssueEvent.Type;
 
 export const IssueRow = Schema.Struct({
@@ -139,7 +159,7 @@ export type LabelCountRow = typeof LabelCountRow.Type;
 export const RecentActivityRow = Schema.Struct({
   eventId: Identifier,
   issueId: Identifier,
-  eventType: Schema.Literals(["IssueCreated", "IssueStatusChanged"]),
+  eventType: Schema.Literals(["IssueCreated", "IssueStatusChanged", "IssueAssigned"]),
   status: IssueStatus,
   sequence: Sequence,
   occurredAt: Timestamp,

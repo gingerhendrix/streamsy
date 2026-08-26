@@ -8,6 +8,7 @@
  */
 import { Schema } from "effect";
 import { Identifier, IssueRow, IssueStatus, Title } from "../domain/issue.ts";
+import { AssignmentNotification } from "../domain/notifications.ts";
 import { CatalogCollection } from "../domain/catalog.ts";
 
 export const CreateIssueRequest = Schema.Struct({
@@ -24,6 +25,12 @@ export const ChangeStatusRequest = Schema.Struct({
   status: IssueStatus,
 });
 export type ChangeStatusRequest = typeof ChangeStatusRequest.Type;
+
+export const AssignIssueRequest = Schema.Struct({
+  commandId: Identifier,
+  assigneeId: Identifier,
+});
+export type AssignIssueRequest = typeof AssignIssueRequest.Type;
 
 export const Ack = Schema.Struct({ stream: Schema.String, offset: Schema.String });
 
@@ -101,6 +108,43 @@ export const HealthResponse = Schema.Struct({
   planHash: Schema.String,
 });
 export type HealthResponse = typeof HealthResponse.Type;
+
+/** One durable delivery decision, as an operator reads it. */
+export const NotificationEntry = Schema.Struct({
+  id: Schema.Number,
+  idempotencyKey: Schema.String,
+  state: Schema.Literals(["pending", "delivered", "dead"]),
+  attempts: Schema.Number,
+  nextAttemptAtMs: Schema.Number,
+  lastError: Schema.NullOr(Schema.String),
+  deadLetterReason: Schema.NullOr(
+    Schema.Literals(["attempts-exhausted", "permanent", "payload-poison"]),
+  ),
+  payload: AssignmentNotification,
+});
+
+export const NotificationsResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  sink: Schema.String,
+  contractFingerprint: Schema.String,
+  pending: Schema.Number,
+  delivered: Schema.Number,
+  dead: Schema.Number,
+  outbox: Schema.Array(NotificationEntry),
+  /** What the handler actually accepted, deduplicated by idempotency key. */
+  notified: Schema.Array(AssignmentNotification),
+});
+export type NotificationsResponse = typeof NotificationsResponse.Type;
+
+export const DrainResponse = Schema.Struct({
+  workspaceId: Schema.String,
+  sink: Schema.String,
+  claimed: Schema.Number,
+  delivered: Schema.Number,
+  retried: Schema.Number,
+  deadLettered: Schema.Number,
+});
+export type DrainResponse = typeof DrainResponse.Type;
 
 export const ApiError = Schema.Struct({
   error: Schema.String,
