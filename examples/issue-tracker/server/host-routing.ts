@@ -14,21 +14,33 @@ import { Effect } from "effect";
 import { handleStateSink } from "@streamsy/state-sink/effect";
 import { handleDocumentSink, handleStreamSink } from "@streamsy/sinks/effect";
 import { boardIssues, issueTransitions, workspaceSummary } from "../domain/declaration.ts";
-import { IDENTIFIER_PATTERN } from "../domain/issue.ts";
-import { InvalidWorkspaceId, UnroutableRequest, type HostFailure } from "./host-errors.ts";
+import {
+  globalKey,
+  isDomainId,
+  userKey,
+  workspaceKey,
+  type DomainKind,
+  type PartitionKey,
+} from "../domain/domains.ts";
+import {
+  InvalidDomainId,
+  InvalidWorkspaceId,
+  UnroutableRequest,
+  type HostFailure,
+} from "./host-errors.ts";
 
 /** Host-level routes. They are answered without opening any partition. */
 export const HOST_HEALTH_PATH = "/health";
 export const HOST_METRICS_PATH = "/host/metrics";
 
 export type RouteResolution =
-  /** A host-level route: the host is what is being asked about, not a workspace. */
+  /** A host-level route: the host is what is being asked about, not a partition. */
   | { readonly kind: "host"; readonly route: "health" | "metrics" }
-  /** One workspace's partition owns this request. */
+  /** One partition owns this request, and the key says which domain it is in. */
   | {
-      readonly kind: "workspace";
-      readonly workspaceId: string;
-      /** `application` runs the router; `streams` goes straight to the partition gateway. */
+      readonly kind: "partition";
+      readonly key: PartitionKey;
+      /** `application` runs the domain's router; `streams` goes straight to the gateway. */
       readonly target: "application" | "streams";
     }
   /**
@@ -70,15 +82,33 @@ export function resolveRoute(pathname: string, streamsPrefix = "/streams"): Rout
     if (matched.kind === "invalid") return { kind: "sink-params" };
   }
 
-  if (pathname.startsWith("/api/")) {
-    const segments = pathSegments(pathname.slice("/api/".length));
-    const workspaceId = segments[0] === "workspaces" ? segments[1] : undefined;
-    if (workspaceId === undefined) return unroutable(pathname);
-    return workspace(workspaceId, "application");
-  }
+  if (pathname.startsWith("/api/")) return resolveApiPath(pathname);
 
   if (SINK_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return unroutable(pathname);
   return { kind: "asset" };
+}
+
+/**
+ * The API surface, one collection segment per domain.
+ *
+ * The collection name is what names the domain — `workspaces`, `users`,
+ * `global` — so a path that names no collection this host serves is a 404
+ * rather than an unkeyed request some partition might answer.
+ */
+function resolveApiPath(pathname: string): RouteResolution {
+  const segments = pathSegments(pathname.slice("/api/".length));
+  const [collection, id] = segments;
+  if (collection === "workspaces") {
+    return id === undefined ? unroutable(pathname) : workspace(id, "application");
+  }
+  if (collection === "users") {
+    return id === undefined ? unroutable(pathname) : user(id);
+  }
+  // The global domain is a singleton, so its collection segment *is* its id.
+  if (collection === "global") {
+    return segments.length < 2 ? unroutable(pathname) : partition(globalKey(), "application");
+  }
+  return unroutable(pathname);
 }
 
 /**
@@ -101,7 +131,7 @@ function resolveStreamPath(rest: string, pathname: string): RouteResolution {
  * for a durable partition: the pattern admits no separator and no traversal.
  */
 function workspace(workspaceId: string, target: "application" | "streams"): RouteResolution {
-  if (!IDENTIFIER_PATTERN.test(workspaceId)) {
+  if (!isDomainId("workspace", workspaceId)) {
     return {
       kind: "failure",
       failure: new InvalidWorkspaceId({
@@ -110,7 +140,35 @@ function workspace(workspaceId: string, target: "application" | "streams"): Rout
       }),
     };
   }
-  return { kind: "workspace", workspaceId, target };
+  return partition(workspaceKey(workspaceId), target);
+}
+
+/**
+ * A user id the host will accept as a partition key.
+ *
+ * It is refused with `InvalidDomainId` rather than `InvalidWorkspaceId`,
+ * because a user is not a workspace and a caller told otherwise would look for
+ * the wrong thing.
+ */
+function user(userId: string): RouteResolution {
+  return isDomainId("user", userId)
+    ? partition(userKey(userId), "application")
+    : invalidDomainId("user", userId);
+}
+
+function invalidDomainId(kind: DomainKind, id: string): RouteResolution {
+  return {
+    kind: "failure",
+    failure: new InvalidDomainId({
+      domain: kind,
+      id: id.slice(0, 80),
+      detail: `not a ${kind} identifier`,
+    }),
+  };
+}
+
+function partition(key: PartitionKey, target: "application" | "streams"): RouteResolution {
+  return { kind: "partition", key, target };
 }
 
 function unroutable(pathname: string): RouteResolution {

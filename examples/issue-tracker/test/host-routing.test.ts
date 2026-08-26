@@ -9,6 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { boardIssues, issueTransitions, workspaceSummary } from "../domain/declaration.ts";
+import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
 import { resolveRoute } from "../server/host-routing.ts";
 
 describe("route resolution", () => {
@@ -19,18 +20,18 @@ describe("route resolution", () => {
 
   test("every command path names the workspace that owns it", () => {
     expect(resolveRoute("/api/workspaces/left/issues")).toEqual({
-      kind: "workspace",
-      workspaceId: "left",
+      kind: "partition",
+      key: workspaceKey("left"),
       target: "application",
     });
     expect(resolveRoute("/api/workspaces/right/issues/issue-1/status")).toEqual({
-      kind: "workspace",
-      workspaceId: "right",
+      kind: "partition",
+      key: workspaceKey("right"),
       target: "application",
     });
     expect(resolveRoute("/api/workspaces/right/notifications/drain")).toEqual({
-      kind: "workspace",
-      workspaceId: "right",
+      kind: "partition",
+      key: workspaceKey("right"),
       target: "application",
     });
   });
@@ -42,22 +43,51 @@ describe("route resolution", () => {
       [workspaceSummary.compiledRoute.build({ workspaceId: "gamma" }), "gamma"],
     ] as const) {
       expect(resolveRoute(route)).toEqual({
-        kind: "workspace",
-        workspaceId,
+        kind: "partition",
+        key: workspaceKey(workspaceId),
         target: "application",
       });
     }
   });
 
+  test("each domain's API collection names the partition that owns it", () => {
+    expect(resolveRoute("/api/users/ada/inbox")).toEqual({
+      kind: "partition",
+      key: userKey("ada"),
+      target: "application",
+    });
+    expect(resolveRoute("/api/global/exchange")).toEqual({
+      kind: "partition",
+      key: globalKey(),
+      target: "application",
+    });
+  });
+
+  test("a user id the domain refuses is a typed refusal, not a partition", () => {
+    const resolved = resolveRoute("/api/users/..%2Fescape/inbox");
+    expect(resolved.kind).toBe("failure");
+    if (resolved.kind !== "failure") throw new Error("expected a failure");
+    expect(resolved.failure._tag).toBe("InvalidDomainId");
+  });
+
+  test("an API collection this host does not serve is unroutable", () => {
+    for (const pathname of ["/api/users", "/api/global", "/api/teams/one", "/api/nothing"]) {
+      const resolved = resolveRoute(pathname);
+      expect(resolved.kind).toBe("failure");
+      if (resolved.kind !== "failure") throw new Error("expected a failure");
+      expect(resolved.failure._tag).toBe("UnroutableRequest");
+    }
+  });
+
   test("a stream path resolves to the workspace named in the stream id", () => {
     expect(resolveRoute("/streams/workspaces/left/issue-events")).toEqual({
-      kind: "workspace",
-      workspaceId: "left",
+      kind: "partition",
+      key: workspaceKey("left"),
       target: "streams",
     });
     expect(resolveRoute("/streams/state/workspaces/left/issues")).toEqual({
-      kind: "workspace",
-      workspaceId: "left",
+      kind: "partition",
+      key: workspaceKey("left"),
       target: "streams",
     });
   });

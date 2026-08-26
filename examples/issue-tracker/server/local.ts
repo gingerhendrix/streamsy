@@ -21,14 +21,18 @@ import { fileURLToPath } from "node:url";
 import type { StorageAdapter, StreamProtocolClient } from "@streamsy/core";
 import type { OutboxStore } from "@streamsy/effect-sink";
 import type { Layer, ManagedRuntime } from "effect";
+import { workspaceKey } from "../domain/domains.ts";
 import type { ApplicationServices } from "./application.ts";
 import type { StreamGateway } from "./gateway.ts";
+import type { ExchangeCursorStore } from "./exchange-store.ts";
 import {
   createWorkspaceHost,
   type DeliveryPolicy,
+  type ExchangePolicy,
   type PartitionPolicy,
   type WorkspaceHost,
 } from "./host.ts";
+import type { InboxStore } from "./inbox-store.ts";
 import type { NotificationTargetOptions } from "./notifications.ts";
 import type { IssueStore } from "./store.ts";
 
@@ -51,8 +55,13 @@ export interface LocalHostOptions {
   readonly deployment?: string;
   /** Test/host adapter seam for transport fault injection around application calls. */
   readonly applicationClient?: (client: StreamProtocolClient) => StreamProtocolClient;
+  /** Per-user-partition inbox storage. A factory: two users never share one. */
+  readonly inbox?: (userId: string) => Layer.Layer<InboxStore>;
+  /** The global partition's exchange cursor storage. */
+  readonly exchangeStore?: () => Layer.Layer<ExchangeCursorStore>;
   readonly partitions?: PartitionPolicy;
   readonly delivery?: DeliveryPolicy;
+  readonly exchange?: ExchangePolicy;
   readonly now?: () => number;
   /** Which workspace the single-workspace accessors resolve to. */
   readonly defaultWorkspaceId?: string;
@@ -82,17 +91,20 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHost {
     deployment: options.deployment,
     adapter: pinnedAdapter === undefined ? undefined : () => pinnedAdapter,
     store: pinnedStore === undefined ? undefined : () => pinnedStore,
+    inbox: options.inbox,
+    exchangeStore: options.exchangeStore,
     notifications: options.notifications,
     applicationClient: wrapClient === undefined ? undefined : (client) => wrapClient(client),
     partitions: options.partitions,
     delivery: options.delivery,
+    exchange: options.exchange,
     now: options.now,
     fallback: (request) => serveAsset(new URL(request.url).pathname),
   });
 
   /** Open the default partition, or report why the host cannot. */
   const partition = () => {
-    const opened = host.partition(workspaceId);
+    const opened = host.partition(workspaceKey(workspaceId));
     if ("_tag" in opened) throw new Error(`${opened._tag}: ${workspaceId}`);
     return opened;
   };
@@ -153,8 +165,12 @@ async function serveAsset(pathname: string): Promise<Response> {
 
 if (import.meta.main) {
   const dataDirectory = process.env.ISSUE_TRACKER_DATA;
-  // A running host drives its own effect delivery; nothing else would.
-  const started: LocalHostOptions = { delivery: { mode: "interval" } };
+  // A running host drives its own effect delivery and its own exchange on the
+  // one managed tick; nothing else would.
+  const started: LocalHostOptions = {
+    delivery: { mode: "interval" },
+    exchange: { mode: "interval" },
+  };
   const host = createLocalHost(
     dataDirectory === undefined ? started : { ...started, databaseDirectory: dataDirectory },
   );

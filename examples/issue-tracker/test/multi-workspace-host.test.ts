@@ -20,6 +20,7 @@ import {
   TransitionFeedResponse,
 } from "../shared/api.ts";
 import { streamNames } from "../domain/declaration.ts";
+import { workspaceKey } from "../domain/domains.ts";
 import { OutboxStore, OutboxUnavailable } from "@streamsy/effect-sink";
 import { Effect, Layer } from "effect";
 import { existsSync } from "node:fs";
@@ -94,8 +95,8 @@ describe("workspace isolation", () => {
 
   test("each partition owns its own storage, client and runtime", () => {
     const instance = track(host());
-    const left = instance.host.partition("left");
-    const right = instance.host.partition("right");
+    const left = instance.host.partition(workspaceKey("left"));
+    const right = instance.host.partition(workspaceKey("right"));
     if ("_tag" in left || "_tag" in right) throw new Error("expected two partitions");
     expect(left.adapter).not.toBe(right.adapter);
     expect(left.client).not.toBe(right.client);
@@ -108,7 +109,7 @@ describe("workspace isolation", () => {
     await rowsOf(instance, "right");
 
     // Straight to `left`'s durable source, as another process would append it.
-    const left = instance.host.partition("left");
+    const left = instance.host.partition(workspaceKey("left"));
     if ("_tag" in left) throw new Error("expected a partition for left");
     const appended = await left.client.stream(streamNames.issueEvents("left")).append(
       JSON.stringify({
@@ -174,19 +175,19 @@ describe("partition lifecycle", () => {
     const instance = track(host({ databaseDirectory: directory }));
     await seed(instance, "left");
     await seed(instance, "right");
-    const rightBefore = instance.host.partition("right");
+    const rightBefore = instance.host.partition(workspaceKey("right"));
 
-    expect(await instance.host.restart("left")).toBe(true);
+    expect(await instance.host.restart(workspaceKey("left"))).toBe(true);
     expect(instance.host.openWorkspaces()).toEqual(["right"]);
     // The neighbour was not touched: same partition object, same runtime.
-    expect(instance.host.partition("right")).toBe(rightBefore);
+    expect(instance.host.partition(workspaceKey("right"))).toBe(rightBefore);
     expect(await rowsOf(instance, "right")).toHaveLength(4);
 
     const reopened = await rowsOf(instance, "left");
     expect(reopened).toHaveLength(4);
     // Each partition's durable state is its own pair of databases.
     for (const workspaceId of ["left", "right"]) {
-      const directoryFor = partitionPath(directory, workspaceId);
+      const directoryFor = partitionPath(directory, workspaceKey(workspaceId));
       expect(existsSync(join(directoryFor, "streams.sqlite"))).toBe(true);
       expect(existsSync(join(directoryFor, "view.sqlite"))).toBe(true);
     }
@@ -222,7 +223,7 @@ describe("partition lifecycle", () => {
       assigneeId: "grace",
     });
 
-    await instance.host.restart("left");
+    await instance.host.restart(workspaceKey("left"));
 
     const rows = await rowsOf(instance, "left");
     expect(rows.find((row) => row.issueId === "issue-1")?.assigneeId).toBe("grace");
@@ -288,7 +289,9 @@ describe("partition lifecycle", () => {
     clock += 40_000;
 
     // Only `left` has been idle for the full window.
-    expect(await instance.host.sweepIdle()).toEqual(["left"]);
+    // A sweep names what it closed by partition key, not by a bare id: the
+    // host gives up partitions in every domain, and two domains can share an id.
+    expect(await instance.host.sweepIdle()).toEqual([workspaceKey("left")]);
     expect(instance.host.openWorkspaces()).toEqual(["right"]);
     expect(instance.host.metrics().idled).toBe(1);
 

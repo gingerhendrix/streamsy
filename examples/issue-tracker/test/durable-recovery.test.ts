@@ -11,6 +11,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { workspaceKey } from "../domain/domains.ts";
 import { partitionPath } from "../server/host.ts";
 import { CommandResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
@@ -54,7 +55,7 @@ describe("durable recovery", () => {
     );
     await close(first);
 
-    const filename = join(partitionPath(directory, "main"), "view.sqlite");
+    const filename = join(partitionPath(directory, workspaceKey("main")), "view.sqlite");
     const before = new Database(filename);
     const checkpoint = before
       .query<{ source_cursor: string }, []>(
@@ -206,7 +207,7 @@ describe("durable recovery", () => {
 
   test("upgrades Slice 1 receipts to the workspace-scoped application schema", async () => {
     const directory = temporaryDirectory("issue-tracker-receipt-migration");
-    const partition = partitionPath(directory, "main");
+    const partition = partitionPath(directory, workspaceKey("main"));
     mkdirSync(partition, { recursive: true });
     const filename = join(partition, "view.sqlite");
     const legacy = new Database(filename, { create: true });

@@ -7,6 +7,9 @@
  * shapes are declared here too, so a test decodes exactly what a client would.
  */
 import { Schema } from "effect";
+import { DomainKind } from "../domain/domains.ts";
+import { EXCHANGE_CURSOR_DOMAIN } from "../domain/exchange.ts";
+import { InboxRow } from "../domain/inbox.ts";
 import { Identifier, IssueRow, IssueStatus, IssueTransition, Title } from "../domain/issue.ts";
 import { AssignmentNotification } from "../domain/notifications.ts";
 import { CatalogCollection } from "../domain/catalog.ts";
@@ -168,6 +171,41 @@ export const DrainResponse = Schema.Struct({
   deadLettered: Schema.Number,
 });
 export type DrainResponse = typeof DrainResponse.Type;
+
+/**
+ * One user's cross-workspace inbox.
+ *
+ * The rows come from more than one workspace, which is the whole point: this
+ * is the first product surface in the tracker that no single workspace
+ * partition could have served.
+ */
+export const InboxResponse = Schema.Struct({
+  userId: Identifier,
+  exchange: Schema.String,
+  rows: Schema.Array(InboxRow),
+});
+export type InboxResponse = typeof InboxResponse.Type;
+
+/**
+ * Where every exchange has got to.
+ *
+ * `domain` is decoded as the exchange cursor's own literal, so a client that
+ * decodes this response has *checked* that the position it is reading is an
+ * exchange position and not a stream offset or a store checkpoint.
+ */
+export const ExchangeCursorBody = Schema.Struct({
+  domain: Schema.Literal(EXCHANGE_CURSOR_DOMAIN),
+  exchange: Schema.String,
+  version: Schema.Number,
+  source: Schema.Struct({ kind: DomainKind, id: Identifier }),
+  arrival: Schema.Number,
+  applied: Schema.Number,
+});
+
+export const ExchangeStatusResponse = Schema.Struct({
+  cursors: Schema.Array(ExchangeCursorBody),
+});
+export type ExchangeStatusResponse = typeof ExchangeStatusResponse.Type;
 
 export const ApiError = Schema.Struct({
   error: Schema.String,

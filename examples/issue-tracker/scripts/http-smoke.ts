@@ -348,6 +348,52 @@ try {
     metrics,
   );
 
+  // === the cross-domain exchange: two workspaces into one user inbox ===
+  const opsAssigned = (await (
+    await post(running.origin, "/api/workspaces/ops/issues/seed-plan/assignee", {
+      commandId: "smoke-assign-ops",
+      assigneeId: "ada",
+    })
+  ).json()) as { row: { assigneeId?: string } | null };
+  check("the second workspace accepts its own assignment", opsAssigned.row?.assigneeId === "ada");
+
+  const exchanged = await running.host.host.exchange();
+  check(
+    "one exchange pass reads every open workspace",
+    exchanged.length === 2 && exchanged.every((report) => !report.failed),
+    exchanged,
+  );
+
+  const inbox = (await (await fetch(`${running.origin}/api/users/ada/inbox`)).json()) as {
+    userId: string;
+    rows: { workspaceId: string; issueId: string; userId: string }[];
+  };
+  check(
+    "one user inbox is fed by two workspace domains",
+    inbox.userId === "ada" &&
+      inbox.rows.length === 2 &&
+      inbox.rows.every((row) => row.userId === "ada") &&
+      inbox.rows
+        .map((row) => row.workspaceId)
+        .toSorted()
+        .join(",") === "main,ops",
+    inbox,
+  );
+
+  const cursors = (await (await fetch(`${running.origin}/api/global/exchange`)).json()) as {
+    cursors: { domain: string; source: { kind: string; id: string }; applied: number }[];
+  };
+  check(
+    "the exchange resumes on its own cursor domain",
+    cursors.cursors.length === 2 &&
+      cursors.cursors.every(
+        (cursor) =>
+          cursor.domain === "issue-tracker.exchange-cursor/1" && cursor.source.kind === "workspace",
+      ) &&
+      cursors.cursors.reduce((sum, cursor) => sum + cursor.applied, 0) === 2,
+    cursors,
+  );
+
   // === restart ===
   await stop(running);
   running = start({ databaseDirectory: directory });
@@ -384,6 +430,24 @@ try {
     "a restarted host re-delivers nothing that was already delivered",
     redrainedAfterRestart.claimed === 0,
     redrainedAfterRestart,
+  );
+
+  const inboxAfterRestart = (await (
+    await fetch(`${running.origin}/api/users/ada/inbox`)
+  ).json()) as { rows: { workspaceId: string }[] };
+  check(
+    "the user inbox survives the restart",
+    inboxAfterRestart.rows.length === 2,
+    inboxAfterRestart,
+  );
+
+  await fetch(`${running.origin}/api/workspaces/ops/issues`);
+  const exchangedAfterRestart = await running.host.host.exchange();
+  check(
+    "a restarted host re-exchanges nothing that was already applied",
+    exchangedAfterRestart.length === 2 &&
+      exchangedAfterRestart.every((report) => !report.failed && report.applied === 0),
+    exchangedAfterRestart,
   );
 
   check(

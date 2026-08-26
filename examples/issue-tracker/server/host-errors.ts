@@ -21,7 +21,20 @@ export class InvalidWorkspaceId extends Schema.TaggedError<InvalidWorkspaceId>()
   { workspaceId: Schema.String, detail: Schema.String },
 ) {}
 
-/** A path that names no host route, no sink route and no workspace. */
+/**
+ * An id the host will not use as a partition key in the domain that named it.
+ *
+ * Kept apart from {@link InvalidWorkspaceId} because a caller told "invalid
+ * workspace id" when it asked about a user would look in the wrong place, and
+ * the two failures reach different routes.
+ */
+export class InvalidDomainId extends Schema.TaggedError<InvalidDomainId>()("InvalidDomainId", {
+  domain: Schema.String,
+  id: Schema.String,
+  detail: Schema.String,
+}) {}
+
+/** A path that names no host route, no sink route and no partition. */
 export class UnroutableRequest extends Schema.TaggedError<UnroutableRequest>()(
   "UnroutableRequest",
   {
@@ -43,17 +56,18 @@ export class HostClosed extends Schema.TaggedError<HostClosed>()("HostClosed", {
  */
 export class PartitionLimitReached extends Schema.TaggedError<PartitionLimitReached>()(
   "PartitionLimitReached",
-  { workspaceId: Schema.String, maxOpen: Schema.Finite },
+  { partition: Schema.String, maxOpen: Schema.Finite },
 ) {}
 
 /** A partition's storage, store or runtime could not be constructed. */
 export class PartitionUnavailable extends Schema.TaggedError<PartitionUnavailable>()(
   "PartitionUnavailable",
-  { workspaceId: Schema.String, detail: Schema.String },
+  { partition: Schema.String, detail: Schema.String },
 ) {}
 
 export type HostFailure =
   | InvalidWorkspaceId
+  | InvalidDomainId
   | UnroutableRequest
   | HostClosed
   | PartitionLimitReached
@@ -74,6 +88,12 @@ export function hostFailureReport(failure: HostFailure): HostFailureReport {
         error: "invalid-workspace-id",
         detail: `${failure.workspaceId}: ${failure.detail}`,
       };
+    case "InvalidDomainId":
+      return {
+        status: 400,
+        error: "invalid-domain-id",
+        detail: `${failure.domain}/${failure.id}: ${failure.detail}`,
+      };
     case "UnroutableRequest":
       return { status: 404, error: "not-found", detail: failure.pathname };
     case "HostClosed":
@@ -82,13 +102,13 @@ export function hostFailureReport(failure: HostFailure): HostFailureReport {
       return {
         status: 503,
         error: "partition-limit-reached",
-        detail: `${failure.workspaceId}: ${failure.maxOpen} partitions open`,
+        detail: `${failure.partition}: ${failure.maxOpen} partitions open`,
       };
     case "PartitionUnavailable":
       return {
         status: 503,
         error: "partition-unavailable",
-        detail: `${failure.workspaceId}: ${failure.detail}`,
+        detail: `${failure.partition}: ${failure.detail}`,
       };
   }
 }

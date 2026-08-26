@@ -1,31 +1,39 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- The host is the executable edge: it is entered from `Bun.serve`'s Promise-native `fetch`, and a durable partition needs a real directory on disk before its databases exist. Everything below the request boundary is an Effect. */
 /**
- * The keyed multi-workspace host.
+ * The keyed multi-domain host.
  *
- * One process, many workspaces, one partition each. A partition owns
- * everything a single workspace needs and shares none of it: its durable
- * stream storage, its protocol client and gateway, its maintained-state store,
- * its outbox, and its `ManagedRuntime`. Routing decides *which* partition
- * before any application code runs, so a request for workspace A cannot read
- * or write B's rows, streams, receipts or deliveries — not because the
- * application filters by id, but because B's services are not reachable from
- * A's runtime at all.
+ * One process, many partitions, one per *domain identity*. B3 keyed this host
+ * by a workspace id because a workspace was the only thing a partition could
+ * be. B4 keys it by a {@link PartitionKey} — a domain kind and an id — so a
+ * workspace, a user and the singleton global partition are three instances of
+ * one rule rather than one implementation and two special cases. Every
+ * workspace route, its on-disk layout and its isolation argument are unchanged;
+ * what changed is that "workspace" is now a value the host is given rather
+ * than an assumption baked into it.
  *
- * Three lifecycle facts follow from that and are the whole operational model:
+ * A partition owns everything its domain needs and shares none of it. A
+ * workspace partition owns durable stream storage, a protocol client and
+ * gateway, a maintained-state store, an outbox and a `ManagedRuntime`. A user
+ * partition owns one inbox. The global partition owns the exchange cursors.
+ * Routing decides *which* partition before any application code runs, so a
+ * request for workspace A cannot read or write B's rows — and no partition's
+ * runtime can resolve another partition's services at all, because they are
+ * different service instances behind different layers over different storage.
  *
- * - **Partitions open lazily.** The first request for a workspace builds it.
- *   A host with a thousand configured workspaces and one active user holds one
- *   partition.
+ * Four lifecycle facts follow and are the whole operational model:
+ *
+ * - **Partitions open lazily.** The first request for a key builds it.
  * - **Partitions close independently.** Restarting, evicting or idling one
- *   partition disposes exactly its runtime and its connections. Every other
- *   partition keeps serving, and the closed one rebuilds from its durable
- *   state on the next request.
+ *   disposes exactly its runtime and its connections.
  * - **Closing is idempotent.** A partition is disposed exactly once however
- *   many times it is asked, so a shutdown racing an eviction cannot
- *   double-close a SQLite handle.
+ *   many times it is asked.
+ * - **A leased partition is not reclaimable.** The exchange holds leases while
+ *   it moves records between two partitions, and neither eviction nor the idle
+ *   sweep will close a partition that is leased — its runtime is what the pass
+ *   is running in.
  *
- * Time is injected (`now`) and idle sweeping is an explicit call, so partition
- * lifecycle is tested by driving it rather than by waiting for a clock.
+ * Time is injected (`now`), and idle sweeping, effect delivery and the
+ * exchange are all explicit calls, so lifecycle is tested by driving it rather
+ * than by waiting for a clock.
  */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -42,11 +50,30 @@ import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import type { Layer, ManagedRuntime } from "effect";
 import { ManagedRuntime as ManagedRuntimeModule } from "effect";
 import { issues } from "../domain/declaration.ts";
+import {
+  globalKey,
+  partitionKeyString,
+  partitionSegments,
+  userKey,
+  workspaceKey,
+  type GlobalKey,
+  type PartitionKey,
+  type UserKey,
+  type WorkspaceKey,
+} from "../domain/domains.ts";
 import * as AppConfigModule from "./config.ts";
 import { PLAN_HASH, SCHEMA_VERSION } from "./config.ts";
 import { drainNotifications } from "./application.ts";
 import type { ApplicationServices } from "./application.ts";
+import {
+  runExchange,
+  type ExchangePassReport,
+  type ExchangeSession,
+  type PartitionLease,
+} from "./exchange.ts";
+import type { ExchangeCursorStore } from "./exchange-store.ts";
 import type { StreamGateway } from "./gateway.ts";
+import { globalLayer, handleGlobalRequest, type GlobalServices } from "./global-domain.ts";
 import {
   hostFailureResponse,
   HostClosed,
@@ -55,15 +82,17 @@ import {
   type HostFailure,
 } from "./host-errors.ts";
 import { invalidSinkParamsResponse, resolveRoute } from "./host-routing.ts";
+import type { InboxStore } from "./inbox-store.ts";
 import type { NotificationTargetOptions } from "./notifications.ts";
 import { handle } from "./router.ts";
 import { applicationLayer } from "./runtime.ts";
 import { memoryLayer, type IssueStore } from "./store.ts";
 import { sqliteLayer } from "./store-sqlite.ts";
+import { handleUserRequest, userLayer, type UserServices } from "./user-domain.ts";
 
 /** How many partitions may be open at once, and when an idle one is given up. */
 export interface PartitionPolicy {
-  /** Upper bound on simultaneously open partitions. */
+  /** Upper bound on simultaneously open partitions, across every domain. */
   readonly maxOpen?: number;
   /** How long a partition may go unused before `sweepIdle` closes it. */
   readonly idleMillis?: number;
@@ -84,8 +113,15 @@ export interface DeliveryPolicy {
   readonly limit?: number;
 }
 
+/** How the host drives the cross-domain exchange. Manual for the same reason. */
+export interface ExchangePolicy {
+  readonly mode?: "manual" | "interval";
+  /** Upper bound on records read from one source in one pass. */
+  readonly limit?: number;
+}
+
 export interface WorkspaceHostOptions {
-  /** Put every partition's durable log and maintained state under this directory. */
+  /** Put every partition's durable state under this directory. */
   readonly databaseDirectory?: string;
   readonly deployment?: string;
   /** Per-partition durable-stream storage. Defaults to memory, or SQLite under `databaseDirectory`. */
@@ -97,6 +133,10 @@ export interface WorkspaceHostOptions {
    * single layer value would hand them the same backing.
    */
   readonly store?: (workspaceId: string) => Layer.Layer<IssueStore | OutboxStore>;
+  /** Per-user-partition inbox storage. A factory, for the same reason. */
+  readonly inbox?: (userId: string) => Layer.Layer<InboxStore>;
+  /** The global partition's exchange cursor storage. */
+  readonly exchangeStore?: () => Layer.Layer<ExchangeCursorStore>;
   readonly notifications?: NotificationTargetOptions;
   /** Test/host adapter seam for transport fault injection, per partition. */
   readonly applicationClient?: (
@@ -105,6 +145,7 @@ export interface WorkspaceHostOptions {
   ) => StreamProtocolClient;
   readonly partitions?: PartitionPolicy;
   readonly delivery?: DeliveryPolicy;
+  readonly exchange?: ExchangePolicy;
   /** Injected clock, so lifecycle policy is driven rather than awaited. */
   readonly now?: () => number;
   /** What to serve for paths that are not application paths. Static files, usually. */
@@ -127,14 +168,33 @@ export interface PartitionDeliveryMetrics {
 }
 
 export interface PartitionMetrics {
-  readonly workspaceId: string;
-  /** How many times this workspace has been opened, including after a restart. */
+  /** The domain identity this partition serves. */
+  readonly kind: PartitionKey["kind"];
+  readonly id: string;
+  /**
+   * The workspace this partition serves.
+   *
+   * Present only on workspace partitions, so the B3 shape of this record is
+   * unchanged for the domain it described.
+   */
+  readonly workspaceId?: string;
+  /** How many times this key has been opened, including after a restart. */
   readonly opens: number;
   readonly requests: number;
   readonly inFlight: number;
+  /** Leases held right now. A partition with any is neither evictable nor sweepable. */
+  readonly leases: number;
   readonly openedAtMs: number;
   readonly lastRequestAtMs: number;
   readonly delivery: PartitionDeliveryMetrics;
+}
+
+export interface ExchangeMetrics {
+  readonly passes: number;
+  readonly scanned: number;
+  readonly applied: number;
+  readonly failures: number;
+  readonly lastError: string | null;
 }
 
 export interface HostMetrics {
@@ -155,6 +215,10 @@ export interface HostMetrics {
   /** Refusals by typed failure tag. */
   readonly failures: Readonly<Record<string, number>>;
   readonly delivery: Omit<PartitionDeliveryMetrics, "lastError">;
+  readonly exchange: ExchangeMetrics;
+  /** Every open partition, in every domain. */
+  readonly partitions: readonly PartitionMetrics[];
+  /** The workspace partitions only, as B3 reported them. */
   readonly workspaces: readonly PartitionMetrics[];
 }
 
@@ -184,6 +248,15 @@ export interface DeliveryPassReport {
   readonly detail?: string;
 }
 
+/** The mutable form of {@link ExchangeMetrics}, owned by the host. */
+interface ExchangeCounters {
+  passes: number;
+  scanned: number;
+  applied: number;
+  failures: number;
+  lastError: string | null;
+}
+
 interface DeliveryCounters {
   passes: number;
   claimed: number;
@@ -194,35 +267,98 @@ interface DeliveryCounters {
   lastError: string | null;
 }
 
+/** What every partition has, whatever domain it serves. */
+interface PartitionCommon {
+  readonly key: PartitionKey;
+  readonly openedAtMs: number;
+  opens: number;
+  requests: number;
+  inFlight: number;
+  /** Outstanding leases. Nonzero means a host-level pass is using this runtime. */
+  leases: number;
+  lastRequestAtMs: number;
+  draining: boolean;
+  delivery: DeliveryCounters;
+  closing: Promise<void> | undefined;
+  /** Release this partition's resources. Called once, by `closePartition`. */
+  readonly dispose: () => Promise<void>;
+}
+
 /** One workspace's isolated runtime and the durable resources it owns. */
-export interface Partition {
+export interface WorkspacePartition extends PartitionCommon {
+  readonly kind: "workspace";
   readonly workspaceId: string;
   readonly adapter: StorageAdapter;
   readonly client: StreamProtocolClient;
   readonly gateway: { readonly fetch: (request: Request) => Promise<Response> };
   readonly runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never>;
-  readonly openedAtMs: number;
-  opens: number;
-  requests: number;
-  inFlight: number;
-  lastRequestAtMs: number;
-  draining: boolean;
-  delivery: DeliveryCounters;
-  closing: Promise<void> | undefined;
+}
+
+/** One user's isolated runtime: an inbox and nothing else. */
+export interface UserPartition extends PartitionCommon {
+  readonly kind: "user";
+  readonly userId: string;
+  readonly runtime: ManagedRuntime.ManagedRuntime<UserServices, never>;
+}
+
+/** The singleton global partition: the exchange's cursors. */
+export interface GlobalPartition extends PartitionCommon {
+  readonly kind: "global";
+  readonly runtime: ManagedRuntime.ManagedRuntime<GlobalServices, never>;
+}
+
+export type DomainPartition = WorkspacePartition | UserPartition | GlobalPartition;
+
+/**
+ * The workspace partition, under the name B3 gave it.
+ *
+ * Kept because a workspace partition is still what `createLocalHost` and every
+ * pre-B4 caller means by "the partition", and renaming it would have churned
+ * call sites without changing a single behaviour.
+ */
+export type Partition = WorkspacePartition;
+
+/** A partition held open by an operator or a host-level pass. */
+export interface HostLease {
+  readonly key: PartitionKey;
+  readonly release: () => void;
 }
 
 export interface WorkspaceHost {
   readonly fetch: (request: Request) => Promise<Response>;
-  /** Open (or reuse) one partition. The typed failure is a value, never a throw. */
-  readonly partition: (workspaceId: string) => Partition | HostFailure;
-  /** The ids of every currently open partition. */
+  /**
+   * Open (or reuse) one partition. The typed failure is a value, never a throw.
+   *
+   * The key's domain decides the partition's shape, and the overloads say so:
+   * asking for a user key cannot hand back a workspace partition.
+   */
+  readonly partition: {
+    (key: WorkspaceKey): WorkspacePartition | HostFailure;
+    (key: UserKey): UserPartition | HostFailure;
+    (key: GlobalKey): GlobalPartition | HostFailure;
+    (key: PartitionKey): DomainPartition | HostFailure;
+  };
+  /** The ids of every currently open workspace partition. */
   readonly openWorkspaces: () => readonly string[];
+  /** The keys of every currently open partition, in every domain. */
+  readonly openPartitions: () => readonly PartitionKey[];
   /** Dispose one partition. It rebuilds from durable state on its next request. */
-  readonly restart: (workspaceId: string) => Promise<boolean>;
-  /** Close every partition unused for at least `idleMillis`. Returns the ids closed. */
-  readonly sweepIdle: (nowMs?: number) => Promise<readonly string[]>;
-  /** One delivery pass over every open partition. Failures are isolated per partition. */
+  readonly restart: (key: PartitionKey) => Promise<boolean>;
+  /**
+   * Hold one partition open for a host-level pass.
+   *
+   * A leased partition is neither evictable nor sweepable. The lease must be
+   * released; the exchange does so in a `finally`. The public handle carries no
+   * way to run in the partition — that capability belongs to the exchange, which
+   * takes its leases through its own typed session.
+   */
+  readonly lease: (key: PartitionKey) => HostLease | HostFailure;
+  /** Close every unleased partition unused for at least `idleMillis`. */
+  readonly sweepIdle: (nowMs?: number) => Promise<readonly PartitionKey[]>;
+  /** One delivery pass over every open workspace partition. Failures are isolated. */
   readonly drainDue: () => Promise<readonly DeliveryPassReport[]>;
+  /** One exchange pass over every open source partition. Failures are isolated. */
+  readonly exchange: () => Promise<readonly ExchangePassReport[]>;
   readonly metrics: () => HostMetrics;
   readonly close: () => Promise<void>;
 }
@@ -233,9 +369,10 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   const idleMillis = options.partitions?.idleMillis ?? DEFAULT_IDLE_MILLIS;
   const deployment = options.deployment ?? "local";
   const deliveryMode = options.delivery?.mode ?? "manual";
+  const exchangeMode = options.exchange?.mode ?? "manual";
 
-  const partitions = new Map<string, Partition>();
-  /** Survives a close, so `opens` still counts a workspace that was restarted. */
+  const partitions = new Map<string, DomainPartition>();
+  /** Survives a close, so `opens` still counts a key that was restarted. */
   const openCounts = new Map<string, number>();
   const totals = {
     opened: 0,
@@ -246,6 +383,13 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     requests: 0,
     hostRequests: 0,
   };
+  const exchangeCounters: ExchangeCounters = {
+    passes: 0,
+    scanned: 0,
+    applied: 0,
+    failures: 0,
+    lastError: null,
+  };
   const failures = new Map<string, number>();
   let closing: Promise<void> | undefined;
 
@@ -254,35 +398,88 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     return failure;
   };
 
-  function open(workspaceId: string): Partition | HostFailure {
-    const existing = partitions.get(workspaceId);
+  function open(key: PartitionKey): DomainPartition | HostFailure {
+    const id = partitionKeyString(key);
+    const existing = partitions.get(id);
     if (existing !== undefined && existing.closing === undefined) return existing;
-    if (closing !== undefined) return countFailure(new HostClosed({ pathname: workspaceId }));
+    if (closing !== undefined) return countFailure(new HostClosed({ pathname: id }));
     if (partitions.size >= maxOpen && !evictOne()) {
-      return countFailure(new PartitionLimitReached({ workspaceId, maxOpen }));
+      return countFailure(new PartitionLimitReached({ partition: id, maxOpen }));
     }
     try {
-      const opens = (openCounts.get(workspaceId) ?? 0) + 1;
-      openCounts.set(workspaceId, opens);
-      const created = build(workspaceId, opens);
-      partitions.set(workspaceId, created);
+      const opens = (openCounts.get(id) ?? 0) + 1;
+      openCounts.set(id, opens);
+      const created = build(key, opens);
+      partitions.set(id, created);
       totals.opened += 1;
       return created;
     } catch (cause) {
       return countFailure(
         new PartitionUnavailable({
-          workspaceId,
+          partition: id,
           detail: cause instanceof Error ? cause.message : String(cause),
         }),
       );
     }
   }
 
-  function build(workspaceId: string, opens: number): Partition {
+  /** One partition, built for the domain its key names. */
+  function build(key: PartitionKey, opens: number): DomainPartition {
     const directory =
       options.databaseDirectory === undefined
         ? undefined
-        : partitionDirectory(options.databaseDirectory, workspaceId);
+        : partitionDirectory(options.databaseDirectory, key);
+    const common = {
+      key,
+      openedAtMs: now(),
+      opens,
+      requests: 0,
+      inFlight: 0,
+      leases: 0,
+      lastRequestAtMs: now(),
+      draining: false,
+      delivery: {
+        passes: 0,
+        claimed: 0,
+        delivered: 0,
+        retried: 0,
+        deadLettered: 0,
+        failures: 0,
+        lastError: null,
+      },
+      closing: undefined,
+    };
+
+    if (key.kind === "user") {
+      const runtime = ManagedRuntimeModule.make(
+        options.inbox?.(key.id) ??
+          userLayer(directory === undefined ? {} : { filename: join(directory, "inbox.sqlite") }),
+      );
+      return {
+        ...common,
+        kind: "user",
+        userId: key.id,
+        runtime,
+        dispose: () => runtime.dispose(),
+      };
+    }
+
+    if (key.kind === "global") {
+      const runtime = ManagedRuntimeModule.make(
+        options.exchangeStore?.() ??
+          globalLayer(
+            directory === undefined ? {} : { filename: join(directory, "exchange.sqlite") },
+          ),
+      );
+      return {
+        ...common,
+        kind: "global",
+        runtime,
+        dispose: () => runtime.dispose(),
+      };
+    }
+
+    const workspaceId = key.id;
     const adapter =
       options.adapter?.(workspaceId) ??
       (directory === undefined
@@ -309,42 +506,33 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
         notifications: options.notifications,
       }),
     );
-    const openedAtMs = now();
     return {
+      ...common,
+      kind: "workspace",
       workspaceId,
       adapter,
       client,
       gateway,
       runtime,
-      openedAtMs,
-      opens,
-      requests: 0,
-      inFlight: 0,
-      lastRequestAtMs: openedAtMs,
-      draining: false,
-      delivery: {
-        passes: 0,
-        claimed: 0,
-        delivered: 0,
-        retried: 0,
-        deadLettered: 0,
-        failures: 0,
-        lastError: null,
+      // Disposal order matters: the runtime's finalizers close the store's
+      // connection, and only then is the protocol client released.
+      dispose: async () => {
+        await runtime.dispose();
+        await client.close();
       },
-      closing: undefined,
     };
   }
 
   /**
    * Give up the least recently used partition that nothing is currently using.
    *
-   * A partition with requests in flight is never evicted: its runtime is what
-   * those requests are running in.
+   * A partition with requests in flight or leases held is never evicted: its
+   * runtime is what those requests, or that exchange pass, are running in.
    */
   function evictOne(): boolean {
-    let victim: Partition | undefined;
+    let victim: DomainPartition | undefined;
     for (const partition of partitions.values()) {
-      if (partition.inFlight > 0 || partition.closing !== undefined) continue;
+      if (!reclaimable(partition)) continue;
       if (victim === undefined || partition.lastRequestAtMs < victim.lastRequestAtMs) {
         victim = partition;
       }
@@ -355,22 +543,21 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     return true;
   }
 
+  const reclaimable = (partition: DomainPartition): boolean =>
+    partition.inFlight === 0 && partition.leases === 0 && partition.closing === undefined;
+
   /**
    * Dispose one partition, exactly once.
    *
    * The map entry is dropped first, so a request arriving mid-shutdown opens a
-   * fresh partition rather than joining a dying one. Disposal order matters:
-   * the runtime's finalizers close the store's connection, and only then is the
-   * protocol client released.
+   * fresh partition rather than joining a dying one.
    */
-  function closePartition(partition: Partition): Promise<void> {
+  function closePartition(partition: DomainPartition): Promise<void> {
     if (partition.closing !== undefined) return partition.closing;
-    if (partitions.get(partition.workspaceId) === partition) {
-      partitions.delete(partition.workspaceId);
-    }
+    const id = partitionKeyString(partition.key);
+    if (partitions.get(id) === partition) partitions.delete(id);
     const closed = (async () => {
-      await partition.runtime.dispose();
-      await partition.client.close();
+      await partition.dispose();
       totals.closed += 1;
     })();
     partition.closing = closed;
@@ -396,7 +583,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     }
     if (resolution.kind === "failure") return hostFailureResponse(countFailure(resolution.failure));
 
-    const partition = open(resolution.workspaceId);
+    const partition = open(resolution.key);
     if (!isPartition(partition)) return hostFailureResponse(partition);
 
     totals.requests += 1;
@@ -404,6 +591,12 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     partition.lastRequestAtMs = now();
     partition.inFlight += 1;
     try {
+      if (partition.kind === "user") {
+        return await partition.runtime.runPromise(handleUserRequest(request));
+      }
+      if (partition.kind === "global") {
+        return await partition.runtime.runPromise(handleGlobalRequest(request));
+      }
       return resolution.target === "streams"
         ? await partition.gateway.fetch(request)
         : await partition.runtime.runPromise(handle(request));
@@ -413,7 +606,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   }
 
   /**
-   * One delivery pass per open partition.
+   * One delivery pass per open workspace partition.
    *
    * Every pass is caught. A notifier that is down, a poisoned payload, even a
    * defect in a handler, is recorded against its own partition and reported;
@@ -424,6 +617,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   async function drainDue(): Promise<readonly DeliveryPassReport[]> {
     const reports: DeliveryPassReport[] = [];
     for (const partition of Array.from(partitions.values())) {
+      if (partition.kind !== "workspace") continue;
       if (partition.closing !== undefined || partition.draining) continue;
       partition.draining = true;
       try {
@@ -464,25 +658,90 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     return reports;
   }
 
-  /** Close every partition that has gone unused for the whole idle window. */
-  async function sweepIdle(nowMs = now()): Promise<readonly string[]> {
-    const stale = Array.from(partitions.values()).filter(
-      (partition) =>
-        partition.inFlight === 0 &&
-        partition.closing === undefined &&
-        nowMs - partition.lastRequestAtMs >= idleMillis,
-    );
-    totals.idled += stale.length;
-    await Promise.all(stale.map(closePartition));
-    return stale.map((partition) => partition.workspaceId);
+  /**
+   * Take a lease on one partition.
+   *
+   * The lease increments a counter the reclamation policy reads, and the
+   * returned handle is the only way to run in that partition. `release` is
+   * idempotent, so a caller releasing twice cannot un-pin a partition somebody
+   * else is using.
+   */
+  function takeLease<R>(key: PartitionKey): PartitionLease<R> | HostFailure {
+    const partition = open(key);
+    if (!isPartition(partition)) return partition;
+    partition.leases += 1;
+    partition.lastRequestAtMs = now();
+    let released = false;
+    // SAFETY: `key.kind` chose which runtime `build` made, and the typed
+    // accessors below pass the matching `R` for that kind. This one erasure is
+    // what lets a single lease implementation serve three differently-shaped
+    // runtimes without three copies of the counter and the release guard.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
+    const runtime = partition.runtime as ManagedRuntime.ManagedRuntime<R, never>;
+    return {
+      key,
+      runPromise: (effect) => runtime.runPromise(effect),
+      release: () => {
+        if (released) return;
+        released = true;
+        partition.leases -= 1;
+      },
+    };
   }
 
   /**
-   * The managed tick a *running* host uses: deliver what is due, then give up
-   * what has gone idle. Both halves are the same calls a manual caller makes,
-   * so the timer adds scheduling and nothing else — which is why every
-   * lifecycle assertion in the tests can drive them directly instead of waiting.
-   * A tick never overlaps its predecessor.
+   * The exchange's view of this host.
+   *
+   * Sources are the workspace partitions currently open. A workspace that has
+   * been idled out is not exchanged until something opens it again, which is
+   * the same laziness every other partition operation has: the host does not
+   * reopen storage on a timer to look for work.
+   */
+  const session: ExchangeSession = {
+    openSources: () =>
+      [...partitions.values()]
+        .filter((partition) => partition.kind === "workspace" && partition.closing === undefined)
+        .map((partition) => partition.key),
+    leaseWorkspace: (workspaceId) =>
+      takeLease<ApplicationServices | StreamGateway>(workspaceKey(workspaceId)),
+    leaseUser: (userId) => takeLease<UserServices>(userKey(userId)),
+    leaseGlobal: () => takeLease<GlobalServices>(globalKey()),
+  };
+
+  /** One exchange pass over every open source. Reports are counted, never thrown. */
+  async function exchange(): Promise<readonly ExchangePassReport[]> {
+    if (closing !== undefined) return [];
+    const limit = options.exchange?.limit;
+    const reports = await runExchange(session, limit === undefined ? {} : { limit });
+    for (const report of reports) {
+      exchangeCounters.passes += 1;
+      exchangeCounters.scanned += report.scanned;
+      exchangeCounters.applied += report.applied;
+      if (report.failed) {
+        exchangeCounters.failures += 1;
+        exchangeCounters.lastError = (report.detail ?? "exchange pass failed").slice(0, 500);
+      }
+    }
+    return reports;
+  }
+
+  /** Close every partition that has gone unused for the whole idle window. */
+  async function sweepIdle(nowMs = now()): Promise<readonly PartitionKey[]> {
+    const stale = Array.from(partitions.values()).filter(
+      (partition) => reclaimable(partition) && nowMs - partition.lastRequestAtMs >= idleMillis,
+    );
+    totals.idled += stale.length;
+    await Promise.all(stale.map(closePartition));
+    return stale.map((partition) => partition.key);
+  }
+
+  /**
+   * The managed tick a *running* host uses: deliver what is due, move what the
+   * exchange owes, then give up what has gone idle. Every half is the same
+   * call a manual caller makes, so the timer adds scheduling and nothing else —
+   * which is why every lifecycle assertion in the tests can drive them directly
+   * instead of waiting. A tick never overlaps its predecessor, and the sweep
+   * runs last so the exchange's leases are already released.
    */
   let ticking = false;
   const tick = async (): Promise<void> => {
@@ -490,6 +749,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     ticking = true;
     try {
       await drainDue();
+      if (exchangeMode === "interval") await exchange();
       await sweepIdle();
     } finally {
       ticking = false;
@@ -497,7 +757,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   };
 
   const timer =
-    deliveryMode === "interval"
+    deliveryMode === "interval" || exchangeMode === "interval"
       ? setInterval(() => {
           void tick();
         }, options.delivery?.intervalMs ?? DEFAULT_INTERVAL_MS)
@@ -515,18 +775,24 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     };
   }
 
+  function partitionMetrics(partition: DomainPartition): PartitionMetrics {
+    const base = {
+      kind: partition.key.kind,
+      id: partition.key.id,
+      opens: partition.opens,
+      requests: partition.requests,
+      inFlight: partition.inFlight,
+      leases: partition.leases,
+      openedAtMs: partition.openedAtMs,
+      lastRequestAtMs: partition.lastRequestAtMs,
+      delivery: { ...partition.delivery },
+    };
+    return partition.kind === "workspace" ? { ...base, workspaceId: partition.workspaceId } : base;
+  }
+
   function metricsBody(): HostMetrics {
-    const workspaces = [...partitions.values()].map(
-      (partition): PartitionMetrics => ({
-        workspaceId: partition.workspaceId,
-        opens: partition.opens,
-        requests: partition.requests,
-        inFlight: partition.inFlight,
-        openedAtMs: partition.openedAtMs,
-        lastRequestAtMs: partition.lastRequestAtMs,
-        delivery: { ...partition.delivery },
-      }),
-    );
+    const all = [...partitions.values()].map(partitionMetrics);
+    const workspaces = all.filter((entry) => entry.kind === "workspace");
     return {
       deployment,
       planHash: PLAN_HASH,
@@ -550,23 +816,41 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
         }),
         { passes: 0, claimed: 0, delivered: 0, retried: 0, deadLettered: 0, failures: 0 },
       ),
+      exchange: { ...exchangeCounters },
+      partitions: all,
       workspaces,
     };
   }
 
+  // SAFETY: `build` chooses a partition's shape from `key.kind`, so `open`
+  // already returns the domain's own partition for the key it was given. The
+  // assertion re-states that in the type system as the overload set, which one
+  // implementation cannot express directly.
+  // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
+  const partition = ((key: PartitionKey) => open(key)) as WorkspaceHost["partition"];
+
   return {
     fetch,
-    partition: open,
-    openWorkspaces: () => [...partitions.keys()],
-    restart: async (workspaceId: string) => {
-      const partition = partitions.get(workspaceId);
-      if (partition === undefined) return false;
+    partition,
+    openWorkspaces: () =>
+      [...partitions.values()]
+        .filter((entry) => entry.kind === "workspace")
+        .map((entry) => entry.key.id),
+    openPartitions: () => [...partitions.values()].map((entry) => entry.key),
+    restart: async (key: PartitionKey) => {
+      const found = partitions.get(partitionKeyString(key));
+      if (found === undefined) return false;
       totals.restarted += 1;
-      await closePartition(partition);
+      await closePartition(found);
       return true;
+    },
+    lease: (key: PartitionKey) => {
+      const taken = takeLease<never>(key);
+      return "_tag" in taken ? taken : { key: taken.key, release: taken.release };
     },
     sweepIdle,
     drainDue,
+    exchange,
     metrics: metricsBody,
     close: () => {
       if (closing !== undefined) return closing;
@@ -581,17 +865,18 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
  * Where one partition's databases live.
  *
  * The id is already checked against the domain's identifier pattern before it
- * reaches here, which admits no separator and no traversal, so the workspace is
- * a single directory name by construction rather than by escaping. The rule is
- * exported because a partition's on-disk layout is what a restart test and an
- * operator both need to name, and neither should have to guess it.
+ * reaches here, which admits no separator and no traversal, so the partition is
+ * two directory names by construction rather than by escaping. A workspace key
+ * still names `workspaces/<id>`, so a B3 data directory is read back unchanged.
+ * The rule is exported because a partition's on-disk layout is what a restart
+ * test and an operator both need to name, and neither should have to guess it.
  */
-export function partitionPath(root: string, workspaceId: string): string {
-  return join(root, "workspaces", workspaceId);
+export function partitionPath(root: string, key: PartitionKey): string {
+  return join(root, ...partitionSegments(key));
 }
 
-function partitionDirectory(root: string, workspaceId: string): string {
-  const directory = partitionPath(root, workspaceId);
+function partitionDirectory(root: string, key: PartitionKey): string {
+  const directory = partitionPath(root, key);
   mkdirSync(directory, { recursive: true });
   return directory;
 }
@@ -608,7 +893,7 @@ function describeFailure(cause: unknown): string {
   return String(cause);
 }
 
-function isPartition(value: Partition | HostFailure): value is Partition {
+function isPartition(value: DomainPartition | HostFailure): value is DomainPartition {
   return !("_tag" in value);
 }
 
