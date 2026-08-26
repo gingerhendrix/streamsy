@@ -77,7 +77,9 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
    * The transition feed is written from the same changes, in the same order.
    * It is a separate durable append from the row commit above, so a crash
    * between them keeps the rows and loses that batch's transitions; the rows
-   * are the authority, and making the pair atomic is outbox work.
+   * are the authority. The Effect sink's outbox is not reused here — it carries
+   * external effects, not a replayable log — so this stays a known Integration 2
+   * gap rather than a forced merge of two delivery contracts.
    */
   yield* publishTransitions(workspaceId, changes);
 

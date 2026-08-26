@@ -64,6 +64,47 @@ const moved = (issueId: string, sequence: number, status: string, occurredAt: st
 });
 
 describe("the issue-transitions stream sink", () => {
+  /**
+   * Wave B-i cross-track contract.
+   *
+   * The feed publishes changes to `issue-tracker.issues`, not status
+   * transitions. B2's assignment fact changes the row without changing its
+   * status, so it reaches the feed as an `update` whose `previousStatus` equals
+   * its `status`. That is the honest signal for a row-change feed: nothing is
+   * dropped, and a consumer that wants only status moves filters on
+   * `previousStatus !== status`, which this test also pins.
+   *
+   * The transition deliberately does not carry the assignee. Naming *what*
+   * changed is an enrichment of the wire contract, and it is recorded for the
+   * Integration 2 review rather than taken here.
+   */
+  test("an assignment reaches the feed as a row change that moved no status", async () => {
+    const instance = fresh();
+    await call(
+      instance,
+      "POST",
+      "/api/workspaces/main/issues",
+      createIssueBody("c-1", "issue-1", "First", "todo"),
+    );
+    await call(instance, "POST", "/api/workspaces/main/issues/issue-1/assignee", {
+      commandId: "c-2",
+      assigneeId: "ada",
+    });
+
+    const body = await json(await feed(instance), TransitionFeedResponse);
+    const events = body.events.filter((event) => event.issueId === "issue-1");
+    expect(events.map((event) => event.change)).toEqual(["enter", "update"]);
+
+    const assignment = events[1];
+    expect(assignment?.status).toBe("todo");
+    expect(assignment?.previousStatus).toBe("todo");
+
+    // The status-move projection a consumer builds from the same feed.
+    expect(
+      events.filter((event) => event.change === "update" && event.previousStatus !== event.status),
+    ).toEqual([]);
+  });
+
   test("publishes one transition per maintained change, in command order", async () => {
     const instance = fresh();
     await call(

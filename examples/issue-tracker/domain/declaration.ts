@@ -39,6 +39,13 @@ import { labels, projects, users, workspaceMetadata } from "./catalog.ts";
 
 export { labels, projects, users, workspaceMetadata };
 
+/**
+ * The one effect sink is declared beside its payload schema in
+ * `notifications.ts`, and re-exported so this module stays the whole
+ * declaration surface.
+ */
+export { assignmentNotifications } from "./notifications.ts";
+
 /** Selectors over one canonical fact, the fold state, and the maintained row. */
 const x = selectors<IssueEventType, IssueEventType, IssueRowType>();
 
@@ -68,6 +75,10 @@ export const issueLifecycle = reducer(
       }),
       IssueStatusChanged: (e) => ({
         status: e.event.status,
+        updatedAt: e.event.occurredAt,
+      }),
+      IssueAssigned: (e) => ({
+        assigneeId: e.event.assigneeId,
         updatedAt: e.event.occurredAt,
       }),
     },

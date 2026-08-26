@@ -17,11 +17,17 @@ import {
   ReadStreams,
   ReadStreamsLive,
 } from "@streamsy/experimental/effect";
+import { OutboxStore, type OutboxDraft } from "@streamsy/effect-sink";
 import { Clock, Effect, Layer } from "effect";
-import type { CreateIssueRequest, ChangeStatusRequest } from "../shared/api.ts";
+import type { AssignIssueRequest, CreateIssueRequest, ChangeStatusRequest } from "../shared/api.ts";
 import type { CatalogUpsertRequest } from "../shared/api.ts";
 import { catalog, decodeCatalogRow, type CatalogCollection } from "../domain/catalog.ts";
-import { boardIssues, issues, streamNames } from "../domain/declaration.ts";
+import {
+  assignmentNotifications,
+  boardIssues,
+  issues,
+  streamNames,
+} from "../domain/declaration.ts";
 import type { IssueEvent, IssueRow, IssueStatus } from "../domain/issue.ts";
 import { AppConfig } from "./config.ts";
 import {
@@ -40,6 +46,7 @@ import {
 } from "./errors.ts";
 import { scanCanonicalIssueSource, type CanonicalIssueSource } from "./command-reconciliation.ts";
 import { advance, type MaintenanceReport } from "./maintenance.ts";
+import { assignmentDrafts, drainAssignments, NotificationTarget } from "./notifications.ts";
 import { IssueSink } from "./sink.ts";
 import { IssueStore, type CommandReceipt } from "./store.ts";
 import { ensureWorkspace, Streams } from "./streams.ts";
@@ -56,6 +63,8 @@ export type ApplicationServices =
   | CommandProducers
   | IssueSink
   | IssueStore
+  | NotificationTarget
+  | OutboxStore
   | ReadStreams
   | StateSourceProtocol
   | Streams;
@@ -155,6 +164,77 @@ export const changeStatus = Effect.fn("Application.changeStatus")(function* (
       status: request.status,
     }),
   );
+});
+
+/**
+ * Put one issue on an assignee: `IssueAssigned`.
+ *
+ * The maintained row is read before the fact is appended, for two reasons that
+ * are both about honesty. Assigning an issue that does not exist is a 404, not
+ * a durable fact. And the notification the effect sink will deliver carries the
+ * issue's title and status, which live on the row rather than on the event, so
+ * they are read from the same row the fact is about.
+ */
+export const assignIssue = Effect.fn("Application.assignIssue")(function* (
+  workspaceId: string,
+  issueId: string,
+  request: AssignIssueRequest,
+) {
+  const store = yield* IssueStore;
+  yield* ensureWorkspace(workspaceId);
+  yield* advance(workspaceId);
+  const current = (yield* store.rows(workspaceId)).find((row) => row.issueId === issueId);
+  if (current === undefined) return yield* new UnknownIssue({ issueId });
+
+  const enqueuedAtMs = yield* Clock.currentTimeMillis;
+  return yield* command(
+    {
+      workspaceId,
+      commandId: request.commandId,
+      commandKind: "assign-issue",
+      targetId: issueId,
+      payload: { assigneeId: request.assigneeId, status: current.status },
+    },
+    (sequence, occurredAt) => ({
+      type: "IssueAssigned",
+      eventId: request.commandId,
+      workspaceId,
+      issueId,
+      sequence,
+      occurredAt,
+      status: current.status,
+      assigneeId: request.assigneeId,
+    }),
+    (event) => assignmentDrafts(event, current, enqueuedAtMs),
+  );
+});
+
+/** The durable delivery state of one workspace's assignment notifications. */
+export const listNotifications = Effect.fn("Application.listNotifications")(function* (
+  workspaceId: string,
+) {
+  const outbox = yield* OutboxStore;
+  const target = yield* NotificationTarget;
+  const entries = yield* outbox.list(assignmentNotifications.name, workspaceId);
+  return {
+    sink: assignmentNotifications.name,
+    contractFingerprint: assignmentNotifications.fingerprint,
+    entries,
+    notified: yield* target.accepted(workspaceId),
+  };
+});
+
+/**
+ * Attempt every due delivery in one workspace's lane.
+ *
+ * Delivery is deliberately not part of the command path. A notifier that is
+ * down must not fail a command, delay a maintenance pass, or hold up the
+ * board's publication, so draining is its own operation with its own report.
+ */
+export const drainNotifications = Effect.fn("Application.drainNotifications")(function* (
+  workspaceId: string,
+) {
+  return yield* drainAssignments(workspaceId);
 });
 
 /** The maintained rows, read from durable state and decoded through the view's schema. */
@@ -269,6 +349,16 @@ export const sinkSession = Effect.fn("Application.sinkSession")(function* (works
 const command = Effect.fn("Application.command")(function* (
   intent: CommandIntent,
   build: (sequence: number, occurredAt: string) => IssueEvent,
+  /**
+   * The effect-sink deliveries this command's fact implies.
+   *
+   * They are written with the receipt, in one durable step, so an accepted
+   * command and the effects it owes are decided together. Every recovery path
+   * below re-derives them from the *durable* fact, so a receipt recovered from
+   * the canonical source still enqueues exactly what the original append would
+   * have — and the outbox absorbs the repeat if it already did.
+   */
+  deliveries: (event: IssueEvent) => readonly OutboxDraft[] = () => [],
 ) {
   const store = yield* IssueStore;
   const streams = yield* Streams;
@@ -298,9 +388,9 @@ const command = Effect.fn("Application.command")(function* (
     const source = yield* scanCanonicalIssueSource(workspaceId, commandId);
     const recovered = yield* receiptFromSource(intent, requestHash, source);
     if (recovered !== undefined) {
-      yield* store.recordReceipt(recovered);
+      yield* store.recordReceipt(recovered.receipt, deliveries(recovered.event));
       const maintenance = yield* advance(workspaceId);
-      return yield* result(recovered, true, maintenance);
+      return yield* result(recovered.receipt, true, maintenance);
     }
 
     const event = build(source.maxSequence + 1, occurredAt);
@@ -309,31 +399,31 @@ const command = Effect.fn("Application.command")(function* (
       Effect.catchTag("StreamAppendError", (error) =>
         Effect.gen(function* () {
           const afterFailure = yield* scanCanonicalIssueSource(workspaceId, commandId);
-          const receipt = yield* receiptFromSource(intent, requestHash, afterFailure);
-          if (receipt === undefined) return yield* error;
-          return { kind: "receipt" as const, receipt };
+          const recoveredAfterFailure = yield* receiptFromSource(intent, requestHash, afterFailure);
+          if (recoveredAfterFailure === undefined) return yield* error;
+          return { kind: "receipt" as const, recovered: recoveredAfterFailure };
         }),
       ),
     );
     if (decision.kind === "receipt") {
-      yield* store.recordReceipt(decision.receipt);
+      yield* store.recordReceipt(decision.recovered.receipt, deliveries(decision.recovered.event));
       const maintenance = yield* advance(workspaceId);
-      return yield* result(decision.receipt, true, maintenance);
+      return yield* result(decision.recovered.receipt, true, maintenance);
     }
     if (decision.append.status === "contention") continue;
     if (decision.append.status === "reconciled") {
       const afterDuplicate = yield* scanCanonicalIssueSource(workspaceId, commandId);
-      const receipt = yield* receiptFromSource(intent, requestHash, afterDuplicate);
-      if (receipt === undefined) {
+      const duplicate = yield* receiptFromSource(intent, requestHash, afterDuplicate);
+      if (duplicate === undefined) {
         return yield* new AppendRejected({ stream: binding.streamId, status: "duplicate-missing" });
       }
-      yield* store.recordReceipt(receipt);
+      yield* store.recordReceipt(duplicate.receipt, deliveries(duplicate.event));
       const maintenance = yield* advance(workspaceId);
-      return yield* result(receipt, true, maintenance);
+      return yield* result(duplicate.receipt, true, maintenance);
     }
 
     const receipt = receiptFor(intent, requestHash, event, decision.append.offset);
-    yield* store.recordReceipt(receipt);
+    yield* store.recordReceipt(receipt, deliveries(event));
     const maintenance = yield* advance(workspaceId);
     return yield* result(receipt, false, maintenance);
   }
@@ -363,6 +453,12 @@ const result = Effect.fn("Application.commandResult")(function* (
   } satisfies CommandResult;
 });
 
+/** A receipt recovered from the durable source, together with the fact that proves it. */
+interface RecoveredCommand {
+  readonly receipt: CommandReceipt;
+  readonly event: IssueEvent;
+}
+
 const receiptFromSource = Effect.fn("Application.receiptFromSource")(function* (
   intent: CommandIntent,
   requestHash: string,
@@ -376,7 +472,10 @@ const receiptFromSource = Effect.fn("Application.receiptFromSource")(function* (
       commandId: intent.commandId,
     });
   }
-  return receiptFor(intent, requestHash, source.match.event, source.match.offset);
+  return {
+    receipt: receiptFor(intent, requestHash, source.match.event, source.match.offset),
+    event: source.match.event,
+  } satisfies RecoveredCommand;
 });
 
 function receiptFor(

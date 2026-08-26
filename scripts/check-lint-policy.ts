@@ -17,7 +17,9 @@ const repoRoot = join(import.meta.dirname, "..");
 
 const effectAreas = [
   "packages/experimental",
+  "packages/sinks",
   "packages/state-sink",
+  "packages/effect-sink",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
   "examples/issue-tracker",

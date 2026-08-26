@@ -171,6 +171,51 @@ try {
     concurrentBodies,
   );
 
+  // === the effect sink: one assignment, one delivery, across a restart ===
+  const assigned = (await (
+    await post(running.origin, "/api/workspaces/main/issues/smoke-issue/assignee", {
+      commandId: "smoke-assign",
+      assigneeId: "ada",
+    })
+  ).json()) as { row: { assigneeId?: string } | null };
+  check("an assignment maintains the row", assigned.row?.assigneeId === "ada", assigned);
+
+  const queued = (await (
+    await fetch(`${running.origin}/api/workspaces/main/notifications`)
+  ).json()) as { pending: number; delivered: number; outbox: { idempotencyKey: string }[] };
+  check(
+    "the accepted command enqueued exactly one durable delivery",
+    queued.pending === 1 && queued.delivered === 0 && queued.outbox.length === 1,
+    queued,
+  );
+
+  const retriedAssign = await post(
+    running.origin,
+    "/api/workspaces/main/issues/smoke-issue/assignee",
+    { commandId: "smoke-assign", assigneeId: "ada" },
+  );
+  const afterRetriedAssign = (await (
+    await fetch(`${running.origin}/api/workspaces/main/notifications`)
+  ).json()) as { outbox: unknown[] };
+  check(
+    "a retried assignment adds no second delivery",
+    retriedAssign.status === 200 && afterRetriedAssign.outbox.length === 1,
+    afterRetriedAssign,
+  );
+
+  const drained = (await (
+    await post(running.origin, "/api/workspaces/main/notifications/drain", {})
+  ).json()) as { claimed: number; delivered: number; deadLettered: number };
+  check(
+    "draining the lane performs the delivery once",
+    drained.claimed === 1 && drained.delivered === 1 && drained.deadLettered === 0,
+    drained,
+  );
+  const redrained = (await (
+    await post(running.origin, "/api/workspaces/main/notifications/drain", {})
+  ).json()) as { claimed: number };
+  check("a delivered effect is never repeated", redrained.claimed === 0, redrained);
+
   // === offset-based sink resume ===
   const session = (await (
     await fetch(`${running.origin}/api/workspaces/main/sink-session`)
@@ -266,11 +311,12 @@ try {
 
   const afterRestart = (await (
     await fetch(`${running.origin}/api/workspaces/main/issues`)
-  ).json()) as { rows: { issueId: string; status: string }[] };
+  ).json()) as { rows: { issueId: string; status: string; assigneeId?: string }[] };
   check(
     "a restart preserves the maintained rows",
     afterRestart.rows.length === 8 &&
-      afterRestart.rows.find((row) => row.issueId === "smoke-issue")?.status === "done",
+      afterRestart.rows.find((row) => row.issueId === "smoke-issue")?.status === "done" &&
+      afterRestart.rows.find((row) => row.issueId === "smoke-issue")?.assigneeId === "ada",
     afterRestart.rows.map((row) => row.issueId),
   );
 
@@ -280,6 +326,23 @@ try {
     ack: { offset: string };
     maintenance: { folded: number };
   };
+  const notificationsAfterRestart = (await (
+    await fetch(`${running.origin}/api/workspaces/main/notifications`)
+  ).json()) as { pending: number; delivered: number; notified: { assigneeId: string }[] };
+  check(
+    "the outbox survives the restart with its settled state intact",
+    notificationsAfterRestart.pending === 0 && notificationsAfterRestart.delivered === 1,
+    notificationsAfterRestart,
+  );
+  const redrainedAfterRestart = (await (
+    await post(running.origin, "/api/workspaces/main/notifications/drain", {})
+  ).json()) as { claimed: number };
+  check(
+    "a restarted host re-delivers nothing that was already delivered",
+    redrainedAfterRestart.claimed === 0,
+    redrainedAfterRestart,
+  );
+
   check(
     "the receipt survives the restart, so a retry still reconciles",
     afterRestartBody.reconciled &&

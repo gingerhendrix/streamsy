@@ -58,6 +58,7 @@
         "@durable-streams/client": "^0.2.6",
         "@durable-streams/state": "^0.3.1",
         "@streamsy/core": "workspace:*",
+        "@streamsy/effect-sink": "workspace:*",
         "@streamsy/experimental": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/sinks": "workspace:*",
@@ -206,6 +207,17 @@
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
+      },
+    },
+    "packages/effect-sink": {
+      "name": "@streamsy/effect-sink",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "4.0.0-rc.109",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
       },
     },
     "packages/experimental": {
@@ -988,6 +1000,8 @@
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
+
+    "@streamsy/effect-sink": ["@streamsy/effect-sink@workspace:packages/effect-sink"],
 
     "@streamsy/experimental": ["@streamsy/experimental@workspace:packages/experimental"],
 

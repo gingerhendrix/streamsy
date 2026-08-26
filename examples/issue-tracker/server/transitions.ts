@@ -11,8 +11,17 @@
  *
  * Publication is a separate durable append from the row commit that produced
  * it. A process that dies between the two loses the transitions of that one
- * batch while keeping its rows, because the rows are the authority. Making the
- * two atomic is outbox work, and the outbox belongs to the Effect sink track.
+ * batch while keeping its rows, because the rows are the authority.
+ *
+ * The Effect sink's outbox is deliberately *not* used to close that gap, even
+ * though both tracks now live in one tree. The outbox delivers external effects
+ * at least once, keyed and retried, with a dead-letter terminus; this feed is a
+ * replayable log whose contract is arrival order and native-offset resume. A
+ * dead-lettered transition would be an undetectable hole in that log, which is
+ * worse than losing a whole batch. The outbox also enqueues from the command
+ * receipt, so it could not carry facts appended straight to the durable source
+ * — which the feed's own ordering test does. Closing this atomically is
+ * Integration 2 work; see `verification-wave-bi-integration.md`.
  */
 import { defaultOffsetGenerator, type JsonValue, type ReadStreamOptions } from "@streamsy/core";
 import { AppendStreams, ReadStreams } from "@streamsy/experimental/effect";

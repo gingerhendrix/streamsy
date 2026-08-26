@@ -23,14 +23,16 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
+import type { OutboxStore } from "@streamsy/effect-sink";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import { Layer, ManagedRuntime } from "effect";
 import * as AppConfigModule from "./config.ts";
 import type { AppConfigOverrides } from "./config.ts";
 import type { StreamGateway } from "./gateway.ts";
 import { handle } from "./router.ts";
-import { applicationLayer } from "./runtime.ts";
+import { applicationLayer, type ApplicationLayerOptions } from "./runtime.ts";
 import type { ApplicationServices } from "./application.ts";
+import type { NotificationTargetOptions } from "./notifications.ts";
 import { memoryLayer } from "./store.ts";
 import { sqliteLayer } from "./store-sqlite.ts";
 import type { IssueStore } from "./store.ts";
@@ -42,8 +44,10 @@ const assetDir = join(here, "..", "dist", "assets");
 export interface LocalHostOptions {
   /** Durable-stream storage. Defaults to memory, or SQLite under `databaseDirectory`. */
   readonly adapter?: StorageAdapter;
-  /** Maintained-state store. Defaults to memory, or SQLite under `databaseDirectory`. */
-  readonly store?: Layer.Layer<IssueStore>;
+  /** Maintained state and the effect-sink outbox. Defaults to memory, or SQLite under `databaseDirectory`. */
+  readonly store?: Layer.Layer<IssueStore | OutboxStore>;
+  /** Where assignment notifications land. Defaults to the in-process log. */
+  readonly notifications?: NotificationTargetOptions;
   /** Put both the durable log and the maintained state on disk in this directory. */
   readonly databaseDirectory?: string;
   readonly deployment?: string;
@@ -71,16 +75,17 @@ export function createLocalHost(options: LocalHostOptions = {}) {
 
   const configValues: AppConfigOverrides = { deployment: options.deployment ?? "local" };
 
+  const layerOptions: ApplicationLayerOptions = {
+    client: applicationClient,
+    protocol,
+    gateway,
+    store,
+    config: AppConfigModule.layer(configValues),
+    notifications: options.notifications,
+  };
+
   const runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never> =
-    ManagedRuntime.make(
-      applicationLayer({
-        client: applicationClient,
-        protocol,
-        gateway,
-        store,
-        config: AppConfigModule.layer(configValues),
-      }),
-    );
+    ManagedRuntime.make(applicationLayer(layerOptions));
 
   async function fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

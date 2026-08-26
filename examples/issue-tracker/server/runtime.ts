@@ -10,12 +10,14 @@
  * the plan, the engine, the sink and the router are identical.
  */
 import type { StreamProtocolClient, StreamProtocolFactory } from "@streamsy/core";
+import type { OutboxStore } from "@streamsy/effect-sink";
 import { Layer } from "effect";
 import { MeshLayer, type ApplicationServices } from "./application.ts";
 import * as Commands from "./commands.ts";
 import type { AppConfig } from "./config.ts";
 import * as GatewayModule from "./gateway.ts";
 import type { StreamGateway } from "./gateway.ts";
+import { notificationTargetLayer, type NotificationTargetOptions } from "./notifications.ts";
 import { sinkLayer } from "./sink.ts";
 import { stateSourceProtocolLayer } from "./state-ingestion.ts";
 import type { IssueStore } from "./store.ts";
@@ -29,8 +31,14 @@ export interface ApplicationLayerOptions {
   /** The Durable Streams HTTP handler the sink route borrows. */
   readonly gateway: { readonly fetch: (request: Request) => Promise<Response> };
   readonly config: Layer.Layer<AppConfig>;
-  /** Where maintained rows, reducer state, receipts and progress live. */
-  readonly store: Layer.Layer<IssueStore>;
+  /**
+   * Where maintained rows, reducer state, receipts, progress and the effect
+   * sink's outbox live. They come from one layer because an atomic
+   * receipt-and-enqueue needs them on one durable boundary.
+   */
+  readonly store: Layer.Layer<IssueStore | OutboxStore>;
+  /** Where assignment notifications are actually delivered. */
+  readonly notifications?: NotificationTargetOptions;
 }
 
 export const applicationLayer = (
@@ -44,5 +52,6 @@ export const applicationLayer = (
     GatewayModule.layer(options.gateway),
     sinkLayer(options.protocol),
     stateSourceProtocolLayer(options.protocol),
+    notificationTargetLayer(options.notifications),
     options.config,
   );
