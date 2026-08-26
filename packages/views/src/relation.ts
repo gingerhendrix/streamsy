@@ -343,6 +343,44 @@ export const view = <S extends Schema.Top, const Key extends KeyFieldsOf<SchemaT
   expression: RelationExpression<SchemaType<S>> | RelationBuilder<SchemaType<S>>,
 ): ViewDeclaration<S, Key> => makeView(name, spec, asRelation(expression), {});
 
+/** A relation that declares what identifies one of its rows. */
+export interface KeyedRelation<Key extends DeclaredKey = DeclaredKey> {
+  readonly name: string;
+  readonly key: Key;
+}
+
+/**
+ * The change stream of a keyed relation.
+ *
+ * A relation's rows and a relation's changes are two different published
+ * things. `changes(issues)` names the second one, so a declaration can publish
+ * transitions without publishing the relation, and a consumer of the feed can
+ * see which relation it is derived from.
+ *
+ * `order` is part of the declaration because it is the only ordering the engine
+ * can honestly promise: a fact fold observes Durable Stream arrival order, so a
+ * change stream is in arrival order and is never re-sorted by a domain field.
+ */
+export interface ChangeStreamDeclaration<Relation extends KeyedRelation = KeyedRelation> {
+  readonly kind: "change-stream";
+  readonly name: string;
+  readonly of: Relation;
+  /** The key of the relation whose changes this stream carries. */
+  readonly key: Relation["key"];
+  readonly order: "arrival";
+}
+
+export const changes = <const Relation extends KeyedRelation>(
+  relation: Relation,
+): ChangeStreamDeclaration<Relation> =>
+  deepFreeze({
+    kind: "change-stream",
+    name: `${relation.name}.changes`,
+    of: relation,
+    key: relation.key,
+    order: "arrival",
+  });
+
 export interface ParameterDeclaration<S extends Schema.Top> {
   readonly kind: "parameter";
   readonly name: string;

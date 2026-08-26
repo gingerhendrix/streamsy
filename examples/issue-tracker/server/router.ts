@@ -27,7 +27,14 @@ import {
 import { AppConfig } from "./config.ts";
 import { InvalidRequest, MalformedBody } from "./errors.ts";
 import type { StreamGateway } from "./gateway.ts";
-import { handleSinkRequest, matchBoardSink } from "./sink-http.ts";
+import {
+  handleSinkRequest,
+  handleTransitionFeedRequest,
+  handleWorkspaceSummaryRequest,
+  matchBoardSink,
+  matchSummarySink,
+  matchTransitionSink,
+} from "./sink-http.ts";
 
 const json = (body: JsonValue, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -109,10 +116,18 @@ const route = (request: Request) =>
 
     const sinkMatch = matchBoardSink(url.pathname);
     if (sinkMatch.kind !== "mismatch") {
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        return fail(405, "method-not-allowed");
-      }
+      if (!readMethod(request)) return fail(405, "method-not-allowed");
       return yield* handleSinkRequest(request);
+    }
+
+    if (matchTransitionSink(url.pathname).kind !== "mismatch") {
+      if (!readMethod(request)) return fail(405, "method-not-allowed");
+      return yield* handleTransitionFeedRequest(request);
+    }
+
+    if (matchSummarySink(url.pathname).kind !== "mismatch") {
+      if (!readMethod(request)) return fail(405, "method-not-allowed");
+      return yield* handleWorkspaceSummaryRequest(request);
     }
 
     const segments = apiSegments(url);
@@ -214,6 +229,11 @@ function commandBody(result: CommandResult): JsonValue {
     },
     row: result.row ?? null,
   };
+}
+
+/** Every checked sink route is read-only; writing goes through the command routes. */
+function readMethod(request: Request): boolean {
+  return request.method === "GET" || request.method === "HEAD";
 }
 
 function apiSegments(url: URL): readonly string[] | undefined {

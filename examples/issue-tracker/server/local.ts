@@ -88,7 +88,9 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     if (
       url.pathname === "/health" ||
       url.pathname.startsWith("/api/") ||
-      url.pathname.startsWith("/state/")
+      url.pathname.startsWith("/state/") ||
+      url.pathname.startsWith("/feed/") ||
+      url.pathname.startsWith("/document/")
     ) {
       return runtime.runPromise(handle(request));
     }

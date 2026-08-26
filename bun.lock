@@ -60,6 +60,7 @@
         "@streamsy/core": "workspace:*",
         "@streamsy/experimental": "workspace:*",
         "@streamsy/json": "workspace:*",
+        "@streamsy/sinks": "workspace:*",
         "@streamsy/state": "workspace:*",
         "@streamsy/state-sink": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
@@ -230,6 +231,18 @@
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
+      },
+    },
+    "packages/sinks": {
+      "name": "@streamsy/sinks",
+      "version": "0.1.0",
+      "dependencies": {
+        "@streamsy/state-sink": "workspace:*",
+        "effect": "4.0.0-rc.109",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
       },
     },
     "packages/state": {
@@ -979,6 +992,8 @@
     "@streamsy/experimental": ["@streamsy/experimental@workspace:packages/experimental"],
 
     "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
+
+    "@streamsy/sinks": ["@streamsy/sinks@workspace:packages/sinks"],
 
     "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
 

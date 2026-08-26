@@ -119,6 +119,54 @@ export const ProjectBoardCard = Schema.Struct({
 export type ProjectBoardCard = typeof ProjectBoardCard.Type;
 export const decodeProjectBoardCard = Schema.decodeUnknownSync(ProjectBoardCard);
 
+/**
+ * One published issue transition.
+ *
+ * A transition is a change to the maintained `issue-tracker.issues` relation,
+ * not a restatement of a canonical fact: `change` is the shape of that change
+ * and `occurredAt` is the `updatedAt` the fold produced. Because a fold observes
+ * Durable Stream arrival order, a feed of these is in arrival order too.
+ */
+export const IssueTransition = Schema.Struct({
+  workspaceId: Identifier,
+  issueId: Identifier,
+  change: Schema.Literals(["enter", "update", "exit"]),
+  status: IssueStatus,
+  /** The status the row held before this change. Absent on entry and exit. */
+  previousStatus: Schema.optionalKey(IssueStatus),
+  title: Title,
+  occurredAt: Timestamp,
+});
+export type IssueTransition = typeof IssueTransition.Type;
+export const decodeIssueTransition = Schema.decodeUnknownSync(IssueTransition);
+
+/** Issue totals per declared board column. Every column is present, including empty ones. */
+export const IssueStatusCounts = Schema.Struct({
+  backlog: Sequence,
+  todo: Sequence,
+  in_progress: Sequence,
+  done: Sequence,
+});
+export type IssueStatusCounts = typeof IssueStatusCounts.Type;
+
+/**
+ * The cached workspace summary document.
+ *
+ * It is derived from the maintained relation and the catalog, and it carries
+ * the plan identity it was derived under, so a consumer holding a cached
+ * summary can tell a stale plan from a stale count.
+ */
+export const WorkspaceSummary = Schema.Struct({
+  workspaceId: Identifier,
+  planHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{8}$/)),
+  issues: Schema.Struct({ total: Sequence, byStatus: IssueStatusCounts }),
+  catalog: Schema.Struct({ projects: Sequence, users: Sequence, labels: Sequence }),
+  /** The latest `updatedAt` across the maintained rows, or null in an empty workspace. */
+  latestActivityAt: Schema.NullOr(Timestamp),
+});
+export type WorkspaceSummary = typeof WorkspaceSummary.Type;
+export const decodeWorkspaceSummary = Schema.decodeUnknownSync(WorkspaceSummary);
+
 export const AssigneeQueueRow = Schema.Struct({
   issueId: Identifier,
   assigneeId: Identifier,

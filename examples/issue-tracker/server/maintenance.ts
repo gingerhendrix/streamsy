@@ -19,6 +19,7 @@ import { maintain, ReducerFault, touchedKeys } from "../views/engine.ts";
 import { MaintenanceFault, SourcePoison } from "./errors.ts";
 import { IssueSink } from "./sink.ts";
 import { IssueStore } from "./store.ts";
+import { publishTransitions } from "./transitions.ts";
 import { Streams } from "./streams.ts";
 
 export interface MaintenanceReport {
@@ -72,6 +73,14 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
 
   // Publication is a separate durable step, so its progress is read again
   // rather than assumed from the commit above.
+  /**
+   * The transition feed is written from the same changes, in the same order.
+   * It is a separate durable append from the row commit above, so a crash
+   * between them keeps the rows and loses that batch's transitions; the rows
+   * are the authority, and making the pair atomic is outbox work.
+   */
+  yield* publishTransitions(workspaceId, changes);
+
   const after = yield* store.progress(workspaceId);
   const board = yield* store.maintainBoard(workspaceId, [
     {

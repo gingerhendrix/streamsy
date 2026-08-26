@@ -25,6 +25,8 @@ export interface WorkspaceBindings {
   readonly users: (workspaceId: string) => StreamBinding;
   readonly labels: (workspaceId: string) => StreamBinding;
   readonly metadata: (workspaceId: string) => StreamBinding;
+  /** The append-only feed the `streamSink` publishes issue transitions to. */
+  readonly issueTransitions: (workspaceId: string) => StreamBinding;
 }
 
 export interface WorkspaceStreams {
@@ -54,6 +56,8 @@ export function workspaceBindings(client: StreamProtocolClient): WorkspaceBindin
     users: (workspaceId) => bindByName(client, streamNames.users(workspaceId)),
     labels: (workspaceId) => bindByName(client, streamNames.labels(workspaceId)),
     metadata: (workspaceId) => bindByName(client, streamNames.metadata(workspaceId)),
+    issueTransitions: (workspaceId) =>
+      bindByName(client, streamNames.issueTransitions(workspaceId)),
   };
 }
 
@@ -88,4 +92,5 @@ export const ensureWorkspace = Effect.fn("Streams.ensureWorkspace")(function* (
   yield* streams.ensure(streamNames.users(workspaceId));
   yield* streams.ensure(streamNames.labels(workspaceId));
   yield* streams.ensure(streamNames.metadata(workspaceId));
+  yield* streams.ensure(streamNames.issueTransitions(workspaceId));
 });

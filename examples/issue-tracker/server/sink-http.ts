@@ -1,11 +1,24 @@
-/** Framework-neutral checked state-sink handling adapted to the local gateway. */
+/** Framework-neutral checked sink handling adapted to the local gateway. */
 import { handleStateSink, StateSinkSourceFailure } from "@streamsy/state-sink/effect";
+import {
+  DocumentSinkSourceFailure,
+  handleDocumentSink,
+  handleStreamSink,
+  StreamSinkSourceFailure,
+} from "@streamsy/sinks/effect";
 import { Effect } from "effect";
-import { boardIssues, streamNames } from "../domain/declaration.ts";
+import {
+  boardIssues,
+  issueTransitions,
+  streamNames,
+  workspaceSummary,
+} from "../domain/declaration.ts";
 import { StreamGateway } from "./gateway.ts";
 import { advance } from "./maintenance.ts";
 import { IssueStore } from "./store.ts";
 import { ensureWorkspace, Streams } from "./streams.ts";
+import { buildWorkspaceSummary } from "./summary.ts";
+import { readTransitions } from "./transitions.ts";
 
 export const matchBoardSink = (pathname: string) => boardIssues.compiledRoute.match(pathname);
 
@@ -58,3 +71,53 @@ export const handleSinkRequest = (request: Request) =>
       );
     }),
   });
+
+export const matchTransitionSink = (pathname: string) =>
+  issueTransitions.compiledRoute.match(pathname);
+
+/**
+ * Serve the declared transition feed.
+ *
+ * The workspace is brought up to its durable tail first, so a consumer polling
+ * the feed sees the transitions of facts that were appended by anything —
+ * including another process — and not only those a command in this process
+ * happened to publish. Nothing between the durable feed and the response
+ * reorders it.
+ */
+export const handleTransitionFeedRequest = (request: Request) =>
+  handleStreamSink(issueTransitions, request, {
+    read: Effect.fn("IssueTracker.transitionFeed")(function* ({ workspaceId }, offset) {
+      yield* ensureWorkspace(workspaceId).pipe(Effect.mapError(feedUnavailable));
+      yield* advance(workspaceId).pipe(Effect.mapError(feedUnavailable));
+      return yield* readTransitions(workspaceId, offset).pipe(
+        Effect.mapError((error) =>
+          error._tag === "TransitionReadFailure"
+            ? new StreamSinkSourceFailure({ reason: error.reason, detail: error.detail })
+            : feedUnavailable(error),
+        ),
+      );
+    }),
+  });
+
+export const matchSummarySink = (pathname: string) =>
+  workspaceSummary.compiledRoute.match(pathname);
+
+export const handleWorkspaceSummaryRequest = (request: Request) =>
+  handleDocumentSink(workspaceSummary, request, {
+    document: Effect.fn("IssueTracker.workspaceSummary")(function* ({ workspaceId }) {
+      return yield* buildWorkspaceSummary(workspaceId).pipe(
+        Effect.mapError((error) => new DocumentSinkSourceFailure({ detail: String(error) })),
+      );
+    }),
+  });
+
+/**
+ * Every application failure below the feed is reported as an unavailable feed.
+ *
+ * That includes a poisoned feed message: the handler's public error union has
+ * no separate tag for it, and reporting it as unavailable keeps the failure
+ * fail-stop and visible rather than serving a shorter page.
+ */
+function feedUnavailable(error: { readonly _tag: string }): StreamSinkSourceFailure {
+  return new StreamSinkSourceFailure({ reason: "unavailable", detail: error._tag });
+}

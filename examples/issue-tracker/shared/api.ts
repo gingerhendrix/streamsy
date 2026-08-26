@@ -7,7 +7,7 @@
  * shapes are declared here too, so a test decodes exactly what a client would.
  */
 import { Schema } from "effect";
-import { Identifier, IssueRow, IssueStatus, Title } from "../domain/issue.ts";
+import { Identifier, IssueRow, IssueStatus, IssueTransition, Title } from "../domain/issue.ts";
 import { CatalogCollection } from "../domain/catalog.ts";
 
 export const CreateIssueRequest = Schema.Struct({
@@ -71,6 +71,29 @@ export const CatalogRowsResponse = Schema.Struct({
   rows: Schema.Array(Schema.Json),
 });
 export type CatalogRowsResponse = typeof CatalogRowsResponse.Type;
+
+/**
+ * One page of the issue-transitions feed.
+ *
+ * `order` is a literal rather than a free string: a consumer that decodes this
+ * page has checked that the feed still promises arrival order, so it can append
+ * the events as they came without re-sorting them. `nextOffset` is a batch
+ * boundary, so resuming from it neither re-reads nor skips half a batch.
+ */
+export const TransitionFeedResponse = Schema.Struct({
+  sink: Schema.String,
+  feed: Schema.Struct({
+    name: Schema.String,
+    type: Schema.String,
+    /** The key of the relation whose changes this feed carries. */
+    subjectKey: Schema.String,
+  }),
+  order: Schema.Literal("arrival"),
+  events: Schema.Array(IssueTransition),
+  nextOffset: Schema.String,
+  upToDate: Schema.Boolean,
+});
+export type TransitionFeedResponse = typeof TransitionFeedResponse.Type;
 
 /** What a consumer needs to bind the sink's public product. */
 export const SinkSessionResponse = Schema.Struct({

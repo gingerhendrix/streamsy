@@ -201,6 +201,65 @@ try {
     suffix,
   );
 
+  // === the stream sink's activity feed ===
+  const feedPath = "/feed/workspaces/main/issue-transitions";
+  const feedResponse = await fetch(`${running.origin}${feedPath}`);
+  const feedPage = (await feedResponse.json()) as {
+    order: string;
+    events: { issueId: string; change: string }[];
+    nextOffset: string;
+    upToDate: boolean;
+  };
+  check(
+    "the transition feed serves arrival order over HTTP",
+    feedResponse.status === 200 &&
+      feedPage.order === "arrival" &&
+      feedPage.upToDate &&
+      feedPage.events.some((event) => event.issueId === "smoke-later"),
+    feedPage.events.map((event) => `${event.change}:${event.issueId}`),
+  );
+
+  // The feed's own cursor must replay exactly what was appended after it.
+  const feedTail = (await (
+    await fetch(`${running.origin}${feedPath}?offset=${encodeURIComponent(feedPage.nextOffset)}`)
+  ).json()) as { events: unknown[] };
+  check("resuming the feed at its tail replays nothing", feedTail.events.length === 0, feedTail);
+
+  const refusedFeed = await fetch(`${running.origin}${feedPath}?offset=not-an-offset`);
+  check(
+    "an unusable feed offset declares replay-from-start",
+    refusedFeed.status === 409 &&
+      ((await refusedFeed.json()) as { recovery?: string }).recovery === "replay-from-start",
+    refusedFeed.status,
+  );
+
+  // === the document sink's cached workspace summary ===
+  const summaryPath = "/document/workspaces/main/summary";
+  const summaryResponse = await fetch(`${running.origin}${summaryPath}`);
+  const summaryDocument = (await summaryResponse.clone().json()) as {
+    workspaceId: string;
+    issues: { total: number };
+  };
+  const summaryEtag = summaryResponse.headers.get("etag") ?? "";
+  check(
+    "the workspace summary serves its declared cache policy",
+    summaryResponse.status === 200 &&
+      summaryResponse.headers.get("cache-control") === "private, max-age=0, must-revalidate" &&
+      /^"[0-9a-f]{16}"$/.test(summaryEtag) &&
+      summaryDocument.workspaceId === "main" &&
+      summaryDocument.issues.total === 8,
+    { etag: summaryEtag, total: summaryDocument.issues.total },
+  );
+
+  const conditional = await fetch(`${running.origin}${summaryPath}`, {
+    headers: { "if-none-match": summaryEtag },
+  });
+  check(
+    "a conditional summary request is a bodiless 304",
+    conditional.status === 304 && (await conditional.text()) === "",
+    conditional.status,
+  );
+
   // === restart ===
   await stop(running);
   running = start({ databaseDirectory: directory });

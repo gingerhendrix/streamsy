@@ -18,6 +18,7 @@ export type {
   TypedExpression,
 } from "./expression.ts";
 export {
+  changes,
   compilePlan,
   defineView,
   from,
@@ -29,10 +30,12 @@ export {
   view,
 } from "./relation.ts";
 export type {
+  ChangeStreamDeclaration,
   EvolveBranch,
   EvolveBranchBuilder,
   GroupedBuilder,
   JoinSpec,
+  KeyedRelation,
   ParameterDeclaration,
   ReducerDeclaration,
   ReducerSpec,
