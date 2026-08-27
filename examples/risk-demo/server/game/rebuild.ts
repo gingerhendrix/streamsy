@@ -185,9 +185,7 @@ async function runRebuild<State, Event>(
   const complete = rebuilt.status === "caught-up";
   const recovered = complete && "checkpoint" in rebuilt ? rebuilt : undefined;
   const rebuiltWatermark = recovered?.checkpoint.sourceThrough ?? null;
-  const rebuiltState = Schema.decodeUnknownSync(plan.state)(
-    (recovered?.state ?? mesh.initial).state,
-  );
+  const rebuiltState = Schema.decodeSync(plan.state)((recovered?.state ?? mesh.initial).state);
 
   const boardEqual = complete && plan.boardEqual(rebuiltState, events);
   const watermarkEqual = (rebuiltWatermark ?? null) === canonicalHead;

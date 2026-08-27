@@ -743,7 +743,7 @@ function validateFanInOptions<State, MemberInput>(
   if (!streamIdentityEquals(options.membership.identity, options.lane.source))
     throw new TypeError("Membership binding identity does not match the producer lane source");
   assertLaneTarget(options.target, options.lane);
-  Schema.decodeUnknownSync(CatchUpLimitsSchema)(options.limits);
+  Schema.decodeSync(CatchUpLimitsSchema)(options.limits);
 }
 
 function assertLaneTarget(target: StreamBinding, lane: ProducerLane): void {

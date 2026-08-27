@@ -206,7 +206,7 @@ function validateOptions<Input>(options: CatchUpOptions<Input>): void {
     throw new TypeError("Source binding identity does not match the producer lane");
   if (!streamIdentityEquals(options.target.identity, options.lane.target))
     throw new TypeError("Target binding identity does not match the producer lane");
-  Schema.decodeUnknownSync(CatchUpLimitsSchema)(options.limits);
+  Schema.decodeSync(CatchUpLimitsSchema)(options.limits);
 }
 
 function hasSourcePayload(batch: StreamBatch): boolean {

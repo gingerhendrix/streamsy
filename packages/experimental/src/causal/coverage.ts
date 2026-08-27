@@ -33,7 +33,7 @@ export type Coverage =
 
 /** Validate a real position without interpreting its opaque wire format. */
 export function streamPosition(position: string): StreamPosition {
-  return Schema.decodeUnknownSync(StreamPosition)(position);
+  return Schema.decodeSync(StreamPosition)(position);
 }
 
 export function compareStreamPositions(a: string, b: string): -1 | 0 | 1 {

@@ -40,11 +40,11 @@ export function parseCommandStatus(value: string): CommandRow["status"] {
 }
 
 export function parseEventsJson(json: string): GameEventType[] {
-  return Array.from(Schema.decodeUnknownSync(EventsJson)(json));
+  return Array.from(Schema.decodeSync(EventsJson)(json));
 }
 
 export function parseDecisionErrorJson(json: string): DecisionError {
-  return Schema.decodeUnknownSync(DecisionErrorJson)(json);
+  return Schema.decodeSync(DecisionErrorJson)(json);
 }
 
 export interface CapabilityRow {

@@ -60,6 +60,13 @@ export interface CatchUpOptions {
   readonly limits: Limits;
 }
 
+const LimitsSchema = Schema.Struct({
+  pages: PositiveInt,
+  batches: PositiveInt,
+  items: PositiveInt,
+  bytes: PositiveInt,
+});
+
 export interface CatchUpProgress {
   readonly sourceThrough?: string;
   readonly targetOffset: string;
@@ -124,7 +131,7 @@ export function make<Input>(options: MakeOptions<Input>): Definition<Input> {
 export function resource(options: StreamResourceOptions): StreamResource {
   return Object.freeze({
     identity: streamIdentity(options.identity.name),
-    streamId: Schema.decodeUnknownSync(NormalizedRequiredText)(options.streamId),
+    streamId: Schema.decodeSync(NormalizedRequiredText)(options.streamId),
   });
 }
 
@@ -146,8 +153,8 @@ export function instance<Input>(
 ): Instance<Input> {
   const source = resource(options.source);
   const target = resource(options.target);
-  const generation = Schema.decodeUnknownSync(NormalizedRequiredText)(options.generation);
-  const producerEpoch = Schema.decodeUnknownSync(NonNegativeInt)(options.producerEpoch);
+  const generation = Schema.decodeSync(NormalizedRequiredText)(options.generation);
+  const producerEpoch = Schema.decodeSync(NonNegativeInt)(options.producerEpoch);
 
   // Validate the complete lane configuration synchronously while keeping the
   // derived producer id out of application-visible state.
@@ -172,14 +179,7 @@ export function instance<Input>(
 export const catchUp = Effect.fn("StateProjection.catchUp")(
   <Input>(projection: Instance<Input>, options: CatchUpOptions) =>
     Effect.gen(function* () {
-      Schema.decodeUnknownSync(
-        Schema.Struct({
-          pages: PositiveInt,
-          batches: PositiveInt,
-          items: PositiveInt,
-          bytes: PositiveInt,
-        }),
-      )(options.limits);
+      yield* Schema.decodeEffect(LimitsSchema)(options.limits);
       const { client } = yield* Client;
       const source = bindStream({ ...projection.source, client });
       const target = bindStream({ ...projection.target, client });

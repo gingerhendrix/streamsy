@@ -150,8 +150,8 @@ export function createActionsDecoder(
   const decodeMessages = Schema.decodeUnknownSync(Schema.Array(schema));
   const decodeControl = Schema.decodeUnknownSync(ActionsControlSchema);
   return {
-    push(chunk: string): ActionsBatch<unknown>[] {
-      const batches: ActionsBatch<unknown>[] = [];
+    push(chunk: string): ActionsBatch[] {
+      const batches: ActionsBatch[] = [];
       for (const frame of parser.push(chunk)) {
         if (frame.event === "data") {
           pending = pending.concat(decodeMessages(JSON.parse(frame.data)));
@@ -192,10 +192,7 @@ const TIMED_OUT = Symbol("timed-out");
  * settlement, so a caller that closes has proof the reader finished — cancelling
  * a body while a reader still holds the lock silently does nothing.
  */
-export function createActionsReader(
-  response: Response,
-  connection: AbortController,
-): ActionsReader<unknown>;
+export function createActionsReader(response: Response, connection: AbortController): ActionsReader;
 export function createActionsReader<T>(
   response: Response,
   connection: AbortController,
@@ -205,10 +202,10 @@ export function createActionsReader(
   response: Response,
   connection: AbortController,
   schema: Schema.Decoder<unknown> = Schema.Unknown,
-): ActionsReader<unknown> {
+): ActionsReader {
   const batches = readActionsBatches(response, schema);
-  let pending: Promise<ActionsBatch<unknown> | null> | null = null;
-  const advance = (): Promise<ActionsBatch<unknown> | null> => {
+  let pending: Promise<ActionsBatch | null> | null = null;
+  const advance = (): Promise<ActionsBatch | null> => {
     pending ??= batches
       .next()
       .then((result) => (result.done ? null : result.value))
@@ -221,7 +218,7 @@ export function createActionsReader(
   };
   return {
     // oxlint-disable-next-line effecttsgo/async-function -- AsyncIterator compatibility requires a Promise-returning next method at this public SSE facade.
-    async next(timeoutMs: number): Promise<ActionsBatch<unknown> | null> {
+    async next(timeoutMs: number): Promise<ActionsBatch | null> {
       const arrival = advance();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const expiry = new Promise<typeof TIMED_OUT>((resolve) => {
@@ -245,16 +242,16 @@ export function createActionsReader(
 }
 
 /** Read one actions response to its end, yielding each batch as it lands. */
-// oxlint-disable-next-line effecttsgo/async-function -- AsyncGenerator is the public Web-stream compatibility contract consumed by browser and agent clients.
-export function readActionsBatches(response: Response): AsyncGenerator<ActionsBatch<unknown>>;
+export function readActionsBatches(response: Response): AsyncGenerator<ActionsBatch>;
 export function readActionsBatches<T>(
   response: Response,
   schema: Schema.Decoder<T>,
 ): AsyncGenerator<ActionsBatch<T>>;
+// oxlint-disable-next-line effecttsgo/async-function -- AsyncGenerator is the public Web-stream compatibility contract consumed by browser and agent clients.
 export async function* readActionsBatches(
   response: Response,
   schema: Schema.Decoder<unknown> = Schema.Unknown,
-): AsyncGenerator<ActionsBatch<unknown>, void, unknown> {
+): AsyncGenerator<ActionsBatch, void, unknown> {
   const body = response.body;
   if (!body) return;
   const reader = body.getReader();

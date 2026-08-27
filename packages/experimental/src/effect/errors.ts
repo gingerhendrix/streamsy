@@ -21,7 +21,7 @@ const ClientFailureSchema = Schema.Struct({
   status: Schema.Literal("error"),
   code: ClientErrorCode,
   message: Schema.String,
-  httpStatus: Schema.optional(Schema.Number),
+  httpStatus: Schema.optional(Schema.Finite),
   retryable: Schema.Boolean,
   cause: Schema.optional(Schema.Unknown),
 });

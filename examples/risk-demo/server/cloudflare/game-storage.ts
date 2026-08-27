@@ -20,22 +20,22 @@ const StreamRecordSchema = Schema.Struct({
   id: Schema.String,
   config: Schema.Struct({
     contentType: Schema.String,
-    ttlSeconds: Schema.optionalKey(Schema.Number),
+    ttlSeconds: Schema.optionalKey(Schema.Finite),
     expiresAt: Schema.optionalKey(Schema.String),
-    createdAt: Schema.Number,
+    createdAt: Schema.Finite,
   }),
   lifecycle: Schema.Struct({
     lastSeq: Schema.optionalKey(Schema.String),
     closed: Schema.optionalKey(Schema.Boolean),
-    closedAt: Schema.optionalKey(Schema.Number),
+    closedAt: Schema.optionalKey(Schema.Finite),
     forkedFrom: Schema.optionalKey(Schema.String),
     forkOffset: Schema.optionalKey(Schema.String),
-    forkSubOffset: Schema.optionalKey(Schema.Number),
+    forkSubOffset: Schema.optionalKey(Schema.Finite),
     softDeleted: Schema.optionalKey(Schema.Boolean),
-    expiresAtMs: Schema.optionalKey(Schema.Number),
+    expiresAtMs: Schema.optionalKey(Schema.Finite),
   }),
   currentOffset: Schema.String,
-  counter: Schema.Number,
+  counter: Schema.Finite,
 });
 type StreamRecordSchemaType = typeof StreamRecordSchema.Type;
 const streamRecordSchemaInput = (record: StreamRecord): StreamRecordSchemaType => record;

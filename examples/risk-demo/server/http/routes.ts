@@ -660,7 +660,8 @@ function firstIssuePath(
   issue: SchemaIssue.Issue,
   prefix: ReadonlyArray<PropertyKey> = [],
 ): ReadonlyArray<PropertyKey> {
-  switch (issue._tag) {
+  const { _tag: tag } = issue;
+  switch (tag) {
     case "Pointer":
       return firstIssuePath(issue.issue, [...prefix, ...issue.path]);
     case "Composite":
