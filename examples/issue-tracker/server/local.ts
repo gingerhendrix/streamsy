@@ -105,7 +105,10 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHost {
   /** Open the default partition, or report why the host cannot. */
   const partition = () => {
     const opened = host.partition(workspaceKey(workspaceId));
-    if ("_tag" in opened) throw new Error(`${opened._tag}: ${workspaceId}`);
+    if ("_tag" in opened) {
+      const { _tag: tag } = opened;
+      throw new Error(`${tag}: ${workspaceId}`);
+    }
     return opened;
   };
 
@@ -139,6 +142,7 @@ const MISSING_BUILD = `<!doctype html><meta charset="utf-8"><title>Build require
 <body style="font:14px system-ui;padding:24px;background:#0f1115;color:#e6e9ef">
 <h1>Browser bundle missing</h1><p>Run <code>bun run --cwd examples/issue-tracker build</code>.</p>`;
 
+// oxlint-disable-next-line effecttsgo/async-function -- Static asset fallback is the Bun fetch/File Promise boundary supplied directly to the host.
 async function serveAsset(pathname: string): Promise<Response> {
   const relative = normalize(pathname === "/" ? "/index.html" : pathname).replace(
     /^(\.\.[/\\])+/,
@@ -164,6 +168,7 @@ async function serveAsset(pathname: string): Promise<Response> {
 }
 
 if (import.meta.main) {
+  // oxlint-disable-next-line effecttsgo/process-env -- This executable edge chooses optional storage before constructing the long-lived application runtime.
   const dataDirectory = process.env.ISSUE_TRACKER_DATA;
   // A running host drives its own effect delivery and its own exchange on the
   // one managed tick; nothing else would.
@@ -175,10 +180,12 @@ if (import.meta.main) {
     dataDirectory === undefined ? started : { ...started, databaseDirectory: dataDirectory },
   );
   const server = Bun.serve({
+    // oxlint-disable-next-line effecttsgo/process-env -- This executable edge translates the platform port setting into Bun's server options.
     port: Number(process.env.PORT ?? 8788),
     fetch: host.fetch,
     idleTimeout: 30,
   });
+  // oxlint-disable-next-line effecttsgo/async-function -- Process signal shutdown is the Bun/Node Promise lifecycle boundary for server and host disposal.
   const shutdown = async (): Promise<void> => {
     await server.stop(true);
     await host.close();

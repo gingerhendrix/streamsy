@@ -79,9 +79,14 @@ interface HostFailureReport {
   readonly detail: string;
 }
 
+const absurd = (value: never): never => {
+  throw new TypeError(`unexpected host failure: ${String(value)}`);
+};
+
 /** How every host failure is reported publicly, chosen by `_tag` and nothing else. */
 export function hostFailureReport(failure: HostFailure): HostFailureReport {
-  switch (failure._tag) {
+  const { _tag: tag } = failure;
+  switch (tag) {
     case "InvalidWorkspaceId":
       return {
         status: 400,
@@ -111,6 +116,7 @@ export function hostFailureReport(failure: HostFailure): HostFailureReport {
         detail: `${failure.partition}: ${failure.detail}`,
       };
   }
+  return absurd(failure);
 }
 
 export function hostFailureResponse(failure: HostFailure): Response {

@@ -15,7 +15,7 @@
  */
 import { Database } from "bun:sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
-import { decodeExchangeCursor, ExchangeCursor, initialCursor } from "../domain/exchange.ts";
+import { ExchangeCursor, initialCursor } from "../domain/exchange.ts";
 import { partitionKeyString, type PartitionKey } from "../domain/domains.ts";
 import { ExchangeCursorPoison, ExchangeStoreUnavailable } from "./domain-errors.ts";
 
@@ -29,7 +29,7 @@ export interface ExchangeCursorStoreService {
   /** Record an advanced position. Idempotent: the same cursor written twice is one row. */
   readonly advance: (cursor: ExchangeCursor) => Effect.Effect<void, ExchangeStoreUnavailable>;
   /** Every position this host holds, for the operator surface. */
-  readonly list: () => Effect.Effect<
+  readonly list: Effect.Effect<
     readonly ExchangeCursor[],
     ExchangeStoreUnavailable | ExchangeCursorPoison
   >;
@@ -53,7 +53,19 @@ interface CursorValueRow {
   readonly value: string;
 }
 
-const encodeCursor = Schema.encodeUnknownSync(Schema.fromJsonString(ExchangeCursor));
+const ExchangeCursorJson = Schema.fromJsonString(ExchangeCursor);
+const encodeCursor = Schema.encodeUnknownSync(ExchangeCursorJson);
+const cursorId = (exchange: string, source: string): string => `${exchange}\u0000${source}`;
+
+const sqlite = <A>(operation: string, run: () => A) =>
+  Effect.try({
+    try: run,
+    catch: (cause) =>
+      new ExchangeStoreUnavailable({
+        operation,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
 
 /**
  * Decode one durable cursor, or fail typed.
@@ -63,15 +75,15 @@ const encodeCursor = Schema.encodeUnknownSync(Schema.fromJsonString(ExchangeCurs
  * stream, and resuming from it would skip or repeat work silently.
  */
 const restore = (exchange: string, source: string, version: number | undefined, value: string) =>
-  Effect.try({
-    try: () => decodeExchangeCursor(JSON.parse(value)),
-    catch: (cause) =>
-      new ExchangeCursorPoison({
-        exchange,
-        source,
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  }).pipe(
+  Schema.decodeEffect(ExchangeCursorJson)(value).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ExchangeCursorPoison({
+          exchange,
+          source,
+          detail: String(cause),
+        }),
+    ),
     Effect.flatMap((cursor) =>
       version !== undefined && cursor.version !== version
         ? Effect.fail(
@@ -86,22 +98,25 @@ const restore = (exchange: string, source: string, version: number | undefined, 
   );
 
 /** The in-memory cursor store. Same decode path, no durability. */
+// oxlint-disable-next-line effecttsgo/lazy-effect -- This factory is the host's isolation boundary: each global partition must acquire its own mutable backing.
 export const exchangeMemoryLayer = (): Layer.Layer<ExchangeCursorStore> =>
   Layer.sync(ExchangeCursorStore, () => {
     const stored = new Map<string, string>();
-    const id = (exchange: string, source: string) => `${exchange}\u0000${source}`;
     return ExchangeCursorStore.of({
       read: Effect.fn("ExchangeCursorStore.read")(function* (exchange, version, source) {
         const key = partitionKeyString(source);
-        const value = stored.get(id(exchange, key));
+        const value = stored.get(cursorId(exchange, key));
         if (value === undefined) return initialCursor(exchange, version, source);
         return yield* restore(exchange, key, version, value);
       }),
       advance: (cursor) =>
         Effect.sync(() => {
-          stored.set(id(cursor.exchange, partitionKeyString(cursor.source)), encodeCursor(cursor));
+          stored.set(
+            cursorId(cursor.exchange, partitionKeyString(cursor.source)),
+            encodeCursor(cursor),
+          );
         }),
-      list: Effect.fn("ExchangeCursorStore.list")(function* () {
+      list: Effect.gen(function* () {
         const cursors: ExchangeCursor[] = [];
         for (const [key, value] of [...stored].toSorted(([left], [right]) =>
           left.localeCompare(right),
@@ -143,16 +158,6 @@ export function exchangeCursorService(database: Database): ExchangeCursorStoreSe
       " ON CONFLICT (exchange, source) DO UPDATE SET value = excluded.value",
   );
 
-  const sqlite = <A>(operation: string, run: () => A) =>
-    Effect.try({
-      try: run,
-      catch: (cause) =>
-        new ExchangeStoreUnavailable({
-          operation,
-          detail: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-
   return ExchangeCursorStore.of({
     read: Effect.fn("ExchangeCursorStore.read")(function* (exchange, version, source) {
       const key = partitionKeyString(source);
@@ -164,7 +169,7 @@ export function exchangeCursorService(database: Database): ExchangeCursorStoreSe
       sqlite("advance", () => {
         upsertCursor.run(cursor.exchange, partitionKeyString(cursor.source), encodeCursor(cursor));
       }),
-    list: Effect.fn("ExchangeCursorStore.list")(function* () {
+    list: Effect.gen(function* () {
       const found = yield* sqlite("list", () => selectAll.all());
       const cursors: ExchangeCursor[] = [];
       for (const row of found) {

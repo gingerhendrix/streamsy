@@ -290,7 +290,7 @@ const historyLeg = Effect.fn("Maintenance.historyLeg")(function* (
   if (at === undefined) {
     const head = yield* store.graphHistoryHead(workspaceId, spec.leg);
     const changes = yield* store.graphHistorySnapshot(workspaceId, spec.leg);
-    return { changes, position: head === undefined ? undefined : JSON.stringify(head) };
+    return { changes, position: head === undefined ? undefined : encodeHistoryPosition(head) };
   }
   const batches = yield* store.graphHistoryChanges(
     workspaceId,
@@ -301,7 +301,7 @@ const historyLeg = Effect.fn("Maintenance.historyLeg")(function* (
   const last = batches.at(-1);
   return {
     changes: batches.flatMap((batch) => batch.changes),
-    position: last === undefined ? undefined : JSON.stringify(last.position),
+    position: last === undefined ? undefined : encodeHistoryPosition(last.position),
   };
 });
 
@@ -327,31 +327,40 @@ const catalogLeg = Effect.fn("Maintenance.catalogLeg")(function* (
     return { changes: [], position: checkpoint };
   }
   const rows = yield* store.stateRows(spec.sourceId, spec.collection, workspaceId);
-  const changes = rows.map((row): Change<JsonObject> => {
+  const changes = yield* Effect.forEach(rows, (row) => {
     const decoded = catalogRow(spec.collection, row);
-    // SAFETY: `catalogRow` has just accepted this row through the collection's
-    // declared Schema, and every catalog schema is a struct of JSON scalars, so
-    // its JSON encoding is a `JsonObject` by construction.
-    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    const after = JSON.parse(JSON.stringify(decoded.row)) as JsonObject;
-    return { kind: "enter", key: decoded.key, after };
+    return Schema.decodeEffect(JsonObjectSchema)(decoded.row).pipe(
+      Effect.map((after): Change<JsonObject> => ({ kind: "enter", key: decoded.key, after })),
+      Effect.mapError(
+        (cause) =>
+          new StoreRestorePoison({
+            table: spec.collection,
+            key: decoded.key,
+            detail: String(cause),
+          }),
+      ),
+    );
   });
   return { changes, position: checkpoint };
 });
 
-const RecordedHistoryPosition = Schema.Struct({ epoch: Schema.Number, sequence: Schema.Number });
+const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
+const RecordedHistoryPosition = Schema.Struct({ epoch: Schema.Finite, sequence: Schema.Finite });
+const RecordedHistoryPositionJson = Schema.fromJsonString(RecordedHistoryPosition);
+const encodeHistoryPosition = Schema.encodeUnknownSync(RecordedHistoryPositionJson);
 
 /** A recorded position that no longer parses is durable corruption, never a restart from zero. */
 const decodeHistoryPosition = (sourceId: string, value: string) =>
-  Effect.try({
-    try: () => Schema.decodeUnknownSync(RecordedHistoryPosition)(JSON.parse(value)),
-    catch: (cause) =>
-      new StoreRestorePoison({
-        table: "__graph_inputs__",
-        key: sourceId,
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  Schema.decodeEffect(RecordedHistoryPositionJson)(value).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StoreRestorePoison({
+          table: "__graph_inputs__",
+          key: sourceId,
+          detail: String(cause),
+        }),
+    ),
+  );
 
 /**
  * Fold every membership fact after the relation's own checkpoint.
@@ -504,11 +513,16 @@ const readSuffix = Effect.fn("Maintenance.readSuffix")(function* (
         }
         for (const value of batch.items) {
           const event = yield* decodeSourceItem(binding.streamId, batch.offset, value, decode);
-          // SAFETY: `event` is a value the declared source schema accepted, so
-          // it is a JSON object whose fields are exactly the ones the source
-          // declares — which is what the engine reads through its scopes.
-          // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-          const decoded = event as unknown as JsonObject;
+          const decoded = yield* Schema.decodeEffect(JsonObjectSchema)(event).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SourcePoison({
+                  sourceId: binding.streamId,
+                  position: batch.offset,
+                  detail: String(cause),
+                }),
+            ),
+          );
           items.push(decoded);
           maxSequence = Math.max(maxSequence, event.sequence);
         }

@@ -60,8 +60,8 @@ export const Ack = Schema.Struct({ stream: Schema.String, offset: Schema.String 
 
 export const MaintenanceReportBody = Schema.Struct({
   checkpoint: Schema.NullOr(Schema.String),
-  folded: Schema.Number,
-  changed: Schema.Number,
+  folded: Schema.Finite,
+  changed: Schema.Finite,
   /**
    * How the board State sink was brought up to the board graph's revision.
    *
@@ -83,7 +83,7 @@ export const CommandResponse = Schema.Struct({
   workspaceId: Schema.String,
   issueId: Schema.String,
   eventId: Schema.String,
-  sequence: Schema.Number,
+  sequence: Schema.Finite,
   ack: Ack,
   /** True when this command had already been accepted; `ack` is the original. */
   reconciled: Schema.Boolean,
@@ -100,7 +100,7 @@ export const LabelCommandResponse = Schema.Struct({
   membershipId: Schema.String,
   attached: Schema.Boolean,
   eventId: Schema.String,
-  sequence: Schema.Number,
+  sequence: Schema.Finite,
   ack: Ack,
   reconciled: Schema.Boolean,
   maintenance: MaintenanceReportBody,
@@ -150,8 +150,8 @@ export const CatalogRowsResponse = Schema.Struct({
   workspaceId: Schema.String,
   collection: CatalogCollection,
   checkpoint: Schema.NullOr(Schema.String),
-  folded: Schema.Number,
-  changed: Schema.Number,
+  folded: Schema.Finite,
+  changed: Schema.Finite,
   rows: Schema.Array(Schema.Json),
 });
 export type CatalogRowsResponse = typeof CatalogRowsResponse.Type;
@@ -220,11 +220,11 @@ export type HealthResponse = typeof HealthResponse.Type;
 
 /** One durable delivery decision, as an operator reads it. */
 export const NotificationEntry = Schema.Struct({
-  id: Schema.Number,
+  id: Schema.Finite,
   idempotencyKey: Schema.String,
   state: Schema.Literals(["pending", "delivered", "dead"]),
-  attempts: Schema.Number,
-  nextAttemptAtMs: Schema.Number,
+  attempts: Schema.Finite,
+  nextAttemptAtMs: Schema.Finite,
   lastError: Schema.NullOr(Schema.String),
   deadLetterReason: Schema.NullOr(
     Schema.Literals(["attempts-exhausted", "permanent", "payload-poison"]),
@@ -236,9 +236,9 @@ export const NotificationsResponse = Schema.Struct({
   workspaceId: Schema.String,
   sink: Schema.String,
   contractFingerprint: Schema.String,
-  pending: Schema.Number,
-  delivered: Schema.Number,
-  dead: Schema.Number,
+  pending: Schema.Finite,
+  delivered: Schema.Finite,
+  dead: Schema.Finite,
   outbox: Schema.Array(NotificationEntry),
   /** What the handler actually accepted, deduplicated by idempotency key. */
   notified: Schema.Array(AssignmentNotification),
@@ -248,10 +248,10 @@ export type NotificationsResponse = typeof NotificationsResponse.Type;
 export const DrainResponse = Schema.Struct({
   workspaceId: Schema.String,
   sink: Schema.String,
-  claimed: Schema.Number,
-  delivered: Schema.Number,
-  retried: Schema.Number,
-  deadLettered: Schema.Number,
+  claimed: Schema.Finite,
+  delivered: Schema.Finite,
+  retried: Schema.Finite,
+  deadLettered: Schema.Finite,
 });
 export type DrainResponse = typeof DrainResponse.Type;
 
@@ -279,10 +279,10 @@ export type InboxResponse = typeof InboxResponse.Type;
 export const ExchangeCursorBody = Schema.Struct({
   domain: Schema.Literal(EXCHANGE_CURSOR_DOMAIN),
   exchange: Schema.String,
-  version: Schema.Number,
+  version: Schema.Finite,
   source: Schema.Struct({ kind: DomainKind, id: Identifier }),
-  arrival: Schema.Number,
-  applied: Schema.Number,
+  arrival: Schema.Finite,
+  applied: Schema.Finite,
 });
 
 export const ExchangeStatusResponse = Schema.Struct({

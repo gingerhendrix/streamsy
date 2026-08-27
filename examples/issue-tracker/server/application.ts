@@ -20,7 +20,7 @@ import {
 } from "@streamsy/experimental/effect";
 import type { StreamBinding } from "@streamsy/experimental/binding";
 import { OutboxStore, type OutboxDraft } from "@streamsy/effect-sink";
-import { Clock, Effect, Layer } from "effect";
+import { Clock, DateTime, Effect, Layer } from "effect";
 import type {
   AssignIssueRequest,
   CreateIssueRequest,
@@ -567,6 +567,13 @@ interface AcceptedCommand<Event> {
   readonly event: Event | undefined;
 }
 
+const acceptedCommand = <Event>(
+  receipt: CommandReceipt,
+  reconciled: boolean,
+  maintenance: MaintenanceReport,
+  event: Event | undefined,
+): AcceptedCommand<Event> => ({ receipt, reconciled, maintenance, event });
+
 /**
  * The shared command path.
  *
@@ -599,25 +606,18 @@ const runCommand = Effect.fn("Application.command")(function* <
   yield* ensureWorkspace(workspaceId);
   const requestHash = yield* hashCommandIntent(intent);
 
-  const accepted = (
-    receipt: CommandReceipt,
-    reconciled: boolean,
-    maintenance: MaintenanceReport,
-    event: Event | undefined,
-  ): AcceptedCommand<Event> => ({ receipt, reconciled, maintenance, event });
-
   const existing = yield* store.receipt(workspaceId, commandId);
   if (existing !== undefined) {
     if (existing.requestHash !== requestHash) {
       return yield* new CommandIdConflict({ workspaceId, commandId });
     }
     // Already accepted. Report the original acceptance and append nothing.
-    return accepted(existing, true, yield* advance(workspaceId), undefined);
+    return acceptedCommand(existing, true, yield* advance(workspaceId), undefined);
   }
 
   const producer = yield* producers.forCommand(workspaceId, commandId);
   const occurredAt = yield* Clock.currentTimeMillis.pipe(
-    Effect.map((millis) => new Date(millis).toISOString()),
+    Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
   );
   const binding = lane.bind(streams.bindings, workspaceId);
 
@@ -627,7 +627,7 @@ const runCommand = Effect.fn("Application.command")(function* <
     if (recovered !== undefined) {
       yield* store.recordReceipt(recovered.receipt, deliveries(recovered.event));
       const maintenance = yield* advance(workspaceId);
-      return accepted(recovered.receipt, true, maintenance, recovered.event);
+      return acceptedCommand(recovered.receipt, true, maintenance, recovered.event);
     }
 
     const event = build(source.maxSequence + 1, occurredAt);
@@ -650,7 +650,12 @@ const runCommand = Effect.fn("Application.command")(function* <
     if (decision.kind === "receipt") {
       yield* store.recordReceipt(decision.recovered.receipt, deliveries(decision.recovered.event));
       const maintenance = yield* advance(workspaceId);
-      return accepted(decision.recovered.receipt, true, maintenance, decision.recovered.event);
+      return acceptedCommand(
+        decision.recovered.receipt,
+        true,
+        maintenance,
+        decision.recovered.event,
+      );
     }
     if (decision.append.status === "contention") continue;
     if (decision.append.status === "reconciled") {
@@ -661,13 +666,13 @@ const runCommand = Effect.fn("Application.command")(function* <
       }
       yield* store.recordReceipt(duplicate.receipt, deliveries(duplicate.event));
       const maintenance = yield* advance(workspaceId);
-      return accepted(duplicate.receipt, true, maintenance, duplicate.event);
+      return acceptedCommand(duplicate.receipt, true, maintenance, duplicate.event);
     }
 
     const receipt = receiptFor(intent, requestHash, event, decision.append.offset);
     yield* store.recordReceipt(receipt, deliveries(event));
     const maintenance = yield* advance(workspaceId);
-    return accepted(receipt, false, maintenance, event);
+    return acceptedCommand(receipt, false, maintenance, event);
   }
   return yield* new CommandContention({ workspaceId, attempts: COMMAND_CAS_ATTEMPTS });
 });

@@ -12,7 +12,7 @@
 import type { ClientProducerOptions } from "@streamsy/core";
 import type { StreamBinding } from "@streamsy/experimental/binding";
 import { AppendStreams, type AppendOutcome } from "@streamsy/experimental/effect";
-import { Cache, Context, Effect, Layer } from "effect";
+import { Cache, Context, Effect, Layer, Schema } from "effect";
 import {
   encodeIssueEventJson,
   encodeIssueLabelEventJson,
@@ -44,6 +44,7 @@ export interface CommandIntent {
 }
 
 const encoder = new TextEncoder();
+const encodeJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 /** How many command lanes one runtime keeps derived. */
 const PRODUCER_CAPACITY = 4_096;
@@ -138,7 +139,7 @@ function classify(
 export const hashCommandIntent = Effect.fn("Commands.hashCommandIntent")(function* (
   intent: CommandIntent,
 ) {
-  const canonical = JSON.stringify({
+  const canonical = encodeJsonString({
     workspaceId: intent.workspaceId,
     commandId: intent.commandId,
     commandKind: intent.commandKind,

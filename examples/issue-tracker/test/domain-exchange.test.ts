@@ -170,7 +170,7 @@ describe("cross-domain exchange", () => {
                     applied: 0,
                   }),
                 advance: () => Effect.void,
-                list: () => Effect.succeed([]),
+                list: Effect.succeed([]),
               }),
             ),
             sourceRegistryMemoryLayer(),

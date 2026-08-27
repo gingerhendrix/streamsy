@@ -12,7 +12,7 @@ import {
   migrateViewStore,
   sqliteService,
 } from "@streamsy/views-store/sqlite";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { planHash } from "@streamsy/views";
 import { decodeCatalogRow, type CatalogRow } from "../domain/catalog.ts";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
@@ -112,6 +112,8 @@ interface ValueRow {
 interface TableInfoRow {
   readonly name: string;
 }
+
+const JsonString = Schema.fromJsonString(Schema.Unknown);
 
 /**
  * Slice 1 receipts lack canonical intent. Replace only that application table;
@@ -386,8 +388,18 @@ function boundary(database: Database, outbox: OutboxBacking): IssueStoreBoundary
         const found = yield* sqlite("stateRows", () => selectSourceRows.all(sourceId, partitionId));
         const restored: CatalogRow[] = [];
         for (const row of found) {
+          const value = yield* Schema.decodeEffect(JsonString)(row.value).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StoreRestorePoison({
+                  table: "source_state_rows",
+                  key: row.row_key,
+                  detail: String(cause),
+                }),
+            ),
+          );
           const decoded = yield* Effect.try({
-            try: () => decodeCatalogRow(collection, JSON.parse(row.value)).row,
+            try: () => decodeCatalogRow(collection, value).row,
             catch: (cause) =>
               new StoreRestorePoison({
                 table: "source_state_rows",

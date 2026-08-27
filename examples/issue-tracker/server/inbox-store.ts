@@ -13,8 +13,8 @@
  * is a repeat, never a duplicate.
  */
 import { Database } from "bun:sqlite";
-import { Context, Effect, Layer } from "effect";
-import { compareInboxRows, decodeInboxRow, type InboxRow } from "../domain/inbox.ts";
+import { Context, Effect, Layer, Schema } from "effect";
+import { compareInboxRows, InboxRow } from "../domain/inbox.ts";
 import { InboxRestorePoison, InboxUnavailable } from "./domain-errors.ts";
 
 export interface InboxStoreService {
@@ -56,7 +56,11 @@ const misplaced = (userId: string, row: InboxRow): InboxUnavailable =>
     detail: `row ${row.inboxId} is placed at user ${row.userId}, not ${userId}`,
   });
 
+const InboxRowJson = Schema.fromJsonString(InboxRow);
+const encodeInboxRow = Schema.encodeUnknownSync(InboxRowJson);
+
 /** The in-memory inbox. Same placement rule and same restore path as SQLite. */
+// oxlint-disable-next-line effecttsgo/lazy-effect -- This factory is the host's isolation boundary: each user partition must acquire its own mutable backing.
 export const inboxMemoryLayer = (): Layer.Layer<InboxStore> =>
   Layer.sync(InboxStore, () => {
     const stored = new Map<string, string>();
@@ -66,7 +70,9 @@ export const inboxMemoryLayer = (): Layer.Layer<InboxStore> =>
           if (row.userId !== userId) return yield* misplaced(userId, row);
         }
         return yield* Effect.sync(() => {
-          for (const row of rows) stored.set(`${userId}\u0000${row.inboxId}`, JSON.stringify(row));
+          for (const row of rows) {
+            stored.set(`${userId}\u0000${row.inboxId}`, encodeInboxRow(row));
+          }
           return rows.length;
         });
       }),
@@ -108,7 +114,7 @@ function inboxService(database: Database): InboxStoreService {
   // One transaction per pass, so a partition that dies mid-apply leaves the
   // inbox at a row boundary the cursor can be replayed against.
   const applyRows = database.transaction((userId: string, rows: readonly InboxRow[]) => {
-    for (const row of rows) upsertRow.run(userId, row.inboxId, JSON.stringify(row));
+    for (const row of rows) upsertRow.run(userId, row.inboxId, encodeInboxRow(row));
   });
 
   return InboxStore.of({
@@ -135,10 +141,9 @@ function inboxService(database: Database): InboxStoreService {
 }
 
 const restore = (userId: string, key: string, value: string) =>
-  Effect.try({
-    try: () => decodeInboxRow(JSON.parse(value)),
-    catch: (cause) => new InboxRestorePoison({ userId, key, detail: describe(cause) }),
-  });
+  Schema.decodeEffect(InboxRowJson)(value).pipe(
+    Effect.mapError((cause) => new InboxRestorePoison({ userId, key, detail: String(cause) })),
+  );
 
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);

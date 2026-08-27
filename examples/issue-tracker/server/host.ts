@@ -35,7 +35,9 @@
  * exchange are all explicit calls, so lifecycle is tested by driving it rather
  * than by waiting for a clock.
  */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The synchronous host-construction edge must create partition directories before it builds SQLite adapters and runtimes.
 import { mkdirSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The synchronous host-construction edge computes stable database and asset paths before any Effect runtime exists.
 import { join } from "node:path";
 import {
   createHttpHandler,
@@ -312,6 +314,24 @@ export interface GlobalPartition extends PartitionCommon {
 
 export type DomainPartition = WorkspacePartition | UserPartition | GlobalPartition;
 
+const reclaimable = (partition: DomainPartition): boolean =>
+  partition.inFlight === 0 && partition.leases === 0 && partition.closing === undefined;
+
+function partitionMetrics(partition: DomainPartition): PartitionMetrics {
+  const base = {
+    kind: partition.key.kind,
+    id: partition.key.id,
+    opens: partition.opens,
+    requests: partition.requests,
+    inFlight: partition.inFlight,
+    leases: partition.leases,
+    openedAtMs: partition.openedAtMs,
+    lastRequestAtMs: partition.lastRequestAtMs,
+    delivery: { ...partition.delivery },
+  };
+  return partition.kind === "workspace" ? { ...base, workspaceId: partition.workspaceId } : base;
+}
+
 /**
  * The workspace partition, under the name B3 gave it.
  *
@@ -367,6 +387,7 @@ export interface WorkspaceHost {
 }
 
 export function createWorkspaceHost(options: WorkspaceHostOptions = {}): WorkspaceHost {
+  // oxlint-disable-next-line effecttsgo/global-date -- This is the injected synchronous host-policy clock default; Effect workflows use Clock and tests replace this function.
   const now = options.now ?? (() => Date.now());
   const maxOpen = options.partitions?.maxOpen ?? DEFAULT_MAX_OPEN;
   const idleMillis = options.partitions?.idleMillis ?? DEFAULT_IDLE_MILLIS;
@@ -405,7 +426,8 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   let closing: Promise<void> | undefined;
 
   const countFailure = (failure: HostFailure): HostFailure => {
-    failures.set(failure._tag, (failures.get(failure._tag) ?? 0) + 1);
+    const { _tag: tag } = failure;
+    failures.set(tag, (failures.get(tag) ?? 0) + 1);
     return failure;
   };
 
@@ -433,6 +455,14 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
         }),
       );
     }
+  }
+
+  function resolvePartition(key: WorkspaceKey): WorkspacePartition | HostFailure;
+  function resolvePartition(key: UserKey): UserPartition | HostFailure;
+  function resolvePartition(key: GlobalKey): GlobalPartition | HostFailure;
+  function resolvePartition(key: PartitionKey): DomainPartition | HostFailure;
+  function resolvePartition(key: PartitionKey): DomainPartition | HostFailure {
+    return open(key);
   }
 
   /** One partition, built for the domain its key names. */
@@ -528,6 +558,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
       runtime,
       // Disposal order matters: the runtime's finalizers close the store's
       // connection, and only then is the protocol client released.
+      // oxlint-disable-next-line effecttsgo/async-function -- Disposal is the Promise lifecycle contract of ManagedRuntime plus StreamProtocolClient, and order must remain explicit.
       dispose: async () => {
         await runtime.dispose();
         await client.close();
@@ -555,9 +586,6 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     return true;
   }
 
-  const reclaimable = (partition: DomainPartition): boolean =>
-    partition.inFlight === 0 && partition.leases === 0 && partition.closing === undefined;
-
   /**
    * Dispose one partition, exactly once.
    *
@@ -568,6 +596,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     if (partition.closing !== undefined) return partition.closing;
     const id = partitionKeyString(partition.key);
     if (partitions.get(id) === partition) partitions.delete(id);
+    // oxlint-disable-next-line effecttsgo/async-function -- Partition disposal is a Promise compatibility edge and this closure owns the exactly-once completion state.
     const closed = (async () => {
       await partition.dispose();
       totals.closed += 1;
@@ -576,6 +605,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     return closed;
   }
 
+  // oxlint-disable-next-line effecttsgo/async-function -- Fetch is the platform Promise boundary; partition effects run through their long-lived ManagedRuntime.
   async function fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (closing !== undefined) {
@@ -626,6 +656,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
    * partition already draining is skipped rather than queued, so passes stay
    * serialized per lane exactly as the outbox expects.
    */
+  // oxlint-disable-next-line effecttsgo/async-function -- This Promise host boundary serially drives independent partition runtimes and isolates each failure.
   async function drainDue(): Promise<readonly DeliveryPassReport[]> {
     const reports: DeliveryPassReport[] = [];
     for (const partition of Array.from(partitions.values())) {
@@ -678,25 +709,36 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
    * idempotent, so a caller releasing twice cannot un-pin a partition somebody
    * else is using.
    */
-  function takeLease<R>(key: PartitionKey): PartitionLease<R> | HostFailure {
-    const partition = open(key);
-    if (!isPartition(partition)) return partition;
+  function makePartitionLease<R>(
+    partition: DomainPartition,
+    runtime: ManagedRuntime.ManagedRuntime<R, never>,
+  ): PartitionLease<R> {
     partition.leases += 1;
     partition.lastRequestAtMs = now();
     let released = false;
-    // SAFETY: `key.kind` chose which runtime `build` made, and the typed
-    // accessors below pass the matching `R` for that kind. This one erasure is
-    // what lets a single lease implementation serve three differently-shaped
-    // runtimes without three copies of the counter and the release guard.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    const runtime = partition.runtime as ManagedRuntime.ManagedRuntime<R, never>;
     return {
-      key,
+      key: partition.key,
       runPromise: (effect) => runtime.runPromise(effect),
       release: () => {
         if (released) return;
         released = true;
         partition.leases -= 1;
+      },
+    };
+  }
+
+  function takeHostLease(key: PartitionKey): HostLease | HostFailure {
+    const opened = open(key);
+    if (!isPartition(opened)) return opened;
+    opened.leases += 1;
+    opened.lastRequestAtMs = now();
+    let released = false;
+    return {
+      key: opened.key,
+      release: () => {
+        if (released) return;
+        released = true;
+        opened.leases -= 1;
       },
     };
   }
@@ -716,13 +758,22 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
         .filter((partition) => partition.kind === "workspace" && partition.closing === undefined)
         .map((partition) => partition.key),
     knownSources: () => [...knownWorkspaces].map(workspaceKey),
-    leaseWorkspace: (workspaceId) =>
-      takeLease<ApplicationServices | StreamGateway>(workspaceKey(workspaceId)),
-    leaseUser: (userId) => takeLease<UserServices>(userKey(userId)),
-    leaseGlobal: () => takeLease<GlobalServices>(globalKey()),
+    leaseWorkspace: (workspaceId) => {
+      const opened = resolvePartition(workspaceKey(workspaceId));
+      return isPartition(opened) ? makePartitionLease(opened, opened.runtime) : opened;
+    },
+    leaseUser: (userId) => {
+      const opened = resolvePartition(userKey(userId));
+      return isPartition(opened) ? makePartitionLease(opened, opened.runtime) : opened;
+    },
+    leaseGlobal: () => {
+      const opened = resolvePartition(globalKey());
+      return isPartition(opened) ? makePartitionLease(opened, opened.runtime) : opened;
+    },
   };
 
   /** One exchange pass over every open source. Reports are counted, never thrown. */
+  // oxlint-disable-next-line effecttsgo/async-function -- This Promise host boundary delegates the resumable pass and records its reports without exposing Effect requirements.
   async function exchange(): Promise<readonly ExchangePassReport[]> {
     if (closing !== undefined) return [];
     const passOptions: ExchangePassOptions = {};
@@ -744,6 +795,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
   }
 
   /** Close every partition that has gone unused for the whole idle window. */
+  // oxlint-disable-next-line effecttsgo/async-function -- This Promise lifecycle method waits for every selected partition's platform/runtime disposal.
   async function sweepIdle(nowMs = now()): Promise<readonly PartitionKey[]> {
     const stale = Array.from(partitions.values()).filter(
       (partition) => reclaimable(partition) && nowMs - partition.lastRequestAtMs >= idleMillis,
@@ -762,6 +814,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
    * runs last so the exchange's leases are already released.
    */
   let ticking = false;
+  // oxlint-disable-next-line effecttsgo/async-function -- The platform timer invokes this Promise lifecycle boundary; each underlying workflow retains its own runtime.
   const tick = async (): Promise<void> => {
     if (ticking || closing !== undefined) return;
     ticking = true;
@@ -776,7 +829,8 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
 
   const timer =
     deliveryMode === "interval" || exchangeMode === "interval"
-      ? setInterval(() => {
+      ? // oxlint-disable-next-line effecttsgo/global-timers -- This is the host platform scheduler; the injected/manual methods remain the deterministic Effect/test boundary.
+        setInterval(() => {
           void tick();
         }, options.delivery?.intervalMs ?? DEFAULT_INTERVAL_MS)
       : undefined;
@@ -791,21 +845,6 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
       view: issues.name,
       planHash: PLAN_HASH,
     };
-  }
-
-  function partitionMetrics(partition: DomainPartition): PartitionMetrics {
-    const base = {
-      kind: partition.key.kind,
-      id: partition.key.id,
-      opens: partition.opens,
-      requests: partition.requests,
-      inFlight: partition.inFlight,
-      leases: partition.leases,
-      openedAtMs: partition.openedAtMs,
-      lastRequestAtMs: partition.lastRequestAtMs,
-      delivery: { ...partition.delivery },
-    };
-    return partition.kind === "workspace" ? { ...base, workspaceId: partition.workspaceId } : base;
   }
 
   function metricsBody(): HostMetrics {
@@ -840,21 +879,15 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     };
   }
 
-  // SAFETY: `build` chooses a partition's shape from `key.kind`, so `open`
-  // already returns the domain's own partition for the key it was given. The
-  // assertion re-states that in the type system as the overload set, which one
-  // implementation cannot express directly.
-  // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-  const partition = ((key: PartitionKey) => open(key)) as WorkspaceHost["partition"];
-
   return {
     fetch,
-    partition,
+    partition: resolvePartition,
     openWorkspaces: () =>
       [...partitions.values()]
         .filter((entry) => entry.kind === "workspace")
         .map((entry) => entry.key.id),
     openPartitions: () => [...partitions.values()].map((entry) => entry.key),
+    // oxlint-disable-next-line effecttsgo/async-function -- Restart is the public Promise lifecycle contract and waits for the partition's managed disposal.
     restart: async (key: PartitionKey) => {
       const found = partitions.get(partitionKeyString(key));
       if (found === undefined) return false;
@@ -862,10 +895,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
       await closePartition(found);
       return true;
     },
-    lease: (key: PartitionKey) => {
-      const taken = takeLease<never>(key);
-      return "_tag" in taken ? taken : { key: taken.key, release: taken.release };
-    },
+    lease: takeHostLease,
     sweepIdle,
     drainDue,
     exchange,

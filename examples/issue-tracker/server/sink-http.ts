@@ -152,11 +152,12 @@ export const handleTransitionFeedRequest = (request: Request) =>
       yield* ensureWorkspace(workspaceId).pipe(Effect.mapError(feedUnavailable));
       yield* advance(workspaceId).pipe(Effect.mapError(feedUnavailable));
       return yield* readTransitions(workspaceId, offset).pipe(
-        Effect.mapError((error) =>
-          error._tag === "TransitionReadFailure"
+        Effect.mapError((error) => {
+          const { _tag: tag } = error;
+          return tag === "TransitionReadFailure"
             ? new StreamSinkSourceFailure({ reason: error.reason, detail: error.detail })
-            : feedUnavailable(error),
-        ),
+            : feedUnavailable(error);
+        }),
       );
     }),
   });
@@ -181,5 +182,6 @@ export const handleWorkspaceSummaryRequest = (request: Request) =>
  * fail-stop and visible rather than serving a shorter page.
  */
 function feedUnavailable(error: { readonly _tag: string }): StreamSinkSourceFailure {
-  return new StreamSinkSourceFailure({ reason: "unavailable", detail: error._tag });
+  const { _tag: tag } = error;
+  return new StreamSinkSourceFailure({ reason: "unavailable", detail: tag });
 }

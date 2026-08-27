@@ -29,6 +29,8 @@ import {
   type RowKey,
   type StoredChange,
   type StoreError,
+  ViewHistoryExpired,
+  ViewStateRestorePoison,
   type ViewStoreService,
 } from "@streamsy/views-store";
 import {
@@ -72,6 +74,15 @@ import {
   operatorSnapshotRef,
 } from "./operator-store-adapter.ts";
 
+const JsonString = Schema.fromJsonString(Schema.Unknown);
+const decodeJsonString = Schema.decodeUnknownSync(JsonString);
+const encodeJsonString = Schema.encodeUnknownSync(JsonString);
+const isViewHistoryExpired = Schema.is(ViewHistoryExpired);
+const isViewStateRestorePoison = Schema.is(ViewStateRestorePoison);
+
+const describeJson = (value: HistoryPosition | StoreError | undefined): string =>
+  value === undefined ? "undefined" : encodeJsonString(value);
+
 /** What the view has consumed, and what the sink has published. */
 export interface ViewProgress {
   /** After-exclusive source cursor already folded into `view_rows`. */
@@ -91,6 +102,16 @@ export interface CommandReceipt {
   /** The offset the *original* append received. */
   readonly eventOffset: string;
 }
+
+const sameReceipt = (left: CommandReceipt, right: CommandReceipt): boolean =>
+  left.commandId === right.commandId &&
+  left.workspaceId === right.workspaceId &&
+  left.commandKind === right.commandKind &&
+  left.targetId === right.targetId &&
+  left.requestHash === right.requestHash &&
+  left.eventId === right.eventId &&
+  left.eventSequence === right.eventSequence &&
+  left.eventOffset === right.eventOffset;
 
 /** One atomic advance of the maintained view. */
 export interface CommitInput {
@@ -375,7 +396,7 @@ export const restoreRow = (
   json: string,
 ): Effect.Effect<IssueRow, StoreRestorePoison> =>
   Effect.try({
-    try: () => decodeIssueRow(JSON.parse(json)),
+    try: () => decodeIssueRow(decodeJsonString(json)),
     catch: (cause) =>
       new StoreRestorePoison({
         table,
@@ -493,7 +514,7 @@ export const memoryLayer = (
         Effect.gen(function* () {
           const key = `${receipt.workspaceId}\u0000${receipt.commandId}`;
           const existing = receipts.get(key);
-          if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(receipt)) {
+          if (existing !== undefined && !sameReceipt(existing, receipt)) {
             return yield* new CommandIdConflict({
               workspaceId: receipt.workspaceId,
               commandId: receipt.commandId,
@@ -527,7 +548,7 @@ export const memoryLayer = (
             ([left], [right]) => left.localeCompare(right),
           )) {
             const decoded = yield* Effect.try({
-              try: () => decodeCatalogRow(collection, JSON.parse(json)).row,
+              try: () => decodeCatalogRow(collection, decodeJsonString(json)).row,
               catch: (cause) =>
                 new StoreRestorePoison({
                   table: "source_state_rows",
@@ -542,7 +563,7 @@ export const memoryLayer = (
       commitState: (sourceId, partitionId, input) =>
         Effect.sync(() => {
           const state = stateSource(sourceId, partitionId);
-          for (const [key, row] of input.rows) state.rows.set(key, JSON.stringify(row));
+          for (const [key, row] of input.rows) state.rows.set(key, encodeJsonString(row));
           state.checkpoint = input.checkpoint;
         }),
     };
@@ -629,7 +650,7 @@ function graphMaintainer<Row>(viewStore: ViewStoreService, product: GraphProduct
         catch: (cause) =>
           new StoreRestorePoison({
             table: product.table,
-            key: JSON.stringify(row.key),
+            key: encodeJsonString(row.key),
             detail: cause instanceof Error ? cause.message : String(cause),
           }),
       }),
@@ -738,15 +759,16 @@ const decodeInputPositions = (
   value: JsonValue | undefined,
 ): Effect.Effect<GraphInputPositions, StoreRestorePoison> => {
   if (value === undefined) return Effect.succeed({});
-  return Effect.try({
-    try: () => Schema.decodeUnknownSync(RecordedPositions)(value),
-    catch: (cause) =>
-      new StoreRestorePoison({
-        table: GRAPH_INPUTS_ID,
-        key: product,
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  return Schema.decodeUnknownEffect(RecordedPositions)(value).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StoreRestorePoison({
+          table: GRAPH_INPUTS_ID,
+          key: product,
+          detail: String(cause),
+        }),
+    ),
+  );
 };
 
 export function issueStoreAdapter(
@@ -806,7 +828,7 @@ export function issueStoreAdapter(
       );
       const rows: IssueRow[] = [];
       for (const row of snapshot.rows)
-        rows.push(yield* decodeStoredRow("view_rows", JSON.stringify(row.key), row.value));
+        rows.push(yield* decodeStoredRow("view_rows", encodeJsonString(row.key), row.value));
       for (const [key, json] of Object.entries(preload?.[workspaceId] ?? {})) {
         if (!snapshot.rows.some((row) => row.key === key))
           rows.push(yield* restoreRow("view_rows", key, json));
@@ -967,15 +989,15 @@ export function issueStoreAdapter(
           .changesAfter(legIdentity(workspaceId, leg), position, limit, relationName)
           .pipe(
             Effect.mapError((error) =>
-              error._tag === "ViewHistoryExpired"
+              isViewHistoryExpired(error)
                 ? new GraphHistoryExpired({
                     workspaceId,
                     product: relationName,
-                    detail: `change history no longer reaches ${JSON.stringify(position)}`,
+                    detail: `change history no longer reaches ${describeJson(position)}`,
                   })
                 : new StoreUnavailable({
                     operation: "graphHistoryChanges",
-                    detail: JSON.stringify(error),
+                    detail: encodeJsonString(error),
                   }),
             ),
           );
@@ -1013,7 +1035,7 @@ export function issueStoreAdapter(
       );
       const rows: IssueLabelRow[] = [];
       for (const row of snapshot.rows) {
-        rows.push(yield* decodeStoredMembership("view_rows", JSON.stringify(row.key), row.value));
+        rows.push(yield* decodeStoredMembership("view_rows", encodeJsonString(row.key), row.value));
       }
       return rows.toSorted((left, right) => left.membershipId.localeCompare(right.membershipId));
     }),
@@ -1052,14 +1074,14 @@ export function issueStoreAdapter(
           .changesAfter(identity(workspaceId), position, limit, issues.name)
           .pipe(
             Effect.mapError((error) =>
-              error._tag === "ViewHistoryExpired"
+              isViewHistoryExpired(error)
                 ? new TransitionHistoryExpired({
                     workspaceId,
-                    detail: `change history no longer reaches ${JSON.stringify(position)}`,
+                    detail: `change history no longer reaches ${describeJson(position)}`,
                   })
                 : new StoreUnavailable({
                     operation: "committedIssueChanges",
-                    detail: JSON.stringify(error),
+                    detail: encodeJsonString(error),
                   }),
             ),
           );
@@ -1081,11 +1103,11 @@ function reconcileSourceInputs(
   return inputs.map((input) => {
     const relation = state.relations.find((candidate) => candidate.relationId === input.sourceId);
     const current = new Map(
-      (relation?.rows ?? []).map((row) => [JSON.stringify(row.key), row.row] as const),
+      (relation?.rows ?? []).map((row) => [encodeJsonString(row.key), row.row] as const),
     );
     const changes: Change<JsonObject>[] = [];
     for (const change of input.changes) {
-      const key = JSON.stringify(change.key);
+      const key = encodeJsonString(change.key);
       const before = current.get(key);
       if (change.kind === "exit") {
         if (before !== undefined) changes.push({ kind: "exit", key: change.key, before });
@@ -1094,7 +1116,7 @@ function reconcileSourceInputs(
       }
       if (before === undefined) {
         changes.push({ kind: "enter", key: change.key, after: change.after });
-      } else if (JSON.stringify(before) !== JSON.stringify(change.after)) {
+      } else if (encodeJsonString(before) !== encodeJsonString(change.after)) {
         changes.push({ kind: "update", key: change.key, before, after: change.after });
       }
       current.set(key, change.after);
@@ -1131,7 +1153,7 @@ const graphRowValue = (
     catch: (cause) =>
       new StoreRestorePoison({
         table: relationId,
-        key: JSON.stringify(key),
+        key: encodeJsonString(key),
         detail: cause instanceof Error ? cause.message : String(cause),
       }),
   });
@@ -1144,15 +1166,16 @@ const graphRowValue = (
  * stringified object silently joined against nothing.
  */
 const graphRowKey = (relationId: string, key: RowKey): Effect.Effect<string, StoreRestorePoison> =>
-  Effect.try({
-    try: () => Schema.decodeUnknownSync(Schema.String)(key),
-    catch: (cause) =>
-      new StoreRestorePoison({
-        table: relationId,
-        key: JSON.stringify(key),
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  Schema.decodeUnknownEffect(Schema.String)(key).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StoreRestorePoison({
+          table: relationId,
+          key: encodeJsonString(key),
+          detail: String(cause),
+        }),
+    ),
+  );
 
 const graphInputChange = (
   relationId: string,
@@ -1304,20 +1327,22 @@ const decodeStoredRow = (table: string, key: string, value: JsonValue) =>
 const mapStoreError = <A>(operation: string, effect: Effect.Effect<A, StoreError>) =>
   effect.pipe(
     Effect.mapError((error) =>
-      error._tag === "ViewStateRestorePoison"
+      isViewStateRestorePoison(error)
         ? new StoreRestorePoison({ table: error.table, key: error.key, detail: error.detail })
-        : new StoreUnavailable({ operation, detail: JSON.stringify(error) }),
+        : new StoreUnavailable({ operation, detail: encodeJsonString(error) }),
     ),
   );
 const mapStoreUnavailable = <A>(operation: string, effect: Effect.Effect<A, StoreError>) =>
   effect.pipe(
-    Effect.mapError((error) => new StoreUnavailable({ operation, detail: JSON.stringify(error) })),
+    Effect.mapError(
+      (error) => new StoreUnavailable({ operation, detail: encodeJsonString(error) }),
+    ),
   );
 
 const recoveryError =
   (operation: string) => (error: StoreError | MaintenanceFault | StoreRestorePoison) => {
-    if (error instanceof MaintenanceFault || error instanceof StoreRestorePoison) return error;
-    return error._tag === "ViewStateRestorePoison"
+    if (Schema.is(MaintenanceFault)(error) || Schema.is(StoreRestorePoison)(error)) return error;
+    return isViewStateRestorePoison(error)
       ? new StoreRestorePoison({ table: error.table, key: error.key, detail: error.detail })
-      : new StoreUnavailable({ operation, detail: JSON.stringify(error) });
+      : new StoreUnavailable({ operation, detail: encodeJsonString(error) });
   };

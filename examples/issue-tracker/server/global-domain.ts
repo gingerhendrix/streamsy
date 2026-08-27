@@ -79,13 +79,13 @@ export const globalLayer = (options: GlobalLayerOptions = {}): Layer.Layer<Globa
 /** Every exchange position this host holds. */
 export const listExchangeCursors = Effect.fn("GlobalDomain.listExchangeCursors")(function* () {
   const cursors = yield* ExchangeCursorStore;
-  return yield* cursors.list();
+  return yield* cursors.list;
 });
 
 /** Every source this host's exchange is responsible for. */
 export const listExchangeSources = Effect.fn("GlobalDomain.listExchangeSources")(function* () {
   const registry = yield* ExchangeSourceRegistry;
-  return yield* registry.list();
+  return yield* registry.list;
 });
 
 /** Route one request that the global partition owns. */

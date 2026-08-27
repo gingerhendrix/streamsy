@@ -14,12 +14,13 @@
  *   the declared retry budget, applied by the package's serialized runtime.
  */
 import { drain, draftsFor, effectSinkHandler, type OutboxDraft } from "@streamsy/effect-sink";
-import type { JsonObject } from "@streamsy/views-ir";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { assignmentNotifications, issueLifecycle, issues } from "../domain/declaration.ts";
 import { assignmentOf, type AssignmentNotification } from "../domain/notifications.ts";
 import { decodeIssueRow, type IssueEvent, type IssueRow } from "../domain/issue.ts";
 import { maintain } from "../views/engine.ts";
+
+const decodeJsonObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json));
 
 /** Why a notification target refused one delivery. */
 export interface NotificationRefusal {
@@ -129,11 +130,7 @@ export function assignmentDrafts(
     reducer: issueLifecycle,
     decodeRow: decodeIssueRow,
     current,
-    // SAFETY: `event` was decoded by the declared source schema, so it is a JSON
-    // object whose fields are exactly the ones the source declares — which is
-    // what the engine reads through its scopes.
-    // oxlint-disable-next-line anti-slop/no-chained-type-assertions, anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    items: [event as unknown as JsonObject],
+    items: [decodeJsonObject(event)],
   });
   const payloads: AssignmentNotification[] = [];
   for (const change of folded.changes) {

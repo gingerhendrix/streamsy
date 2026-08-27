@@ -36,7 +36,7 @@
  * the source and State ingestion paths already follow: a position that moved
  * past work that was not done is a silent hole.
  */
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import {
   assignmentInbox,
   ExchangeKeyMismatch,
@@ -129,6 +129,7 @@ export const DEFAULT_COLD_SOURCES_PER_PASS = 2;
 
 const isLease = <R>(value: PartitionLease<R> | HostFailure): value is PartitionLease<R> =>
   !("_tag" in value);
+const isExchangeKeyMismatch = Schema.is(ExchangeKeyMismatch);
 
 /**
  * One pass over the sources this host is responsible for.
@@ -143,6 +144,7 @@ const isLease = <R>(value: PartitionLease<R> | HostFailure): value is PartitionL
  * Registration and scheduling both run in the global partition, which the pass
  * already leases — so this adds no new cross-domain reach.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- Promise is the host/session compatibility contract; the implementation must retain lease release across awaited partition runtimes.
 export async function runExchange(
   session: ExchangeSession,
   options: ExchangePassOptions = {},
@@ -180,6 +182,7 @@ export async function runExchange(
  * sources are still sources, and refusing them would turn a bookkeeping outage
  * into a stalled product. The pass degrades to B4's behaviour instead.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- Promise is the host/session compatibility contract; the implementation must retain lease release across awaited partition runtimes.
 async function scheduleSources(
   session: ExchangeSession,
   open: readonly PartitionKey[],
@@ -191,7 +194,7 @@ async function scheduleSources(
     const now = session.now();
     await global.runPromise(registerSources(session.knownSources(), now)).catch(() => undefined);
     if (coldBudget <= 0) return open;
-    const registered = await global.runPromise(listSources()).catch(() => []);
+    const registered = await global.runPromise(listSources).catch(() => []);
     const cold: PartitionKey[] = [];
     for (const source of registered) {
       if (cold.length >= coldBudget) break;
@@ -206,6 +209,7 @@ async function scheduleSources(
 }
 
 /** Record that every successfully exchanged source has just been exchanged. */
+// oxlint-disable-next-line effecttsgo/async-function -- Promise is the host/session compatibility contract; the implementation must retain lease release across awaited partition runtimes.
 async function recordVisits(
   session: ExchangeSession,
   visited: readonly PartitionKey[],
@@ -229,11 +233,10 @@ const registerSources = (keys: readonly PartitionKey[], atMs: number) =>
     yield* registry.register(keys, atMs);
   });
 
-const listSources = () =>
-  Effect.gen(function* () {
-    const registry = yield* ExchangeSourceRegistry;
-    return yield* registry.list();
-  });
+const listSources = Effect.gen(function* () {
+  const registry = yield* ExchangeSourceRegistry;
+  return yield* registry.list;
+});
 
 const touchSource = (key: PartitionKey, atMs: number) =>
   Effect.gen(function* () {
@@ -242,6 +245,7 @@ const touchSource = (key: PartitionKey, atMs: number) =>
   });
 
 /** One pass over one source. Every failure is a report, never a throw. */
+// oxlint-disable-next-line effecttsgo/async-function -- Promise is the host/session compatibility contract; the implementation must retain all acquired leases in one try/finally.
 export async function runExchangePass(
   session: ExchangeSession,
   source: PartitionKey,
@@ -282,13 +286,14 @@ export async function runExchangePass(
     // single mis-keyed record refuses the pass rather than leaving the inbox
     // half-applied against a cursor that already moved.
     const planned = plan(source, page.records);
-    if (planned instanceof ExchangeKeyMismatch) {
+    if (isExchangeKeyMismatch(planned)) {
+      const { _tag: tag } = planned;
       return report({
         failed: true,
         scanned: page.records.length,
         fromArrival: from,
         toArrival: from,
-        detail: `${planned._tag}: ${planned.side}/${planned.keyField}: ${planned.detail}`,
+        detail: `${tag}: ${planned.side}/${planned.keyField}: ${planned.detail}`,
       });
     }
 
@@ -329,7 +334,7 @@ export async function runExchangePass(
   } catch (cause) {
     return report({ failed: true, detail: describeCause(cause) });
   } finally {
-    for (const lease of held.reverse()) lease.release();
+    for (const lease of held.toReversed()) lease.release();
   }
 }
 
@@ -347,7 +352,7 @@ function plan(
   const grouped = new Map<string, InboxRow[]>();
   for (const record of records) {
     const from = assignmentInbox.sourceKey(record);
-    if (from instanceof ExchangeKeyMismatch) return from;
+    if (isExchangeKeyMismatch(from)) return from;
     if (!partitionKeyEquals(from, source)) {
       return new ExchangeKeyMismatch({
         exchange: assignmentInbox.name,
@@ -358,9 +363,9 @@ function plan(
       });
     }
     const to = assignmentInbox.destinationKey(record);
-    if (to instanceof ExchangeKeyMismatch) return to;
+    if (isExchangeKeyMismatch(to)) return to;
     const row = assignmentInbox.rowFor(record, to);
-    if (row instanceof ExchangeKeyMismatch) return row;
+    if (isExchangeKeyMismatch(row)) return row;
     const rows = grouped.get(to.id);
     if (rows === undefined) grouped.set(to.id, [row]);
     else rows.push(row);
@@ -384,7 +389,8 @@ const writeCursor = Effect.fn("Exchange.writeCursor")(function* (cursor: Exchang
 /** A refused lease, as the pass reports it. The host's own translation, reused. */
 function describeFailure(failure: HostFailure): string {
   const reported = hostFailureReport(failure);
-  return `${failure._tag}: ${reported.detail}`;
+  const { _tag: tag } = failure;
+  return `${tag}: ${reported.detail}`;
 }
 
 function describeCause(cause: unknown): string {

@@ -64,12 +64,12 @@ export class CommandIdConflict extends Schema.TaggedError<CommandIdConflict>()(
 
 export class CommandContention extends Schema.TaggedError<CommandContention>()(
   "CommandContention",
-  { workspaceId: Schema.String, attempts: Schema.Number },
+  { workspaceId: Schema.String, attempts: Schema.Finite },
 ) {}
 
 export class CommandRecoveryExhausted extends Schema.TaggedError<CommandRecoveryExhausted>()(
   "CommandRecoveryExhausted",
-  { workspaceId: Schema.String, maxBatches: Schema.Number, maxItems: Schema.Number },
+  { workspaceId: Schema.String, maxBatches: Schema.Finite, maxItems: Schema.Finite },
 ) {}
 
 /** A durable source item that the declared source schema rejects. */

@@ -37,7 +37,7 @@ export interface ExchangeSourceRegistryService {
     atMs: number,
   ) => Effect.Effect<void, ExchangeStoreUnavailable>;
   /** Every registered source, least recently exchanged first. */
-  readonly list: () => Effect.Effect<readonly RegisteredSource[], ExchangeStoreUnavailable>;
+  readonly list: Effect.Effect<readonly RegisteredSource[], ExchangeStoreUnavailable>;
   /** Record that a pass has just run over this source. */
   readonly touch: (
     key: PartitionKey,
@@ -76,7 +76,18 @@ export function compareSources(left: RegisteredSource, right: RegisteredSource):
   return partitionKeyString(left.key).localeCompare(partitionKeyString(right.key));
 }
 
+const sqlite = <A>(operation: string, run: () => A) =>
+  Effect.try({
+    try: run,
+    catch: (cause) =>
+      new ExchangeStoreUnavailable({
+        operation,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+
 /** The in-memory registry. Same ordering rule, no durability. */
+// oxlint-disable-next-line effecttsgo/lazy-effect -- This factory is the host's isolation boundary: each global partition must acquire its own mutable backing.
 export const sourceRegistryMemoryLayer = (): Layer.Layer<ExchangeSourceRegistry> =>
   Layer.sync(ExchangeSourceRegistry, () => {
     const stored = new Map<string, RegisteredSource>();
@@ -89,7 +100,7 @@ export const sourceRegistryMemoryLayer = (): Layer.Layer<ExchangeSourceRegistry>
             stored.set(id, { key, registeredAtMs: atMs, lastExchangedAtMs: 0 });
           }
         }),
-      list: () => Effect.sync(() => [...stored.values()].toSorted(compareSources)),
+      list: Effect.sync(() => [...stored.values()].toSorted(compareSources)),
       touch: (key, atMs) =>
         Effect.sync(() => {
           const id = partitionKeyString(key);
@@ -121,38 +132,27 @@ export function sourceRegistryService(database: Database): ExchangeSourceRegistr
     for (const key of keys) insertSource.run(partitionKeyString(key), atMs);
   });
 
-  const sqlite = <A>(operation: string, run: () => A) =>
-    Effect.try({
-      try: run,
-      catch: (cause) =>
-        new ExchangeStoreUnavailable({
-          operation,
-          detail: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-
   return ExchangeSourceRegistry.of({
     register: (keys, atMs) =>
       sqlite("register", () => {
         registerAll(keys, atMs);
       }),
-    list: () =>
-      sqlite("listSources", () => {
-        const sources: RegisteredSource[] = [];
-        for (const row of selectSources.all()) {
-          // A row whose key no longer parses is a key this host does not serve.
-          // Skipping it is right: it is not a source, and failing the pass over
-          // it would stop every source this host *can* serve.
-          const key = parsePartitionKey(row.source);
-          if (key === undefined) continue;
-          sources.push({
-            key,
-            registeredAtMs: row.registered_at_ms,
-            lastExchangedAtMs: row.last_exchanged_at_ms,
-          });
-        }
-        return sources.toSorted(compareSources);
-      }),
+    list: sqlite("listSources", () => {
+      const sources: RegisteredSource[] = [];
+      for (const row of selectSources.all()) {
+        // A row whose key no longer parses is a key this host does not serve.
+        // Skipping it is right: it is not a source, and failing the pass over
+        // it would stop every source this host *can* serve.
+        const key = parsePartitionKey(row.source);
+        if (key === undefined) continue;
+        sources.push({
+          key,
+          registeredAtMs: row.registered_at_ms,
+          lastExchangedAtMs: row.last_exchanged_at_ms,
+        });
+      }
+      return sources.toSorted(compareSources);
+    }),
     touch: (key, atMs) =>
       sqlite("touchSource", () => {
         touchSource.run(partitionKeyString(key), atMs, atMs);

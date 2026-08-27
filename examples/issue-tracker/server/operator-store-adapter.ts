@@ -2,6 +2,7 @@
 /* oxlint-disable anti-slop/no-chained-type-assertions, anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion -- This module is the explicit checked conversion boundary between A2's structurally JSON snapshot and A4's closed persistence grammar. */
 import type { Change, JsonObject, RelationPlan, RowKey } from "@streamsy/views-ir";
 import type { OperatorMutationPatch, OperatorStateSnapshot } from "@streamsy/views-engine";
+import { Schema } from "effect";
 import type {
   IndexMutation,
   JsonValue,
@@ -39,6 +40,65 @@ export interface OperatorCommitInput {
     readonly value: JsonValue;
   }[];
 }
+
+const RowKey = Schema.Union([
+  Schema.Boolean,
+  Schema.Finite,
+  Schema.String,
+  Schema.Array(Schema.Union([Schema.Boolean, Schema.Finite, Schema.String])),
+]);
+const JsonObject = Schema.Record(Schema.String, Schema.Json);
+const StateRow = Schema.Struct({ key: RowKey, row: JsonObject });
+const CountedValue = Schema.Struct({ value: Schema.Json, count: Schema.Finite });
+const OperatorStateSnapshotSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  planName: Schema.String,
+  revision: Schema.Finite,
+  relations: Schema.Array(
+    Schema.Struct({ relationId: Schema.String, rows: Schema.Array(StateRow) }),
+  ),
+  arrangements: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      relationId: Schema.String,
+      retainedFields: Schema.Array(Schema.String),
+      entries: Schema.Array(Schema.Struct({ value: Schema.Json, rowKeys: Schema.Array(RowKey) })),
+    }),
+  ),
+  aggregates: Schema.Array(
+    Schema.Struct({
+      nodeId: Schema.String,
+      groups: Schema.Array(
+        Schema.Struct({
+          key: RowKey,
+          group: JsonObject,
+          memberCount: Schema.Finite,
+          sums: Schema.Record(Schema.String, Schema.Finite),
+          maxima: Schema.Record(Schema.String, Schema.Array(CountedValue)),
+          conditionalCounts: Schema.Record(Schema.String, Schema.Finite),
+        }),
+      ),
+    }),
+  ),
+  tops: Schema.Array(
+    Schema.Struct({
+      nodeId: Schema.String,
+      partitions: Schema.Array(
+        Schema.Struct({
+          key: RowKey,
+          candidates: Schema.Array(
+            Schema.Struct({
+              key: RowKey,
+              row: JsonObject,
+              sortValues: Schema.Array(Schema.Json),
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+});
+const decodeOperatorStateSnapshot = Schema.decodeUnknownSync(OperatorStateSnapshotSchema);
 
 export function operatorMaintenanceCommit(input: OperatorCommitInput): MaintenanceCommit {
   if (input.patch.planName !== input.plan.name) {
@@ -81,14 +141,14 @@ export function operatorMaintenanceCommit(input: OperatorCommitInput): Maintenan
             kind: "put" as const,
             namespace: namespace(mutation.id),
             key: mutation.key,
-            value: mutation.value as JsonValue,
+            value: mutation.value,
           },
     ),
     {
       kind: "put",
       namespace: namespace("__graph_snapshot__"),
       key: "state",
-      value: input.snapshot as unknown as JsonValue,
+      value: decodeOperatorStateSnapshot(input.snapshot),
     },
     ...(input.extraValues ?? []).map((extra) => ({
       kind: "put" as const,
@@ -164,14 +224,11 @@ export function decodeOperatorSnapshot(
   value: JsonValue | undefined,
 ): OperatorStateSnapshot | undefined {
   if (value === undefined) return undefined;
-  if (value === null || Array.isArray(value) || typeof value !== "object") {
-    throw new TypeError("stored operator snapshot is not an object");
-  }
-  const candidate = value as Partial<OperatorStateSnapshot>;
+  const candidate = decodeOperatorStateSnapshot(value);
   if (candidate.version !== 1 || candidate.planName !== plan.name) {
     throw new TypeError("stored operator snapshot is incompatible with the checked plan");
   }
-  return candidate as OperatorStateSnapshot;
+  return candidate;
 }
 
 export const rowKey = (value: RowKey): RowKey => value;

@@ -91,6 +91,18 @@ export class IssueSink extends Context.Service<IssueSink, IssueSinkService>()(
   "issue-tracker/IssueSink",
 ) {}
 
+const appendChecked = (
+  streamId: string,
+  run: () => Promise<{ status: string }>,
+): Effect.Effect<void, AppendRejected> =>
+  Effect.promise(run).pipe(
+    Effect.flatMap((result) =>
+      result.status === "appended"
+        ? Effect.void
+        : Effect.fail(new AppendRejected({ stream: streamId, status: result.status })),
+    ),
+  );
+
 export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSink> =>
   Layer.effect(
     IssueSink,
@@ -114,23 +126,6 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
         );
       };
 
-      const appendedCount = (
-        workspaceId: string,
-        run: () => Promise<{ status: string }>,
-      ): Effect.Effect<void, AppendRejected> =>
-        Effect.promise(run).pipe(
-          Effect.flatMap((result) =>
-            result.status === "appended"
-              ? Effect.void
-              : Effect.fail(
-                  new AppendRejected({
-                    stream: streamNames.labelCountState(workspaceId),
-                    status: result.status,
-                  }),
-                ),
-          ),
-        );
-
       const open = (workspaceId: string): Effect.Effect<BoardStateStream, StreamUnavailable> => {
         const streamId = streamNames.boardState(workspaceId);
         return Effect.promise(() => state.get(streamId)).pipe(
@@ -142,32 +137,11 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
         );
       };
 
-      /**
-       * Every append is checked. A Durable State message that the protocol
-       * refuses is a failed publication, never a silent gap in the product.
-       */
-      const appended = (
-        workspaceId: string,
-        run: () => Promise<{ status: string }>,
-      ): Effect.Effect<void, AppendRejected> =>
-        Effect.promise(run).pipe(
-          Effect.flatMap((result) =>
-            result.status === "appended"
-              ? Effect.void
-              : Effect.fail(
-                  new AppendRejected({
-                    stream: streamNames.boardState(workspaceId),
-                    status: result.status,
-                  }),
-                ),
-          ),
-        );
-
       return IssueSink.of({
         ensure: Effect.fn("IssueSink.ensure")(function* (workspaceId: string) {
           const streamId = streamNames.boardState(workspaceId);
           const created = yield* Effect.promise(() => state.create(streamId));
-          if (created.status === "created" || created.status === "exists") return;
+          if (created.status === "created" || created.status === "exists") return undefined;
           return yield* new StreamUnavailable({ streamId, status: created.status });
         }),
 
@@ -179,12 +153,12 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
           const stream = yield* open(workspaceId);
           for (const change of changes) {
             if (change.kind === "exit") {
-              yield* appended(workspaceId, () =>
+              yield* appendChecked(streamNames.boardState(workspaceId), () =>
                 stream.state.delete("issues", change.key, { oldValue: change.before }),
               );
               continue;
             }
-            yield* appended(workspaceId, () =>
+            yield* appendChecked(streamNames.boardState(workspaceId), () =>
               stream.state.upsert("issues", change.after, { key: change.key }),
             );
           }
@@ -195,13 +169,17 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
           rows: readonly ProjectBoardCard[],
         ) {
           const stream = yield* open(workspaceId);
-          yield* appended(workspaceId, () => stream.state.snapshotStart());
+          yield* appendChecked(streamNames.boardState(workspaceId), () =>
+            stream.state.snapshotStart(),
+          );
           for (const row of rows) {
-            yield* appended(workspaceId, () =>
+            yield* appendChecked(streamNames.boardState(workspaceId), () =>
               stream.state.upsert("issues", row, { key: row.issueId }),
             );
           }
-          yield* appended(workspaceId, () => stream.state.snapshotEnd());
+          yield* appendChecked(streamNames.boardState(workspaceId), () =>
+            stream.state.snapshotEnd(),
+          );
         }),
 
         /**
@@ -225,12 +203,12 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
           const stream = yield* openCounts(workspaceId);
           for (const change of changes) {
             if (change.kind === "exit") {
-              yield* appendedCount(workspaceId, () =>
+              yield* appendChecked(streamNames.labelCountState(workspaceId), () =>
                 stream.state.delete("labelCounts", change.key, { oldValue: change.before }),
               );
               continue;
             }
-            yield* appendedCount(workspaceId, () =>
+            yield* appendChecked(streamNames.labelCountState(workspaceId), () =>
               stream.state.upsert("labelCounts", change.after, { key: change.key }),
             );
           }
@@ -241,13 +219,17 @@ export const sinkLayer = (protocol: StreamProtocolFactory): Layer.Layer<IssueSin
           rows: readonly LabelCountRow[],
         ) {
           const stream = yield* openCounts(workspaceId);
-          yield* appendedCount(workspaceId, () => stream.state.snapshotStart());
+          yield* appendChecked(streamNames.labelCountState(workspaceId), () =>
+            stream.state.snapshotStart(),
+          );
           for (const row of rows) {
-            yield* appendedCount(workspaceId, () =>
+            yield* appendChecked(streamNames.labelCountState(workspaceId), () =>
               stream.state.upsert("labelCounts", row, { key: row.labelId }),
             );
           }
-          yield* appendedCount(workspaceId, () => stream.state.snapshotEnd());
+          yield* appendChecked(streamNames.labelCountState(workspaceId), () =>
+            stream.state.snapshotEnd(),
+          );
         }),
       });
     }),

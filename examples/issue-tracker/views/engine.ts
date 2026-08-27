@@ -13,7 +13,10 @@
  */
 import type { Change, Expression, JsonObject, JsonValue, RelationPlan } from "@streamsy/views-ir";
 import type { ReducerDeclaration } from "@streamsy/views";
+import { Schema } from "effect";
 import { evaluate, evaluateKey } from "./reducer-expression.ts";
+
+const decodeJsonObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json));
 
 /** A source item that the reducer cannot fold. Always a declaration or data bug. */
 export class ReducerFault extends TypeError {
@@ -109,11 +112,18 @@ function fold<Row>(
     throw new ReducerFault("branch", key, `no evolve branch for ${discriminator}`);
   }
 
+  let previousJson: JsonObject | undefined;
+  try {
+    previousJson = previous === undefined ? undefined : decodeJsonObject(previous);
+  } catch (cause) {
+    throw new ReducerFault("decode", key, cause);
+  }
+
   const patch: Record<string, JsonValue> = {};
   // SAFETY: `previous` came from `decodeRow`, so it is a value the caller's
   // schema accepted — a JSON object by construction. The evaluator reads it
   // through the `state` scope and never mutates it.
-  const scopes = { event: item, state: previous as JsonValue | undefined };
+  const scopes = { event: item, state: previousJson };
   for (const [field, expression] of Object.entries(branch)) {
     try {
       patch[field] = evaluate(expression, scopes);
@@ -124,7 +134,7 @@ function fold<Row>(
 
   // SAFETY: same invariant — `previous` is a decoded row, so spreading it
   // yields its own fields and the patch overwrites exactly the declared ones.
-  const merged = previous === undefined ? patch : { ...(previous as object), ...patch };
+  const merged = previousJson === undefined ? patch : { ...previousJson, ...patch };
   try {
     return input.decodeRow(merged);
   } catch (cause) {
