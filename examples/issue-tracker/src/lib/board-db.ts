@@ -46,7 +46,7 @@ export function createBoardConnection(options: BoardConnectionOptions): BoardCon
 }
 
 export function sortRows(rows: readonly BoardIssuesRow[]): readonly BoardIssuesRow[] {
-  return [...rows].sort(
+  return rows.toSorted(
     (left, right) =>
       right.updatedAt.localeCompare(left.updatedAt) || left.issueId.localeCompare(right.issueId),
   );

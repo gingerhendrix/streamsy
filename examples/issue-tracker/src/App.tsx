@@ -16,6 +16,7 @@
  *   the panels say so rather than implying convergence they do not have.
  */
 import { useLiveQuery } from "@tanstack/react-db";
+import { DateTime } from "effect";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, type IssueStatus } from "../domain/issue.ts";
 import type { BoardIssuesRow } from "./generated/board-issues.ts";
@@ -27,6 +28,7 @@ import {
   fetchInbox,
   fetchWorkspaceReadModels,
   newCommandId,
+  newIssueId,
   seedWorkspace,
   type CommandAck,
   type WorkspaceReadModels,
@@ -139,15 +141,17 @@ function Board(props: {
   const [refreshedAt, setRefreshedAt] = useState<string | undefined>(undefined);
 
   const { workspaceId, userId } = props;
-  const refresh = useCallback(async () => {
-    const [next, rowsForUser] = await Promise.all([
-      fetchWorkspaceReadModels(workspaceId),
-      fetchInbox(userId),
-    ]);
-    setModels(next);
-    setInbox(rowsForUser);
-    setRefreshedAt(new Date().toISOString());
-  }, [workspaceId, userId]);
+  const refresh = useCallback(
+    () =>
+      Promise.all([fetchWorkspaceReadModels(workspaceId), fetchInbox(userId)]).then(
+        ([next, rowsForUser]) => {
+          setModels(next);
+          setInbox(rowsForUser);
+          setRefreshedAt(DateTime.formatIso(DateTime.nowUnsafe()));
+        },
+      ),
+    [workspaceId, userId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +161,7 @@ function Board(props: {
       });
     };
     tick();
+    // oxlint-disable-next-line effecttsgo/global-timers -- React owns this browser polling lifecycle and the cleanup below clears the matching platform interval.
     const timer = setInterval(tick, READ_MODEL_INTERVAL_MS);
     return () => {
       cancelled = true;
@@ -206,7 +211,7 @@ function Board(props: {
           run(() =>
             createIssue(props.workspaceId, {
               commandId: newCommandId("create"),
-              issueId: `issue-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
+              issueId: newIssueId(),
               projectId: "streamsy",
               title,
               status,
@@ -521,10 +526,10 @@ function Column(props: {
                   value={row.status}
                   disabled={props.busy}
                   onChange={(changed) => {
-                    // SAFETY: the option values are `BOARD_COLUMNS`' own
-                    // statuses, so a select can only report one of them.
-                    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-                    props.onMove(row.issueId, changed.target.value as IssueStatus);
+                    const next = BOARD_COLUMNS.find(
+                      (column) => column.status === changed.target.value,
+                    );
+                    if (next !== undefined) props.onMove(row.issueId, next.status);
                   }}
                 >
                   {BOARD_COLUMNS.map((column) => (
@@ -580,10 +585,8 @@ function CreateIssueForm(props: {
           name="status"
           value={status}
           onChange={(changed) => {
-            // SAFETY: the options are rendered from `BOARD_COLUMNS`, so the
-            // selected value is one of the declared statuses.
-            // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-            setStatus(changed.target.value as IssueStatus);
+            const next = BOARD_COLUMNS.find((column) => column.status === changed.target.value);
+            if (next !== undefined) setStatus(next.status);
           }}
         >
           {BOARD_COLUMNS.map((column) => (
@@ -598,6 +601,12 @@ function CreateIssueForm(props: {
       </button>
     </form>
   );
+}
+
+function sinkErrorMessage(error: SinkStatus & { readonly kind: "failed" }): string {
+  if (error.error instanceof Error) return error.error.message;
+  const { _tag: tag } = error.error;
+  return tag;
 }
 
 /** `Live` means the sink answered successfully for this session. */
@@ -623,11 +632,7 @@ function SyncBadge(props: {
         </span>
       ) : undefined}
       {props.status.kind === "failed" ? (
-        <span className="rows">
-          {props.status.error instanceof Error
-            ? props.status.error.message
-            : props.status.error._tag}
-        </span>
+        <span className="rows">{sinkErrorMessage(props.status)}</span>
       ) : undefined}
     </p>
   );

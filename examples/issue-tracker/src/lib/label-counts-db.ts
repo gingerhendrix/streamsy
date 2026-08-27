@@ -62,7 +62,7 @@ export function createLabelCountsConnection(
 export function sortLabelCounts(
   rows: readonly BoardLabelCountsRow[],
 ): readonly BoardLabelCountsRow[] {
-  return [...rows].sort(
+  return rows.toSorted(
     (left, right) =>
       right.issueCount - left.issueCount || left.labelName.localeCompare(right.labelName),
   );
