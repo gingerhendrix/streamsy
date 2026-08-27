@@ -1,4 +1,3 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/node-builtin-import, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-unknown-parameters -- This is an executable acceptance script: it starts a real server, drives it over real HTTP, and reports to the invoking terminal; each parsed body's assertion IS the check, and a failed one exits non-zero. */
 /**
  * The whole local application, from recorded and live inputs.
  *
@@ -22,22 +21,38 @@
  * asserted from a command response: every check reads a published product or a
  * maintained read model back over the network.
  */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This executable reads its checked-in recording and creates an isolated native temporary database directory.
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This executable resolves its checked-in recording path and isolated database directory through Bun's Node-compatible path API.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Schema } from "effect";
 import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
 import { streamNames } from "../domain/declaration.ts";
+import { WorkspaceSummary } from "../domain/issue.ts";
+import {
+  DrainResponse,
+  InboxResponse,
+  IssuesResponse,
+  LabelCommandResponse,
+  LabelCountsResponse,
+  TransitionFeedResponse,
+} from "../shared/api.ts";
 import { createBoardConnection } from "../src/lib/board-db.ts";
 import { createLabelCountsConnection } from "../src/lib/label-counts-db.ts";
+import { decodeResponse, request } from "./http.ts";
 
 const checks: string[] = [];
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This executable assertion boundary accepts already-decoded values from several contracts solely to preserve their native stderr diagnostics on failure.
 function check(label: string, condition: boolean, detail?: unknown): void {
   if (!condition) {
+    // oxlint-disable-next-line effecttsgo/global-console -- A failed acceptance check must retain its stderr diagnostic before the executable exits non-zero.
     console.error(`FAIL ${label}`, detail === undefined ? "" : detail);
     process.exit(1);
   }
   checks.push(label);
+  // oxlint-disable-next-line effecttsgo/global-console -- Per-check stdout is the acceptance script's documented terminal result.
   console.log(`ok   ${label}`);
 }
 
@@ -53,23 +68,31 @@ function start(options: LocalHostOptions): Running {
   return { host, server, origin: `http://localhost:${server.port}` };
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- This executable edge awaits native Bun server shutdown and the host's Promise-based close contract in order.
 async function stop(running: Running): Promise<void> {
   await running.server.stop(true);
   await running.host.close();
 }
 
-const post = (origin: string, path: string, body: unknown): Promise<Response> =>
-  fetch(`${origin}${path}`, {
+const post = (origin: string, path: string, body: Schema.Json): Promise<Response> =>
+  request(`${origin}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 
-const get = async <T>(origin: string, path: string): Promise<T> => {
-  const response = await fetch(`${origin}${path}`, { headers: { accept: "application/json" } });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${path} → ${response.status} ${text.slice(0, 300)}`);
-  return JSON.parse(text) as T;
+// oxlint-disable-next-line effecttsgo/async-function -- This executable HTTP assertion boundary must inspect a non-success body's native Response text before decoding successful JSON.
+const get = async <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  origin: string,
+  path: string,
+): Promise<S["Type"]> => {
+  const response = await request(`${origin}${path}`, { headers: { accept: "application/json" } });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${path} → ${response.status} ${text.slice(0, 300)}`);
+  }
+  return decodeResponse(schema, response);
 };
 
 /**
@@ -80,24 +103,36 @@ const get = async <T>(origin: string, path: string): Promise<T> => {
  * wrote. The host decodes them through the declared schemas on the way in, and
  * a recording that no longer decodes must fail there rather than here.
  */
-type RecordedValue = Record<string, string | number | boolean | null>;
+const RecordedValue = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null]),
+);
 
-interface Recording {
-  readonly workspaceId: string;
-  readonly catalog: Readonly<Record<string, readonly RecordedValue[]>>;
-  readonly issueEvents: readonly RecordedValue[];
-  readonly issueLabelEvents: readonly RecordedValue[];
-}
+const Recording = Schema.Struct({
+  workspaceId: Schema.String,
+  catalog: Schema.Record(Schema.String, Schema.Array(RecordedValue)),
+  issueEvents: Schema.Array(RecordedValue),
+  issueLabelEvents: Schema.Array(RecordedValue),
+});
 
 /** Which field of a recorded catalog row is that collection's declared key. */
-const CATALOG_KEYS = {
-  projects: "projectId",
-  users: "userId",
-  labels: "labelId",
-} satisfies Readonly<Record<string, string>>;
+function catalogKey(collection: string): string | undefined {
+  switch (collection) {
+    case "projects":
+      return "projectId";
+    case "users":
+      return "userId";
+    case "labels":
+      return "labelId";
+    default:
+      return undefined;
+  }
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
-const recording = JSON.parse(readFileSync(join(here, "recordings/acme.json"), "utf8")) as Recording;
+const recording = Schema.decodeSync(Schema.fromJsonString(Recording))(
+  readFileSync(join(here, "recordings/acme.json"), "utf8"),
+);
 
 /**
  * Replay a recording onto the durable streams, bypassing the command path.
@@ -106,18 +141,20 @@ const recording = JSON.parse(readFileSync(join(here, "recordings/acme.json"), "u
  * order is the recording's order — which is what makes the out-of-sequence
  * entry meaningful.
  */
+// oxlint-disable-next-line effecttsgo/async-function -- Recording replay deliberately sequences native durable-stream appends so arrival order remains the checked file order.
 async function replay(running: Running): Promise<void> {
   const workspaceId = recording.workspaceId;
   // One request opens the partition and creates every stream this workspace owns.
-  await get(running.origin, `/api/workspaces/${workspaceId}/issues`);
+  await get(IssuesResponse, running.origin, `/api/workspaces/${workspaceId}/issues`);
   const client = running.host.host.partition({ kind: "workspace", id: workspaceId });
-  if ("_tag" in client) throw new Error(`cannot open ${workspaceId}: ${client._tag}`);
+  if ("_tag" in client) {
+    const { _tag: tag } = client;
+    throw new Error(`cannot open ${workspaceId}: ${tag}`);
+  }
 
   for (const [collection, rows] of Object.entries(recording.catalog)) {
     for (const row of rows) {
-      const keyField: string | undefined = Object.hasOwn(CATALOG_KEYS, collection)
-        ? CATALOG_KEYS[collection as keyof typeof CATALOG_KEYS]
-        : undefined;
+      const keyField = catalogKey(collection);
       if (keyField === undefined) throw new Error(`unknown recorded collection ${collection}`);
       await post(running.origin, `/api/workspaces/${workspaceId}/catalog/${collection}`, {
         key: String(row[keyField]),
@@ -139,28 +176,9 @@ async function replay(running: Running): Promise<void> {
   }
 }
 
-interface IssueRowBody {
-  readonly issueId: string;
-  readonly status: string;
-  readonly assigneeId?: string;
-}
 interface LabelCountBody {
   readonly labelId: string;
   readonly issueCount: number;
-}
-interface TransitionBody {
-  readonly issueId: string;
-  readonly change: string;
-  readonly status: string;
-}
-interface InboxBody {
-  readonly workspaceId: string;
-  readonly issueId: string;
-}
-interface SummaryBody {
-  readonly issues: { readonly total: number; readonly byStatus: Record<string, number> };
-  readonly catalog: { readonly labels: number; readonly users: number };
-  readonly planHash: string;
 }
 
 const countOf = (rows: readonly LabelCountBody[], labelId: string): number =>
@@ -173,10 +191,7 @@ try {
   // ===== recorded inputs =====
   await replay(running);
 
-  const recorded = await get<{ rows: IssueRowBody[] }>(
-    running.origin,
-    "/api/workspaces/acme/issues",
-  );
+  const recorded = await get(IssuesResponse, running.origin, "/api/workspaces/acme/issues");
   check(
     "the recorded workspace folds into maintained rows",
     recorded.rows.length === 2 &&
@@ -191,7 +206,8 @@ try {
     recorded.rows,
   );
 
-  const recordedFeed = await get<{ events: TransitionBody[]; order: string }>(
+  const recordedFeed = await get(
+    TransitionFeedResponse,
     running.origin,
     "/feed/workspaces/acme/issue-transitions",
   );
@@ -207,7 +223,8 @@ try {
     recordedFeed.events,
   );
 
-  const recordedCounts = await get<{ rows: LabelCountBody[] }>(
+  const recordedCounts = await get(
+    LabelCountsResponse,
     running.origin,
     "/api/workspaces/acme/label-counts",
   );
@@ -218,7 +235,8 @@ try {
     recordedCounts.rows,
   );
 
-  const recordedSummary = await get<SummaryBody>(
+  const recordedSummary = await get(
+    WorkspaceSummary,
     running.origin,
     "/document/workspaces/acme/summary",
   );
@@ -249,7 +267,8 @@ try {
     labelId: "bug",
   });
 
-  const liveCounts = await get<{ rows: LabelCountBody[] }>(
+  const liveCounts = await get(
+    LabelCountsResponse,
     running.origin,
     "/api/workspaces/live/label-counts",
   );
@@ -261,15 +280,17 @@ try {
   check(
     "the recorded workspace's counts are untouched by the live one",
     countOf(
-      (await get<{ rows: LabelCountBody[] }>(running.origin, "/api/workspaces/acme/label-counts"))
-        .rows,
+      (await get(LabelCountsResponse, running.origin, "/api/workspaces/acme/label-counts")).rows,
       "bug",
     ) === 1,
   );
 
-  const drained = (await (
-    await post(running.origin, "/api/workspaces/live/notifications/drain", {})
-  ).json()) as { delivered: number };
+  const drainedResponse = await post(
+    running.origin,
+    "/api/workspaces/live/notifications/drain",
+    {},
+  );
+  const drained = await decodeResponse(DrainResponse, drainedResponse);
   check("the assignment notification is delivered once", drained.delivered === 1, drained);
 
   // ===== the cross-workspace inbox: two domains feeding one user =====
@@ -279,7 +300,7 @@ try {
     passes.length === 2 && passes.every((pass) => !pass.failed),
     passes,
   );
-  const inbox = await get<{ rows: InboxBody[] }>(running.origin, "/api/users/grace/inbox");
+  const inbox = await get(InboxResponse, running.origin, "/api/users/grace/inbox");
   check(
     "one user inbox is fed by the recorded and the live workspace",
     inbox.rows.length === 2 &&
@@ -325,32 +346,26 @@ try {
   check(
     "the recorded workspace's rows survive a whole-host restart",
     JSON.stringify(
-      (await get<{ rows: IssueRowBody[] }>(running.origin, "/api/workspaces/acme/issues")).rows,
+      (await get(IssuesResponse, running.origin, "/api/workspaces/acme/issues")).rows,
     ) === JSON.stringify(beforeRestart.rows),
   );
   check(
     "label counts survive a whole-host restart",
     JSON.stringify(
-      (await get<{ rows: LabelCountBody[] }>(running.origin, "/api/workspaces/acme/label-counts"))
-        .rows,
+      (await get(LabelCountsResponse, running.origin, "/api/workspaces/acme/label-counts")).rows,
     ) === JSON.stringify(beforeRestart.counts),
   );
   check(
     "the transition feed gains nothing from a restart",
     JSON.stringify(
-      (
-        await get<{ events: TransitionBody[] }>(
-          running.origin,
-          "/feed/workspaces/acme/issue-transitions",
-        )
-      ).events,
+      (await get(TransitionFeedResponse, running.origin, "/feed/workspaces/acme/issue-transitions"))
+        .events,
     ) === JSON.stringify(beforeRestart.feed),
   );
   check(
     "the user inbox survives a whole-host restart",
-    JSON.stringify(
-      (await get<{ rows: InboxBody[] }>(running.origin, "/api/users/grace/inbox")).rows,
-    ) === JSON.stringify(beforeRestart.inbox),
+    JSON.stringify((await get(InboxResponse, running.origin, "/api/users/grace/inbox")).rows) ===
+      JSON.stringify(beforeRestart.inbox),
   );
 
   const afterRestartPasses = await running.host.host.exchange();
@@ -361,14 +376,14 @@ try {
     afterRestartPasses,
   );
 
-  const retried = (await (
-    await post(running.origin, "/api/workspaces/live/issues/live-1/labels", {
-      commandId: "live-attach",
-      labelId: "bug",
-    })
-  ).json()) as { reconciled: boolean };
+  const retriedResponse = await post(running.origin, "/api/workspaces/live/issues/live-1/labels", {
+    commandId: "live-attach",
+    labelId: "bug",
+  });
+  const retried = await decodeResponse(LabelCommandResponse, retriedResponse);
   check("a membership retry still reconciles after the restart", retried.reconciled, retried);
 
+  // oxlint-disable-next-line effecttsgo/global-console -- The executable's final stdout contract reports the preserved acceptance-check count.
   console.log(`\n${checks.length} checks passed`);
 } finally {
   await stop(running);

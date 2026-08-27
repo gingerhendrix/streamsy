@@ -1,10 +1,11 @@
-/* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- This one-shot Bun build executable resolves its output paths with the Node-compatible filesystem and path APIs and reports bundle results directly to the invoking terminal. */
 /**
  * Build the browser bundle.
  *
  * Assets land in `dist/assets`, which is what the local host serves.
  */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This Bun build executable removes and recreates its package-owned output directory through the runtime filesystem API.
 import { rm } from "node:fs/promises";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This Bun build executable resolves package-owned input and output paths before invoking Bun.build.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,9 +26,11 @@ const app = await Bun.build({
 });
 
 if (!app.success) {
+  // oxlint-disable-next-line effecttsgo/global-console -- The executable forwards Bun build diagnostics to its invoking terminal before failing.
   for (const log of app.logs) console.error(log);
   throw new Error("Browser bundle failed");
 }
 
 const bytes = app.outputs.reduce((total, output) => total + output.size, 0);
+// oxlint-disable-next-line effecttsgo/global-console -- The build command's stdout contract reports output size and file count to its caller.
 console.log(`assets → dist/assets (${bytes} bytes, ${app.outputs.length} files)`);
