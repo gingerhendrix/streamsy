@@ -1,4 +1,5 @@
 import { DurableStream } from "@durable-streams/client";
+import type { CollectionDefinition } from "@durable-streams/state";
 import {
   createStreamDB,
   type StreamDB,
@@ -23,7 +24,7 @@ export type StateSinkStatus =
 export interface StateSinkClientDescriptor<
   Row extends object,
   Params extends Readonly<Record<string, string>>,
-  Definition extends StreamStateDefinition,
+  Definition extends Readonly<Record<string, CollectionDefinition<Row>>>,
 > {
   readonly name: string;
   readonly route: { readonly build: (params: Params) => string };
@@ -50,10 +51,13 @@ export interface StateSinkConnection<Definition extends StreamStateDefinition> {
   readonly dispose: () => void;
 }
 
+const NO_ROWS: readonly never[] = [];
+const emptyRows = (): readonly never[] => NO_ROWS;
+
 export function createStateSinkBinding<
   Row extends object,
   Params extends Readonly<Record<string, string>>,
-  Definition extends StreamStateDefinition,
+  Definition extends Readonly<Record<string, CollectionDefinition<Row>>>,
 >(descriptor: StateSinkClientDescriptor<Row, Params, Definition>) {
   const createTransport = (options: {
     readonly params: Params;
@@ -62,7 +66,7 @@ export function createStateSinkBinding<
     readonly onStatus: (status: StateSinkStatus) => void;
     readonly fetch?: typeof globalThis.fetch;
   }): StateSinkTransport<Row> => {
-    let rows = (): readonly Row[] => [];
+    let rows: () => readonly Row[] = emptyRows;
     let latest: StateSinkResume | undefined;
     const fetchImplementation = options.fetch ?? globalThis.fetch;
 
@@ -78,8 +82,9 @@ export function createStateSinkBinding<
       let response = await fetchImplementation(new Request(request, { headers }));
       if (response.status === 409) {
         const error = await decodeErrorResponse(response);
-        if (error._tag === "ResumeRejected" || error._tag === "ProtocolVersionUnsupported") {
-          if (error._tag === "ProtocolVersionUnsupported") {
+        const { _tag: tag } = error;
+        if (tag === "ResumeRejected" || tag === "ProtocolVersionUnsupported") {
+          if (tag === "ProtocolVersionUnsupported") {
             options.onStatus({ kind: "failed", error });
             throw new Error(`state-sink protocol ${error.received} is unsupported`);
           }
@@ -114,13 +119,14 @@ export function createStateSinkBinding<
       return lowerResetResponse(response, rows(), descriptor.collection);
     };
 
+    const compatibleFetch: typeof globalThis.fetch = Object.assign(guardedFetch, {
+      preconnect: fetchImplementation.preconnect,
+    });
     const stream = new DurableStream({
       url: new URL(descriptor.route.build(options.params), options.origin).toString(),
       contentType: "application/json",
       warnOnHttp: false,
-      // SAFETY: DurableStream calls only the standard fetch signature implemented
-      // by guardedFetch; Bun's ambient type adds a `preconnect` property it never uses.
-      fetch: guardedFetch as typeof globalThis.fetch,
+      fetch: compatibleFetch,
     });
 
     return {
@@ -157,9 +163,7 @@ export function createStateSinkBinding<
     });
     const collection = db.collections[descriptor.collection.name];
     options.transport.attachRows(() => {
-      // SAFETY: the generated Definition collection schema decodes Row before
-      // values enter this collection, and descriptor.name selects that collection.
-      return collection.toArray as readonly Row[];
+      return collection.toArray;
     });
     return {
       db,

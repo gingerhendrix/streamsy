@@ -123,17 +123,18 @@ export class OutboxStore extends Context.Service<OutboxStore, OutboxStoreService
   "streamsy/effect-sink/OutboxStore",
 ) {}
 
+const attempt = <A>(operation: string, run: () => A): Effect.Effect<A, OutboxUnavailable> =>
+  Effect.try({
+    try: run,
+    catch: (cause) =>
+      new OutboxUnavailable({
+        operation,
+        detail: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+
 /** Lift one synchronous backing into the service every runtime asks for. */
 export function outboxStore(backing: OutboxBacking): OutboxStoreService {
-  const attempt = <A>(operation: string, run: () => A): Effect.Effect<A, OutboxUnavailable> =>
-    Effect.try({
-      try: run,
-      catch: (cause) =>
-        new OutboxUnavailable({
-          operation,
-          detail: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
   return OutboxStore.of({
     enqueue: Effect.fn("Outbox.enqueue")((drafts: readonly OutboxDraft[]) =>
       attempt("enqueue", () => backing.enqueue(drafts)),

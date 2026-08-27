@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Clock, Effect, Schema } from "effect";
 import type {
   CheckpointDescriptor,
   JsonValue,
@@ -9,6 +9,8 @@ import type {
   ViewStoreService,
 } from "./contracts.ts";
 import { ViewCheckpointIncompatible, ViewCursorConflict } from "./errors.ts";
+
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 
 export interface RecoverySource<Item, SourceError = StoreError> {
   readonly readAfter: (
@@ -57,7 +59,7 @@ export const recover = <Item, SourceError = StoreError, FoldError = StoreError>(
     const checkpoint = yield* options.store.loadCheckpoint(options.checkpoint);
     const state = new Map<string, JsonValue>(options.initialState ?? []);
     for (const entry of checkpoint?.entries ?? [])
-      state.set(JSON.stringify(entry.key), entry.value);
+      state.set(encodeJsonString(entry.key), entry.value);
     const suffix = yield* options.source.readAfter(checkpoint?.sourceCursor);
     if (suffix.items.length === 0 || suffix.afterExclusiveCursor === undefined)
       return {
@@ -74,10 +76,12 @@ export const recover = <Item, SourceError = StoreError, FoldError = StoreError>(
       afterExclusiveCursor: suffix.afterExclusiveCursor,
     });
     if (options.saveCheckpoint === true) {
+      const createdAtMs =
+        options.now === undefined ? yield* Clock.currentTimeMillis : options.now();
       const save: SaveCheckpoint = {
         ...options.checkpoint,
         sourceCursor: suffix.afterExclusiveCursor,
-        createdAtMs: options.now?.() ?? Date.now(),
+        createdAtMs,
         entries: [...folded.state.values()],
       };
       yield* options.store.saveCheckpoint(save);

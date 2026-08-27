@@ -48,7 +48,10 @@ CREATE INDEX streamsy_view_index_lookup ON streamsy_view_operator_index(plan_nam
 `,
 ];
 
-export function migrateViewStore(database: Database, now = Date.now()): void {
+export function migrateViewStore(
+  database: Database,
+  now = sqliteCurrentTimeMillis(database),
+): void {
   database.run(
     "CREATE TABLE IF NOT EXISTS streamsy_view_schema_version(version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
   );
@@ -78,7 +81,7 @@ export interface LegacyImport {
 export function importLegacyIssueStore(
   database: Database,
   config: LegacyImport,
-  now = Date.now(),
+  now = sqliteCurrentTimeMillis(database),
 ): void {
   database.run(
     "CREATE TABLE IF NOT EXISTS streamsy_view_legacy_import(import_name TEXT PRIMARY KEY, imported_at_ms INTEGER NOT NULL)",
@@ -125,4 +128,12 @@ export function importLegacyIssueStore(
       );
     database.run("INSERT INTO streamsy_view_legacy_import VALUES ('issue-tracker-v1', ?)", [now]);
   })();
+}
+
+function sqliteCurrentTimeMillis(database: Database): number {
+  const row = database
+    .query<{ now_ms: number }, []>("SELECT CAST(unixepoch('subsec') * 1000 AS INTEGER) now_ms")
+    .get();
+  if (row === null) throw new Error("SQLite did not provide the current time");
+  return row.now_ms;
 }

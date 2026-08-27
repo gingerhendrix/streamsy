@@ -4,21 +4,18 @@ const Recovery = Schema.Literal("snapshot-then-live");
 
 /** Server-side schema for the browser-safe public error union. */
 export const StateSinkPublicErrorSchema = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("InvalidSinkParams"),
+  Schema.TaggedStruct("InvalidSinkParams", {
     sink: Schema.String,
     parameter: Schema.String,
     detail: Schema.String,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("ProtocolVersionUnsupported"),
+  Schema.TaggedStruct("ProtocolVersionUnsupported", {
     sink: Schema.String,
-    supported: Schema.Number,
+    supported: Schema.Finite,
     received: Schema.String,
     recovery: Recovery,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("ResumeRejected"),
+  Schema.TaggedStruct("ResumeRejected", {
     sink: Schema.String,
     reason: Schema.Literals([
       "invalid-offset",
@@ -28,18 +25,15 @@ export const StateSinkPublicErrorSchema = Schema.Union([
     ]),
     recovery: Recovery,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("SnapshotUnavailable"),
+  Schema.TaggedStruct("SnapshotUnavailable", {
     sink: Schema.String,
     detail: Schema.String,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("TransportUnavailable"),
+  Schema.TaggedStruct("TransportUnavailable", {
     sink: Schema.String,
     detail: Schema.String,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("WireDecodeFailed"),
+  Schema.TaggedStruct("WireDecodeFailed", {
     sink: Schema.String,
     detail: Schema.String,
   }),

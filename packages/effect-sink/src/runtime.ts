@@ -230,9 +230,10 @@ function failureOf<Payload, From extends EffectSinkRelation>(
   entry: OutboxEntry,
   cause: Cause.Cause<EffectSinkDeliveryFailure>,
 ): EffectSinkDeliveryFailure {
-  const declared = cause.reasons.find(
-    (reason): reason is Cause.Fail<EffectSinkDeliveryFailure> => reason._tag === "Fail",
-  );
+  const declared = cause.reasons.find((reason): reason is Cause.Fail<EffectSinkDeliveryFailure> => {
+    const { _tag: tag } = reason;
+    return tag === "Fail";
+  });
   if (declared !== undefined) return declared.error;
   return EffectSinkDeliveryFailure.retryable(
     sink.handler.name,

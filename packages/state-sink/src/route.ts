@@ -65,7 +65,7 @@ export function compileSinkRoute<Codecs extends SinkParamCodecs>(
           return encodeURIComponent(value);
         })
         .join("/")}`,
-    match: (pathname: string) => matchRoute<DecodedSinkParams<Codecs>>(segments, pathname),
+    match: (pathname: string) => matchRoute(segments, codecs, pathname),
   };
   return Object.freeze(compiled);
 }
@@ -84,10 +84,11 @@ function splitTemplate(template: string): readonly string[] {
   return parts;
 }
 
-function matchRoute<Params>(
+function matchRoute<Codecs extends SinkParamCodecs>(
   segments: readonly Segment[],
+  codecs: Codecs,
   pathname: string,
-): SinkRouteMatch<Params> {
+): SinkRouteMatch<DecodedSinkParams<Codecs>> {
   const actual = pathname.startsWith("/") ? pathname.slice(1).split("/") : [];
   if (actual.length !== segments.length) return { kind: "mismatch" };
   const params: Record<string, string> = {};
@@ -117,7 +118,15 @@ function matchRoute<Params>(
       return { kind: "invalid", parameter: segment.name, detail: String(cause) };
     }
   }
-  // SAFETY: every compiled parameter was decoded through its named codec and
-  // the compiler rejects missing or extra codec names.
-  return { kind: "matched", params: params as Params };
+  if (!hasEveryDecodedParam(params, codecs)) {
+    throw new TypeError("compiled sink route did not decode every declared parameter");
+  }
+  return { kind: "matched", params };
+}
+
+function hasEveryDecodedParam<Codecs extends SinkParamCodecs>(
+  params: Readonly<Record<string, string>>,
+  codecs: Codecs,
+): params is DecodedSinkParams<Codecs> {
+  return Object.keys(codecs).every((name) => name in params);
 }

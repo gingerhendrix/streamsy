@@ -19,7 +19,7 @@ export class ViewCursorConflict extends Schema.TaggedError<ViewCursorConflict>()
 ) {}
 export class ViewHistoryExpired extends Schema.TaggedError<ViewHistoryExpired>()(
   "ViewHistoryExpired",
-  { epoch: Schema.Number, requested: Schema.Number, first: Schema.Number, latest: Schema.Number },
+  { epoch: Schema.Finite, requested: Schema.Finite, first: Schema.Finite, latest: Schema.Finite },
 ) {}
 export class ViewCheckpointIncompatible extends Schema.TaggedError<ViewCheckpointIncompatible>()(
   "ViewCheckpointIncompatible",

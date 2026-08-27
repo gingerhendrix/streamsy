@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import type {
   Checkpoint,
   CheckpointDescriptor,
@@ -22,7 +22,7 @@ import {
   ViewStateRestorePoison,
   ViewStoreUnavailable,
 } from "./errors.ts";
-import { decodeJson } from "./errors-internal.ts";
+import { decodeJson, decodeStoredChange } from "./errors-internal.ts";
 import { decodeKey, encodeKey } from "./key-codec.ts";
 
 export class ViewStore extends Context.Service<ViewStore, ViewStoreService>()(
@@ -81,6 +81,10 @@ const batchKey = (i: ViewIdentity, sequence: number) =>
 const checkpointKey = (d: CheckpointDescriptor) =>
   JSON.stringify([d.planName, d.partition, d.reducerId]);
 const raw = (value: JsonValue | StoredChange) => JSON.stringify(value);
+const isCheckpointIncompatible = Schema.is(ViewCheckpointIncompatible);
+const isCursorConflict = Schema.is(ViewCursorConflict);
+const isHistoryExpired = Schema.is(ViewHistoryExpired);
+const isRestorePoison = Schema.is(ViewStateRestorePoison);
 
 interface ParsedIndex {
   readonly sortKey: RowKey;
@@ -102,8 +106,7 @@ function storeError(
   operation: string,
   cause: unknown,
 ): ViewStoreUnavailable | ViewStateRestorePoison | ViewCheckpointIncompatible {
-  if (cause instanceof ViewStateRestorePoison || cause instanceof ViewCheckpointIncompatible)
-    return cause;
+  if (isRestorePoison(cause) || isCheckpointIncompatible(cause)) return cause;
   return new ViewStoreUnavailable({
     operation,
     detail: cause instanceof Error ? cause.message : String(cause),
@@ -187,7 +190,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
             let floor = existing?.floor ?? 1;
             const candidates = [...batches.entries()]
               .filter(([key]) => key.startsWith(`${pkey}\u0000`))
-              .sort(([a], [b]) => a.localeCompare(b));
+              .toSorted(([a], [b]) => a.localeCompare(b));
             const keepCount = Math.max(0, retention.keepLastBatches ?? candidates.length);
             const cutoff =
               retention.keepForMilliseconds === undefined
@@ -217,8 +220,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
             });
             return { epoch, sequence };
           },
-          catch: (cause) =>
-            cause instanceof ViewCursorConflict ? cause : storeError("commit", cause),
+          catch: (cause) => (isCursorConflict(cause) ? cause : storeError("commit", cause)),
         }),
     ),
     getRow: Effect.fn("ViewStore.getRow")((namespace, key) =>
@@ -230,7 +232,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
           sourceCursor: backing.partitions.get(partitionKey(namespace))?.cursor,
           rows: [...backing.rows.entries()]
             .filter(([key]) => key.startsWith(`${namespaceKey(namespace)}\u0000`))
-            .sort(([a], [b]) => a.localeCompare(b))
+            .toSorted(([a], [b]) => a.localeCompare(b))
             .map(([key, value]) => ({
               key: decodeKey(key.slice(namespaceKey(namespace).length + 1)),
               value: decodeJson("rows", namespaceKey(namespace), key, value),
@@ -247,7 +249,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
         try: () =>
           [...backing.operatorValues.entries()]
             .filter(([key]) => key.startsWith(`${namespaceKey(namespace)}\u0000`))
-            .sort(([a], [b]) => a.localeCompare(b))
+            .toSorted(([a], [b]) => a.localeCompare(b))
             .map(([key, value]) => ({
               key: decodeKey(key.slice(namespaceKey(namespace).length + 1)),
               value: decodeJson("operator_values", namespaceKey(namespace), key, value),
@@ -261,7 +263,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
           const prefix = indexPrefix(namespace, name, key);
           return [...backing.indexes.entries()]
             .filter(([encoded]) => encoded.startsWith(prefix))
-            .sort(([a], [b]) => a.localeCompare(b))
+            .toSorted(([a], [b]) => a.localeCompare(b))
             .map(([encoded, value]) => indexEntry(encoded, prefix, value, namespace))
             .filter(
               (entry) =>
@@ -310,8 +312,7 @@ export function memoryService(backing: MemoryBacking): ViewStoreService {
             .filter((batch) => batch.position.sequence > requested)
             .slice(0, limit);
         },
-        catch: (cause) =>
-          cause instanceof ViewHistoryExpired ? cause : storeError("changesAfter", cause),
+        catch: (cause) => (isHistoryExpired(cause) ? cause : storeError("changesAfter", cause)),
       }),
     ),
     saveCheckpoint: Effect.fn("ViewStore.saveCheckpoint")((input: SaveCheckpoint) =>
@@ -371,20 +372,13 @@ function decodeBatches(
   const p = backing.partitions.get(partitionKey(identity));
   return [...backing.batches.entries()]
     .filter(([key]) => key.startsWith(`${partitionKey(identity)}\u0000`))
-    .sort(([a], [b]) => a.localeCompare(b))
+    .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([key, batch]) => ({
       position: { epoch: p?.epoch ?? 1, sequence: Number(key.slice(-16)) },
       sourceCursor: batch.sourceCursor,
       changes: batch.changes
-        .map(
-          (value, ordinal) =>
-            // SAFETY: commit serializes only the closed StoredChange union into this collection.
-            decodeJson(
-              "changes",
-              partitionKey(identity),
-              `${key}:${ordinal}`,
-              value,
-            ) as StoredChangeBatch["changes"][number],
+        .map((value, ordinal) =>
+          decodeStoredChange("changes", partitionKey(identity), `${key}:${ordinal}`, value),
         )
         .filter((change) => relationId === undefined || change.relationId === relationId),
     }))
@@ -409,7 +403,7 @@ function decodeCheckpoint(rawCheckpoint: RawCheckpoint): Checkpoint {
     sourceCursor: rawCheckpoint.sourceCursor,
     createdAtMs: rawCheckpoint.createdAtMs,
     entries: [...rawCheckpoint.entries]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .toSorted(([a], [b]) => a.localeCompare(b))
       .map(([key, value]) => ({
         key: decodeKey(key),
         value: decodeJson("checkpoint_entries", rawCheckpoint.descriptor.reducerId, key, value),

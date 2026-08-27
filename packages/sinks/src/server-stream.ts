@@ -119,7 +119,7 @@ export function handleStreamSink<
       nextOffset: page.nextOffset,
       upToDate: page.upToDate,
     };
-    return new Response(JSON.stringify(body), { status: 200, headers });
+    return Response.json(body, { status: 200, headers });
   }).pipe(
     Effect.catchTags({
       StreamSinkSourceFailure: (failure: StreamSinkSourceFailure) =>

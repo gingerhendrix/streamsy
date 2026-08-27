@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import type {
   Checkpoint,
   HistoryPosition,
@@ -39,11 +39,15 @@ export interface SqliteStoreOptions {
   readonly legacyImport?: LegacyImport;
   readonly now?: () => number;
 }
+const isCheckpointIncompatible = Schema.is(ViewCheckpointIncompatible);
+const isCursorConflict = Schema.is(ViewCursorConflict);
+const isHistoryExpired = Schema.is(ViewHistoryExpired);
+const isRestorePoison = Schema.is(ViewStateRestorePoison);
 const fail = (operation: string, cause: unknown) =>
-  cause instanceof ViewCheckpointIncompatible ||
-  cause instanceof ViewCursorConflict ||
-  cause instanceof ViewHistoryExpired ||
-  cause instanceof ViewStateRestorePoison
+  isCheckpointIncompatible(cause) ||
+  isCursorConflict(cause) ||
+  isHistoryExpired(cause) ||
+  isRestorePoison(cause)
     ? cause
     : new ViewStoreUnavailable({
         operation,
