@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP fixtures through their native Promise APIs. */
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun smoke resolves the demo child-process working directory with the Node-compatible path API.
 import { resolve } from "node:path";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.ts";
 
 // Offline vertical smoke: local HN fixture -> deterministic source batch ->
@@ -101,7 +101,7 @@ async function readStoryEvents(): Promise<ChangeEvent[]> {
   const decodeChange = Schema.decodeUnknownOption(HackerNewsStateChange);
   return values.flatMap((value) => {
     const decoded = decodeChange(value);
-    return decoded._tag === "Some" ? [decoded.value] : [];
+    return Option.isSome(decoded) ? [decoded.value] : [];
   });
 }
 

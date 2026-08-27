@@ -286,8 +286,7 @@ class FakeDurableObjectId implements DurableObjectId {
  * and is covered by the deployed conformance suite (see the file header).
  */
 function asStub(stub: FakeStub): FactoryStub {
-  // SAFETY: `FakeStub` implements the real stream RPC surface; this intersection adds only
-  // workerd's unavailable Fetcher, Provider, Disposable, and nominal brand types at the test seam.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: FakeStub implements the real RPC methods; only workerd's unavailable Fetcher, Provider, Disposable, and nominal brand types are added at this test seam.
   return stub as FakeStub & FactoryStub;
 }
 
