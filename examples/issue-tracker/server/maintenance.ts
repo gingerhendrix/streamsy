@@ -14,6 +14,7 @@ import { ReadStreams } from "@streamsy/experimental/effect";
 import { Effect, Schema } from "effect";
 import { catalogRow, type CatalogCollection } from "../domain/catalog.ts";
 import {
+  boardIssues,
   boardLabelCounts,
   issueLabelLifecycle,
   issueLabelMemberships,
@@ -59,7 +60,18 @@ export interface MaintenanceReport {
   readonly checkpoint: string | undefined;
   readonly folded: number;
   readonly changes: readonly Change<IssueRow, string>[];
-  /** How the sink was brought up to the committed checkpoint. */
+  /**
+   * How the board State sink was brought up to the board graph's committed
+   * revision by this pass.
+   *
+   * It reports the *sink*, not the source: `none` means the sink already
+   * carried the revision the graph now holds, `changes` that the graph's own
+   * deltas were appended, and `snapshot` that the sink was rebuilt from the
+   * committed rows. A pass that folds no issue event can still report `changes`
+   * or `snapshot`, because a project or user rename moves the board rows
+   * without moving the issue checkpoint. Conversely `none` never means "the
+   * work was skipped": it means the sink is already authoritative.
+   */
   readonly publication: "none" | "changes" | "snapshot";
   /**
    * What the joined catalog collections ingested during this pass.
@@ -140,8 +152,6 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
    */
   const catalogReports = yield* catchUpJoinedCatalog(workspaceId);
 
-  const after = yield* store.progress(workspaceId);
-
   /**
    * Both graphs are fed from *durable* sources behind their own positions, not
    * from the local variables above.
@@ -169,21 +179,24 @@ export const advance = Effect.fn("Maintenance.advance")(function* (workspaceId: 
     republish: (rows) => sink.republishLabelCounts(workspaceId, rows),
   });
 
-  if (after.checkpoint === undefined || after.published === after.checkpoint) {
-    return report(workspaceId, checkpoint, suffix.items.length, changes, "none");
-  }
-
-  const inSync =
-    after.published !== undefined && after.published === before.checkpoint && changes.length > 0;
-  if (inSync) {
-    yield* sink.publish(workspaceId, board.changes);
-    yield* store.markPublished(workspaceId, after.checkpoint);
-    return report(workspaceId, checkpoint, suffix.items.length, changes, "changes");
-  }
-
-  yield* sink.republish(workspaceId, board.rows);
-  yield* store.markPublished(workspaceId, after.checkpoint);
-  return report(workspaceId, checkpoint, suffix.items.length, changes, "snapshot");
+  /**
+   * The board publishes on its *graph's* revision, exactly as the label counts
+   * do — not on the issue source checkpoint.
+   *
+   * The board graph joins the project and user catalogs, so a pass in which
+   * only the catalog moved still produces a new board revision with the
+   * recomputed cards in it. Keying the sink append on the issue checkpoint made
+   * that pass look like "nothing to publish", and the checked sink then served
+   * the old project or user name on every card whose issue did not happen to
+   * change afterwards — per card, and for as long as that stayed true. The
+   * graph revision is the only marker that moves whenever the rows move, which
+   * is precisely the condition the sink has to track.
+   */
+  const boardPublication = yield* publishGraph(workspaceId, boardIssues.name, board, {
+    publish: (changed) => sink.publish(workspaceId, changed),
+    republish: (rows) => sink.republish(workspaceId, rows),
+  });
+  return report(workspaceId, checkpoint, suffix.items.length, changes, boardPublication);
 
   function report(
     id: string,

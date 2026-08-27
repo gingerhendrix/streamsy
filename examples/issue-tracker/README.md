@@ -193,11 +193,16 @@ server/runtime.ts       the application Layer, assembled once
 - **Atomic advance.** Maintained rows, reducer state and the source checkpoint
   commit in one SQLite transaction. A crash can leave the view behind the
   source; it cannot leave it half-folded or ahead of it.
-- **Publication is separate from the checkpoint.** The store tracks a published
-  position as well as a checkpoint. If publication fell behind — a process died
-  between committing and appending — the sink is rebuilt from the durable rows
-  rather than replaying messages nobody recorded. Durable rows are the
-  authority.
+- **Publication is separate from the checkpoint, and keyed on the graph.** Each
+  checked State sink tracks the _graph revision_ it last carried, not a source
+  cursor. That is what makes a catalog-only change publishable: a project or
+  user rename moves the board graph's rows and revision without moving the
+  issue checkpoint, and the board sink has to receive it anyway. If publication
+  fell behind — a process died between committing and appending — the sink is
+  rebuilt from the durable rows rather than replaying messages nobody recorded.
+  Durable rows are the authority. The `publication` field on a command response
+  reports which of the three happened (`none`, `changes`, `snapshot`) for the
+  board sink; `none` means the sink is already authoritative.
 - **The transition feed is atomic with the rows it describes.** It is published
   _from_ the committed change history, which is written in the same transaction
   as the rows, on a producer lane whose sequence is durable. A crash before the

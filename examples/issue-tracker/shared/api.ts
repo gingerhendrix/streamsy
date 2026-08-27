@@ -62,6 +62,19 @@ export const MaintenanceReportBody = Schema.Struct({
   checkpoint: Schema.NullOr(Schema.String),
   folded: Schema.Number,
   changed: Schema.Number,
+  /**
+   * How the board State sink was brought up to the board graph's revision.
+   *
+   * `checkpoint`, `folded` and `changed` describe the *source* side of the
+   * pass; this one describes the *sink* side, and the two are independent.
+   * `none` means the sink already carried the revision the graph holds — it is
+   * an "already authoritative" answer, never a "skipped" one. `changes` means
+   * the graph's deltas were appended, `snapshot` that the sink was rebuilt from
+   * the committed rows. A pass with `folded: 0` can still report `changes`,
+   * because a catalog rename moves board rows without moving the source
+   * checkpoint. The three values are unchanged from Integration 1; what a
+   * client may infer from them is what this note pins down.
+   */
   publication: Schema.Literals(["none", "changes", "snapshot"]),
 });
 
