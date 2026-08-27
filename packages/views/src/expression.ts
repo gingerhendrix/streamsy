@@ -104,9 +104,7 @@ const variadic = <T>(
 
 const operand = <T>(value: LiteralOperand<T>): Expression => {
   if (isExpression(value)) return value;
-  // SAFETY: LiteralOperand admits a non-expression only when Present<T> is a JsonValue.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion
-  return literal(value as JsonValue);
+  return literal(value);
 };
 
 const sort = (expression: Expression, direction: SortTerm["direction"]): SortTerm =>
@@ -132,6 +130,8 @@ const operations = new Set([
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-reflect-get, anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions -- Proxies are the intentional typed authoring boundary: their JSON target is a closed Expression, and the compile-time facade is covered by expression.test.ts and type-fixtures.ts. */
 function decorate<T>(node: Expression): TypedExpression<T> {
+  if (!isDecoratableExpression<T>(node))
+    throw new TypeError("expression nodes must be frozen before decoration");
   return new Proxy(node, {
     get(target, property) {
       if (typeof property !== "string" || property in target)
@@ -180,7 +180,11 @@ function decorate<T>(node: Expression): TypedExpression<T> {
           throw new TypeError(`unknown expression operation ${property}`);
       }
     },
-  }) as TypedExpression<T>;
+  });
+}
+
+function isDecoratableExpression<T>(node: Expression): node is TypedExpression<T> {
+  return Object.isFrozen(node);
 }
 
 function nestedReference<T>(target: Expression, property: string): TypedExpression<T> {

@@ -230,6 +230,8 @@ function expressionsOf(node: RelationNode): readonly (readonly [string, Expressi
       ];
     case "reduce-by-key":
       return [["key", node.key]];
+    default:
+      return unreachable(node);
   }
 }
 
@@ -337,4 +339,8 @@ function checkTop(
       node.id,
     );
   }
+}
+
+function unreachable(value: never): never {
+  throw new TypeError(`unreachable value ${String(value)}`);
 }

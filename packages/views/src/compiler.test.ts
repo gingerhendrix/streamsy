@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import type { RelationPlan } from "@streamsy/views-ir";
+import type { ReducerDeclaration } from "./relation.ts";
 import {
   checkPlan,
   collectPlanIssues,
@@ -16,7 +17,7 @@ import {
 
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion -- Malformed plan fixtures intentionally cross the static contract to prove runtime rejection. */
 
-const Row = Schema.Struct({ id: Schema.String, projectId: Schema.String, score: Schema.Number });
+const Row = Schema.Struct({ id: Schema.String, projectId: Schema.String, score: Schema.Finite });
 type Row = typeof Row.Type;
 const x = selectors<Row>();
 const rows = source("example.rows", {
@@ -26,6 +27,15 @@ const rows = source("example.rows", {
   key: "id",
   mode: "facts",
 });
+const unusedReducer: ReducerDeclaration<typeof Row, typeof Row> = {
+  kind: "reducer",
+  ref: { name: "example.reducer", version: 1 },
+  state: Row,
+  stateRef: { name: "example.Row", version: 1 },
+  input: Row,
+  discriminator: "kind",
+  evolve: {},
+};
 
 describe("relation compilation", () => {
   it("lowers filters, projections, keys and bounded top deterministically", () => {
@@ -89,12 +99,12 @@ describe("relation compilation", () => {
     expect(statePlan.nodes[0]).toMatchObject({ mode: "state", key: x.row.id });
     expect(Object.isFrozen(statePlan.nodes[0])).toBe(true);
     expect(planHash(factPlan)).not.toBe(planHash(statePlan));
-    expect(() => from(state).reduceByKey({ key: "id", reducer: {} as never })).toThrow(
+    expect(() => from(state).reduceByKey({ key: "id", reducer: unusedReducer })).toThrow(
       "fact source",
     );
   });
 
-  it("records parameter metadata and enforced top bounds", async () => {
+  it("records parameter metadata and enforced top bounds", () => {
     const projectId = parameter("projectId", Schema.String);
     const limit = parameter("limit", Schema.Int, { maximum: 50 });
     const declaration = defineView({
@@ -113,7 +123,7 @@ describe("relation compilation", () => {
       limit: { schema: { name: "limit", version: 1 }, maximum: 50 },
     });
     expect(declaration.plan.nodes.at(-1)).toMatchObject({ kind: "top-n", maximum: 50 });
-    await expect(Effect.runPromise(checkPlan(declaration))).resolves.toMatchObject({
+    return expect(Effect.runPromise(checkPlan(declaration))).resolves.toMatchObject({
       hash: expect.stringMatching(/^[0-9a-f]{8}$/),
     });
   });
@@ -153,7 +163,7 @@ describe("checking and canonical identity", () => {
     ...overrides,
   });
 
-  it("collects independent issues and fails once through Effect", async () => {
+  it("collects independent issues and fails once through Effect", () => {
     const issues = collectPlanIssues(raw());
     expect(issues.map((issue) => issue.code)).toEqual([
       "invalid-output-key",
@@ -162,7 +172,7 @@ describe("checking and canonical identity", () => {
       "unbounded-top",
       "unstable-top-order",
     ]);
-    await expect(Effect.runPromise(checkPlan(raw()))).rejects.toMatchObject({
+    return expect(Effect.runPromise(checkPlan(raw()))).rejects.toMatchObject({
       _tag: "PlanCheckFailed",
       issues,
     });
@@ -184,7 +194,12 @@ describe("checking and canonical identity", () => {
     expect(() => encodePlan({ ...first, value: 1n } as RelationPlan)).toThrow("non-JSON");
     expect(() => encodePlan({ ...first, value: () => 1 } as RelationPlan)).toThrow("non-JSON");
     expect(() => encodePlan({ ...first, value: Symbol("x") } as RelationPlan)).toThrow("non-JSON");
-    expect(() => encodePlan({ ...first, value: new Date() } as RelationPlan)).toThrow("non-plain");
+    class NonPlainValue {
+      readonly marker = "non-plain";
+    }
+    expect(() => encodePlan({ ...first, value: new NonPlainValue() } as RelationPlan)).toThrow(
+      "non-plain",
+    );
   });
 });
 

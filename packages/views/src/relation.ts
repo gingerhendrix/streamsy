@@ -144,7 +144,7 @@ interface FilterRelation<Row> {
 }
 interface ProjectRelation<Row> {
   readonly kind: "project";
-  readonly input: RelationExpression<unknown>;
+  readonly input: RelationExpression;
   readonly fields: Readonly<Record<string, Expression>>;
   readonly _row?: Row;
 }
@@ -155,15 +155,15 @@ interface KeyRelation<Row> {
 }
 interface JoinRelation<Row> {
   readonly kind: "inner-join" | "left-join";
-  readonly left: RelationExpression<unknown>;
-  readonly right: RelationExpression<unknown>;
+  readonly left: RelationExpression;
+  readonly right: RelationExpression;
   readonly on: Expression;
   readonly rightAlias: string;
   readonly _row?: Row;
 }
 interface AggregateRelation<Row> {
   readonly kind: "grouped-aggregate";
-  readonly input: RelationExpression<unknown>;
+  readonly input: RelationExpression;
   readonly groupBy: Readonly<Record<string, Expression>>;
   readonly aggregates: Readonly<Record<string, AggregateExpression>>;
   readonly _row?: Row;
@@ -237,20 +237,21 @@ export interface GroupedBuilder<Group> {
 }
 
 const asExpression = <Row>(
-  input: SourceDeclaration<Schema.Top> | RelationBuilder<Row>,
+  input: SourceDeclaration | RelationBuilder<Row>,
 ): RelationExpression<Row> =>
   "expression" in input ? input.expression : deepFreeze({ kind: "source-relation", source: input });
 
-/* oxlint-disable anti-slop/require-safety-comment-for-type-assertion -- SAFETY: builder callbacks preserve the row phantom described by RelationBuilder; runtime values contain only RelationExpression data, while generic return refinements are compile-time only and covered by type-fixtures.ts. */
-const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row> =>
-  Object.freeze({
+const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row> => {
+  const result: RelationBuilder<Row> = {
     expression,
-    where: (predicate: BooleanExpression) =>
-      builder(deepFreeze({ kind: "filter", input: expression, predicate })),
-    select: (fields: Readonly<Record<string, Expression>>) =>
-      builder(deepFreeze({ kind: "project", input: expression, fields })) as never,
-    join: (other: SourceDeclaration<Schema.Top> | RelationBuilder<unknown>, spec: JoinSpec) =>
-      builder(
+    where: (predicate) => builder(deepFreeze({ kind: "filter", input: expression, predicate })),
+    select: <Fields extends Readonly<Record<string, Expression>>>(fields: Fields) =>
+      builder<Selected<Fields>>(deepFreeze({ kind: "project", input: expression, fields })),
+    join: <S extends Schema.Top, Alias extends string>(
+      other: SourceDeclaration<S> | RelationBuilder<S["Type"]>,
+      spec: JoinSpec & { readonly as: Alias },
+    ) =>
+      builder<Row & Record<Alias, S["Type"]>>(
         deepFreeze({
           kind: "inner-join",
           left: expression,
@@ -258,9 +259,12 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
           on: spec.on,
           rightAlias: spec.as,
         }),
-      ) as never,
-    leftJoin: (other: SourceDeclaration<Schema.Top> | RelationBuilder<unknown>, spec: JoinSpec) =>
-      builder(
+      ),
+    leftJoin: <S extends Schema.Top, Alias extends string>(
+      other: SourceDeclaration<S> | RelationBuilder<S["Type"]>,
+      spec: JoinSpec & { readonly as: Alias },
+    ) =>
+      builder<Row & Partial<Record<Alias, S["Type"]>>>(
         deepFreeze({
           kind: "left-join",
           left: expression,
@@ -268,20 +272,25 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
           on: spec.on,
           rightAlias: spec.as,
         }),
-      ) as never,
-    groupBy: (fields: Readonly<Record<string, Expression>>) =>
-      Object.freeze({
-        aggregate: (aggregates: Readonly<Record<string, AggregateExpression>>) =>
-          builder(
-            deepFreeze({
-              kind: "grouped-aggregate",
-              input: expression,
-              groupBy: fields,
-              aggregates,
-            }),
-          ),
-      }) as never,
-    top: (spec: TopSpec) => {
+      ),
+    groupBy: <Fields extends Readonly<Record<string, Expression>>>(fields: Fields) => ({
+      aggregate: <Aggregates extends Readonly<Record<string, TypedAggregateExpression<unknown>>>>(
+        aggregates: Aggregates,
+      ) =>
+        builder<
+          Selected<Fields> & {
+            readonly [K in keyof Aggregates]: AggregateValue<Aggregates[K]>;
+          }
+        >(
+          deepFreeze({
+            kind: "grouped-aggregate",
+            input: expression,
+            groupBy: fields,
+            aggregates,
+          }),
+        ),
+    }),
+    top: (spec) => {
       // oxlint-disable-next-line anti-slop/no-runtime-typeof -- TopSpec is a parsed discriminated union of a numeric literal and TypedExpression.
       const limit = typeof spec.limit === "number" ? literal(spec.limit) : spec.limit;
       const top: TopRelation<Row> =
@@ -296,21 +305,25 @@ const builder = <Row>(expression: RelationExpression<Row>): RelationBuilder<Row>
             };
       return builder(deepFreeze(top));
     },
-    reduceByKey: (spec: { readonly key: DeclaredKey; readonly reducer: ReducerDeclaration }) => {
+    reduceByKey: <State extends Schema.Top>(spec: {
+      readonly key: KeyFieldsOf<Row>;
+      readonly reducer: ReducerDeclaration<State>;
+    }) => {
       if (expression.kind !== "source-relation" || expression.source.mode !== "facts") {
         throw new TypeError("reduceByKey is only available directly on a fact source");
       }
-      return builder(
+      return builder<State["Type"]>(
         deepFreeze({
           kind: "reduce-by-key",
           input: expression,
           key: keyExpression(spec.key),
           reducer: spec.reducer,
         }),
-      ) as RelationBuilder<unknown>;
+      );
     },
-  }) as RelationBuilder<Row>;
-/* oxlint-enable anti-slop/require-safety-comment-for-type-assertion */
+  };
+  return Object.freeze(result);
+};
 
 export const from = <S extends Schema.Top>(
   input: SourceDeclaration<S>,
@@ -571,6 +584,7 @@ export function compilePlan(
         );
       }
     }
+    return unreachable(relation);
   };
   const output = walk(expression);
   const parameterDescriptors: Record<string, ParameterDescriptor> = {};
@@ -645,3 +659,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 /* oxlint-enable anti-slop/no-runtime-typeof */
+
+function unreachable(value: never): never {
+  throw new TypeError(`unreachable relation ${String(value)}`);
+}

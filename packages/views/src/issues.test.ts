@@ -127,13 +127,18 @@ describe("plan issue collection", () => {
     expect(
       codes(plan([source(), { ...top, limit: { kind: "literal", value: -1 }, maximum: 10 }])),
     ).toContain("invalid-top-limit");
-    expect(codes({ ...plan([source()]), version: 1 } as unknown as RelationPlan)).toContain(
-      "unsupported-plan-version",
-    );
-    const nonJson = { ...plan([source()]), runtime: new Date() } as RelationPlan;
+    const unsupported = Object.defineProperty(plan([source()]), "version", { value: 1 });
+    expect(codes(unsupported)).toContain("unsupported-plan-version");
+    class NonPlainValue {
+      readonly marker = "non-plain";
+    }
+    const nonJson = Object.defineProperty(plan([source()]), "runtime", {
+      value: new NonPlainValue(),
+      enumerable: true,
+    });
     const issues = collectPlanIssues(nonJson);
     expect(issues.map((issue) => issue.code)).toContain("non-json-plan-value");
-    for (const issue of issues) expect(Schema.decodeUnknownSync(PlanIssue)(issue)).toEqual(issue);
+    for (const issue of issues) expect(Schema.decodeSync(PlanIssue)(issue)).toEqual(issue);
   });
 });
 
