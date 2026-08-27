@@ -9,6 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { defaultOffsetGenerator } from "@streamsy/core";
+import { Effect, Schema } from "effect";
 import {
   DOMAIN_DIRECTORIES,
   GLOBAL_PARTITION_ID,
@@ -167,7 +168,7 @@ describe("key alignment", () => {
           ? assignmentInbox.sourceKey(record)
           : assignmentInbox.destinationKey(record);
       expect(key).toBeInstanceOf(ExchangeKeyMismatch);
-      if (!(key instanceof ExchangeKeyMismatch)) throw new Error("expected a mismatch");
+      if (!Schema.is(ExchangeKeyMismatch)(key)) throw new Error("expected a mismatch");
       expect(key.side).toBe(side);
       expect(key.exchange).toBe(assignmentInbox.name);
     }
@@ -185,21 +186,21 @@ describe("key alignment", () => {
     });
     const mismatch = unkeyed.destinationKey(activity());
     expect(mismatch).toBeInstanceOf(ExchangeKeyMismatch);
-    if (!(mismatch instanceof ExchangeKeyMismatch)) throw new Error("expected a mismatch");
+    if (!Schema.is(ExchangeKeyMismatch)(mismatch)) throw new Error("expected a mismatch");
     expect(mismatch.detail).toContain("carries no assigneeId");
   });
 
   test("a projected row must land where the record was routed", () => {
     const record = activity();
     const row = assignmentInbox.rowFor(record, userKey("ada"));
-    if (row instanceof ExchangeKeyMismatch) throw new Error("expected a row");
+    if (Schema.is(ExchangeKeyMismatch)(row)) throw new Error("expected a row");
     expect(row.userId).toBe("ada");
     expect(row.inboxId).toBe(inboxIdOf("left", "assign-1"));
 
     // The same record routed at another user is refused before it is written.
     const misplaced = assignmentInbox.rowFor(record, userKey("grace"));
     expect(misplaced).toBeInstanceOf(ExchangeKeyMismatch);
-    if (!(misplaced instanceof ExchangeKeyMismatch)) throw new Error("expected a mismatch");
+    if (!Schema.is(ExchangeKeyMismatch)(misplaced)) throw new Error("expected a mismatch");
     expect(misplaced.side).toBe("row");
     expect(misplaced.keyField).toBe("userId");
   });
@@ -260,16 +261,26 @@ describe("the exchange position domain", () => {
     expect(assignmentInbox.version).toBe(1);
   });
 
-  test("the exchange never names a stream offset or a store checkpoint", async () => {
-    // A structural guard: the exchange's own modules must not reach for a
-    // position from another domain. Reviewing this once is worth less than
-    // asserting it, because the temptation returns with every new source.
-    for (const path of ["../server/exchange.ts", "../server/exchange-source.ts"]) {
-      const source = await Bun.file(new URL(path, import.meta.url)).text();
-      const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-      for (const forbidden of ["HistoryPosition", "loadCheckpoint", "sourceProgress", "offset:"]) {
-        expect(code).not.toContain(forbidden);
-      }
-    }
-  });
+  test("the exchange never names a stream offset or a store checkpoint", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        // A structural guard: the exchange's own modules must not reach for a
+        // position from another domain. Reviewing this once is worth less than
+        // asserting it, because the temptation returns with every new source.
+        for (const path of ["../server/exchange.ts", "../server/exchange-source.ts"]) {
+          const source = yield* Effect.promise(() =>
+            Bun.file(new URL(path, import.meta.url)).text(),
+          );
+          const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+          for (const forbidden of [
+            "HistoryPosition",
+            "loadCheckpoint",
+            "sourceProgress",
+            "offset:",
+          ]) {
+            expect(code).not.toContain(forbidden);
+          }
+        }
+      }),
+    ));
 });

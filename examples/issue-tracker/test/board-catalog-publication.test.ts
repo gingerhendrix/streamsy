@@ -15,6 +15,7 @@
  * card's own issue changed.
  */
 import { afterEach, expect, test } from "bun:test";
+import { Schema } from "effect";
 import { CommandResponse } from "../shared/api.ts";
 import { call, host, json, type Host } from "./support.ts";
 
@@ -24,19 +25,24 @@ afterEach(async () => {
 });
 
 /** One Durable State message on the board sink, in the shape this suite reads. */
-interface SinkMessage {
-  readonly type?: string;
-  readonly key?: string;
-  readonly value?: { readonly projectName?: string; readonly status?: string };
-}
+const SinkMessage = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(
+    Schema.Struct({
+      projectName: Schema.optionalKey(Schema.String),
+      status: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+interface SinkMessage extends Schema.Schema.Type<typeof SinkMessage> {}
 
 async function messages(instance: Host): Promise<readonly SinkMessage[]> {
   const response = await call(instance, "GET", "/state/workspaces/main/issues");
   if (!response.ok) throw new Error(`board sink: ${response.status}`);
-  // SAFETY: a 2xx from the declared sink route is a Durable State message
-  // array; `SinkMessage` names only the optional fields read here.
-  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-  return JSON.parse(await response.text()) as SinkMessage[];
+  return Schema.decodePromise(Schema.fromJsonString(Schema.Array(SinkMessage)))(
+    await response.text(),
+  );
 }
 
 /**

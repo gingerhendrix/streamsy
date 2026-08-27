@@ -25,7 +25,7 @@ import type {
 } from "@streamsy/core";
 import type { OutboxStore } from "@streamsy/effect-sink";
 import type { SourceChanges } from "@streamsy/views-engine";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { issueLabelMemberships, labels } from "../domain/declaration.ts";
 import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
 import { ExchangeStatusResponse, InboxResponse, TransitionFeedResponse } from "../shared/api.ts";
@@ -523,15 +523,18 @@ describe("graph products recover inputs committed by a failed pass", () => {
 const BOARD_SINK = "/state/workspaces/main/issues";
 const LABEL_COUNT_SINK = "/state/workspaces/main/label-counts";
 
-interface PublishedStateMessage {
-  readonly type?: string;
-  readonly key?: string;
-  readonly value?: {
-    readonly status?: string;
-    readonly labelName?: string;
-    readonly issueCount?: number;
-  };
-}
+const PublishedStateMessage = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(
+    Schema.Struct({
+      status: Schema.optionalKey(Schema.String),
+      labelName: Schema.optionalKey(Schema.String),
+      issueCount: Schema.optionalKey(Schema.Finite),
+    }),
+  ),
+});
+interface PublishedStateMessage extends Schema.Schema.Type<typeof PublishedStateMessage> {}
 
 /** Every message the sink's own State stream currently carries. */
 async function stateMessages(
@@ -540,10 +543,9 @@ async function stateMessages(
 ): Promise<readonly PublishedStateMessage[]> {
   const response = await call(instance, "GET", path);
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
-  // SAFETY: a 2xx from a checked State route is a Durable State message array,
-  // and `PublishedStateMessage` names only the optional fields read here.
-  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-  return JSON.parse(await response.text()) as PublishedStateMessage[];
+  return Schema.decodePromise(Schema.fromJsonString(Schema.Array(PublishedStateMessage)))(
+    await response.text(),
+  );
 }
 
 /** The current value of one key: the last message the stream carries for it. */

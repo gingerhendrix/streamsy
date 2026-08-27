@@ -8,14 +8,21 @@
  * the maintained rows — and the published product — to be identical.
  */
 import { describe, expect, test } from "bun:test";
+import { Schema } from "effect";
 import { CatalogRowsResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 
-interface Published {
-  readonly type?: string;
-  readonly key?: string;
-  readonly value?: { readonly status?: string; readonly title?: string };
-}
+const Published = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(
+    Schema.Struct({
+      status: Schema.optionalKey(Schema.String),
+      title: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+interface Published extends Schema.Schema.Type<typeof Published> {}
 
 /** The same script of commands, whatever the host is made of. */
 async function drive(instance: Host): Promise<void> {
@@ -92,10 +99,9 @@ async function product(instance: Host): Promise<Product> {
     IssuesResponse,
   );
   const sink = await instance.fetch(new Request("http://localhost/state/workspaces/main/issues"));
-  // SAFETY: a 2xx from the sink route is a Durable State message array;
-  // `Published` names only the optional fields this comparison reads.
-  // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-  const published = (JSON.parse(await sink.text()) as Published[])
+  const published = (
+    await Schema.decodePromise(Schema.fromJsonString(Schema.Array(Published)))(await sink.text())
+  )
     .filter((message) => message.type === "issue")
     .map((message) => ({ key: message.key, status: message.value?.status }));
   const catalog = await Promise.all(

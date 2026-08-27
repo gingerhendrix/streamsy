@@ -86,7 +86,7 @@ describe("maintain", () => {
 
   test("independent keys are maintained independently", () => {
     const result = run([created("a", 0), created("b", 1), moved("b", 2, "done")]);
-    expect([...result.rows.keys()].sort()).toEqual(["a", "b"]);
+    expect([...result.rows.keys()].toSorted()).toEqual(["a", "b"]);
     expect(result.rows.get("a")?.status).toBe("backlog");
     expect(result.rows.get("b")?.status).toBe("done");
   });
@@ -97,9 +97,8 @@ describe("maintain", () => {
       run([moved("ghost", 0, "done")]);
     } catch (cause) {
       expect(cause).toBeInstanceOf(ReducerFault);
-      // SAFETY: the assertion immediately above proves the instance type.
-      // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-      expect((cause as ReducerFault).phase).toBe("decode");
+      if (!(cause instanceof ReducerFault)) throw new Error("expected a reducer fault", { cause });
+      expect(cause.phase).toBe("decode");
     }
   });
 

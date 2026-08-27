@@ -10,31 +10,34 @@ import {
 } from "../domain/views.ts";
 
 describe("the four inert A1 proof declarations", () => {
-  test("all plans check and keep stable golden identities", async () => {
-    const hashes: Record<string, string> = {};
-    for (const declaration of a1Views) {
-      const checked = await Effect.runPromise(checkPlan(declaration));
-      hashes[declaration.name] = checked.hash;
-      expect(Object.isFrozen(declaration)).toBe(true);
-      expect(Object.isFrozen(declaration.plan.nodes)).toBe(true);
-      expect(checked.hash).toBe(planHash(declaration.plan));
-    }
-    /**
-     * `project-board` and `recent-activity` are byte-identical to their Wave B-i
-     * identities: swapping the duplicate `projects`/`users` source declarations
-     * for the catalog's own moved no field the plan encodes. `assignee-queue`
-     * and `label-counts` moved, and both moves are the contract-freeze audit
-     * fixing something that was wrong — a projection of `displayName`, a field
-     * the ingested user row never had, and a count that did not exclude
-     * detached memberships. See `integration-2-decisions.md`.
-     */
-    expect(hashes).toEqual({
-      "issue-tracker.project-board": "edca38c1",
-      "issue-tracker.assignee-queue": "662bbf73",
-      "issue-tracker.label-counts": "06f6f6ba",
-      "issue-tracker.recent-activity": "428ac64e",
-    });
-  });
+  test("all plans check and keep stable golden identities", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const hashes: Record<string, string> = {};
+        for (const declaration of a1Views) {
+          const checked = yield* checkPlan(declaration);
+          hashes[declaration.name] = checked.hash;
+          expect(Object.isFrozen(declaration)).toBe(true);
+          expect(Object.isFrozen(declaration.plan.nodes)).toBe(true);
+          expect(checked.hash).toBe(planHash(declaration.plan));
+        }
+        /**
+         * `project-board` and `recent-activity` are byte-identical to their Wave B-i
+         * identities: swapping the duplicate `projects`/`users` source declarations
+         * for the catalog's own moved no field the plan encodes. `assignee-queue`
+         * and `label-counts` moved, and both moves are the contract-freeze audit
+         * fixing something that was wrong — a projection of `displayName`, a field
+         * the ingested user row never had, and a count that did not exclude
+         * detached memberships. See `integration-2-decisions.md`.
+         */
+        expect(hashes).toEqual({
+          "issue-tracker.project-board": "edca38c1",
+          "issue-tracker.assignee-queue": "662bbf73",
+          "issue-tracker.label-counts": "06f6f6ba",
+          "issue-tracker.recent-activity": "428ac64e",
+        });
+      }),
+    ));
 
   test("project boards prove parameters, both joins, projection and partitioned bounded top", () => {
     expect(projectBoard.plan.parameters).toEqual({

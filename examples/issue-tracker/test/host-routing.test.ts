@@ -67,7 +67,8 @@ describe("route resolution", () => {
     const resolved = resolveRoute("/api/users/..%2Fescape/inbox");
     expect(resolved.kind).toBe("failure");
     if (resolved.kind !== "failure") throw new Error("expected a failure");
-    expect(resolved.failure._tag).toBe("InvalidDomainId");
+    const { _tag: tag } = resolved.failure;
+    expect(tag).toBe("InvalidDomainId");
   });
 
   test("an API collection this host does not serve is unroutable", () => {
@@ -75,7 +76,8 @@ describe("route resolution", () => {
       const resolved = resolveRoute(pathname);
       expect(resolved.kind).toBe("failure");
       if (resolved.kind !== "failure") throw new Error("expected a failure");
-      expect(resolved.failure._tag).toBe("UnroutableRequest");
+      const { _tag: tag } = resolved.failure;
+      expect(tag).toBe("UnroutableRequest");
     }
   });
 
@@ -96,7 +98,8 @@ describe("route resolution", () => {
     const resolved = resolveRoute("/api/workspaces/..%2Fescape/issues");
     expect(resolved.kind).toBe("failure");
     if (resolved.kind !== "failure") throw new Error("expected a failure");
-    expect(resolved.failure._tag).toBe("InvalidWorkspaceId");
+    const { _tag: tag } = resolved.failure;
+    expect(tag).toBe("InvalidWorkspaceId");
   });
 
   test("a matched sink route with an undecodable parameter is the sink's own answer", () => {
@@ -113,7 +116,8 @@ describe("route resolution", () => {
       const resolved = resolveRoute(pathname);
       expect(resolved.kind).toBe("failure");
       if (resolved.kind !== "failure") throw new Error("expected a failure");
-      expect(resolved.failure._tag).toBe("UnroutableRequest");
+      const { _tag: tag } = resolved.failure;
+      expect(tag).toBe("UnroutableRequest");
     }
   });
 

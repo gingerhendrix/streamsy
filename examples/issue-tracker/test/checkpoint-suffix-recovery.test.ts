@@ -1,13 +1,14 @@
-/* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions -- This test converts schema-decoded IssueEvent and IssueRow fixtures into the package's transport-neutral JSON persistence grammar. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Recovery must reopen a real on-disk SQLite database to exercise the forced migration boundary.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This joins the package-owned temporary recovery fixture path.
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { planHash } from "@streamsy/views";
 import type { JsonObject } from "@streamsy/views-ir";
-import { recover, type JsonValue } from "@streamsy/views-store";
+import { recover } from "@streamsy/views-store";
 import { migrateViewStore, sqliteService } from "@streamsy/views-store/sqlite";
 import { issueLifecycle, issues } from "../domain/declaration.ts";
 import { decodeIssueRow, type IssueEvent, type IssueRow } from "../domain/issue.ts";
@@ -42,148 +43,147 @@ const finished: IssueEvent = {
   occurredAt: "2026-08-24T10:02:00.000Z",
   status: "done",
 };
-const jsonObject = (event: IssueEvent): JsonObject =>
-  JSON.parse(JSON.stringify(event)) as JsonObject;
+const decodeJsonObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json));
+const decodeJsonValue = Schema.decodeUnknownSync(Schema.Json);
+const decodeJsonKey = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
+const jsonObject = (event: IssueEvent): JsonObject => decodeJsonObject(event);
 
-test("forced reopen produces deterministic issue rows from checkpoint plus suffix", async () => {
-  const filename = join(mkdtempSync(join(tmpdir(), "issue-checkpoint-")), "views.sqlite");
-  const identity = {
-    planName: issues.name,
-    planHash: planHash(issues.plan),
-    partition: "main",
-    sourceId: "issue-tracker.issue-events",
-    reducerId: issueLifecycle.ref.name,
-    reducerVersion: issueLifecycle.ref.version,
-  } as const;
-  const prefix = maintain<IssueRow>({
-    plan: issues.plan,
-    reducer: issueLifecycle,
-    decodeRow: decodeIssueRow,
-    current: new Map(),
-    items: [created, moved].map(jsonObject),
-  });
-  let database = new Database(filename, { create: true });
-  migrateViewStore(database, 1);
-  let store = sqliteService(database);
-  await Effect.runPromise(
-    store.saveCheckpoint({
-      ...identity,
-      sourceCursor: "offset-2",
-      createdAtMs: 2,
-      entries: [...prefix.rows].map(([key, value]) => ({
-        key,
-        value: value as unknown as JsonValue,
-      })),
-    }),
-  );
-  database.close(false);
-  database = new Database(filename);
-  database.run("PRAGMA foreign_keys=ON");
-  migrateViewStore(database, 2);
-  store = sqliteService(database);
-  const cursors: (string | undefined)[] = [];
-  const result = await Effect.runPromise(
-    recover({
-      store,
-      checkpoint: identity,
-      saveCheckpoint: true,
-      now: () => 3,
-      source: {
-        readAfter: (cursor) =>
-          Effect.sync(() => {
-            cursors.push(cursor);
-            return cursor === "offset-2"
-              ? { items: [jsonObject(finished)], afterExclusiveCursor: "offset-3" }
-              : { items: [], afterExclusiveCursor: cursor };
-          }),
-      },
-      reducer: {
-        fold: (state, items) =>
-          Effect.sync(() => {
-            const current = new Map<string, IssueRow>();
-            for (const [encoded, value] of state)
-              current.set(JSON.parse(encoded) as string, decodeIssueRow(value));
-            const folded = maintain<IssueRow>({
-              plan: issues.plan,
-              reducer: issueLifecycle,
-              decodeRow: decodeIssueRow,
-              current,
-              items,
-            });
-            return {
-              state: new Map(
-                [...folded.rows].map(([key, value]) => [
-                  key,
-                  { key, value: value as unknown as JsonValue },
-                ]),
-              ),
-              commit: {
-                identity,
-                batchId: "offset-3",
-                committedAtMs: 3,
-                rows: [...folded.rows].map(([key, value]) => ({
-                  kind: "put" as const,
-                  namespace: { ...identity, id: issues.name },
-                  key,
-                  value: value as unknown as JsonValue,
-                })),
-                reducerStates: [...folded.rows].map(([key, value]) => ({
-                  kind: "put" as const,
-                  namespace: { ...identity, id: issueLifecycle.ref.name },
-                  key,
-                  value: value as unknown as JsonValue,
-                })),
-                changes: folded.changes.map((change) =>
-                  change.kind === "enter"
-                    ? {
-                        ...change,
-                        relationId: issues.name,
-                        after: change.after as unknown as JsonValue,
-                      }
-                    : change.kind === "update"
+test("forced reopen produces deterministic issue rows from checkpoint plus suffix", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const filename = join(mkdtempSync(join(tmpdir(), "issue-checkpoint-")), "views.sqlite");
+      const identity = {
+        planName: issues.name,
+        planHash: planHash(issues.plan),
+        partition: "main",
+        sourceId: "issue-tracker.issue-events",
+        reducerId: issueLifecycle.ref.name,
+        reducerVersion: issueLifecycle.ref.version,
+      } as const;
+      const prefix = maintain<IssueRow>({
+        plan: issues.plan,
+        reducer: issueLifecycle,
+        decodeRow: decodeIssueRow,
+        current: new Map(),
+        items: [created, moved].map(jsonObject),
+      });
+      let database = new Database(filename, { create: true });
+      migrateViewStore(database, 1);
+      let store = sqliteService(database);
+      yield* store.saveCheckpoint({
+        ...identity,
+        sourceCursor: "offset-2",
+        createdAtMs: 2,
+        entries: [...prefix.rows].map(([key, value]) => ({
+          key,
+          value: decodeJsonValue(value),
+        })),
+      });
+      database.close(false);
+      database = new Database(filename);
+      database.run("PRAGMA foreign_keys=ON");
+      migrateViewStore(database, 2);
+      store = sqliteService(database);
+      const cursors: (string | undefined)[] = [];
+      const result = yield* recover({
+        store,
+        checkpoint: identity,
+        saveCheckpoint: true,
+        now: () => 3,
+        source: {
+          readAfter: (cursor) =>
+            Effect.sync(() => {
+              cursors.push(cursor);
+              return cursor === "offset-2"
+                ? { items: [jsonObject(finished)], afterExclusiveCursor: "offset-3" }
+                : { items: [], afterExclusiveCursor: cursor };
+            }),
+        },
+        reducer: {
+          fold: (state, items) =>
+            Effect.sync(() => {
+              const current = new Map<string, IssueRow>();
+              for (const [encoded, value] of state)
+                current.set(decodeJsonKey(encoded), decodeIssueRow(value));
+              const folded = maintain<IssueRow>({
+                plan: issues.plan,
+                reducer: issueLifecycle,
+                decodeRow: decodeIssueRow,
+                current,
+                items,
+              });
+              return {
+                state: new Map(
+                  [...folded.rows].map(([key, value]) => [
+                    key,
+                    { key, value: decodeJsonValue(value) },
+                  ]),
+                ),
+                commit: {
+                  identity,
+                  batchId: "offset-3",
+                  committedAtMs: 3,
+                  rows: [...folded.rows].map(([key, value]) => ({
+                    kind: "put" as const,
+                    namespace: { ...identity, id: issues.name },
+                    key,
+                    value: decodeJsonValue(value),
+                  })),
+                  reducerStates: [...folded.rows].map(([key, value]) => ({
+                    kind: "put" as const,
+                    namespace: { ...identity, id: issueLifecycle.ref.name },
+                    key,
+                    value: decodeJsonValue(value),
+                  })),
+                  changes: folded.changes.map((change) =>
+                    change.kind === "enter"
                       ? {
                           ...change,
                           relationId: issues.name,
-                          before: change.before as unknown as JsonValue,
-                          after: change.after as unknown as JsonValue,
+                          after: decodeJsonValue(change.after),
                         }
-                      : {
-                          ...change,
-                          relationId: issues.name,
-                          before: change.before as unknown as JsonValue,
-                        },
-                ),
-              },
-            };
-          }),
-      },
+                      : change.kind === "update"
+                        ? {
+                            ...change,
+                            relationId: issues.name,
+                            before: decodeJsonValue(change.before),
+                            after: decodeJsonValue(change.after),
+                          }
+                        : {
+                            ...change,
+                            relationId: issues.name,
+                            before: decodeJsonValue(change.before),
+                          },
+                  ),
+                },
+              };
+            }),
+        },
+      });
+      expect(result.folded).toBe(1);
+      expect(cursors).toEqual(["offset-2"]);
+      const recovered = (yield* store.snapshotRows({ ...identity, id: issues.name })).rows.map(
+        (row) => decodeIssueRow(row.value),
+      );
+      const uninterrupted = maintain<IssueRow>({
+        plan: issues.plan,
+        reducer: issueLifecycle,
+        decodeRow: decodeIssueRow,
+        current: new Map(),
+        items: [created, moved, finished].map(jsonObject),
+      }).rows;
+      expect(recovered).toEqual([...uninterrupted.values()]);
+      const historyBefore = yield* store.historyBounds(identity);
+      const idle = yield* recover({
+        store,
+        checkpoint: identity,
+        source: {
+          readAfter: (cursor) => Effect.succeed({ items: [], afterExclusiveCursor: cursor }),
+        },
+        reducer: { fold: () => Effect.die("must not fold at tail") },
+      });
+      expect(idle.committed).toBe(false);
+      expect(yield* store.historyBounds(identity)).toEqual(historyBefore);
+      database.close(false);
     }),
-  );
-  expect(result.folded).toBe(1);
-  expect(cursors).toEqual(["offset-2"]);
-  const recovered = (
-    await Effect.runPromise(store.snapshotRows({ ...identity, id: issues.name }))
-  ).rows.map((row) => decodeIssueRow(row.value));
-  const uninterrupted = maintain<IssueRow>({
-    plan: issues.plan,
-    reducer: issueLifecycle,
-    decodeRow: decodeIssueRow,
-    current: new Map(),
-    items: [created, moved, finished].map(jsonObject),
-  }).rows;
-  expect(recovered).toEqual([...uninterrupted.values()]);
-  const historyBefore = await Effect.runPromise(store.historyBounds(identity));
-  const idle = await Effect.runPromise(
-    recover({
-      store,
-      checkpoint: identity,
-      source: {
-        readAfter: (cursor) => Effect.succeed({ items: [], afterExclusiveCursor: cursor }),
-      },
-      reducer: { fold: () => Effect.die("must not fold at tail") },
-    }),
-  );
-  expect(idle.committed).toBe(false);
-  expect(await Effect.runPromise(store.historyBounds(identity))).toEqual(historyBefore);
-  database.close(false);
-});
+  ));

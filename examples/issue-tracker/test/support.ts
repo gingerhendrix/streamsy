@@ -1,13 +1,13 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- `bun:test` owns these fixtures' control flow, and the restart fixture needs real on-disk databases, so it uses the Node-compatible filesystem and path APIs. */
-/* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/require-safety-comment-for-type-assertion -- A request body is arbitrary JSON on purpose, so malformed-body rejection can be driven; `json()` decodes every response through a declared Schema and the assertion only names what that decode produced. */
 /**
  * Shared test fixtures.
  *
  * Every suite drives the same `createLocalHost` the executable edge uses, so
  * nothing here is a second implementation of the application.
  */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Restart tests need real package-external temporary directories for on-disk SQLite hosts.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This path join constructs a file-backed test fixture location, not application I/O.
 import { join } from "node:path";
 import { Schema } from "effect";
 import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
@@ -22,10 +22,11 @@ export function host(options: LocalHostOptions = {}): Host {
   return createLocalHost(options);
 }
 
-export async function call(
+export function call(
   target: Host,
   method: string,
   path: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Tests intentionally send malformed external request bodies through this trust boundary.
   body?: unknown,
 ): Promise<Response> {
   const init: RequestInit = { method };
@@ -37,13 +38,14 @@ export async function call(
 }
 
 /** Decode a response through the declared wire contract, as a client would. */
-export async function json<S extends Schema.ConstraintDecoder<unknown>>(
+export function json<S extends Schema.ConstraintDecoder<unknown>>(
   response: Response,
   schema: S,
 ): Promise<S["Type"]> {
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 500)}`);
-  return Schema.decodeUnknownSync(schema)(JSON.parse(text)) as S["Type"];
+  return response.text().then((text) => {
+    if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 500)}`);
+    return Schema.decodePromise(Schema.fromJsonString(schema))(text);
+  });
 }
 
 /** The create-issue body a test sends. `status` is optional, as the contract says. */

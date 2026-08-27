@@ -7,6 +7,7 @@
  * here against the real route, not a description of it.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { Schema } from "effect";
 import { SinkSessionResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, type Host } from "./support.ts";
 
@@ -22,28 +23,43 @@ function fresh(): Host {
   return created;
 }
 
-interface StateMessage {
-  readonly type?: string;
-  readonly key?: string;
-  readonly value?: { readonly status?: string; readonly title?: string };
-  readonly headers?: { readonly control?: string; readonly operation?: string };
-}
+const StateMessage = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(
+    Schema.Struct({
+      status: Schema.optionalKey(Schema.String),
+      title: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  headers: Schema.optionalKey(
+    Schema.Struct({
+      control: Schema.optionalKey(Schema.String),
+      operation: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+interface StateMessage extends Schema.Schema.Type<typeof StateMessage> {}
 
 async function read(
   instance: Host,
   query: string,
   headers: HeadersInit = {},
-): Promise<{ status: number; messages: StateMessage[]; offset: string | undefined; body: string }> {
+): Promise<{
+  status: number;
+  messages: readonly StateMessage[];
+  offset: string | undefined;
+  body: string;
+}> {
   const response = await instance.fetch(
     new Request(`http://localhost${SINK}${query}`, { headers }),
   );
   const body = await response.text();
   return {
     status: response.status,
-    // SAFETY: a 2xx from the sink route is a Durable State message array, and
-    // `StateMessage` names only the optional fields these assertions read.
-    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    messages: response.ok ? (JSON.parse(body) as StateMessage[]) : [],
+    messages: response.ok
+      ? Schema.decodeSync(Schema.fromJsonString(Schema.Array(StateMessage)))(body)
+      : [],
     offset: response.headers.get("stream-next-offset") ?? undefined,
     body,
   };

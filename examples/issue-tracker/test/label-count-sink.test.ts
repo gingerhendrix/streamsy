@@ -12,8 +12,9 @@
  * half of the claim: adding a second sink moved nothing about the first.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { Schema } from "effect";
 import { boardIssues, boardLabelCounts } from "../domain/declaration.ts";
-import { SinkSessionResponse } from "../shared/api.ts";
+import { LabelCountsResponse, SinkSessionResponse } from "../shared/api.ts";
 import { call, host, json, type Host } from "./support.ts";
 
 const SINK = "/state/workspaces/main/label-counts";
@@ -27,25 +28,39 @@ function fresh(): Host {
   return created;
 }
 
-interface StateMessage {
-  readonly type?: string;
-  readonly key?: string;
-  readonly value?: { readonly labelName?: string; readonly issueCount?: number };
-  readonly headers?: { readonly control?: string; readonly operation?: string };
-}
+const StateMessage = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  key: Schema.optionalKey(Schema.String),
+  value: Schema.optionalKey(
+    Schema.Struct({
+      labelName: Schema.optionalKey(Schema.String),
+      issueCount: Schema.optionalKey(Schema.Finite),
+    }),
+  ),
+  headers: Schema.optionalKey(
+    Schema.Struct({
+      control: Schema.optionalKey(Schema.String),
+      operation: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+interface StateMessage extends Schema.Schema.Type<typeof StateMessage> {}
+const StateMessages = Schema.Array(StateMessage);
 
 async function read(
   instance: Host,
   query: string,
-): Promise<{ status: number; messages: StateMessage[]; offset: string | undefined; body: string }> {
+): Promise<{
+  status: number;
+  messages: readonly StateMessage[];
+  offset: string | undefined;
+  body: string;
+}> {
   const response = await instance.fetch(new Request(`http://localhost${SINK}${query}`));
   const body = await response.text();
   return {
     status: response.status,
-    // SAFETY: a 2xx from the sink route is a Durable State message array, and
-    // `StateMessage` names only the optional fields these assertions read.
-    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    messages: response.ok ? (JSON.parse(body) as StateMessage[]) : [],
+    messages: response.ok ? Schema.decodeSync(Schema.fromJsonString(StateMessages))(body) : [],
     offset: response.headers.get("stream-next-offset") ?? undefined,
     body,
   };
@@ -142,9 +157,9 @@ describe("the board-label-counts state sink", () => {
     const theirs = await instance.fetch(
       new Request("http://localhost/state/workspaces/other/label-counts"),
     );
-    // SAFETY: a 2xx from the sink route is a Durable State message array.
-    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    const theirMessages = JSON.parse(await theirs.text()) as StateMessage[];
+    const theirMessages = await Schema.decodePromise(Schema.fromJsonString(StateMessages))(
+      await theirs.text(),
+    );
     expect(mine.messages.filter((m) => m.key === "bug").at(-1)?.value?.issueCount).toBe(2);
     expect(theirMessages.filter((m) => m.key === "bug").at(-1)?.value?.issueCount).toBe(1);
   });
@@ -176,10 +191,11 @@ describe("the board-label-counts state sink", () => {
       if (message.type !== "label-count" || message.key === undefined) continue;
       published.set(message.key, message.value?.issueCount ?? 0);
     }
-    const model = await (await call(instance, "GET", "/api/workspaces/main/label-counts")).json();
-    // SAFETY: the route's body is `LabelCountsResponse`; this reads its rows only.
-    // oxlint-disable-next-line anti-slop/require-safety-comment-for-type-assertion -- Justified immediately above.
-    const rows = (model as { rows: readonly { labelId: string; issueCount: number }[] }).rows;
+    const model = await json(
+      await call(instance, "GET", "/api/workspaces/main/label-counts"),
+      LabelCountsResponse,
+    );
+    const { rows } = model;
     for (const row of rows) expect(published.get(row.labelId)).toBe(row.issueCount);
   });
 });

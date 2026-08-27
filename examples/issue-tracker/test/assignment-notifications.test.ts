@@ -310,13 +310,15 @@ describe("the receipt-and-enqueue boundary", () => {
     ],
   ] as const) {
     test(`${name} records a repeated receipt without enqueuing a second delivery`, async () => {
-      const entries = await Effect.gen(function* () {
+      const program = Effect.gen(function* () {
         const store = yield* IssueStore;
         const outbox = yield* OutboxStore;
         yield* store.recordReceipt(receipt, drafts);
         yield* store.recordReceipt(receipt, drafts);
         return yield* outbox.list(assignmentNotifications.name, "main");
-      }).pipe(Effect.provide(layer()), Effect.scoped, Effect.runPromise);
+      });
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- Each table entry is a complete Bun test entry point that supplies and scopes exactly one isolated store layer.
+      const entries = await program.pipe(Effect.provide(layer()), Effect.scoped, Effect.runPromise);
 
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({ idempotencyKey: "main/assign-1", state: "pending" });

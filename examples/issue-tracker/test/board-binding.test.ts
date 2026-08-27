@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { memoryResumeStore } from "@streamsy/tanstack-db";
-import { Effect } from "effect";
+import { DateTime, Effect } from "effect";
 import { createBoardConnection, sortRows, type BoardConnection } from "../src/lib/board-db.ts";
 import type { BoardIssuesRow } from "../src/generated/board-issues.ts";
 import { IssueSink } from "../server/sink.ts";
@@ -64,11 +64,11 @@ async function until(
   predicate: (rows: readonly BoardIssuesRow[]) => boolean,
   what: string,
 ): Promise<readonly BoardIssuesRow[]> {
-  const deadline = Date.now() + 10_000;
+  const deadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 10_000;
   for (;;) {
     const rows = rowsOf(connection);
     if (predicate(rows)) return rows;
-    if (Date.now() > deadline) {
+    if (DateTime.toEpochMillis(DateTime.nowUnsafe()) > deadline) {
       throw new Error(`timed out waiting for ${what}; saw ${JSON.stringify(rows)}`);
     }
     await Bun.sleep(25);
@@ -91,7 +91,7 @@ describe("the TanStack DB board binding", () => {
     await connection.preload();
 
     const rows = rowsOf(connection);
-    expect(rows.map((row) => row.issueId).sort()).toEqual([
+    expect(rows.map((row) => row.issueId).toSorted()).toEqual([
       "seed-maintain",
       "seed-plan",
       "seed-publish",
@@ -182,22 +182,24 @@ describe("the TanStack DB board binding", () => {
 
     let sinkReads = 0;
     const statuses: string[] = [];
-    const connection = createBoardConnection({
-      workspaceId: "main",
-      origin: fixture.origin,
-      onStatus: (status) => statuses.push(status.kind),
-      // SAFETY: the adapter calls only the standard fetch signature; Bun's
-      // ambient type adds `preconnect`, which this deterministic test wrapper
-      // does not need to implement.
-      fetch: ((input, init) => {
+    const interceptedFetch: typeof globalThis.fetch = Object.assign(
+      (input: string | URL | Request, init?: RequestInit) => {
         const request = new Request(input, init);
         const url = new URL(request.url);
         if (url.pathname.startsWith("/state/")) {
           sinkReads += 1;
           if (sinkReads === 2) url.searchParams.set("offset", "not-an-offset");
         }
+        // oxlint-disable-next-line effecttsgo/global-fetch -- This transport test must cross Bun's real HTTP boundary after rewriting the second sink request.
         return globalThis.fetch(new Request(url, request));
-      }) as typeof globalThis.fetch,
+      },
+      { preconnect: globalThis.fetch.preconnect },
+    );
+    const connection = createBoardConnection({
+      workspaceId: "main",
+      origin: fixture.origin,
+      onStatus: (status) => statuses.push(status.kind),
+      fetch: interceptedFetch,
     });
     connections.push(connection);
     await connection.preload();
