@@ -17,6 +17,13 @@
     "test": "bun test test",
     "test:cloudflare": "bun test test/cloudflare-workspace.test.ts test/cloudflare-parity.test.ts",
     "build:cloudflare": "bun build server/cloudflare.ts --outdir dist/cloudflare --target browser --format esm --external cloudflare:workers",
+    "build:deployment": "bun run build && bun run build:cloudflare",
+    "test:alchemy": "vitest --run test/alchemy-stack.test.ts",
+    "deploy:check": "bun run scripts/deploy-check.ts",
+    "plan:cloudflare": "alchemy plan",
+    "deploy:cloudflare": "alchemy deploy",
+    "destroy:cloudflare": "alchemy destroy --yes",
+    "smoke:deployment": "bun run scripts/deployment-smoke.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
     "smoke:ui": "bun run scripts/ui-smoke.ts",
     "app:full": "bun run scripts/full-app.ts"
@@ -50,7 +57,9 @@
     "@types/bun": "^1.2.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "alchemy": "2.0.0-beta.74",
     "miniflare": "4.20260730.0",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
   }
 }

@@ -3,7 +3,6 @@ import type { DurableObjectStorage, SqlStorageValue } from "@cloudflare/workers-
 import { Effect, Layer, Schema } from "effect";
 import {
   NotificationTarget,
-  type NotificationRefusal,
   type NotificationTargetService,
 } from "./notifications.ts";
 import { AssignmentNotification, decodeAssignmentNotification } from "../domain/notifications.ts";
@@ -34,7 +33,7 @@ export const cloudflareNotificationTargetLayer = (
       accept: Effect.fn("CloudflareNotificationTarget.accept")(function* (
         idempotencyKey: string,
         notification: AssignmentNotification,
-      ): Generator<never, "accepted" | "absorbed", NotificationRefusal> {
+      ) {
         const accepted = storage.transactionSync(() => {
           const existing = [
             ...sql.exec<{ readonly present: number }>(
@@ -54,7 +53,9 @@ export const cloudflareNotificationTargetLayer = (
           );
           return true;
         });
-        if (accepted && interruptAfterAccept()) return yield* Effect.interrupt;
+        if (accepted && interruptAfterAccept()) {
+          return yield* Effect.interrupt.pipe(Effect.as("accepted" as const));
+        }
         return accepted ? "accepted" : "absorbed";
       }),
       accepted: Effect.fn("CloudflareNotificationTarget.accepted")((workspaceId: string) =>

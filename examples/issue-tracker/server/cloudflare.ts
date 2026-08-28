@@ -3,7 +3,12 @@
 /* oxlint-disable effecttsgo/crypto-random-uuid -- Request ids are generated at the stateless Worker platform edge. */
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { DurableObject } from "cloudflare:workers";
-import type { DurableObjectStorage, ExecutionContext } from "@cloudflare/workers-types";
+import type {
+  AlarmInvocationInfo,
+  DurableObjectStorage,
+  ExecutionContext,
+} from "@cloudflare/workers-types";
+import type { IssueTrackerCloudflareEnv } from "../alchemy.run.ts";
 import {
   createHttpHandler,
   directProtocolClient,
@@ -46,8 +51,16 @@ export interface CloudflareEnv {
   };
   readonly ASSETS?: { fetch(request: Request): Promise<Response> };
   readonly DEPLOYMENT?: string;
+  /** Test harness capability. The deployed topology intentionally omits it. */
   readonly TEST_FAILPOINTS?: string;
 }
+
+type AssertTrue<T extends true> = T;
+
+/** Compile-time proof that every derived deployed binding fits the host edge. */
+export type DerivedEnvironmentCoversHost = AssertTrue<
+  IssueTrackerCloudflareEnv extends CloudflareEnv ? true : false
+>;
 
 const json = (body: JsonValue, status = 200, requestId?: string): Response => {
   const headers = new Headers({

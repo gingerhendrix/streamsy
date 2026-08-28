@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- Workerd binding fixture uses native Worker fetch edges. */
 import worker, { type CloudflareEnv } from "../server/cloudflare.ts";
+import type { ExecutionContext } from "@cloudflare/workers-types";
 
 const immutableAssetBinding = {
   fetch: async (_request: Request): Promise<Response> => {

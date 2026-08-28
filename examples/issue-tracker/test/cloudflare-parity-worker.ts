@@ -75,7 +75,9 @@ const observedRead = (
     );
   }) as SqlClient.SqlClient["unsafe"];
   // SAFETY: the wrapper preserves the generic transaction effect and only observes its lifetime.
-  const withTransaction = ((effect: Effect.Effect<unknown>) =>
+  const withTransaction: SqlClient.SqlClient["withTransaction"] = <R, E, A>(
+    effect: Effect.Effect<A, E, R>,
+  ) =>
     Effect.suspend(() => {
       transactionCalls += 1;
       transactionDepth += 1;
@@ -87,7 +89,7 @@ const observedRead = (
           }),
         ),
       );
-    })) as SqlClient.SqlClient["withTransaction"];
+    });
   // SAFETY: unsafe and withTransaction retain their original overload contracts.
   const client = {
     ...sql,
