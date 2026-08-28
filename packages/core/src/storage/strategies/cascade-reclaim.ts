@@ -9,15 +9,26 @@ export async function cascadeReclaim(
 ): Promise<StorageDeleteResult> {
   const record = await store.getRecord(plan.streamId);
   if (!record) return { status: "not-found" };
+  if (plan.reason === "expiry" && record.lifecycle.expiresAtMs !== plan.expectedExpiresAtMs)
+    return { status: "expiry-mismatch" };
   if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" };
 
   const dependents = await lineage.countDependents(plan.streamId);
   if (dependents > 0) {
-    await store.softDelete(plan.streamId);
+    const softened = await store.softDelete(
+      plan.streamId,
+      plan.reason === "expiry" ? plan.expectedExpiresAtMs : undefined,
+    );
+    if (!softened) return { status: plan.reason === "expiry" ? "expiry-mismatch" : "not-found" };
     return { status: "retained-soft-deleted" };
   }
 
-  await purgeAndCascade(store, lineage, record);
+  const purged = await store.purgeSelf(
+    record.id,
+    plan.reason === "expiry" ? plan.expectedExpiresAtMs : undefined,
+  );
+  if (!purged) return { status: plan.reason === "expiry" ? "expiry-mismatch" : "not-found" };
+  await cascadeParents(store, lineage, record);
   return { status: "purged" };
 }
 
@@ -27,18 +38,22 @@ export async function plainPurge(
 ): Promise<StorageDeleteResult> {
   const record = await store.getRecord(plan.streamId);
   if (!record) return { status: "not-found" };
+  if (plan.reason === "expiry" && record.lifecycle.expiresAtMs !== plan.expectedExpiresAtMs)
+    return { status: "expiry-mismatch" };
   if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" };
-  await store.purgeSelf(plan.streamId);
+  const purged = await store.purgeSelf(
+    plan.streamId,
+    plan.reason === "expiry" ? plan.expectedExpiresAtMs : undefined,
+  );
+  if (!purged) return { status: plan.reason === "expiry" ? "expiry-mismatch" : "not-found" };
   return { status: "purged" };
 }
 
-async function purgeAndCascade(
+async function cascadeParents(
   store: LineageStore,
   lineage: LineagePolicy,
   record: StreamRecord,
 ): Promise<void> {
-  await store.purgeSelf(record.id);
-
   let childId: StreamId = record.id;
   let parentId = record.lifecycle.forkedFrom;
   while (parentId) {

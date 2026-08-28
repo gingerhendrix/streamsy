@@ -124,16 +124,21 @@ export type StorageForkResult =
   | { status: "exists"; record: StreamRecord }
   | { status: "fork-source-gone" };
 
-export interface DeletePlan {
-  streamId: StreamId;
-  reason: "delete" | "expiry";
-}
+export type DeletePlan =
+  | { streamId: StreamId; reason: "delete" }
+  | {
+      streamId: StreamId;
+      reason: "expiry";
+      /** Exact durable deadline on which the expiry decision was based. */
+      expectedExpiresAtMs: number;
+    };
 
 export type StorageDeleteResult =
   | { status: "purged" }
   | { status: "retained-soft-deleted" }
   | { status: "not-found" }
-  | { status: "gone" };
+  | { status: "gone" }
+  | { status: "expiry-mismatch" };
 
 /**
  * Per-stream level-triggered live waiter. Serializable in and out: the argument
@@ -155,6 +160,7 @@ export interface StreamLiveWaiter {
 /** Per-stream active expiry scheduler. */
 export interface StreamExpiryScheduler {
   scheduleExpiry(streamId: StreamId, at: number): Promise<void> | void;
+  /** Cancel only an orphaned schedule; a current same-id record is a replacement. */
   cancelExpiry(streamId: StreamId): Promise<void> | void;
 }
 

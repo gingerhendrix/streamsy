@@ -17,7 +17,7 @@ function record(id: StreamId, forkedFrom?: StreamId, softDeleted = false): Strea
 }
 
 function deletePlan(streamId: StreamId, reason: DeletePlan["reason"] = "delete"): DeletePlan {
-  return { streamId, reason };
+  return reason === "delete" ? { streamId, reason } : { streamId, reason, expectedExpiresAtMs: 1 };
 }
 
 class FakeLineageStore implements LineageStore {
@@ -30,16 +30,29 @@ class FakeLineageStore implements LineageStore {
     return this.records.get(id) ?? null;
   }
 
-  async purgeSelf(id: StreamId): Promise<void> {
+  async purgeSelf(id: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
+    const current = this.records.get(id);
+    if (
+      !current ||
+      current.lifecycle.expiresAtMs !== (expectedExpiresAtMs ?? current.lifecycle.expiresAtMs)
+    )
+      return false;
     this.purged.push(id);
     this.records.delete(id);
+    return true;
   }
 
-  async softDelete(id: StreamId): Promise<void> {
+  async softDelete(id: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
     this.softened.push(id);
     const current = this.records.get(id);
+    if (
+      !current ||
+      current.lifecycle.expiresAtMs !== (expectedExpiresAtMs ?? current.lifecycle.expiresAtMs)
+    )
+      return false;
     if (current)
       this.records.set(id, { ...current, lifecycle: { ...current.lifecycle, softDeleted: true } });
+    return true;
   }
 
   async addEdge(parent: StreamId, child: StreamId): Promise<void> {

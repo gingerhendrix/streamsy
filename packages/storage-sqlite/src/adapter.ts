@@ -40,7 +40,9 @@ export function createSqliteStorageAdapter(
     append: (streamId, plan) => state.getStream(streamId).append(plan),
     awaitChange: (streamId, awaitOptions) => state.getStream(streamId).awaitChange(awaitOptions),
     scheduleExpiry: (streamId, at) => state.getStream(streamId).scheduleExpiry(at),
-    cancelExpiry: (streamId) => state.getStream(streamId).cancelExpiry(),
+    cancelExpiry: (streamId) => {
+      if (readRecord(state, streamId) === null) return state.getStream(streamId).cancelExpiry();
+    },
     async create(plan: CreatePlan) {
       const stream = state.getStream(plan.record.id);
       // `plan.record` is the single source of truth — a created-closed stream
@@ -101,6 +103,8 @@ export function createSqliteStorageAdapter(
 function deleteInTransaction(state: SqliteStreamState, plan: DeletePlan) {
   const record = readRecord(state, plan.streamId);
   if (!record) return { status: "not-found" as const };
+  if (plan.reason === "expiry" && record.lifecycle.expiresAtMs !== plan.expectedExpiresAtMs)
+    return { status: "expiry-mismatch" as const };
   if (plan.reason === "delete" && record.lifecycle.softDeleted) return { status: "gone" as const };
 
   if (countDependents(state, plan.streamId) > 0) {

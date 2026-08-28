@@ -75,6 +75,9 @@ describe("createDurableObjectStorageAdapter", () => {
     await adapter.scheduleExpiry("alpha", 123_456);
     expect(fake.stubFor("alpha").state.expiry).toEqual({ at: 123_456, cancelled: false });
     await adapter.cancelExpiry("alpha");
+    expect(fake.stubFor("alpha").state.expiry.cancelled).toBe(false);
+    fake.stubFor("alpha").state.record = null;
+    await adapter.cancelExpiry("alpha");
     expect(fake.stubFor("alpha").state.expiry.cancelled).toBe(true);
   });
 

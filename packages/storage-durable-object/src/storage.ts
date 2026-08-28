@@ -191,20 +191,36 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return { status: "committed", record: updated };
   }
 
-  async purgeSelf(streamId: StreamId): Promise<void> {
+  async purgeSelf(streamId: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
     this.ensureInit(streamId);
+    const record = this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY);
+    if (
+      record === undefined ||
+      (expectedExpiresAtMs !== undefined && record.lifecycle.expiresAtMs !== expectedExpiresAtMs)
+    ) {
+      return false;
+    }
     await this.records.deleteRecord();
     await this.messages.deleteMessages();
     await this.producers.deleteProducerStates();
     await this.deleteChildEdges();
     await this.alarms.cancel();
     this.notifier.wake();
+    return true;
   }
 
-  async softDelete(streamId: StreamId): Promise<void> {
+  async softDelete(streamId: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
     this.ensureInit(streamId);
+    const record = this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY);
+    if (
+      record === undefined ||
+      (expectedExpiresAtMs !== undefined && record.lifecycle.expiresAtMs !== expectedExpiresAtMs)
+    ) {
+      return false;
+    }
     await this.records.updateRecord({ lifecycle: { softDeleted: true } });
     this.notifier.wake();
+    return true;
   }
 
   async listMessages(streamId: StreamId, options?: ListMessagesOptions): Promise<StoredMessage[]> {
@@ -243,9 +259,9 @@ export class DurableObjectStreamStorage extends DurableObject<DurableObjectStrea
     return this.alarms.schedule(at);
   }
 
-  cancelExpiry(streamId: StreamId): Promise<void> {
+  async cancelExpiry(streamId: StreamId): Promise<void> {
     this.ensureInit(streamId);
-    return this.alarms.cancel();
+    if (this.ctx.storage.kv.get<StreamRecord>(RECORD_KEY) === undefined) await this.alarms.cancel();
   }
 
   async addChildEdge(streamId: StreamId, childId: StreamId): Promise<void> {

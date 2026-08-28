@@ -10,12 +10,12 @@ export class DurableObjectLineageStore implements LineageStore {
     return this.stub(id).getRecord(id);
   }
 
-  async purgeSelf(id: StreamId): Promise<void> {
-    await this.stub(id).purgeSelf(id);
+  async purgeSelf(id: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
+    return this.stub(id).purgeSelf(id, expectedExpiresAtMs);
   }
 
-  async softDelete(id: StreamId): Promise<void> {
-    await this.stub(id).softDelete(id);
+  async softDelete(id: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
+    return this.stub(id).softDelete(id, expectedExpiresAtMs);
   }
 
   async addEdge(parent: StreamId, child: StreamId): Promise<void> {

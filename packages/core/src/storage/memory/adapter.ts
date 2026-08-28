@@ -41,7 +41,10 @@ export function createMemoryStorageAdapter(
     append: (streamId, plan) => Promise.resolve(state.getStream(streamId).append(plan)),
     awaitChange: (streamId, awaitOptions) => state.getStream(streamId).awaitChange(awaitOptions),
     scheduleExpiry: (streamId, at) => state.getStream(streamId).scheduleExpiry(at),
-    cancelExpiry: (streamId) => state.getStream(streamId).cancelExpiry(),
+    cancelExpiry: (streamId) => {
+      const stream = state.getStream(streamId);
+      if (stream.getRecord() === null) return stream.cancelExpiry();
+    },
     async create(plan: CreatePlan) {
       const stream = state.getStream(plan.record.id);
       // `plan.record` is the single source of truth — a created-closed stream

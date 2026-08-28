@@ -147,6 +147,29 @@ interface ActorRuntime {
   readonly runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never>;
 }
 
+interface GuardedOperation {
+  state: "active" | "consumed";
+}
+
+type AlarmFailurePoint =
+  | "begin-get"
+  | "begin-set"
+  | "notification-discovery"
+  | "reconcile-get"
+  | "reconcile-set"
+  | "reconcile-delete";
+
+function isAlarmFailurePoint(value: string): value is AlarmFailurePoint {
+  return (
+    value === "begin-get" ||
+    value === "begin-set" ||
+    value === "notification-discovery" ||
+    value === "reconcile-get" ||
+    value === "reconcile-set" ||
+    value === "reconcile-delete"
+  );
+}
+
 const StoredPartition = Schema.Struct({
   kind: Schema.Literal("workspace"),
   id: Schema.String,
@@ -162,9 +185,14 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
   private interruptAfterStreamCreateCommit = false;
   private pauseRenewalUntilExpiry = false;
   private failNextMaintenance = false;
+  private releaseCancelAfterCreate = false;
   private applicationGate: TestGate | undefined;
   private expiryGate: TestGate | undefined;
   private maintenanceCompletionGate: TestGate | undefined;
+  private maintenanceBeginGate: TestGate | undefined;
+  private expiryDeleteGate: TestGate | undefined;
+  private cancelExpiryGate: TestGate | undefined;
+  private alarmFailure: AlarmFailurePoint | undefined;
 
   private initialize(canonicalKey: string): Promise<ActorRuntime> {
     if (this.runtime !== undefined) return this.runtime;
@@ -183,6 +211,8 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         afterCreateCommit: () => this.afterStreamCreateCommit(),
         beforeAppendCommit: () => this.beforeStreamAppendCommit(),
         afterAppendCommit: () => this.afterStreamAppendCommit(),
+        beforeExpiryDeleteCommit: () => this.beforeExpiryDeleteCommit(),
+        beforeCancelExpiry: () => this.beforeCancelExpiry(),
       });
       protocol = new StreamProtocol({
         storage: { adapter: streams.adapter },
@@ -225,8 +255,29 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
   async fetch(request: Request): Promise<Response> {
     const id = requestId(request);
     try {
-      if (new URL(request.url).pathname === "/_streamsy/maintenance") {
+      const url = new URL(request.url);
+      if (url.pathname === "/_streamsy/maintenance") {
         const actor = await this.current(request);
+        if (this.env.TEST_FAILPOINTS === "enabled") {
+          const alarmControl = url.searchParams.get("test-alarm");
+          if (alarmControl === "set") {
+            const at = Number(url.searchParams.get("at"));
+            if (!Number.isFinite(at)) throw new Error("invalid test alarm timestamp");
+            await this.ctx.storage.setAlarm(at);
+            return json({ alarm: at }, 200, id);
+          }
+          if (alarmControl === "get") {
+            return json({ alarm: await this.ctx.storage.getAlarm() }, 200, id);
+          }
+          if (alarmControl === "release-maintenance-begin") {
+            this.maintenanceBeginGate?.release();
+            return json({ alarm: await this.ctx.storage.getAlarm() }, 200, id);
+          }
+        }
+        this.configureAlarmFailure(request);
+        if (this.testFailpoint(request, "pause-maintenance-after-begin")) {
+          this.maintenanceBeginGate = makeTestGate();
+        }
         if (this.testFailpoint(request, "pause-maintenance-after-reconcile")) {
           this.maintenanceCompletionGate = makeTestGate();
         }
@@ -234,6 +285,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         return json({ ...report, workspaceId: actor.workspaceId }, 200, id);
       }
       const actor = await this.current(request);
+      this.configureAlarmFailure(request);
       const resolution = resolveRoute(new URL(request.url).pathname);
       if (
         resolution.kind !== "partition" ||
@@ -247,8 +299,14 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       headers.delete(TEST_FAILPOINT_HEADER);
       const clean = new Request(request, { headers });
       if (resolution.target === "streams") {
-        await this.beginGuardedOperation();
+        let operation: GuardedOperation | undefined;
         try {
+          operation = await this.beginGuardedOperation();
+          if (this.testFailpoint(request, "release-maintenance-begin")) {
+            const gate = this.maintenanceBeginGate ?? (this.maintenanceBeginGate = makeTestGate());
+            await gate.reached;
+            gate.release();
+          }
           if (this.testFailpoint(request, "pause-next-expiry")) {
             this.expiryGate = makeTestGate();
           }
@@ -258,14 +316,32 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
               "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
             );
           }
-          this.pauseRenewalUntilExpiry = this.testFailpoint(request, "pause-renewal-until-expiry");
+          if (this.testFailpoint(request, "pause-renewal-until-expiry")) {
+            this.pauseRenewalUntilExpiry = true;
+          }
+          if (this.testFailpoint(request, "pause-lazy-expiry-delete")) {
+            this.expiryDeleteGate = this.expiryGate ?? makeTestGate();
+          }
+          if (this.testFailpoint(request, "pause-delete-cancellation")) {
+            this.cancelExpiryGate = makeTestGate();
+          }
+          this.releaseCancelAfterCreate = this.testFailpoint(
+            request,
+            "release-delete-cancellation-after-create",
+          );
           this.interruptAfterStreamCreateCommit = this.testFailpoint(
             request,
             "after-stream-create-commit",
           );
           const response = await actor.gateway.fetch(clean);
           response.headers.set(REQUEST_ID_HEADER, id);
-          await this.finishGuardedOperation(actor);
+          await this.finishGuardedOperation(operation, actor);
+          if (this.env.TEST_FAILPOINTS === "enabled") {
+            response.headers.set(
+              "x-streamsy-test-guarded-operations",
+              String(this.guardedOperations),
+            );
+          }
           if (this.testFailpoint(request, "release-paused-application")) {
             const gate = this.applicationGate ?? (this.applicationGate = makeTestGate());
             await gate.reached;
@@ -279,16 +355,18 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
           }
           return response;
         } catch (cause) {
-          await this.abandonGuardedOperation();
+          if (operation !== undefined) await this.abandonGuardedOperation(operation);
           throw cause;
         } finally {
           this.interruptAfterStreamCreateCommit = false;
           this.pauseRenewalUntilExpiry = false;
+          this.releaseCancelAfterCreate = false;
         }
       }
       return await this.serialized(async () => {
-        await this.beginGuardedOperation();
+        let operation: GuardedOperation | undefined;
         try {
+          operation = await this.beginGuardedOperation();
           if (this.testFailpoint(request, "pause-after-prearm-then-fail")) {
             const gate = this.applicationGate ?? (this.applicationGate = makeTestGate());
             gate.arrive();
@@ -316,10 +394,10 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
           ) {
             throw new Error("injected failure after application commit");
           }
-          await this.finishGuardedOperation(actor);
+          await this.finishGuardedOperation(operation, actor);
           return response;
         } catch (cause) {
-          await this.abandonGuardedOperation();
+          if (operation !== undefined) await this.abandonGuardedOperation(operation);
           throw cause;
         } finally {
           this.interruptNotificationAfterAccept = false;
@@ -338,21 +416,47 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
     }
   }
 
-  async alarm(): Promise<void> {
-    await this.runMaintenance();
+  async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {
+    await this.runMaintenance(alarmInfo);
   }
 
   /** Idempotent maintenance RPC; the alarm handler and local harness share it. */
-  private async runMaintenance(): Promise<{ workspaceId: string; delivered: number }> {
+  private async runMaintenance(
+    alarmInfo?: AlarmInvocationInfo,
+  ): Promise<{ workspaceId: string; delivered: number }> {
     return await this.serialized(async () => {
-      await this.beginGuardedOperation(true);
+      let operation: GuardedOperation | undefined;
       try {
+        operation = await this.beginGuardedOperation();
+        if (this.maintenanceBeginGate !== undefined) {
+          const gate = this.maintenanceBeginGate;
+          this.ensureTestEventsTable();
+          this.ctx.storage.sql.exec(
+            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('maintenance-begin-paused')",
+          );
+          gate.arrive();
+          await gate.released;
+          this.maintenanceBeginGate = undefined;
+        }
         const actor = await this.current();
+        if (alarmInfo !== undefined) {
+          this.ensureTestEventsTable();
+          this.ctx.storage.sql.exec(
+            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
+            `alarm-start:${alarmInfo.retryCount}:${alarmInfo.isRetry}`,
+          );
+        }
         if (this.failNextMaintenance) {
           this.failNextMaintenance = false;
           this.ctx.storage.sql.exec(
             "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('maintenance-failed')",
           );
+          if (alarmInfo !== undefined) {
+            this.ctx.storage.sql.exec(
+              "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
+              `alarm-failed:${alarmInfo.retryCount}:${alarmInfo.isRetry}`,
+            );
+          }
           throw new Error("injected alarm maintenance body failure");
         }
         const now = Date.now();
@@ -370,7 +474,14 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         // fair share of this alarm turn before any remaining due batch.
         await actor.runtime.runPromise(advance(actor.workspaceId));
         const delivery = await actor.runtime.runPromise(drainNotifications(actor.workspaceId));
-        await this.finishGuardedOperation(actor);
+        if (alarmInfo !== undefined) {
+          this.ensureTestEventsTable();
+          this.ctx.storage.sql.exec(
+            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
+            `alarm-succeeded:${alarmInfo.retryCount}:${alarmInfo.isRetry}`,
+          );
+        }
+        await this.finishGuardedOperation(operation, actor);
         if (this.maintenanceCompletionGate !== undefined) {
           const gate = this.maintenanceCompletionGate;
           this.ctx.storage.sql.exec(
@@ -382,13 +493,14 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         }
         return { workspaceId: actor.workspaceId, delivered: delivery.delivered };
       } catch (cause) {
-        await this.abandonGuardedOperation();
+        if (operation !== undefined) await this.abandonGuardedOperation(operation);
         throw cause;
       }
     });
   }
 
   private async reconcileOwedWork(actor: ActorRuntime): Promise<void> {
+    this.failAlarmPhase("notification-discovery");
     const listed = await actor.runtime.runPromise(listNotifications(actor.workspaceId));
     const nextNotification = listed.entries
       .filter((entry) => entry.state === "pending")
@@ -409,47 +521,96 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
     if (this.guardedOperations > 0) {
       const guard = Date.now() + MAINTENANCE_GUARD_MS;
       const desired = next === undefined ? guard : Math.min(guard, next);
-      const current = await this.ctx.storage.getAlarm();
-      if (current === null || current > desired) await this.ctx.storage.setAlarm(desired);
+      const current = await this.getAlarm("reconcile-get");
+      if (current === null || current > desired) await this.setAlarm(desired, "reconcile-set");
       return;
     }
     if (next !== undefined)
-      await this.ctx.storage.setAlarm(Math.max(Date.now() + ALARM_FLOOR_MS, next));
-    else await this.ctx.storage.deleteAlarm();
+      await this.setAlarm(Math.max(Date.now() + ALARM_FLOOR_MS, next), "reconcile-set");
+    else await this.deleteAlarm("reconcile-delete");
   }
 
-  private async beginGuardedOperation(replaceFiredAlarm = false): Promise<void> {
-    await this.serializedAlarm(async () => {
-      this.guardedOperations += 1;
-      if (replaceFiredAlarm) {
-        await this.ctx.storage.setAlarm(Date.now() + MAINTENANCE_GUARD_MS);
-        return;
-      }
+  private async beginGuardedOperation(): Promise<GuardedOperation> {
+    return await this.serializedAlarm(async () => {
       await this.preserveOrArmGuard();
+      const operation: GuardedOperation = { state: "active" };
+      this.guardedOperations += 1;
+      return operation;
     });
   }
 
-  private async finishGuardedOperation(actor: ActorRuntime): Promise<void> {
+  private async finishGuardedOperation(
+    operation: GuardedOperation,
+    actor: ActorRuntime,
+  ): Promise<void> {
     await this.serializedAlarm(async () => {
-      this.guardedOperations -= 1;
+      this.consumeGuardedOperation(operation);
       await this.reconcileOwedWork(actor);
     });
   }
 
-  private async abandonGuardedOperation(): Promise<void> {
+  private async abandonGuardedOperation(operation: GuardedOperation): Promise<void> {
     await this.serializedAlarm(async () => {
-      this.guardedOperations -= 1;
+      if (operation.state === "consumed") return;
+      this.consumeGuardedOperation(operation);
       await this.preserveOrArmGuard();
     });
   }
 
+  private consumeGuardedOperation(operation: GuardedOperation): void {
+    if (operation.state !== "active") throw new Error("guarded operation already consumed");
+    operation.state = "consumed";
+    this.guardedOperations -= 1;
+    if (this.guardedOperations < 0) throw new Error("guarded operation count became negative");
+  }
+
   private async preserveOrArmGuard(): Promise<void> {
     const guard = Date.now() + MAINTENANCE_GUARD_MS;
-    const current = await this.ctx.storage.getAlarm();
-    if (current === null || current > guard) await this.ctx.storage.setAlarm(guard);
+    const current = await this.getAlarm("begin-get");
+    if (current === null || current > guard) await this.setAlarm(guard, "begin-set");
+  }
+
+  private async getAlarm(point: "begin-get" | "reconcile-get"): Promise<number | null> {
+    this.failAlarmPhase(point);
+    return await this.ctx.storage.getAlarm();
+  }
+
+  private async setAlarm(at: number, point: "begin-set" | "reconcile-set"): Promise<void> {
+    this.failAlarmPhase(point);
+    await this.ctx.storage.setAlarm(at);
+  }
+
+  private async deleteAlarm(point: "reconcile-delete"): Promise<void> {
+    this.failAlarmPhase(point);
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  private failAlarmPhase(point: AlarmFailurePoint): void {
+    if (this.alarmFailure !== point) return;
+    this.alarmFailure = undefined;
+    throw new Error(`injected alarm phase failure: ${point}`);
+  }
+
+  private configureAlarmFailure(request: Request): void {
+    if (this.env.TEST_FAILPOINTS !== "enabled") return;
+    const value = request.headers.get(TEST_FAILPOINT_HEADER);
+    if (value?.startsWith("fail-alarm-") !== true) return;
+    const point = value.slice("fail-alarm-".length);
+    if (isAlarmFailurePoint(point)) this.alarmFailure = point;
+  }
+
+  private ensureTestEventsTable(): void {
+    this.ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
+    );
   }
 
   private async afterStreamCreateCommit(): Promise<void> {
+    if (this.releaseCancelAfterCreate) {
+      const gate = this.cancelExpiryGate ?? (this.cancelExpiryGate = makeTestGate());
+      await gate.reached;
+      gate.release();
+    }
     if (!this.interruptAfterStreamCreateCommit) return;
     this.interruptAfterStreamCreateCommit = false;
     throw new Error("injected interruption after atomic stream create commit");
@@ -457,12 +618,40 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
 
   private async beforeStreamAppendCommit(): Promise<void> {
     if (!this.pauseRenewalUntilExpiry) return;
+    this.ensureTestEventsTable();
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('renewal-append-paused')",
+    );
     const gate = this.expiryGate ?? (this.expiryGate = makeTestGate());
     await gate.reached;
   }
 
   private async afterStreamAppendCommit(): Promise<void> {
     if (this.pauseRenewalUntilExpiry) this.expiryGate?.release();
+  }
+
+  private async beforeExpiryDeleteCommit(): Promise<void> {
+    const gate = this.expiryDeleteGate;
+    if (gate === undefined) return;
+    this.expiryDeleteGate = undefined;
+    this.ensureTestEventsTable();
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('lazy-expiry-delete-paused')",
+    );
+    gate.arrive();
+    await gate.released;
+  }
+
+  private async beforeCancelExpiry(): Promise<void> {
+    const gate = this.cancelExpiryGate;
+    if (gate === undefined) return;
+    this.ensureTestEventsTable();
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('delete-cancellation-paused')",
+    );
+    gate.arrive();
+    await gate.released;
+    this.cancelExpiryGate = undefined;
   }
 
   private testFailpoint(request: Request, name: string): boolean {

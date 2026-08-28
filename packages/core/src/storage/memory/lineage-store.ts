@@ -9,12 +9,30 @@ export class MemoryLineageStore implements LineageStore {
     return this.state.getExistingStream(id)?.getRecord() ?? null;
   }
 
-  async purgeSelf(id: StreamId): Promise<void> {
-    this.state.getExistingStream(id)?.purgeSelf();
+  async purgeSelf(id: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
+    const stream = this.state.getExistingStream(id);
+    const record = stream?.getRecord();
+    if (
+      !stream ||
+      !record ||
+      record.lifecycle.expiresAtMs !== (expectedExpiresAtMs ?? record.lifecycle.expiresAtMs)
+    )
+      return false;
+    stream.purgeSelf();
+    return true;
   }
 
-  async softDelete(id: StreamId): Promise<void> {
-    this.state.getExistingStream(id)?.softDelete();
+  async softDelete(id: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
+    const stream = this.state.getExistingStream(id);
+    const record = stream?.getRecord();
+    if (
+      !stream ||
+      !record ||
+      record.lifecycle.expiresAtMs !== (expectedExpiresAtMs ?? record.lifecycle.expiresAtMs)
+    )
+      return false;
+    stream.softDelete();
+    return true;
   }
 
   async addEdge(parent: StreamId, child: StreamId): Promise<void> {

@@ -290,6 +290,8 @@ export function createGameStorageAdapter(
       const result = storage.transactionSync(() => {
         const record = readRecord(plan.streamId);
         if (!record) return { status: "not-found" as const };
+        if (plan.reason === "expiry" && record.lifecycle.expiresAtMs !== plan.expectedExpiresAtMs)
+          return { status: "expiry-mismatch" as const };
         if (plan.reason === "delete" && record.lifecycle.softDeleted)
           return { status: "gone" as const };
         const dependent = [
@@ -323,7 +325,9 @@ export function createGameStorageAdapter(
       );
     },
     scheduleExpiry: async (_streamId, _at) => onExpiryChange?.(),
-    cancelExpiry: async (_streamId) => onExpiryChange?.(),
+    cancelExpiry: async (streamId) => {
+      if (readRecord(streamId) === null) onExpiryChange?.();
+    },
   };
 
   return adapter;

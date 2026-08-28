@@ -8,6 +8,7 @@ import type {
   ListMessagesOptions,
   ProducerState,
   StorageAdapter,
+  StorageDeleteResult,
   StoredMessage,
   StreamRecord,
 } from "@streamsy/core";
@@ -99,6 +100,8 @@ export interface WorkspaceStreamStorageOptions {
   readonly afterCreateCommit?: () => Promise<void>;
   readonly beforeAppendCommit?: () => Promise<void>;
   readonly afterAppendCommit?: () => Promise<void>;
+  readonly beforeExpiryDeleteCommit?: () => Promise<void>;
+  readonly beforeCancelExpiry?: () => Promise<void>;
 }
 
 /** All streams selected for one workspace stay inside that workspace object. */
@@ -197,6 +200,35 @@ export function createWorkspaceStreamStorage(
       };
       const timeout = setTimeout(done, Math.max(0, timeoutMs));
       waiters.add(done);
+    });
+
+  const deleteStream = (plan: DeletePlan, dueAtOrBefore?: number): StorageDeleteResult["status"] =>
+    storage.transactionSync(() => {
+      const record = readRecord(plan.streamId);
+      if (record === null) return "not-found";
+      if (plan.reason === "expiry") {
+        const row = [
+          ...sql.exec<ExpiryRow>(
+            "SELECT stream_id, expires_at_ms FROM issue_tracker_stream_expiries WHERE stream_id = ?",
+            plan.streamId,
+          ),
+        ][0];
+        if (
+          row === undefined ||
+          row.expires_at_ms !== plan.expectedExpiresAtMs ||
+          record.lifecycle.expiresAtMs !== plan.expectedExpiresAtMs ||
+          (dueAtOrBefore !== undefined && row.expires_at_ms > dueAtOrBefore)
+        ) {
+          return "expiry-mismatch";
+        }
+      } else if (record.lifecycle.softDeleted === true) {
+        return "gone";
+      }
+      sql.exec("DELETE FROM issue_tracker_messages WHERE stream_id = ?", plan.streamId);
+      sql.exec("DELETE FROM issue_tracker_producers WHERE stream_id = ?", plan.streamId);
+      sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", plan.streamId);
+      sql.exec("DELETE FROM issue_tracker_streams WHERE stream_id = ?", plan.streamId);
+      return "purged";
     });
 
   const adapter: StorageAdapter = {
@@ -299,19 +331,9 @@ export function createWorkspaceStreamStorage(
       return { status: "created", record: plan.record };
     },
     async delete(plan: DeletePlan) {
-      const status = storage.transactionSync(() => {
-        const record = readRecord(plan.streamId);
-        if (record === null) return "not-found" as const;
-        if (plan.reason === "delete" && record.lifecycle.softDeleted === true) {
-          return "gone" as const;
-        }
-        sql.exec("DELETE FROM issue_tracker_messages WHERE stream_id = ?", plan.streamId);
-        sql.exec("DELETE FROM issue_tracker_producers WHERE stream_id = ?", plan.streamId);
-        sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", plan.streamId);
-        sql.exec("DELETE FROM issue_tracker_streams WHERE stream_id = ?", plan.streamId);
-        return "purged" as const;
-      });
-      wake();
+      if (plan.reason === "expiry") await hooks.beforeExpiryDeleteCommit?.();
+      const status = deleteStream(plan);
+      if (status === "purged") wake();
       return { status };
     },
     awaitChange(streamId, options: AwaitChangeOptions): Promise<AwaitChangeResult> {
@@ -337,7 +359,11 @@ export function createWorkspaceStreamStorage(
       });
     },
     cancelExpiry: async (streamId) => {
-      sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", streamId);
+      await hooks.beforeCancelExpiry?.();
+      storage.transactionSync(() => {
+        if (readRecord(streamId) !== null) return;
+        sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", streamId);
+      });
     },
   };
   return {
@@ -352,28 +378,18 @@ export function createWorkspaceStreamStorage(
         ),
       ].map((row) => row.stream_id),
     expireStreamIfDue: (streamId, nowMs) => {
-      const purged = storage.transactionSync(() => {
-        const row = [
-          ...sql.exec<ExpiryRow>(
-            "SELECT stream_id, expires_at_ms FROM issue_tracker_stream_expiries WHERE stream_id = ?",
-            streamId,
-          ),
-        ][0];
-        const record = readRecord(streamId);
-        if (
-          row === undefined ||
-          row.expires_at_ms > nowMs ||
-          record === null ||
-          record.lifecycle.expiresAtMs !== row.expires_at_ms
-        ) {
-          return false;
-        }
-        sql.exec("DELETE FROM issue_tracker_messages WHERE stream_id = ?", streamId);
-        sql.exec("DELETE FROM issue_tracker_producers WHERE stream_id = ?", streamId);
-        sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", streamId);
-        sql.exec("DELETE FROM issue_tracker_streams WHERE stream_id = ?", streamId);
-        return true;
-      });
+      const row = [
+        ...sql.exec<ExpiryRow>(
+          "SELECT stream_id, expires_at_ms FROM issue_tracker_stream_expiries WHERE stream_id = ?",
+          streamId,
+        ),
+      ][0];
+      if (row === undefined) return false;
+      const purged =
+        deleteStream(
+          { streamId, reason: "expiry", expectedExpiresAtMs: row.expires_at_ms },
+          nowMs,
+        ) === "purged";
       if (purged) wake();
       return purged;
     },

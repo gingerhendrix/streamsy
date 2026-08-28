@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-timers, effecttsgo/new-promise -- bun:test owns Promise-native workerd timing. */
 import { afterEach, describe, expect, test } from "bun:test";
+import { Schema } from "effect";
 import { WorkspaceSummary } from "../domain/issue.ts";
 import {
   ApiError,
@@ -18,6 +19,7 @@ import {
 } from "./cloudflare-support.ts";
 
 const open: WorkerdHarness[] = [];
+const AlarmControlResponse = Schema.Struct({ alarm: Schema.NullOr(Schema.Finite) });
 afterEach(async () => {
   await Promise.all(open.splice(0).map((harness) => harness.close()));
 });
@@ -26,6 +28,20 @@ async function fresh(): Promise<WorkerdHarness> {
   const harness = await workerdHarness();
   open.push(harness);
   return harness;
+}
+
+async function workspaceControl(
+  harness: WorkerdHarness,
+  workspaceId: string,
+  query: string,
+): Promise<{ alarm: number | null }> {
+  const namespace = await harness.mf.getDurableObjectNamespace("WORKSPACES");
+  const stub = namespace.get(namespace.idFromName(`workspace:${workspaceId}`));
+  const response = await stub.fetch(`http://workspace.internal/_streamsy/maintenance?${query}`, {
+    headers: { "x-streamsy-partition-key": `workspace:${workspaceId}` },
+  });
+  if (!response.ok) throw new Error(`workspace control failed: ${await response.text()}`);
+  return Schema.decodeUnknownSync(AlarmControlResponse)(await response.json());
 }
 
 async function eventually(assertion: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
@@ -356,6 +372,116 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     );
   });
 
+  test("guard phase failures finalize ownership exactly once on the resident actor", async () => {
+    const harness = await fresh();
+    const cases = [
+      { point: "begin-get", ttl: false },
+      { point: "begin-set", ttl: false },
+      { point: "notification-discovery", ttl: false },
+      { point: "reconcile-set", ttl: true },
+      { point: "reconcile-delete", ttl: false },
+    ] as const;
+
+    for (const entry of cases) {
+      const workspace = `guard-${entry.point}`;
+      const headers = new Headers({
+        "x-streamsy-test-failpoint": `fail-alarm-${entry.point}`,
+      });
+      if (entry.ttl) headers.set("stream-ttl", "30");
+      const failed = await harness.fetch(`/streams/workspaces/${workspace}/failed`, {
+        method: "PUT",
+        headers,
+      });
+      expect(failed.status).toBeGreaterThanOrEqual(500);
+      const recovered = await harness.fetch(`/streams/workspaces/${workspace}/recovered`, {
+        method: "PUT",
+      });
+      expect(recovered.status).toBe(201);
+      expect(recovered.headers.get("x-streamsy-test-guarded-operations")).toBe("0");
+    }
+  });
+
+  test("a failed guarded reconciliation get cannot underflow the next interleaving", async () => {
+    const harness = await fresh();
+    const workspace = "guard-reconcile-get";
+    await harness.fetch(
+      `/api/workspaces/${workspace}/issues`,
+      jsonRequest("POST", create("guard-get-create", "guard-get-issue", "Guard get")),
+    );
+    const application = harness.fetch(
+      `/api/workspaces/${workspace}/issues/guard-get-issue/assignee`,
+      {
+        ...jsonRequest("POST", { commandId: "guard-get-assign", assigneeId: "ada" }),
+        headers: {
+          "content-type": "application/json",
+          "x-streamsy-test-failpoint": "pause-after-prearm-then-fail",
+        },
+      },
+    );
+    const failed = await harness.fetch(`/streams/workspaces/${workspace}/failed`, {
+      method: "PUT",
+      headers: { "x-streamsy-test-failpoint": "fail-alarm-reconcile-get" },
+    });
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    const release = await harness.fetch(`/streams/workspaces/${workspace}/release`, {
+      method: "PUT",
+      headers: { "x-streamsy-test-failpoint": "release-paused-application" },
+    });
+    expect(release.status).toBe(201);
+    expect((await application).status).toBe(503);
+    const recovered = await harness.fetch(`/streams/workspaces/${workspace}/recovered`, {
+      method: "PUT",
+    });
+    expect(recovered.headers.get("x-streamsy-test-guarded-operations")).toBe("0");
+
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: `workspace:${workspace}`,
+    });
+    expect(
+      await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"),
+    ).toHaveLength(1);
+    await harness.evictWorkspace(workspace);
+    await eventually(
+      async () =>
+        (await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"))[0]
+          ?.state === "delivered",
+    );
+  });
+
+  test("maintenance begin preserves an earlier alarm installed by another phase", async () => {
+    const harness = await fresh();
+    const workspace = "minimum-alarm";
+    await harness.fetch(`/streams/workspaces/${workspace}/initial`, { method: "PUT" });
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: `workspace:${workspace}`,
+    });
+    const earlier = Date.now() + 950;
+    await workspaceControl(harness, workspace, `test-alarm=set&at=${earlier}`);
+    await storage.exec(
+      "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
+    );
+    const namespace = await harness.mf.getDurableObjectNamespace("WORKSPACES");
+    const stub = namespace.get(namespace.idFromName(`workspace:${workspace}`));
+    const maintenance = stub.fetch("http://workspace.internal/_streamsy/maintenance", {
+      headers: {
+        "x-streamsy-partition-key": `workspace:${workspace}`,
+        "x-streamsy-test-failpoint": "pause-maintenance-after-begin",
+      },
+    });
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_test_events" +
+              " WHERE name = 'maintenance-begin-paused'",
+          )
+        )[0]?.present === 1,
+    );
+    expect((await workspaceControl(harness, workspace, "test-alarm=get")).alarm).toBe(earlier);
+    await workspaceControl(harness, workspace, "test-alarm=release-maintenance-begin");
+    await maintenance;
+  });
+
   test("durable notification identity absorbs a post-accept interruption after eviction", async () => {
     const harness = await fresh();
     await harness.fetch(
@@ -452,7 +578,7 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
         await harness.fetch(path, {
           method: "PUT",
           headers: {
-            "stream-ttl": "1",
+            "stream-ttl": "30",
             "x-streamsy-test-failpoint": "pause-next-expiry",
           },
         })
@@ -464,6 +590,17 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     const initial = await storage.exec<{ expires_at_ms: number }>(
       "SELECT expires_at_ms FROM issue_tracker_stream_expiries",
     );
+    const forcedDeadline = Date.now() + 250;
+    await storage.exec(
+      "UPDATE issue_tracker_stream_expiries SET expires_at_ms = ?",
+      forcedDeadline,
+    );
+    await storage.exec(
+      "UPDATE issue_tracker_streams" +
+        " SET record_json = json_set(record_json, '$.lifecycle.expiresAtMs', ?)",
+      forcedDeadline,
+    );
+    await workspaceControl(harness, "renew-race", `test-alarm=set&at=${forcedDeadline}`);
     const renewed = await harness.fetch(`${path}?offset=now`, {
       headers: { "x-streamsy-test-failpoint": "pause-renewal-until-expiry" },
     });
@@ -478,6 +615,109 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
         "workspaces/renew-race/sliding",
       ),
     ).toEqual([{ present: 1 }]);
+  });
+
+  test("lazy expiry uses the same deadline-conditional delete boundary as alarms", async () => {
+    const harness = await fresh();
+    const path = "/streams/workspaces/lazy-renew/sliding";
+    expect(
+      (
+        await harness.fetch(path, {
+          method: "PUT",
+          headers: { "stream-ttl": "30" },
+        })
+      ).status,
+    ).toBe(201);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:lazy-renew",
+    });
+    await storage.exec(
+      "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
+    );
+    const renewal = harness.fetch(`${path}?offset=now`, {
+      headers: { "x-streamsy-test-failpoint": "pause-renewal-until-expiry" },
+    });
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_test_events WHERE name = 'renewal-append-paused'",
+          )
+        )[0]?.present === 1,
+    );
+    const due = Date.now() - 1;
+    await storage.exec("UPDATE issue_tracker_stream_expiries SET expires_at_ms = ?", due);
+    await storage.exec(
+      "UPDATE issue_tracker_streams" +
+        " SET record_json = json_set(record_json, '$.lifecycle.expiresAtMs', ?)",
+      due,
+    );
+    const lazy = harness.fetch(`${path}?offset=now`, {
+      headers: { "x-streamsy-test-failpoint": "pause-lazy-expiry-delete" },
+    });
+    expect((await renewal).status).toBe(200);
+    expect((await lazy).status).toBe(200);
+    const after = await storage.exec<{ expires_at_ms: number }>(
+      "SELECT expires_at_ms FROM issue_tracker_stream_expiries",
+    );
+    expect(after[0]?.expires_at_ms).toBeGreaterThan(Date.now() + 20_000);
+    expect(
+      await storage.exec<{ present: number }>(
+        "SELECT COUNT(*) present FROM issue_tracker_streams WHERE stream_id = ?",
+        "workspaces/lazy-renew/sliding",
+      ),
+    ).toEqual([{ present: 1 }]);
+  });
+
+  test("delayed cancellation cannot erase a recreated stream expiry", async () => {
+    const harness = await fresh();
+    const path = "/streams/workspaces/cancel-generation/same";
+    expect(
+      (
+        await harness.fetch(path, {
+          method: "PUT",
+          headers: { "stream-ttl": "30" },
+        })
+      ).status,
+    ).toBe(201);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:cancel-generation",
+    });
+    await storage.exec(
+      "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
+    );
+    const removing = harness.fetch(path, {
+      method: "DELETE",
+      headers: { "x-streamsy-test-failpoint": "pause-delete-cancellation" },
+    });
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_test_events WHERE name = 'delete-cancellation-paused'",
+          )
+        )[0]?.present === 1,
+    );
+    const replacement = await harness.fetch(path, {
+      method: "PUT",
+      headers: {
+        "stream-ttl": "60",
+        "x-streamsy-test-failpoint": "release-delete-cancellation-after-create",
+      },
+    });
+    expect(replacement.status).toBe(201);
+    expect((await removing).status).toBe(204);
+    expect(
+      await storage.exec<{ present: number }>(
+        "SELECT COUNT(*) present FROM issue_tracker_streams WHERE stream_id = ?",
+        "workspaces/cancel-generation/same",
+      ),
+    ).toEqual([{ present: 1 }]);
+    const expiry = await storage.exec<{ expires_at_ms: number }>(
+      "SELECT expires_at_ms FROM issue_tracker_stream_expiries WHERE stream_id = ?",
+      "workspaces/cancel-generation/same",
+    );
+    expect(expiry[0]?.expires_at_ms).toBeGreaterThan(Date.now() + 50_000);
   });
 
   test("bounds due TTL work while delivering outbox work and re-arming the backlog", async () => {
@@ -541,6 +781,9 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
         "SELECT COUNT(*) remaining FROM issue_tracker_stream_expiries",
       ),
     ).toEqual([{ remaining: 2 }]);
+    const backlogAlarm = (await workspaceControl(harness, "fairness", "test-alarm=get")).alarm;
+    expect(backlogAlarm).not.toBeNull();
+    expect(backlogAlarm ?? Infinity).toBeLessThanOrEqual(Date.now() + 250);
     expect(
       (
         await harness.fetch("/streams/workspaces/fairness/release", {
@@ -599,6 +842,12 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
         (await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"))[0]
           ?.state === "delivered",
     );
+    expect(
+      await storage.exec<{ present: number }>(
+        "SELECT COUNT(*) present FROM issue_tracker_test_events" +
+          " WHERE name = 'alarm-succeeded:0:false'",
+      ),
+    ).toEqual([{ present: 1 }]);
   });
 
   test("persists, renews, cancels, and fires raw stream expiry obligations", async () => {

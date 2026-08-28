@@ -18,7 +18,7 @@ import type {
   ReadResult,
   StreamProtocolFactory,
 } from "./types/protocol.ts";
-import type { StorageAdapter } from "./types/storage-adapter.ts";
+import type { StorageAdapter, StorageDeleteResult } from "./types/storage-adapter.ts";
 import { notSupported } from "./types/storage-adapter.ts";
 import type { Clock, StoredMessage, StreamRecord } from "./types/storage.ts";
 import { systemClock } from "./protocol/helpers/clock.ts";
@@ -45,7 +45,7 @@ export { ZERO_OFFSET } from "./protocol/helpers/offset-generator.ts";
 const LONG_POLL_TIMEOUT_MS = 30_000;
 const MAX_COMMIT_ATTEMPTS = 8;
 const MAX_NO_PROGRESS_ATTEMPTS = 8;
-type DeleteStatus = "purged" | "retained-soft-deleted" | "not-found" | "gone";
+type DeleteStatus = StorageDeleteResult["status"];
 
 export interface StreamProtocolOptions {
   clock?: Clock;
@@ -74,6 +74,8 @@ async function runDeleteEffects(status: DeleteStatus, storage: BoundStream): Pro
 }
 
 function mapDelete(status: DeleteStatus): DeleteResult {
+  if (status === "expiry-mismatch")
+    throw new Error("storage returned expiry-mismatch for an explicit delete");
   if (status === "not-found") return { status: "not-found" };
   if (status === "gone") return { status: "gone" };
   return { status: "ok" };
@@ -366,7 +368,13 @@ export class StreamProtocol implements StreamProtocolFactory {
       await this.expiryPolicy.scheduleExpiry(record);
       return;
     }
-    const commit = await this.deps.storage.adapter.delete({ streamId, reason: "expiry" });
+    const expectedExpiresAtMs = record.lifecycle.expiresAtMs;
+    if (expectedExpiresAtMs === undefined) return;
+    const commit = await this.deps.storage.adapter.delete({
+      streamId,
+      reason: "expiry",
+      expectedExpiresAtMs,
+    });
     await runDeleteEffects(commit.status, storage);
   }
 

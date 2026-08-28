@@ -38,6 +38,8 @@
  *     fallback) with `fork-source-gone` and record-carrying `exists`, delete
  *     `purged` / `retained-soft-deleted` / `not-found` / `gone` with cascade
  *     reclaim.
+ *   - expiry deletion is conditional on the exact durable deadline observed by
+ *     core, so a stale lazy/timer decision cannot purge a renewed generation.
  *   - cancellation: `raceAbortAwaitChange` composed over a real adapter wait
  *     resolves timeout-shaped on abort and never rejects the caller.
  *
@@ -761,6 +763,28 @@ function runLifecycleContract(
     const adapter = await makeAdapter();
     const deleted = await adapter.delete({ streamId: "missing", reason: "delete" });
     assertStatus(deleted, "not-found", "not-found");
+  });
+
+  harness.it("expiry delete rejects a stale expected deadline", async () => {
+    const adapter = await makeAdapter();
+    const expiring: StreamRecord = {
+      ...newRecord("s"),
+      lifecycle: { expiresAtMs: 100 },
+    };
+    await adapter.create({ record: expiring });
+    const stale = await adapter.delete({
+      streamId: "s",
+      reason: "expiry",
+      expectedExpiresAtMs: 99,
+    });
+    assertStatus(stale, "expiry-mismatch", "stale expiry delete");
+    assert((await adapter.getRecord("s"))?.lifecycle.expiresAtMs === 100, "renewal retained");
+    const matched = await adapter.delete({
+      streamId: "s",
+      reason: "expiry",
+      expectedExpiresAtMs: 100,
+    });
+    assertStatus(matched, "purged", "matching expiry delete");
   });
 
   harness.it("delete soft-deletes an ancestor with dependents, then cascade-purges", async () => {

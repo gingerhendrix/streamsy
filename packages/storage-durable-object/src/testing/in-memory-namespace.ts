@@ -178,21 +178,36 @@ class FakeStub implements StreamStorageRpc {
     return this.state.producers.get(producerId);
   }
 
-  async purgeSelf(streamId: StreamId): Promise<void> {
+  async purgeSelf(streamId: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
     this.ensureInit(streamId);
+    if (
+      this.state.record === null ||
+      (expectedExpiresAtMs !== undefined &&
+        this.state.record.lifecycle.expiresAtMs !== expectedExpiresAtMs)
+    ) {
+      return false;
+    }
     this.state.record = null;
     this.state.messages = [];
     this.state.producers.clear();
     this.state.children.clear();
     this.state.expiry.cancelled = true;
     this.wake();
+    return true;
   }
 
-  async softDelete(streamId: StreamId): Promise<void> {
+  async softDelete(streamId: StreamId, expectedExpiresAtMs?: number): Promise<boolean> {
     this.ensureInit(streamId);
-    if (!this.state.record) throw new Error("Stream not found");
+    if (
+      !this.state.record ||
+      (expectedExpiresAtMs !== undefined &&
+        this.state.record.lifecycle.expiresAtMs !== expectedExpiresAtMs)
+    ) {
+      return false;
+    }
     this.state.record = mergeRecord(this.state.record, { lifecycle: { softDeleted: true } });
     this.wake();
+    return true;
   }
 
   async addChildEdge(streamId: StreamId, childId: StreamId): Promise<void> {
@@ -249,7 +264,7 @@ class FakeStub implements StreamStorageRpc {
 
   async cancelExpiry(streamId: StreamId): Promise<void> {
     this.ensureInit(streamId);
-    this.state.expiry.cancelled = true;
+    if (this.state.record === null) this.state.expiry.cancelled = true;
   }
 }
 

@@ -41,6 +41,7 @@ import type {
   AwaitChangeResult,
   ListMessagesOptions,
   ProducerState,
+  DeletePlan,
   StorageAppendResult,
   StorageDeleteResult,
   StoredMessage,
@@ -300,7 +301,7 @@ export class FsStream {
   // ---- delete ------------------------------------------------------------
 
   /** Forkless purge: no dependents are possible, so delete is a plain purge. */
-  async remove(reason: "delete" | "expiry"): Promise<StorageDeleteResult> {
+  async remove(plan: DeletePlan): Promise<StorageDeleteResult> {
     // Fast path for an absent stream: its directory (and thus its lock) may not
     // exist, so check before attempting to acquire the lock.
     if (this.readRecord() === null) return { status: "not-found" };
@@ -309,7 +310,10 @@ export class FsStream {
     try {
       const record = this.readRecord();
       if (!record) return { status: "not-found" };
-      if (reason === "delete" && record.lifecycle.softDeleted === true) return { status: "gone" };
+      if (plan.reason === "expiry" && record.lifecycle.expiresAtMs !== plan.expectedExpiresAtMs)
+        return { status: "expiry-mismatch" };
+      if (plan.reason === "delete" && record.lifecycle.softDeleted === true)
+        return { status: "gone" };
       rmSync(this.dir, { recursive: true, force: true });
       return { status: "purged" };
     } finally {
