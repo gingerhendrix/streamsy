@@ -320,6 +320,42 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     ).toEqual([{ accepted: 1 }]);
   });
 
+  test("raw-stream reconciliation preserves a paused application guard", async () => {
+    const harness = await fresh();
+    await harness.fetch(
+      "/api/workspaces/guard-race/issues",
+      jsonRequest("POST", create("guard-create", "guard-issue", "Guard race")),
+    );
+    const application = harness.fetch("/api/workspaces/guard-race/issues/guard-issue/assignee", {
+      ...jsonRequest("POST", { commandId: "guard-assign", assigneeId: "ada" }),
+      headers: {
+        "content-type": "application/json",
+        "x-streamsy-test-failpoint": "pause-after-prearm-then-fail",
+      },
+    });
+    const raw = await harness.fetch("/streams/workspaces/guard-race/raw", {
+      method: "PUT",
+      headers: { "x-streamsy-test-failpoint": "release-paused-application" },
+    });
+    expect(raw.status).toBe(201);
+    expect((await application).status).toBe(503);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:guard-race",
+    });
+    expect(
+      await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"),
+    ).toEqual([{ state: "pending" }]);
+    await harness.evictWorkspace("guard-race");
+
+    // Only the platform alarm follows eviction; the raw reconciliation was
+    // allowed to finish before the application committed and failed.
+    await eventually(
+      async () =>
+        (await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"))[0]
+          ?.state === "delivered",
+    );
+  });
+
   test("durable notification identity absorbs a post-accept interruption after eviction", async () => {
     const harness = await fresh();
     await harness.fetch(
@@ -370,6 +406,199 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     );
     expect(visible.notified).toHaveLength(1);
     expect(visible.outbox[0]?.state).toBe("delivered");
+  });
+
+  test("commits an initial expiry obligation atomically with stream creation", async () => {
+    const harness = await fresh();
+    const interrupted = await harness.fetch("/streams/workspaces/atomic-ttl/created", {
+      method: "PUT",
+      headers: {
+        "stream-ttl": "1",
+        "x-streamsy-test-failpoint": "after-stream-create-commit",
+      },
+    });
+    expect(interrupted.status).toBe(500);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:atomic-ttl",
+    });
+    expect(
+      await storage.exec<{ stream_id: string }>(
+        "SELECT stream_id FROM issue_tracker_streams WHERE stream_id = ?",
+        "workspaces/atomic-ttl/created",
+      ),
+    ).toEqual([{ stream_id: "workspaces/atomic-ttl/created" }]);
+    expect(
+      await storage.exec<{ stream_id: string }>(
+        "SELECT stream_id FROM issue_tracker_stream_expiries WHERE stream_id = ?",
+        "workspaces/atomic-ttl/created",
+      ),
+    ).toEqual([{ stream_id: "workspaces/atomic-ttl/created" }]);
+    await harness.evictWorkspace("atomic-ttl");
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_streams",
+          )
+        )[0]?.present === 0,
+    );
+  });
+
+  test("a renewal commit wins against a stale due-expiry alarm decision", async () => {
+    const harness = await fresh();
+    const path = "/streams/workspaces/renew-race/sliding";
+    expect(
+      (
+        await harness.fetch(path, {
+          method: "PUT",
+          headers: {
+            "stream-ttl": "1",
+            "x-streamsy-test-failpoint": "pause-next-expiry",
+          },
+        })
+      ).status,
+    ).toBe(201);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:renew-race",
+    });
+    const initial = await storage.exec<{ expires_at_ms: number }>(
+      "SELECT expires_at_ms FROM issue_tracker_stream_expiries",
+    );
+    const renewed = await harness.fetch(`${path}?offset=now`, {
+      headers: { "x-streamsy-test-failpoint": "pause-renewal-until-expiry" },
+    });
+    expect(renewed.status).toBe(200);
+    const after = await storage.exec<{ expires_at_ms: number }>(
+      "SELECT expires_at_ms FROM issue_tracker_stream_expiries",
+    );
+    expect(after[0]?.expires_at_ms).toBeGreaterThan(initial[0]?.expires_at_ms ?? 0);
+    expect(
+      await storage.exec<{ present: number }>(
+        "SELECT COUNT(*) present FROM issue_tracker_streams WHERE stream_id = ?",
+        "workspaces/renew-race/sliding",
+      ),
+    ).toEqual([{ present: 1 }]);
+  });
+
+  test("bounds due TTL work while delivering outbox work and re-arming the backlog", async () => {
+    const harness = await fresh();
+    for (let index = 0; index < 10; index += 1) {
+      const headers = new Headers({ "stream-ttl": "1" });
+      if (index === 9) {
+        headers.set("x-streamsy-test-failpoint", "pause-next-maintenance-after-reconcile");
+      }
+      const response = await harness.fetch(`/streams/workspaces/fairness/ttl-${index}`, {
+        method: "PUT",
+        headers,
+      });
+      expect(response.status).toBe(201);
+    }
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:fairness",
+    });
+    const earliest = await storage.exec<{ expires_at_ms: number }>(
+      "SELECT MIN(expires_at_ms) expires_at_ms FROM issue_tracker_stream_expiries",
+    );
+    const commonDeadline = earliest[0]?.expires_at_ms;
+    expect(commonDeadline).toBeNumber();
+    await storage.exec(
+      "UPDATE issue_tracker_stream_expiries SET expires_at_ms = ?",
+      commonDeadline,
+    );
+    await storage.exec(
+      "UPDATE issue_tracker_streams" +
+        " SET record_json = json_set(record_json, '$.lifecycle.expiresAtMs', ?)",
+      commonDeadline,
+    );
+    await harness.fetch(
+      "/api/workspaces/fairness/issues",
+      jsonRequest("POST", create("fair-create", "fair-issue", "Fair alarm")),
+    );
+    expect(
+      (
+        await harness.fetch("/api/workspaces/fairness/issues/fair-issue/assignee", {
+          ...jsonRequest("POST", { commandId: "fair-assign", assigneeId: "ada" }),
+          headers: {
+            "content-type": "application/json",
+            "x-streamsy-test-failpoint": "after-application-commit",
+          },
+        })
+      ).status,
+    ).toBe(503);
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_test_events WHERE name = 'maintenance-paused'",
+          )
+        )[0]?.present === 1,
+    );
+    expect(
+      await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"),
+    ).toEqual([{ state: "delivered" }]);
+    expect(
+      await storage.exec<{ remaining: number }>(
+        "SELECT COUNT(*) remaining FROM issue_tracker_stream_expiries",
+      ),
+    ).toEqual([{ remaining: 2 }]);
+    expect(
+      (
+        await harness.fetch("/streams/workspaces/fairness/release", {
+          method: "PUT",
+          headers: { "x-streamsy-test-failpoint": "release-maintenance-completion" },
+        })
+      ).status,
+    ).toBe(201);
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ remaining: number }>(
+            "SELECT COUNT(*) remaining FROM issue_tracker_stream_expiries",
+          )
+        )[0]?.remaining === 0,
+    );
+  });
+
+  test("a failed alarm body leaves a replacement wake across eviction", async () => {
+    const harness = await fresh();
+    await harness.fetch(
+      "/api/workspaces/alarm-body/issues",
+      jsonRequest("POST", create("body-create", "body-issue", "Alarm body")),
+    );
+    expect(
+      (
+        await harness.fetch("/api/workspaces/alarm-body/issues/body-issue/assignee", {
+          ...jsonRequest("POST", { commandId: "body-assign", assigneeId: "ada" }),
+          headers: {
+            "content-type": "application/json",
+            "x-streamsy-test-failpoint": "after-application-commit-with-maintenance-failure",
+          },
+        })
+      ).status,
+    ).toBe(503);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:alarm-body",
+    });
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_test_events WHERE name = 'maintenance-failed'",
+          )
+        )[0]?.present === 1,
+    );
+    expect(
+      await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"),
+    ).toEqual([{ state: "pending" }]);
+    await harness.evictWorkspace("alarm-body");
+
+    // The first alarm already failed. No Worker/object fetch or maintenance RPC
+    // follows eviction; its replacement guard must produce the second wake.
+    await eventually(
+      async () =>
+        (await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"))[0]
+          ?.state === "delivered",
+    );
   });
 
   test("persists, renews, cancels, and fires raw stream expiry obligations", async () => {
