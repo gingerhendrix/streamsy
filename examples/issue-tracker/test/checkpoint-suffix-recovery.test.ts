@@ -3,9 +3,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- This joins the package-owned temporary recovery fixture path.
 import { join } from "node:path";
+import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { Effect, Schema } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { planHash } from "@streamsy/views";
 import type { JsonObject } from "@streamsy/views-ir";
 import { recover } from "@streamsy/views-store";
@@ -47,6 +50,17 @@ const decodeJsonObject = Schema.decodeUnknownSync(Schema.Record(Schema.String, S
 const decodeJsonValue = Schema.decodeUnknownSync(Schema.Json);
 const decodeJsonKey = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
 const jsonObject = (event: IssueEvent): JsonObject => decodeJsonObject(event);
+const sqliteClientLayer = (filename: string) =>
+  Layer.effectContext(
+    Effect.gen(function* () {
+      const client = yield* SqliteClient.make({ filename, create: true });
+      yield* client.unsafe<Record<string, never>>("PRAGMA foreign_keys = ON").pipe(Effect.asVoid);
+      return Context.empty().pipe(
+        Context.add(SqliteClient.SqliteClient, client),
+        Context.add(SqlClient.SqlClient, client),
+      );
+    }),
+  ).pipe(Layer.provide(Reactivity.layer));
 
 test("forced reopen produces deterministic issue rows from checkpoint plus suffix", () =>
   Effect.runPromise(
@@ -69,7 +83,8 @@ test("forced reopen produces deterministic issue rows from checkpoint plus suffi
       });
       let database = new Database(filename, { create: true });
       migrateViewStore(database, 1);
-      let store = sqliteService(database);
+      let runtime = ManagedRuntime.make(sqliteClientLayer(filename));
+      let store = runtime.runSync(Effect.map(SqlClient.SqlClient, sqliteService));
       yield* store.saveCheckpoint({
         ...identity,
         sourceCursor: "offset-2",
@@ -79,11 +94,13 @@ test("forced reopen produces deterministic issue rows from checkpoint plus suffi
           value: decodeJsonValue(value),
         })),
       });
+      yield* Effect.promise(() => runtime.dispose());
       database.close(false);
       database = new Database(filename);
       database.run("PRAGMA foreign_keys=ON");
       migrateViewStore(database, 2);
-      store = sqliteService(database);
+      runtime = ManagedRuntime.make(sqliteClientLayer(filename));
+      store = runtime.runSync(Effect.map(SqlClient.SqlClient, sqliteService));
       const cursors: (string | undefined)[] = [];
       const result = yield* recover({
         store,
@@ -184,6 +201,7 @@ test("forced reopen produces deterministic issue rows from checkpoint plus suffi
       });
       expect(idle.committed).toBe(false);
       expect(yield* store.historyBounds(identity)).toEqual(historyBefore);
+      yield* Effect.promise(() => runtime.dispose());
       database.close(false);
     }),
   ));

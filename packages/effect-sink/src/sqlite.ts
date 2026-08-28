@@ -1,17 +1,8 @@
-/**
- * The SQLite outbox backing.
- *
- * One table, one unique index, and no background state. The unique index on
- * `(sink, idempotency_key)` is the durable half of the idempotency contract: an
- * `INSERT ... ON CONFLICT DO NOTHING` makes a repeated enqueue a no-op at the
- * storage layer, which is the only place that can decide it without a race.
- *
- * Every function here is synchronous on the caller's `Database`, so an
- * application can call `enqueue` from inside its own `database.transaction` and
- * commit the cause of a delivery and the decision to deliver it together.
- */
-import { Database } from "bun:sqlite";
+import { Effect, Schema } from "effect";
+import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { DeadLetterReason } from "./errors.ts";
+import { OutboxUnavailable } from "./errors.ts";
 import type {
   OutboxBacking,
   OutboxDraft,
@@ -39,11 +30,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS streamsy_effect_outbox_identity
 CREATE INDEX IF NOT EXISTS streamsy_effect_outbox_due
   ON streamsy_effect_outbox (sink, state, next_attempt_at_ms, id);
 `;
-
-/** Create the outbox table. Idempotent, so a host may call it on every open. */
-export function migrateOutbox(database: Database): void {
-  database.exec(OUTBOX_SCHEMA);
-}
+const OUTBOX_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS streamsy_effect_outbox (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  sink               TEXT NOT NULL,
+  partition_id       TEXT NOT NULL,
+  idempotency_key    TEXT NOT NULL,
+  payload            TEXT NOT NULL,
+  state              TEXT NOT NULL,
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at_ms INTEGER NOT NULL,
+  last_error         TEXT,
+  dead_letter_reason TEXT,
+  enqueued_at_ms     INTEGER NOT NULL,
+  settled_at_ms      INTEGER
+)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS streamsy_effect_outbox_identity
+  ON streamsy_effect_outbox (sink, idempotency_key)`,
+  `CREATE INDEX IF NOT EXISTS streamsy_effect_outbox_due
+  ON streamsy_effect_outbox (sink, state, next_attempt_at_ms, id)`,
+] as const;
 
 interface OutboxRow {
   readonly id: number;
@@ -60,82 +66,124 @@ interface OutboxRow {
   readonly settled_at_ms: number | null;
 }
 
-export function createSqliteOutboxBacking(database: Database): OutboxBacking {
-  migrateOutbox(database);
+const isOutboxUnavailable = Schema.is(OutboxUnavailable);
+const attempt = <A>(
+  operation: string,
+  effect: Effect.Effect<A, OutboxUnavailable | SqlError>,
+): Effect.Effect<A, OutboxUnavailable> =>
+  effect.pipe(
+    Effect.mapError(
+      (cause) =>
+        isOutboxUnavailable(cause)
+          ? cause
+          : new OutboxUnavailable({
+              operation,
+              detail: cause instanceof Error ? cause.message : String(cause),
+            }),
+    ),
+  );
 
-  const insert = database.query<never, [string, string, string, string, number, number]>(
-    "INSERT INTO streamsy_effect_outbox" +
-      " (sink, partition_id, idempotency_key, payload, state, attempts," +
-      " next_attempt_at_ms, enqueued_at_ms)" +
-      " VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)" +
-      " ON CONFLICT (sink, idempotency_key) DO NOTHING",
+export function migrateOutbox(sql: SqlClient): Effect.Effect<void, OutboxUnavailable> {
+  return attempt(
+    "migrateOutbox",
+    Effect.forEach(OUTBOX_STATEMENTS, (statement) =>
+      sql.unsafe<Record<string, never>>(statement).pipe(Effect.asVoid),
+    ).pipe(Effect.asVoid),
   );
-  const selectDue = database.query<OutboxRow, [string, number, number]>(
-    "SELECT * FROM streamsy_effect_outbox" +
-      " WHERE sink = ? AND state = 'pending' AND next_attempt_at_ms <= ?" +
-      " ORDER BY id LIMIT ?",
+}
+
+export function createSqliteOutboxBacking(sql: SqlClient): OutboxBacking {
+  let migrated = false;
+
+  const ready: Effect.Effect<void, OutboxUnavailable> = Effect.suspend(() =>
+    migrated
+      ? Effect.void
+      : migrateOutbox(sql).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              migrated = true;
+            }),
+          ),
+        ),
   );
-  const selectDueInPartition = database.query<OutboxRow, [string, string, number, number]>(
-    "SELECT * FROM streamsy_effect_outbox" +
-      " WHERE sink = ? AND partition_id = ? AND state = 'pending' AND next_attempt_at_ms <= ?" +
-      " ORDER BY id LIMIT ?",
-  );
-  const selectAll = database.query<OutboxRow, [string]>(
-    "SELECT * FROM streamsy_effect_outbox WHERE sink = ? ORDER BY id",
-  );
-  const selectPartition = database.query<OutboxRow, [string, string]>(
-    "SELECT * FROM streamsy_effect_outbox WHERE sink = ? AND partition_id = ? ORDER BY id",
-  );
-  const settleDelivered = database.query<never, [number, number, number]>(
-    "UPDATE streamsy_effect_outbox SET state = 'delivered', attempts = ?," +
-      " last_error = NULL, settled_at_ms = ? WHERE id = ?",
-  );
-  const settleRetry = database.query<never, [number, number, string, number]>(
-    "UPDATE streamsy_effect_outbox SET state = 'pending', attempts = ?," +
-      " next_attempt_at_ms = ?, last_error = ? WHERE id = ?",
-  );
-  const settleDead = database.query<never, [number, string, string, number, number]>(
-    "UPDATE streamsy_effect_outbox SET state = 'dead', attempts = ?," +
-      " dead_letter_reason = ?, last_error = ?, settled_at_ms = ? WHERE id = ?",
-  );
+  const queryAll = <A extends object>(statement: string, params: ReadonlyArray<unknown> = []) =>
+    Effect.flatMap(ready, () => sql.unsafe<A>(statement, params));
+  const execute = (operation: string, statement: string, params: ReadonlyArray<unknown> = []) =>
+    attempt(operation, queryAll<Record<string, never>>(statement, params).pipe(Effect.asVoid));
 
   return {
-    enqueue: (drafts: readonly OutboxDraft[]): OutboxEnqueueReport => {
-      let enqueued = 0;
-      for (const draft of drafts) {
-        // The insert writes no row exactly when the unique index absorbed a
-        // repeated enqueue, so the row count *is* the idempotency decision.
-        const written = insert.run(
-          draft.sink,
-          draft.partitionId,
-          draft.idempotencyKey,
-          draft.payload,
-          draft.enqueuedAtMs,
-          draft.enqueuedAtMs,
-        );
-        if (written.changes > 0) enqueued += 1;
-      }
-      return { enqueued, absorbed: drafts.length - enqueued };
-    },
+    enqueue: (drafts: readonly OutboxDraft[]): Effect.Effect<OutboxEnqueueReport, OutboxUnavailable> =>
+      attempt(
+        "enqueue",
+        Effect.gen(function* () {
+          let enqueued = 0;
+          for (const draft of drafts) {
+            const inserted = yield* queryAll<{ readonly inserted: number }>(
+              "INSERT INTO streamsy_effect_outbox" +
+                " (sink, partition_id, idempotency_key, payload, state, attempts," +
+                " next_attempt_at_ms, enqueued_at_ms)" +
+                " VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)" +
+                " ON CONFLICT (sink, idempotency_key) DO NOTHING" +
+                " RETURNING 1 AS inserted",
+              [
+                draft.sink,
+                draft.partitionId,
+                draft.idempotencyKey,
+                draft.payload,
+                draft.enqueuedAtMs,
+                draft.enqueuedAtMs,
+              ],
+            );
+            if (inserted.length > 0) enqueued += 1;
+          }
+          return { enqueued, absorbed: drafts.length - enqueued };
+        }),
+      ),
     claimDue: (sink, partitionId, nowMs, limit) =>
-      (partitionId === undefined
-        ? selectDue.all(sink, nowMs, limit)
-        : selectDueInPartition.all(sink, partitionId, nowMs, limit)
-      ).map(decodeRow),
-    markDelivered: (id, attempts, atMs) => {
-      settleDelivered.run(attempts, atMs, id);
-    },
-    reschedule: (id, attempts, nextAttemptAtMs, detail) => {
-      settleRetry.run(attempts, nextAttemptAtMs, detail, id);
-    },
-    deadLetter: (id, attempts, reason, detail, atMs) => {
-      settleDead.run(attempts, reason, detail, atMs, id);
-    },
+      attempt(
+        "claimDue",
+        queryAll<OutboxRow>(
+          partitionId === undefined
+            ? "SELECT * FROM streamsy_effect_outbox" +
+                " WHERE sink = ? AND state = 'pending' AND next_attempt_at_ms <= ?" +
+                " ORDER BY id LIMIT ?"
+            : "SELECT * FROM streamsy_effect_outbox" +
+                " WHERE sink = ? AND partition_id = ? AND state = 'pending'" +
+                " AND next_attempt_at_ms <= ? ORDER BY id LIMIT ?",
+          partitionId === undefined ? [sink, nowMs, limit] : [sink, partitionId, nowMs, limit],
+        ).pipe(Effect.map((rows) => rows.map(decodeRow))),
+      ),
+    markDelivered: (id, attempts, atMs) =>
+      execute(
+        "markDelivered",
+        "UPDATE streamsy_effect_outbox SET state = 'delivered', attempts = ?," +
+          " last_error = NULL, settled_at_ms = ? WHERE id = ?",
+        [attempts, atMs, id],
+      ),
+    reschedule: (id, attempts, nextAttemptAtMs, detail) =>
+      execute(
+        "reschedule",
+        "UPDATE streamsy_effect_outbox SET state = 'pending', attempts = ?," +
+          " next_attempt_at_ms = ?, last_error = ? WHERE id = ?",
+        [attempts, nextAttemptAtMs, detail, id],
+      ),
+    deadLetter: (id, attempts, reason, detail, atMs) =>
+      execute(
+        "deadLetter",
+        "UPDATE streamsy_effect_outbox SET state = 'dead', attempts = ?," +
+          " dead_letter_reason = ?, last_error = ?, settled_at_ms = ? WHERE id = ?",
+        [attempts, reason, detail, atMs, id],
+      ),
     list: (sink, partitionId) =>
-      (partitionId === undefined
-        ? selectAll.all(sink)
-        : selectPartition.all(sink, partitionId)
-      ).map(decodeRow),
+      attempt(
+        "list",
+        queryAll<OutboxRow>(
+          partitionId === undefined
+            ? "SELECT * FROM streamsy_effect_outbox WHERE sink = ? ORDER BY id"
+            : "SELECT * FROM streamsy_effect_outbox WHERE sink = ? AND partition_id = ? ORDER BY id",
+          partitionId === undefined ? [sink] : [sink, partitionId],
+        ).pipe(Effect.map((rows) => rows.map(decodeRow))),
+      ),
   };
 }
 

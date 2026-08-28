@@ -33,7 +33,7 @@
     "@streamsy/storage-sqlite": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
-    "effect": "4.0.0-rc.109",
+    "effect": "4.0.0-rc.112",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

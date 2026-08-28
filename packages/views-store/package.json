@@ -29,7 +29,7 @@
     "test:unit": "bun test src"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.109"
+    "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

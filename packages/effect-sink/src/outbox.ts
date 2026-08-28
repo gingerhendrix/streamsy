@@ -6,13 +6,6 @@
  * decision to deliver is written down first, in the same durable step as the
  * fact that caused it, and delivery is a separate, resumable pass over what was
  * written.
- *
- * The backing is deliberately *synchronous*. Atomic enqueue is only possible if
- * a host can call `enqueue` from inside its own transaction — the SQLite backing
- * runs its insert on the host's `Database`, so an application that writes a
- * command receipt and an outbox draft in one `database.transaction` gets both or
- * neither. Wrapping the backing in Effect afterwards keeps that property; making
- * the backing itself effectful would have destroyed it.
  */
 import { Context, Effect, Layer } from "effect";
 import { OutboxUnavailable, type DeadLetterReason } from "./errors.ts";
@@ -53,42 +46,12 @@ export interface OutboxEnqueueReport {
   readonly absorbed: number;
 }
 
-/**
- * The synchronous durable boundary.
- *
- * Every method may throw; the Effect wrapper below is the only place that
- * decides what a throw means.
- */
+/** The durable storage boundary for one outbox implementation. */
 export interface OutboxBacking {
-  readonly enqueue: (drafts: readonly OutboxDraft[]) => OutboxEnqueueReport;
-  /** Pending entries in one lane whose next attempt instant has arrived, in enqueue order. */
-  readonly claimDue: (
-    sink: string,
-    partitionId: string | undefined,
-    nowMs: number,
-    limit: number,
-  ) => readonly OutboxEntry[];
-  readonly markDelivered: (id: number, attempts: number, atMs: number) => void;
-  readonly reschedule: (
-    id: number,
-    attempts: number,
-    nextAttemptAtMs: number,
-    detail: string,
-  ) => void;
-  readonly deadLetter: (
-    id: number,
-    attempts: number,
-    reason: DeadLetterReason,
-    detail: string,
-    atMs: number,
-  ) => void;
-  readonly list: (sink: string, partitionId: string | undefined) => readonly OutboxEntry[];
-}
-
-export interface OutboxStoreService {
   readonly enqueue: (
     drafts: readonly OutboxDraft[],
   ) => Effect.Effect<OutboxEnqueueReport, OutboxUnavailable>;
+  /** Pending entries in one lane whose next attempt instant has arrived, in enqueue order. */
   readonly claimDue: (
     sink: string,
     partitionId: string | undefined,
@@ -119,45 +82,15 @@ export interface OutboxStoreService {
   ) => Effect.Effect<readonly OutboxEntry[], OutboxUnavailable>;
 }
 
+export interface OutboxStoreService extends OutboxBacking {}
+
 export class OutboxStore extends Context.Service<OutboxStore, OutboxStoreService>()(
   "streamsy/effect-sink/OutboxStore",
 ) {}
 
-const attempt = <A>(operation: string, run: () => A): Effect.Effect<A, OutboxUnavailable> =>
-  Effect.try({
-    try: run,
-    catch: (cause) =>
-      new OutboxUnavailable({
-        operation,
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
-
-/** Lift one synchronous backing into the service every runtime asks for. */
+/** Lift one durable backing into the service every runtime asks for. */
 export function outboxStore(backing: OutboxBacking): OutboxStoreService {
-  return OutboxStore.of({
-    enqueue: Effect.fn("Outbox.enqueue")((drafts: readonly OutboxDraft[]) =>
-      attempt("enqueue", () => backing.enqueue(drafts)),
-    ),
-    claimDue: Effect.fn("Outbox.claimDue")(
-      (sink: string, partitionId: string | undefined, nowMs: number, limit: number) =>
-        attempt("claimDue", () => backing.claimDue(sink, partitionId, nowMs, limit)),
-    ),
-    markDelivered: Effect.fn("Outbox.markDelivered")((id: number, attempts: number, atMs: number) =>
-      attempt("markDelivered", () => backing.markDelivered(id, attempts, atMs)),
-    ),
-    reschedule: Effect.fn("Outbox.reschedule")(
-      (id: number, attempts: number, nextAttemptAtMs: number, detail: string) =>
-        attempt("reschedule", () => backing.reschedule(id, attempts, nextAttemptAtMs, detail)),
-    ),
-    deadLetter: Effect.fn("Outbox.deadLetter")(
-      (id: number, attempts: number, reason: DeadLetterReason, detail: string, atMs: number) =>
-        attempt("deadLetter", () => backing.deadLetter(id, attempts, reason, detail, atMs)),
-    ),
-    list: Effect.fn("Outbox.list")((sink: string, partitionId: string | undefined) =>
-      attempt("list", () => backing.list(sink, partitionId)),
-    ),
-  });
+  return OutboxStore.of(backing);
 }
 
 export const outboxStoreLayer = (backing: OutboxBacking): Layer.Layer<OutboxStore> =>
@@ -184,62 +117,74 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
     [...entries.values()].toSorted((left, right) => left.id - right.id);
 
   return {
-    enqueue: (drafts) => {
-      let enqueued = 0;
-      let absorbed = 0;
-      for (const draft of drafts) {
-        const identity = JSON.stringify([draft.sink, draft.idempotencyKey]);
-        if (identities.has(identity)) {
-          absorbed += 1;
-          continue;
+    enqueue: (drafts) =>
+      Effect.sync(() => {
+        let enqueued = 0;
+        let absorbed = 0;
+        for (const draft of drafts) {
+          const identity = `${draft.sink}\u0000${draft.idempotencyKey}`;
+          if (identities.has(identity)) {
+            absorbed += 1;
+            continue;
+          }
+          const id = nextId;
+          nextId += 1;
+          identities.add(identity);
+          entries.set(id, {
+            id,
+            sink: draft.sink,
+            partitionId: draft.partitionId,
+            idempotencyKey: draft.idempotencyKey,
+            payload: draft.payload,
+            state: "pending",
+            attempts: 0,
+            nextAttemptAtMs: draft.enqueuedAtMs,
+            lastError: undefined,
+            deadLetterReason: undefined,
+            enqueuedAtMs: draft.enqueuedAtMs,
+            settledAtMs: undefined,
+          });
+          enqueued += 1;
         }
-        const id = nextId;
-        nextId += 1;
-        identities.add(identity);
-        entries.set(id, {
-          id,
-          sink: draft.sink,
-          partitionId: draft.partitionId,
-          idempotencyKey: draft.idempotencyKey,
-          payload: draft.payload,
-          state: "pending",
-          attempts: 0,
-          nextAttemptAtMs: draft.enqueuedAtMs,
-          lastError: undefined,
-          deadLetterReason: undefined,
-          enqueuedAtMs: draft.enqueuedAtMs,
-          settledAtMs: undefined,
-        });
-        enqueued += 1;
-      }
-      return { enqueued, absorbed };
-    },
+        return { enqueued, absorbed };
+      }),
     claimDue: (sink, partitionId, nowMs, limit) =>
-      ordered()
-        .filter(
-          (entry) =>
-            entry.sink === sink &&
-            entry.state === "pending" &&
-            entry.nextAttemptAtMs <= nowMs &&
-            (partitionId === undefined || entry.partitionId === partitionId),
-        )
-        .slice(0, limit),
+      Effect.sync(() =>
+        ordered()
+          .filter(
+            (entry) =>
+              entry.sink === sink &&
+              entry.state === "pending" &&
+              entry.nextAttemptAtMs <= nowMs &&
+              (partitionId === undefined || entry.partitionId === partitionId),
+          )
+          .slice(0, limit),
+      ),
     markDelivered: (id, attempts, atMs) =>
-      replace(id, { state: "delivered", attempts, settledAtMs: atMs, lastError: undefined }),
+      Effect.sync(() => {
+        replace(id, { state: "delivered", attempts, settledAtMs: atMs, lastError: undefined });
+      }),
     reschedule: (id, attempts, nextAttemptAtMs, detail) =>
-      replace(id, { state: "pending", attempts, nextAttemptAtMs, lastError: detail }),
+      Effect.sync(() => {
+        replace(id, { state: "pending", attempts, nextAttemptAtMs, lastError: detail });
+      }),
     deadLetter: (id, attempts, reason, detail, atMs) =>
-      replace(id, {
-        state: "dead",
-        attempts,
-        lastError: detail,
-        deadLetterReason: reason,
-        settledAtMs: atMs,
+      Effect.sync(() => {
+        replace(id, {
+          state: "dead",
+          attempts,
+          lastError: detail,
+          deadLetterReason: reason,
+          settledAtMs: atMs,
+        });
       }),
     list: (sink, partitionId) =>
-      ordered().filter(
-        (entry) =>
-          entry.sink === sink && (partitionId === undefined || entry.partitionId === partitionId),
+      Effect.sync(() =>
+        ordered().filter(
+          (entry) =>
+            entry.sink === sink &&
+            (partitionId === undefined || entry.partitionId === partitionId),
+        ),
       ),
   };
 }

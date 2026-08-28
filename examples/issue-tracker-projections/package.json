@@ -26,14 +26,14 @@
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
-    "effect": "4.0.0-rc.109",
+    "effect": "4.0.0-rc.112",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
-    "@effect/platform-bun": "4.0.0-rc.109",
-    "@effect/platform-node": "4.0.0-rc.109",
+    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112",
     "@streamsy/storage-sqlite": "workspace:*",
     "@types/bun": "^1.2.0",
     "@types/react": "^19.2.0",

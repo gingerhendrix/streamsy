@@ -22,6 +22,7 @@
   "dependencies": {
     "@durable-streams/client": "^0.2.6",
     "@durable-streams/state": "^0.3.1",
+    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
     "@streamsy/core": "workspace:*",
     "@streamsy/effect-sink": "workspace:*",
     "@streamsy/experimental": "workspace:*",
@@ -37,7 +38,7 @@
     "@streamsy/views-store": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
-    "effect": "4.0.0-rc.109",
+    "effect": "4.0.0-rc.112",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

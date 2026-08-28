@@ -61,6 +61,8 @@ interface Recorder {
 }
 
 const recorder = (): Recorder => ({ deliveries: [], accepted: new Set() });
+const runOutbox = <A>(effect: Effect.Effect<A, OutboxUnavailable>) =>
+  Effect.runSync(Effect.orDie(effect));
 
 /**
  * A handler that behaves the way the contract asks a real one to behave: it
@@ -84,7 +86,7 @@ const handlerFor = (
   );
 
 const enqueue = (outbox: OutboxBacking, notifications: readonly Notification[], atMs = 0) =>
-  outbox.enqueue(draftsFor(sink, notifications, atMs));
+  runOutbox(outbox.enqueue(draftsFor(sink, notifications, atMs)));
 
 const drainAt = (
   handler: EffectSinkHandler<Notification>,
@@ -105,7 +107,7 @@ const runWithOutbox = <A>(
 };
 
 const states = (outbox: OutboxBacking): readonly Pick<OutboxEntry, "idempotencyKey" | "state">[] =>
-  outbox.list(sink.name, undefined).map((entry) => ({
+  runOutbox(outbox.list(sink.name, undefined)).map((entry) => ({
     idempotencyKey: entry.idempotencyKey,
     state: entry.state,
   }));
@@ -166,7 +168,7 @@ describe("draining an effect sink", () => {
       outbox,
       Effect.gen(function* () {
         yield* drainAt(handlerFor(log), 0);
-        outbox.reschedule(1, 0, 0, "simulated crash before the outbox write");
+        yield* outbox.reschedule(1, 0, 0, "simulated crash before the outbox write");
         yield* drainAt(handlerFor(log), 0);
 
         expect(log.deliveries).toHaveLength(2);
@@ -189,7 +191,8 @@ describe("draining an effect sink", () => {
           retried: 1,
           deadLettered: 0,
         });
-        expect(outbox.list(sink.name, undefined)[0]).toMatchObject({
+        const entries = yield* outbox.list(sink.name, undefined);
+        expect(entries[0]).toMatchObject({
           state: "pending",
           attempts: 1,
           nextAttemptAtMs: 100,
@@ -201,7 +204,8 @@ describe("draining an effect sink", () => {
         expect(yield* drainAt(handler, 99)).toMatchObject({ claimed: 0 });
 
         expect(yield* drainAt(handler, 100)).toMatchObject({ retried: 1 });
-        expect(outbox.list(sink.name, undefined)[0]).toMatchObject({
+        const retried = yield* outbox.list(sink.name, undefined);
+        expect(retried[0]).toMatchObject({
           attempts: 2,
           nextAttemptAtMs: 300,
         });
@@ -211,7 +215,8 @@ describe("draining an effect sink", () => {
           retried: 0,
           deadLettered: 1,
         });
-        expect(outbox.list(sink.name, undefined)[0]).toMatchObject({
+        const dead = yield* outbox.list(sink.name, undefined);
+        expect(dead[0]).toMatchObject({
           state: "dead",
           attempts: 3,
           deadLetterReason: "attempts-exhausted",
@@ -236,7 +241,8 @@ describe("draining an effect sink", () => {
           deadLettered: 1,
           retried: 0,
         });
-        expect(outbox.list(sink.name, undefined)[0]).toMatchObject({
+        const entries = yield* outbox.list(sink.name, undefined);
+        expect(entries[0]).toMatchObject({
           state: "dead",
           attempts: 1,
           deadLetterReason: "permanent",
@@ -288,7 +294,8 @@ describe("draining an effect sink", () => {
       outbox,
       Effect.gen(function* () {
         expect(yield* drainAt(thrower, 0)).toMatchObject({ delivered: 1, retried: 1 });
-        expect(outbox.list(sink.name, undefined)[0]?.lastError).toContain(
+        const entries = yield* outbox.list(sink.name, undefined);
+        expect(entries[0]?.lastError).toContain(
           "the notifier client blew up",
         );
       }),
@@ -298,7 +305,7 @@ describe("draining an effect sink", () => {
   test("a stored payload the codec now rejects dead-letters alone", () => {
     const outbox = makeMemoryOutboxBacking();
     const log = recorder();
-    outbox.enqueue([
+    runOutbox(outbox.enqueue([
       {
         sink: sink.name,
         partitionId: "main",
@@ -307,7 +314,7 @@ describe("draining an effect sink", () => {
         enqueuedAtMs: 0,
       },
       ...draftsFor(sink, [note("healthy")], 0),
-    ]);
+    ]));
 
     return runWithOutbox(
       outbox,
@@ -316,7 +323,8 @@ describe("draining an effect sink", () => {
           deadLettered: 1,
           delivered: 1,
         });
-        expect(outbox.list(sink.name, undefined)[0]).toMatchObject({
+        const entries = yield* outbox.list(sink.name, undefined);
+        expect(entries[0]).toMatchObject({
           state: "dead",
           deadLetterReason: "payload-poison",
         });

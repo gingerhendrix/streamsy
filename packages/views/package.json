@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@streamsy/views-ir": "workspace:*",
-    "effect": "4.0.0-rc.109"
+    "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
     "typescript": "catalog:",

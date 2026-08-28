@@ -38,6 +38,7 @@ import {
   outboxStoreLayer,
   OutboxStore,
   type OutboxDraft,
+  type OutboxUnavailable,
 } from "@streamsy/effect-sink";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { planHash } from "@streamsy/views";
@@ -522,10 +523,17 @@ export const memoryLayer = (
           }
           // One synchronous step, so the memory host has the same all-or-nothing
           // receipt-and-enqueue boundary the SQLite transaction gives.
-          yield* Effect.sync(() => {
-            receipts.set(key, receipt);
-            if (deliveries.length > 0) outbox.enqueue(deliveries);
-          });
+          receipts.set(key, receipt);
+          if (deliveries.length > 0) {
+            yield* outbox.enqueue(deliveries).pipe(
+              Effect.mapError((error: OutboxUnavailable) =>
+                new StoreUnavailable({
+                  operation: "recordReceipt",
+                  detail: encodeJsonString(error),
+                }),
+              ),
+            );
+          }
           return undefined;
         }),
       graphPublished: (workspaceId, product) =>

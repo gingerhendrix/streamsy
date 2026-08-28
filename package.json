@@ -63,6 +63,7 @@
     "pack:dry-run": "for dir in packages/core packages/client packages/json packages/views-ir packages/views packages/views-engine packages/views-store packages/experimental packages/state packages/state-sink packages/sinks packages/effect-sink packages/tanstack-db packages/storage-sqlite packages/storage-fs packages/storage-durable-object; do (cd \"$dir\" && bun pm pack --dry-run); done"
   },
   "devDependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
     "@effect/tsgo": "0.36.5",
     "@oxlint/plugins": "1.78.0",
     "oxfmt": "^0.48.0",
@@ -72,9 +73,9 @@
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
-    "@effect/platform-node": "4.0.0-rc.109",
+    "@effect/platform-node": "4.0.0-rc.112",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "0.1.83",
-    "effect": "4.0.0-rc.109"
+    "effect": "4.0.0-rc.112"
   }
 }
