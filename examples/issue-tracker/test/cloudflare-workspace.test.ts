@@ -443,6 +443,12 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
       `/api/workspaces/${workspace}/issues`,
       jsonRequest("POST", create("guard-get-create", "guard-get-issue", "Guard get")),
     );
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: `workspace:${workspace}`,
+    });
+    await storage.exec(
+      "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
+    );
     const application = harness.fetch(
       `/api/workspaces/${workspace}/issues/guard-get-issue/assignee`,
       {
@@ -452,6 +458,15 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
           "x-streamsy-test-failpoint": "pause-after-prearm-then-fail",
         },
       },
+    );
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_test_events" +
+              " WHERE name = 'application-guard-paused'",
+          )
+        )[0]?.present === 1,
     );
     const failed = await harness.fetch(`/streams/workspaces/${workspace}/failed`, {
       method: "PUT",
@@ -469,9 +484,6 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     });
     expect(recovered.headers.get("x-streamsy-test-guarded-operations")).toBe("0");
 
-    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
-      name: `workspace:${workspace}`,
-    });
     expect(
       await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"),
     ).toHaveLength(1);

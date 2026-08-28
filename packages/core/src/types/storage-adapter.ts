@@ -138,7 +138,9 @@ export type StorageDeleteResult =
   | { status: "retained-soft-deleted" }
   | { status: "not-found" }
   | { status: "gone" }
-  | { status: "expiry-mismatch" };
+  | { status: "expiry-mismatch" }
+  /** Bounded backend contention ended without a mutation; callers may retry. */
+  | { status: "busy" };
 
 /**
  * Per-stream level-triggered live waiter. Serializable in and out: the argument

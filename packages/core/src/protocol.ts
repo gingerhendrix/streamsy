@@ -78,6 +78,7 @@ function mapDelete(status: DeleteStatus): DeleteResult {
     throw new Error("storage returned expiry-mismatch for an explicit delete");
   if (status === "not-found") return { status: "not-found" };
   if (status === "gone") return { status: "gone" };
+  if (status === "busy") return { status: "busy" };
   return { status: "ok" };
 }
 

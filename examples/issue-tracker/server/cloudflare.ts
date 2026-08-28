@@ -367,6 +367,10 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
           operation = await this.beginGuardedOperation();
           if (this.testFailpoint(request, "pause-after-prearm-then-fail")) {
             const gate = this.applicationGate ?? (this.applicationGate = makeTestGate());
+            // Enabled-binding-only proof that beginGuardedOperation completed:
+            // this request owns a counted guard before the test interleaves a
+            // reconciliation failure with it.
+            this.recordTestEvent("application-guard-paused");
             gate.arrive();
             await gate.released;
           }

@@ -226,7 +226,11 @@ export type MetadataResult =
   | { status: "not-found" }
   | { status: "gone" };
 
-export type DeleteResult = { status: "ok" } | { status: "not-found" } | { status: "gone" };
+export type DeleteResult =
+  | { status: "ok" }
+  | { status: "not-found" }
+  | { status: "gone" }
+  | { status: "busy" };
 
 // === Protocol-bound stream and factory ===
 

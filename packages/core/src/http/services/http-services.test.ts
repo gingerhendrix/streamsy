@@ -36,6 +36,28 @@ describe("HTTP services with bound protocol streams", () => {
     expect(get.status).toBe(200);
     expect(await get.text()).toBe("hi");
   });
+
+  it("maps a retryable storage delete contention result to 503", async () => {
+    const memory = createMemoryStorageAdapter();
+    const protocol = new StreamProtocol({
+      storage: { adapter: { ...memory, delete: async () => ({ status: "busy" as const }) } },
+    });
+    const handler = new HttpHandler({ protocol });
+    expect(
+      (
+        await handler.fetch(
+          new Request("http://x/contended", {
+            method: "PUT",
+            headers: { "content-type": "text/plain" },
+          }),
+        )
+      ).status,
+    ).toBe(201);
+
+    const response = await handler.fetch(new Request("http://x/contended", { method: "DELETE" }));
+    expect(response.status).toBe(503);
+    expect(await response.text()).toBe("Stream busy, retry later");
+  });
 });
 
 async function emptyStreamHandler(): Promise<HttpHandler> {

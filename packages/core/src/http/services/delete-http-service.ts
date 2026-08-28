@@ -8,6 +8,7 @@ export class DeleteHttpService {
     const result = await ctx.stream.delete();
     if (result.status === "not-found") return this.deps.responses.notFound();
     if (result.status === "gone") return this.deps.responses.gone();
+    if (result.status === "busy") return this.deps.responses.text("Stream busy, retry later", 503);
     return this.deps.responses.empty(204);
   }
 }

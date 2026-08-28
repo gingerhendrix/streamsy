@@ -306,7 +306,9 @@ type StorageDeleteResult =
   | { status: "purged" }
   | { status: "retained-soft-deleted" }
   | { status: "not-found" }
-  | { status: "gone" };
+  | { status: "gone" }
+  | { status: "expiry-mismatch" }
+  | { status: "busy" };
 ```
 
 - **`create`** materializes the plan's record (and any initial messages)
@@ -330,7 +332,13 @@ type StorageDeleteResult =
 - **`delete`** executes core's lineage policy and reports what happened: `purged`
   (no dependents — also cascade-reclaims now-orphaned soft-deleted ancestors),
   `retained-soft-deleted` (has dependents), `not-found`, or `gone` (already
-  soft-deleted). The caller does not choose soft-vs-purge; the policy does.
+  soft-deleted). An expiry plan whose expected durable deadline no longer matches
+  returns `expiry-mismatch`. If bounded backend contention ends before the
+  mutation boundary can be acquired, return `busy` without continuing into the
+  protected read/mutation section or performing any timer cancellation, waiter
+  wake, or cache eviction. `busy` is retryable for explicit deletes; scheduled
+  expiry may leave the durable deadline for a later active or lazy expiry pass.
+  The caller does not choose soft-vs-purge; the policy does.
 
 Cross-stream operations (fork-edge registration, delete/GC cascades) are
 convergent, idempotent sagas — a retry or later pass repairs a missing edge or

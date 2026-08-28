@@ -307,6 +307,9 @@ export class FsStream {
     if (this.readRecord() === null) return { status: "not-found" };
 
     const acquired = await acquireLock(this.lockPath, this.lockOptions);
+    // A bounded contention timeout is retryable and must be completely inert:
+    // the peer still owns the mutation boundary, including its lock sentinel.
+    if (!acquired) return { status: "busy" };
     try {
       const record = this.readRecord();
       if (!record) return { status: "not-found" };
@@ -316,7 +319,7 @@ export class FsStream {
         return { status: "gone" };
       rmSync(this.dir, { recursive: true, force: true });
     } finally {
-      if (acquired) releaseLock(this.lockPath);
+      releaseLock(this.lockPath);
     }
     this.timeout.cancel();
     // Surface the purge to any parked live waiter before the cache eviction:

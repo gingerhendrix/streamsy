@@ -37,7 +37,8 @@
  *     protocol surfaces fork intents as `not-supported`, there is no core
  *     fallback) with `fork-source-gone` and record-carrying `exists`, delete
  *     `purged` / `retained-soft-deleted` / `not-found` / `gone` with cascade
- *     reclaim.
+ *     reclaim; a backend may also return retryable, non-mutating `busy` after
+ *     bounded contention.
  *   - expiry deletion is conditional on the exact durable deadline observed by
  *     core, so a stale lazy/timer decision cannot purge a renewed generation.
  *   - cancellation: `raceAbortAwaitChange` composed over a real adapter wait
