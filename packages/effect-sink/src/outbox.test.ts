@@ -73,6 +73,17 @@ for (const [name, run] of cases) {
         }),
       ));
 
+    test("keeps NUL-containing sink and key tuples distinct", () =>
+      run((outbox) =>
+        Effect.gen(function* () {
+          const left = { ...draft("c"), sink: "a\u0000b" };
+          const right = { ...draft("b\u0000c"), sink: "a" };
+          expect(yield* outbox.enqueue([left, right])).toEqual({ enqueued: 2, absorbed: 0 });
+          expect(yield* outbox.list(left.sink, undefined)).toHaveLength(1);
+          expect(yield* outbox.list(right.sink, undefined)).toHaveLength(1);
+        }),
+      ));
+
     test("claims pending work in enqueue order and only when it is due", () =>
       run((outbox) =>
         Effect.gen(function* () {
@@ -151,11 +162,10 @@ describe("the SQLite outbox", () => {
     );
   });
 
-  test("enqueue joins the caller's transaction, so a rollback enqueues nothing", () => {
+  test("a rolled-back first-operation migration is retried on the same backing", () => {
     const filename = sqliteFilename();
     return runSqlite(filename, ({ outbox, sql }) =>
       Effect.gen(function* () {
-        yield* outbox.list("test.sink", undefined);
         const exit = yield* Effect.exit(
           sql.withTransaction(
             Effect.gen(function* () {
@@ -169,6 +179,8 @@ describe("the SQLite outbox", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* outbox.list("test.sink", undefined)).toHaveLength(0);
+        expect(yield* outbox.enqueue([draft("retry")])).toEqual({ enqueued: 1, absorbed: 0 });
+        expect((yield* outbox.list("test.sink", undefined))[0]?.idempotencyKey).toBe("retry");
       }),
     );
   });

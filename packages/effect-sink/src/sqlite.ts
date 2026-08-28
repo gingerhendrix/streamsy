@@ -93,19 +93,11 @@ export function migrateOutbox(sql: SqlClient): Effect.Effect<void, OutboxUnavail
 }
 
 export function createSqliteOutboxBacking(sql: SqlClient): OutboxBacking {
-  let migrated = false;
-
-  const ready: Effect.Effect<void, OutboxUnavailable> = Effect.suspend(() =>
-    migrated
-      ? Effect.void
-      : migrateOutbox(sql).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              migrated = true;
-            }),
-          ),
-        ),
-  );
+  // Readiness deliberately is not cached: migration can run inside a caller's
+  // transaction, and publishing that transaction-local result after rollback
+  // would leave this backing unable to recover. The idempotent statements make
+  // a retry safe; placements may still migrate eagerly before publishing stores.
+  const ready: Effect.Effect<void, OutboxUnavailable> = Effect.suspend(() => migrateOutbox(sql));
   const queryAll = <A extends object>(statement: string, params: ReadonlyArray<unknown> = []) =>
     Effect.flatMap(ready, () => sql.unsafe<A>(statement, params));
   const execute = (operation: string, statement: string, params: ReadonlyArray<unknown> = []) =>

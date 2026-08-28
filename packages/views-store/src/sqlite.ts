@@ -263,10 +263,12 @@ export function sqliteService(sql: SqlClient): ViewStoreService {
     snapshotRows: Effect.fn("ViewStore.snapshotRows")((n) =>
       attempt(
         "snapshotRows",
-        Effect.all({
-          sourceCursor: progress(sql, n),
-          rows: scanValues(sql, "rows", n),
-        }),
+        sql.withTransaction(
+          Effect.all({
+            sourceCursor: progress(sql, n),
+            rows: scanValues(sql, "rows", n),
+          }),
+        ),
       ),
     ),
     getOperatorValue: Effect.fn("ViewStore.getOperatorValue")((n, k) => readValue("operator", n, k)),
@@ -300,16 +302,19 @@ export function sqliteService(sql: SqlClient): ViewStoreService {
       attempt("sourceProgress", progress(sql, i)),
     ),
     historyBounds: Effect.fn("ViewStore.historyBounds")((i, relation) =>
-      attempt("historyBounds", bounds(sql, i, relation)),
+      attempt("historyBounds", sql.withTransaction(bounds(sql, i, relation))),
     ),
     changesAfter: Effect.fn("ViewStore.changesAfter")((i, position, limit, relation) =>
-      attempt("changesAfter", changesAfter(sql, i, position, limit, relation)),
+      attempt(
+        "changesAfter",
+        sql.withTransaction(changesAfter(sql, i, position, limit, relation)),
+      ),
     ),
     saveCheckpoint: Effect.fn("ViewStore.saveCheckpoint")((input) =>
       attempt("saveCheckpoint", saveCheckpoint(sql, input)),
     ),
     loadCheckpoint: Effect.fn("ViewStore.loadCheckpoint")((input) =>
-      attempt("loadCheckpoint", loadCheckpoint(sql, input)),
+      attempt("loadCheckpoint", sql.withTransaction(loadCheckpoint(sql, input))),
     ),
   });
 }

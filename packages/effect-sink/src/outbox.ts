@@ -105,7 +105,7 @@ export const outboxStoreLayer = (backing: OutboxBacking): Layer.Layer<OutboxStor
  */
 export function makeMemoryOutboxBacking(): OutboxBacking {
   const entries = new Map<number, OutboxEntry>();
-  const identities = new Set<string>();
+  const identities = new Map<string, Set<string>>();
   let nextId = 1;
 
   const replace = (id: number, patch: Partial<OutboxEntry>): void => {
@@ -122,14 +122,16 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
         let enqueued = 0;
         let absorbed = 0;
         for (const draft of drafts) {
-          const identity = `${draft.sink}\u0000${draft.idempotencyKey}`;
-          if (identities.has(identity)) {
+          const sinkIdentities = identities.get(draft.sink);
+          if (sinkIdentities?.has(draft.idempotencyKey) === true) {
             absorbed += 1;
             continue;
           }
           const id = nextId;
           nextId += 1;
-          identities.add(identity);
+          if (sinkIdentities === undefined)
+            identities.set(draft.sink, new Set([draft.idempotencyKey]));
+          else sinkIdentities.add(draft.idempotencyKey);
           entries.set(id, {
             id,
             sink: draft.sink,
