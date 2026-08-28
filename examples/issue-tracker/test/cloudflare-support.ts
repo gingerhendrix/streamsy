@@ -16,7 +16,10 @@ export interface WorkerdHarness {
   readonly close: () => Promise<void>;
 }
 
-export async function workerdHarness(entrypoint = "server/cloudflare.ts"): Promise<WorkerdHarness> {
+export async function workerdHarness(
+  entrypoint = "server/cloudflare.ts",
+  options: { testFailpoints?: boolean } = {},
+): Promise<WorkerdHarness> {
   // Miniflare 4.20260730 resolves DO persistence inside workerd's sandbox and
   // rejects an absolute path that escapes its starting directory.
   const root = mkdtempSync(".issue-tracker-workerd-");
@@ -39,7 +42,10 @@ export async function workerdHarness(entrypoint = "server/cloudflare.ts"): Promi
       ? { PARITY: { className: "SqlParityObject", useSQLite: true } }
       : { WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true } },
     durableObjectsPersist: join(root, "state"),
-    bindings: { DEPLOYMENT: "workerd-test", TEST_FAILPOINTS: "enabled" },
+    bindings:
+      options.testFailpoints === false
+        ? { DEPLOYMENT: "workerd-test" }
+        : { DEPLOYMENT: "workerd-test", TEST_FAILPOINTS: "enabled" },
     unsafeInspectDurableObjects: true,
   });
   await mf.ready;

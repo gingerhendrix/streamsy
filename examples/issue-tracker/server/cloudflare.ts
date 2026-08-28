@@ -312,9 +312,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
           }
           if (this.testFailpoint(request, "pause-next-maintenance-after-reconcile")) {
             this.maintenanceCompletionGate = makeTestGate();
-            this.ctx.storage.sql.exec(
-              "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
-            );
+            this.recordTestEvent();
           }
           if (this.testFailpoint(request, "pause-renewal-until-expiry")) {
             this.pauseRenewalUntilExpiry = true;
@@ -378,9 +376,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
           );
           if (this.testFailpoint(request, "after-application-commit-with-maintenance-failure")) {
             this.failNextMaintenance = true;
-            this.ctx.storage.sql.exec(
-              "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
-            );
+            this.recordTestEvent();
           }
           const response = await actor.runtime.runPromise(handle(clean));
           response.headers.set(REQUEST_ID_HEADER, id);
@@ -430,32 +426,20 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         operation = await this.beginGuardedOperation();
         if (this.maintenanceBeginGate !== undefined) {
           const gate = this.maintenanceBeginGate;
-          this.ensureTestEventsTable();
-          this.ctx.storage.sql.exec(
-            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('maintenance-begin-paused')",
-          );
+          this.recordTestEvent("maintenance-begin-paused");
           gate.arrive();
           await gate.released;
           this.maintenanceBeginGate = undefined;
         }
         const actor = await this.current();
         if (alarmInfo !== undefined) {
-          this.ensureTestEventsTable();
-          this.ctx.storage.sql.exec(
-            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
-            `alarm-start:${alarmInfo.retryCount}:${alarmInfo.isRetry}`,
-          );
+          this.recordTestEvent(`alarm-start:${alarmInfo.retryCount}:${alarmInfo.isRetry}`);
         }
         if (this.failNextMaintenance) {
           this.failNextMaintenance = false;
-          this.ctx.storage.sql.exec(
-            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('maintenance-failed')",
-          );
+          this.recordTestEvent("maintenance-failed");
           if (alarmInfo !== undefined) {
-            this.ctx.storage.sql.exec(
-              "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
-              `alarm-failed:${alarmInfo.retryCount}:${alarmInfo.isRetry}`,
-            );
+            this.recordTestEvent(`alarm-failed:${alarmInfo.retryCount}:${alarmInfo.isRetry}`);
           }
           throw new Error("injected alarm maintenance body failure");
         }
@@ -475,18 +459,12 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         await actor.runtime.runPromise(advance(actor.workspaceId));
         const delivery = await actor.runtime.runPromise(drainNotifications(actor.workspaceId));
         if (alarmInfo !== undefined) {
-          this.ensureTestEventsTable();
-          this.ctx.storage.sql.exec(
-            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
-            `alarm-succeeded:${alarmInfo.retryCount}:${alarmInfo.isRetry}`,
-          );
+          this.recordTestEvent(`alarm-succeeded:${alarmInfo.retryCount}:${alarmInfo.isRetry}`);
         }
         await this.finishGuardedOperation(operation, actor);
         if (this.maintenanceCompletionGate !== undefined) {
           const gate = this.maintenanceCompletionGate;
-          this.ctx.storage.sql.exec(
-            "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('maintenance-paused')",
-          );
+          this.recordTestEvent("maintenance-paused");
           gate.arrive();
           await gate.released;
           this.maintenanceCompletionGate = undefined;
@@ -599,10 +577,17 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
     if (isAlarmFailurePoint(point)) this.alarmFailure = point;
   }
 
-  private ensureTestEventsTable(): void {
+  private recordTestEvent(name?: string): void {
+    if (this.env.TEST_FAILPOINTS !== "enabled") return;
     this.ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS issue_tracker_test_events (name TEXT PRIMARY KEY)",
     );
+    if (name !== undefined) {
+      this.ctx.storage.sql.exec(
+        "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES (?)",
+        name,
+      );
+    }
   }
 
   private async afterStreamCreateCommit(): Promise<void> {
@@ -618,10 +603,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
 
   private async beforeStreamAppendCommit(): Promise<void> {
     if (!this.pauseRenewalUntilExpiry) return;
-    this.ensureTestEventsTable();
-    this.ctx.storage.sql.exec(
-      "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('renewal-append-paused')",
-    );
+    this.recordTestEvent("renewal-append-paused");
     const gate = this.expiryGate ?? (this.expiryGate = makeTestGate());
     await gate.reached;
   }
@@ -634,10 +616,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
     const gate = this.expiryDeleteGate;
     if (gate === undefined) return;
     this.expiryDeleteGate = undefined;
-    this.ensureTestEventsTable();
-    this.ctx.storage.sql.exec(
-      "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('lazy-expiry-delete-paused')",
-    );
+    this.recordTestEvent("lazy-expiry-delete-paused");
     gate.arrive();
     await gate.released;
   }
@@ -645,10 +624,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
   private async beforeCancelExpiry(): Promise<void> {
     const gate = this.cancelExpiryGate;
     if (gate === undefined) return;
-    this.ensureTestEventsTable();
-    this.ctx.storage.sql.exec(
-      "INSERT OR REPLACE INTO issue_tracker_test_events(name) VALUES ('delete-cancellation-paused')",
-    );
+    this.recordTestEvent("delete-cancellation-paused");
     gate.arrive();
     await gate.released;
     this.cancelExpiryGate = undefined;

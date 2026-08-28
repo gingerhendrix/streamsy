@@ -315,15 +315,15 @@ export class FsStream {
       if (plan.reason === "delete" && record.lifecycle.softDeleted === true)
         return { status: "gone" };
       rmSync(this.dir, { recursive: true, force: true });
-      return { status: "purged" };
     } finally {
       if (acquired) releaseLock(this.lockPath);
-      this.timeout.cancel();
-      // Surface the purge to any parked live waiter before the cache eviction:
-      // its loop re-reads and observes the now-absent record (`!present`).
-      this.notifier.wake();
-      this.deleteFromCache();
     }
+    this.timeout.cancel();
+    // Surface the purge to any parked live waiter before the cache eviction:
+    // its loop re-reads and observes the now-absent record (`!present`).
+    this.notifier.wake();
+    this.deleteFromCache();
+    return { status: "purged" };
   }
 
   // ---- live wait ---------------------------------------------------------

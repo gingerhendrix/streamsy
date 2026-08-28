@@ -336,6 +336,41 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     ).toEqual([{ accepted: 1 }]);
   });
 
+  test("production-bound alarms do not create test telemetry", async () => {
+    const harness = await workerdHarness("server/cloudflare.ts", { testFailpoints: false });
+    open.push(harness);
+    const path = "/streams/workspaces/no-test-telemetry/expiring";
+    expect(
+      (
+        await harness.fetch(path, {
+          method: "PUT",
+          headers: { "content-type": "text/plain", "stream-ttl": "1" },
+          body: "expires",
+        })
+      ).status,
+    ).toBe(201);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:no-test-telemetry",
+    });
+    await harness.evictWorkspace("no-test-telemetry");
+
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_streams WHERE stream_id = ?",
+            "workspaces/no-test-telemetry/expiring",
+          )
+        )[0]?.present === 0,
+    );
+    expect(
+      await storage.exec<{ present: number }>(
+        "SELECT COUNT(*) present FROM sqlite_master" +
+          " WHERE type = 'table' AND name = 'issue_tracker_test_events'",
+      ),
+    ).toEqual([{ present: 0 }]);
+  });
+
   test("raw-stream reconciliation preserves a paused application guard", async () => {
     const harness = await fresh();
     await harness.fetch(
