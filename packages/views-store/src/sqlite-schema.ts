@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 export const VIEW_SCHEMA_VERSION = 1;
-const MIGRATIONS = [
+export const VIEW_MIGRATIONS = [
   `
 CREATE TABLE streamsy_view_partitions (
  plan_name TEXT NOT NULL, partition_key TEXT NOT NULL, plan_hash TEXT NOT NULL, source_id TEXT NOT NULL,
@@ -61,9 +61,9 @@ export function migrateViewStore(
         "SELECT MAX(version) version FROM streamsy_view_schema_version",
       )
       .get()?.version ?? 0;
-  for (let version = current + 1; version <= MIGRATIONS.length; version++)
+  for (let version = current + 1; version <= VIEW_MIGRATIONS.length; version++)
     database.transaction(() => {
-      database.run(MIGRATIONS[version - 1]!);
+      database.run(VIEW_MIGRATIONS[version - 1]!);
       database.run("INSERT INTO streamsy_view_schema_version VALUES (?, ?)", [version, now]);
     })();
 }

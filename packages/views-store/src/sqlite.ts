@@ -3,6 +3,7 @@ import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import * as SqlClientTag from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import type {
+  Checkpoint,
   HistoryPosition,
   IndexMutation,
   JsonValue,
@@ -28,9 +29,11 @@ import { ViewStore } from "./memory.ts";
 export {
   importLegacyIssueStore,
   migrateViewStore,
+  VIEW_MIGRATIONS,
   VIEW_SCHEMA_VERSION,
   type LegacyImport,
 } from "./sqlite-schema.ts";
+import { VIEW_MIGRATIONS } from "./sqlite-schema.ts";
 
 const isCheckpointIncompatible = Schema.is(ViewCheckpointIncompatible);
 const isCursorConflict = Schema.is(ViewCursorConflict);
@@ -57,8 +60,42 @@ const fail = (operation: string, cause: ViewSqlError | SqlError): ViewSqlError =
 const attempt = <A>(
   operation: string,
   effect: Effect.Effect<A, ViewSqlError | SqlError>,
-): Effect.Effect<A, ViewSqlError> => effect.pipe(Effect.mapError((cause) => fail(operation, cause)));
+): Effect.Effect<A, ViewSqlError> =>
+  effect.pipe(Effect.mapError((cause) => fail(operation, cause)));
 const first = <A>(rows: ReadonlyArray<A>): A | undefined => rows[0];
+
+/** Apply the maintained-view schema through any Effect SQL SQLite client. */
+export function migrateViewStoreSql(sql: SqlClient): Effect.Effect<void, SqlError> {
+  return Effect.gen(function* () {
+    yield* sql
+      .unsafe<Record<string, never>>(
+        "CREATE TABLE IF NOT EXISTS streamsy_view_schema_version(" +
+          "version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
+      )
+      .pipe(Effect.asVoid);
+    const current = yield* sql
+      .unsafe<{ readonly version: number | null }>(
+        "SELECT MAX(version) version FROM streamsy_view_schema_version",
+      )
+      .pipe(Effect.map((rows) => first(rows)?.version ?? 0));
+    for (let version = current + 1; version <= VIEW_MIGRATIONS.length; version++) {
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql
+            .unsafe<Record<string, never>>(VIEW_MIGRATIONS[version - 1]!)
+            .pipe(Effect.asVoid);
+          yield* sql
+            .unsafe<Record<string, never>>(
+              "INSERT INTO streamsy_view_schema_version(version, applied_at_ms)" +
+                " VALUES (?, CAST(unixepoch('subsec') * 1000 AS INTEGER))",
+              [version],
+            )
+            .pipe(Effect.asVoid);
+        }),
+      );
+    }
+  });
+}
 
 export const sqliteLayer: Layer.Layer<ViewStore, never, SqlClient> = Layer.effect(
   ViewStore,
@@ -261,24 +298,22 @@ export function sqliteService(sql: SqlClient): ViewStoreService {
     ),
     getRow: Effect.fn("ViewStore.getRow")((n, k) => readValue("rows", n, k)),
     snapshotRows: Effect.fn("ViewStore.snapshotRows")((n) =>
-      attempt(
-        "snapshotRows",
-        sql.withTransaction(
-          Effect.all({
-            sourceCursor: progress(sql, n),
-            rows: scanValues(sql, "rows", n),
-          }),
-        ),
-      ),
+      attempt("snapshotRows", sql.withTransaction(snapshotRows(sql, n))),
     ),
-    getOperatorValue: Effect.fn("ViewStore.getOperatorValue")((n, k) => readValue("operator", n, k)),
+    getOperatorValue: Effect.fn("ViewStore.getOperatorValue")((n, k) =>
+      readValue("operator", n, k),
+    ),
     scanOperatorValues: Effect.fn("ViewStore.scanOperatorValues")((n) =>
       attempt("scanOperatorValues", scanValues(sql, "operator", n)),
     ),
     lookupIndex: Effect.fn("ViewStore.lookupIndex")((n, name, key, range = {}) =>
       attempt(
         "lookupIndex",
-        queryAll<{ readonly sort_key: string; readonly row_key: string; readonly value_json: string | null }>(
+        queryAll<{
+          readonly sort_key: string;
+          readonly row_key: string;
+          readonly value_json: string | null;
+        }>(
           "SELECT sort_key,row_key,value_json FROM streamsy_view_operator_index" +
             " WHERE plan_name=? AND partition_key=? AND operator_id=? AND index_name=? AND index_key=?" +
             " ORDER BY sort_key,row_key",
@@ -305,10 +340,7 @@ export function sqliteService(sql: SqlClient): ViewStoreService {
       attempt("historyBounds", sql.withTransaction(bounds(sql, i, relation))),
     ),
     changesAfter: Effect.fn("ViewStore.changesAfter")((i, position, limit, relation) =>
-      attempt(
-        "changesAfter",
-        sql.withTransaction(changesAfter(sql, i, position, limit, relation)),
-      ),
+      attempt("changesAfter", sql.withTransaction(changesAfter(sql, i, position, limit, relation))),
     ),
     saveCheckpoint: Effect.fn("ViewStore.saveCheckpoint")((input) =>
       attempt("saveCheckpoint", saveCheckpoint(sql, input)),
@@ -399,39 +431,69 @@ function scanValues(sql: SqlClient, surface: string, n: NamespaceRef) {
 }
 
 function bounds(sql: SqlClient, i: ViewIdentity, relation?: string) {
-  const range =
+  const relationClause =
     relation === undefined
-      ? sql.unsafe<{ readonly first: number | null; readonly latest: number | null }>(
-          "SELECT MIN(history_seq) first,MAX(history_seq) latest" +
-            " FROM streamsy_view_change_batches b WHERE plan_name=? AND partition_key=?",
-          [i.planName, i.partition],
-        )
-      : sql.unsafe<{ readonly first: number | null; readonly latest: number | null }>(
-          "SELECT MIN(history_seq) first,MAX(history_seq) latest FROM streamsy_view_change_batches b" +
-            " WHERE plan_name=? AND partition_key=?" +
-            " AND EXISTS (" +
-            "   SELECT 1 FROM streamsy_view_changes c" +
-            "   WHERE c.plan_name=b.plan_name AND c.partition_key=b.partition_key" +
-            "     AND c.history_epoch=b.history_epoch AND c.history_seq=b.history_seq" +
-            "     AND c.relation_id=?" +
-            " )",
-          [i.planName, i.partition, relation],
-        );
-  return Effect.all({
-    row: range.pipe(Effect.map(first)),
-    partition: sql
-      .unsafe<{ readonly history_epoch: number }>(
-        "SELECT history_epoch FROM streamsy_view_partitions WHERE plan_name=? AND partition_key=?",
-        [i.planName, i.partition],
-      )
-      .pipe(Effect.map(first)),
-  }).pipe(
-    Effect.map(({ row, partition }) => ({
-      epoch: partition?.history_epoch ?? 1,
-      first: row?.first ?? undefined,
-      latest: row?.latest ?? undefined,
-    })),
-  );
+      ? ""
+      : " AND EXISTS (SELECT 1 FROM streamsy_view_changes c" +
+        " WHERE c.plan_name=b.plan_name AND c.partition_key=b.partition_key" +
+        " AND c.history_epoch=b.history_epoch AND c.history_seq=b.history_seq" +
+        " AND c.relation_id=?)";
+  return sql
+    .unsafe<{
+      readonly history_epoch: number | null;
+      readonly first: number | null;
+      readonly latest: number | null;
+    }>(
+      "SELECT MIN(history_seq) first,MAX(history_seq) latest," +
+        " (SELECT history_epoch FROM streamsy_view_partitions" +
+        " WHERE plan_name=? AND partition_key=?) history_epoch" +
+        " FROM streamsy_view_change_batches b WHERE plan_name=? AND partition_key=?" +
+        relationClause,
+      relation === undefined
+        ? [i.planName, i.partition, i.planName, i.partition]
+        : [i.planName, i.partition, i.planName, i.partition, relation],
+    )
+    .pipe(
+      Effect.map(first),
+      Effect.map((row) => ({
+        epoch: row?.history_epoch ?? 1,
+        first: row?.first ?? undefined,
+        latest: row?.latest ?? undefined,
+      })),
+    );
+}
+
+function snapshotRows(sql: SqlClient, n: NamespaceRef) {
+  return sql
+    .unsafe<{
+      readonly source_cursor: string | null;
+      readonly value_key: string | null;
+      readonly value_json: string | null;
+    }>(
+      "/* SELECT source_cursor FROM streamsy_view_partitions */" +
+        " SELECT p.source_cursor,v.value_key,v.value_json" +
+        " FROM (SELECT source_cursor FROM streamsy_view_partitions" +
+        " WHERE plan_name=? AND partition_key=?) p" +
+        " LEFT JOIN streamsy_view_values v ON v.surface='rows'" +
+        " AND v.plan_name=? AND v.partition_key=? AND v.namespace_id=?" +
+        " ORDER BY v.value_key",
+      [n.planName, n.partition, n.planName, n.partition, n.id],
+    )
+    .pipe(
+      Effect.map((found) => ({
+        sourceCursor: found[0]?.source_cursor ?? undefined,
+        rows: found.flatMap((row) =>
+          row.value_key === null || row.value_json === null
+            ? []
+            : [
+                {
+                  key: decodeKey(row.value_key),
+                  value: decodeJson("streamsy_view_rows", n.id, row.value_key, row.value_json),
+                },
+              ],
+        ),
+      })),
+    );
 }
 
 function changesAfter(
@@ -441,57 +503,107 @@ function changesAfter(
   limit: number,
   relation?: string,
 ) {
-  return Effect.gen(function* () {
-    const partition = yield* sql
-      .unsafe<{ readonly history_epoch: number; readonly history_floor: number; readonly next_history_seq: number }>(
-        "SELECT history_epoch,history_floor,next_history_seq FROM streamsy_view_partitions" +
-          " WHERE plan_name=? AND partition_key=?",
-        [i.planName, i.partition],
-      )
-      .pipe(Effect.map(first));
-    const epoch = partition?.history_epoch ?? 1;
-    const floor = partition?.history_floor ?? 1;
-    const requested = position?.sequence ?? floor - 1;
-    if (position !== undefined && (position.epoch !== epoch || requested < floor - 1))
-      return yield* new ViewHistoryExpired({
-        epoch,
-        requested,
-        first: floor,
-        latest: (partition?.next_history_seq ?? 1) - 1,
-      });
-    const batches = yield* sql.unsafe<{ readonly history_seq: number; readonly source_cursor: string }>(
-      "SELECT history_seq,source_cursor FROM streamsy_view_change_batches" +
-        " WHERE plan_name=? AND partition_key=? AND history_seq>? ORDER BY history_seq LIMIT ?",
-      [i.planName, i.partition, requested, limit],
+  return sql
+    .unsafe<{
+      readonly epoch: number;
+      readonly floor: number;
+      readonly next_sequence: number;
+      readonly history_seq: number | null;
+      readonly source_cursor: string | null;
+      readonly ordinal: number | null;
+      readonly relation_id: string | null;
+      readonly kind: string | null;
+      readonly row_key: string | null;
+      readonly before_json: string | null;
+      readonly after_json: string | null;
+    }>(
+      "/* SELECT history_seq,source_cursor FROM streamsy_view_change_batches */" +
+        " WITH p AS (SELECT" +
+        " COALESCE((SELECT history_epoch FROM streamsy_view_partitions" +
+        " WHERE plan_name=? AND partition_key=?),1) epoch," +
+        " COALESCE((SELECT history_floor FROM streamsy_view_partitions" +
+        " WHERE plan_name=? AND partition_key=?),1) floor," +
+        " COALESCE((SELECT next_history_seq FROM streamsy_view_partitions" +
+        " WHERE plan_name=? AND partition_key=?),1) next_sequence)," +
+        " selected AS (SELECT b.history_seq,b.source_cursor FROM streamsy_view_change_batches b,p" +
+        " WHERE b.plan_name=? AND b.partition_key=?" +
+        " AND b.history_seq>COALESCE(?,p.floor-1) ORDER BY b.history_seq LIMIT ?)" +
+        " SELECT p.epoch,p.floor,p.next_sequence,b.history_seq,b.source_cursor," +
+        " c.ordinal,c.relation_id,c.kind,c.row_key,c.before_json,c.after_json" +
+        " FROM p LEFT JOIN selected b ON 1=1 LEFT JOIN streamsy_view_changes c" +
+        " ON c.plan_name=? AND c.partition_key=? AND c.history_epoch=p.epoch" +
+        " AND c.history_seq=b.history_seq ORDER BY b.history_seq,c.ordinal",
+      [
+        i.planName,
+        i.partition,
+        i.planName,
+        i.partition,
+        i.planName,
+        i.partition,
+        i.planName,
+        i.partition,
+        position?.sequence ?? null,
+        limit,
+        i.planName,
+        i.partition,
+      ],
+    )
+    .pipe(
+      Effect.flatMap((rows) => {
+        const state = rows[0] ?? { epoch: 1, floor: 1, next_sequence: 1 };
+        const requested = position?.sequence ?? state.floor - 1;
+        if (
+          position !== undefined &&
+          (position.epoch !== state.epoch || requested < state.floor - 1)
+        ) {
+          return Effect.fail(
+            new ViewHistoryExpired({
+              epoch: state.epoch,
+              requested,
+              first: state.floor,
+              latest: state.next_sequence - 1,
+            }),
+          );
+        }
+        const grouped = new Map<number, { sourceCursor: string; changes: StoredChange[] }>();
+        for (const row of rows) {
+          if (row.history_seq === null || row.source_cursor === null) continue;
+          let batch = grouped.get(row.history_seq);
+          if (batch === undefined) {
+            batch = { sourceCursor: row.source_cursor, changes: [] };
+            grouped.set(row.history_seq, batch);
+          }
+          if (
+            row.ordinal !== null &&
+            row.relation_id !== null &&
+            row.kind !== null &&
+            row.row_key !== null &&
+            (relation === undefined || row.relation_id === relation)
+          ) {
+            batch.changes.push(
+              decodeChange({
+                relation_id: row.relation_id,
+                kind: row.kind,
+                row_key: row.row_key,
+                before_json: row.before_json,
+                after_json: row.after_json,
+              }),
+            );
+          }
+        }
+        const restored: StoredChangeBatch[] = [];
+        for (const [sequence, batch] of grouped) {
+          if (relation === undefined || batch.changes.length > 0) {
+            restored.push({
+              position: { epoch: state.epoch, sequence },
+              sourceCursor: batch.sourceCursor,
+              changes: batch.changes,
+            });
+          }
+        }
+        return Effect.succeed(restored);
+      }),
     );
-    const restored: StoredChangeBatch[] = [];
-    for (const batch of batches) {
-      const rows = yield* sql.unsafe<{
-        readonly ordinal: number;
-        readonly relation_id: string;
-        readonly kind: string;
-        readonly row_key: string;
-        readonly before_json: string | null;
-        readonly after_json: string | null;
-      }>(
-        "SELECT ordinal,relation_id,kind,row_key,before_json,after_json" +
-          " FROM streamsy_view_changes WHERE plan_name=? AND partition_key=? AND history_seq=?" +
-          " ORDER BY ordinal",
-        [i.planName, i.partition, batch.history_seq],
-      );
-      const changes = rows
-        .filter((row) => relation === undefined || row.relation_id === relation)
-        .map(decodeChange);
-      if (relation === undefined || changes.length > 0) {
-        restored.push({
-          position: { epoch, sequence: batch.history_seq },
-          sourceCursor: batch.source_cursor,
-          changes,
-        });
-      }
-    }
-    return restored;
-  });
 }
 
 function decodeChange(row: {
@@ -588,71 +700,85 @@ function saveCheckpoint(sql: SqlClient, input: SaveCheckpoint) {
 function loadCheckpoint(
   sql: SqlClient,
   input: SaveCheckpoint | Omit<SaveCheckpoint, "sourceCursor" | "createdAtMs" | "entries">,
-) {
+): Effect.Effect<
+  Checkpoint | undefined,
+  SqlError | ViewCheckpointIncompatible | ViewStateRestorePoison
+> {
   return Effect.gen(function* () {
-    const row = yield* sql
-      .unsafe<{
-        readonly generation: number;
-        readonly source_cursor: string;
-        readonly created_at_ms: number;
-        readonly entry_count: number;
-      }>(
-        "SELECT generation,source_cursor,created_at_ms,entry_count" +
-          " FROM streamsy_view_checkpoint_manifests" +
-          " WHERE plan_name=? AND partition_key=? AND reducer_id=? AND plan_hash=?" +
-          " AND reducer_version=? AND source_id=? AND status='active'" +
-          " ORDER BY generation DESC LIMIT 1",
-        [
-          input.planName,
-          input.partition,
-          input.reducerId,
-          input.planHash,
-          input.reducerVersion,
-          input.sourceId,
-        ],
-      )
-      .pipe(Effect.map(first));
-    if (row === undefined) {
-      const anyGeneration = yield* sql
-        .unsafe<{ readonly present: number }>(
-          "SELECT 1 present FROM streamsy_view_checkpoint_manifests" +
-            " WHERE plan_name=? AND partition_key=? AND reducer_id=? AND status='active' LIMIT 1",
-          [input.planName, input.partition, input.reducerId],
-        )
-        .pipe(Effect.map(first));
-      if (anyGeneration !== undefined)
+    const rows = yield* sql.unsafe<{
+      readonly active_present: number;
+      readonly generation: number | null;
+      readonly source_cursor: string | null;
+      readonly created_at_ms: number | null;
+      readonly entry_count: number | null;
+      readonly row_key: string | null;
+      readonly value_json: string | null;
+    }>(
+      "/* SELECT generation,source_cursor,created_at_ms,entry_count */" +
+        " WITH target AS (SELECT generation,source_cursor,created_at_ms,entry_count" +
+        " FROM streamsy_view_checkpoint_manifests" +
+        " WHERE plan_name=? AND partition_key=? AND reducer_id=? AND plan_hash=?" +
+        " AND reducer_version=? AND source_id=? AND status='active'" +
+        " ORDER BY generation DESC LIMIT 1)," +
+        " presence AS (SELECT EXISTS(SELECT 1 FROM streamsy_view_checkpoint_manifests" +
+        " WHERE plan_name=? AND partition_key=? AND reducer_id=? AND status='active') active_present)" +
+        " SELECT presence.active_present,target.generation,target.source_cursor," +
+        " target.created_at_ms,target.entry_count,e.row_key,e.value_json" +
+        " FROM presence LEFT JOIN target ON 1=1 LEFT JOIN streamsy_view_checkpoint_entries e" +
+        " ON e.plan_name=? AND e.partition_key=? AND e.reducer_id=?" +
+        " AND e.generation=target.generation ORDER BY e.row_key",
+      [
+        input.planName,
+        input.partition,
+        input.reducerId,
+        input.planHash,
+        input.reducerVersion,
+        input.sourceId,
+        input.planName,
+        input.partition,
+        input.reducerId,
+        input.planName,
+        input.partition,
+        input.reducerId,
+      ],
+    );
+    const row = rows[0];
+    if (row === undefined || row.generation === null) {
+      if (row?.active_present === 1) {
         return yield* new ViewCheckpointIncompatible({
           reducerId: input.reducerId,
           reason: "no active generation matches the plan, source, and reducer version",
         });
+      }
       return undefined;
     }
-    const entries = yield* sql
-      .unsafe<{ readonly row_key: string; readonly value_json: string }>(
-        "SELECT row_key,value_json FROM streamsy_view_checkpoint_entries" +
-          " WHERE plan_name=? AND partition_key=? AND reducer_id=? AND generation=? ORDER BY row_key",
-        [input.planName, input.partition, input.reducerId, row.generation],
-      )
-      .pipe(
-        Effect.map((found) =>
-          found.map((entry) => ({
-            key: decodeKey(entry.row_key),
-            value: decodeJson(
-              "streamsy_view_checkpoint_entries",
-              input.reducerId,
-              entry.row_key,
-              entry.value_json,
-            ),
-          })),
-        ),
-      );
-    if (entries.length !== row.entry_count)
+    const entries = rows.flatMap((entry) =>
+      entry.row_key === null || entry.value_json === null
+        ? []
+        : [
+            {
+              key: decodeKey(entry.row_key),
+              value: decodeJson(
+                "streamsy_view_checkpoint_entries",
+                input.reducerId,
+                entry.row_key,
+                entry.value_json,
+              ),
+            },
+          ],
+    );
+    const expected = row.entry_count ?? 0;
+    if (entries.length !== expected) {
       return yield* new ViewStateRestorePoison({
         table: "streamsy_view_checkpoint_entries",
         identity: input.reducerId,
         key: String(row.generation),
-        detail: `expected ${row.entry_count} entries, found ${entries.length}`,
+        detail: `expected ${expected} entries, found ${entries.length}`,
       });
+    }
+    if (row.source_cursor === null || row.created_at_ms === null) {
+      return yield* Effect.die("active checkpoint manifest contains null required fields");
+    }
     return {
       ...input,
       generation: row.generation,

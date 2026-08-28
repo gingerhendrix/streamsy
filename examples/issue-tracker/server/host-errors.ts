@@ -65,13 +65,20 @@ export class PartitionUnavailable extends Schema.TaggedError<PartitionUnavailabl
   { partition: Schema.String, detail: Schema.String },
 ) {}
 
+/** A valid domain route whose Cloudflare placement belongs to a later slice. */
+export class DomainPlacementUnavailable extends Schema.TaggedError<DomainPlacementUnavailable>()(
+  "DomainPlacementUnavailable",
+  { domain: Schema.String, id: Schema.String },
+) {}
+
 export type HostFailure =
   | InvalidWorkspaceId
   | InvalidDomainId
   | UnroutableRequest
   | HostClosed
   | PartitionLimitReached
-  | PartitionUnavailable;
+  | PartitionUnavailable
+  | DomainPlacementUnavailable;
 
 interface HostFailureReport {
   readonly status: number;
@@ -114,6 +121,12 @@ export function hostFailureReport(failure: HostFailure): HostFailureReport {
         status: 503,
         error: "partition-unavailable",
         detail: `${failure.partition}: ${failure.detail}`,
+      };
+    case "DomainPlacementUnavailable":
+      return {
+        status: 503,
+        error: "domain-placement-unavailable",
+        detail: `${failure.domain}/${failure.id}: unavailable in cloudflare workspace placement`,
       };
   }
   return absurd(failure);

@@ -15,6 +15,8 @@
     "generate:check:label-counts": "bun ../../packages/tanstack-db/src/cli.ts --module $PWD/domain/declaration.ts --export boardLabelCounts --output $PWD/src/generated/label-counts.ts --check",
     "typecheck": "tsc --noEmit",
     "test": "bun test test",
+    "test:cloudflare": "bun test test/cloudflare-workspace.test.ts test/cloudflare-parity.test.ts",
+    "build:cloudflare": "bun build server/cloudflare.ts --outdir dist/cloudflare --target browser --format esm --external cloudflare:workers",
     "smoke:http": "bun run scripts/http-smoke.ts",
     "smoke:ui": "bun run scripts/ui-smoke.ts",
     "app:full": "bun run scripts/full-app.ts"
@@ -23,6 +25,7 @@
     "@durable-streams/client": "^0.2.6",
     "@durable-streams/state": "^0.3.1",
     "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112",
     "@streamsy/core": "workspace:*",
     "@streamsy/effect-sink": "workspace:*",
     "@streamsy/experimental": "workspace:*",
@@ -43,9 +46,11 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
     "@types/bun": "^1.2.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "miniflare": "4.20260730.0",
     "typescript": "catalog:"
   }
 }
