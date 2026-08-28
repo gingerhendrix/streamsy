@@ -470,8 +470,7 @@ function snapshotRows(sql: SqlClient, n: NamespaceRef) {
       readonly value_key: string | null;
       readonly value_json: string | null;
     }>(
-      "/* SELECT source_cursor FROM streamsy_view_partitions */" +
-        " SELECT p.source_cursor,v.value_key,v.value_json" +
+      "SELECT p.source_cursor,v.value_key,v.value_json" +
         " FROM (SELECT source_cursor FROM streamsy_view_partitions" +
         " WHERE plan_name=? AND partition_key=?) p" +
         " LEFT JOIN streamsy_view_values v ON v.surface='rows'" +
@@ -517,8 +516,7 @@ function changesAfter(
       readonly before_json: string | null;
       readonly after_json: string | null;
     }>(
-      "/* SELECT history_seq,source_cursor FROM streamsy_view_change_batches */" +
-        " WITH p AS (SELECT" +
+      "WITH p AS (SELECT" +
         " COALESCE((SELECT history_epoch FROM streamsy_view_partitions" +
         " WHERE plan_name=? AND partition_key=?),1) epoch," +
         " COALESCE((SELECT history_floor FROM streamsy_view_partitions" +
@@ -714,8 +712,7 @@ function loadCheckpoint(
       readonly row_key: string | null;
       readonly value_json: string | null;
     }>(
-      "/* SELECT generation,source_cursor,created_at_ms,entry_count */" +
-        " WITH target AS (SELECT generation,source_cursor,created_at_ms,entry_count" +
+      "WITH target AS (SELECT generation,source_cursor,created_at_ms,entry_count" +
         " FROM streamsy_view_checkpoint_manifests" +
         " WHERE plan_name=? AND partition_key=? AND reducer_id=? AND plan_hash=?" +
         " AND reducer_version=? AND source_id=? AND status='active'" +

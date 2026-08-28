@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function -- bun:test owns the Promise-native workerd harness. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-timers, effecttsgo/new-promise -- bun:test owns Promise-native workerd timing. */
 import { afterEach, describe, expect, test } from "bun:test";
 import { WorkspaceSummary } from "../domain/issue.ts";
 import {
@@ -28,6 +28,14 @@ async function fresh(): Promise<WorkerdHarness> {
   return harness;
 }
 
+async function eventually(assertion: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await assertion())) {
+    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 const create = (commandId: string, issueId: string, title: string) => ({
   commandId,
   issueId,
@@ -37,6 +45,18 @@ const create = (commandId: string, issueId: string, title: string) => ({
 });
 
 describe("Cloudflare workspace placement on real workerd storage", () => {
+  test("clones immutable asset binding responses before propagating request ids", async () => {
+    const harness = await workerdHarness("test/cloudflare-assets-worker.ts");
+    open.push(harness);
+    const response = await harness.fetch("/app.js", {
+      headers: { "x-request-id": "asset-request" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("immutable-asset");
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(response.headers.get("x-request-id")).toBe("asset-request");
+  });
+
   test("gateway owns health, typed unavailable domains, and request ids", async () => {
     const harness = await fresh();
     const health = await harness.fetch("/health", { headers: { "x-request-id": "request-1" } });
@@ -262,5 +282,154 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
       (await decodeResponse(await harness.fetch("/api/workspaces/left/issues"), IssuesResponse))
         .rows,
     ).toEqual(left.rows);
+  });
+
+  test("a pre-armed platform alarm drains an outbox commit after failure and eviction", async () => {
+    const harness = await fresh();
+    await harness.fetch(
+      "/api/workspaces/alarm/issues",
+      jsonRequest("POST", create("alarm-create", "alarm-issue", "Alarm issue")),
+    );
+    const failed = await harness.fetch("/api/workspaces/alarm/issues/alarm-issue/assignee", {
+      ...jsonRequest("POST", { commandId: "alarm-assign", assigneeId: "ada" }),
+      headers: {
+        "content-type": "application/json",
+        "x-streamsy-test-failpoint": "after-application-commit",
+      },
+    });
+    expect(failed.status).toBe(503);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:alarm",
+    });
+    expect(
+      await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"),
+    ).toEqual([{ state: "pending" }]);
+    await harness.evictWorkspace("alarm");
+
+    // No Worker or object fetch follows eviction: workerd's scheduled alarm is
+    // the only event able to change this durable row.
+    await eventually(
+      async () =>
+        (await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"))[0]
+          ?.state === "delivered",
+    );
+    expect(
+      await storage.exec<{ accepted: number }>(
+        "SELECT COUNT(*) accepted FROM issue_tracker_notification_acceptances",
+      ),
+    ).toEqual([{ accepted: 1 }]);
+  });
+
+  test("durable notification identity absorbs a post-accept interruption after eviction", async () => {
+    const harness = await fresh();
+    await harness.fetch(
+      "/api/workspaces/notify/issues",
+      jsonRequest("POST", create("notify-create", "notify-issue", "Notify issue")),
+    );
+    await harness.fetch("/api/workspaces/notify/issues/notify-issue/assignee", {
+      ...jsonRequest("POST", { commandId: "notify-assign", assigneeId: "ada" }),
+      headers: {
+        "content-type": "application/json",
+        "x-streamsy-test-failpoint": "after-application-commit",
+      },
+    });
+    const interrupted = await harness.fetch("/api/workspaces/notify/notifications/drain", {
+      method: "POST",
+      headers: { "x-streamsy-test-failpoint": "notification-after-accept" },
+    });
+    expect(interrupted.status).toBe(503);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:notify",
+    });
+    expect(
+      await storage.exec<{ state: string; attempts: number }>(
+        "SELECT state, attempts FROM streamsy_effect_outbox",
+      ),
+    ).toEqual([{ state: "pending", attempts: 0 }]);
+    expect(
+      await storage.exec<{ accepted: number }>(
+        "SELECT COUNT(*) accepted FROM issue_tracker_notification_acceptances",
+      ),
+    ).toEqual([{ accepted: 1 }]);
+    await harness.evictWorkspace("notify");
+    await eventually(
+      async () =>
+        (await storage.exec<{ state: string }>("SELECT state FROM streamsy_effect_outbox"))[0]
+          ?.state === "delivered",
+    );
+    expect(
+      await storage.exec<{ accepted: number }>(
+        "SELECT COUNT(*) accepted FROM issue_tracker_notification_acceptances",
+      ),
+    ).toEqual([{ accepted: 1 }]);
+
+    await harness.evictWorkspace("notify");
+    const visible = await decodeResponse(
+      await harness.fetch("/api/workspaces/notify/notifications"),
+      NotificationsResponse,
+    );
+    expect(visible.notified).toHaveLength(1);
+    expect(visible.outbox[0]?.state).toBe("delivered");
+  });
+
+  test("persists, renews, cancels, and fires raw stream expiry obligations", async () => {
+    const harness = await fresh();
+    const expiringPath = "/streams/workspaces/ttl/expiring";
+    const cancelledPath = "/streams/workspaces/ttl/cancelled";
+    expect(
+      (
+        await harness.fetch(expiringPath, {
+          method: "PUT",
+          headers: { "content-type": "text/plain", "stream-ttl": "1" },
+          body: "first",
+        })
+      ).status,
+    ).toBe(201);
+    const storage = await harness.mf.unsafeGetDurableObjectStorage("", "WorkspacePartitionObject", {
+      name: "workspace:ttl",
+    });
+    const initial = await storage.exec<{ stream_id: string; expires_at_ms: number }>(
+      "SELECT stream_id, expires_at_ms FROM issue_tracker_stream_expiries",
+    );
+    expect(initial).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await harness.fetch(`${expiringPath}?offset=now`)).status).toBe(200);
+    const renewed = await storage.exec<{ expires_at_ms: number }>(
+      "SELECT expires_at_ms FROM issue_tracker_stream_expiries WHERE stream_id = ?",
+      "workspaces/ttl/expiring",
+    );
+    expect(renewed[0]?.expires_at_ms).toBeGreaterThan(initial[0]?.expires_at_ms ?? 0);
+
+    expect(
+      (
+        await harness.fetch(cancelledPath, {
+          method: "PUT",
+          headers: { "content-type": "text/plain", "stream-ttl": "10" },
+        })
+      ).status,
+    ).toBe(201);
+    expect((await harness.fetch(cancelledPath, { method: "DELETE" })).status).toBe(204);
+    expect(
+      await storage.exec<{ stream_id: string }>(
+        "SELECT stream_id FROM issue_tracker_stream_expiries ORDER BY stream_id",
+      ),
+    ).toEqual([{ stream_id: "workspaces/ttl/expiring" }]);
+
+    await harness.evictWorkspace("ttl");
+    await eventually(
+      async () =>
+        (
+          await storage.exec<{ present: number }>(
+            "SELECT COUNT(*) present FROM issue_tracker_streams WHERE stream_id = ?",
+            "workspaces/ttl/expiring",
+          )
+        )[0]?.present === 0,
+      5_000,
+    );
+    expect(
+      await storage.exec<{ present: number }>(
+        "SELECT COUNT(*) present FROM issue_tracker_stream_expiries",
+      ),
+    ).toEqual([{ present: 0 }]);
   });
 });

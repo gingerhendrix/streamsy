@@ -39,7 +39,7 @@ export async function workerdHarness(entrypoint = "server/cloudflare.ts"): Promi
       ? { PARITY: { className: "SqlParityObject", useSQLite: true } }
       : { WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true } },
     durableObjectsPersist: join(root, "state"),
-    bindings: { DEPLOYMENT: "workerd-test" },
+    bindings: { DEPLOYMENT: "workerd-test", TEST_FAILPOINTS: "enabled" },
     unsafeInspectDurableObjects: true,
   });
   await mf.ready;

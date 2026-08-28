@@ -19,6 +19,8 @@ import type { ApplicationServices } from "./application.ts";
 import { PLAN_HASH, SCHEMA_VERSION } from "./config.ts";
 import * as AppConfigModule from "./config.ts";
 import { createWorkspaceStreamStorage } from "./cloudflare-stream-storage.ts";
+import type { WorkspaceStreamStorage } from "./cloudflare-stream-storage.ts";
+import { cloudflareNotificationTargetLayer } from "./cloudflare-notifications.ts";
 import {
   DomainPlacementUnavailable,
   PartitionUnavailable,
@@ -32,7 +34,9 @@ import type { StreamGateway } from "./gateway.ts";
 
 const PARTITION_HEADER = "x-streamsy-partition-key";
 const REQUEST_ID_HEADER = "x-request-id";
+const TEST_FAILPOINT_HEADER = "x-streamsy-test-failpoint";
 const ALARM_FLOOR_MS = 1;
+const MAINTENANCE_GUARD_MS = 1_000;
 
 export interface CloudflareEnv {
   readonly WORKSPACES: {
@@ -41,6 +45,7 @@ export interface CloudflareEnv {
   };
   readonly ASSETS?: { fetch(request: Request): Promise<Response> };
   readonly DEPLOYMENT?: string;
+  readonly TEST_FAILPOINTS?: string;
 }
 
 const json = (body: JsonValue, status = 200, requestId?: string): Response => {
@@ -96,8 +101,9 @@ export default {
       if (env.ASSETS === undefined)
         return json({ error: "not-found", detail: url.pathname }, 404, id);
       const response = await env.ASSETS.fetch(request);
-      response.headers.set(REQUEST_ID_HEADER, id);
-      return response;
+      const mutable = new Response(response.body, response);
+      mutable.headers.set(REQUEST_ID_HEADER, id);
+      return mutable;
     }
     if (resolution.kind === "failure") {
       const response = hostFailureResponse(resolution.failure);
@@ -135,6 +141,7 @@ export default {
 interface ActorRuntime {
   readonly workspaceId: string;
   readonly protocol: StreamProtocol;
+  readonly streams: WorkspaceStreamStorage;
   readonly gateway: { readonly fetch: (request: Request) => Promise<Response> };
   readonly runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never>;
 }
@@ -148,6 +155,7 @@ const StoredPartition = Schema.Struct({
 export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
   private runtime: Promise<ActorRuntime> | undefined;
   private turn: Promise<void> = Promise.resolve();
+  private interruptNotificationAfterAccept = false;
 
   private initialize(canonicalKey: string): Promise<ActorRuntime> {
     if (this.runtime !== undefined) return this.runtime;
@@ -162,10 +170,11 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       if (stored === undefined) this.ctx.storage.kv.put(PARTITION_HEADER, canonicalKey);
 
       let protocol!: StreamProtocol;
-      const adapter = createWorkspaceStreamStorage(this.ctx.storage, () => {
-        void this.scheduleAlarm(ALARM_FLOOR_MS);
+      const streams = createWorkspaceStreamStorage(this.ctx.storage);
+      protocol = new StreamProtocol({
+        storage: { adapter: streams.adapter },
+        longPollTimeoutMs: 5_000,
       });
-      protocol = new StreamProtocol({ storage: { adapter }, longPollTimeoutMs: 5_000 });
       const client = directProtocolClient(protocol);
       const gateway = createHttpHandler({ protocol, pathPrefix: "/streams" });
       const sql = SqliteClient.layer({ storage: this.ctx.storage });
@@ -175,12 +184,15 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
         gateway,
         store: Layer.orDie(migratedSqlLayer).pipe(Layer.provide(sql)),
         config: AppConfigModule.layer({ deployment: this.env.DEPLOYMENT ?? "cloudflare-local" }),
+        notificationTarget: cloudflareNotificationTargetLayer(this.ctx.storage, () =>
+          this.consumeNotificationInterrupt(),
+        ),
       }).pipe(Layer.orDie);
       const runtime = ManagedRuntime.make(layer);
       // Building the runtime acquires the one shared DO client and completes all
       // migrations before a triggering request can resolve an application store.
       await runtime.runPromise(Effect.void);
-      return { workspaceId: decoded.id, protocol, gateway, runtime };
+      return { workspaceId: decoded.id, protocol, streams, gateway, runtime };
     });
     this.runtime = initializing;
     return initializing;
@@ -216,16 +228,31 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       }
       const headers = new Headers(request.headers);
       headers.delete(PARTITION_HEADER);
+      headers.delete(TEST_FAILPOINT_HEADER);
       const clean = new Request(request, { headers });
       if (resolution.target === "streams") {
+        await this.preArmMaintenance();
         const response = await actor.gateway.fetch(clean);
         response.headers.set(REQUEST_ID_HEADER, id);
+        await this.reconcileOwedWork(actor);
         return response;
       }
       return await this.serialized(async () => {
+        await this.preArmMaintenance();
+        this.interruptNotificationAfterAccept = this.testFailpoint(
+          request,
+          "notification-after-accept",
+        );
         const response = await actor.runtime.runPromise(handle(clean));
         response.headers.set(REQUEST_ID_HEADER, id);
-        await this.scheduleOwedWork(actor);
+        if (this.testFailpoint(request, "notification-after-accept") && response.status === 499) {
+          throw new Error("injected interruption after notification acceptance");
+        }
+        if (this.testFailpoint(request, "after-application-commit")) {
+          throw new Error("injected failure after application commit");
+        }
+        await this.reconcileOwedWork(actor);
+        this.interruptNotificationAfterAccept = false;
         return response;
       });
     } catch (cause) {
@@ -248,17 +275,24 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
   /** Idempotent maintenance RPC; the alarm handler and local harness share it. */
   private async runMaintenance(): Promise<{ workspaceId: string; delivered: number }> {
     return await this.serialized(async () => {
+      // A fired alarm is one-shot. Replace it before any fallible recovery so
+      // an exception cannot consume the workspace's only durable wake-up.
+      await this.armMaintenanceGuard();
       const actor = await this.current();
+      const now = Date.now();
+      for (const streamId of actor.streams.dueExpiryStreamIds(now)) {
+        await actor.protocol.handleScheduledExpiry(streamId);
+      }
       await actor.runtime.runPromise(advance(actor.workspaceId));
       const delivery = await actor.runtime.runPromise(drainNotifications(actor.workspaceId));
-      await this.scheduleOwedWork(actor);
+      await this.reconcileOwedWork(actor);
       return { workspaceId: actor.workspaceId, delivered: delivery.delivered };
     });
   }
 
-  private async scheduleOwedWork(actor: ActorRuntime): Promise<void> {
+  private async reconcileOwedWork(actor: ActorRuntime): Promise<void> {
     const listed = await actor.runtime.runPromise(listNotifications(actor.workspaceId));
-    const next = listed.entries
+    const nextNotification = listed.entries
       .filter((entry) => entry.state === "pending")
       .reduce<number | undefined>(
         (earliest, entry) =>
@@ -267,13 +301,40 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
             : Math.min(earliest, entry.nextAttemptAtMs),
         undefined,
       );
+    const nextExpiry = actor.streams.nextExpiryAt();
+    const next =
+      nextNotification === undefined
+        ? nextExpiry
+        : nextExpiry === undefined
+          ? nextNotification
+          : Math.min(nextNotification, nextExpiry);
     if (next !== undefined) {
       await this.ctx.storage.setAlarm(Math.max(Date.now() + ALARM_FLOOR_MS, next));
+    } else {
+      await this.ctx.storage.deleteAlarm();
     }
   }
 
-  private scheduleAlarm(delayMs: number): Promise<void> {
-    return this.ctx.storage.setAlarm(Date.now() + Math.max(ALARM_FLOOR_MS, delayMs));
+  private async preArmMaintenance(): Promise<void> {
+    const guard = Date.now() + MAINTENANCE_GUARD_MS;
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > guard) await this.ctx.storage.setAlarm(guard);
+  }
+
+  private armMaintenanceGuard(): Promise<void> {
+    return this.ctx.storage.setAlarm(Date.now() + MAINTENANCE_GUARD_MS);
+  }
+
+  private testFailpoint(request: Request, name: string): boolean {
+    return (
+      this.env.TEST_FAILPOINTS === "enabled" && request.headers.get(TEST_FAILPOINT_HEADER) === name
+    );
+  }
+
+  private consumeNotificationInterrupt(): boolean {
+    if (!this.interruptNotificationAfterAccept) return false;
+    this.interruptNotificationAfterAccept = false;
+    return true;
   }
 
   private serialized<A>(work: () => Promise<A>): Promise<A> {

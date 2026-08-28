@@ -61,6 +61,13 @@ const STREAM_SCHEMA = [
     PRIMARY KEY (stream_id, producer_id),
     FOREIGN KEY (stream_id) REFERENCES issue_tracker_streams(stream_id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS issue_tracker_stream_expiries (
+    stream_id TEXT PRIMARY KEY,
+    expires_at_ms INTEGER NOT NULL,
+    FOREIGN KEY (stream_id) REFERENCES issue_tracker_streams(stream_id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS issue_tracker_stream_expiries_due
+    ON issue_tracker_stream_expiries (expires_at_ms, stream_id)`,
 ] as const;
 
 interface RecordRow extends Record<string, SqlStorageValue> {
@@ -75,13 +82,22 @@ interface ProducerRow extends Record<string, SqlStorageValue> {
   readonly epoch: number;
   readonly last_seq: number;
 }
+interface ExpiryRow extends Record<string, SqlStorageValue> {
+  readonly stream_id: string;
+  readonly expires_at_ms: number;
+}
 type FailureReason = "offset" | "closed" | "producer";
+
+export interface WorkspaceStreamStorage {
+  readonly adapter: StorageAdapter;
+  readonly dueExpiryStreamIds: (nowMs: number) => readonly string[];
+  readonly nextExpiryAt: () => number | undefined;
+}
 
 /** All streams selected for one workspace stay inside that workspace object. */
 export function createWorkspaceStreamStorage(
   storage: DurableObjectStorage,
-  onExpiryChange: () => void,
-): StorageAdapter {
+): WorkspaceStreamStorage {
   const sql = storage.sql;
   const waiters = new Set<() => void>();
   for (const statement of STREAM_SCHEMA) sql.exec(statement);
@@ -175,7 +191,7 @@ export function createWorkspaceStreamStorage(
       waiters.add(done);
     });
 
-  return {
+  const adapter: StorageAdapter = {
     getRecord: async (streamId) => readRecord(streamId),
     async listMessages(streamId, options: ListMessagesOptions = {}) {
       const clauses = ["stream_id = ?"];
@@ -261,6 +277,7 @@ export function createWorkspaceStreamStorage(
         }
         sql.exec("DELETE FROM issue_tracker_messages WHERE stream_id = ?", plan.streamId);
         sql.exec("DELETE FROM issue_tracker_producers WHERE stream_id = ?", plan.streamId);
+        sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", plan.streamId);
         sql.exec("DELETE FROM issue_tracker_streams WHERE stream_id = ?", plan.streamId);
         return "purged" as const;
       });
@@ -278,7 +295,34 @@ export function createWorkspaceStreamStorage(
         options,
       );
     },
-    scheduleExpiry: async () => onExpiryChange(),
-    cancelExpiry: async () => onExpiryChange(),
+    scheduleExpiry: async (streamId, at) => {
+      sql.exec(
+        `INSERT INTO issue_tracker_stream_expiries(stream_id, expires_at_ms) VALUES (?, ?)
+         ON CONFLICT(stream_id) DO UPDATE SET expires_at_ms = excluded.expires_at_ms`,
+        streamId,
+        at,
+      );
+    },
+    cancelExpiry: async (streamId) => {
+      sql.exec("DELETE FROM issue_tracker_stream_expiries WHERE stream_id = ?", streamId);
+    },
+  };
+  return {
+    adapter,
+    dueExpiryStreamIds: (nowMs) =>
+      [
+        ...sql.exec<ExpiryRow>(
+          "SELECT stream_id, expires_at_ms FROM issue_tracker_stream_expiries" +
+            " WHERE expires_at_ms <= ? ORDER BY expires_at_ms, stream_id",
+          nowMs,
+        ),
+      ].map((row) => row.stream_id),
+    nextExpiryAt: () =>
+      [
+        ...sql.exec<ExpiryRow>(
+          "SELECT stream_id, expires_at_ms FROM issue_tracker_stream_expiries" +
+            " ORDER BY expires_at_ms, stream_id LIMIT 1",
+        ),
+      ][0]?.expires_at_ms,
   };
 }

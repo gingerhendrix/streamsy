@@ -8,30 +8,48 @@ const SnapshotParityResult = Schema.Struct({
   rows: Schema.Array(
     Schema.Struct({ key: Schema.String, value: Schema.Struct({ revision: Schema.Finite }) }),
   ),
+  transactionCalls: Schema.Finite,
+  maxTransactionDepth: Schema.Finite,
+  materializedStatements: Schema.Finite,
 });
 const HistoryParityResult = Schema.Struct({
   epoch: Schema.Finite,
   first: Schema.Finite,
   latest: Schema.Finite,
+  transactionCalls: Schema.Finite,
+  maxTransactionDepth: Schema.Finite,
+  materializedStatements: Schema.Finite,
 });
-const ChangesParityResult = Schema.Array(
-  Schema.Struct({
-    position: Schema.Struct({ epoch: Schema.Finite, sequence: Schema.Finite }),
-    changes: Schema.Array(Schema.Struct({ kind: Schema.String })),
-  }),
-);
-const CheckpointParityResult = Schema.Struct({
-  generation: Schema.Finite,
-  sourceCursor: Schema.String,
-  entries: Schema.Array(
-    Schema.Struct({ key: Schema.String, value: Schema.Struct({ revision: Schema.Finite }) }),
+const ChangesParityResult = Schema.Struct({
+  batches: Schema.Array(
+    Schema.Struct({
+      position: Schema.Struct({ epoch: Schema.Finite, sequence: Schema.Finite }),
+      changes: Schema.Array(Schema.Struct({ kind: Schema.String })),
+    }),
   ),
+  transactionCalls: Schema.Finite,
+  maxTransactionDepth: Schema.Finite,
+  materializedStatements: Schema.Finite,
+});
+const CheckpointParityResult = Schema.Struct({
+  checkpoint: Schema.Struct({
+    generation: Schema.Finite,
+    sourceCursor: Schema.String,
+    entries: Schema.Array(
+      Schema.Struct({ key: Schema.String, value: Schema.Struct({ revision: Schema.Finite }) }),
+    ),
+  }),
+  transactionCalls: Schema.Finite,
+  maxTransactionDepth: Schema.Finite,
+  materializedStatements: Schema.Finite,
 });
 const OutboxRollbackResult = Schema.Struct({
   failed: Schema.Boolean,
+  schemaAfterRollback: Schema.Boolean,
   rollbackCount: Schema.Finite,
   retried: Schema.Struct({ enqueued: Schema.Finite, absorbed: Schema.Finite }),
   retryCount: Schema.Finite,
+  schemaAfterRetry: Schema.Boolean,
 });
 const ReceiptRollbackResult = Schema.Struct({
   failed: Schema.Boolean,
@@ -58,38 +76,61 @@ async function run<S extends Schema.ConstraintDecoder<unknown>>(
 }
 
 describe("@effect/sql-sqlite-do parity on full DurableObjectStorage", () => {
-  test("snapshotRows materializes progress and rows from one revision", async () => {
+  test("snapshotRows atomically materializes its complete statement in one top-level transaction", async () => {
     expect(await run("/snapshot", SnapshotParityResult)).toEqual({
       sourceCursor: "1",
       rows: [{ key: "issue", value: { revision: 1 } }],
+      transactionCalls: 1,
+      maxTransactionDepth: 1,
+      materializedStatements: 1,
     });
   });
 
-  test("historyBounds cannot mix the retained range and epoch", async () => {
-    expect(await run("/history", HistoryParityResult)).toEqual({ epoch: 1, first: 1, latest: 1 });
+  test("historyBounds atomically materializes its complete statement in one top-level transaction", async () => {
+    expect(await run("/history", HistoryParityResult)).toEqual({
+      epoch: 1,
+      first: 1,
+      latest: 1,
+      transactionCalls: 1,
+      maxTransactionDepth: 1,
+      materializedStatements: 1,
+    });
   });
 
-  test("changesAfter retains every row of the selected pre-prune batch", async () => {
-    const batches = await run("/changes", ChangesParityResult);
+  test("changesAfter atomically materializes its complete statement in one top-level transaction", async () => {
+    const result = await run("/changes", ChangesParityResult);
+    const batches = result.batches;
     expect(batches).toHaveLength(1);
     expect(batches[0]?.position).toEqual({ epoch: 1, sequence: 1 });
     expect(batches[0]?.changes).toHaveLength(1);
+    expect(result).toMatchObject({
+      transactionCalls: 1,
+      maxTransactionDepth: 1,
+      materializedStatements: 1,
+    });
   });
 
-  test("loadCheckpoint retains the selected manifest and all entries", async () => {
+  test("loadCheckpoint atomically materializes its complete statement in one top-level transaction", async () => {
     expect(await run("/checkpoint", CheckpointParityResult)).toMatchObject({
-      generation: 1,
-      sourceCursor: "1",
-      entries: [{ key: "issue", value: { revision: 1 } }],
+      checkpoint: {
+        generation: 1,
+        sourceCursor: "1",
+        entries: [{ key: "issue", value: { revision: 1 } }],
+      },
+      transactionCalls: 1,
+      maxTransactionDepth: 1,
+      materializedStatements: 1,
     });
   });
 
   test("rolled-back first enqueue retries on the same resident backing", async () => {
     expect(await run("/outbox-rollback", OutboxRollbackResult)).toEqual({
       failed: true,
+      schemaAfterRollback: false,
       rollbackCount: 0,
       retried: { enqueued: 1, absorbed: 0 },
       retryCount: 1,
+      schemaAfterRetry: true,
     });
   });
 

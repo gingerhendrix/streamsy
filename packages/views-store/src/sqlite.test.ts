@@ -140,7 +140,7 @@ const withInterleavedStores = async <A>(
 
 test("snapshotRows reads its cursor and rows from one committed revision", async () => {
   const result = await withInterleavedStores(
-    "SELECT source_cursor FROM streamsy_view_partitions",
+    "SELECT p.source_cursor,v.value_key,v.value_json",
     (store) =>
       Effect.runPromise(
         store.commit(
@@ -198,7 +198,7 @@ test("historyBounds reads its retained range and epoch from one committed revisi
 
 test("changesAfter keeps a selected batch and its change rows in one snapshot", async () => {
   const result = await withInterleavedStores(
-    "SELECT history_seq,source_cursor FROM streamsy_view_change_batches",
+    "WITH p AS (SELECT",
     (store) =>
       Effect.runPromise(
         store.commit(
@@ -225,7 +225,7 @@ test("changesAfter keeps a selected batch and its change rows in one snapshot", 
 test("loadCheckpoint keeps an active manifest and its entries in one snapshot", async () => {
   const descriptor = { ...identity, reducerId: "reducer", reducerVersion: 1 };
   const result = await withInterleavedStores(
-    "SELECT generation,source_cursor,created_at_ms,entry_count",
+    "WITH target AS (SELECT generation,source_cursor,created_at_ms,entry_count",
     (store) =>
       Effect.runPromise(
         store.saveCheckpoint({

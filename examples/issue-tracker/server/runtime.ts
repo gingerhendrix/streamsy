@@ -17,7 +17,11 @@ import * as Commands from "./commands.ts";
 import type { AppConfig } from "./config.ts";
 import * as GatewayModule from "./gateway.ts";
 import type { StreamGateway } from "./gateway.ts";
-import { notificationTargetLayer, type NotificationTargetOptions } from "./notifications.ts";
+import {
+  NotificationTarget,
+  notificationTargetLayer,
+  type NotificationTargetOptions,
+} from "./notifications.ts";
 import { sinkLayer } from "./sink.ts";
 import { stateSourceProtocolLayer } from "./state-ingestion.ts";
 import type { IssueStore } from "./store.ts";
@@ -39,6 +43,8 @@ export interface ApplicationLayerOptions {
   readonly store: Layer.Layer<IssueStore | OutboxStore>;
   /** Where assignment notifications are actually delivered. */
   readonly notifications?: NotificationTargetOptions;
+  /** Placement-specific durable notification target, when one is available. */
+  readonly notificationTarget?: Layer.Layer<NotificationTarget>;
 }
 
 export const applicationLayer = (
@@ -52,6 +58,6 @@ export const applicationLayer = (
     GatewayModule.layer(options.gateway),
     sinkLayer(options.protocol),
     stateSourceProtocolLayer(options.protocol),
-    notificationTargetLayer(options.notifications),
+    options.notificationTarget ?? notificationTargetLayer(options.notifications),
     options.config,
   );

@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- This is a workerd-only test executable and Durable Object platform edge. */
 /* oxlint-disable effecttsgo/new-promise -- Deterministic test gates deliberately expose Promise controls to the workerd handler. */
+/* oxlint-disable effecttsgo/missing-effect-context, effecttsgo/missing-effect-error -- Generic test proxy preserves arbitrary transaction channels through an asserted overload. */
 /* oxlint-disable typescript/no-unsafe-type-assertion -- The test proxy preserves the exact SqlClient surface and taps one selected query. */
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { OutboxUnavailable, type OutboxBacking } from "@streamsy/effect-sink";
@@ -35,17 +36,33 @@ const relation = { ...identity, id: "rows" };
 const clientRuntime = (storage: DurableObjectState["storage"]) =>
   ManagedRuntime.make(SqliteClient.layer({ storage }));
 
-const interleaved = (
+interface ReadEvidence {
+  readonly transactionCalls: number;
+  readonly maxTransactionDepth: number;
+  readonly materializedStatements: number;
+}
+interface ObservedRead {
+  readonly client: SqlClient.SqlClient;
+  readonly evidence: () => ReadEvidence;
+}
+
+const observedRead = (
   sql: SqlClient.SqlClient,
   marker: string,
   reached: () => void,
   resume: Promise<void>,
-): SqlClient.SqlClient => {
+): ObservedRead => {
   let paused = false;
+  let transactionCalls = 0;
+  let transactionDepth = 0;
+  let maxTransactionDepth = 0;
+  let materializedStatements = 0;
   // SAFETY: the proxy delegates every client member and preserves unsafe's overload contract.
   const unsafe = ((statement: string, parameters?: ReadonlyArray<unknown>) => {
     const result = sql.unsafe<object>(statement, parameters);
-    if (paused || !statement.includes(marker)) return result;
+    if (!statement.includes(marker)) return result;
+    materializedStatements += 1;
+    if (paused) return result;
     paused = true;
     return Effect.flatMap(result, (rows) =>
       Effect.as(
@@ -57,18 +74,48 @@ const interleaved = (
       ),
     );
   }) as SqlClient.SqlClient["unsafe"];
-  // SAFETY: replacing unsafe is the only structural change to this test-only SqlClient proxy.
-  return {
+  // SAFETY: the wrapper preserves the generic transaction effect and only observes its lifetime.
+  const withTransaction = ((effect: Effect.Effect<unknown>) =>
+    Effect.suspend(() => {
+      transactionCalls += 1;
+      transactionDepth += 1;
+      maxTransactionDepth = Math.max(maxTransactionDepth, transactionDepth);
+      return sql.withTransaction(effect).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            transactionDepth -= 1;
+          }),
+        ),
+      );
+    })) as SqlClient.SqlClient["withTransaction"];
+  // SAFETY: unsafe and withTransaction retain their original overload contracts.
+  const client = {
     ...sql,
     unsafe,
+    withTransaction,
   } as SqlClient.SqlClient;
+  return {
+    client,
+    evidence: () => ({ transactionCalls, maxTransactionDepth, materializedStatements }),
+  };
 };
+
+interface SnapshotReadResult extends Snapshot, ReadEvidence {}
+interface HistoryReadResult extends HistoryBounds, ReadEvidence {}
+interface ChangesReadResult extends ReadEvidence {
+  readonly batches: readonly StoredChangeBatch[];
+}
+interface CheckpointReadResult extends ReadEvidence {
+  readonly checkpoint: Checkpoint | undefined;
+}
 
 interface OutboxRollbackResult {
   readonly failed: boolean;
+  readonly schemaAfterRollback: boolean;
   readonly rollbackCount: number;
   readonly retried: { readonly enqueued: number; readonly absorbed: number };
   readonly retryCount: number;
+  readonly schemaAfterRetry: boolean;
 }
 
 interface ReceiptRollbackResult {
@@ -93,7 +140,7 @@ export class SqlParityObject {
     return Response.json({ error: "not-found" }, { status: 404 });
   }
 
-  private async snapshot(): Promise<Snapshot> {
+  private async snapshot(): Promise<SnapshotReadResult> {
     const readerRuntime = clientRuntime(this.ctx.storage);
     const writerRuntime = clientRuntime(this.ctx.storage);
     try {
@@ -119,14 +166,13 @@ export class SqlParityObject {
       const resumed = new Promise<void>((resolve) => {
         resume = resolve;
       });
-      const reader = sqliteService(
-        interleaved(
-          readerSql,
-          "SELECT source_cursor FROM streamsy_view_partitions",
-          markReached,
-          resumed,
-        ),
+      const observed = observedRead(
+        readerSql,
+        "SELECT p.source_cursor,v.value_key,v.value_json",
+        markReached,
+        resumed,
       );
+      const reader = sqliteService(observed.client);
       const reading = Effect.runPromise(reader.snapshotRows(relation));
       await reached;
       await Effect.runPromise(
@@ -140,14 +186,14 @@ export class SqlParityObject {
         }),
       );
       resume();
-      return await reading;
+      return { ...(await reading), ...observed.evidence() };
     } finally {
       await readerRuntime.dispose();
       await writerRuntime.dispose();
     }
   }
 
-  private async history(): Promise<HistoryBounds> {
+  private async history(): Promise<HistoryReadResult> {
     return this.withViewClients(async (readerSql, writerSql) => {
       const writer = sqliteService(writerSql);
       await Effect.runPromise(
@@ -160,14 +206,13 @@ export class SqlParityObject {
         }),
       );
       const gate = makeGate();
-      const reader = sqliteService(
-        interleaved(
-          readerSql,
-          "SELECT MIN(history_seq) first,MAX(history_seq) latest",
-          gate.reached,
-          gate.resume,
-        ),
+      const observed = observedRead(
+        readerSql,
+        "SELECT MIN(history_seq) first,MAX(history_seq) latest",
+        gate.reached,
+        gate.resume,
       );
+      const reader = sqliteService(observed.client);
       const reading = Effect.runPromise(reader.historyBounds(identity));
       await gate.wait;
       await Effect.runPromise(
@@ -195,11 +240,11 @@ export class SqlParityObject {
         ),
       );
       gate.continue();
-      return reading;
+      return { ...(await reading), ...observed.evidence() };
     });
   }
 
-  private async changes(): Promise<readonly StoredChangeBatch[]> {
+  private async changes(): Promise<ChangesReadResult> {
     return this.withViewClients(async (readerSql, writerSql) => {
       const writer = sqliteService(writerSql);
       await Effect.runPromise(
@@ -215,14 +260,8 @@ export class SqlParityObject {
         }),
       );
       const gate = makeGate();
-      const reader = sqliteService(
-        interleaved(
-          readerSql,
-          "SELECT history_seq,source_cursor FROM streamsy_view_change_batches",
-          gate.reached,
-          gate.resume,
-        ),
-      );
+      const observed = observedRead(readerSql, "WITH p AS (SELECT", gate.reached, gate.resume);
+      const reader = sqliteService(observed.client);
       const reading = Effect.runPromise(reader.changesAfter(identity, undefined, 10));
       await gate.wait;
       await Effect.runPromise(
@@ -238,11 +277,11 @@ export class SqlParityObject {
         ),
       );
       gate.continue();
-      return reading;
+      return { batches: await reading, ...observed.evidence() };
     });
   }
 
-  private async checkpoint(): Promise<Checkpoint | undefined> {
+  private async checkpoint(): Promise<CheckpointReadResult> {
     return this.withViewClients(async (readerSql, writerSql) => {
       const descriptor = { ...identity, reducerId: "reducer", reducerVersion: 1 };
       const writer = sqliteService(writerSql);
@@ -255,14 +294,13 @@ export class SqlParityObject {
         }),
       );
       const gate = makeGate();
-      const reader = sqliteService(
-        interleaved(
-          readerSql,
-          "SELECT generation,source_cursor,created_at_ms,entry_count",
-          gate.reached,
-          gate.resume,
-        ),
+      const observed = observedRead(
+        readerSql,
+        "WITH target AS (SELECT generation,source_cursor,created_at_ms,entry_count",
+        gate.reached,
+        gate.resume,
       );
+      const reader = sqliteService(observed.client);
       const reading = Effect.runPromise(reader.loadCheckpoint(descriptor));
       await gate.wait;
       await Effect.runPromise(
@@ -275,7 +313,7 @@ export class SqlParityObject {
         }),
       );
       gate.continue();
-      return reading;
+      return { checkpoint: await reading, ...observed.evidence() };
     });
   }
 
@@ -283,9 +321,6 @@ export class SqlParityObject {
     const runtime = clientRuntime(this.ctx.storage);
     try {
       const sql = runtime.runSync(SqliteClient.SqliteClient);
-      await runtime.runPromise(
-        migrateApplicationStore().pipe(Effect.provideService(SqlClient.SqlClient, sql)),
-      );
       const backing = createSqliteOutboxBacking(sql);
       const draft = {
         sink: "parity",
@@ -297,14 +332,36 @@ export class SqlParityObject {
       const failed = await Effect.runPromiseExit(
         sql.withTransaction(backing.enqueue([draft]).pipe(Effect.andThen(Effect.fail("rollback")))),
       );
-      const afterRollback = await Effect.runPromise(backing.list("parity", "main"));
+      const schemaAfterRollback =
+        (
+          await Effect.runPromise(
+            sql.unsafe<{ readonly present: number }>(
+              "SELECT COUNT(*) present FROM sqlite_master" +
+                " WHERE type='table' AND name='streamsy_effect_outbox'",
+            ),
+          )
+        )[0]?.present === 1;
+      const rollbackCount = schemaAfterRollback
+        ? (await Effect.runPromise(backing.list("parity", "main"))).length
+        : 0;
       const retried = await Effect.runPromise(backing.enqueue([draft]));
       const afterRetry = await Effect.runPromise(backing.list("parity", "main"));
+      const schemaAfterRetry =
+        (
+          await Effect.runPromise(
+            sql.unsafe<{ readonly present: number }>(
+              "SELECT COUNT(*) present FROM sqlite_master" +
+                " WHERE type='table' AND name='streamsy_effect_outbox'",
+            ),
+          )
+        )[0]?.present === 1;
       return {
         failed: Exit.isFailure(failed),
-        rollbackCount: afterRollback.length,
+        schemaAfterRollback,
+        rollbackCount,
         retried,
         retryCount: afterRetry.length,
+        schemaAfterRetry,
       };
     } finally {
       await runtime.dispose();
