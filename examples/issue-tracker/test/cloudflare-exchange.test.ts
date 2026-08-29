@@ -12,8 +12,6 @@ const InboxBody = Schema.Struct({ userId: Schema.String, rows: Schema.Array(Sche
 const CursorBody = Schema.Struct({ cursors: Schema.Array(Schema.Struct({
   source: Schema.Struct({ kind: Schema.String, id: Schema.String }), applied: Schema.Number,
 })) });
-const decode = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown): S["Type"] =>
-  Schema.decodeUnknownSync(schema)(value);
 async function eventually<A>(read: () => Promise<A | undefined>, timeoutMs = 4_000): Promise<A> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -40,7 +38,7 @@ describe("Integration 3B cross-object exchange", () => {
     await harness.evictWorkspace("cold");
     await harness.evictGlobal();
     const inbox = await eventually(async () => {
-      const current = decode(InboxBody, await (await harness.fetch("/api/users/ada/inbox")).json());
+      const current = Schema.decodeUnknownSync(InboxBody)(await (await harness.fetch("/api/users/ada/inbox")).json());
       return current.rows.length === 1 ? current : undefined;
     });
     expect(inbox).toMatchObject({ userId: "ada", rows: [{ workspaceId: "cold", issueId: "issue-cold", userId: "ada" }] });
@@ -56,9 +54,9 @@ describe("Integration 3B cross-object exchange", () => {
     await harness.evictUser("ada");
     await harness.evictGlobal();
     await harness.runGlobalExchange();
-    const inbox = decode(InboxBody, await (await harness.fetch("/api/users/ada/inbox")).json());
+    const inbox = Schema.decodeUnknownSync(InboxBody)(await (await harness.fetch("/api/users/ada/inbox")).json());
     expect(inbox.rows).toHaveLength(1);
-    const state = decode(CursorBody, await (await harness.fetch("/api/global/exchange")).json());
+    const state = Schema.decodeUnknownSync(CursorBody)(await (await harness.fetch("/api/global/exchange")).json());
     expect(state.cursors).toMatchObject([{ source: { kind: "workspace", id: "main" }, applied: 1 }]);
   });
 
@@ -67,8 +65,8 @@ describe("Integration 3B cross-object exchange", () => {
     await assignment(harness, "left", "issue-left", "ada");
     await assignment(harness, "right", "issue-right", "ada");
     await harness.runGlobalExchange();
-    const inbox = decode(InboxBody, await (await harness.fetch("/api/users/ada/inbox")).json());
-    expect(inbox.rows.map((row: { workspaceId: string }) => row.workspaceId).sort()).toEqual(["left", "right"]);
+    const inbox = Schema.decodeUnknownSync(InboxBody)(await (await harness.fetch("/api/users/ada/inbox")).json());
+    expect(inbox.rows.map((row) => row.workspaceId).toSorted()).toEqual(["left", "right"]);
     const ids = await harness.mf.listDurableObjectIds("WorkspacePartitionObject");
     expect(ids).toHaveLength(2);
   });

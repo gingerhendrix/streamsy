@@ -957,6 +957,7 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
           " VALUES (?, ?, ?, 'allocated', ?, ?) ON CONFLICT(attempt_id) DO NOTHING",
         [attemptId, sourceName, cursor.arrival, attemptHash, Date.now()],
       );
+      return undefined;
     })));
     const pageResponse = await this.env.WORKSPACES.get(this.env.WORKSPACES.idFromName(sourceName)).fetch(
       new Request("http://workspace.internal/_streamsy/exchange/read-page", { method: "POST", headers: { "content-type": "application/json", [PARTITION_HEADER]: sourceName }, body: JSON.stringify(pageRequest) }),
@@ -995,11 +996,12 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
       const cursors = yield* ExchangeCursorStore;
       yield* sql.withTransaction(Effect.gen(function* () {
         const current = yield* cursors.read(EXCHANGE_NAME, EXCHANGE_VERSION, parsed);
-        if (current.arrival !== cursor.arrival) return;
-        yield* cursors.advance({ ...current, arrival: page.toArrival, applied: current.applied + applied });
-        yield* sql.unsafe<Record<string, never>>("UPDATE exchange_sources SET last_exchanged_at_ms = ? WHERE source = ?", [Date.now(), sourceName]);
-        yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=0, next_eligible_at_ms=0, last_error=NULL WHERE source = ?", [sourceName]);
-        yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, applied, created_at_ms, completed_at_ms) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?) ON CONFLICT(attempt_id) DO UPDATE SET status='completed', completed_at_ms=excluded.completed_at_ms", [attemptId, sourceName, cursor.arrival, page.requestHash, applied, Date.now(), Date.now()]);
+        if (current.arrival === cursor.arrival) {
+          yield* cursors.advance({ ...current, arrival: page.toArrival, applied: current.applied + applied });
+          yield* sql.unsafe<Record<string, never>>("UPDATE exchange_sources SET last_exchanged_at_ms = ? WHERE source = ?", [Date.now(), sourceName]);
+          yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=0, next_eligible_at_ms=0, last_error=NULL WHERE source = ?", [sourceName]);
+          yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, applied, created_at_ms, completed_at_ms) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?) ON CONFLICT(attempt_id) DO UPDATE SET status='completed', completed_at_ms=excluded.completed_at_ms", [attemptId, sourceName, cursor.arrival, page.requestHash, applied, Date.now(), Date.now()]);
+        }
       }));
     }));
     return !page.upToDate;

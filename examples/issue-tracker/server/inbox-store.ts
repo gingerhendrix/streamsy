@@ -1,6 +1,7 @@
 /** One user's inbox, backed by the placement's shared Effect SQL client. */
 import { Context, Effect, Layer, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import { compareInboxRows, InboxRow } from "../domain/inbox.ts";
 import { InboxRestorePoison, InboxUnavailable } from "./domain-errors.ts";
 
@@ -104,7 +105,7 @@ export const inboxSqlLayer: Layer.Layer<InboxStore, never, SqlClient.SqlClient> 
   Effect.map(SqlClient.SqlClient, inboxService),
 );
 
-export const migratedInboxSqlLayer: Layer.Layer<InboxStore, unknown, SqlClient.SqlClient> =
+export const migratedInboxSqlLayer: Layer.Layer<InboxStore, SqlError, SqlClient.SqlClient> =
   Layer.effect(
     InboxStore,
     Effect.gen(function* () {

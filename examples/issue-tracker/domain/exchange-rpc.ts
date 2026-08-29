@@ -59,7 +59,18 @@ export const ApplyInboxBatchResult = Schema.Struct({
 });
 export type ApplyInboxBatchResult = typeof ApplyInboxBatchResult.Type;
 
-export async function stableHash(value: unknown): Promise<string> {
+export type StableHashInput =
+  | RegisterSourceRequest
+  | ReadAssignmentPageRequest
+  | {
+      readonly source: typeof WorkspaceSource.Type;
+      readonly destination: typeof UserDestination.Type;
+      readonly fromArrival: number;
+      readonly toArrival: number;
+      readonly rows: readonly typeof InboxRow.Type[];
+    };
+
+export async function stableHash(value: StableHashInput): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");

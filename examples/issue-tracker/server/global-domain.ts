@@ -2,6 +2,7 @@
 import type { JsonValue } from "@streamsy/core";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import { partitionKeyString } from "../domain/domains.ts";
 import { EXCHANGE_SCHEMA, exchangeCursorService, ExchangeCursorStore, exchangeMemoryLayer } from "./exchange-store.ts";
 import { ExchangeSourceRegistry, sourceRegistryMemoryLayer, sourceRegistryService, SOURCE_REGISTRY_SCHEMA } from "./source-registry.ts";
@@ -16,7 +17,7 @@ export const migrateGlobalStore = Effect.fn("GlobalStore.migrate")(function* () 
   }
 });
 
-export const migratedGlobalSqlLayer: Layer.Layer<GlobalServices, unknown, SqlClient.SqlClient> =
+export const migratedGlobalSqlLayer: Layer.Layer<GlobalServices, SqlError, SqlClient.SqlClient> =
   Layer.effectContext(Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* migrateGlobalStore();
