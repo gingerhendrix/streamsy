@@ -16,7 +16,20 @@ import {
   type JsonValue,
 } from "@streamsy/core";
 import { Effect, Layer, ManagedRuntime, Schema } from "effect";
-import { partitionKeyString, parsePartitionKey, workspaceKey } from "../domain/domains.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { globalKey, partitionKeyString, parsePartitionKey, userKey, workspaceKey } from "../domain/domains.ts";
+import {
+  ApplyInboxBatchRequest,
+  ApplyInboxBatchResult,
+  EXCHANGE_NAME,
+  EXCHANGE_VERSION,
+  ReadAssignmentPageRequest,
+  ReadAssignmentPageResult,
+  RegisterSourceRequest,
+  stableHash,
+} from "../domain/exchange-rpc.ts";
+import { assignmentInbox } from "../domain/exchange.ts";
+import type { InboxRow } from "../domain/inbox.ts";
 import { issues } from "../domain/declaration.ts";
 import { advance } from "./maintenance.ts";
 import { drainNotifications, listNotifications } from "./application.ts";
@@ -26,16 +39,17 @@ import * as AppConfigModule from "./config.ts";
 import { createWorkspaceStreamStorage } from "./cloudflare-stream-storage.ts";
 import type { WorkspaceStreamStorage } from "./cloudflare-stream-storage.ts";
 import { cloudflareNotificationTargetLayer } from "./cloudflare-notifications.ts";
-import {
-  DomainPlacementUnavailable,
-  PartitionUnavailable,
-  hostFailureResponse,
-} from "./host-errors.ts";
+import { PartitionUnavailable, hostFailureResponse } from "./host-errors.ts";
 import { invalidSinkParamsResponse, resolveRoute } from "./host-routing.ts";
 import { handle } from "./router.ts";
 import { applicationLayer } from "./runtime.ts";
 import { migratedSqlLayer } from "./store-sql.ts";
 import type { StreamGateway } from "./gateway.ts";
+import { readAssignmentActivity, EXCHANGE_SOURCE_PAGE_LIMIT } from "./exchange-source.ts";
+import { InboxStore, migratedInboxSqlLayer } from "./inbox-store.ts";
+import { handleUserRequest, type UserServices } from "./user-domain.ts";
+import { handleGlobalRequest, migratedGlobalSqlLayer, type GlobalServices } from "./global-domain.ts";
+import { ExchangeCursorStore } from "./exchange-store.ts";
 
 const PARTITION_HEADER = "x-streamsy-partition-key";
 const REQUEST_ID_HEADER = "x-request-id";
@@ -46,6 +60,14 @@ const EXPIRY_BATCH_SIZE = 8;
 
 export interface CloudflareEnv {
   readonly WORKSPACES: {
+    idFromName(name: string): NonNullable<unknown>;
+    get(id: NonNullable<unknown>): { fetch(request: Request): Promise<Response> };
+  };
+  readonly USERS: {
+    idFromName(name: string): NonNullable<unknown>;
+    get(id: NonNullable<unknown>): { fetch(request: Request): Promise<Response> };
+  };
+  readonly GLOBALS: {
     idFromName(name: string): NonNullable<unknown>;
     get(id: NonNullable<unknown>): { fetch(request: Request): Promise<Response> };
   };
@@ -124,21 +146,28 @@ export default {
       response.headers.set(REQUEST_ID_HEADER, id);
       return response;
     }
-    if (resolution.key.kind !== "workspace") {
-      const response = hostFailureResponse(
-        new DomainPlacementUnavailable({
-          domain: resolution.key.kind,
-          id: resolution.key.id,
-        }),
-      );
-      response.headers.set(REQUEST_ID_HEADER, id);
-      return response;
-    }
     const key = partitionKeyString(resolution.key);
     try {
-      return await env.WORKSPACES.get(env.WORKSPACES.idFromName(key)).fetch(
-        forward(request, key, id),
-      );
+      if (resolution.key.kind === "workspace") {
+        const globalName = partitionKeyString(globalKey());
+        const register: typeof RegisterSourceRequest.Type = {
+          operationId: `register/${EXCHANGE_NAME}/${EXCHANGE_VERSION}/${key}`,
+          exchange: EXCHANGE_NAME,
+          version: EXCHANGE_VERSION,
+          source: resolution.key,
+        };
+        const registered = await env.GLOBALS.get(env.GLOBALS.idFromName(globalName)).fetch(
+          new Request("http://global.internal/_streamsy/exchange/register", {
+            method: "POST",
+            headers: { "content-type": "application/json", [PARTITION_HEADER]: globalName },
+            body: JSON.stringify(register),
+          }),
+        );
+        if (!registered.ok) return new Response(registered.body, registered);
+        return await env.WORKSPACES.get(env.WORKSPACES.idFromName(key)).fetch(forward(request, key, id));
+      }
+      const namespace = resolution.key.kind === "user" ? env.USERS : env.GLOBALS;
+      return await namespace.get(namespace.idFromName(key)).fetch(forward(request, key, id));
     } catch (cause) {
       const response = hostFailureResponse(
         new PartitionUnavailable({
@@ -158,6 +187,8 @@ interface ActorRuntime {
   readonly streams: WorkspaceStreamStorage;
   readonly gateway: { readonly fetch: (request: Request) => Promise<Response> };
   readonly runtime: ManagedRuntime.ManagedRuntime<ApplicationServices | StreamGateway, never>;
+  readonly sql: SqlClient.SqlClient;
+  readonly sqlRuntime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, never>;
 }
 
 interface GuardedOperation {
@@ -233,12 +264,16 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       });
       const client = directProtocolClient(protocol);
       const gateway = createHttpHandler({ protocol, pathPrefix: "/streams" });
-      const sql = SqliteClient.layer({ storage: this.ctx.storage });
+      const sqlLayer = SqliteClient.layer({ storage: this.ctx.storage }).pipe(Layer.orDie);
+      const sqlRuntime = ManagedRuntime.make(sqlLayer);
+      const sql = sqlRuntime.runSync(SqlClient.SqlClient);
       const layer = applicationLayer({
         client,
         protocol,
         gateway,
-        store: Layer.orDie(migratedSqlLayer).pipe(Layer.provide(sql)),
+        store: Layer.orDie(migratedSqlLayer).pipe(
+          Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+        ),
         config: AppConfigModule.layer({ deployment: this.env.DEPLOYMENT ?? "cloudflare-local" }),
         notificationTarget: cloudflareNotificationTargetLayer(this.ctx.storage, () =>
           this.consumeNotificationInterrupt(),
@@ -248,7 +283,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       // Building the runtime acquires the one shared DO client and completes all
       // migrations before a triggering request can resolve an application store.
       await runtime.runPromise(Effect.void);
-      return { workspaceId: decoded.id, protocol, streams, gateway, runtime };
+      return { workspaceId: decoded.id, protocol, streams, gateway, runtime, sql, sqlRuntime };
     });
     this.runtime = initializing;
     return initializing;
@@ -269,6 +304,10 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
     const id = requestId(request);
     try {
       const url = new URL(request.url);
+      if (url.pathname === "/_streamsy/exchange/read-page") {
+        const actor = await this.current(request);
+        return await this.readExchangePage(request, actor, id);
+      }
       if (url.pathname === "/_streamsy/maintenance") {
         const actor = await this.current(request);
         if (this.env.TEST_FAILPOINTS === "enabled") {
@@ -431,6 +470,48 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
 
   async alarm(alarmInfo?: AlarmInvocationInfo): Promise<void> {
     await this.runMaintenance(alarmInfo);
+  }
+
+  private async readExchangePage(request: Request, actor: ActorRuntime, id: string): Promise<Response> {
+    if (request.method !== "POST") return json({ error: "method-not-allowed" }, 405, id);
+    const input = Schema.decodeUnknownSync(ReadAssignmentPageRequest)(await request.json());
+    if (partitionKeyString(input.source) !== `workspace:${actor.workspaceId}`) {
+      return json({ error: "wrong-workspace-object", detail: actor.workspaceId }, 409, id);
+    }
+    if (input.limit < 1 || input.limit > EXCHANGE_SOURCE_PAGE_LIMIT) {
+      return json({ error: "invalid-page-limit" }, 400, id);
+    }
+    const requestHash = await stableHash(input);
+    const sql = actor.sql;
+    await Effect.runPromise(sql.unsafe<Record<string, never>>(
+      "CREATE TABLE IF NOT EXISTS exchange_read_receipts (operation_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, response TEXT NOT NULL, created_at_ms INTEGER NOT NULL)",
+    ));
+    const existing = (await Effect.runPromise(sql.unsafe<{ readonly request_hash: string; readonly response: string }>(
+      "SELECT request_hash, response FROM exchange_read_receipts WHERE operation_id = ?",
+      [input.operationId],
+    )))[0];
+    if (existing !== undefined) {
+      if (existing.request_hash !== requestHash) return json({ error: "operation-id-conflict" }, 409, id);
+      return new Response(existing.response, { headers: { "content-type": "application/json" } });
+    }
+    const page = await actor.runtime.runPromise(
+      readAssignmentActivity(actor.workspaceId, input.afterArrival, input.limit),
+    );
+    const result: typeof ReadAssignmentPageResult.Type = {
+      operationId: input.operationId,
+      requestHash,
+      source: input.source,
+      fromArrival: input.afterArrival,
+      toArrival: page.arrival,
+      upToDate: page.upToDate,
+      records: page.records,
+    };
+    const encoded = JSON.stringify(result);
+    await Effect.runPromise(sql.withTransaction(sql.unsafe<Record<string, never>>(
+      "INSERT INTO exchange_read_receipts (operation_id, request_hash, response, created_at_ms) VALUES (?, ?, ?, ?)",
+      [input.operationId, requestHash, encoded, Date.now()],
+    ).pipe(Effect.asVoid)));
+    return new Response(encoded, { headers: { "content-type": "application/json" } });
   }
 
   /** Idempotent maintenance RPC; the alarm handler and local harness share it. */
@@ -674,6 +755,274 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       () => undefined,
       () => undefined,
     );
+    return result;
+  }
+}
+
+const StoredUserPartition = Schema.Struct({ kind: Schema.Literal("user"), id: Schema.String });
+
+/** One Effect-SQL-backed inbox actor per canonical user key. */
+export class UserPartitionObject extends DurableObject<CloudflareEnv> {
+  private runtime: Promise<{ readonly userId: string; readonly runtime: ManagedRuntime.ManagedRuntime<UserServices, never> }> | undefined;
+
+  private initialize(canonicalKey: string) {
+    if (this.runtime !== undefined) return this.runtime;
+    this.runtime = this.ctx.blockConcurrencyWhile(async () => {
+      const decoded = Schema.decodeUnknownSync(StoredUserPartition)(parsePartitionKey(canonicalKey));
+      if (partitionKeyString(userKey(decoded.id)) !== canonicalKey) throw new Error(`non-canonical user key ${canonicalKey}`);
+      const stored = this.ctx.storage.kv.get<string>(PARTITION_HEADER);
+      if (stored !== undefined && stored !== canonicalKey) throw new Error(`object is already bound to ${stored}`);
+      if (stored === undefined) this.ctx.storage.kv.put(PARTITION_HEADER, canonicalKey);
+      const sqlLayer = SqliteClient.layer({ storage: this.ctx.storage }).pipe(Layer.orDie);
+      const layer = migratedInboxSqlLayer.pipe(Layer.orDie, Layer.provide(sqlLayer));
+      const runtime = ManagedRuntime.make(layer);
+      await runtime.runPromise(InboxStore);
+      return { userId: decoded.id, runtime };
+    });
+    return this.runtime;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const id = requestId(request);
+    try {
+      const key = request.headers.get(PARTITION_HEADER) ?? this.ctx.storage.kv.get<string>(PARTITION_HEADER);
+      if (key === null || key === undefined) throw new Error("missing user partition identity");
+      const actor = await this.initialize(key);
+      const url = new URL(request.url);
+      if (url.pathname === "/_streamsy/exchange/apply-inbox") {
+        const input = Schema.decodeUnknownSync(ApplyInboxBatchRequest)(await request.json());
+        if (input.destination.id !== actor.userId) return json({ error: "wrong-user-object" }, 409, id);
+        const expectedHash = await stableHash({ source: input.source, destination: input.destination, fromArrival: input.fromArrival, toArrival: input.toArrival, rows: input.rows });
+        if (expectedHash !== input.payloadHash) return json({ error: "payload-hash-mismatch" }, 409, id);
+        const result = await actor.runtime.runPromise(Effect.gen(function* () {
+          const inbox = yield* InboxStore;
+          return yield* inbox.applyBatch(actor.userId, { operationId: input.operationId, payloadHash: input.payloadHash, rows: input.rows });
+        }));
+        return json(Schema.encodeSync(ApplyInboxBatchResult)(result), 200, id);
+      }
+      const resolution = resolveRoute(url.pathname);
+      if (resolution.kind !== "partition" || resolution.key.kind !== "user" || resolution.key.id !== actor.userId) {
+        return json({ error: "wrong-user-object", detail: actor.userId }, 409, id);
+      }
+      const response = await actor.runtime.runPromise(handleUserRequest(request));
+      response.headers.set(REQUEST_ID_HEADER, id);
+      return response;
+    } catch (cause) {
+      return json({ error: "partition-unavailable", detail: cause instanceof Error ? cause.message : String(cause) }, 503, id);
+    }
+  }
+}
+
+interface ScheduleSourceRow {
+  readonly source: string;
+  readonly failure_count: number;
+  readonly next_eligible_at_ms: number;
+  readonly last_exchanged_at_ms: number;
+}
+
+/** Singleton global owner of registry, cursors, attempts, scheduling and alarms. */
+export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
+  private runtime: Promise<{
+    readonly runtime: ManagedRuntime.ManagedRuntime<GlobalServices, never>;
+    readonly sql: SqlClient.SqlClient;
+    readonly sqlRuntime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, never>;
+  }> | undefined;
+  private turn: Promise<void> = Promise.resolve();
+
+  private initialize(canonicalKey: string) {
+    if (this.runtime !== undefined) return this.runtime;
+    this.runtime = this.ctx.blockConcurrencyWhile(async () => {
+      if (canonicalKey !== partitionKeyString(globalKey())) throw new Error(`non-canonical global key ${canonicalKey}`);
+      const stored = this.ctx.storage.kv.get<string>(PARTITION_HEADER);
+      if (stored !== undefined && stored !== canonicalKey) throw new Error(`object is already bound to ${stored}`);
+      if (stored === undefined) this.ctx.storage.kv.put(PARTITION_HEADER, canonicalKey);
+      const sqlLayer = SqliteClient.layer({ storage: this.ctx.storage }).pipe(Layer.orDie);
+      const sqlRuntime = ManagedRuntime.make(sqlLayer);
+      const sql = sqlRuntime.runSync(SqlClient.SqlClient);
+      const runtime = ManagedRuntime.make(
+        migratedGlobalSqlLayer.pipe(
+          Layer.orDie,
+          Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+        ),
+      );
+      await runtime.runPromise(ExchangeCursorStore);
+      await Effect.runPromise(Effect.gen(function* () {
+        yield* sql.unsafe<Record<string, never>>(`CREATE TABLE IF NOT EXISTS exchange_registration_receipts (
+          operation_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, response TEXT NOT NULL, created_at_ms INTEGER NOT NULL
+        )`);
+        yield* sql.unsafe<Record<string, never>>(`CREATE TABLE IF NOT EXISTS exchange_schedule (
+          source TEXT PRIMARY KEY, failure_count INTEGER NOT NULL DEFAULT 0,
+          next_eligible_at_ms INTEGER NOT NULL DEFAULT 0, last_error TEXT
+        )`);
+        yield* sql.unsafe<Record<string, never>>(`CREATE TABLE IF NOT EXISTS exchange_attempts (
+          attempt_id TEXT PRIMARY KEY, source TEXT NOT NULL, expected_arrival INTEGER NOT NULL,
+          status TEXT NOT NULL, request_hash TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 0,
+          created_at_ms INTEGER NOT NULL, completed_at_ms INTEGER
+        )`);
+      }));
+      return { runtime, sql, sqlRuntime };
+    });
+    return this.runtime;
+  }
+
+  private current() { return this.initialize(partitionKeyString(globalKey())); }
+
+  async fetch(request: Request): Promise<Response> {
+    const id = requestId(request);
+    try {
+      const actor = await this.current();
+      const url = new URL(request.url);
+      if (url.pathname === "/_streamsy/exchange/register") {
+        const input = Schema.decodeUnknownSync(RegisterSourceRequest)(await request.json());
+        const requestHash = await stableHash(input);
+        const result = await Effect.runPromise(Effect.gen(function* () {
+          const sql = actor.sql;
+          const receipt = (yield* sql.unsafe<{ readonly request_hash: string; readonly response: string }>(
+            "SELECT request_hash, response FROM exchange_registration_receipts WHERE operation_id = ?", [input.operationId],
+          ))[0];
+          if (receipt !== undefined) {
+            if (receipt.request_hash !== requestHash) return yield* Effect.fail("operation-id-conflict");
+            return receipt.response;
+          }
+          const response = JSON.stringify({ operationId: input.operationId, source: input.source, registered: true });
+          yield* sql.withTransaction(Effect.gen(function* () {
+            yield* sql.unsafe<Record<string, never>>(
+              "INSERT INTO exchange_sources (source, registered_at_ms, last_exchanged_at_ms) VALUES (?, ?, 0) ON CONFLICT(source) DO NOTHING",
+              [partitionKeyString(input.source), Date.now()],
+            );
+            yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_schedule (source) VALUES (?) ON CONFLICT(source) DO NOTHING", [partitionKeyString(input.source)]);
+            yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_registration_receipts (operation_id, request_hash, response, created_at_ms) VALUES (?, ?, ?, ?)", [input.operationId, requestHash, response, Date.now()]);
+          }));
+          return response;
+        }));
+        await this.ensureAlarm(Date.now() + ALARM_FLOOR_MS);
+        return new Response(result, { headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname === "/_streamsy/exchange/run" && this.env.TEST_FAILPOINTS === "enabled") {
+        await this.runTurn();
+        return json({ ran: true }, 200, id);
+      }
+      const response = await actor.runtime.runPromise(handleGlobalRequest(request));
+      response.headers.set(REQUEST_ID_HEADER, id);
+      return response;
+    } catch (cause) {
+      return json({ error: "partition-unavailable", detail: cause instanceof Error ? cause.message : String(cause) }, 503, id);
+    }
+  }
+
+  async alarm(): Promise<void> { await this.serialized(() => this.runTurn()); }
+
+  private async runTurn(): Promise<void> {
+    const actor = await this.current();
+    await this.ensureAlarm(Date.now() + MAINTENANCE_GUARD_MS);
+    const sources = await Effect.runPromise(Effect.gen(function* () {
+      const sql = actor.sql;
+      return yield* sql.unsafe<ScheduleSourceRow>(
+        "SELECT s.source, COALESCE(q.failure_count,0) failure_count, COALESCE(q.next_eligible_at_ms,0) next_eligible_at_ms, s.last_exchanged_at_ms" +
+          " FROM exchange_sources s LEFT JOIN exchange_schedule q ON q.source=s.source" +
+          " WHERE COALESCE(q.next_eligible_at_ms,0) <= ? ORDER BY s.last_exchanged_at_ms, s.source LIMIT 2",
+        [Date.now()],
+      );
+    }));
+    let immediate = false;
+    for (const source of sources) {
+      try { immediate = (await this.exchangeSource(source.source)) || immediate; }
+      catch (cause) { await this.recordFailure(source, cause); }
+    }
+    await this.ctx.storage.setAlarm(Date.now() + (immediate ? ALARM_FLOOR_MS : 1_000));
+  }
+
+  private async exchangeSource(sourceName: string): Promise<boolean> {
+    const parsed = parsePartitionKey(sourceName);
+    if (parsed?.kind !== "workspace") throw new Error(`invalid source ${sourceName}`);
+    const actor = await this.current();
+    const cursor = await actor.runtime.runPromise(Effect.gen(function* () {
+      return yield* (yield* ExchangeCursorStore).read(EXCHANGE_NAME, EXCHANGE_VERSION, parsed);
+    }));
+    const attemptId = `attempt/${EXCHANGE_NAME}/${EXCHANGE_VERSION}/${sourceName}/${cursor.arrival}`;
+    const pageRequest: typeof ReadAssignmentPageRequest.Type = {
+      operationId: `${attemptId}/page`, exchange: EXCHANGE_NAME, version: EXCHANGE_VERSION,
+      source: parsed, afterArrival: cursor.arrival, limit: EXCHANGE_SOURCE_PAGE_LIMIT,
+    };
+    const attemptHash = await stableHash(pageRequest);
+    await Effect.runPromise(actor.sql.withTransaction(Effect.gen(function* () {
+      const existing = (yield* actor.sql.unsafe<{ readonly request_hash: string }>(
+        "SELECT request_hash FROM exchange_attempts WHERE attempt_id = ?", [attemptId],
+      ))[0];
+      if (existing !== undefined && existing.request_hash !== attemptHash) {
+        return yield* Effect.fail("attempt-identity-conflict");
+      }
+      yield* actor.sql.unsafe<Record<string, never>>(
+        "INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, created_at_ms)" +
+          " VALUES (?, ?, ?, 'allocated', ?, ?) ON CONFLICT(attempt_id) DO NOTHING",
+        [attemptId, sourceName, cursor.arrival, attemptHash, Date.now()],
+      );
+    })));
+    const pageResponse = await this.env.WORKSPACES.get(this.env.WORKSPACES.idFromName(sourceName)).fetch(
+      new Request("http://workspace.internal/_streamsy/exchange/read-page", { method: "POST", headers: { "content-type": "application/json", [PARTITION_HEADER]: sourceName }, body: JSON.stringify(pageRequest) }),
+    );
+    if (!pageResponse.ok) throw new Error(`source-read:${pageResponse.status}:${await pageResponse.text()}`);
+    const page = Schema.decodeUnknownSync(ReadAssignmentPageResult)(await pageResponse.json());
+    const grouped = new Map<string, InboxRow[]>();
+    for (const record of page.records) {
+      const source = assignmentInbox.sourceKey(record);
+      if ("_tag" in source || partitionKeyString(source) !== sourceName) {
+        throw new Error("source-poison:source-key");
+      }
+      const destination = assignmentInbox.destinationKey(record);
+      if ("_tag" in destination || destination.kind !== "user") throw new Error("source-poison:destination-key");
+      const row = assignmentInbox.rowFor(record, destination);
+      if ("_tag" in row) throw new Error("source-poison:row-key");
+      const rows = grouped.get(destination.id);
+      if (rows === undefined) grouped.set(destination.id, [row]);
+      else rows.push(row);
+    }
+    let applied = 0;
+    for (const [userId, rows] of grouped) {
+      const payload = { source: parsed, destination: userKey(userId), fromArrival: page.fromArrival, toArrival: page.toArrival, rows };
+      const input: typeof ApplyInboxBatchRequest.Type = {
+        operationId: `${attemptId}/user/${userId}`, exchange: EXCHANGE_NAME, version: EXCHANGE_VERSION,
+        ...payload, payloadHash: await stableHash(payload),
+      };
+      const response = await this.env.USERS.get(this.env.USERS.idFromName(`user:${userId}`)).fetch(
+        new Request("http://user.internal/_streamsy/exchange/apply-inbox", { method: "POST", headers: { "content-type": "application/json", [PARTITION_HEADER]: `user:${userId}` }, body: JSON.stringify(input) }),
+      );
+      if (!response.ok) throw new Error(`destination:${response.status}:${await response.text()}`);
+      applied += Schema.decodeUnknownSync(ApplyInboxBatchResult)(await response.json()).applied;
+    }
+    await actor.runtime.runPromise(Effect.gen(function* () {
+      const sql = actor.sql;
+      const cursors = yield* ExchangeCursorStore;
+      yield* sql.withTransaction(Effect.gen(function* () {
+        const current = yield* cursors.read(EXCHANGE_NAME, EXCHANGE_VERSION, parsed);
+        if (current.arrival !== cursor.arrival) return;
+        yield* cursors.advance({ ...current, arrival: page.toArrival, applied: current.applied + applied });
+        yield* sql.unsafe<Record<string, never>>("UPDATE exchange_sources SET last_exchanged_at_ms = ? WHERE source = ?", [Date.now(), sourceName]);
+        yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=0, next_eligible_at_ms=0, last_error=NULL WHERE source = ?", [sourceName]);
+        yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, applied, created_at_ms, completed_at_ms) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?) ON CONFLICT(attempt_id) DO UPDATE SET status='completed', completed_at_ms=excluded.completed_at_ms", [attemptId, sourceName, cursor.arrival, page.requestHash, applied, Date.now(), Date.now()]);
+      }));
+    }));
+    return !page.upToDate;
+  }
+
+  private async recordFailure(source: ScheduleSourceRow, cause: unknown): Promise<void> {
+    const actor = await this.current();
+    const count = source.failure_count + 1;
+    const delay = Math.min(60_000, 250 * 2 ** Math.min(count, 8));
+    await Effect.runPromise(Effect.gen(function* () {
+      const sql = actor.sql;
+      yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=?, next_eligible_at_ms=?, last_error=? WHERE source=?", [count, Date.now() + delay, String(cause).slice(0, 1_000), source.source]);
+      yield* sql.unsafe<Record<string, never>>("UPDATE exchange_attempts SET status='failed' WHERE source=? AND status='allocated'", [source.source]);
+    }));
+  }
+
+  private async ensureAlarm(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+  }
+  private serialized<A>(work: () => Promise<A>): Promise<A> {
+    const result = this.turn.then(work);
+    this.turn = result.then(() => undefined, () => undefined);
     return result;
   }
 }

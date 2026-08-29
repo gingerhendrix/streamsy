@@ -1,9 +1,7 @@
 /** The global domain: exchange cursors and durable source registry. */
-import { SqliteClient } from "@effect/sql-sqlite-bun";
 import type { JsonValue } from "@streamsy/core";
 import { Cause, Context, Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { partitionKeyString } from "../domain/domains.ts";
 import { EXCHANGE_SCHEMA, exchangeCursorService, ExchangeCursorStore, exchangeMemoryLayer } from "./exchange-store.ts";
 import { ExchangeSourceRegistry, sourceRegistryMemoryLayer, sourceRegistryService, SOURCE_REGISTRY_SCHEMA } from "./source-registry.ts";
@@ -28,17 +26,10 @@ export const migratedGlobalSqlLayer: Layer.Layer<GlobalServices, unknown, SqlCli
     );
   }));
 
-const globalSqlClientLayer = (filename: string): Layer.Layer<SqlClient.SqlClient> =>
-  Layer.effectContext(Effect.gen(function* () {
-    const client = yield* SqliteClient.make({ filename, create: true });
-    yield* client.unsafe<Record<string, never>>("PRAGMA journal_mode = WAL").pipe(Effect.asVoid);
-    return Context.empty().pipe(Context.add(SqlClient.SqlClient, client));
-  })).pipe(Layer.provide(Reactivity.layer), Layer.orDie);
-
 export const globalLayer = (options: GlobalLayerOptions = {}): Layer.Layer<GlobalServices> =>
   options.filename === undefined
     ? Layer.merge(exchangeMemoryLayer(), sourceRegistryMemoryLayer())
-    : migratedGlobalSqlLayer.pipe(Layer.orDie, Layer.provide(globalSqlClientLayer(options.filename)));
+    : Layer.merge(exchangeMemoryLayer(), sourceRegistryMemoryLayer());
 
 export const listExchangeCursors = Effect.fn("GlobalDomain.listExchangeCursors")(function* () {
   return yield* (yield* ExchangeCursorStore).list;

@@ -77,6 +77,7 @@ import {
 
 import type { StreamGateway } from "./gateway.ts";
 import { globalLayer, handleGlobalRequest, type GlobalServices } from "./global-domain.ts";
+import { globalSqliteLayer, userSqliteLayer } from "./domain-layers-bun.ts";
 import {
   hostFailureResponse,
   HostClosed,
@@ -495,7 +496,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     if (key.kind === "user") {
       const runtime = ManagedRuntimeModule.make(
         options.inbox?.(key.id) ??
-          userLayer(directory === undefined ? {} : { filename: join(directory, "inbox.sqlite") }),
+          directory === undefined ? userLayer() : userSqliteLayer(join(directory, "inbox.sqlite")),
       );
       return {
         ...common,
@@ -509,9 +510,7 @@ export function createWorkspaceHost(options: WorkspaceHostOptions = {}): Workspa
     if (key.kind === "global") {
       const runtime = ManagedRuntimeModule.make(
         options.exchangeStore?.() ??
-          globalLayer(
-            directory === undefined ? {} : { filename: join(directory, "exchange.sqlite") },
-          ),
+          directory === undefined ? globalLayer() : globalSqliteLayer(join(directory, "exchange.sqlite")),
       );
       return {
         ...common,

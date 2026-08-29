@@ -12,6 +12,9 @@ export interface WorkerdHarness {
     init?: Parameters<Miniflare["dispatchFetch"]>[1],
   ) => ReturnType<Miniflare["dispatchFetch"]>;
   readonly evictWorkspace: (workspaceId: string) => Promise<void>;
+  readonly evictUser: (userId: string) => Promise<void>;
+  readonly evictGlobal: () => Promise<void>;
+  readonly runGlobalExchange: () => Promise<void>;
   readonly runWorkspaceMaintenance: (workspaceId: string) => Promise<void>;
   readonly close: () => Promise<void>;
 }
@@ -40,7 +43,13 @@ export async function workerdHarness(
     compatibilityDate: "2026-08-06",
     durableObjects: entrypoint.includes("parity")
       ? { PARITY: { className: "SqlParityObject", useSQLite: true } }
-      : { WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true } },
+      : entrypoint.includes("assets")
+        ? { WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true } }
+      : {
+          WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true },
+          USERS: { className: "UserPartitionObject", useSQLite: true },
+          GLOBALS: { className: "GlobalExchangeObject", useSQLite: true },
+        },
     durableObjectsPersist: join(root, "state"),
     bindings:
       options.testFailpoints === false
@@ -56,6 +65,19 @@ export async function workerdHarness(
       mf.unsafeEvictDurableObject("", "WorkspacePartitionObject", {
         name: `workspace:${workspaceId}`,
       }),
+    evictUser: (userId) =>
+      mf.unsafeEvictDurableObject("", "UserPartitionObject", { name: `user:${userId}` }),
+    evictGlobal: () =>
+      mf.unsafeEvictDurableObject("", "GlobalExchangeObject", { name: "global:global" }),
+    runGlobalExchange: async () => {
+      const namespace = await mf.getDurableObjectNamespace("GLOBALS");
+      const stub = namespace.get(namespace.idFromName("global:global"));
+      const response = await stub.fetch("http://global.internal/_streamsy/exchange/run", {
+        method: "POST",
+        headers: { "x-streamsy-partition-key": "global:global" },
+      });
+      if (!response.ok) throw new Error(`global exchange failed: ${response.status} ${await response.text()}`);
+    },
     runWorkspaceMaintenance: async (workspaceId) => {
       const namespace = await mf.getDurableObjectNamespace("WORKSPACES");
       const stub = namespace.get(namespace.idFromName(`workspace:${workspaceId}`));

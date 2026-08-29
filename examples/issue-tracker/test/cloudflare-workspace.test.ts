@@ -3,7 +3,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 import { WorkspaceSummary } from "../domain/issue.ts";
 import {
-  ApiError,
   CommandResponse,
   DrainResponse,
   HealthResponse,
@@ -73,7 +72,7 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     expect(response.headers.get("x-request-id")).toBe("asset-request");
   });
 
-  test("gateway owns health, typed unavailable domains, and request ids", async () => {
+  test("gateway owns health, placed domains, and request ids", async () => {
     const harness = await fresh();
     const health = await harness.fetch("/health", { headers: { "x-request-id": "request-1" } });
     expect(health.status).toBe(200);
@@ -84,15 +83,11 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
     });
 
     const user = await harness.fetch("/api/users/ada/inbox");
-    expect(user.status).toBe(503);
-    expect(await decodeResponse(user, ApiError)).toMatchObject({
-      error: "domain-placement-unavailable",
-    });
+    expect(user.status).toBe(200);
+    expect(await user.json()).toMatchObject({ userId: "ada", rows: [] });
     const global = await harness.fetch("/api/global/exchange");
-    expect(global.status).toBe(503);
-    expect(await decodeResponse(global, ApiError)).toMatchObject({
-      error: "domain-placement-unavailable",
-    });
+    expect(global.status).toBe(200);
+    expect(await global.json()).toEqual({ cursors: [] });
   });
 
   test("runs the vertical path and resumes checked products after actor wake", async () => {

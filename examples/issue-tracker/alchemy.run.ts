@@ -8,13 +8,21 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect } from "effect";
 
-export const STACK_NAME = "streamsy-issue-tracker-3a";
+export const STACK_NAME = "streamsy-issue-tracker-3b";
 export const WORKSPACE_OBJECT_CLASS = "WorkspacePartitionObject";
 export const WORKSPACE_OBJECT_MIGRATION = `new_sqlite_classes:${WORKSPACE_OBJECT_CLASS}`;
+export const USER_OBJECT_CLASS = "UserPartitionObject";
+export const GLOBAL_OBJECT_CLASS = "GlobalExchangeObject";
 
 /** One SQLite Durable Object namespace, partitioned by canonical workspace key. */
 export const WorkspacePartitions = Cloudflare.DurableObject("WorkspacePartitions", {
   className: WORKSPACE_OBJECT_CLASS,
+});
+export const UserPartitions = Cloudflare.DurableObject("UserPartitions", {
+  className: USER_OBJECT_CLASS,
+});
+export const GlobalExchange = Cloudflare.DurableObject("GlobalExchange", {
+  className: GLOBAL_OBJECT_CLASS,
 });
 
 /** Stateless gateway Worker, application API, checked sinks, streams and assets. */
@@ -36,6 +44,8 @@ export const Gateway = Cloudflare.Worker("Gateway", {
   },
   env: {
     WORKSPACES: WorkspacePartitions,
+    USERS: UserPartitions,
+    GLOBALS: GlobalExchange,
     DEPLOYMENT: Alchemy.Stage,
   },
 });
@@ -57,6 +67,10 @@ export default Alchemy.Stack(
       workspaceNamespaceId: gateway.durableObjectNamespaces[WORKSPACE_OBJECT_CLASS],
       workspaceClass: WORKSPACE_OBJECT_CLASS,
       workspaceMigration: WORKSPACE_OBJECT_MIGRATION,
+      userNamespaceId: gateway.durableObjectNamespaces[USER_OBJECT_CLASS],
+      globalNamespaceId: gateway.durableObjectNamespaces[GLOBAL_OBJECT_CLASS],
+      userClass: USER_OBJECT_CLASS,
+      globalClass: GLOBAL_OBJECT_CLASS,
     };
   }),
 );
