@@ -13,8 +13,8 @@
  * `HistoryPosition` written into this table does not decode, and the read fails
  * typed rather than resuming from a position whose domain is unknown.
  */
-import { Database } from "bun:sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ExchangeCursor, initialCursor } from "../domain/exchange.ts";
 import { partitionKeyString, type PartitionKey } from "../domain/domains.ts";
 import { ExchangeCursorPoison, ExchangeStoreUnavailable } from "./domain-errors.ts";
@@ -57,15 +57,15 @@ const ExchangeCursorJson = Schema.fromJsonString(ExchangeCursor);
 const encodeCursor = Schema.encodeUnknownSync(ExchangeCursorJson);
 const cursorId = (exchange: string, source: string): string => `${exchange}\u0000${source}`;
 
-const sqlite = <A>(operation: string, run: () => A) =>
-  Effect.try({
-    try: run,
-    catch: (cause) =>
+const sqlite = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
+  effect.pipe(
+    Effect.mapError((cause) =>
       new ExchangeStoreUnavailable({
         operation,
         detail: cause instanceof Error ? cause.message : String(cause),
       }),
-  });
+    ),
+  );
 
 /**
  * Decode one durable cursor, or fail typed.
@@ -129,48 +129,31 @@ export const exchangeMemoryLayer = (): Layer.Layer<ExchangeCursorStore> =>
     });
   });
 
-/** The durable cursor store: one file, owned by the global partition. */
-export const exchangeSqliteLayer = (options: {
-  readonly filename: string;
-}): Layer.Layer<ExchangeCursorStore> =>
-  Layer.effect(
-    ExchangeCursorStore,
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        const database = new Database(options.filename, { create: true });
-        database.exec("PRAGMA journal_mode = WAL");
-        database.exec(EXCHANGE_SCHEMA);
-        return database;
-      }),
-      (database) => Effect.sync(() => database.close(false)),
-    ).pipe(Effect.map(exchangeCursorService)),
-  );
+export const exchangeSqlLayer: Layer.Layer<ExchangeCursorStore, never, SqlClient.SqlClient> =
+  Layer.effect(ExchangeCursorStore, Effect.map(SqlClient.SqlClient, exchangeCursorService));
 
-export function exchangeCursorService(database: Database): ExchangeCursorStoreService {
-  const selectCursor = database.query<CursorValueRow, [string, string]>(
-    "SELECT exchange, source, value FROM exchange_cursors WHERE exchange = ? AND source = ?",
-  );
-  const selectAll = database.query<CursorValueRow, []>(
-    "SELECT exchange, source, value FROM exchange_cursors ORDER BY exchange, source",
-  );
-  const upsertCursor = database.query<never, [string, string, string]>(
-    "INSERT INTO exchange_cursors (exchange, source, value) VALUES (?, ?, ?)" +
-      " ON CONFLICT (exchange, source) DO UPDATE SET value = excluded.value",
-  );
-
+export function exchangeCursorService(sql: SqlClient.SqlClient): ExchangeCursorStoreService {
   return ExchangeCursorStore.of({
     read: Effect.fn("ExchangeCursorStore.read")(function* (exchange, version, source) {
       const key = partitionKeyString(source);
-      const found = yield* sqlite("read", () => selectCursor.get(exchange, key));
-      if (found === null || found === undefined) return initialCursor(exchange, version, source);
+      const rows = yield* sqlite("read", sql.unsafe<CursorValueRow>(
+        "SELECT exchange, source, value FROM exchange_cursors WHERE exchange = ? AND source = ?",
+        [exchange, key],
+      ));
+      const found = rows[0];
+      if (found === undefined) return initialCursor(exchange, version, source);
       return yield* restore(exchange, key, version, found.value);
     }),
     advance: (cursor) =>
-      sqlite("advance", () => {
-        upsertCursor.run(cursor.exchange, partitionKeyString(cursor.source), encodeCursor(cursor));
-      }),
+      sqlite("advance", sql.unsafe<Record<string, never>>(
+        "INSERT INTO exchange_cursors (exchange, source, value) VALUES (?, ?, ?)" +
+          " ON CONFLICT (exchange, source) DO UPDATE SET value = excluded.value",
+        [cursor.exchange, partitionKeyString(cursor.source), encodeCursor(cursor)],
+      ).pipe(Effect.asVoid)),
     list: Effect.gen(function* () {
-      const found = yield* sqlite("list", () => selectAll.all());
+      const found = yield* sqlite("list", sql.unsafe<CursorValueRow>(
+        "SELECT exchange, source, value FROM exchange_cursors ORDER BY exchange, source",
+      ));
       const cursors: ExchangeCursor[] = [];
       for (const row of found) {
         cursors.push(yield* restore(row.exchange, row.source, undefined, row.value));

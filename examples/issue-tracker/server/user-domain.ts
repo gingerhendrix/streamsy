@@ -13,11 +13,14 @@
  * different partition's runtime and can fail in a different set of ways.
  */
 import type { JsonValue } from "@streamsy/core";
-import { Cause, Effect, Layer } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-bun";
+import { Cause, Context, Effect, Layer } from "effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { assignmentInbox } from "../domain/exchange.ts";
 import type { InboxRow } from "../domain/inbox.ts";
 import { IDENTIFIER_PATTERN } from "../domain/issue.ts";
-import { InboxStore, inboxMemoryLayer, inboxSqliteLayer } from "./inbox-store.ts";
+import { InboxStore, inboxMemoryLayer, migratedInboxSqlLayer } from "./inbox-store.ts";
 
 export type UserServices = InboxStore;
 
@@ -29,7 +32,16 @@ export interface UserLayerOptions {
 export const userLayer = (options: UserLayerOptions = {}): Layer.Layer<UserServices> =>
   options.filename === undefined
     ? inboxMemoryLayer()
-    : inboxSqliteLayer({ filename: options.filename });
+    : migratedInboxSqlLayer.pipe(Layer.orDie, Layer.provide(userSqlClientLayer(options.filename)));
+
+const userSqlClientLayer = (filename: string): Layer.Layer<SqlClient.SqlClient> =>
+  Layer.effectContext(
+    Effect.gen(function* () {
+      const client = yield* SqliteClient.make({ filename, create: true });
+      yield* client.unsafe<Record<string, never>>("PRAGMA journal_mode = WAL").pipe(Effect.asVoid);
+      return Context.empty().pipe(Context.add(SqlClient.SqlClient, client));
+    }),
+  ).pipe(Layer.provide(Reactivity.layer), Layer.orDie);
 
 /** Write exchanged rows into this partition's inbox. Idempotent by `inboxId`. */
 export const applyInbox = Effect.fn("UserDomain.applyInbox")(function* (
