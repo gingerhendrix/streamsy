@@ -60,6 +60,20 @@ describe("Integration 3B cross-object exchange", () => {
     expect(state.cursors).toMatchObject([{ source: { kind: "workspace", id: "main" }, applied: 1 }]);
   });
 
+  test("a new polling attempt observes facts appended after an earlier empty page", async () => {
+    const harness = await fresh();
+    expect((await harness.fetch("/api/workspaces/late/issues", jsonRequest("POST", {
+      commandId: "create-late", issueId: "issue-late", projectId: "streamsy", title: "late", status: "todo",
+    }))).status).toBe(201);
+    await harness.runGlobalExchange();
+    expect((await harness.fetch("/api/workspaces/late/issues/issue-late/assignee", jsonRequest("POST", {
+      commandId: "assign-late", assigneeId: "ada",
+    }))).status).toBe(200);
+    await harness.runGlobalExchange();
+    const inbox = Schema.decodeUnknownSync(InboxBody)(await (await harness.fetch("/api/users/ada/inbox")).json());
+    expect(inbox.rows).toMatchObject([{ workspaceId: "late", issueId: "issue-late" }]);
+  });
+
   test("isolates two workspace sources while converging into one user partition", async () => {
     const harness = await fresh();
     await assignment(harness, "left", "issue-left", "ada");

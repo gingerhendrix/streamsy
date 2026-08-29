@@ -852,7 +852,8 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
         )`);
         yield* sql.unsafe<Record<string, never>>(`CREATE TABLE IF NOT EXISTS exchange_schedule (
           source TEXT PRIMARY KEY, failure_count INTEGER NOT NULL DEFAULT 0,
-          next_eligible_at_ms INTEGER NOT NULL DEFAULT 0, last_error TEXT
+          next_eligible_at_ms INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+          next_attempt_sequence INTEGER NOT NULL DEFAULT 0
         )`);
         yield* sql.unsafe<Record<string, never>>(`CREATE TABLE IF NOT EXISTS exchange_attempts (
           attempt_id TEXT PRIMARY KEY, source TEXT NOT NULL, expected_arrival INTEGER NOT NULL,
@@ -936,10 +937,21 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
     const parsed = parsePartitionKey(sourceName);
     if (parsed?.kind !== "workspace") throw new Error(`invalid source ${sourceName}`);
     const actor = await this.current();
+    const attemptSequence = await Effect.runPromise(actor.sql.withTransaction(Effect.gen(function* () {
+      const row = (yield* actor.sql.unsafe<{ readonly next_attempt_sequence: number }>(
+        "SELECT next_attempt_sequence FROM exchange_schedule WHERE source = ?", [sourceName],
+      ))[0];
+      if (row === undefined) return yield* Effect.fail(`unregistered source ${sourceName}`);
+      yield* actor.sql.unsafe<Record<string, never>>(
+        "UPDATE exchange_schedule SET next_attempt_sequence = ? WHERE source = ?",
+        [row.next_attempt_sequence + 1, sourceName],
+      );
+      return row.next_attempt_sequence;
+    })));
     const cursor = await actor.runtime.runPromise(Effect.gen(function* () {
       return yield* (yield* ExchangeCursorStore).read(EXCHANGE_NAME, EXCHANGE_VERSION, parsed);
     }));
-    const attemptId = `attempt/${EXCHANGE_NAME}/${EXCHANGE_VERSION}/${sourceName}/${cursor.arrival}`;
+    const attemptId = `attempt/${EXCHANGE_NAME}/${EXCHANGE_VERSION}/${sourceName}/${attemptSequence}`;
     const pageRequest: typeof ReadAssignmentPageRequest.Type = {
       operationId: `${attemptId}/page`, exchange: EXCHANGE_NAME, version: EXCHANGE_VERSION,
       source: parsed, afterArrival: cursor.arrival, limit: EXCHANGE_SOURCE_PAGE_LIMIT,
