@@ -6,7 +6,11 @@ import { Effect, Schema } from "effect";
 import { describe, expect, test } from "vitest";
 import stack, {
   Gateway,
+  GlobalExchange,
+  GLOBAL_OBJECT_CLASS,
   STACK_NAME,
+  UserPartitions,
+  USER_OBJECT_CLASS,
   WORKSPACE_OBJECT_CLASS,
   WORKSPACE_OBJECT_MIGRATION,
   WorkspacePartitions,
@@ -30,7 +34,7 @@ function stringField(root: InspectedResource, ...path: readonly string[]): strin
   throw new TypeError("a field path must not be empty");
 }
 
-describe("Integration 3A Alchemy topology", () => {
+describe("Integration 3B Alchemy topology", () => {
   test("is an import-safe Alchemy v2 description", () => {
     const declared = Schema.decodeUnknownSync(DeclaredPackage)(
       JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")),
@@ -42,11 +46,21 @@ describe("Integration 3A Alchemy topology", () => {
     expect(Object.getOwnPropertyDescriptor(stack, "state")?.value).toBeDefined();
   });
 
-  test("declares one SQLite workspace object and one gateway Worker", () => {
+  test("declares three SQLite domain objects and one gateway Worker", () => {
     expect(WorkspacePartitions).toEqual({
       kind: "Cloudflare.DurableObject",
       name: "WorkspacePartitions",
       className: WORKSPACE_OBJECT_CLASS,
+    });
+    expect(UserPartitions).toEqual({
+      kind: "Cloudflare.DurableObject",
+      name: "UserPartitions",
+      className: USER_OBJECT_CLASS,
+    });
+    expect(GlobalExchange).toEqual({
+      kind: "Cloudflare.DurableObject",
+      name: "GlobalExchange",
+      className: GLOBAL_OBJECT_CLASS,
     });
     expect(Effect.isEffect(Gateway)).toBe(true);
     expect(stringField(Gateway, "LogicalId")).toBe("Gateway");
@@ -66,6 +80,8 @@ describe("Integration 3A Alchemy topology", () => {
   test("binds only placement and stage identity, never test failpoints", () => {
     const source = readFileSync(join(packageDir, "alchemy.run.ts"), "utf8");
     expect(source).toContain("WORKSPACES: WorkspacePartitions");
+    expect(source).toContain("USERS: UserPartitions");
+    expect(source).toContain("GLOBALS: GlobalExchange");
     expect(source).toContain("DEPLOYMENT: Alchemy.Stage");
     expect(source).not.toContain("TEST_FAILPOINTS");
     expect(source).not.toContain("domain:");

@@ -323,5 +323,9 @@ would have been dishonest.
   label counts are maintained at `projectId: "streamsy"`, which is what the
   seeded workspace uses. Parameterising them per request needs one operator
   state per parameter binding, which is scale work rather than assembly work.
-- **No deployment.** Durable Objects, Alchemy, R2 snapshots and the Cloudflare
-  host are out of scope and are not present in this example.
+- **Cloudflare placement is example-owned.** Integration 3B places each workspace
+  and user in its own SQLite Durable Object and gives the singleton global object
+  the durable source registry, exchange cursors, attempts, backoff and alarm.
+  Workspace registration precedes forwarding; stable page and batch identities
+  make cross-object reply loss replay-safe. R2 snapshots and `Streamsy.Mesh`
+  extraction remain later slices.

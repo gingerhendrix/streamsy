@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const stage = process.env.STAGE ?? "integration-3a-plan-check";
+const stage = process.env.STAGE ?? "integration-3b-plan-check";
 
 await step("typecheck topology and derived Worker environment", "bun", ["run", "typecheck"]);
 await step("build browser assets and Cloudflare Worker", "bun", ["run", "build:deployment"]);

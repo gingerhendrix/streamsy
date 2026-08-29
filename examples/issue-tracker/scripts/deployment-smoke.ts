@@ -21,13 +21,20 @@ import {
   SinkSessionResponse,
   TransitionFeedResponse,
 } from "../shared/api.ts";
-import { WORKSPACE_OBJECT_CLASS, WORKSPACE_OBJECT_MIGRATION } from "../alchemy.run.ts";
+import {
+  GLOBAL_OBJECT_CLASS,
+  USER_OBJECT_CLASS,
+  WORKSPACE_OBJECT_CLASS,
+  WORKSPACE_OBJECT_MIGRATION,
+} from "../alchemy.run.ts";
 
 const base = required("DEPLOYMENT_URL").replace(/\/$/, "");
 const stage = required("DEPLOYMENT_STAGE");
 const workerId = required("DEPLOYMENT_WORKER_ID");
 const workerName = required("DEPLOYMENT_WORKER_NAME");
 const namespaceId = required("DEPLOYMENT_NAMESPACE_ID");
+const userNamespaceId = required("DEPLOYMENT_USER_NAMESPACE_ID");
+const globalNamespaceId = required("DEPLOYMENT_GLOBAL_NAMESPACE_ID");
 const localVerification = base.startsWith("http://localhost:");
 const suffix = (process.env.DEPLOYMENT_EVIDENCE_ID ?? Math.random().toString(36).slice(2, 10))
   .toLowerCase()
@@ -39,7 +46,7 @@ const createBody = {
   commandId: `create-${suffix}`,
   issueId,
   projectId: "streamsy",
-  title: "Integration 3A deployment smoke",
+  title: "Integration 3B deployment smoke",
   status: "backlog",
 } as const;
 
@@ -207,6 +214,33 @@ await decode(
   }),
   CommandResponse,
 );
+const inbox = await eventually(async () => {
+  const response = await call("GET", "/api/users/ada/inbox");
+  if (!response.ok) return undefined;
+  const value = Schema.decodeUnknownSync(Schema.Struct({
+    userId: Schema.String,
+    rows: Schema.Array(Schema.Struct({ inboxId: Schema.String, workspaceId: Schema.String, issueId: Schema.String })),
+  }))(await response.json());
+  return value.rows.some((row) => row.workspaceId === workspaceId && row.issueId === issueId)
+    ? value
+    : undefined;
+});
+assert(inbox.userId === "ada", "cross-object inbox must be placed at ada");
+const exchange = await decode(
+  await call("GET", "/api/global/exchange"),
+  Schema.Struct({ cursors: Schema.Array(Schema.Struct({
+    exchange: Schema.String,
+    source: Schema.Struct({ kind: Schema.String, id: Schema.String }),
+    arrival: Schema.Number,
+    applied: Schema.Number,
+  })) }),
+);
+assert(exchange.cursors.some((cursor) => cursor.source.id === workspaceId && cursor.applied === 1), "global cursor must advance once");
+const sources = await decode(
+  await call("GET", "/api/global/sources"),
+  Schema.Struct({ sources: Schema.Array(Schema.Struct({ partition: Schema.String })) }),
+);
+assert(sources.sources.some((source) => source.partition === `workspace:${workspaceId}`), "workspace source must remain registered");
 const beforeDrain = await decode(
   await call("GET", `/api/workspaces/${workspaceId}/notifications`),
   NotificationsResponse,
@@ -249,6 +283,8 @@ console.log(
         className: WORKSPACE_OBJECT_CLASS,
         migration: WORKSPACE_OBJECT_MIGRATION,
       },
+      userDurableObject: { namespaceId: userNamespaceId, binding: "USERS", className: USER_OBJECT_CLASS },
+      globalDurableObject: { namespaceId: globalNamespaceId, binding: "GLOBALS", className: GLOBAL_OBJECT_CLASS },
       workspaceId,
       planHash: PLAN_HASH,
       sinkFingerprints: {
@@ -268,6 +304,7 @@ console.log(
         summary: "passed",
         notificationMaintenanceDrain: "passed",
         duplicateOriginalOffset: "passed",
+        durableObjectExchange: "passed",
       },
       positions: {
         command: created.ack.offset,
@@ -332,4 +369,14 @@ function required(name: string): string {
 
 function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+async function eventually<A>(read: () => Promise<A | undefined>, timeoutMs = 15_000): Promise<A> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await read();
+    if (value !== undefined) return value;
+    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    await Bun.sleep(250);
+  }
 }
