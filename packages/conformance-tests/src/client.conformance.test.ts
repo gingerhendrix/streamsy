@@ -4,7 +4,7 @@ import {
   directProtocolClient,
   StreamProtocol,
 } from "@streamsy/core";
-import { officialProtocolClient, protocolPathUrl } from "@streamsy/client";
+import { officialProtocolClient, protocolPathUrl } from "@streamsy/http-client";
 import { describe } from "vitest";
 import { runStreamProtocolClientContract } from "./stream-protocol-client-contract.ts";
 

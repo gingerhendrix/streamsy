@@ -1,4 +1,4 @@
-import { officialProtocolClient, protocolPathUrl } from "@streamsy/client";
+import { officialProtocolClient, protocolPathUrl } from "@streamsy/http-client";
 import {
   ClientReadSession,
   StreamProtocol,

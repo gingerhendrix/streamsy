@@ -68,7 +68,7 @@
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
-    "@streamsy/client": "workspace:*",
+    "@streamsy/http-client": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
     "typescript": "catalog:",
     "vitest": "^4.0.16"

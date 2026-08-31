@@ -20,8 +20,8 @@
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.5",
-    "@streamsy/client": "workspace:*",
     "@streamsy/core": "workspace:*",
+    "@streamsy/http-client": "workspace:*",
     "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",

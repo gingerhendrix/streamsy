@@ -56,7 +56,7 @@ jobs:
 
           PACKAGES=(
             packages/core
-            packages/client
+            packages/http-client
             packages/json
             packages/experimental
             packages/state
@@ -78,7 +78,7 @@ jobs:
         run: |
           PACKAGES=(
             packages/core
-            packages/client
+            packages/http-client
             packages/json
             packages/experimental
             packages/state

@@ -5,7 +5,7 @@ Streamsy uses a single release-train version. The private root `package.json` is
 Current public npm packages:
 
 - `@streamsy/core` (`packages/core`)
-- `@streamsy/client` (`packages/client`)
+- `@streamsy/http-client` (`packages/http-client`)
 - `@streamsy/json` (`packages/json`)
 - `@streamsy/experimental` (`packages/experimental`)
 - `@streamsy/state` (`packages/state`)
@@ -81,11 +81,13 @@ npm trusted publishing is configured per package after that package exists on np
 
 Local/manual publishes cannot create npm provenance attestations because provenance requires a supported cloud CI/CD runner with OIDC. The first manual publish should therefore use normal npm authentication and `--access public`; provenance starts with the trusted-publishing workflow after the package exists and trusted publishing is configured.
 
-### Streamsy 0.2.0 first publish: `@streamsy/storage-fs`, `@streamsy/client`, and `@streamsy/experimental`
+### First publish after the HTTP client rename
 
-For `0.2.0`, `@streamsy/storage-fs`, `@streamsy/client`, and `@streamsy/experimental` are new package names. First-publish all three manually from the reviewed release commit. Then configure npm trusted publishing for all three packages, push `main`, and push tag `v0.2.0`.
+`@streamsy/client` was first published with Streamsy `0.2.0`. The package was renamed to `@streamsy/http-client` after `0.2.1` because Streamsy's transport-neutral client contracts and direct client already live in `@streamsy/core`. The new name identifies this package as the HTTP adapter over `@durable-streams/client`.
 
-The tag workflow includes all eight public packages. It skips package versions that are already present on npm, so the workflow should skip the manually-published new packages and publish/provenance-attest the existing package names that are not yet at `0.2.0`.
+First-publish `@streamsy/http-client` manually from the reviewed release commit. Then configure npm trusted publishing for the new package name before pushing the release tag. Deprecate `@streamsy/client` only after the replacement version is available.
+
+The tag workflow skips package versions that are already present on npm. It should skip the manually published HTTP client and publish the other package versions that are absent.
 
 ```bash
 cd /home/gareth/Documents/Personal/repos/streamsy/main
@@ -93,13 +95,12 @@ cd /home/gareth/Documents/Personal/repos/streamsy/main
 # Confirm you are on the reviewed release commit and all versions match.
 git status --short --branch
 VERSION=$(node -p "require('./package.json').version")
-test "$VERSION" = "0.2.0"
 echo "Releasing ${VERSION}"
 node - <<'NODE'
 const paths = [
   'package.json',
   'packages/core/package.json',
-  'packages/client/package.json',
+  'packages/http-client/package.json',
   'packages/json/package.json',
   'packages/experimental/package.json',
   'packages/state/package.json',
@@ -130,21 +131,17 @@ bun run test:conformance:fs
 bun run pack:dry-run
 
 set -euo pipefail
-for package in packages/storage-fs packages/client packages/experimental; do
-  (
-    cd "$package"
-    TARBALL=$(bun pm pack --quiet | tail -n 1)
-    npm publish "$TARBALL" --access public
-    rm -f "$TARBALL"
-  )
-done
+(
+  cd packages/http-client
+  TARBALL=$(bun pm pack --quiet | tail -n 1)
+  npm publish "$TARBALL" --access public
+  rm -f "$TARBALL"
+)
 
-npm view "@streamsy/storage-fs@${VERSION}" version repository
-npm view "@streamsy/client@${VERSION}" version repository
-npm view "@streamsy/experimental@${VERSION}" version repository
+npm view "@streamsy/http-client@${VERSION}" version repository
 ```
 
-After the first publishes succeed, configure trusted publishing for all three new packages using the settings below, then push `main` and the release tag.
+After the first publish succeeds, configure trusted publishing for `@streamsy/http-client` using the settings below. Then push `main` and the release tag.
 
 ## Configure npm trusted publishing
 
@@ -163,7 +160,7 @@ The repository workflow is `.github/workflows/publish.yml`. A `v*` tag triggers 
 
 ## Automated release after trusted publishing is configured
 
-Use this after new packages have been first-published and trusted publishing has been configured. For `0.2.0`, this means after `@streamsy/storage-fs@0.2.0`, `@streamsy/client@0.2.0`, and `@streamsy/experimental@0.2.0` exist on npm and have trusted publishing configured.
+Use this after new packages have been first-published and trusted publishing has been configured. For the HTTP client rename, this means after the release version of `@streamsy/http-client` exists on npm and has trusted publishing configured.
 
 ```bash
 cd /home/gareth/Documents/Personal/repos/streamsy/main
@@ -197,7 +194,7 @@ Verify publication:
 VERSION=$(node -p "require('./package.json').version")
 for name in \
   @streamsy/core \
-  @streamsy/client \
+  @streamsy/http-client \
   @streamsy/json \
   @streamsy/experimental \
   @streamsy/state \
@@ -210,6 +207,20 @@ do
 done
 
 gh release view "v${VERSION}" --repo gingerhendrix/streamsy
+```
+
+## Deprecate `@streamsy/client`
+
+After the first `@streamsy/http-client` release is available and its migration wording is confirmed, deprecate the old package instead of unpublishing it:
+
+```bash
+npm deprecate '@streamsy/client@*' 'This package moved to @streamsy/http-client. Install and import @streamsy/http-client instead.'
+```
+
+Verify the deprecation message:
+
+```bash
+npm view @streamsy/client deprecated
 ```
 
 ## Deprecate `@streamsy/storage-memory`

@@ -103,7 +103,7 @@ retry supplied the same bytes. Stale epochs, producer gaps, invalid epoch/sequen
 expected-offset conflicts are separate typed results. Missing required success metadata is a
 `parse-error`; the client never follows an append with `HEAD` to manufacture an acknowledgement.
 
-The pinned `@durable-streams/client` append API discards this response data, so `@streamsy/client`
+The pinned `@durable-streams/client` append API discards this response data, so `@streamsy/http-client`
 uses a narrow non-batching POST path for append while retaining the upstream client for reads,
 metadata, and its retry utility. One append call therefore means one POST unless that POST receives
 a retryable transport/server failure. Simple callers that only narrow on `status === "appended"`

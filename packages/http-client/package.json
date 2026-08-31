@@ -1,5 +1,5 @@
 {
-  "name": "@streamsy/client",
+  "name": "@streamsy/http-client",
   "version": "0.2.1",
   "description": "Durable Streams protocol client adapter for Streamsy consumers.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
@@ -10,7 +10,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gingerhendrix/streamsy.git",
-    "directory": "packages/client"
+    "directory": "packages/http-client"
   },
   "files": [
     "dist"

@@ -22,9 +22,9 @@
     "smoke:deployment": "bun run scripts/deployment-smoke.ts"
   },
   "dependencies": {
-    "@streamsy/client": "workspace:*",
     "@streamsy/core": "workspace:*",
     "@streamsy/experimental": "workspace:*",
+    "@streamsy/http-client": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
     "effect": "4.0.0-rc.112",
     "react": "^19.2.0",

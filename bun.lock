@@ -114,7 +114,7 @@
       "name": "issue-tracker-projections",
       "version": "0.0.1",
       "dependencies": {
-        "@streamsy/client": "workspace:*",
+        "@streamsy/http-client": "workspace:*",
         "@streamsy/core": "workspace:*",
         "@streamsy/experimental": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
@@ -173,8 +173,8 @@
         "vitest": "^4.0.16",
       },
     },
-    "packages/client": {
-      "name": "@streamsy/client",
+    "packages/http-client": {
+      "name": "@streamsy/http-client",
       "version": "0.2.1",
       "dependencies": {
         "@durable-streams/client": "^0.2.6",
@@ -190,7 +190,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@durable-streams/server-conformance-tests": "^0.3.5",
-        "@streamsy/client": "workspace:*",
+        "@streamsy/http-client": "workspace:*",
         "@streamsy/core": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/state": "workspace:*",
@@ -235,7 +235,7 @@
         "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
-        "@streamsy/client": "workspace:*",
+        "@streamsy/http-client": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -1004,7 +1004,7 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@streamsy/client": ["@streamsy/client@workspace:packages/client"],
+    "@streamsy/http-client": ["@streamsy/http-client@workspace:packages/http-client"],
 
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 

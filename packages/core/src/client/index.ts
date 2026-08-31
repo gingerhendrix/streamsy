@@ -1,7 +1,7 @@
 /** Transport-neutral client seam: types, the shared read session, and the direct adapter. */
 
 export { directProtocolClient, hasStreamsyProtocol } from "./direct/client.ts";
-/** The single read-session implementation, shared by every adapter (incl. `@streamsy/client`). */
+/** The single read-session implementation, shared by every adapter (incl. `@streamsy/http-client`). */
 export { ClientReadSession } from "./read-session.ts";
 
 export type {
