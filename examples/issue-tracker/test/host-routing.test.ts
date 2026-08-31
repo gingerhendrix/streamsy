@@ -10,7 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { boardIssues, issueTransitions, workspaceSummary } from "../domain/declaration.ts";
 import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
-import { resolveRoute } from "../server/host-routing.ts";
+import { resolveRoute } from "../server/host/host-routing.ts";
 
 describe("route resolution", () => {
   test("host routes are answered without a partition", () => {

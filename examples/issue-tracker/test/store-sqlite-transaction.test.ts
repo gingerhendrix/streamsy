@@ -11,8 +11,8 @@ import {
   createSqliteIssueStoreBoundary,
   sqliteClientLayer,
   type SqliteStoreOptions,
-} from "../server/store-sqlite.ts";
-import type { CommandReceipt } from "../server/store.ts";
+} from "../server/persistence/store-sqlite.ts";
+import type { CommandReceipt } from "../server/persistence/store.ts";
 
 const sqliteOptions = (): SqliteStoreOptions => ({
   filename: join(mkdtempSync(join(tmpdir(), "issue-tracker-store-sqlite-")), "view.sqlite"),

@@ -28,7 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
-import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
+import { createLocalHost, type LocalHostOptions } from "../server/host/bun/local.ts";
 import { streamNames } from "../domain/declaration.ts";
 import { WorkspaceSummary } from "../domain/issue.ts";
 import {

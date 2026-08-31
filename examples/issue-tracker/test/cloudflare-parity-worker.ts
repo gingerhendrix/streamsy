@@ -10,7 +10,7 @@ import { migrateViewStoreSql, sqliteService } from "@streamsy/views-store/sqlite
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Effect, Exit, ManagedRuntime } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { createSqliteIssueStoreBoundary, migrateApplicationStore } from "../server/store-sql.ts";
+import { createSqliteIssueStoreBoundary, migrateApplicationStore } from "../server/persistence/store-sql.ts";
 
 interface Env {
   readonly PARITY: {

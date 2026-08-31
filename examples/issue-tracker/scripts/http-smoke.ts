@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- This executable builds the isolated database path through Bun's Node-compatible path API.
 import { join } from "node:path";
 import { DateTime, Schema } from "effect";
-import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
+import { createLocalHost, type LocalHostOptions } from "../server/host/bun/local.ts";
 import { WorkspaceSummary } from "../domain/issue.ts";
 import {
   CatalogRowsResponse,

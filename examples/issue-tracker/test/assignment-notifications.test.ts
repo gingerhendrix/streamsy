@@ -14,10 +14,10 @@ import { Effect } from "effect";
 import { OutboxStore } from "@streamsy/effect-sink";
 import { assignmentNotifications } from "../domain/declaration.ts";
 import type { AssignmentNotification } from "../domain/notifications.ts";
-import { assignmentDrafts } from "../server/notifications.ts";
-import { memoryLayer } from "../server/store.ts";
-import { sqliteLayer } from "../server/store-sqlite.ts";
-import { IssueStore, type CommandReceipt } from "../server/store.ts";
+import { assignmentDrafts } from "../server/publication/notifications.ts";
+import { memoryLayer } from "../server/persistence/store.ts";
+import { sqliteLayer } from "../server/persistence/store-sqlite.ts";
+import { IssueStore, type CommandReceipt } from "../server/persistence/store.ts";
 import {
   CommandResponse,
   DrainResponse,

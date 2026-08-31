@@ -27,7 +27,7 @@ export const GlobalExchange = Cloudflare.DurableObject("GlobalExchange", {
 
 /** Stateless gateway Worker, application API, checked sinks, streams and assets. */
 export const Gateway = Cloudflare.Worker("Gateway", {
-  main: "./server/cloudflare.ts",
+  main: "./server/host/cloudflare/cloudflare.ts",
   compatibility: { flags: ["nodejs_compat"] },
   assets: {
     directory: "./dist/assets",

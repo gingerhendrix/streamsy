@@ -164,23 +164,31 @@ operator store, indexes, history, checkpoints, and migrations are not included.
 
 Effect-first, in the shape `issue-tracker-projections` established. Every
 application operation is a description with declared services and typed errors;
-`server/local.ts` is the only executable edge.
+`server/host/bun/local.ts` is the only executable edge.
+
+The server groups modules by runtime responsibility. The three root modules
+configure and assemble the complete workspace application.
 
 ```text
-server/errors.ts        typed failures (Schema.TaggedError)
-server/config.ts        AppConfig, read through Effect Config
-server/streams.ts       Streams — the protocol-client boundary
-server/commands.ts      CommandProducers, the commandId producer lane
-server/store.ts         IssueStore + the memory layer
-server/store-sqlite.ts  the SQLite layer: one transactional advance
-server/maintenance.ts   suffix -> decode -> engine -> commit -> publish
-server/sink.ts          the stateSink runtime
-server/sink-http.ts     checked route + native offset capabilities
-server/gateway.ts       the Durable Streams HTTP surface the route borrows
-server/application.ts   command and query workflows
-server/router.ts        the trust boundary: decode, call, translate by _tag
-server/runtime.ts       the application Layer, assembled once
+server/
+├── config.ts          application configuration
+├── errors.ts          typed application failures
+├── runtime.ts         application Layer composition
+├── application/       commands, queries, reconciliation, ingestion, maintenance
+├── transport/         request routing and Durable Streams protocol adapters
+├── persistence/       IssueStore implementations and engine commit adapter
+├── publication/       State, stream, document, and effect sink delivery
+├── exchange/          source paging, user inboxes, global cursors, source registry
+└── host/
+    ├── bun/            keyed in-process host and local executable edge
+    └── cloudflare/     Worker, Durable Objects, storage, and notifications
 ```
+
+The request path enters through `transport/router.ts`, calls the workflows in
+`application/application.ts`, and commits through `persistence/store.ts`.
+Publication modules expose the resulting products. Host-level exchange moves
+assignment activity from workspace sources into user inboxes with global cursor
+and source-registry state.
 
 ## Semantics worth knowing
 

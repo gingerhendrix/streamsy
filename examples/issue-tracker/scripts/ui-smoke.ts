@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- This executable resolves its package assets and screenshot paths through Bun's Node-compatible path API.
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createLocalHost } from "../server/local.ts";
+import { createLocalHost } from "../server/host/bun/local.ts";
 import { request } from "./http.ts";
 
 const packageDir = join(dirname(new URL(import.meta.url).pathname), "..");

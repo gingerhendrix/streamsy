@@ -70,7 +70,7 @@ describe("Integration 3B Alchemy topology", () => {
 
   test("routes dynamic surfaces through the Worker and serves built assets", () => {
     const source = readFileSync(join(packageDir, "alchemy.run.ts"), "utf8");
-    expect(source).toContain('main: "./server/cloudflare.ts"');
+    expect(source).toContain('main: "./server/host/cloudflare/cloudflare.ts"');
     expect(source).toContain('directory: "./dist/assets"');
     for (const route of ["/api/*", "/streams/*", "/state/*", "/feed/*", "/document/*"]) {
       expect(source).toContain(`"${route}"`);

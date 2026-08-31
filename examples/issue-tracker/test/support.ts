@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- This path join constructs a file-backed test fixture location, not application I/O.
 import { join } from "node:path";
 import { Schema } from "effect";
-import { createLocalHost, type LocalHostOptions } from "../server/local.ts";
+import { createLocalHost, type LocalHostOptions } from "../server/host/bun/local.ts";
 
 export type Host = ReturnType<typeof createLocalHost>;
 

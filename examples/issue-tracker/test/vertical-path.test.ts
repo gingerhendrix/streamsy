@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { CommandResponse, HealthResponse, IssuesResponse, SeedResponse } from "../shared/api.ts";
-import { memoryLayer } from "../server/store.ts";
+import { memoryLayer } from "../server/persistence/store.ts";
 import { call, createIssueBody, host, json, type Host } from "./support.ts";
 
 const open: Host[] = [];

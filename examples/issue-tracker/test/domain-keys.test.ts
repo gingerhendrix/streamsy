@@ -267,7 +267,7 @@ describe("the exchange position domain", () => {
         // A structural guard: the exchange's own modules must not reach for a
         // position from another domain. Reviewing this once is worth less than
         // asserting it, because the temptation returns with every new source.
-        for (const path of ["../server/exchange.ts", "../server/exchange-source.ts"]) {
+        for (const path of ["../server/exchange/exchange.ts", "../server/exchange/exchange-source.ts"]) {
           const source = yield* Effect.promise(() =>
             Bun.file(new URL(path, import.meta.url)).text(),
           );

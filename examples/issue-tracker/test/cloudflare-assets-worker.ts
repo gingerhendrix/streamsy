@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- Workerd binding fixture uses native Worker fetch edges. */
-import worker, { type CloudflareEnv } from "../server/cloudflare.ts";
+import worker, { type CloudflareEnv } from "../server/host/cloudflare/cloudflare.ts";
 import type { ExecutionContext } from "@cloudflare/workers-types";
 
 const immutableAssetBinding = {
@@ -16,4 +16,4 @@ export default {
   },
 };
 
-export { WorkspacePartitionObject } from "../server/cloudflare.ts";
+export { WorkspacePartitionObject } from "../server/host/cloudflare/cloudflare.ts";

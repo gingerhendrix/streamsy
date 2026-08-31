@@ -25,8 +25,8 @@ import { OutboxStore, OutboxUnavailable } from "@streamsy/effect-sink";
 import { Effect, Layer } from "effect";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { partitionPath } from "../server/host.ts";
-import { memoryLayer } from "../server/store.ts";
+import { partitionPath } from "../server/host/bun/host.ts";
+import { memoryLayer } from "../server/persistence/store.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 
 /**

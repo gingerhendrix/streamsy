@@ -24,7 +24,7 @@ import {
 } from "../shared/api.ts";
 import { membershipIdOf } from "../domain/issue.ts";
 import { workspaceKey } from "../domain/domains.ts";
-import { partitionPath } from "../server/host.ts";
+import { partitionPath } from "../server/host/bun/host.ts";
 import { call, host, json, temporaryDirectory, type Host } from "./support.ts";
 
 const open: Host[] = [];

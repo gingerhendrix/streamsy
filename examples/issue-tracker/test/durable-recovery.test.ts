@@ -12,7 +12,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { workspaceKey } from "../domain/domains.ts";
-import { partitionPath } from "../server/host.ts";
+import { partitionPath } from "../server/host/bun/host.ts";
 import { CommandResponse, IssuesResponse } from "../shared/api.ts";
 import { call, createIssueBody, host, json, temporaryDirectory, type Host } from "./support.ts";
 

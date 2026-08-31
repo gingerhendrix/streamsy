@@ -13,7 +13,7 @@ import { memoryResumeStore } from "@streamsy/tanstack-db";
 import { DateTime, Effect } from "effect";
 import { createBoardConnection, sortRows, type BoardConnection } from "../src/lib/board-db.ts";
 import type { BoardIssuesRow } from "../src/generated/board-issues.ts";
-import { IssueSink } from "../server/sink.ts";
+import { IssueSink } from "../server/publication/sink.ts";
 import { call, createIssueBody, host, type Host } from "./support.ts";
 
 interface Fixture {

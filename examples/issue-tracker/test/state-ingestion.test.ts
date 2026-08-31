@@ -3,8 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Effect } from "effect";
 import { streamNames } from "../domain/declaration.ts";
 import { CatalogRowsResponse } from "../shared/api.ts";
-import { IssueStore } from "../server/store.ts";
-import { stateSourceId } from "../server/state-ingestion.ts";
+import { IssueStore } from "../server/persistence/store.ts";
+import { stateSourceId } from "../server/application/state-ingestion.ts";
 import { call, host, json, type Host } from "./support.ts";
 
 const open: Host[] = [];

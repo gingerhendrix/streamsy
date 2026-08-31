@@ -31,7 +31,7 @@ import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";
 import { ExchangeStatusResponse, InboxResponse, TransitionFeedResponse } from "../shared/api.ts";
 import { IssueLabelsResponse, IssuesResponse, LabelCountsResponse } from "../shared/api.ts";
 import { StoreUnavailable } from "../server/errors.ts";
-import { IssueStore, memoryLayer } from "../server/store.ts";
+import { IssueStore, memoryLayer } from "../server/persistence/store.ts";
 import { call, host, json, temporaryDirectory, type Host } from "./support.ts";
 
 const open: Host[] = [];

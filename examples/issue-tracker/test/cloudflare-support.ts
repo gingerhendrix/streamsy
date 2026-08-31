@@ -20,7 +20,7 @@ export interface WorkerdHarness {
 }
 
 export async function workerdHarness(
-  entrypoint = "server/cloudflare.ts",
+  entrypoint = "server/host/cloudflare/cloudflare.ts",
   options: { testFailpoints?: boolean } = {},
 ): Promise<WorkerdHarness> {
   // Miniflare 4.20260730 resolves DO persistence inside workerd's sandbox and

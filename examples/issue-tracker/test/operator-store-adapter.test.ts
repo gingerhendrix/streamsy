@@ -8,7 +8,7 @@ import {
   decodeOperatorSnapshot,
   operatorMaintenanceCommit,
   operatorSnapshotRef,
-} from "../server/operator-store-adapter.ts";
+} from "../server/persistence/operator-store-adapter.ts";
 
 const issue = {
   issueId: "i1",

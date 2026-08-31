@@ -12,20 +12,20 @@
 import type { StreamProtocolClient, StreamProtocolFactory } from "@streamsy/core";
 import type { OutboxStore } from "@streamsy/effect-sink";
 import { Layer } from "effect";
-import { MeshLayer, type ApplicationServices } from "./application.ts";
-import * as Commands from "./commands.ts";
+import { MeshLayer, type ApplicationServices } from "./application/application.ts";
+import * as Commands from "./application/commands.ts";
 import type { AppConfig } from "./config.ts";
-import * as GatewayModule from "./gateway.ts";
-import type { StreamGateway } from "./gateway.ts";
+import * as GatewayModule from "./transport/gateway.ts";
+import type { StreamGateway } from "./transport/gateway.ts";
 import {
   NotificationTarget,
   notificationTargetLayer,
   type NotificationTargetOptions,
-} from "./notifications.ts";
-import { sinkLayer } from "./sink.ts";
-import { stateSourceProtocolLayer } from "./state-ingestion.ts";
-import type { IssueStore } from "./store.ts";
-import * as StreamsModule from "./streams.ts";
+} from "./publication/notifications.ts";
+import { sinkLayer } from "./publication/sink.ts";
+import { stateSourceProtocolLayer } from "./application/state-ingestion.ts";
+import type { IssueStore } from "./persistence/store.ts";
+import * as StreamsModule from "./transport/streams.ts";
 
 export interface ApplicationLayerOptions {
   /** Storage resolved into a protocol client by the host. */
