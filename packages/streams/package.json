@@ -42,18 +42,13 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
-    },
-    "./test-layers": {
-      "types": "./dist/test-layers.d.ts",
-      "import": "./dist/test-layers.js",
-      "default": "./dist/test-layers.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/streams.ts src/binding.ts src/identity.ts src/causal.ts src/testing.ts src/test-layers.ts --format esm --out-dir dist --clean --external @streamsy/core --external effect && tsc --project tsconfig.build.json",
+    "build": "tsdown src/streams.ts src/binding.ts src/identity.ts src/causal.ts src/testing.ts --format esm --out-dir dist --clean --external @streamsy/core --external effect && tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'"
   },

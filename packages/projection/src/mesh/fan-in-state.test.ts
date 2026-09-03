@@ -11,7 +11,7 @@ import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
 import { streamIdentity, type StreamIdentity } from "@streamsy/streams/identity";
 import { ProjectionPoison, AppendStreamsLive, ReadStreamsLive } from "@streamsy/streams";
 
-import { provideTestLayers } from "@streamsy/streams/test-layers";
+import { provideTestLayers } from "@streamsy/streams/testing";
 import {
   catchUpDynamicFanInState,
   FanInRecoveryLive,

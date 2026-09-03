@@ -16,7 +16,7 @@ import {
   ReadStreamsLive,
 } from "@streamsy/streams";
 
-import { provideTestLayers } from "@streamsy/streams/test-layers";
+import { provideTestLayers } from "@streamsy/streams/testing";
 import { DerivedRecoveryLive, DerivedStateHistoryLive } from "./derived-append.ts";
 import { deriveProducerLane, type ProducerLane } from "./lane.ts";
 import { catchUpState, type CatchUpStateResult } from "./state-projection.ts";

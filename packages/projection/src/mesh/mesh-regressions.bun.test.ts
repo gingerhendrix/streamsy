@@ -25,7 +25,7 @@ import {
   MalformedLineage,
   StreamAppendError,
 } from "@streamsy/streams";
-import { provideTestLayers } from "@streamsy/streams/test-layers";
+import { provideTestLayers } from "@streamsy/streams/testing";
 
 import {
   appendDerivedStateBatch,

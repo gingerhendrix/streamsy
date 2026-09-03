@@ -11,7 +11,7 @@ import { Effect, Layer } from "effect";
 import { bindStream } from "@streamsy/streams/binding";
 import { streamIdentity } from "@streamsy/streams/identity";
 import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/streams";
-import { provideTestLayers } from "@streamsy/streams/test-layers";
+import { provideTestLayers } from "@streamsy/streams/testing";
 import { DerivedRecoveryLive } from "./derived-append.ts";
 import { deriveProducerLane } from "./lane.ts";
 import { catchUp } from "./projection.ts";

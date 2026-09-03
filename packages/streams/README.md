@@ -9,7 +9,6 @@ Effect-native stream capabilities for Streamsy durable streams, together with th
 | `@streamsy/streams/identity`    | `src/identity.ts`    | `streamIdentity()` and its canonical encoding                                        |
 | `@streamsy/streams/causal`      | `src/causal.ts`      | `coverage()`, `sourceAck()`, `sourceWatermark()`, stream positions                   |
 | `@streamsy/streams/testing`     | `src/testing.ts`     | `TestStreams` and `TestStreamsLayer`                                                 |
-| `@streamsy/streams/test-layers` | `src/test-layers.ts` | `provideTestLayers()` for the executable test boundary                               |
 
 ## Causal vocabulary
 

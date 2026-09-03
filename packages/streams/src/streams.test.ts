@@ -26,7 +26,7 @@ import {
   StreamReadError,
   type StreamCancellationReason,
 } from "./streams.ts";
-import { provideTestLayers } from "./test-layers.ts";
+import { provideTestLayers } from "./testing.ts";
 
 const StreamTestLive = Layer.mergeAll(CreateStreamsLive, ReadStreamsLive, AppendStreamsLive);
 
