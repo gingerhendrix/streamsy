@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The test codec exercises the server's external row boundary. */
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
-import { defineStateSink } from "../state-contract.ts";
+import { defineStateSink } from "../state.ts";
 import { handleStateSink } from "./state.ts";
 
 interface Row {

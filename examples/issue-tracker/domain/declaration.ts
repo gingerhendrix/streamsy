@@ -9,12 +9,9 @@
  * change makes `issues.plan` hash differently, the maintained state is a
  * different thing and the host must say so.
  */
-import { defineStateSink } from "@streamsy/sinks";
-import { STATE_SINK_ERROR_TAGS } from "@streamsy/sinks/state-errors";
-import { defineStreamSink } from "@streamsy/sinks/stream";
-import { STREAM_SINK_ERROR_TAGS } from "@streamsy/sinks/stream-errors";
-import { defineDocumentSink } from "@streamsy/sinks/document";
-import { DOCUMENT_SINK_ERROR_TAGS } from "@streamsy/sinks/document-errors";
+import { defineStateSink, STATE_SINK_ERROR_TAGS } from "@streamsy/sinks";
+import { defineStreamSink, STREAM_SINK_ERROR_TAGS } from "@streamsy/sinks/stream";
+import { defineDocumentSink, DOCUMENT_SINK_ERROR_TAGS } from "@streamsy/sinks/document";
 import {
   decodeIdentifier,
   decodeIssueTransition,
@@ -47,7 +44,7 @@ import { labels, projects, users, workspaceMetadata } from "./catalog.ts";
 export { labels, projects, users, workspaceMetadata };
 
 /**
- * The one effect sink is declared beside its payload schema in
+ * The one action sink is declared beside its payload schema in
  * `notifications.ts`, and re-exported so this module stays the whole
  * declaration surface.
  */

@@ -10,49 +10,19 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/state-contract.d.ts",
-      "import": "./dist/state-contract.js",
-      "default": "./dist/state-contract.js"
-    },
-    "./state-errors": {
-      "types": "./dist/state-errors.d.ts",
-      "import": "./dist/state-errors.js",
-      "default": "./dist/state-errors.js"
-    },
-    "./state-protocol": {
-      "types": "./dist/state-protocol.d.ts",
-      "import": "./dist/state-protocol.js",
-      "default": "./dist/state-protocol.js"
+      "types": "./dist/state.d.ts",
+      "import": "./dist/state.js",
+      "default": "./dist/state.js"
     },
     "./stream": {
-      "types": "./dist/stream-contract.d.ts",
-      "import": "./dist/stream-contract.js",
-      "default": "./dist/stream-contract.js"
-    },
-    "./stream-errors": {
-      "types": "./dist/stream-errors.d.ts",
-      "import": "./dist/stream-errors.js",
-      "default": "./dist/stream-errors.js"
-    },
-    "./stream-protocol": {
-      "types": "./dist/stream-protocol.d.ts",
-      "import": "./dist/stream-protocol.js",
-      "default": "./dist/stream-protocol.js"
+      "types": "./dist/stream.d.ts",
+      "import": "./dist/stream.js",
+      "default": "./dist/stream.js"
     },
     "./document": {
-      "types": "./dist/document-contract.d.ts",
-      "import": "./dist/document-contract.js",
-      "default": "./dist/document-contract.js"
-    },
-    "./document-errors": {
-      "types": "./dist/document-errors.d.ts",
-      "import": "./dist/document-errors.js",
-      "default": "./dist/document-errors.js"
-    },
-    "./document-protocol": {
-      "types": "./dist/document-protocol.d.ts",
-      "import": "./dist/document-protocol.js",
-      "default": "./dist/document-protocol.js"
+      "types": "./dist/document.d.ts",
+      "import": "./dist/document.js",
+      "default": "./dist/document.js"
     },
     "./route": {
       "types": "./dist/route.d.ts",
@@ -73,11 +43,6 @@
       "types": "./dist/server/state.d.ts",
       "import": "./dist/server/state.js",
       "default": "./dist/server/state.js"
-    },
-    "./server/state-error-schema": {
-      "types": "./dist/server/state-error-schema.d.ts",
-      "import": "./dist/server/state-error-schema.js",
-      "default": "./dist/server/state-error-schema.js"
     },
     "./server/stream": {
       "types": "./dist/server/stream.d.ts",
@@ -116,7 +81,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/state-contract.ts src/state-errors.ts src/state-protocol.ts src/stream-contract.ts src/stream-errors.ts src/stream-protocol.ts src/document-contract.ts src/document-errors.ts src/document-protocol.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/state-error-schema.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite",
+    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test src"
   },

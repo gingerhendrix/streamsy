@@ -1,5 +1,5 @@
 /**
- * The tracker's one effect sink: notify an assignee when an issue lands on them.
+ * The tracker's one action sink: notify an assignee when an issue lands on them.
  *
  * `boardIssues` publishes state a consumer reads. This declares the opposite
  * kind of product — an external effect the world observes once. So the contract
@@ -11,7 +11,7 @@
  * retried command, a recovered receipt and a replayed enqueue all describe the
  * same delivery instead of three of them.
  */
-import { defineEffectSink, type EffectSinkChange } from "@streamsy/sinks/action";
+import { defineActionSink, type ActionSinkChange } from "@streamsy/sinks/action";
 import { Schema } from "effect";
 import { Identifier, IssueStatus, Timestamp, Title } from "./issue.ts";
 import type { IssueEvent, IssueRow } from "./issue.ts";
@@ -34,7 +34,7 @@ const encodeAssignmentNotification = Schema.encodeUnknownSync(
   Schema.fromJsonString(AssignmentNotification),
 );
 
-export const assignmentNotifications = defineEffectSink<
+export const assignmentNotifications = defineActionSink<
   AssignmentNotification,
   { readonly key: "issueId" }
 >({
@@ -69,7 +69,7 @@ export const assignmentNotifications = defineEffectSink<
  * leaving the relation is not an assignment.
  */
 export function assignmentOf(
-  change: EffectSinkChange<IssueRow>,
+  change: ActionSinkChange<IssueRow>,
   event: IssueEvent,
 ): AssignmentNotification | undefined {
   if (change.kind === "exit") return undefined;

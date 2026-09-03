@@ -11,10 +11,12 @@
  */
 import { Effect, Schema } from "effect";
 import type { DecodedSinkParams, SinkParamCodecs } from "../route.ts";
-import type { CheckedDocumentSink } from "../document-contract.ts";
-import type { DocumentSinkPublicError } from "../document-errors.ts";
+import {
+  type CheckedDocumentSink,
+  type DocumentSinkPublicError,
+  DOCUMENT_SINK_CONTRACT_HEADER,
+} from "../document.ts";
 import { canonicalJson, documentEtag, type CanonicalValue } from "../fingerprint.ts";
-import { DOCUMENT_SINK_CONTRACT_HEADER } from "../document-protocol.ts";
 
 export class DocumentSinkSourceFailure extends Schema.TaggedError<DocumentSinkSourceFailure>()(
   "DocumentSinkSourceFailure",

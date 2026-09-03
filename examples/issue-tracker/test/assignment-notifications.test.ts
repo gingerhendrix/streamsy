@@ -1,6 +1,6 @@
-/* oxlint-disable effecttsgo/async-function -- `bun:test` owns this file's control flow; the behaviour under test is the effect sink driven through the same host the executable edge builds. */
+/* oxlint-disable effecttsgo/async-function -- `bun:test` owns this file's control flow; the behaviour under test is the action sink driven through the same host the executable edge builds. */
 /**
- * The effect sink, end to end.
+ * The action sink, end to end.
  *
  * An assignment command becomes one canonical fact, one durable outbox entry
  * written with the command's receipt, and — when the lane is drained — exactly
@@ -220,7 +220,7 @@ describe("a notifier that refuses", () => {
 
 describe("the durable outbox across a restart", () => {
   test("pending work survives, and the retry budget is not restarted with it", async () => {
-    const directory = temporaryDirectory("issue-tracker-effect-sink");
+    const directory = temporaryDirectory("issue-tracker-action-sink");
     const failing = await seeded(
       track(
         host({

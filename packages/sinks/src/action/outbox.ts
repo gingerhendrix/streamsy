@@ -1,7 +1,7 @@
 /**
  * The durable outbox.
  *
- * An effect sink cannot enqueue by holding work in memory: the process that
+ * An action sink cannot enqueue by holding work in memory: the process that
  * decided to deliver is the same process that can die before delivering. So the
  * decision to deliver is written down first, in the same durable step as the
  * fact that caused it, and delivery is a separate, resumable pass over what was
@@ -85,7 +85,7 @@ export interface OutboxBacking {
 export interface OutboxStoreService extends OutboxBacking {}
 
 export class OutboxStore extends Context.Service<OutboxStore, OutboxStoreService>()(
-  "streamsy/effect-sink/OutboxStore",
+  "streamsy/action-sink/OutboxStore",
 ) {}
 
 /** Lift one durable backing into the service every runtime asks for. */

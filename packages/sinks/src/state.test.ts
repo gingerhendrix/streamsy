@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeStateSinkPublicError } from "./state-errors.ts";
+import { decodeStateSinkPublicError } from "./state.ts";
 
 describe("browser-safe state-sink public error decoding", () => {
   test("decodes closed resume literals", () => {

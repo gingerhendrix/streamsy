@@ -1,4 +1,18 @@
 /**
+ * The document sink surface.
+ *
+ * One module owns the document sink end to end: the wire header a response
+ * carries, the checked contract `defineDocumentSink` produces, and the
+ * browser-safe error union a consumer decodes. Nothing here imports `effect`.
+ */
+import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
+import { contractFingerprint } from "./fingerprint.ts";
+import type { ExactRouteParams } from "./route-params.ts";
+
+// Protocol: the wire header a document sink response carries.
+export const DOCUMENT_SINK_CONTRACT_HEADER = "x-streamsy-document-sink-contract";
+
+/*
  * The checked document-sink contract.
  *
  * A document sink publishes one derived value per route, not a keyed
@@ -12,11 +26,6 @@
  * document that no longer matches its schema is a typed failure instead of a
  * cached wrong answer.
  */
-import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
-import type { DocumentSinkErrorTag } from "./document-errors.ts";
-import { contractFingerprint } from "./fingerprint.ts";
-import type { ExactRouteParams } from "./route-params.ts";
-
 export interface DocumentSinkCodec<Document> {
   /* oxlint-disable-next-line anti-slop/no-unknown-parameters -- This decoder is the document's external wire boundary. */
   readonly decode: (value: unknown) => Document;
@@ -103,3 +112,38 @@ export type DocumentParamsOf<Sink> =
   Sink extends CheckedDocumentSink<infer _Document, infer Params>
     ? DecodedSinkParams<Params>
     : never;
+
+/*
+ * The browser-safe public errors a document sink may return.
+ *
+ * Every failure a consumer can act on carries a `recovery`, so a client never
+ * has to infer a retry policy from a status code. The union has no
+ * authorization member: access control belongs at the HTTP and session boundary
+ * that wraps these handlers, never inside a checked sink contract.
+ */
+
+export const DOCUMENT_SINK_ERROR_TAGS = [
+  "InvalidSinkParams",
+  "ContractChanged",
+  "DocumentUnavailable",
+  "WireDecodeFailed",
+] as const;
+export type DocumentSinkErrorTag = (typeof DOCUMENT_SINK_ERROR_TAGS)[number];
+
+/** A document sink is recovered by fetching the document unconditionally. */
+export type DocumentSinkRecovery = "refetch";
+
+export type DocumentSinkPublicError =
+  | {
+      readonly _tag: "InvalidSinkParams";
+      readonly sink: string;
+      readonly parameter: string;
+      readonly detail: string;
+    }
+  | {
+      readonly _tag: "ContractChanged";
+      readonly sink: string;
+      readonly recovery: DocumentSinkRecovery;
+    }
+  | { readonly _tag: "DocumentUnavailable"; readonly sink: string; readonly detail: string }
+  | { readonly _tag: "WireDecodeFailed"; readonly sink: string; readonly detail: string };

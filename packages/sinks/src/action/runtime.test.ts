@@ -1,7 +1,7 @@
 /**
  * The delivery runtime's contract, driven through the outbox a host would use.
  *
- * These are the properties that make an effect sink safe to point at the real
+ * These are the properties that make an action sink safe to point at the real
  * world: one effect per idempotency key, a bounded retry budget, a terminus
  * when the budget runs out, and a failing delivery that cannot stop the healthy
  * ones behind it. Backoff is checked against a `TestClock` rather than a sleep,
@@ -10,8 +10,8 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { TestClock } from "effect/testing";
-import { defineEffectSink } from "./contract.ts";
-import { EffectSinkDeliveryFailure, type OutboxUnavailable } from "./errors.ts";
+import { defineActionSink } from "./contract.ts";
+import { ActionSinkDeliveryFailure, type OutboxUnavailable } from "./errors.ts";
 import {
   makeMemoryOutboxBacking,
   OutboxStore,
@@ -22,10 +22,10 @@ import {
 import {
   drain,
   draftsFor,
-  effectSinkHandler,
+  actionSinkHandler,
   type DrainOptions,
-  type EffectSinkDelivery,
-  type EffectSinkHandler,
+  type ActionSinkDelivery,
+  type ActionSinkHandler,
 } from "./runtime.ts";
 
 interface Notification {
@@ -35,7 +35,7 @@ interface Notification {
 
 type NotificationRelation = { readonly key: "id" };
 
-const sink = defineEffectSink<Notification, NotificationRelation>({
+const sink = defineActionSink<Notification, NotificationRelation>({
   name: "test.notifications",
   from: { key: "id" },
   handler: { name: "test.notify", version: 1 },
@@ -56,7 +56,7 @@ const sink = defineEffectSink<Notification, NotificationRelation>({
 const note = (id: string, workspaceId = "main"): Notification => ({ id, workspaceId });
 
 interface Recorder {
-  readonly deliveries: EffectSinkDelivery<Notification>[];
+  readonly deliveries: ActionSinkDelivery<Notification>[];
   readonly accepted: Set<string>;
 }
 
@@ -72,8 +72,8 @@ const runOutbox = <A>(effect: Effect.Effect<A, OutboxUnavailable>) =>
 const handlerFor = (
   log: Recorder,
   options: { readonly refuse?: (id: string) => "retryable" | "permanent" | undefined } = {},
-): EffectSinkHandler<Notification> =>
-  effectSinkHandler(sink, (delivery, refuse) =>
+): ActionSinkHandler<Notification> =>
+  actionSinkHandler(sink, (delivery, refuse) =>
     Effect.gen(function* () {
       log.deliveries.push(delivery);
       const refusal = options.refuse?.(delivery.payload.id);
@@ -89,7 +89,7 @@ const enqueue = (outbox: OutboxBacking, notifications: readonly Notification[], 
   runOutbox(outbox.enqueue(draftsFor(sink, notifications, atMs)));
 
 const drainAt = (
-  handler: EffectSinkHandler<Notification>,
+  handler: ActionSinkHandler<Notification>,
   atMs: number,
   options: DrainOptions = {},
 ) =>
@@ -112,7 +112,7 @@ const states = (outbox: OutboxBacking): readonly Pick<OutboxEntry, "idempotencyK
     state: entry.state,
   }));
 
-describe("draining an effect sink", () => {
+describe("draining an action sink", () => {
   test("delivers each enqueued payload once and marks it delivered", () => {
     const outbox = makeMemoryOutboxBacking();
     const log = recorder();
@@ -282,7 +282,7 @@ describe("draining an effect sink", () => {
   test("a thrown handler is a failed delivery, not a failed pass", () => {
     const outbox = makeMemoryOutboxBacking();
     enqueue(outbox, [note("a"), note("b")]);
-    const thrower = effectSinkHandler<Notification, NotificationRelation>(sink, (delivery) =>
+    const thrower = actionSinkHandler<Notification, NotificationRelation>(sink, (delivery) =>
       delivery.payload.id === "a"
         ? Effect.sync(() => {
             throw new TypeError("the notifier client blew up");
@@ -356,9 +356,9 @@ describe("draining an effect sink", () => {
 
 describe("a delivery refusal", () => {
   test("names the sink's declared handler", () => {
-    const failure = EffectSinkDeliveryFailure.retryable(sink.handler.name, "a", "down");
+    const failure = ActionSinkDeliveryFailure.retryable(sink.handler.name, "a", "down");
     const { _tag: tag } = failure;
-    expect(tag).toBe("EffectSinkDeliveryFailure");
+    expect(tag).toBe("ActionSinkDeliveryFailure");
     expect(failure.handler).toBe("test.notify");
     expect(failure.retryable).toBe(true);
   });

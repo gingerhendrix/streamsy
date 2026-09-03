@@ -6,14 +6,14 @@
  * pinned to, the retry budget — are exactly the parts the fingerprint covers.
  */
 import { describe, expect, test } from "bun:test";
-import { backoffAfter, defineEffectSink, type EffectSinkDeliveryPolicy } from "./contract.ts";
+import { backoffAfter, defineActionSink, type ActionSinkDeliveryPolicy } from "./contract.ts";
 
 interface Payload {
   readonly id: string;
   readonly partition: string;
 }
 
-const delivery: EffectSinkDeliveryPolicy = {
+const delivery: ActionSinkDeliveryPolicy = {
   maxAttempts: 3,
   initialBackoffMs: 100,
   backoffFactor: 2,
@@ -21,7 +21,7 @@ const delivery: EffectSinkDeliveryPolicy = {
 };
 
 const define = (overrides: { readonly name?: string; readonly version?: number } = {}) =>
-  defineEffectSink<Payload, { readonly key: "id" }>({
+  defineActionSink<Payload, { readonly key: "id" }>({
     name: overrides.name ?? "test.sink",
     from: { key: "id" },
     handler: { name: "test.handler", version: overrides.version ?? 1 },
@@ -37,10 +37,10 @@ const define = (overrides: { readonly name?: string; readonly version?: number }
     delivery,
   });
 
-describe("an effect-sink declaration", () => {
+describe("an action-sink declaration", () => {
   test("carries the observed relation's key and is frozen", () => {
     const sink = define();
-    expect(sink.kind).toBe("checked-effect-sink");
+    expect(sink.kind).toBe("checked-action-sink");
     expect(sink.key).toBe("id");
     expect(Object.isFrozen(sink)).toBe(true);
     expect(sink.fingerprint).toMatch(/^[0-9a-f]{8}$/);
@@ -54,19 +54,19 @@ describe("an effect-sink declaration", () => {
 
   test("an impossible delivery policy is rejected at declaration time", () => {
     expect(() =>
-      defineEffectSink<Payload, { readonly key: "id" }>({
+      defineActionSink<Payload, { readonly key: "id" }>({
         ...define(),
         delivery: { ...delivery, maxAttempts: 0 },
       }),
     ).toThrow(/at least one delivery attempt/);
     expect(() =>
-      defineEffectSink<Payload, { readonly key: "id" }>({
+      defineActionSink<Payload, { readonly key: "id" }>({
         ...define(),
         delivery: { ...delivery, backoffFactor: 0.5 },
       }),
     ).toThrow(/shrink its backoff/);
     expect(() =>
-      defineEffectSink<Payload, { readonly key: "id" }>({
+      defineActionSink<Payload, { readonly key: "id" }>({
         ...define(),
         delivery: { ...delivery, maxBackoffMs: 10 },
       }),

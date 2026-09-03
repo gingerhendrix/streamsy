@@ -205,7 +205,7 @@ try {
     concurrentBodies,
   );
 
-  // === the effect sink: one assignment, one delivery, across a restart ===
+  // === the action sink: one assignment, one delivery, across a restart ===
   const assignedResponse = await post(
     running.origin,
     "/api/workspaces/main/issues/smoke-issue/assignee",

@@ -17,16 +17,16 @@
  * handler can never fail the caller that asked for a drain.
  */
 import { Cause, Clock, Effect, Exit } from "effect";
-import { backoffAfter, type CheckedEffectSink, type EffectSinkRelation } from "./contract.ts";
+import { backoffAfter, type CheckedActionSink, type ActionSinkRelation } from "./contract.ts";
 import {
-  EffectSinkDeliveryFailure,
+  ActionSinkDeliveryFailure,
   type DeadLetterReason,
   type OutboxUnavailable,
 } from "./errors.ts";
 import { OutboxStore, type OutboxDraft, type OutboxEntry } from "./outbox.ts";
 
 /** One attempt at one delivery, as the handler sees it. */
-export interface EffectSinkDelivery<Payload> {
+export interface ActionSinkDelivery<Payload> {
   readonly entryId: number;
   readonly sink: string;
   readonly partitionId: string;
@@ -44,18 +44,18 @@ export interface EffectSinkDelivery<Payload> {
   readonly payload: Payload;
 }
 
-export interface EffectSinkHandler<Payload, Requirements = never> {
+export interface ActionSinkHandler<Payload, Requirements = never> {
   readonly deliver: (
-    delivery: EffectSinkDelivery<Payload>,
-  ) => Effect.Effect<void, EffectSinkDeliveryFailure, Requirements>;
+    delivery: ActionSinkDelivery<Payload>,
+  ) => Effect.Effect<void, ActionSinkDeliveryFailure, Requirements>;
 }
 
 /** How a handler refuses the delivery it was given, without restating its own identity. */
 export interface RefuseDelivery {
   /** The effect may still succeed later: the runtime spends another attempt. */
-  readonly retryable: (detail: string) => EffectSinkDeliveryFailure;
+  readonly retryable: (detail: string) => ActionSinkDeliveryFailure;
   /** The effect can never succeed for this payload: the runtime dead-letters it now. */
-  readonly permanent: (detail: string) => EffectSinkDeliveryFailure;
+  readonly permanent: (detail: string) => ActionSinkDeliveryFailure;
 }
 
 /**
@@ -66,20 +66,20 @@ export interface RefuseDelivery {
  * the same sink delivers through a real notifier in the host and through a
  * recording fake in a test, with no branch in between.
  */
-export function effectSinkHandler<Payload, From extends EffectSinkRelation, Requirements = never>(
-  sink: CheckedEffectSink<Payload, From>,
+export function actionSinkHandler<Payload, From extends ActionSinkRelation, Requirements = never>(
+  sink: CheckedActionSink<Payload, From>,
   deliver: (
-    delivery: EffectSinkDelivery<Payload>,
+    delivery: ActionSinkDelivery<Payload>,
     refuse: RefuseDelivery,
-  ) => Effect.Effect<void, EffectSinkDeliveryFailure, Requirements>,
-): EffectSinkHandler<Payload, Requirements> {
+  ) => Effect.Effect<void, ActionSinkDeliveryFailure, Requirements>,
+): ActionSinkHandler<Payload, Requirements> {
   return {
     deliver: (delivery) =>
       deliver(delivery, {
         retryable: (detail) =>
-          EffectSinkDeliveryFailure.retryable(sink.handler.name, delivery.idempotencyKey, detail),
+          ActionSinkDeliveryFailure.retryable(sink.handler.name, delivery.idempotencyKey, detail),
         permanent: (detail) =>
-          EffectSinkDeliveryFailure.permanent(sink.handler.name, delivery.idempotencyKey, detail),
+          ActionSinkDeliveryFailure.permanent(sink.handler.name, delivery.idempotencyKey, detail),
       }),
   };
 }
@@ -103,8 +103,8 @@ export interface DrainReport {
 export const DEFAULT_DRAIN_LIMIT = 100;
 
 /** Lower declared payloads to outbox drafts. Pure, so a caller can write them transactionally. */
-export function draftsFor<Payload, From extends EffectSinkRelation>(
-  sink: CheckedEffectSink<Payload, From>,
+export function draftsFor<Payload, From extends ActionSinkRelation>(
+  sink: CheckedActionSink<Payload, From>,
   payloads: readonly Payload[],
   enqueuedAtMs: number,
 ): readonly OutboxDraft[] {
@@ -118,9 +118,9 @@ export function draftsFor<Payload, From extends EffectSinkRelation>(
 }
 
 /** Deliver every due entry in one lane, serially, applying the declared retry policy. */
-export const drain = <Payload, From extends EffectSinkRelation, Requirements = never>(
-  sink: CheckedEffectSink<Payload, From>,
-  handler: EffectSinkHandler<Payload, Requirements>,
+export const drain = <Payload, From extends ActionSinkRelation, Requirements = never>(
+  sink: CheckedActionSink<Payload, From>,
+  handler: ActionSinkHandler<Payload, Requirements>,
   options: DrainOptions = {},
 ): Effect.Effect<DrainReport, OutboxUnavailable, OutboxStore | Requirements> =>
   Effect.gen(function* () {
@@ -213,8 +213,8 @@ type DecodedPayload<Payload> =
  * Retrying it would re-run the same decode against the same bytes forever, so
  * it dead-letters immediately — fail-stop for that entry, and only that entry.
  */
-function decodePayload<Payload, From extends EffectSinkRelation>(
-  sink: CheckedEffectSink<Payload, From>,
+function decodePayload<Payload, From extends ActionSinkRelation>(
+  sink: CheckedActionSink<Payload, From>,
   entry: OutboxEntry,
 ): DecodedPayload<Payload> {
   try {
@@ -225,27 +225,27 @@ function decodePayload<Payload, From extends EffectSinkRelation>(
 }
 
 /** Every non-interrupt cause becomes one retryable refusal; a thrown handler is still a handler. */
-function failureOf<Payload, From extends EffectSinkRelation>(
-  sink: CheckedEffectSink<Payload, From>,
+function failureOf<Payload, From extends ActionSinkRelation>(
+  sink: CheckedActionSink<Payload, From>,
   entry: OutboxEntry,
-  cause: Cause.Cause<EffectSinkDeliveryFailure>,
-): EffectSinkDeliveryFailure {
-  const declared = cause.reasons.find((reason): reason is Cause.Fail<EffectSinkDeliveryFailure> => {
+  cause: Cause.Cause<ActionSinkDeliveryFailure>,
+): ActionSinkDeliveryFailure {
+  const declared = cause.reasons.find((reason): reason is Cause.Fail<ActionSinkDeliveryFailure> => {
     const { _tag: tag } = reason;
     return tag === "Fail";
   });
   if (declared !== undefined) return declared.error;
-  return EffectSinkDeliveryFailure.retryable(
+  return ActionSinkDeliveryFailure.retryable(
     sink.handler.name,
     entry.idempotencyKey,
     Cause.pretty(cause).slice(0, 500),
   );
 }
 
-function deadLetterReason<Payload, From extends EffectSinkRelation>(
-  sink: CheckedEffectSink<Payload, From>,
+function deadLetterReason<Payload, From extends ActionSinkRelation>(
+  sink: CheckedActionSink<Payload, From>,
   attempt: number,
-  failure: EffectSinkDeliveryFailure,
+  failure: ActionSinkDeliveryFailure,
 ): DeadLetterReason | undefined {
   if (!failure.retryable) return "permanent";
   if (attempt >= sink.delivery.maxAttempts) return "attempts-exhausted";

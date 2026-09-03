@@ -28,7 +28,7 @@
  * it has none. In practice at most one batch is ever owed, because every
  * maintenance pass publishes.
  *
- * The Effect sink's outbox is deliberately still not used here. The outbox
+ * The action sink's outbox is deliberately still not used here. The outbox
  * delivers external effects at least once with a dead-letter terminus; this
  * feed is a replayable log whose contract is arrival order and native-offset
  * resume, and a dead-lettered transition would be exactly the hole above.

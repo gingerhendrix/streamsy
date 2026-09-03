@@ -178,7 +178,7 @@ export const changeStatus = Effect.fn("Application.changeStatus")(function* (
  *
  * The maintained row is read before the fact is appended, for two reasons that
  * are both about honesty. Assigning an issue that does not exist is a 404, not
- * a durable fact. And the notification the effect sink will deliver carries the
+ * a durable fact. And the notification the action sink will deliver carries the
  * issue's title and status, which live on the row rather than on the event, so
  * they are read from the same row the fact is about.
  */
@@ -582,7 +582,7 @@ const runCommand = Effect.fn("Application.command")(function* <
   intent: CommandIntent,
   build: (sequence: number, occurredAt: string) => Event,
   /**
-   * The effect-sink deliveries this command's fact implies.
+   * The action-sink deliveries this command's fact implies.
    *
    * They are written with the receipt, in one durable step, so an accepted
    * command and the effects it owes are decided together. Every recovery path

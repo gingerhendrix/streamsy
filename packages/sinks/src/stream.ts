@@ -1,4 +1,19 @@
 /**
+ * The stream sink surface.
+ *
+ * One module owns the stream sink end to end: the wire headers a session is
+ * negotiated with, the checked contract `defineStreamSink` produces, and the
+ * browser-safe error union a consumer decodes. Nothing here imports `effect`.
+ */
+import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
+import { contractFingerprint } from "./fingerprint.ts";
+import type { ExactRouteParams } from "./route-params.ts";
+
+// Protocol: the wire headers a stream sink session carries.
+export const STREAM_SINK_VERSION_HEADER = "x-streamsy-stream-sink-version";
+export const STREAM_SINK_CONTRACT_HEADER = "x-streamsy-stream-sink-contract";
+
+/*
  * The checked stream-sink contract.
  *
  * A state sink publishes what a relation *is*; a stream sink publishes what
@@ -11,11 +26,6 @@
  * The declaration is inert data. A host reads its route, its feed metadata and
  * its fingerprint; the runtime that serves it lives in `./server/stream.ts`.
  */
-import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
-import type { StreamSinkErrorTag } from "./stream-errors.ts";
-import { contractFingerprint } from "./fingerprint.ts";
-import type { ExactRouteParams } from "./route-params.ts";
-
 export interface StreamSinkEventCodec<Event> {
   /* oxlint-disable-next-line anti-slop/no-unknown-parameters -- This decoder is the feed event's external wire boundary. */
   readonly decode: (value: unknown) => Event;
@@ -144,3 +154,51 @@ export type StreamParamsOf<Sink> =
   Sink extends CheckedStreamSink<infer _Event, infer _Key, infer Params, infer _From>
     ? DecodedSinkParams<Params>
     : never;
+
+/*
+ * The browser-safe public errors a stream sink may return.
+ *
+ * Every failure a consumer can act on carries a `recovery`, so a client never
+ * has to infer a retry policy from a status code. The union has no
+ * authorization member: access control belongs at the HTTP and session boundary
+ * that wraps these handlers, never inside a checked sink contract.
+ */
+
+export const STREAM_SINK_ERROR_TAGS = [
+  "InvalidSinkParams",
+  "ProtocolVersionUnsupported",
+  "ResumeRejected",
+  "FeedUnavailable",
+  "WireDecodeFailed",
+] as const;
+export type StreamSinkErrorTag = (typeof STREAM_SINK_ERROR_TAGS)[number];
+
+/** A stream sink is recovered by reading its feed again from the start. */
+export type StreamSinkRecovery = "replay-from-start";
+export type StreamResumeRejectedReason =
+  | "invalid-offset"
+  | "history-unavailable"
+  | "contract-changed";
+
+export type StreamSinkPublicError =
+  | {
+      readonly _tag: "InvalidSinkParams";
+      readonly sink: string;
+      readonly parameter: string;
+      readonly detail: string;
+    }
+  | {
+      readonly _tag: "ProtocolVersionUnsupported";
+      readonly sink: string;
+      readonly supported: number;
+      readonly received: string;
+      readonly recovery: StreamSinkRecovery;
+    }
+  | {
+      readonly _tag: "ResumeRejected";
+      readonly sink: string;
+      readonly reason: StreamResumeRejectedReason;
+      readonly recovery: StreamSinkRecovery;
+    }
+  | { readonly _tag: "FeedUnavailable"; readonly sink: string; readonly detail: string }
+  | { readonly _tag: "WireDecodeFailed"; readonly sink: string; readonly detail: string };

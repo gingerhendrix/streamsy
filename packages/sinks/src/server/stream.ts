@@ -12,9 +12,12 @@
  */
 import { Effect, Schema } from "effect";
 import type { SinkParamCodecs, DecodedSinkParams } from "../route.ts";
-import type { CheckedStreamSink } from "../stream-contract.ts";
-import type { StreamSinkPublicError } from "../stream-errors.ts";
-import { STREAM_SINK_CONTRACT_HEADER, STREAM_SINK_VERSION_HEADER } from "../stream-protocol.ts";
+import {
+  type CheckedStreamSink,
+  type StreamSinkPublicError,
+  STREAM_SINK_CONTRACT_HEADER,
+  STREAM_SINK_VERSION_HEADER,
+} from "../stream.ts";
 
 export class StreamSinkSourceFailure extends Schema.TaggedError<StreamSinkSourceFailure>()(
   "StreamSinkSourceFailure",

@@ -46,7 +46,7 @@ export const DEFAULT_WORKSPACE_ID = "main";
 export interface LocalHostOptions {
   /** Durable-stream storage for the default workspace. Pins the host to it. */
   readonly adapter?: StorageAdapter;
-  /** Maintained state and the effect-sink outbox for the default workspace. Pins the host to it. */
+  /** Maintained state and the action-sink outbox for the default workspace. Pins the host to it. */
   readonly store?: Layer.Layer<IssueStore | OutboxStore>;
   /** Where assignment notifications land. Defaults to the in-process log. */
   readonly notifications?: NotificationTargetOptions;

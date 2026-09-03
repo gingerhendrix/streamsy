@@ -3,7 +3,7 @@
 The Streamsy issue tracker. It carries one declaration end to end, from an HTTP
 command to a live React board — and, since Integration 2, it is the whole local
 application rather than one vertical slice: three domains, two checked State
-sinks, a stream sink, a document sink, an effect sink, and a cross-workspace
+sinks, a stream sink, a document sink, an action sink, and a cross-workspace
 inbox no single partition could serve.
 
 ```text
@@ -27,7 +27,7 @@ HTTP issue command
 | Issue labels  | read model over the maintained membership relation | Polled, refreshed after every command                                   |
 | Activity      | `streamSink` feed, in arrival order                | Polled                                                                  |
 | Summary       | `documentSink` with a declared cache policy        | Polled                                                                  |
-| Notifications | `effectSink` outbox state                          | Polled                                                                  |
+| Notifications | `actionSink` outbox state                          | Polled                                                                  |
 | Inbox         | the _user_ domain's product, fed by the exchange   | Polled — see "Evidence limits"                                          |
 
 ## Label membership
@@ -177,7 +177,7 @@ server/
 ├── application/       commands, queries, reconciliation, ingestion, maintenance
 ├── transport/         request routing and Durable Streams protocol adapters
 ├── persistence/       IssueStore implementations and engine commit adapter
-├── publication/       State, stream, document, and effect sink delivery
+├── publication/       State, stream, document, and action sink delivery
 ├── exchange/          source paging, user inboxes, global cursors, source registry
 └── host/
     ├── bun/            keyed in-process host and local executable edge

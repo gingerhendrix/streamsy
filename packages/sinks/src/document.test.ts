@@ -1,7 +1,6 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The test codec exercises the sink's external wire boundary. */
 import { describe, expect, test } from "bun:test";
-import { cacheControlOf, defineDocumentSink } from "./document-contract.ts";
-import { DOCUMENT_SINK_ERROR_TAGS } from "./document-errors.ts";
+import { cacheControlOf, defineDocumentSink, DOCUMENT_SINK_ERROR_TAGS } from "./document.ts";
 
 interface Summary {
   readonly workspaceId: string;

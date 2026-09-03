@@ -121,8 +121,8 @@ describe("the issue-tracker declaration", () => {
     expect(boardIssues.from.name).toBe(projectBoard.name);
   });
 
-  test("the effect sink declares a delivery contract, not a route", () => {
-    expect(assignmentNotifications.kind).toBe("checked-effect-sink");
+  test("the action sink declares a delivery contract, not a route", () => {
+    expect(assignmentNotifications.kind).toBe("checked-action-sink");
     expect(Object.isFrozen(assignmentNotifications)).toBe(true);
     expect(assignmentNotifications.key).toBe(issues.key);
     expect(assignmentNotifications.handler).toEqual({
@@ -138,7 +138,7 @@ describe("the issue-tracker declaration", () => {
     expect(assignmentNotifications.fingerprint).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  test("the effect sink's idempotency key is a function of durable facts only", () => {
+  test("the action sink's idempotency key is a function of durable facts only", () => {
     const notification = {
       workspaceId: "main",
       issueId: "issue-1",

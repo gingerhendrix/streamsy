@@ -35,34 +35,31 @@ The Effect-free tier is the package root and the sibling subpaths beside it. No
 module reachable from any of them imports `effect`, so a browser bundle that
 declares or decodes a sink stays free of the runtime.
 
-| Subpath               | Owns                                                             |
-| --------------------- | ---------------------------------------------------------------- |
-| `.`                   | `defineStateSink` and the checked state-sink types               |
-| `./state-errors`      | the state sink's browser-safe public error union and its decoder |
-| `./state-protocol`    | the state sink's wire headers and protocol identifier            |
-| `./stream`            | `defineStreamSink` and the checked stream-sink types             |
-| `./stream-errors`     | the stream sink's public error union                             |
-| `./stream-protocol`   | the stream sink's wire headers                                   |
-| `./document`          | `defineDocumentSink` and the checked document-sink types         |
-| `./document-errors`   | the document sink's public error union                           |
-| `./document-protocol` | the document sink's wire header                                  |
-| `./route`             | `compileSinkRoute` and the parameter codec contract              |
-| `./route-params`      | the compile-time check that a route and its codecs agree         |
-| `./fingerprint`       | canonical encoding, contract fingerprints, entity tags           |
+| Subpath          | Owns                                                                       |
+| ---------------- | -------------------------------------------------------------------------- |
+| `.`              | the state sink surface: protocol headers, `defineStateSink`, error union   |
+| `./stream`       | the stream sink surface: protocol headers, `defineStreamSink`, error union |
+| `./document`     | the document sink surface: protocol header, `defineDocumentSink`, errors   |
+| `./route`        | `compileSinkRoute` and the parameter codec contract                        |
+| `./route-params` | the compile-time check that a route and its codecs agree                   |
+| `./fingerprint`  | canonical encoding, contract fingerprints, entity tags                     |
+
+Each family is one module. Its wire protocol, its checked contract, and the
+browser-safe error union a consumer decodes have one owner between them, in that
+order within the file.
 
 The Effect tier:
 
-| Subpath                       | Owns                                                           |
-| ----------------------------- | -------------------------------------------------------------- |
-| `./server/state`              | `handleStateSink`                                              |
-| `./server/stream`             | `handleStreamSink`                                             |
-| `./server/document`           | `handleDocumentSink`                                           |
-| `./server/state-error-schema` | the server-side schema for the state sink's public error union |
-| `./action`                    | `defineEffectSink` and the checked action-sink types           |
-| `./action/errors`             | the action sink's failures and dead-letter reasons             |
-| `./action/outbox`             | the durable outbox contract and its in-memory backing          |
-| `./action/runtime`            | the serialized delivery runtime and drain loop                 |
-| `./action/sqlite`             | the SQLite outbox backing and its migration                    |
+| Subpath             | Owns                                                     |
+| ------------------- | -------------------------------------------------------- |
+| `./server/state`    | `handleStateSink` and the server-side error union schema |
+| `./server/stream`   | `handleStreamSink`                                       |
+| `./server/document` | `handleDocumentSink`                                     |
+| `./action`          | `defineActionSink` and the checked action-sink types     |
+| `./action/errors`   | the action sink's failures and dead-letter reasons       |
+| `./action/outbox`   | the durable outbox contract and its in-memory backing    |
+| `./action/runtime`  | the serialized delivery runtime and drain loop           |
+| `./action/sqlite`   | the SQLite outbox backing and its migration              |
 
 There is no barrel. A subpath points at the module that owns the symbols, so an
 import names where a symbol lives.

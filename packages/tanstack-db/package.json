@@ -4,7 +4,7 @@
   "description": "Browser-safe Durable State and TanStack DB bindings for checked Streamsy sinks.",
   "license": "MIT",
   "bin": {
-    "streamsy-state-sink": "./dist/cli.js"
+    "streamsy-tanstack-db": "./dist/cli.js"
   },
   "files": [
     "dist"

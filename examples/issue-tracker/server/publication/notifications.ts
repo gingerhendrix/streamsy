@@ -1,5 +1,5 @@
 /**
- * The `effectSink` runtime for `issue-tracker.assignment-notifications`.
+ * The `actionSink` runtime for `issue-tracker.assignment-notifications`.
  *
  * Three things live here and they are deliberately apart:
  *
@@ -13,7 +13,7 @@
  * - `assignmentHandler` and `drainAssignments` are *how* delivery is attempted:
  *   the declared retry budget, applied by the package's serialized runtime.
  */
-import { drain, draftsFor, effectSinkHandler } from "@streamsy/sinks/action/runtime";
+import { drain, draftsFor, actionSinkHandler } from "@streamsy/sinks/action/runtime";
 import { type OutboxDraft } from "@streamsy/sinks/action/outbox";
 import { Context, Effect, Layer, Schema } from "effect";
 import { assignmentNotifications, issueLifecycle, issues } from "../../domain/declaration.ts";
@@ -90,7 +90,7 @@ export const notificationTargetLayer = (
   });
 
 /** The declared handler, bound to whatever target the host's layer supplies. */
-export const assignmentHandler = effectSinkHandler<
+export const assignmentHandler = actionSinkHandler<
   AssignmentNotification,
   typeof assignmentNotifications.from,
   NotificationTarget

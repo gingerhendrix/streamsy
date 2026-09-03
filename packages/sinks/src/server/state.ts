@@ -1,14 +1,13 @@
 import { Effect, Schema } from "effect";
-import type { CheckedStateSink } from "../state-contract.ts";
-import type { StateSinkPublicError } from "../state-errors.ts";
 import {
+  type CheckedStateSink,
+  type StateSinkPublicError,
   STATE_SINK_CONTRACT_HEADER,
   STATE_SINK_RESET_HEADER,
   STATE_SINK_RESET_VALUE,
   STATE_SINK_VERSION_HEADER,
-} from "../state-protocol.ts";
-import type { SinkParamCodecs } from "../route.ts";
-import type { DecodedSinkParams } from "../route.ts";
+} from "../state.ts";
+import type { SinkParamCodecs, DecodedSinkParams } from "../route.ts";
 
 export class StateSinkSourceFailure extends Schema.TaggedError<StateSinkSourceFailure>()(
   "StateSinkSourceFailure",
@@ -172,3 +171,44 @@ function invalid(sink: string): StateSinkPublicError {
     detail: "request path does not match the checked sink route",
   };
 }
+
+// The server-side encoding of the same public error union `../state.ts` declares
+// structurally for the browser: what a server writes, against what a client decodes.
+const Recovery = Schema.Literal("snapshot-then-live");
+
+/** Server-side schema for the browser-safe public error union. */
+export const StateSinkPublicErrorSchema = Schema.Union([
+  Schema.TaggedStruct("InvalidSinkParams", {
+    sink: Schema.String,
+    parameter: Schema.String,
+    detail: Schema.String,
+  }),
+  Schema.TaggedStruct("ProtocolVersionUnsupported", {
+    sink: Schema.String,
+    supported: Schema.Finite,
+    received: Schema.String,
+    recovery: Recovery,
+  }),
+  Schema.TaggedStruct("ResumeRejected", {
+    sink: Schema.String,
+    reason: Schema.Literals([
+      "invalid-offset",
+      "history-unavailable",
+      "protocol-incompatible",
+      "contract-changed",
+    ]),
+    recovery: Recovery,
+  }),
+  Schema.TaggedStruct("SnapshotUnavailable", {
+    sink: Schema.String,
+    detail: Schema.String,
+  }),
+  Schema.TaggedStruct("TransportUnavailable", {
+    sink: Schema.String,
+    detail: Schema.String,
+  }),
+  Schema.TaggedStruct("WireDecodeFailed", {
+    sink: Schema.String,
+    detail: Schema.String,
+  }),
+]);

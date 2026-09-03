@@ -242,7 +242,7 @@ export interface IssueStoreService {
    * Record one accepted command and the deliveries it implies, together.
    *
    * The receipt is the application's exactly-once record of an accepted
-   * command, so it is also the only place an effect-sink enqueue can be made
+   * command, so it is also the only place an action-sink enqueue can be made
    * exactly-once without inventing a second reconciliation mechanism. Both
    * writes land or neither does.
    */
