@@ -14,7 +14,7 @@
 
 import { rmSync } from "node:fs";
 import { createStreamProtocol } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 
 import { buildApp } from "./http/app.ts";
 import { createSqliteStores } from "./persistence/sqlite-store.ts";

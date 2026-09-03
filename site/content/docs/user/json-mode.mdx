@@ -1,12 +1,12 @@
 ---
 title: JSON mode
-description: Typed JSON streams with @streamsy/json — JsonProtocol, JsonStream, codecs, and Standard Schema.
+description: Typed JSON streams with @streamsy/core/json — JsonProtocol, JsonStream, codecs, and Standard Schema.
 ---
 
-`@streamsy/json` wraps a `StreamProtocolAdapter` so messages are typed JavaScript values instead of raw bytes. Values are encoded to / decoded from `application/json` through a **codec** or a **Standard Schema**, and streams are tagged with the `application/json` content type.
+`@streamsy/core/json` wraps a `StreamProtocolAdapter` so messages are typed JavaScript values instead of raw bytes. Values are encoded to / decoded from `application/json` through a **codec** or a **Standard Schema**, and streams are tagged with the `application/json` content type.
 
 ```bash
-bun add @streamsy/json
+bun add @streamsy/core
 ```
 
 ## Create a typed protocol
@@ -15,7 +15,7 @@ bun add @streamsy/json
 
 ```ts
 import { createMemoryStorageAdapter, createStreamProtocol } from "@streamsy/core";
-import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
+import { createJsonProtocol, type JsonCodec } from "@streamsy/core/json";
 
 type User = { id: string; name: string };
 

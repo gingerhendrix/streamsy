@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { StreamProtocol, directProtocolClient } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 import { Effect, Layer } from "effect";
 import { bindStream } from "@streamsy/streams/binding";
 import { streamIdentity } from "@streamsy/streams/identity";

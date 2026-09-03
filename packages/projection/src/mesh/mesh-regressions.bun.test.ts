@@ -14,7 +14,7 @@ import {
   type StreamProtocolClient,
   type StreamProtocolHandle,
 } from "@streamsy/core";
-import { createSqliteStorageAdapter, type SqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter, type SqliteStorageAdapter } from "@streamsy/storage/sqlite";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
 import { streamIdentity } from "@streamsy/streams/identity";

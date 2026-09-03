@@ -19,7 +19,7 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect } from "effect";
-import type { DurableObjectStreamStorage } from "@streamsy/storage-durable-object";
+import type { DurableObjectStreamStorage } from "@streamsy/storage/durable-object/storage";
 
 export const STACK_NAME = "streamsy-issue-tracker";
 

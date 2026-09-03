@@ -175,6 +175,6 @@ The Vitest suites cover domain rules, projection equivalence and recovery, HTTP 
 - Board recovery restores the complete output history on each materialization. A bounded recovery anchor is noted as future work in `server/game/board.ts`.
 - Catch-up currently reads all unread source data as one delivery boundary; an oversized boundary fails atomically, and paginated draining is future work.
 - The move feed caps at 40 rows. It is a presentation feed, not full history.
-- Cloudflare hosting uses one SQLite Durable Object per game, not the one-object-per-stream model of `@streamsy/storage-durable-object`.
+- Cloudflare hosting uses one SQLite Durable Object per game, not the one-object-per-stream model of `@streamsy/storage/durable-object`.
 - Board delivery uses a long-poll Durable State stream; agent actions use SSE. The transports differ by design, and the agent API rejects `wait`.
 - Duplicate command acceptance proves reuse of a producer sequence, not payload equality. Positions from different identities are incomparable. Wakeups improve latency; durable rereads, lineage, and checkpoints provide the proof.

@@ -6,7 +6,7 @@ import {
   type JsonReadNextResult,
   type JsonReadResult,
   type JsonSchema,
-} from "@streamsy/json";
+} from "@streamsy/core/json";
 import type {
   AppendResult,
   CreateOptions,

@@ -140,7 +140,7 @@ The protocol maps `NotSupportedError` to a structured public `not-supported` res
 - Insert messages in the same transaction as record and producer updates.
 - Use a reverse index or child-edge rows for fork reclamation.
 
-Reference: `packages/storage-sqlite/src`.
+Reference: `packages/storage/src/sqlite`.
 
 ### Actor or Durable Object stores
 
@@ -150,7 +150,7 @@ Reference: `packages/storage-sqlite/src`.
 - Model fork/delete/GC as convergent, idempotent operations.
 - Use actor alarms for active expiry and actor-local waiters for live reads.
 
-Reference: `packages/storage-durable-object/src`.
+Reference: `packages/storage/src/durable-object`.
 
 ### Memory and test stores
 

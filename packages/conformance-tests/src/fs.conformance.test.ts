@@ -1,7 +1,7 @@
 /**
  * Run conformance tests against the JSONL filesystem server implementation.
  *
- * Starts a server with `@streamsy/storage-fs` pointed at a fresh temp directory,
+ * Starts a server with `@streamsy/storage/fs` pointed at a fresh temp directory,
  * runs the official @durable-streams/server-conformance-tests suite over HTTP,
  * then stops the server and removes the temp tree.
  *
@@ -16,7 +16,7 @@
  * (the HTTP-frontend use-case).
  *
  * **Fork is excluded by design.** The v1 fs adapter is intentionally forkless
- * (see packages/storage-fs), so the protocol surfaces forks as `not-supported`
+ * (see packages/storage/src/fs), so the protocol surfaces forks as `not-supported`
  * (HTTP 400). The official suite has no capability-skip option, so the
  * `test:fs` script filters out the `Fork - *` groups with a vitest
  * `--testNamePattern` negative lookahead (`-t '^(?!.*Fork - )'`). Every other
@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { describe, beforeAll, afterAll } from "vitest";
 import { StreamProtocol, HttpHandler } from "@streamsy/core";
-import { createFsStorageAdapter } from "@streamsy/storage-fs";
+import { createFsStorageAdapter } from "@streamsy/storage/fs";
 import type { NodeRequestInit } from "./node-request-init.ts";
 
 let server: { stop: () => void; port: number | undefined } | null = null;

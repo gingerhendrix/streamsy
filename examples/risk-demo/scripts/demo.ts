@@ -28,12 +28,14 @@ const rootDir = resolve(packageDir, "../..");
 
 export const REQUIRED_WORKSPACE_DISTS = [
   "packages/core/dist/index.js",
-  "packages/experimental/dist/command.js",
-  "packages/experimental/dist/derived.js",
-  "packages/experimental/dist/projection.js",
-  "packages/json/dist/index.js",
+  "packages/core/dist/json.js",
+  "packages/streams/dist/streams.js",
+  "packages/streams/dist/binding.js",
+  "packages/streams/dist/causal.js",
+  "packages/streams/dist/identity.js",
+  "packages/projection/dist/mesh.js",
   "packages/state/dist/index.js",
-  "packages/storage-sqlite/dist/index.js",
+  "packages/storage/dist/sqlite/adapter.js",
 ] as const;
 
 export function missingWorkspaceDists(

@@ -6,7 +6,7 @@
  * `./mesh.ts`.
  */
 import type { StreamId, StreamProtocolFactory } from "@streamsy/core";
-import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
+import { createJsonProtocol, type JsonCodec } from "@streamsy/core/json";
 
 import { GameEvent, type GameEvent as GameEventType } from "../domain/events.ts";
 import { Schema } from "effect";

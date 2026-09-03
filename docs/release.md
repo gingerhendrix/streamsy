@@ -6,13 +6,10 @@ Current public npm packages:
 
 - `@streamsy/core` (`packages/core`)
 - `@streamsy/http-client` (`packages/http-client`)
-- `@streamsy/json` (`packages/json`)
 - `@streamsy/streams` (`packages/streams`)
 - `@streamsy/projection` (`packages/projection`)
 - `@streamsy/state` (`packages/state`)
-- `@streamsy/storage-sqlite` (`packages/storage-sqlite`)
-- `@streamsy/storage-durable-object` (`packages/storage-durable-object`)
-- `@streamsy/storage-fs` (`packages/storage-fs`)
+- `@streamsy/storage` (`packages/storage`) — subpaths `/fs`, `/sqlite`, `/durable-object`
 
 `@streamsy/conformance-tests` and everything under `examples/*` remain private and are not published.
 
@@ -102,13 +99,10 @@ const paths = [
   'package.json',
   'packages/core/package.json',
   'packages/http-client/package.json',
-  'packages/json/package.json',
   'packages/streams/package.json',
   'packages/projection/package.json',
   'packages/state/package.json',
-  'packages/storage-sqlite/package.json',
-  'packages/storage-durable-object/package.json',
-  'packages/storage-fs/package.json',
+  'packages/storage/package.json',
 ];
 const root = require('./package.json').version;
 for (const path of paths) {
@@ -197,13 +191,10 @@ VERSION=$(node -p "require('./package.json').version")
 for name in \
   @streamsy/core \
   @streamsy/http-client \
-  @streamsy/json \
   @streamsy/streams \
   @streamsy/projection \
   @streamsy/state \
-  @streamsy/storage-sqlite \
-  @streamsy/storage-durable-object \
-  @streamsy/storage-fs
+  @streamsy/storage
 do
   npm view "${name}@${VERSION}" version repository dist.integrity
   npm view "${name}@${VERSION}" dist.attestations --json

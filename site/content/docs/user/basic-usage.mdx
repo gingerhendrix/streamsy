@@ -56,17 +56,17 @@ Results are discriminated unions keyed on `status` (`"created"`, `"exists"`, `"o
 
 To persist data, swap `createMemoryStorageAdapter()` for a durable adapter. Nothing else in the composition changes.
 
-### Bun SQLite — `@streamsy/storage-sqlite`
+### Bun SQLite — `@streamsy/storage/sqlite`
 
 File-backed persistence on `bun:sqlite`, with automatic migrations, in-process mutation locking, live-read notification, and lazy expiry. Requires the Bun runtime.
 
 ```bash
-bun add @streamsy/storage-sqlite
+bun add @streamsy/storage
 ```
 
 ```ts
 import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 
 const adapter = createSqliteStorageAdapter({ filename: "streams.db" }); // omit for :memory:
 const protocol = createStreamProtocol({ storage: { adapter } });
@@ -77,20 +77,18 @@ Bun.serve({ fetch: (request) => handler.fetch(request) });
 // adapter.close() closes the underlying database connection.
 ```
 
-### Cloudflare Durable Object — `@streamsy/storage-durable-object`
+### Cloudflare Durable Object — `@streamsy/storage/durable-object`
 
 SQLite-backed persistence inside a Durable Object, with long-polling, SSE, and TTL/expiry. Each stream id maps to one Durable Object instance.
 
 ```bash
-bun add @streamsy/storage-durable-object
+bun add @streamsy/storage
 ```
 
 ```ts
 import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import {
-  createDurableObjectStorageAdapter,
-  DurableObjectStreamStorage,
-} from "@streamsy/storage-durable-object";
+import { createDurableObjectStorageAdapter } from "@streamsy/storage/durable-object";
+import { DurableObjectStreamStorage } from "@streamsy/storage/durable-object/storage";
 
 // Re-export the storage class so Wrangler can bind it as a Durable Object.
 export { DurableObjectStreamStorage };
@@ -115,7 +113,7 @@ Bind `STREAMS` to the `DurableObjectStreamStorage` class in your Wrangler config
 
 Most applications don't work with raw bytes. Two packages wrap the protocol factory with typed facades:
 
-- **[JSON mode](/docs/user/json-mode)** (`@streamsy/json`) — typed JSON messages validated through a codec or Standard Schema.
+- **[JSON mode](/docs/user/json-mode)** (`@streamsy/core/json`) — typed JSON messages validated through a codec or Standard Schema.
 - **[Durable State](/docs/user/durable-state)** (`@streamsy/state`) — typed change/control messages over named collections.
 
 Both accept the same `protocol` object returned by `createStreamProtocol`, so you layer them on top of any storage backend.

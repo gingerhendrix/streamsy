@@ -7,7 +7,7 @@ import {
   type ProtocolStream,
   type StreamProtocolFactory,
 } from "@streamsy/core";
-import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
+import { createJsonProtocol, type JsonCodec } from "@streamsy/core/json";
 import { Schema } from "effect";
 
 import { catchUpDerived } from "./derived-streams.ts";

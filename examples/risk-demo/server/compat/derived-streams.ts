@@ -6,7 +6,7 @@ import {
   type JsonReadAllResult,
   type JsonSchema,
   type JsonStoredMessage,
-} from "@streamsy/json";
+} from "@streamsy/core/json";
 
 export interface DerivedSourceMessage<T> extends JsonStoredMessage<T> {}
 

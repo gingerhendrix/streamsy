@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Vitest owns these Promise-native test callbacks; application workflows are exercised through their existing Effect runtimes or Promise facades. */
 import { describe, expect, it } from "vitest";
-import { createJsonProtocol } from "@streamsy/json";
+import { createJsonProtocol } from "@streamsy/core/json";
 import {
   checkedNumber,
   checkedRecord,

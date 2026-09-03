@@ -30,13 +30,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external @streamsy/json",
+    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/core",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },
   "dependencies": {
-    "@streamsy/core": "0.3.0",
-    "@streamsy/json": "0.3.0"
+    "@streamsy/core": "0.3.0"
   },
   "devDependencies": {
     "typescript": "catalog:",

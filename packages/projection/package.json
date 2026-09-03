@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@streamsy/http-client": "workspace:*",
-    "@streamsy/storage-sqlite": "workspace:*",
+    "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.2.0",
     "typescript": "catalog:",
     "vitest": "^4.0.16"

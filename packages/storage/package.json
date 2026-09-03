@@ -1,0 +1,59 @@
+{
+  "name": "@streamsy/storage",
+  "version": "0.3.0",
+  "description": "Filesystem, Bun SQLite, and Cloudflare Durable Object storage adapters for Streamsy durable streams.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/storage"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./fs": {
+      "types": "./dist/fs/adapter.d.ts",
+      "import": "./dist/fs/adapter.js",
+      "default": "./dist/fs/adapter.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite/adapter.d.ts",
+      "import": "./dist/sqlite/adapter.js",
+      "default": "./dist/sqlite/adapter.js"
+    },
+    "./durable-object": {
+      "types": "./dist/durable-object/adapter.d.ts",
+      "import": "./dist/durable-object/adapter.js",
+      "default": "./dist/durable-object/adapter.js"
+    },
+    "./durable-object/storage": {
+      "types": "./dist/durable-object/storage.d.ts",
+      "import": "./dist/durable-object/storage.js",
+      "default": "./dist/durable-object/storage.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/fs/adapter.ts src/sqlite/adapter.ts src/durable-object/adapter.ts src/durable-object/storage.ts --format esm --dts --out-dir dist --clean --external @streamsy/core --external bun:sqlite --external cloudflare:workers --external node:fs --external node:path --external node:buffer",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test src/fs src/sqlite && vitest --run src/durable-object"
+  },
+  "dependencies": {
+    "@streamsy/core": "0.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

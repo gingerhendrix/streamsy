@@ -87,7 +87,7 @@ type FailureReason = "offset" | "closed" | "producer";
 
 /**
  * Streamsy storage whose entire namespace is one game Durable Object's SQLite
- * database. Unlike @streamsy/storage-durable-object, this adapter never routes
+ * database. Unlike @streamsy/storage/durable-object, this adapter never routes
  * by stream id: canonical events, projections, turns and metadata remain in the
  * already-selected game actor.
  */

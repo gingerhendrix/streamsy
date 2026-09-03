@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The same fixture resolves that database path with the Node-compatible path API.
 import { join } from "node:path";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 import type { JsonValue } from "@streamsy/core";
 import { afterEach, describe, expect, test } from "bun:test";
 import {

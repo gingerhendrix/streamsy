@@ -48,7 +48,7 @@ import {
   type StreamProtocolClient,
 } from "@streamsy/core";
 import type { OutboxStore } from "@streamsy/sinks/action/outbox";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 import type { Layer, ManagedRuntime } from "effect";
 import { ManagedRuntime as ManagedRuntimeModule } from "effect";
 import { issues } from "../../../domain/declaration.ts";

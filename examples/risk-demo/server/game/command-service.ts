@@ -12,7 +12,7 @@ import {
   createCommandLog,
   readCommandHistory,
 } from "../compat/command-log.ts";
-import { createJsonProtocol, type JsonCodec } from "@streamsy/json";
+import { createJsonProtocol, type JsonCodec } from "@streamsy/core/json";
 
 import { foldAggregate } from "../../src/domain/aggregate.ts";
 import type { Command } from "../../src/domain/commands.ts";

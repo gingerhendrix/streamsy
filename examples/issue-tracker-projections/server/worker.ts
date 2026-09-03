@@ -13,10 +13,8 @@
  * deployment state.
  */
 import { HttpHandler, StreamProtocol, directProtocolClient } from "@streamsy/core";
-import {
-  createDurableObjectStorageAdapter,
-  DurableObjectStreamStorage as StreamStorage,
-} from "@streamsy/storage-durable-object";
+import { createDurableObjectStorageAdapter } from "@streamsy/storage/durable-object";
+import { DurableObjectStreamStorage as StreamStorage } from "@streamsy/storage/durable-object/storage";
 import { ConfigProvider, Layer, ManagedRuntime } from "effect";
 import type { IssueTrackerEnv } from "../alchemy.run.ts";
 import { repairProject, type ApplicationServices } from "./application.ts";

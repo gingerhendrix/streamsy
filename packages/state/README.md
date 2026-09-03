@@ -33,13 +33,13 @@ if (created.status === "created") {
 }
 ```
 
-Schemas accept a `JsonCodec` or a [Standard Schema](https://standardschema.dev/) validator (via `@streamsy/json`); `primaryKey` may be a field name or a function.
+Schemas accept a `JsonCodec` or a [Standard Schema](https://standardschema.dev/) validator (via `@streamsy/core/json`); `primaryKey` may be a field name or a function.
 
 ## Exports
 
 - `createDurableStateProtocol`, `DurableStateProtocol`, `DurableStateStream`
 - types: `DurableStateCollectionDef`, `DurableStateMessage`, `ChangeMessage`, `ControlMessage`, and the typed create/get/read result and option types
-- re-exports `JsonCodec` and `JsonSchema` from `@streamsy/json`
+- re-exports `JsonCodec` and `JsonSchema` from `@streamsy/core/json`
 
 ## License
 

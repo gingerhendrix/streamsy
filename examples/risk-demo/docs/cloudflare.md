@@ -22,7 +22,7 @@ and external-agent request is routed by that same id.
 - the canonical pending-defence state and the Durable Object alarm used to recover its deadline.
 
 The game-local Streamsy adapter does not call a Durable Object namespace and does not route by
-stream id. `@streamsy/storage-durable-object` is intentionally not used here because its model is
+stream id. `@streamsy/storage/durable-object` is intentionally not used here because its model is
 one object per stream.
 
 Agent requests are game-scoped and carry the capability only in the bearer header:

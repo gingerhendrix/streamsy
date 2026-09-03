@@ -8,7 +8,7 @@ import {
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { catchUp } from "./mesh-test-harness.ts";
 
-import { createJsonProtocol } from "@streamsy/json";
+import { createJsonProtocol } from "@streamsy/core/json";
 
 import { foldAggregate } from "../domain/aggregate.ts";
 import { GameEvent } from "../domain/events.ts";

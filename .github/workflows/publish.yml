@@ -57,13 +57,10 @@ jobs:
           PACKAGES=(
             packages/core
             packages/http-client
-            packages/json
             packages/streams
             packages/projection
             packages/state
-            packages/storage-sqlite
-            packages/storage-durable-object
-            packages/storage-fs
+            packages/storage
           )
 
           for pkg in "${PACKAGES[@]}"; do
@@ -80,13 +77,10 @@ jobs:
           PACKAGES=(
             packages/core
             packages/http-client
-            packages/json
             packages/streams
             packages/projection
             packages/state
-            packages/storage-sqlite
-            packages/storage-durable-object
-            packages/storage-fs
+            packages/storage
           )
 
           for pkg in "${PACKAGES[@]}"; do

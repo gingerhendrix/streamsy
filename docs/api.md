@@ -150,7 +150,7 @@ Notes:
   `expected-offset`;
 - a close-only append on an already-closed stream remains an idempotent success and skips the
   check (nothing is written, so no update can be lost);
-- `expectedOffset` is per-append: it is not meaningful with `@streamsy/json`'s `appendMany`, whose
+- `expectedOffset` is per-append: it is not meaningful with `@streamsy/core/json`'s `appendMany`, whose
   appends run concurrently;
 - this is a Streamsy extension — the upstream Durable Streams protocol has no append precondition.
 
@@ -205,10 +205,11 @@ Protocol-bound streams are distinct from storage-bound streams:
 | Package                            | Purpose                                                                                                                         |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types, and the in-memory `StorageAdapter` for tests, examples, and local servers. |
-| `@streamsy/json`                   | Typed JSON protocol/stream wrappers over a `StreamProtocolFactory`.                                                             |
+| `@streamsy/core/json`              | Typed JSON protocol/stream wrappers over a `StreamProtocolFactory`.                                                             |
 | `@streamsy/state`                  | Durable State protocol/stream wrappers: typed change/control messages over collections.                                         |
-| `@streamsy/storage-sqlite`         | Bun `bun:sqlite` `StorageAdapter` for durable local persistence.                                                                |
-| `@streamsy/storage-durable-object` | Cloudflare Durable Object `StorageAdapter` and storage class.                                                                   |
+| `@streamsy/storage/fs`             | JSONL filesystem `StorageAdapter` for simple durable persistence.                                                               |
+| `@streamsy/storage/sqlite`         | Bun `bun:sqlite` `StorageAdapter` for durable local persistence.                                                                |
+| `@streamsy/storage/durable-object` | Cloudflare Durable Object `StorageAdapter`; the `DurableObjectStreamStorage` class lives at `/durable-object/storage`.         |
 
 ## Public exports
 
@@ -219,12 +220,12 @@ Core exports include:
 - the flat storage-adapter seam: `StorageAdapter` (with the grouping facets `StreamReader`, `StreamAppender`, `StreamLiveWaiter`, `StreamExpiryScheduler`), plan types `AppendPlan`, `CreatePlan`, `ForkPlan`, `DeletePlan`, adapter result types `StorageAppendResult`, `StorageCreateResult`, `StorageForkResult`, `StorageDeleteResult`, and the live-wait types `StreamChangeSnapshot`, `AwaitChangeOptions`, `AwaitChangeResult`
 - the core-internal per-stream binding for adapter authors and tests: `bindStream` and `BoundStream`
 - the level-triggered `awaitChange` building blocks every adapter uses to implement its live wait (including a polling one): `runAwaitChangeLoop` (with `AwaitChangeLoopDeps`), `buildChangeSnapshot`, `changeSnapshotDiffers`, and `compareOffsets`
-- the reusable adapter conformance kit: `runStorageAdapterContract` (with `MakeStorageAdapter` and `StorageAdapterContractHarness`)
+- the reusable adapter conformance kit: `runStorageAdapterContract` (with `MakeStorageAdapter` and `StorageAdapterContractHarness`), also published on its own at `@streamsy/core/testing`
 - lineage strategy helpers for storage authors: `LineageStore`, `LineagePolicy`, `cascadeReclaim`, `plainPurge`, `refCountLineage`, `reverseIndexLineage`, `copyOnForkReclaim`, and `ttlOnlyReclaim`
 - structured unsupported-feature helpers including `notSupported`, `isNotSupported`, `NotSupportedError`, and `unsupported`
 - the in-memory storage adapter: `createMemoryStorageAdapter` and `MemoryStorageAdapterOptions`
 
-JSON exports (`@streamsy/json`):
+JSON exports (`@streamsy/core/json`):
 
 - `createJsonProtocol`, `JsonProtocol`, `JsonStream`, `JsonValidationError`, `normalizeJsonCodec`, `JSON_CONTENT_TYPE`
 - types including `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readNext result and option types
@@ -233,7 +234,7 @@ State exports (`@streamsy/state`):
 
 - `createDurableStateProtocol`, `DurableStateProtocol`, `DurableStateStream`
 - types including `DurableStateCollectionDef`, `DurableStateMessage`, `ChangeMessage`, `ControlMessage`, and the typed create/get/read result and option types
-- re-exports `JsonCodec` and `JsonSchema` from `@streamsy/json` for schema authoring
+- re-exports `JsonCodec` and `JsonSchema` from `@streamsy/core/json` for schema authoring
 
 Durable Object exports:
 

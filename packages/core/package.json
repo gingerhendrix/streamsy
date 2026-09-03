@@ -24,13 +24,23 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./json": {
+      "types": "./dist/json.d.ts",
+      "import": "./dist/json.js",
+      "default": "./dist/json.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/storage-adapter-contract.d.ts",
+      "import": "./dist/testing/storage-adapter-contract.js",
+      "default": "./dist/testing/storage-adapter-contract.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean",
+    "build": "tsdown src/index.ts src/json.ts src/testing/storage-adapter-contract.ts --format esm --dts --out-dir dist --clean",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest --run src"
   },

@@ -20,7 +20,7 @@ import {
 } from "@streamsy/core";
 import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
 import { streamIdentity } from "@streamsy/streams/identity";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 
 export interface StreamsyStore {
   /** The transport-neutral client over the local protocol. */

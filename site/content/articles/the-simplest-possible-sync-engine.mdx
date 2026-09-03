@@ -130,7 +130,7 @@ const handler = createHttpHandler({
 Bun.serve({ fetch: (request) => handler.fetch(request) });
 ```
 
-This uses the in-memory adapter for brevity; swap in Streamsy's `@streamsy/storage-sqlite` adapter for a real deployment.
+This uses the in-memory adapter for brevity; swap in Streamsy's `@streamsy/storage/sqlite` adapter for a real deployment.
 
 ### Ch-ch-ch-ch-changes
 

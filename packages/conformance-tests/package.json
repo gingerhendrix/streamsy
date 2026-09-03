@@ -22,11 +22,8 @@
     "@durable-streams/server-conformance-tests": "^0.3.5",
     "@streamsy/core": "workspace:*",
     "@streamsy/http-client": "workspace:*",
-    "@streamsy/json": "workspace:*",
     "@streamsy/state": "workspace:*",
-    "@streamsy/storage-durable-object": "workspace:*",
-    "@streamsy/storage-fs": "workspace:*",
-    "@streamsy/storage-sqlite": "workspace:*",
+    "@streamsy/storage": "workspace:*",
     "valibot": "1.0.0",
     "vitest": "^4.0.16"
   },

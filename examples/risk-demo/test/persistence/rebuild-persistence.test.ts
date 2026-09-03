@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStreamProtocol } from "@streamsy/core";
 import type { StreamProtocolFactory } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 
 import { buildApp, type App } from "../../server/http/app.ts";
 import { createSqliteStores } from "../../server/persistence/sqlite-store.ts";

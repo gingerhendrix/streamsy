@@ -2,7 +2,7 @@
 /** Replay-safe, self-sufficient per-player action-required streams. */
 import type { StreamProtocolFactory } from "@streamsy/core";
 import { catchUpDerived, readDerived } from "../compat/derived-streams.ts";
-import type { JsonCodec } from "@streamsy/json";
+import type { JsonCodec } from "@streamsy/core/json";
 
 import { foldAggregate, buildTurnId } from "../../src/domain/aggregate.ts";
 import type { PendingInteraction } from "../../src/domain/aggregate.ts";

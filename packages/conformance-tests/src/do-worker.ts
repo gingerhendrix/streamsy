@@ -1,8 +1,6 @@
 import { HttpHandler, StreamProtocol } from "@streamsy/core";
-import {
-  createDurableObjectStorageAdapter,
-  DurableObjectStreamStorage as StreamStorage,
-} from "@streamsy/storage-durable-object";
+import { createDurableObjectStorageAdapter } from "@streamsy/storage/durable-object";
+import { DurableObjectStreamStorage as StreamStorage } from "@streamsy/storage/durable-object/storage";
 
 export { StreamStorage };
 

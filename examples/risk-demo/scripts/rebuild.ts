@@ -12,7 +12,7 @@
  */
 
 import { createStreamProtocol } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 
 import { createSqliteStores } from "../server/persistence/sqlite-store.ts";
 import { rebuildBoardGeneration } from "../server/game/rebuild.ts";

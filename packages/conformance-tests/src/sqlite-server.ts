@@ -9,7 +9,7 @@
  * once ready so the parent can synchronize.
  */
 import { StreamProtocol, HttpHandler } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
+import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
 
 const port = Number(process.env.PORT ?? 0);
 const filename = process.env.DB_PATH ?? ":memory:";

@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- This module preserves a public Promise compatibility facade over protocol/runtime-owned application work. */
 import { ZERO_OFFSET, type StreamProtocolFactory } from "@streamsy/core";
-import { createJsonProtocol, type JsonSchema } from "@streamsy/json";
+import { createJsonProtocol, type JsonSchema } from "@streamsy/core/json";
 
 const MAX_CAS_ATTEMPTS = 8;
 

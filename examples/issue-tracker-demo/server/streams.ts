@@ -4,7 +4,7 @@ import {
   createStreamProtocol,
   type AppendResult,
 } from "@streamsy/core";
-import { createJsonProtocol, type JsonStream } from "@streamsy/json";
+import { createJsonProtocol, type JsonStream } from "@streamsy/core/json";
 import { stateEventSchema, type StateEvent } from "../shared/state-schema.ts";
 import { contentType } from "./config.ts";
 
