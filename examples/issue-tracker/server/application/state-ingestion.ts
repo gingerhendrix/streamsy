@@ -8,7 +8,7 @@ import {
   type DurableStateProtocol,
   type ValuesByWireType,
 } from "@streamsy/state";
-import type { Change } from "@streamsy/views-ir";
+import type { Change } from "@streamsy/views/ir";
 import { Context, Effect, Layer } from "effect";
 import {
   catalog,

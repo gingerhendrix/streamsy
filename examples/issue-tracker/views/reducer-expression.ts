@@ -1,5 +1,5 @@
 /** The deliberately narrow evaluator for the two-node Slice 1 reducer plan. */
-import { isJsonObject, type Expression, type JsonValue } from "@streamsy/views-ir";
+import { isJsonObject, type Expression, type JsonValue } from "@streamsy/views/ir";
 
 export interface Scopes {
   readonly row?: JsonValue;

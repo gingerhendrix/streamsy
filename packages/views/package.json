@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/views",
   "version": "0.3.0",
-  "description": "Typed inert declarations and plan checking for Streamsy views.",
+  "description": "Typed view authoring, the serializable plan IR, the incremental engine, and maintained-view storage for Streamsy.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
     "url": "https://github.com/gingerhendrix/streamsy/issues"
@@ -17,28 +17,58 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/relation.js",
+  "types": "./dist/relation.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "types": "./dist/relation.d.ts",
+      "import": "./dist/relation.js",
+      "default": "./dist/relation.js"
+    },
+    "./ir": {
+      "types": "./dist/ir/contracts.d.ts",
+      "import": "./dist/ir/contracts.js",
+      "default": "./dist/ir/contracts.js"
+    },
+    "./engine": {
+      "types": "./dist/engine/engine.d.ts",
+      "import": "./dist/engine/engine.js",
+      "default": "./dist/engine/engine.js"
+    },
+    "./engine/conformance": {
+      "types": "./dist/engine/reference.d.ts",
+      "import": "./dist/engine/reference.js",
+      "default": "./dist/engine/reference.js"
+    },
+    "./store": {
+      "types": "./dist/store/memory.d.ts",
+      "import": "./dist/store/memory.js",
+      "default": "./dist/store/memory.js"
+    },
+    "./store/sqlite": {
+      "types": "./dist/store/sqlite.d.ts",
+      "import": "./dist/store/sqlite.js",
+      "default": "./dist/store/sqlite.js"
+    },
+    "./store/conformance": {
+      "types": "./dist/store/conformance.d.ts",
+      "import": "./dist/store/conformance.js",
+      "default": "./dist/store/conformance.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts --out-dir dist --clean --external @streamsy/views-ir --external effect",
+    "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts src/store/memory.ts src/store/sqlite.ts src/store/conformance.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external bun:test",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest --run src"
+    "test:unit": "vitest --run src --exclude '**/*.bun.test.ts' && bun test src/store"
   },
   "dependencies": {
-    "@streamsy/views-ir": "workspace:*",
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.0",
     "typescript": "catalog:",
     "vitest": "^4.0.16"
   }

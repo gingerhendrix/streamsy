@@ -7,7 +7,7 @@ import type {
   RelationPlan,
   RowKey,
   TopNNode,
-} from "@streamsy/views-ir";
+} from "../ir/contracts.ts";
 import { compareValues, evaluate, evaluateOptional, isMissing } from "./expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "./key.ts";
 import type { OrderedPartition } from "./operators/top.ts";

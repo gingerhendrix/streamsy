@@ -7,7 +7,7 @@ import type {
   RelationNode,
   RelationPlan,
   SortTerm,
-} from "@streamsy/views-ir";
+} from "./ir/contracts.ts";
 import {
   keyExpression,
   literal,
@@ -644,3 +644,43 @@ function deepFreeze<T>(value: T): T {
 function unreachable(value: never): never {
   throw new TypeError(`unreachable relation ${String(value)}`);
 }
+
+/*
+ * The `@streamsy/views` root subpath resolves to this module. `relation.ts`
+ * owns the authoring DSL and the plan compiler; `expression.ts`, `check.ts`
+ * and `plan.ts` are collaborators on the same authoring surface rather than
+ * separate tiers, so the root re-publishes their public names instead of each
+ * earning a subpath of its own.
+ */
+export {
+  aggregate,
+  joinSelectors,
+  keyExpression,
+  literal,
+  parameterReference,
+  selectors,
+} from "./expression.ts";
+export type {
+  AggregateValue,
+  BooleanExpression,
+  DeclaredKey,
+  ExpressionValue,
+  KeyFieldsOf,
+  Reference,
+  Selectors,
+  TypedAggregateExpression,
+  TypedExpression,
+} from "./expression.ts";
+export {
+  checkPlan,
+  collectPlanIssues,
+  PlanCheckFailed,
+  PlanIssue,
+  PlanIssueCode,
+} from "./check.ts";
+export type {
+  CheckedPlan,
+  PlanIssue as PlanIssueType,
+  PlanIssueCode as PlanIssueCodeType,
+} from "./check.ts";
+export { encodePlan, planHash } from "./plan.ts";

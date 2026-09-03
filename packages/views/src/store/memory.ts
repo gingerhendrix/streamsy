@@ -26,7 +26,7 @@ import { decodeJson, decodeStoredChange } from "./errors-internal.ts";
 import { decodeKey, encodeKey } from "./key-codec.ts";
 
 export class ViewStore extends Context.Service<ViewStore, ViewStoreService>()(
-  "@streamsy/views-store/ViewStore",
+  "@streamsy/views/store/ViewStore",
 ) {}
 
 interface Partition {
@@ -410,3 +410,42 @@ function decodeCheckpoint(rawCheckpoint: RawCheckpoint): Checkpoint {
       })),
   };
 }
+
+/*
+ * The `@streamsy/views/store` subpath resolves to this module. The memory
+ * backend is the tier's reference implementation; `contracts.ts`, `errors.ts`,
+ * `key-codec.ts` and `recovery.ts` are store internals that no consumer
+ * outside the package reaches directly, so their published names travel
+ * through this entry rather than through subpaths of their own.
+ */
+export type {
+  Checkpoint,
+  CheckpointDescriptor,
+  HistoryBounds,
+  HistoryPosition,
+  IndexMutation,
+  JsonScalar,
+  JsonValue,
+  MaintenanceCommit,
+  NamespaceRef,
+  RetentionPolicy,
+  RowKey,
+  SaveCheckpoint,
+  Snapshot,
+  StoreError,
+  StoredChange,
+  StoredChangeBatch,
+  ValueMutation,
+  ViewIdentity,
+  ViewStoreService,
+} from "./contracts.ts";
+export {
+  ViewCheckpointIncompatible,
+  ViewCursorConflict,
+  ViewHistoryExpired,
+  ViewStateRestorePoison,
+  ViewStoreUnavailable,
+} from "./errors.ts";
+export { canonicalJson, compareKeys, decodeKey, encodeKey } from "./key-codec.ts";
+export { recover } from "./recovery.ts";
+export type { RecoverOptions, RecoveryFold, RecoveryResult, RecoverySource } from "./recovery.ts";

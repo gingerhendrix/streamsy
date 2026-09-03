@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { Effect } from "effect";
 import { planHash } from "@streamsy/views";
-import { maintainGraph } from "@streamsy/views-engine";
-import { makeMemoryBacking, memoryService } from "@streamsy/views-store";
+import { maintainGraph } from "@streamsy/views/engine";
+import { makeMemoryBacking, memoryService } from "@streamsy/views/store";
 import { projectBoard } from "../domain/views.ts";
 import {
   decodeOperatorSnapshot,

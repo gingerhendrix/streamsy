@@ -24,7 +24,7 @@ import type {
   StreamProtocolHandle,
 } from "@streamsy/core";
 import type { OutboxStore } from "@streamsy/sinks/action/outbox";
-import type { SourceChanges } from "@streamsy/views-engine";
+import type { SourceChanges } from "@streamsy/views/engine";
 import { Effect, Layer, Schema } from "effect";
 import { issueLabelMemberships, labels } from "../domain/declaration.ts";
 import { globalKey, userKey, workspaceKey } from "../domain/domains.ts";

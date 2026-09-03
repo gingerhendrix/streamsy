@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Change, Expression, RelationNode, RelationPlan } from "./index.ts";
+import type { Change, Expression, RelationNode, RelationPlan } from "./contracts.ts";
 
 const expressionKind = (expression: Expression): Expression["kind"] => {
   switch (expression.kind) {

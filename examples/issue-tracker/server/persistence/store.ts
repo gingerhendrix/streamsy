@@ -32,7 +32,7 @@ import {
   ViewHistoryExpired,
   ViewStateRestorePoison,
   type ViewStoreService,
-} from "@streamsy/views-store";
+} from "@streamsy/views/store";
 import { makeMemoryOutboxBacking, outboxStoreLayer, OutboxStore, type OutboxDraft } from "@streamsy/sinks/action/outbox";
 import { type OutboxUnavailable } from "@streamsy/sinks/action/errors";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
@@ -41,8 +41,8 @@ import {
   maintainGraph,
   type OperatorStateSnapshot,
   type SourceChanges,
-} from "@streamsy/views-engine";
-import { isJsonObject, type Change, type JsonObject } from "@streamsy/views-ir";
+} from "@streamsy/views/engine";
+import { isJsonObject, type Change, type JsonObject } from "@streamsy/views/ir";
 import {
   issueLabelLifecycle,
   issueLabelMemberships,

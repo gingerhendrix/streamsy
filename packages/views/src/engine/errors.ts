@@ -1,4 +1,4 @@
-import type { Expression, RelationNode, RowKey } from "@streamsy/views-ir";
+import type { Expression, RelationNode, RowKey } from "../ir/contracts.ts";
 
 export type OperatorPhase =
   | "plan"

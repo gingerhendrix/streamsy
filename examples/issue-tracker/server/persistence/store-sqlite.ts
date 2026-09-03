@@ -1,7 +1,7 @@
 /** Bun placement for the platform-neutral Effect SQL application store. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { OUTBOX_SCHEMA } from "@streamsy/sinks/action/sqlite";
-import { importLegacyIssueStore, migrateViewStore } from "@streamsy/views-store/sqlite";
+import { importLegacyIssueStore, migrateViewStore } from "@streamsy/views/store/sqlite";
 import { planHash } from "@streamsy/views";
 import { Database } from "bun:sqlite";
 import { Context, Effect, Layer } from "effect";

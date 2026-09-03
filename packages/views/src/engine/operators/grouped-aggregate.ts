@@ -4,7 +4,7 @@ import type {
   JsonObject,
   JsonValue,
   RowKey,
-} from "@streamsy/views-ir";
+} from "../../ir/contracts.ts";
 import { transition } from "../change.ts";
 import { compareValues, evaluate, evaluateOptional, isMissing } from "../expression.ts";
 import { asRowKey, canonicalJson, encodeRowKey } from "../key.ts";

@@ -1,4 +1,4 @@
-import type { Change, JsonObject, JsonValue, ProjectNode } from "@streamsy/views-ir";
+import type { Change, JsonObject, JsonValue, ProjectNode } from "../../ir/contracts.ts";
 import { transition } from "../change.ts";
 import { evaluate } from "../expression.ts";
 

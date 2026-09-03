@@ -36,7 +36,7 @@
 import { defaultOffsetGenerator, type JsonValue, type ReadStreamOptions } from "@streamsy/core";
 import { AppendStreams, ReadStreams } from "@streamsy/streams";
 import type { StreamSinkPage } from "@streamsy/sinks/server/stream";
-import type { Change } from "@streamsy/views-ir";
+import type { Change } from "@streamsy/views/ir";
 import { Effect, Schema } from "effect";
 import { issues, issueTransitions } from "../../domain/declaration.ts";
 import {
@@ -45,7 +45,7 @@ import {
   type IssueRow,
   type IssueTransition,
 } from "../../domain/issue.ts";
-import type { StoredChange } from "@streamsy/views-store";
+import type { StoredChange } from "@streamsy/views/store";
 import {
   AppendRejected,
   MaintenanceFault,

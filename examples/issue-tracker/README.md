@@ -108,7 +108,7 @@ serializable `RelationPlan`, hashes that plan canonically, and
 `views/engine.ts` is a pure interpreter of the plan. `GET /health` reports the
 plan hash, so two hosts can be compared by inspection.
 
-`@streamsy/views-ir` supplies A1's published JSON-only RelationPlan v2 contract,
+`@streamsy/views/ir` supplies A1's published JSON-only RelationPlan v2 contract,
 including the full authoring vocabulary and explicit `facts` and `state` source
 modes. The application consumes that contract through `@streamsy/views`; it no
 longer carries a local public IR or DSL compatibility layer.

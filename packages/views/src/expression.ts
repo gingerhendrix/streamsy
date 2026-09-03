@@ -7,7 +7,7 @@ import type {
   SortTerm,
   UnaryOperator,
   VariadicOperator,
-} from "@streamsy/views-ir";
+} from "./ir/contracts.ts";
 
 declare const ExpressionType: unique symbol;
 declare const AggregateType: unique symbol;

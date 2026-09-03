@@ -1,19 +1,11 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import type { RelationPlan } from "@streamsy/views-ir";
+import type { RelationPlan } from "./ir/contracts.ts";
 import type { ReducerDeclaration } from "./relation.ts";
-import {
-  checkPlan,
-  collectPlanIssues,
-  defineView,
-  encodePlan,
-  from,
-  parameter,
-  planHash,
-  selectors,
-  source,
-  view,
-} from "./index.ts";
+import { checkPlan, collectPlanIssues } from "./check.ts";
+import { selectors } from "./expression.ts";
+import { encodePlan, planHash } from "./plan.ts";
+import { defineView, from, parameter, source, view } from "./relation.ts";
 
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion -- Malformed plan fixtures intentionally cross the static contract to prove runtime rejection. */
 

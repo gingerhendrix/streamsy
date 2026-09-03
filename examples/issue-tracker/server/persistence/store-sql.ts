@@ -2,7 +2,7 @@
 import { OutboxUnavailable } from "@streamsy/sinks/action/errors";
 import { OutboxStore, outboxStore, type OutboxBacking } from "@streamsy/sinks/action/outbox";
 import { createSqliteOutboxBacking, migrateOutbox } from "@streamsy/sinks/action/sqlite";
-import { migrateViewStoreSql, sqliteService } from "@streamsy/views-store/sqlite";
+import { migrateViewStoreSql, sqliteService } from "@streamsy/views/store/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";

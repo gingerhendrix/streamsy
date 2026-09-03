@@ -1,4 +1,4 @@
-import type { Change, JsonObject, RowKey } from "@streamsy/views-ir";
+import type { Change, JsonObject, RowKey } from "../ir/contracts.ts";
 import { canonicalJson, encodeRowKey } from "./key.ts";
 
 export const sameRow = (left: JsonObject, right: JsonObject): boolean =>

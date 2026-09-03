@@ -1,4 +1,4 @@
-import type { RelationPlan } from "@streamsy/views-ir";
+import type { RelationPlan } from "./ir/contracts.ts";
 
 /** Canonical JSON with lexicographically sorted object keys and preserved array order. */
 export function encodePlan(plan: RelationPlan): string {

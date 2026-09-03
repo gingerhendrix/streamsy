@@ -23,7 +23,7 @@ import {
   type LabelCountRow,
   type ProjectBoardCard,
 } from "../../domain/issue.ts";
-import type { Change } from "@streamsy/views-ir";
+import type { Change } from "@streamsy/views/ir";
 import { AppendRejected, StreamUnavailable } from "../errors.ts";
 
 /**

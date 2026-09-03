@@ -32,8 +32,8 @@ import {
   type IssueLabelRow,
   type IssueRow,
 } from "../../domain/issue.ts";
-import type { Change, JsonObject } from "@streamsy/views-ir";
-import type { SourceChanges } from "@streamsy/views-engine";
+import type { Change, JsonObject } from "@streamsy/views/ir";
+import type { SourceChanges } from "@streamsy/views/engine";
 import { maintain, ReducerFault, touchedKeys } from "../../views/engine.ts";
 import {
   AppendRejected,

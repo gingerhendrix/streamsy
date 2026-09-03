@@ -5,7 +5,7 @@ import type {
   JsonObject,
   RelationNode,
   RelationPlan,
-} from "@streamsy/views-ir";
+} from "../ir/contracts.ts";
 import { maintainGraph } from "./engine.ts";
 import { OperatorFault } from "./errors.ts";
 import { fullRecompute } from "./reference.ts";

@@ -1,4 +1,4 @@
-import type { Change, FilterNode, JsonObject } from "@streamsy/views-ir";
+import type { Change, FilterNode, JsonObject } from "../../ir/contracts.ts";
 import { evaluate } from "../expression.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- Predicate evaluation is the runtime validation boundary for the A1 Boolean contract. */

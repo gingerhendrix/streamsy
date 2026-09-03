@@ -19,6 +19,7 @@ const effectAreas = [
   "packages/streams",
   "packages/projection",
   "packages/sinks",
+  "packages/views",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
   "examples/issue-tracker",

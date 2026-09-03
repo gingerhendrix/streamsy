@@ -1,4 +1,4 @@
-import { isJsonObject, type Expression, type JsonObject, type JsonValue } from "@streamsy/views-ir";
+import { isJsonObject, type Expression, type JsonObject, type JsonValue } from "../ir/contracts.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, typescript/consistent-return -- This module is the pure runtime parser for JSON expression results; its guards establish each operator's scalar contract, and assertions only recover array/object evidence erased by indexed JSON access. */
 

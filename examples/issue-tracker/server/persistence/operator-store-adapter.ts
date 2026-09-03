@@ -1,7 +1,7 @@
 /** Maps the pure A2 mutation seam into one atomic A4 maintenance commit. */
 /* oxlint-disable anti-slop/no-chained-type-assertions, anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion -- This module is the explicit checked conversion boundary between A2's structurally JSON snapshot and A4's closed persistence grammar. */
-import type { Change, JsonObject, RelationPlan, RowKey } from "@streamsy/views-ir";
-import type { OperatorMutationPatch, OperatorStateSnapshot } from "@streamsy/views-engine";
+import type { Change, JsonObject, RelationPlan, RowKey } from "@streamsy/views/ir";
+import type { OperatorMutationPatch, OperatorStateSnapshot } from "@streamsy/views/engine";
 import { Schema } from "effect";
 import type {
   IndexMutation,
@@ -11,7 +11,7 @@ import type {
   StoredChange,
   ValueMutation,
   ViewIdentity,
-} from "@streamsy/views-store";
+} from "@streamsy/views/store";
 
 export interface OperatorCommitInput {
   readonly plan: RelationPlan;

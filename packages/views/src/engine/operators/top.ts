@@ -1,4 +1,4 @@
-import type { Change, JsonObject, RowKey, TopNNode } from "@streamsy/views-ir";
+import type { Change, JsonObject, RowKey, TopNNode } from "../../ir/contracts.ts";
 import { transition } from "../change.ts";
 import { compareValues, evaluate } from "../expression.ts";
 import { asRowKey, encodeRowKey } from "../key.ts";

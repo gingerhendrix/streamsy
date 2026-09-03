@@ -1,4 +1,4 @@
-import type { JsonValue, RowKey, RowKeyPart } from "@streamsy/views-ir";
+import type { JsonValue, RowKey, RowKeyPart } from "../ir/contracts.ts";
 
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion -- The canonical key codec is the runtime boundary that validates discriminated JSON scalar representations. */
 

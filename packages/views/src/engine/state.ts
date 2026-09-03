@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue, RowKey } from "@streamsy/views-ir";
+import type { JsonObject, JsonValue, RowKey } from "../ir/contracts.ts";
 
 export interface StateRow {
   readonly key: RowKey;

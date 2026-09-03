@@ -5,7 +5,7 @@ import type {
   RelationNode,
   RelationPlan,
   TopNNode,
-} from "@streamsy/views-ir";
+} from "./ir/contracts.ts";
 import type { ViewDeclaration } from "./relation.ts";
 import { encodePlan, planHash } from "./plan.ts";
 

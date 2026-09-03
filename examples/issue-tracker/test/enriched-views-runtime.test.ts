@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { fullRecompute, maintainGraph } from "@streamsy/views-engine";
+import { fullRecompute, maintainGraph } from "@streamsy/views/engine";
 import { executableViews } from "../domain/views.ts";
 
 const project = {

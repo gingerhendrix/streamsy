@@ -1,5 +1,6 @@
 import type { Schema } from "effect";
-import { from, parameter, selectors, source, type TypedExpression } from "./index.ts";
+import { selectors, type TypedExpression } from "./expression.ts";
+import { from, parameter, source } from "./relation.ts";
 
 interface FixtureRow {
   readonly id: string;

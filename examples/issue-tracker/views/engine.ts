@@ -11,7 +11,7 @@
  * plan. It is written against {@link RelationPlan} rather than the declaration
  * so a later host can execute a plan it received rather than one it built.
  */
-import type { Change, Expression, JsonObject, JsonValue, RelationPlan } from "@streamsy/views-ir";
+import type { Change, Expression, JsonObject, JsonValue, RelationPlan } from "@streamsy/views/ir";
 import type { ReducerDeclaration } from "@streamsy/views";
 import { Schema } from "effect";
 import { evaluate, evaluateKey } from "./reducer-expression.ts";

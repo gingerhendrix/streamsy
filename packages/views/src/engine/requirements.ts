@@ -4,7 +4,7 @@ import type {
   RelationNode,
   RelationPlan,
   ReferenceScope,
-} from "@streamsy/views-ir";
+} from "../ir/contracts.ts";
 import { canonicalJson } from "./key.ts";
 
 /* oxlint-disable anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, unicorn/no-array-sort -- Requirements canonicalize already-checked JSON-only A1 expression trees and return named public descriptor fields; sorting mutates only fresh field arrays. */

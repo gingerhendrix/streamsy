@@ -7,7 +7,7 @@ import type {
   RelationNode,
   RelationPlan,
   RowKey,
-} from "@streamsy/views-ir";
+} from "../ir/contracts.ts";
 import { coalesceChanges, sameRow } from "./change.ts";
 import { OperatorFault, type OperatorPhase } from "./errors.ts";
 import { evaluate, evaluateOptional, isMissing } from "./expression.ts";
@@ -695,3 +695,42 @@ function fault(
     cause,
   });
 }
+
+/*
+ * The `@streamsy/views/engine` subpath resolves to this module. The graph
+ * runtime is the tier's public surface; `change.ts`, `errors.ts`,
+ * `expression.ts`, `key.ts`, `reference.ts`, `requirements.ts` and `state.ts`
+ * are engine internals that no consumer outside the package reaches directly,
+ * so their published names travel through this entry rather than through
+ * subpaths of their own.
+ */
+export { coalesceChanges } from "./change.ts";
+export { OperatorFault } from "./errors.ts";
+export type { OperatorPhase } from "./errors.ts";
+export { evaluate, evaluateOptional } from "./expression.ts";
+export { asRowKey, canonicalJson, encodeRowKey } from "./key.ts";
+export { fullRecompute, normalizeResult } from "./reference.ts";
+export type { FullRecomputeInput, FullRecomputeResult } from "./reference.ts";
+export { planRequirements } from "./requirements.ts";
+export type {
+  AccumulatorRequirement,
+  ArrangementRequirement,
+  OperatorRequirements,
+} from "./requirements.ts";
+export { emptyOperatorState } from "./state.ts";
+export type {
+  AggregateGroupState,
+  AggregateState,
+  ArrangementEntry,
+  ArrangementState,
+  CountedValue,
+  OperatorIndexMutation,
+  OperatorMutationPatch,
+  OperatorStateSnapshot,
+  OperatorValueMutation,
+  RelationState,
+  StateRow,
+  TopCandidate,
+  TopPartitionState,
+  TopState,
+} from "./state.ts";

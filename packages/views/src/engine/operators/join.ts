@@ -6,7 +6,7 @@ import type {
   JsonValue,
   LeftJoinNode,
   RowKey,
-} from "@streamsy/views-ir";
+} from "../../ir/contracts.ts";
 import { transition } from "../change.ts";
 import { evaluate, evaluateOptional, isMissing } from "../expression.ts";
 import { encodeRowKey } from "../key.ts";
