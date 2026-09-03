@@ -21,7 +21,7 @@
  * out of sequence by another process reaches the inbox in the order it landed.
  */
 import type { ReadStreamOptions } from "@streamsy/core";
-import { ReadStreams } from "@streamsy/experimental/effect";
+import { ReadStreams } from "@streamsy/streams";
 import { Effect } from "effect";
 import type { AssignmentActivity } from "../../domain/exchange.ts";
 import { decodeIssueEvent } from "../../domain/issue.ts";

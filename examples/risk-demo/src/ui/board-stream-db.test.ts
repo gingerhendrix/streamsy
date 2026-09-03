@@ -8,7 +8,7 @@ import {
   directProtocolClient,
 } from "@streamsy/core";
 import { catchUp } from "../board/mesh-test-harness.ts";
-import { MESH_LINEAGE_TYPE, MESH_RESERVED_TYPE_PREFIX } from "@streamsy/experimental/ivm-mesh";
+import { MESH_LINEAGE_TYPE, MESH_RESERVED_TYPE_PREFIX } from "@streamsy/projection/mesh";
 
 import { writeCanonicalEvents } from "../board/board-projection.ts";
 import { createBoardMesh, type BoardMaterialized } from "../board/mesh.ts";

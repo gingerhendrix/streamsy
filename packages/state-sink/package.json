@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/state-sink",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Checked state-sink contracts, routes, protocol handling, and Effect server adapters.",
   "license": "MIT",
   "files": [

@@ -12,13 +12,13 @@
  * the host's runtime and read their typed error channel with `Effect.flip`.
  */
 import type { JsonValue } from "@streamsy/core";
-import { AppendStreams } from "@streamsy/experimental/effect";
+import { AppendStreams } from "@streamsy/streams";
 import {
   createFanInCheckpoint,
   createLineageEvent,
   FanInRecovery,
   recoverDerivedStateHistory,
-} from "@streamsy/experimental/ivm-mesh";
+} from "@streamsy/projection/mesh";
 import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { ProjectionLanes } from "../server/lanes.ts";

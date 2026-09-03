@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/effect-sink",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Checked effect-sink declarations, a durable outbox, serialized retry, and dead-letter delivery.",
   "license": "MIT",
   "files": [

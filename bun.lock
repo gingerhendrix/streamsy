@@ -22,8 +22,8 @@
         "@effect/ai-openai": "4.0.0-rc.109",
         "@humanlayer/fold-core": "0.1.4",
         "@streamsy/core": "workspace:*",
-        "@streamsy/experimental": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
+        "@streamsy/streams": "workspace:*",
         "effect": "4.0.0-rc.109",
       },
       "devDependencies": {
@@ -37,7 +37,8 @@
       "dependencies": {
         "@durable-streams/state": "^0.3.1",
         "@streamsy/core": "workspace:*",
-        "@streamsy/experimental": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/streams": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",
         "effect": "4.0.0-rc.112",
@@ -62,12 +63,12 @@
         "@effect/sql-sqlite-do": "4.0.0-rc.112",
         "@streamsy/core": "workspace:*",
         "@streamsy/effect-sink": "workspace:*",
-        "@streamsy/experimental": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/sinks": "workspace:*",
         "@streamsy/state": "workspace:*",
         "@streamsy/state-sink": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
+        "@streamsy/streams": "workspace:*",
         "@streamsy/tanstack-db": "workspace:*",
         "@streamsy/views": "workspace:*",
         "@streamsy/views-engine": "workspace:*",
@@ -114,10 +115,11 @@
       "name": "issue-tracker-projections",
       "version": "0.0.1",
       "dependencies": {
-        "@streamsy/http-client": "workspace:*",
         "@streamsy/core": "workspace:*",
-        "@streamsy/experimental": "workspace:*",
+        "@streamsy/http-client": "workspace:*",
+        "@streamsy/projection": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
+        "@streamsy/streams": "workspace:*",
         "effect": "4.0.0-rc.112",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
@@ -153,10 +155,11 @@
         "@durable-streams/state": "^0.3.1",
         "@fontsource/barlow-condensed": "^5.3.0",
         "@streamsy/core": "workspace:*",
-        "@streamsy/experimental": "workspace:*",
         "@streamsy/json": "workspace:*",
+        "@streamsy/projection": "workspace:*",
         "@streamsy/state": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
+        "@streamsy/streams": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",
         "effect": "4.0.0-rc.112",
@@ -173,25 +176,13 @@
         "vitest": "^4.0.16",
       },
     },
-    "packages/http-client": {
-      "name": "@streamsy/http-client",
-      "version": "0.2.1",
-      "dependencies": {
-        "@durable-streams/client": "^0.2.6",
-        "@streamsy/core": "0.2.1",
-      },
-      "devDependencies": {
-        "typescript": "catalog:",
-        "vitest": "^4.0.16",
-      },
-    },
     "packages/conformance-tests": {
       "name": "@streamsy/conformance-tests",
-      "version": "0.0.1",
+      "version": "0.3.0",
       "dependencies": {
         "@durable-streams/server-conformance-tests": "^0.3.5",
-        "@streamsy/http-client": "workspace:*",
         "@streamsy/core": "workspace:*",
+        "@streamsy/http-client": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/state": "workspace:*",
         "@streamsy/storage-durable-object": "workspace:*",
@@ -210,7 +201,7 @@
     },
     "packages/core": {
       "name": "@streamsy/core",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -218,7 +209,7 @@
     },
     "packages/effect-sink": {
       "name": "@streamsy/effect-sink",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "effect": "4.0.0-rc.112",
       },
@@ -227,34 +218,48 @@
         "typescript": "catalog:",
       },
     },
-    "packages/experimental": {
-      "name": "@streamsy/experimental",
+    "packages/http-client": {
+      "name": "@streamsy/http-client",
       "version": "0.3.0",
       "dependencies": {
-        "@streamsy/core": "0.2.1",
-        "effect": "4.0.0-rc.112",
+        "@durable-streams/client": "^0.2.6",
+        "@streamsy/core": "0.3.0",
       },
       "devDependencies": {
-        "@streamsy/http-client": "workspace:*",
-        "@streamsy/storage-sqlite": "workspace:*",
         "typescript": "catalog:",
         "vitest": "^4.0.16",
       },
     },
     "packages/json": {
       "name": "@streamsy/json",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
-        "@streamsy/core": "0.2.1",
+        "@streamsy/core": "0.3.0",
       },
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
       },
     },
+    "packages/projection": {
+      "name": "@streamsy/projection",
+      "version": "0.3.0",
+      "dependencies": {
+        "@streamsy/core": "0.3.0",
+        "@streamsy/streams": "0.3.0",
+        "effect": "4.0.0-rc.112",
+      },
+      "devDependencies": {
+        "@streamsy/http-client": "workspace:*",
+        "@streamsy/storage-sqlite": "workspace:*",
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "packages/sinks": {
       "name": "@streamsy/sinks",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@streamsy/state-sink": "workspace:*",
         "effect": "4.0.0-rc.112",
@@ -266,10 +271,10 @@
     },
     "packages/state": {
       "name": "@streamsy/state",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
-        "@streamsy/core": "0.2.1",
-        "@streamsy/json": "0.2.1",
+        "@streamsy/core": "0.3.0",
+        "@streamsy/json": "0.3.0",
       },
       "devDependencies": {
         "typescript": "catalog:",
@@ -278,7 +283,7 @@
     },
     "packages/state-sink": {
       "name": "@streamsy/state-sink",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "effect": "4.0.0-rc.112",
       },
@@ -289,9 +294,9 @@
     },
     "packages/storage-durable-object": {
       "name": "@streamsy/storage-durable-object",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
-        "@streamsy/core": "0.2.1",
+        "@streamsy/core": "0.3.0",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
@@ -301,7 +306,7 @@
     },
     "packages/storage-fs": {
       "name": "@streamsy/storage-fs",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
         "@streamsy/core": "0.2.1",
       },
@@ -312,18 +317,30 @@
     },
     "packages/storage-sqlite": {
       "name": "@streamsy/storage-sqlite",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
-        "@streamsy/core": "0.2.1",
+        "@streamsy/core": "0.3.0",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "typescript": "catalog:",
       },
     },
+    "packages/streams": {
+      "name": "@streamsy/streams",
+      "version": "0.3.0",
+      "dependencies": {
+        "@streamsy/core": "0.3.0",
+        "effect": "4.0.0-rc.112",
+      },
+      "devDependencies": {
+        "typescript": "catalog:",
+        "vitest": "^4.0.16",
+      },
+    },
     "packages/tanstack-db": {
       "name": "@streamsy/tanstack-db",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "bin": {
         "streamsy-state-sink": "./dist/cli.js",
       },
@@ -340,7 +357,7 @@
     },
     "packages/views": {
       "name": "@streamsy/views",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
         "@streamsy/views-ir": "workspace:*",
         "effect": "4.0.0-rc.112",
@@ -352,7 +369,7 @@
     },
     "packages/views-engine": {
       "name": "@streamsy/views-engine",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "dependencies": {
         "@streamsy/views-ir": "workspace:*",
       },
@@ -363,7 +380,7 @@
     },
     "packages/views-ir": {
       "name": "@streamsy/views-ir",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
@@ -371,7 +388,7 @@
     },
     "packages/views-store": {
       "name": "@streamsy/views-store",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "effect": "4.0.0-rc.112",
       },
@@ -1004,17 +1021,17 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@streamsy/http-client": ["@streamsy/http-client@workspace:packages/http-client"],
-
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
     "@streamsy/effect-sink": ["@streamsy/effect-sink@workspace:packages/effect-sink"],
 
-    "@streamsy/experimental": ["@streamsy/experimental@workspace:packages/experimental"],
+    "@streamsy/http-client": ["@streamsy/http-client@workspace:packages/http-client"],
 
     "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
+
+    "@streamsy/projection": ["@streamsy/projection@workspace:packages/projection"],
 
     "@streamsy/sinks": ["@streamsy/sinks@workspace:packages/sinks"],
 
@@ -1027,6 +1044,8 @@
     "@streamsy/storage-fs": ["@streamsy/storage-fs@workspace:packages/storage-fs"],
 
     "@streamsy/storage-sqlite": ["@streamsy/storage-sqlite@workspace:packages/storage-sqlite"],
+
+    "@streamsy/streams": ["@streamsy/streams@workspace:packages/streams"],
 
     "@streamsy/tanstack-db": ["@streamsy/tanstack-db@workspace:packages/tanstack-db"],
 

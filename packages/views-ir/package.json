@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/views-ir",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Serializable contracts for Streamsy incrementally maintained views.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {

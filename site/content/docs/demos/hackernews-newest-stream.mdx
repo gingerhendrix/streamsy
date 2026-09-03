@@ -23,15 +23,15 @@ Hacker News Firebase API
   -> React story list
 ```
 
-The demo uses two public experimental subpaths, `@streamsy/experimental/stream-identity` and `@streamsy/experimental/state-projection`, alongside stable protocol primitives from `@streamsy/core`.
+The demo uses two public subpaths, `@streamsy/streams/identity` and `@streamsy/projection`, alongside stable protocol primitives from `@streamsy/core`.
 
 ## Declare the streams as resources
 
 A `StateProjection.resource` separates a stream's logical identity from the protocol stream ID it currently lives at. The identity is what lineage and causal comparisons use; the stream ID is just the address.
 
 ```ts title="src/server/stream-resources.ts"
-import { streamIdentity } from "@streamsy/experimental/stream-identity";
-import * as StateProjection from "@streamsy/experimental/state-projection";
+import { streamIdentity } from "@streamsy/streams/identity";
+import * as StateProjection from "@streamsy/projection";
 import { sourceStreamId, targetStreamId } from "./config.ts";
 
 export const hackerNewsSource = StateProjection.resource({

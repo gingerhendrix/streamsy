@@ -8,19 +8,14 @@
  * `server/worker.ts` — builds a runtime and runs one of these descriptions.
  */
 import type { JsonValue } from "@streamsy/core";
-import type { StreamBinding } from "@streamsy/experimental/binding";
-import { sourceAck, type SourceAck } from "@streamsy/experimental/causal";
-import {
-  AppendStreams,
-  AppendStreamsLive,
-  ReadStreams,
-  ReadStreamsLive,
-} from "@streamsy/experimental/effect";
+import type { StreamBinding } from "@streamsy/streams/binding";
+import { sourceAck, type SourceAck } from "@streamsy/streams/causal";
+import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive } from "@streamsy/streams";
 import {
   DerivedRecoveryLive,
   DerivedStateHistoryLive,
   FanInRecoveryLive,
-} from "@streamsy/experimental/ivm-mesh";
+} from "@streamsy/projection/mesh";
 import { Effect, Layer, Option, Schema } from "effect";
 import type {
   BoardResponse,

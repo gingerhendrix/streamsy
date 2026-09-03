@@ -1,5 +1,5 @@
 import { createMemoryStorageAdapter, type StorageAdapter } from "@streamsy/core";
-import * as StateProjection from "@streamsy/experimental/state-projection";
+import * as StateProjection from "@streamsy/projection";
 import { ManagedRuntime } from "effect";
 import type { HnStory } from "../state-schema.ts";
 import { StoryProjectionInstance, storyProjectionInstanceLayer } from "./projection.ts";

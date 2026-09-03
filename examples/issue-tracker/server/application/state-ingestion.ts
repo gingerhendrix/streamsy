@@ -1,7 +1,7 @@
 /** Catch-up ingestion for the four application-owned Durable State sources. */
 /* oxlint-disable typescript/consistent-return -- Effect requires `return yield*` for a never-succeeding failure branch; successful catch-up branches intentionally return void. */
 import type { ReadOptions, StreamProtocolFactory } from "@streamsy/core";
-import type { StreamBinding } from "@streamsy/experimental/binding";
+import type { StreamBinding } from "@streamsy/streams/binding";
 import {
   createDurableStateProtocol,
   type DurableStateMessage,

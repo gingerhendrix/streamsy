@@ -13,14 +13,10 @@
  * threaded through call sites, and nothing converts a Promise inline.
  */
 import type { JsonValue } from "@streamsy/core";
-import type { StreamBinding } from "@streamsy/experimental/binding";
-import {
-  sourceAck,
-  sourceWatermark,
-  type SourceAck,
-  type StreamIdentity,
-} from "@streamsy/experimental/causal";
-import { StateRestorePoison } from "@streamsy/experimental/effect";
+import type { StreamBinding } from "@streamsy/streams/binding";
+import { sourceAck, sourceWatermark, type SourceAck } from "@streamsy/streams/causal";
+import type { StreamIdentity } from "@streamsy/streams/identity";
+import { StateRestorePoison } from "@streamsy/streams";
 import {
   catchUpDynamicFanInState,
   catchUpState,
@@ -32,7 +28,7 @@ import {
   type ChainHop,
   type ChainedCoverage,
   type MembershipChange,
-} from "@streamsy/experimental/ivm-mesh";
+} from "@streamsy/projection/mesh";
 import { Effect, Schema } from "effect";
 import type { ProjectionPassReport } from "../shared/api.ts";
 import {

@@ -10,8 +10,8 @@
  * id. Only `ensure` performs work.
  */
 import type { StreamProtocolClient } from "@streamsy/core";
-import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
-import { streamIdentity } from "@streamsy/experimental/causal";
+import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
+import { streamIdentity } from "@streamsy/streams/identity";
 import { Context, Effect, Layer } from "effect";
 import { streamNames } from "../../domain/declaration.ts";
 import { StreamUnavailable } from "../errors.ts";

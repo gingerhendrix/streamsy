@@ -58,7 +58,8 @@ jobs:
             packages/core
             packages/http-client
             packages/json
-            packages/experimental
+            packages/streams
+            packages/projection
             packages/state
             packages/storage-sqlite
             packages/storage-durable-object
@@ -80,7 +81,8 @@ jobs:
             packages/core
             packages/http-client
             packages/json
-            packages/experimental
+            packages/streams
+            packages/projection
             packages/state
             packages/storage-sqlite
             packages/storage-durable-object

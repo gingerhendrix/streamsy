@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/sinks",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Checked stream-sink and document-sink contracts, routes, and Effect server adapters.",
   "license": "MIT",
   "files": [

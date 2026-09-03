@@ -27,14 +27,14 @@ The command acknowledgement contains `commandId`, `turnId`, and the final canoni
 The board is a stateful projection: to emit a row *change*, it must know the rows it previously wrote. `src/board/mesh.ts` expresses the board on the mesh primitives:
 
 ```ts title="src/board/mesh.ts"
-import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
-import { streamIdentity, type StreamIdentity } from "@streamsy/experimental/causal";
+import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
+import { streamIdentity, type StreamIdentity } from "@streamsy/streams/identity";
 import {
   deriveProducerLane,
   type CatchUpLimits,
   type ProducerLane,
   type ProjectionBoundary,
-} from "@streamsy/experimental/ivm-mesh";
+} from "@streamsy/projection/mesh";
 
 /**
  * The epoch is fixed configuration for a board generation, never claimed and
@@ -94,15 +94,11 @@ The honest cost: recovery is O(board history) per call, because the incubating m
 
 ## Causal coverage in the client path
 
-A command acknowledgement names a canonical-stream offset. The board is a separate projection that may lag. `server/game/board-sync.ts` waits until the board provably incorporates an acknowledged offset, using the pure `coverage()` function from `@streamsy/experimental/causal`:
+A command acknowledgement names a canonical-stream offset. The board is a separate projection that may lag. `server/game/board-sync.ts` waits until the board provably incorporates an acknowledged offset, using the pure `coverage()` function from `@streamsy/streams/causal`:
 
 ```ts title="server/game/board-sync.ts"
-import {
-  coverage,
-  sourceAck,
-  sourceWatermark,
-  streamIdentityEquals,
-} from "@streamsy/experimental/causal";
+import { coverage, sourceAck, sourceWatermark } from "@streamsy/streams/causal";
+import { streamIdentityEquals } from "@streamsy/streams/identity";
 ```
 
 Both operands are positions in the *canonical* stream, lifted into structured identities. Coverage answers `proven`, `not-yet`, or `incomparable`, and this module turns `incomparable` into a hard error rather than a retry. Nothing ever compares a source offset with a target offset.

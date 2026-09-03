@@ -31,14 +31,14 @@
  */
 
 import { type JsonValue, type StreamProtocolClient } from "@streamsy/core";
-import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
-import { streamIdentity, type StreamIdentity } from "@streamsy/experimental/causal";
+import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
+import { streamIdentity, type StreamIdentity } from "@streamsy/streams/identity";
 import {
   deriveProducerLane,
   type CatchUpLimits,
   type ProducerLane,
   type ProjectionBoundary,
-} from "@streamsy/experimental/ivm-mesh";
+} from "@streamsy/projection/mesh";
 
 import { GameEvent, type GameEvent as GameEventType } from "../domain/events.ts";
 import { Option, Schema } from "effect";

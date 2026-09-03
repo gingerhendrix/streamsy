@@ -11,9 +11,9 @@
  * application workflow contains a Promise call.
  */
 import type { ClientProducerOptions } from "@streamsy/core";
-import type { StreamBinding } from "@streamsy/experimental/binding";
-import { sourceAck, type SourceAck } from "@streamsy/experimental/causal";
-import { AppendStreams, type AppendOutcome } from "@streamsy/experimental/effect";
+import type { StreamBinding } from "@streamsy/streams/binding";
+import { sourceAck, type SourceAck } from "@streamsy/streams/causal";
+import { AppendStreams, type AppendOutcome } from "@streamsy/streams";
 import { Cache, Context, Effect, Layer, Schema } from "effect";
 import { IssueEvent, ProjectMembershipFact } from "../shared/domain.ts";
 import { AppendRejected, InvalidRequest } from "./errors.ts";

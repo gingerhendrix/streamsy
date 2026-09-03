@@ -18,12 +18,12 @@
  */
 
 import { directProtocolClient, type StreamProtocolFactory } from "@streamsy/core";
-import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/experimental/effect";
+import { AppendStreamsLive, ReadStreamsLive } from "@streamsy/streams";
 import {
   catchUpState,
   DerivedRecoveryLive,
   DerivedStateHistoryLive,
-} from "@streamsy/experimental/ivm-mesh";
+} from "@streamsy/projection/mesh";
 import { Layer, ManagedRuntime } from "effect";
 
 import type { GameEvent } from "../../src/domain/events.ts";

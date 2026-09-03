@@ -8,7 +8,7 @@
  * and is reported as one.
  *
  * Mesh failures (`StreamReadError`, `StreamAppendError`, `StateRestorePoison`,
- * …) already have typed classes in `@streamsy/experimental/effect`; this module
+ * …) already have typed classes in `@streamsy/streams`; this module
  * only adds the ones this application owns.
  */
 import { Schema } from "effect";

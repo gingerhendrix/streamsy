@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/views-store",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Backend-neutral maintained-view state, history, checkpoints, and recovery.",
   "license": "MIT",
   "files": [

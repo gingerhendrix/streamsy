@@ -11,14 +11,8 @@
  * reconciles the append to the original offset, so the two mechanisms are
  * independent rather than one guarding the other.
  */
-import {
-  AppendStreams,
-  AppendStreamsLive,
-  ReadStreams,
-  ReadStreamsLive,
-  type StreamReadError,
-} from "@streamsy/experimental/effect";
-import type { StreamBinding } from "@streamsy/experimental/binding";
+import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive, type StreamReadError } from "@streamsy/streams";
+import type { StreamBinding } from "@streamsy/streams/binding";
 import { OutboxStore, type OutboxDraft } from "@streamsy/effect-sink";
 import { Clock, DateTime, Effect, Layer } from "effect";
 import type {

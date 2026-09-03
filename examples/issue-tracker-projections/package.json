@@ -23,9 +23,10 @@
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
-    "@streamsy/experimental": "workspace:*",
     "@streamsy/http-client": "workspace:*",
+    "@streamsy/projection": "workspace:*",
     "@streamsy/storage-durable-object": "workspace:*",
+    "@streamsy/streams": "workspace:*",
     "effect": "4.0.0-rc.112",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

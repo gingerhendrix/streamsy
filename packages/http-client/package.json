@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/http-client",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Durable Streams protocol client adapter for Streamsy consumers.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@durable-streams/client": "^0.2.6",
-    "@streamsy/core": "0.2.1"
+    "@streamsy/core": "0.3.0"
   },
   "devDependencies": {
     "typescript": "catalog:",

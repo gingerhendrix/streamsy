@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/async-function -- This Vitest integration suite drives Promise protocol adapters and executes Effect descriptions at the test boundary. */
 import { type StreamProtocolClient } from "@streamsy/core";
-import * as StateProjection from "@streamsy/experimental/state-projection";
-import type { Instance as StateProjectionInstance } from "@streamsy/experimental/state-projection";
+import * as StateProjection from "@streamsy/projection";
+import type { Instance as StateProjectionInstance } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 import { makeStoryProjectionInstance } from "./projection.ts";

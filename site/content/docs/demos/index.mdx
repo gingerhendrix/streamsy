@@ -1,20 +1,20 @@
 ---
 title: Experimental demos
-description: Guided tutorials for the demos built on @streamsy/experimental — stream identity, bindings, Effect capabilities, bounded StateProjection, durable lineage, and causal coverage.
+description: Guided tutorials for the demos built on @streamsy/streams and @streamsy/projection — stream identity, bindings, Effect capabilities, bounded StateProjection, durable lineage, and causal coverage.
 ---
 
-The `experimental` branch ships runnable demo applications under [`examples/`](https://github.com/gingerhendrix/streamsy/tree/experimental/examples). Each demo exercises the experimental derived-state programme in `@streamsy/experimental`: structured stream identity, inert stream bindings, Effect capabilities, bounded projection catch-up, durable lineage, and causal coverage.
+The `experimental` branch ships runnable demo applications under [`examples/`](https://github.com/gingerhendrix/streamsy/tree/experimental/examples). Each demo exercises the experimental derived-state programme in `@streamsy/streams` and `@streamsy/projection`: structured stream identity, inert stream bindings, Effect capabilities, bounded projection catch-up, durable lineage, and causal coverage.
 
 These tutorials explain how each demo was implemented. They walk through the real source code, show the Streamsy APIs the demo uses, and tell you how to run and verify the demo yourself.
 
 ## Before you start
 
-`@streamsy/experimental` is incubating:
+`@streamsy/streams` and `@streamsy/projection` are incubating:
 
-- The package exposes explicit subpath exports only. There is no package-root export.
-- Its Effect dependency is pinned to a v4 release candidate.
+- Each public API is reached through the subpath that owns it.
+- Their Effect dependency is pinned to a v4 release candidate.
 - APIs can change or disappear between commits. Nothing here is a compatibility promise.
-- `@streamsy/experimental/ivm-mesh` is a framework-private incubation area. Two demos use it directly; treat those imports as implementation detail, not public API.
+- `@streamsy/projection/mesh` is a framework-private incubation area. Two demos use it directly; treat those imports as implementation detail, not public API.
 
 Every demo runs on [Bun](https://bun.sh). From a checkout of the `experimental` branch:
 

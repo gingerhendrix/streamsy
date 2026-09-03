@@ -2,7 +2,7 @@
 
 A [Fold Core](https://www.npmjs.com/package/@humanlayer/fold-core) agent whose
 append-only event log is one Streamsy durable stream, written Effect-native
-against the `@streamsy/experimental/effect` capabilities.
+against the `@streamsy/streams` capabilities.
 
 Fold runs unchanged: it keeps the agent loop, tool settlement, projections,
 interruption, and resume semantics. Streamsy owns durability through Fold's
@@ -26,7 +26,7 @@ the Promise client by hand:
 - `StreamCreateError` / `StreamReadError` / `StreamAppendError` carry the failure classification;
   the adapter maps them to Fold's typed `EventLog` errors.
 - Capabilities are a `Layer`, so tests can swap in
-  `TestStreamsLayer(...)` from `@streamsy/experimental/effect/testing` and
+  `TestStreamsLayer(...)` from `@streamsy/streams/testing` and
   script capability behaviour with no transport at all.
 
 Stream creation, reads, and appends all cross the same injectable Effect

@@ -15,8 +15,8 @@
     "@effect/ai-openai": "4.0.0-rc.109",
     "@humanlayer/fold-core": "0.1.4",
     "@streamsy/core": "workspace:*",
-    "@streamsy/experimental": "workspace:*",
     "@streamsy/storage-sqlite": "workspace:*",
+    "@streamsy/streams": "workspace:*",
     "effect": "4.0.0-rc.109"
   },
   "devDependencies": {

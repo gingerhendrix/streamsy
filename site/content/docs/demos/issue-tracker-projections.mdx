@@ -31,8 +31,8 @@ workspaces/{workspaceId}/projects/{projectId}/board
 `server/streams.ts` turns them into an Effect service. A host resolves storage into one `StreamProtocolClient` and provides this layer once; application code asks for `Streams` and receives inert bindings.
 
 ```ts title="server/streams.ts"
-import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
-import { streamIdentity } from "@streamsy/experimental/causal";
+import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
+import { streamIdentity } from "@streamsy/streams/identity";
 
 export function bindByName(client: StreamProtocolClient, name: string): StreamBinding {
   return bindStream({ identity: streamIdentity(name), client, streamId: name });

@@ -19,7 +19,7 @@
  */
 
 import type { StreamProtocolFactory } from "@streamsy/core";
-import { catchUpState } from "@streamsy/experimental/ivm-mesh";
+import { catchUpState } from "@streamsy/projection/mesh";
 import { Schema } from "effect";
 
 import type { GameEvent } from "../../src/domain/events.ts";

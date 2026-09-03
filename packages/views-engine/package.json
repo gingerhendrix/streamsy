@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/views-engine",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Pure incremental graph runtime for Streamsy view plans.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "license": "MIT",

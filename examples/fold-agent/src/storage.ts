@@ -8,7 +8,7 @@
  *
  * Everything above this file works through {@link StreamBinding} values, the
  * explicit composition of identity, client, and stream address that the
- * `@streamsy/experimental` Effect capabilities take as their method argument.
+ * `@streamsy/streams` Effect capabilities take as their method argument.
  */
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -18,8 +18,8 @@ import {
   directProtocolClient,
   type StreamsyProtocolClient,
 } from "@streamsy/core";
-import { bindStream, type StreamBinding } from "@streamsy/experimental/binding";
-import { streamIdentity } from "@streamsy/experimental/stream-identity";
+import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
+import { streamIdentity } from "@streamsy/streams/identity";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 
 export interface StreamsyStore {

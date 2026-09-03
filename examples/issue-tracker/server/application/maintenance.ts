@@ -10,7 +10,7 @@
  * the sink is rebuilt from them.
  */
 import type { JsonValue, ReadStreamOptions } from "@streamsy/core";
-import { ReadStreams } from "@streamsy/experimental/effect";
+import { ReadStreams } from "@streamsy/streams";
 import { Effect, Schema } from "effect";
 import { catalogRow, type CatalogCollection } from "../../domain/catalog.ts";
 import {

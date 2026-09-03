@@ -95,8 +95,8 @@ public stream facade exposes the active board generation, never canonical events
 command logs, retired generations, or private action streams.
 
 Command idempotency and private action derivation are deliberately app-scoped
-adapters over the current JSON protocol. The port does not restore the removed
-`@streamsy/experimental/command` or `@streamsy/experimental/derived` exports.
+adapters over the current JSON protocol. The port does not restore the `command` or `derived` exports removed from the
+former `@streamsy/experimental` package.
 
 The main source areas are:
 

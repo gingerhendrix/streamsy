@@ -1,6 +1,6 @@
 /**
  * A Fold Core `EventLog` backed by one Streamsy durable stream, written against
- * the Effect-native capabilities in `@streamsy/experimental/effect`.
+ * the Effect-native capabilities in `@streamsy/streams`.
  *
  * One Fold session is one JSON Streamsy stream: every Fold log entry is one
  * stored message, appended in Fold `seq` order. The two orderings stay separate
@@ -26,7 +26,7 @@ import {
   type LogEntryInput,
 } from "@humanlayer/fold-core";
 import type { JsonValue, StreamOffset } from "@streamsy/core";
-import type { StreamBinding } from "@streamsy/experimental/binding";
+import type { StreamBinding } from "@streamsy/streams/binding";
 import {
   AppendStreams,
   AppendStreamsLive,
@@ -39,7 +39,7 @@ import {
   type ReadStreamsService,
   type StreamCreateError,
   type StreamReadError,
-} from "@streamsy/experimental/effect";
+} from "@streamsy/streams";
 import { Context, Effect, Layer, Ref, Schema, Semaphore, Stream } from "effect";
 
 /** How the adapter attaches to its Streamsy stream. */

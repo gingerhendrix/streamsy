@@ -10,8 +10,8 @@
  * durable authority remains the in-band lineage written to each target, so the
  * cache is a latency device and never a source of truth.
  */
-import { streamIdentity } from "@streamsy/experimental/causal";
-import { deriveProducerLane, type ProducerLane } from "@streamsy/experimental/ivm-mesh";
+import { streamIdentity } from "@streamsy/streams/identity";
+import { deriveProducerLane, type ProducerLane } from "@streamsy/projection/mesh";
 import { Cache, Context, Effect, Layer } from "effect";
 import { streamNames } from "../shared/domain.ts";
 

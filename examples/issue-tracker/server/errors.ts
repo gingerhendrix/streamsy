@@ -6,7 +6,7 @@
  * translate them by `_tag`; nothing throws to signal an expected failure, and a
  * `TypeError` reaching the edge is a real defect reported as one.
  *
- * `@streamsy/experimental/effect` already owns `StreamReadError`,
+ * `@streamsy/streams` already owns `StreamReadError`,
  * `StreamAppendError` and `StateRestorePoison`. This module adds only what the
  * application owns.
  */

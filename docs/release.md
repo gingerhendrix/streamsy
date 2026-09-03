@@ -7,7 +7,8 @@ Current public npm packages:
 - `@streamsy/core` (`packages/core`)
 - `@streamsy/http-client` (`packages/http-client`)
 - `@streamsy/json` (`packages/json`)
-- `@streamsy/experimental` (`packages/experimental`)
+- `@streamsy/streams` (`packages/streams`)
+- `@streamsy/projection` (`packages/projection`)
 - `@streamsy/state` (`packages/state`)
 - `@streamsy/storage-sqlite` (`packages/storage-sqlite`)
 - `@streamsy/storage-durable-object` (`packages/storage-durable-object`)
@@ -102,7 +103,8 @@ const paths = [
   'packages/core/package.json',
   'packages/http-client/package.json',
   'packages/json/package.json',
-  'packages/experimental/package.json',
+  'packages/streams/package.json',
+  'packages/projection/package.json',
   'packages/state/package.json',
   'packages/storage-sqlite/package.json',
   'packages/storage-durable-object/package.json',
@@ -196,7 +198,8 @@ for name in \
   @streamsy/core \
   @streamsy/http-client \
   @streamsy/json \
-  @streamsy/experimental \
+  @streamsy/streams \
+  @streamsy/projection \
   @streamsy/state \
   @streamsy/storage-sqlite \
   @streamsy/storage-durable-object \
@@ -221,6 +224,26 @@ Verify the deprecation message:
 
 ```bash
 npm view @streamsy/client deprecated
+```
+
+## Deprecate `@streamsy/experimental`
+
+`@streamsy/experimental@0.2.1` is still live on npm. The package was dissolved after `0.2.1` into `@streamsy/streams` (Effect stream capabilities, bindings, stream identity, causal coverage) and `@streamsy/projection` (the `StateProjection` facade and the framework-private `/mesh` incubation area).
+
+Both replacement names are new to npm, so they follow the `@streamsy/http-client` pattern:
+
+1. First-publish `@streamsy/streams` and `@streamsy/projection` manually from the reviewed release commit.
+2. Configure npm trusted publishing for both new package names.
+3. Only then deprecate the old name.
+
+```bash
+npm deprecate '@streamsy/experimental@*' 'This package was split into @streamsy/streams and @streamsy/projection. Install and import those instead.'
+```
+
+Verify the deprecation message:
+
+```bash
+npm view @streamsy/experimental deprecated
 ```
 
 ## Deprecate `@streamsy/storage-memory`

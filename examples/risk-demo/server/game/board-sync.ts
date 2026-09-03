@@ -7,7 +7,7 @@
  * board is a separate projection that may lag. This helper waits until the board
  * projection proves it has incorporated an acknowledged canonical offset.
  *
- * The comparison itself is `@streamsy/experimental/causal`'s pure `coverage()`:
+ * The comparison itself is `@streamsy/streams/causal`'s pure `coverage()`:
  * both sides are lifted into structured mesh identities and real durable-stream
  * positions, and coverage answers `proven`, `not-yet`, or `incomparable`.
  * `incomparable` is the important one — it is what a mismatched identity returns
@@ -17,12 +17,8 @@
  * stream, and the identity must match before either is looked at.
  */
 
-import {
-  coverage,
-  sourceAck,
-  sourceWatermark,
-  streamIdentityEquals,
-} from "@streamsy/experimental/causal";
+import { coverage, sourceAck, sourceWatermark } from "@streamsy/streams/causal";
+import { streamIdentityEquals } from "@streamsy/streams/identity";
 
 import { boardSourceIdentity } from "../../src/board/mesh.ts";
 import { BoardResponse } from "../../src/application/api.ts";

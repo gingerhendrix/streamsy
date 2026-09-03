@@ -1,5 +1,5 @@
 import { Context, Effect, Schema } from "effect";
-import type * as StateProjection from "@streamsy/experimental/state-projection";
+import type * as StateProjection from "@streamsy/projection";
 import type { HnStory } from "../../state-schema.ts";
 import type { HackerNewsSourceChange } from "../story-index-projection.ts";
 import { errorMessage } from "../util.ts";

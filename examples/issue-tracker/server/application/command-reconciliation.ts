@@ -1,7 +1,7 @@
 /** Bounded canonical-source scan used for sequence allocation and rare receipt recovery. */
 import { ZERO_OFFSET, type JsonValue, type ReadStreamOptions } from "@streamsy/core";
-import type { StreamBinding } from "@streamsy/experimental/binding";
-import { ReadStreams, type StreamReadError } from "@streamsy/experimental/effect";
+import type { StreamBinding } from "@streamsy/streams/binding";
+import { ReadStreams, type StreamReadError } from "@streamsy/streams";
 import { Effect } from "effect";
 import { decodeIssueEvent, decodeIssueLabelEvent, type IssueEvent } from "../../domain/issue.ts";
 import type { IssueLabelEvent } from "../../domain/issue.ts";

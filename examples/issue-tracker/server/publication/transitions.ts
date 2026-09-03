@@ -34,7 +34,7 @@
  * resume, and a dead-lettered transition would be exactly the hole above.
  */
 import { defaultOffsetGenerator, type JsonValue, type ReadStreamOptions } from "@streamsy/core";
-import { AppendStreams, ReadStreams } from "@streamsy/experimental/effect";
+import { AppendStreams, ReadStreams } from "@streamsy/streams";
 import type { StreamSinkPage } from "@streamsy/sinks/effect";
 import type { Change } from "@streamsy/views-ir";
 import { Effect, Schema } from "effect";

@@ -1,6 +1,6 @@
 {
   "name": "@streamsy/views",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Typed inert declarations and plan checking for Streamsy views.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {

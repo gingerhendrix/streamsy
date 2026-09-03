@@ -1,0 +1,53 @@
+{
+  "name": "@streamsy/projection",
+  "version": "0.3.0",
+  "description": "Bounded StateProjection and the incubating IVM mesh for Streamsy durable streams.",
+  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
+  "bugs": {
+    "url": "https://github.com/gingerhendrix/streamsy/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/projection"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/state-projection.d.ts",
+      "import": "./dist/state-projection.js",
+      "default": "./dist/state-projection.js"
+    },
+    "./mesh": {
+      "types": "./dist/mesh.d.ts",
+      "import": "./dist/mesh.js",
+      "default": "./dist/mesh.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/state-projection.ts src/mesh.ts --format esm --out-dir dist --clean --external @streamsy/core --external @streamsy/streams --external effect && tsc --project tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest --run src --exclude '**/*.bun.test.ts'",
+    "test:sqlite": "bun test src/mesh/*.bun.test.ts"
+  },
+  "dependencies": {
+    "@streamsy/core": "0.3.0",
+    "@streamsy/streams": "0.3.0",
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@streamsy/http-client": "workspace:*",
+    "@streamsy/storage-sqlite": "workspace:*",
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:",
+    "vitest": "^4.0.16"
+  }
+}

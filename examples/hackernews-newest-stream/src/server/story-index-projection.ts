@@ -1,4 +1,4 @@
-import * as StateProjection from "@streamsy/experimental/state-projection";
+import * as StateProjection from "@streamsy/projection";
 import { Schema } from "effect";
 import {
   HackerNewsStateChange,

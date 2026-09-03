@@ -19,8 +19,8 @@ import {
   type LogEntryInput,
 } from "@humanlayer/fold-core";
 import type { JsonValue } from "@streamsy/core";
-import { StreamCreateError, StreamReadError } from "@streamsy/experimental/effect";
-import { TestStreamsLayer } from "@streamsy/experimental/effect/testing";
+import { StreamCreateError, StreamReadError } from "@streamsy/streams";
+import { TestStreamsLayer } from "@streamsy/streams/testing";
 import { Cause, Effect, Exit, Fiber, Stream, type Scope } from "effect";
 import { openMemoryStore, openStore, type StreamsyStore } from "../src/storage.ts";
 import {

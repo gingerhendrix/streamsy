@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- This Vitest scenario exercises the demo's Promise compatibility edges through one explicit ManagedRuntime. */
-import * as StateProjection from "@streamsy/experimental/state-projection";
+import * as StateProjection from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { describe, expect, test } from "vitest";
 import type { HnStory } from "../state-schema.ts";

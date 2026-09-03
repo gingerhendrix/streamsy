@@ -1,5 +1,5 @@
-import { streamIdentity } from "@streamsy/experimental/stream-identity";
-import * as StateProjection from "@streamsy/experimental/state-projection";
+import { streamIdentity } from "@streamsy/streams/identity";
+import * as StateProjection from "@streamsy/projection";
 import { sourceStreamId, targetStreamId } from "./config.ts";
 
 export const hackerNewsSource = StateProjection.resource({

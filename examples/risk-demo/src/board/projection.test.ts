@@ -24,7 +24,7 @@ import {
 } from "./projection.ts";
 import { writeCanonicalEvents, BOARD_REDUCER_VERSION } from "./board-projection.ts";
 import { createBoardMesh, type BoardMaterialized, type BoardMeshOptions } from "./mesh.ts";
-import { createLineageEvent, type CatchUpLimits } from "@streamsy/experimental/ivm-mesh";
+import { createLineageEvent, type CatchUpLimits } from "@streamsy/projection/mesh";
 import { boardProjectionTxId } from "./transaction.ts";
 import { ProjectedMoveSchema } from "./schemas.ts";
 import {
