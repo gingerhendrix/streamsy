@@ -19,7 +19,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StorageAdapter, StreamProtocolClient } from "@streamsy/core";
-import type { OutboxStore } from "@streamsy/effect-sink";
+import type { OutboxStore } from "@streamsy/sinks/action/outbox";
 import type { Layer, ManagedRuntime } from "effect";
 import { workspaceKey } from "../../../domain/domains.ts";
 import type { ApplicationServices } from "../../application/application.ts";

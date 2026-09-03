@@ -632,25 +632,6 @@ export interface Scope {
 }
 export const scope = (value: string): Scope => Object.freeze({ kind: "scope", value });
 
-export interface StateSinkSpec {
-  readonly from: ViewDeclaration;
-  readonly key: Expression;
-  readonly route: string;
-  readonly params: readonly string[];
-  readonly protocol: {
-    readonly transport: "durable-state";
-    readonly resume: boolean;
-    readonly fallback: "snapshot-then-live";
-  };
-  readonly auth: Scope;
-}
-export interface StateSinkDeclaration extends StateSinkSpec {
-  readonly kind: "state-sink";
-  readonly name: string;
-}
-export const stateSink = (name: string, spec: StateSinkSpec): StateSinkDeclaration =>
-  deepFreeze({ kind: "state-sink", name, ...spec });
-
 /* oxlint-disable anti-slop/no-runtime-typeof -- This is the freezing boundary for inert declaration values; schema classes are already frozen externally and are intentionally not traversed. */
 function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) return value;

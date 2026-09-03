@@ -1,10 +1,10 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The test codec exercises the sink's external wire boundary. */
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
-import { STREAM_SINK_ERROR_TAGS } from "./errors.ts";
-import { STREAM_SINK_CONTRACT_HEADER, STREAM_SINK_VERSION_HEADER } from "./protocol.ts";
-import { defineStreamSink } from "./stream.ts";
-import { handleStreamSink, StreamSinkSourceFailure, type StreamSinkPage } from "./server-stream.ts";
+import { STREAM_SINK_ERROR_TAGS } from "../stream-errors.ts";
+import { STREAM_SINK_CONTRACT_HEADER, STREAM_SINK_VERSION_HEADER } from "../stream-protocol.ts";
+import { defineStreamSink } from "../stream-contract.ts";
+import { handleStreamSink, StreamSinkSourceFailure, type StreamSinkPage } from "./stream.ts";
 
 interface Transition {
   readonly issueId: string;

@@ -62,11 +62,9 @@
         "@effect/sql-sqlite-bun": "4.0.0-rc.112",
         "@effect/sql-sqlite-do": "4.0.0-rc.112",
         "@streamsy/core": "workspace:*",
-        "@streamsy/effect-sink": "workspace:*",
         "@streamsy/json": "workspace:*",
         "@streamsy/sinks": "workspace:*",
         "@streamsy/state": "workspace:*",
-        "@streamsy/state-sink": "workspace:*",
         "@streamsy/storage-sqlite": "workspace:*",
         "@streamsy/streams": "workspace:*",
         "@streamsy/tanstack-db": "workspace:*",
@@ -207,17 +205,6 @@
         "vitest": "^4.0.16",
       },
     },
-    "packages/effect-sink": {
-      "name": "@streamsy/effect-sink",
-      "version": "0.3.0",
-      "dependencies": {
-        "effect": "4.0.0-rc.112",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.2.0",
-        "typescript": "catalog:",
-      },
-    },
     "packages/http-client": {
       "name": "@streamsy/http-client",
       "version": "0.3.0",
@@ -261,7 +248,6 @@
       "name": "@streamsy/sinks",
       "version": "0.3.0",
       "dependencies": {
-        "@streamsy/state-sink": "workspace:*",
         "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
@@ -279,17 +265,6 @@
       "devDependencies": {
         "typescript": "catalog:",
         "vitest": "^4.0.16",
-      },
-    },
-    "packages/state-sink": {
-      "name": "@streamsy/state-sink",
-      "version": "0.3.0",
-      "dependencies": {
-        "effect": "4.0.0-rc.112",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.2.0",
-        "typescript": "catalog:",
       },
     },
     "packages/storage-durable-object": {
@@ -347,7 +322,7 @@
       "dependencies": {
         "@durable-streams/client": "^0.2.6",
         "@durable-streams/state": "^0.3.1",
-        "@streamsy/state-sink": "workspace:*",
+        "@streamsy/sinks": "workspace:*",
         "@tanstack/db": "0.6.8",
       },
       "devDependencies": {
@@ -1025,8 +1000,6 @@
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
 
-    "@streamsy/effect-sink": ["@streamsy/effect-sink@workspace:packages/effect-sink"],
-
     "@streamsy/http-client": ["@streamsy/http-client@workspace:packages/http-client"],
 
     "@streamsy/json": ["@streamsy/json@workspace:packages/json"],
@@ -1036,8 +1009,6 @@
     "@streamsy/sinks": ["@streamsy/sinks@workspace:packages/sinks"],
 
     "@streamsy/state": ["@streamsy/state@workspace:packages/state"],
-
-    "@streamsy/state-sink": ["@streamsy/state-sink@workspace:packages/state-sink"],
 
     "@streamsy/storage-durable-object": ["@streamsy/storage-durable-object@workspace:packages/storage-durable-object"],
 

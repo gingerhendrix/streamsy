@@ -13,7 +13,8 @@
  * - `assignmentHandler` and `drainAssignments` are *how* delivery is attempted:
  *   the declared retry budget, applied by the package's serialized runtime.
  */
-import { drain, draftsFor, effectSinkHandler, type OutboxDraft } from "@streamsy/effect-sink";
+import { drain, draftsFor, effectSinkHandler } from "@streamsy/sinks/action/runtime";
+import { type OutboxDraft } from "@streamsy/sinks/action/outbox";
 import { Context, Effect, Layer, Schema } from "effect";
 import { assignmentNotifications, issueLifecycle, issues } from "../../domain/declaration.ts";
 import { assignmentOf, type AssignmentNotification } from "../../domain/notifications.ts";

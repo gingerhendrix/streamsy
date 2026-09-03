@@ -5,7 +5,7 @@
  * Neither side may carry a name the other does not, so a typo is a type error at
  * the declaration rather than a 404 at run time.
  */
-import type { SinkParamCodecs } from "@streamsy/state-sink";
+import type { SinkParamCodecs } from "./route.ts";
 
 type RouteParameterNames<Route extends string> =
   Route extends `${string}:${infer Parameter}/${infer Rest}`

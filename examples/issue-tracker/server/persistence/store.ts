@@ -33,13 +33,8 @@ import {
   ViewStateRestorePoison,
   type ViewStoreService,
 } from "@streamsy/views-store";
-import {
-  makeMemoryOutboxBacking,
-  outboxStoreLayer,
-  OutboxStore,
-  type OutboxDraft,
-  type OutboxUnavailable,
-} from "@streamsy/effect-sink";
+import { makeMemoryOutboxBacking, outboxStoreLayer, OutboxStore, type OutboxDraft } from "@streamsy/sinks/action/outbox";
+import { type OutboxUnavailable } from "@streamsy/sinks/action/errors";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { planHash } from "@streamsy/views";
 import {

@@ -26,7 +26,6 @@ export {
   reducer,
   scope,
   source,
-  stateSink,
   view,
 } from "./relation.ts";
 export type {
@@ -45,8 +44,6 @@ export type {
   SourceCollection,
   SourceDeclaration,
   SourceSpec,
-  StateSinkDeclaration,
-  StateSinkSpec,
   TopSpec,
   ViewDeclaration,
   ViewSpec,

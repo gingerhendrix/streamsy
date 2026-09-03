@@ -1,6 +1,6 @@
 /** Bun placement for the platform-neutral Effect SQL application store. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
-import { OUTBOX_SCHEMA } from "@streamsy/effect-sink/sqlite";
+import { OUTBOX_SCHEMA } from "@streamsy/sinks/action/sqlite";
 import { importLegacyIssueStore, migrateViewStore } from "@streamsy/views-store/sqlite";
 import { planHash } from "@streamsy/views";
 import { Database } from "bun:sqlite";
@@ -14,7 +14,7 @@ import {
   createSqliteIssueStoreBoundary,
   sqlLayer,
 } from "./store-sql.ts";
-import type { OutboxStore } from "@streamsy/effect-sink";
+import type { OutboxStore } from "@streamsy/sinks/action/outbox";
 import type { IssueStore } from "./store.ts";
 
 interface TableInfoRow {

@@ -16,10 +16,9 @@ import { dirname, join } from "node:path";
 const repoRoot = join(import.meta.dirname, "..");
 
 const effectAreas = [
-  "packages/experimental",
+  "packages/streams",
+  "packages/projection",
   "packages/sinks",
-  "packages/state-sink",
-  "packages/effect-sink",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
   "examples/issue-tracker",
@@ -40,7 +39,7 @@ const probeSource = [
 ].join("\n");
 
 const generalProbe = "packages/core/src/__lint-policy-probe__.ts";
-const effectProbe = "packages/experimental/src/__lint-policy-probe__.ts";
+const effectProbe = "packages/streams/src/__lint-policy-probe__.ts";
 
 interface Diagnostic {
   code: string;

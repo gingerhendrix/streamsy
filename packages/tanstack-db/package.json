@@ -24,7 +24,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/codegen.ts src/cli.ts --format esm --dts --out-dir dist --clean --external @durable-streams/client --external @durable-streams/state --external @durable-streams/state/db --external @streamsy/state-sink",
+    "build": "tsdown src/index.ts src/codegen.ts src/cli.ts --format esm --dts --out-dir dist --clean --external @durable-streams/client --external @durable-streams/state --external @durable-streams/state/db --external @streamsy/sinks",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test src",
     "generate:check": "bun test src/codegen.test.ts"
@@ -32,7 +32,7 @@
   "dependencies": {
     "@durable-streams/client": "^0.2.6",
     "@durable-streams/state": "^0.3.1",
-    "@streamsy/state-sink": "workspace:*",
+    "@streamsy/sinks": "workspace:*",
     "@tanstack/db": "0.6.8"
   },
   "devDependencies": {

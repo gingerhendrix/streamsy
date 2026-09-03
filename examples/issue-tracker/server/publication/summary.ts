@@ -9,7 +9,7 @@
  * the committed rows — which is what makes the sink's entity tag stable.
  */
 import { Effect } from "effect";
-import type { CanonicalValue } from "@streamsy/sinks";
+import type { CanonicalValue } from "@streamsy/sinks/fingerprint";
 import { ISSUE_STATUSES, type IssueRow, type IssueStatus } from "../../domain/issue.ts";
 import { PLAN_HASH } from "../config.ts";
 import { catchUpStateSource, stateSourceId } from "../application/state-ingestion.ts";

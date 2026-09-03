@@ -1,5 +1,5 @@
 import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
-import type { StateSinkErrorTag, StateSinkPublicError } from "./errors.ts";
+import type { StateSinkErrorTag, StateSinkPublicError } from "./state-errors.ts";
 
 export interface StateSinkRowCodec<Row> {
   /* oxlint-disable-next-line anti-slop/no-unknown-parameters -- This decoder is the sink row's external wire boundary. */

@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/sinks",
   "version": "0.3.0",
-  "description": "Checked stream-sink and document-sink contracts, routes, and Effect server adapters.",
+  "description": "Checked state, stream, document, and action sink contracts, routes, protocol handling, and Effect server adapters.",
   "license": "MIT",
   "files": [
     "dist"
@@ -10,23 +10,117 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
+      "types": "./dist/state-contract.d.ts",
+      "import": "./dist/state-contract.js",
+      "default": "./dist/state-contract.js"
     },
-    "./effect": {
-      "types": "./dist/effect.d.ts",
-      "import": "./dist/effect.js",
-      "default": "./dist/effect.js"
+    "./state-errors": {
+      "types": "./dist/state-errors.d.ts",
+      "import": "./dist/state-errors.js",
+      "default": "./dist/state-errors.js"
+    },
+    "./state-protocol": {
+      "types": "./dist/state-protocol.d.ts",
+      "import": "./dist/state-protocol.js",
+      "default": "./dist/state-protocol.js"
+    },
+    "./stream": {
+      "types": "./dist/stream-contract.d.ts",
+      "import": "./dist/stream-contract.js",
+      "default": "./dist/stream-contract.js"
+    },
+    "./stream-errors": {
+      "types": "./dist/stream-errors.d.ts",
+      "import": "./dist/stream-errors.js",
+      "default": "./dist/stream-errors.js"
+    },
+    "./stream-protocol": {
+      "types": "./dist/stream-protocol.d.ts",
+      "import": "./dist/stream-protocol.js",
+      "default": "./dist/stream-protocol.js"
+    },
+    "./document": {
+      "types": "./dist/document-contract.d.ts",
+      "import": "./dist/document-contract.js",
+      "default": "./dist/document-contract.js"
+    },
+    "./document-errors": {
+      "types": "./dist/document-errors.d.ts",
+      "import": "./dist/document-errors.js",
+      "default": "./dist/document-errors.js"
+    },
+    "./document-protocol": {
+      "types": "./dist/document-protocol.d.ts",
+      "import": "./dist/document-protocol.js",
+      "default": "./dist/document-protocol.js"
+    },
+    "./route": {
+      "types": "./dist/route.d.ts",
+      "import": "./dist/route.js",
+      "default": "./dist/route.js"
+    },
+    "./route-params": {
+      "types": "./dist/route-params.d.ts",
+      "import": "./dist/route-params.js",
+      "default": "./dist/route-params.js"
+    },
+    "./fingerprint": {
+      "types": "./dist/fingerprint.d.ts",
+      "import": "./dist/fingerprint.js",
+      "default": "./dist/fingerprint.js"
+    },
+    "./server/state": {
+      "types": "./dist/server/state.d.ts",
+      "import": "./dist/server/state.js",
+      "default": "./dist/server/state.js"
+    },
+    "./server/state-error-schema": {
+      "types": "./dist/server/state-error-schema.d.ts",
+      "import": "./dist/server/state-error-schema.js",
+      "default": "./dist/server/state-error-schema.js"
+    },
+    "./server/stream": {
+      "types": "./dist/server/stream.d.ts",
+      "import": "./dist/server/stream.js",
+      "default": "./dist/server/stream.js"
+    },
+    "./server/document": {
+      "types": "./dist/server/document.d.ts",
+      "import": "./dist/server/document.js",
+      "default": "./dist/server/document.js"
+    },
+    "./action": {
+      "types": "./dist/action/contract.d.ts",
+      "import": "./dist/action/contract.js",
+      "default": "./dist/action/contract.js"
+    },
+    "./action/errors": {
+      "types": "./dist/action/errors.d.ts",
+      "import": "./dist/action/errors.js",
+      "default": "./dist/action/errors.js"
+    },
+    "./action/outbox": {
+      "types": "./dist/action/outbox.d.ts",
+      "import": "./dist/action/outbox.js",
+      "default": "./dist/action/outbox.js"
+    },
+    "./action/runtime": {
+      "types": "./dist/action/runtime.d.ts",
+      "import": "./dist/action/runtime.js",
+      "default": "./dist/action/runtime.js"
+    },
+    "./action/sqlite": {
+      "types": "./dist/action/sqlite.d.ts",
+      "import": "./dist/action/sqlite.js",
+      "default": "./dist/action/sqlite.js"
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/effect.ts --format esm --dts --out-dir dist --clean --external effect --external @streamsy/state-sink",
+    "build": "tsdown src/state-contract.ts src/state-errors.ts src/state-protocol.ts src/stream-contract.ts src/stream-errors.ts src/stream-protocol.ts src/document-contract.ts src/document-errors.ts src/document-protocol.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/state-error-schema.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test src"
   },
   "dependencies": {
-    "@streamsy/state-sink": "workspace:*",
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {

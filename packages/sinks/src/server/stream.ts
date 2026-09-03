@@ -11,10 +11,10 @@
  * order.
  */
 import { Effect, Schema } from "effect";
-import type { SinkParamCodecs, DecodedSinkParams } from "@streamsy/state-sink";
-import type { CheckedStreamSink } from "./stream.ts";
-import type { StreamSinkPublicError } from "./errors.ts";
-import { STREAM_SINK_CONTRACT_HEADER, STREAM_SINK_VERSION_HEADER } from "./protocol.ts";
+import type { SinkParamCodecs, DecodedSinkParams } from "../route.ts";
+import type { CheckedStreamSink } from "../stream-contract.ts";
+import type { StreamSinkPublicError } from "../stream-errors.ts";
+import { STREAM_SINK_CONTRACT_HEADER, STREAM_SINK_VERSION_HEADER } from "../stream-protocol.ts";
 
 export class StreamSinkSourceFailure extends Schema.TaggedError<StreamSinkSourceFailure>()(
   "StreamSinkSourceFailure",

@@ -3,8 +3,9 @@
 /* oxlint-disable effecttsgo/missing-effect-context, effecttsgo/missing-effect-error -- Generic test proxy preserves arbitrary transaction channels through an asserted overload. */
 /* oxlint-disable typescript/no-unsafe-type-assertion -- The test proxy preserves the exact SqlClient surface and taps one selected query. */
 import { SqliteClient } from "@effect/sql-sqlite-do";
-import { OutboxUnavailable, type OutboxBacking } from "@streamsy/effect-sink";
-import { createSqliteOutboxBacking } from "@streamsy/effect-sink/sqlite";
+import { OutboxUnavailable } from "@streamsy/sinks/action/errors";
+import { type OutboxBacking } from "@streamsy/sinks/action/outbox";
+import { createSqliteOutboxBacking } from "@streamsy/sinks/action/sqlite";
 import type { Checkpoint, HistoryBounds, Snapshot, StoredChangeBatch } from "@streamsy/views-store";
 import { migrateViewStoreSql, sqliteService } from "@streamsy/views-store/sqlite";
 import type { DurableObjectState } from "@cloudflare/workers-types";

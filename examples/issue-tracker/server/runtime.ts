@@ -10,7 +10,7 @@
  * the plan, the engine, the sink and the router are identical.
  */
 import type { StreamProtocolClient, StreamProtocolFactory } from "@streamsy/core";
-import type { OutboxStore } from "@streamsy/effect-sink";
+import type { OutboxStore } from "@streamsy/sinks/action/outbox";
 import { Layer } from "effect";
 import { MeshLayer, type ApplicationServices } from "./application/application.ts";
 import * as Commands from "./application/commands.ts";

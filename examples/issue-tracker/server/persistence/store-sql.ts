@@ -1,11 +1,7 @@
 /** Platform-neutral SQLite application boundary over Effect SQL. */
-import {
-  OutboxUnavailable,
-  OutboxStore,
-  outboxStore,
-  type OutboxBacking,
-} from "@streamsy/effect-sink";
-import { createSqliteOutboxBacking, migrateOutbox } from "@streamsy/effect-sink/sqlite";
+import { OutboxUnavailable } from "@streamsy/sinks/action/errors";
+import { OutboxStore, outboxStore, type OutboxBacking } from "@streamsy/sinks/action/outbox";
+import { createSqliteOutboxBacking, migrateOutbox } from "@streamsy/sinks/action/sqlite";
 import { migrateViewStoreSql, sqliteService } from "@streamsy/views-store/sqlite";
 import { Context, Effect, Layer, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

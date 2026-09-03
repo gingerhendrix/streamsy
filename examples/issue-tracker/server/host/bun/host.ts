@@ -47,7 +47,7 @@ import {
   type StorageAdapter,
   type StreamProtocolClient,
 } from "@streamsy/core";
-import type { OutboxStore } from "@streamsy/effect-sink";
+import type { OutboxStore } from "@streamsy/sinks/action/outbox";
 import { createSqliteStorageAdapter } from "@streamsy/storage-sqlite";
 import type { Layer, ManagedRuntime } from "effect";
 import { ManagedRuntime as ManagedRuntimeModule } from "effect";

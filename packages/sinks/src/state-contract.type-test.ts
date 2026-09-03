@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The fixture decoder intentionally models an external row boundary. */
-import { defineStateSink, type KeyOf, type ParamsOf, type RowOf } from "./index.ts";
+import { defineStateSink, type KeyOf, type ParamsOf, type RowOf } from "./state-contract.ts";
 
 const checked = defineStateSink({
   name: "type.fixture",

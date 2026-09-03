@@ -11,7 +11,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { Effect } from "effect";
-import { OutboxStore } from "@streamsy/effect-sink";
+import { OutboxStore } from "@streamsy/sinks/action/outbox";
 import { assignmentNotifications } from "../domain/declaration.ts";
 import type { AssignmentNotification } from "../domain/notifications.ts";
 import { assignmentDrafts } from "../server/publication/notifications.ts";

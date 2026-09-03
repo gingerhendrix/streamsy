@@ -7,12 +7,14 @@ import {
 } from "@durable-streams/state/db";
 import {
   decodeStateSinkPublicError,
+  type StateSinkPublicError,
+} from "@streamsy/sinks/state-errors";
+import {
   STATE_SINK_CONTRACT_HEADER,
   STATE_SINK_RESET_HEADER,
   STATE_SINK_RESET_VALUE,
   STATE_SINK_VERSION_HEADER,
-  type StateSinkPublicError,
-} from "@streamsy/state-sink";
+} from "@streamsy/sinks/state-protocol";
 import type { ResumeStore, StateSinkResume } from "./resume-store.ts";
 
 export type StateSinkStatus =

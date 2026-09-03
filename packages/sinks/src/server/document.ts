@@ -10,11 +10,11 @@
  * separate "is it still current" path that could disagree with the body path.
  */
 import { Effect, Schema } from "effect";
-import type { DecodedSinkParams, SinkParamCodecs } from "@streamsy/state-sink";
-import type { CheckedDocumentSink } from "./document.ts";
-import type { DocumentSinkPublicError } from "./errors.ts";
-import { canonicalJson, documentEtag, type CanonicalValue } from "./fingerprint.ts";
-import { DOCUMENT_SINK_CONTRACT_HEADER } from "./protocol.ts";
+import type { DecodedSinkParams, SinkParamCodecs } from "../route.ts";
+import type { CheckedDocumentSink } from "../document-contract.ts";
+import type { DocumentSinkPublicError } from "../document-errors.ts";
+import { canonicalJson, documentEtag, type CanonicalValue } from "../fingerprint.ts";
+import { DOCUMENT_SINK_CONTRACT_HEADER } from "../document-protocol.ts";
 
 export class DocumentSinkSourceFailure extends Schema.TaggedError<DocumentSinkSourceFailure>()(
   "DocumentSinkSourceFailure",

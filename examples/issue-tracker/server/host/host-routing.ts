@@ -11,8 +11,9 @@
  * declaration moves a route, resolution moves with it.
  */
 import { Effect } from "effect";
-import { handleStateSink } from "@streamsy/state-sink/effect";
-import { handleDocumentSink, handleStreamSink } from "@streamsy/sinks/effect";
+import { handleStateSink } from "@streamsy/sinks/server/state";
+import { handleStreamSink } from "@streamsy/sinks/server/stream";
+import { handleDocumentSink } from "@streamsy/sinks/server/document";
 import {
   boardIssues,
   boardLabelCounts,

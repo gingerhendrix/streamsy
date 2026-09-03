@@ -9,14 +9,10 @@
  * order.
  *
  * The declaration is inert data. A host reads its route, its feed metadata and
- * its fingerprint; the runtime that serves it lives in `./effect`.
+ * its fingerprint; the runtime that serves it lives in `./server/stream.ts`.
  */
-import {
-  compileSinkRoute,
-  type DecodedSinkParams,
-  type SinkParamCodecs,
-} from "@streamsy/state-sink";
-import type { StreamSinkErrorTag } from "./errors.ts";
+import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
+import type { StreamSinkErrorTag } from "./stream-errors.ts";
 import { contractFingerprint } from "./fingerprint.ts";
 import type { ExactRouteParams } from "./route-params.ts";
 

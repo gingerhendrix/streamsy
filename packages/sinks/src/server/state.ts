@@ -1,14 +1,14 @@
 import { Effect, Schema } from "effect";
-import type { CheckedStateSink } from "./contract.ts";
-import type { StateSinkPublicError } from "./errors.ts";
+import type { CheckedStateSink } from "../state-contract.ts";
+import type { StateSinkPublicError } from "../state-errors.ts";
 import {
   STATE_SINK_CONTRACT_HEADER,
   STATE_SINK_RESET_HEADER,
   STATE_SINK_RESET_VALUE,
   STATE_SINK_VERSION_HEADER,
-} from "./protocol.ts";
-import type { SinkParamCodecs } from "./route.ts";
-import type { DecodedSinkParams } from "./route.ts";
+} from "../state-protocol.ts";
+import type { SinkParamCodecs } from "../route.ts";
+import type { DecodedSinkParams } from "../route.ts";
 
 export class StateSinkSourceFailure extends Schema.TaggedError<StateSinkSourceFailure>()(
   "StateSinkSourceFailure",

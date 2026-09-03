@@ -12,12 +12,8 @@
  * document that no longer matches its schema is a typed failure instead of a
  * cached wrong answer.
  */
-import {
-  compileSinkRoute,
-  type DecodedSinkParams,
-  type SinkParamCodecs,
-} from "@streamsy/state-sink";
-import type { DocumentSinkErrorTag } from "./errors.ts";
+import { compileSinkRoute, type DecodedSinkParams, type SinkParamCodecs } from "./route.ts";
+import type { DocumentSinkErrorTag } from "./document-errors.ts";
 import { contractFingerprint } from "./fingerprint.ts";
 import type { ExactRouteParams } from "./route-params.ts";
 

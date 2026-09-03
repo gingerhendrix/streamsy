@@ -11,7 +11,7 @@
  * retried command, a recovered receipt and a replayed enqueue all describe the
  * same delivery instead of three of them.
  */
-import { defineEffectSink, type EffectSinkChange } from "@streamsy/effect-sink";
+import { defineEffectSink, type EffectSinkChange } from "@streamsy/sinks/action";
 import { Schema } from "effect";
 import { Identifier, IssueStatus, Timestamp, Title } from "./issue.ts";
 import type { IssueEvent, IssueRow } from "./issue.ts";

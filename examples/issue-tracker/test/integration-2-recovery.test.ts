@@ -23,7 +23,7 @@ import type {
   StreamProtocolClient,
   StreamProtocolHandle,
 } from "@streamsy/core";
-import type { OutboxStore } from "@streamsy/effect-sink";
+import type { OutboxStore } from "@streamsy/sinks/action/outbox";
 import type { SourceChanges } from "@streamsy/views-engine";
 import { Effect, Layer, Schema } from "effect";
 import { issueLabelMemberships, labels } from "../domain/declaration.ts";

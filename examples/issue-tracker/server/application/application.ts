@@ -13,7 +13,7 @@
  */
 import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive, type StreamReadError } from "@streamsy/streams";
 import type { StreamBinding } from "@streamsy/streams/binding";
-import { OutboxStore, type OutboxDraft } from "@streamsy/effect-sink";
+import { OutboxStore, type OutboxDraft } from "@streamsy/sinks/action/outbox";
 import { Clock, DateTime, Effect, Layer } from "effect";
 import type {
   AssignIssueRequest,

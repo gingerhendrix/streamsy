@@ -1,11 +1,7 @@
 /** Framework-neutral checked sink handling adapted to the local gateway. */
-import { handleStateSink, StateSinkSourceFailure } from "@streamsy/state-sink/effect";
-import {
-  DocumentSinkSourceFailure,
-  handleDocumentSink,
-  handleStreamSink,
-  StreamSinkSourceFailure,
-} from "@streamsy/sinks/effect";
+import { handleStateSink, StateSinkSourceFailure } from "@streamsy/sinks/server/state";
+import { handleStreamSink, StreamSinkSourceFailure } from "@streamsy/sinks/server/stream";
+import { DocumentSinkSourceFailure, handleDocumentSink } from "@streamsy/sinks/server/document";
 import { Effect } from "effect";
 import {
   boardIssues,

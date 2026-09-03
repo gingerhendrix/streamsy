@@ -18,7 +18,7 @@ export function generateStateSinkModule(input: StateSinkCodegenInput): string {
 // Source: ${relativeModule}#${input.exportName}
 import { createStateSchema } from "@durable-streams/state";
 import { createStateSinkBinding } from "@streamsy/tanstack-db";
-import type { ErrorOf, KeyOf, ParamsOf, RowOf, StatusOf } from "@streamsy/state-sink";
+import type { ErrorOf, KeyOf, ParamsOf, RowOf, StatusOf } from "@streamsy/sinks";
 import { Schema } from "effect";
 import { ${input.exportName} } from "${relativeModule}";
 

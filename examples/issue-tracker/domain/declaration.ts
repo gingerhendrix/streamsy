@@ -9,13 +9,12 @@
  * change makes `issues.plan` hash differently, the maintained state is a
  * different thing and the host must say so.
  */
-import { defineStateSink, STATE_SINK_ERROR_TAGS } from "@streamsy/state-sink";
-import {
-  defineDocumentSink,
-  defineStreamSink,
-  DOCUMENT_SINK_ERROR_TAGS,
-  STREAM_SINK_ERROR_TAGS,
-} from "@streamsy/sinks";
+import { defineStateSink } from "@streamsy/sinks";
+import { STATE_SINK_ERROR_TAGS } from "@streamsy/sinks/state-errors";
+import { defineStreamSink } from "@streamsy/sinks/stream";
+import { STREAM_SINK_ERROR_TAGS } from "@streamsy/sinks/stream-errors";
+import { defineDocumentSink } from "@streamsy/sinks/document";
+import { DOCUMENT_SINK_ERROR_TAGS } from "@streamsy/sinks/document-errors";
 import {
   decodeIdentifier,
   decodeIssueTransition,

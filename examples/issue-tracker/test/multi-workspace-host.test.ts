@@ -21,7 +21,8 @@ import {
 } from "../shared/api.ts";
 import { streamNames } from "../domain/declaration.ts";
 import { workspaceKey } from "../domain/domains.ts";
-import { OutboxStore, OutboxUnavailable } from "@streamsy/effect-sink";
+import { OutboxStore } from "@streamsy/sinks/action/outbox";
+import { OutboxUnavailable } from "@streamsy/sinks/action/errors";
 import { Effect, Layer } from "effect";
 import { existsSync } from "node:fs";
 import { join } from "node:path";

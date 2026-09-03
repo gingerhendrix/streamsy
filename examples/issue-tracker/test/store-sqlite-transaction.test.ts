@@ -1,6 +1,7 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This test needs disposable SQLite files on the host filesystem. */
-import { OutboxUnavailable, type OutboxBacking } from "@streamsy/effect-sink";
-import { createSqliteOutboxBacking } from "@streamsy/effect-sink/sqlite";
+import { OutboxUnavailable } from "@streamsy/sinks/action/errors";
+import { type OutboxBacking } from "@streamsy/sinks/action/outbox";
+import { createSqliteOutboxBacking } from "@streamsy/sinks/action/sqlite";
 import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
