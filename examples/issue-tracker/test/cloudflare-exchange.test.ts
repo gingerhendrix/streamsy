@@ -10,14 +10,14 @@ const InboxBody = Schema.Struct({ userId: Schema.String, rows: Schema.Array(Sche
   workspaceId: Schema.String, issueId: Schema.String, userId: Schema.String,
 })) });
 const CursorBody = Schema.Struct({ cursors: Schema.Array(Schema.Struct({
-  source: Schema.Struct({ kind: Schema.String, id: Schema.String }), applied: Schema.Number,
+  source: Schema.Struct({ kind: Schema.String, id: Schema.String }), applied: Schema.Finite,
 })) });
 async function eventually<A>(read: () => Promise<A | undefined>, timeoutMs = 4_000): Promise<A> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   for (;;) {
     const value = await read();
     if (value !== undefined) return value;
-    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    if (performance.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
     await Bun.sleep(25);
   }
 }

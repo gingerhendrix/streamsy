@@ -14,7 +14,7 @@
  * acknowledging its command resumes and finishes it instead of deadlocking.
  */
 
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -35,6 +35,7 @@ import { actionsControlFrame, actionsDataFrame } from "../../src/application/act
 const execFileAsync = promisify(execFile);
 const LAUNCHER = path.resolve("external-agent/risk-seat.mjs");
 const roots: string[] = [];
+const ProcessExitError = Schema.Struct({ code: Schema.Finite });
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -600,29 +601,41 @@ describe("repository-independent external-seat launcher", () => {
       const session = await initialize(root, fixture.origin);
       const binary = await fakeHarness(root);
       const cancelFile = path.join(root, "cancel");
-      const child = spawn(
-        "node",
-        [
-          LAUNCHER,
-          "run",
-          "--state",
-          session,
-          "--harness",
-          "claude",
-          "--max-commands",
-          "1",
-          "--max-decisions",
-          "1",
-          "--wall-ms",
-          "8000",
-          "--cancel-file",
-          cancelFile,
-        ],
-        { env: { ...process.env, RISK_CLAUDE_BIN: binary }, stdio: ["ignore", "pipe", "pipe"] },
-      );
+      const exited = new Promise<number | null>((resolve, reject) => {
+        execFile(
+          "node",
+          [
+            LAUNCHER,
+            "run",
+            "--state",
+            session,
+            "--harness",
+            "claude",
+            "--max-commands",
+            "1",
+            "--max-decisions",
+            "1",
+            "--wall-ms",
+            "8000",
+            "--cancel-file",
+            cancelFile,
+          ],
+          { env: { ...process.env, RISK_CLAUDE_BIN: binary } },
+          (error) => {
+            if (error === null) resolve(0);
+            else {
+              try {
+                resolve(Schema.decodeUnknownSync(ProcessExitError)(error).code);
+              } catch {
+                reject(error);
+              }
+            }
+          },
+        );
+      });
       await new Promise((resolve) => setTimeout(resolve, 200));
       await writeFile(cancelFile, "");
-      const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+      const code = await exited;
       expect(code).toBe(130);
       expect(state.commandBodies).toHaveLength(0);
       expect(await evidenceOf(session)).toContain('"kind":"cancelled"');

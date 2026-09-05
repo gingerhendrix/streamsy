@@ -19,7 +19,6 @@
  * It never applies infrastructure — `plan` is read-only, and `deploy:demo` is
  * the separate explicit step.
  */
-import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,11 +52,13 @@ console.log(
 
 function step(label: string, command: string, args: readonly string[]): Promise<void> {
   console.log(`\n==> ${label}`);
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { cwd: packageDir, stdio: "inherit" });
-    child.on("error", reject);
-    child.on("exit", (code) =>
-      code === 0 ? resolve() : reject(new Error(`${label} exited with code ${String(code)}`)),
-    );
+  const child = Bun.spawn([command, ...args], {
+    cwd: packageDir,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  return child.exited.then((code) => {
+    if (code !== 0) throw new Error(`${label} exited with code ${String(code)}`);
   });
 }

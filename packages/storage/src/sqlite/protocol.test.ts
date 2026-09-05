@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -233,12 +232,9 @@ function spawnWorker(
   readyPath: string,
   startPath: string,
 ) {
-  return spawn(
-    "bun",
-    [appendWorkerPath, dbPath, streamId, label, String(count), readyPath, startPath],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-    },
+  return Bun.spawn(
+    ["bun", appendWorkerPath, dbPath, streamId, label, String(count), readyPath, startPath],
+    { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
   );
 }
 
@@ -250,15 +246,9 @@ async function waitForFile(path: string): Promise<void> {
   throw new Error(`timed out waiting for ${path}`);
 }
 
-function waitForExit(
-  child: ReturnType<typeof spawn>,
-): Promise<{ code: number | null; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stderr: stderr.trim() }));
-  });
+async function waitForExit(
+  child: ReturnType<typeof spawnWorker>,
+): Promise<{ code: number; stderr: string }> {
+  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  return { code, stderr: stderr.trim() };
 }

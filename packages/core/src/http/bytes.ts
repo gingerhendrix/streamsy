@@ -47,6 +47,8 @@ interface NodeBufferResult {
   value: HostValue;
 }
 
+interface HostObject {}
+
 interface Base64Encoder {
   (encoding: "base64"): HostValue;
 }
@@ -74,6 +76,18 @@ function isNodeBufferGlobal<Value>(candidate: Value): candidate is Value & NodeB
   );
 }
 
+function readHostProperty(value: HostObject, key: PropertyKey): HostValue {
+  let owner: HostObject | null = value;
+  while (owner !== null) {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor !== undefined) {
+      return "value" in descriptor ? descriptor.value : descriptor.get?.call(value);
+    }
+    owner = Object.getPrototypeOf(owner);
+  }
+  return undefined;
+}
+
 function parseBase64Encoder(result: NodeBufferResult): Base64Encoder | undefined {
   const { value } = result;
   if (!isReferenceValue(value)) return undefined;
@@ -92,7 +106,7 @@ function parseBase64Encoder(result: NodeBufferResult): Base64Encoder | undefined
 
 export function nodeBufferBase64(bytes: Uint8Array): string | undefined {
   if (!("Buffer" in globalThis)) return undefined;
-  const bufferGlobal: HostValue = globalThis.Buffer;
+  const bufferGlobal = readHostProperty(globalThis, "Buffer");
   if (!isReferenceValue(bufferGlobal) || !isNodeBufferGlobal(bufferGlobal)) return undefined;
 
   // `Buffer` stays the receiver: `Buffer.from` is a static method and a host

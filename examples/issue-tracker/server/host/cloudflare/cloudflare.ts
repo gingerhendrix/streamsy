@@ -15,7 +15,7 @@ import {
   StreamProtocol,
   type JsonValue,
 } from "@streamsy/core";
-import { Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { Clock, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { globalKey, partitionKeyString, parsePartitionKey, userKey, workspaceKey } from "../../../domain/domains.ts";
 import {
@@ -26,6 +26,7 @@ import {
   ReadAssignmentPageRequest,
   ReadAssignmentPageResult,
   RegisterSourceRequest,
+  RegisterSourceResult,
   stableHash,
 } from "../../../domain/exchange-rpc.ts";
 import { assignmentInbox } from "../../../domain/exchange.ts";
@@ -57,6 +58,9 @@ const TEST_FAILPOINT_HEADER = "x-streamsy-test-failpoint";
 const ALARM_FLOOR_MS = 1;
 const MAINTENANCE_GUARD_MS = 1_000;
 const EXPIRY_BATCH_SIZE = 8;
+const encodeRegisterSourceResult = Schema.encodeUnknownSync(
+  Schema.fromJsonString(RegisterSourceResult),
+);
 
 export interface CloudflareEnv {
   readonly WORKSPACES: {
@@ -150,7 +154,7 @@ export default {
     try {
       if (resolution.key.kind === "workspace") {
         const globalName = partitionKeyString(globalKey());
-        const register: typeof RegisterSourceRequest.Type = {
+        const register: RegisterSourceRequest = {
           operationId: `register/${EXCHANGE_NAME}/${EXCHANGE_VERSION}/${key}`,
           exchange: EXCHANGE_NAME,
           version: EXCHANGE_VERSION,
@@ -497,7 +501,7 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
     const page = await actor.runtime.runPromise(
       readAssignmentActivity(actor.workspaceId, input.afterArrival, input.limit),
     );
-    const result: typeof ReadAssignmentPageResult.Type = {
+    const result: ReadAssignmentPageResult = {
       operationId: input.operationId,
       requestHash,
       source: input.source,
@@ -507,10 +511,13 @@ export class WorkspacePartitionObject extends DurableObject<CloudflareEnv> {
       records: page.records,
     };
     const encoded = JSON.stringify(result);
-    await Effect.runPromise(sql.withTransaction(sql.unsafe<Record<string, never>>(
-      "INSERT INTO exchange_read_receipts (operation_id, request_hash, response, created_at_ms) VALUES (?, ?, ?, ?)",
-      [input.operationId, requestHash, encoded, Date.now()],
-    ).pipe(Effect.asVoid)));
+    await Effect.runPromise(Effect.gen(function* () {
+      const createdAtMs = yield* Clock.currentTimeMillis;
+      yield* sql.withTransaction(sql.unsafe<Record<string, never>>(
+        "INSERT INTO exchange_read_receipts (operation_id, request_hash, response, created_at_ms) VALUES (?, ?, ?, ?)",
+        [input.operationId, requestHash, encoded, createdAtMs],
+      ).pipe(Effect.asVoid));
+    }));
     return new Response(encoded, { headers: { "content-type": "application/json" } });
   }
 
@@ -885,14 +892,20 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
             if (receipt.request_hash !== requestHash) return yield* Effect.fail("operation-id-conflict");
             return receipt.response;
           }
-          const response = JSON.stringify({ operationId: input.operationId, source: input.source, registered: true });
+          const response = encodeRegisterSourceResult({
+            operationId: input.operationId,
+            source: input.source,
+            registered: true,
+          });
           yield* sql.withTransaction(Effect.gen(function* () {
+            const registeredAtMs = yield* Clock.currentTimeMillis;
             yield* sql.unsafe<Record<string, never>>(
               "INSERT INTO exchange_sources (source, registered_at_ms, last_exchanged_at_ms) VALUES (?, ?, 0) ON CONFLICT(source) DO NOTHING",
-              [partitionKeyString(input.source), Date.now()],
+              [partitionKeyString(input.source), registeredAtMs],
             );
             yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_schedule (source) VALUES (?) ON CONFLICT(source) DO NOTHING", [partitionKeyString(input.source)]);
-            yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_registration_receipts (operation_id, request_hash, response, created_at_ms) VALUES (?, ?, ?, ?)", [input.operationId, requestHash, response, Date.now()]);
+            const receiptCreatedAtMs = yield* Clock.currentTimeMillis;
+            yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_registration_receipts (operation_id, request_hash, response, created_at_ms) VALUES (?, ?, ?, ?)", [input.operationId, requestHash, response, receiptCreatedAtMs]);
           }));
           return response;
         }));
@@ -918,11 +931,12 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
     await this.ensureAlarm(Date.now() + MAINTENANCE_GUARD_MS);
     const sources = await Effect.runPromise(Effect.gen(function* () {
       const sql = actor.sql;
+      const now = yield* Clock.currentTimeMillis;
       return yield* sql.unsafe<ScheduleSourceRow>(
         "SELECT s.source, COALESCE(q.failure_count,0) failure_count, COALESCE(q.next_eligible_at_ms,0) next_eligible_at_ms, s.last_exchanged_at_ms" +
           " FROM exchange_sources s LEFT JOIN exchange_schedule q ON q.source=s.source" +
           " WHERE COALESCE(q.next_eligible_at_ms,0) <= ? ORDER BY s.last_exchanged_at_ms, s.source LIMIT 2",
-        [Date.now()],
+        [now],
       );
     }));
     let immediate = false;
@@ -952,7 +966,7 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
       return yield* (yield* ExchangeCursorStore).read(EXCHANGE_NAME, EXCHANGE_VERSION, parsed);
     }));
     const attemptId = `attempt/${EXCHANGE_NAME}/${EXCHANGE_VERSION}/${sourceName}/${attemptSequence}`;
-    const pageRequest: typeof ReadAssignmentPageRequest.Type = {
+    const pageRequest: ReadAssignmentPageRequest = {
       operationId: `${attemptId}/page`, exchange: EXCHANGE_NAME, version: EXCHANGE_VERSION,
       source: parsed, afterArrival: cursor.arrival, limit: EXCHANGE_SOURCE_PAGE_LIMIT,
     };
@@ -964,10 +978,11 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
       if (existing !== undefined && existing.request_hash !== attemptHash) {
         return yield* Effect.fail("attempt-identity-conflict");
       }
+      const createdAtMs = yield* Clock.currentTimeMillis;
       yield* actor.sql.unsafe<Record<string, never>>(
         "INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, created_at_ms)" +
           " VALUES (?, ?, ?, 'allocated', ?, ?) ON CONFLICT(attempt_id) DO NOTHING",
-        [attemptId, sourceName, cursor.arrival, attemptHash, Date.now()],
+        [attemptId, sourceName, cursor.arrival, attemptHash, createdAtMs],
       );
       return undefined;
     })));
@@ -993,7 +1008,7 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
     let applied = 0;
     for (const [userId, rows] of grouped) {
       const payload = { source: parsed, destination: userKey(userId), fromArrival: page.fromArrival, toArrival: page.toArrival, rows };
-      const input: typeof ApplyInboxBatchRequest.Type = {
+      const input: ApplyInboxBatchRequest = {
         operationId: `${attemptId}/user/${userId}`, exchange: EXCHANGE_NAME, version: EXCHANGE_VERSION,
         ...payload, payloadHash: await stableHash(payload),
       };
@@ -1009,10 +1024,11 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
       yield* sql.withTransaction(Effect.gen(function* () {
         const current = yield* cursors.read(EXCHANGE_NAME, EXCHANGE_VERSION, parsed);
         if (current.arrival === cursor.arrival) {
+          const completedAtMs = yield* Clock.currentTimeMillis;
           yield* cursors.advance({ ...current, arrival: page.toArrival, applied: current.applied + applied });
-          yield* sql.unsafe<Record<string, never>>("UPDATE exchange_sources SET last_exchanged_at_ms = ? WHERE source = ?", [Date.now(), sourceName]);
+          yield* sql.unsafe<Record<string, never>>("UPDATE exchange_sources SET last_exchanged_at_ms = ? WHERE source = ?", [completedAtMs, sourceName]);
           yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=0, next_eligible_at_ms=0, last_error=NULL WHERE source = ?", [sourceName]);
-          yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, applied, created_at_ms, completed_at_ms) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?) ON CONFLICT(attempt_id) DO UPDATE SET status='completed', completed_at_ms=excluded.completed_at_ms", [attemptId, sourceName, cursor.arrival, page.requestHash, applied, Date.now(), Date.now()]);
+          yield* sql.unsafe<Record<string, never>>("INSERT INTO exchange_attempts (attempt_id, source, expected_arrival, status, request_hash, applied, created_at_ms, completed_at_ms) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?) ON CONFLICT(attempt_id) DO UPDATE SET status='completed', completed_at_ms=excluded.completed_at_ms", [attemptId, sourceName, cursor.arrival, page.requestHash, applied, completedAtMs, completedAtMs]);
         }
       }));
     }));
@@ -1025,7 +1041,8 @@ export class GlobalExchangeObject extends DurableObject<CloudflareEnv> {
     const delay = Math.min(60_000, 250 * 2 ** Math.min(count, 8));
     await Effect.runPromise(Effect.gen(function* () {
       const sql = actor.sql;
-      yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=?, next_eligible_at_ms=?, last_error=? WHERE source=?", [count, Date.now() + delay, String(cause).slice(0, 1_000), source.source]);
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql.unsafe<Record<string, never>>("UPDATE exchange_schedule SET failure_count=?, next_eligible_at_ms=?, last_error=? WHERE source=?", [count, now + delay, String(cause).slice(0, 1_000), source.source]);
       yield* sql.unsafe<Record<string, never>>("UPDATE exchange_attempts SET status='failed' WHERE source=? AND status='allocated'", [source.source]);
     }));
   }

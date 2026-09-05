@@ -16,7 +16,6 @@
  */
 
 import { existsSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,21 +71,14 @@ async function ensureWorkspaceDists(): Promise<void> {
 }
 
 export async function findFreePort(): Promise<number> {
-  return await new Promise((resolvePort, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      try {
-        const { port } = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Finite }))(
-          probe.address(),
-        );
-        probe.close((error) => (error ? reject(error) : resolvePort(port)));
-      } catch {
-        probe.close();
-        reject(new Error("could not allocate a demo port"));
-      }
-    });
+  const probe = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => new Response(null, { status: 503 }),
   });
+  const port = Schema.decodeUnknownSync(Schema.Finite)(probe.port);
+  await probe.stop(true);
+  return port;
 }
 
 interface HttpResult {

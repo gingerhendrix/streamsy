@@ -20,6 +20,13 @@ export const RegisterSourceRequest = Schema.Struct({
 });
 export type RegisterSourceRequest = typeof RegisterSourceRequest.Type;
 
+export const RegisterSourceResult = Schema.Struct({
+  operationId: Schema.String,
+  source: WorkspaceSource,
+  registered: Schema.Literal(true),
+});
+export type RegisterSourceResult = typeof RegisterSourceResult.Type;
+
 export const ReadAssignmentPageRequest = Schema.Struct({
   operationId: Schema.String,
   ...ExchangeIdentity,
@@ -67,11 +74,12 @@ export type StableHashInput =
       readonly destination: typeof UserDestination.Type;
       readonly fromArrival: number;
       readonly toArrival: number;
-      readonly rows: readonly typeof InboxRow.Type[];
+      readonly rows: readonly InboxRow[];
     };
 
-export async function stableHash(value: StableHashInput): Promise<string> {
+export function stableHash(value: StableHashInput): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");
+  return crypto.subtle.digest("SHA-256", bytes).then((digest) =>
+    [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join(""),
+  );
 }

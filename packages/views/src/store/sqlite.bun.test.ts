@@ -80,8 +80,8 @@ const interleavedSql = (
   // the same call signature while only tapping its returned Effect in this test.
   return {
     ...sql,
-    unsafe: ((statement: string, params?: ReadonlyArray<unknown>) => {
-      const result = sql.unsafe<object>(statement, params);
+    unsafe: (<A extends object>(statement: string, params?: ReadonlyArray<unknown>) => {
+      const result = sql.unsafe<A>(statement, params);
       if (paused || !statement.includes(afterQuery)) return result;
       paused = true;
       return result.pipe(

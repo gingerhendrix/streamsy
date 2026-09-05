@@ -1,5 +1,5 @@
 /** One user's inbox, backed by the placement's shared Effect SQL client. */
-import { Context, Effect, Layer, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import { compareInboxRows, InboxRow } from "../../domain/inbox.ts";
@@ -146,9 +146,10 @@ export function inboxService(sql: SqlClient.SqlClient): InboxStoreService {
             return { operationId: batch.operationId, payloadHash: receipt.payload_hash, applied: receipt.applied };
           }
           yield* upsertRows(userId, batch.rows);
+          const createdAtMs = yield* Clock.currentTimeMillis;
           yield* execute(
             "INSERT INTO exchange_batch_receipts (operation_id, payload_hash, applied, created_at_ms) VALUES (?, ?, ?, ?)",
-            [batch.operationId, batch.payloadHash, batch.rows.length, Date.now()],
+            [batch.operationId, batch.payloadHash, batch.rows.length, createdAtMs],
           );
           return { operationId: batch.operationId, payloadHash: batch.payloadHash, applied: batch.rows.length };
         }))),

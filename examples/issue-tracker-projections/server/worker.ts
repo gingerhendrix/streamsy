@@ -64,7 +64,9 @@ function state(env: Env): IsolateState {
         config: AppConfigModule.layerFromEnv.pipe(
           Layer.provide(ConfigProvider.layer(configProvider)),
         ),
-        wake: WakeModule.layerQueue((message) => env.PROJECTION_WAKES.send(message)),
+        wake: WakeModule.layerQueue((message) =>
+          env.PROJECTION_WAKES.send(message).then(() => undefined),
+        ),
       }),
     ),
   };

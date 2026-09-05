@@ -231,8 +231,8 @@ const exchange = await decode(
   Schema.Struct({ cursors: Schema.Array(Schema.Struct({
     exchange: Schema.String,
     source: Schema.Struct({ kind: Schema.String, id: Schema.String }),
-    arrival: Schema.Number,
-    applied: Schema.Number,
+    arrival: Schema.Finite,
+    applied: Schema.Finite,
   })) }),
 );
 assert(exchange.cursors.some((cursor) => cursor.source.id === workspaceId && cursor.applied === 1), "global cursor must advance once");
@@ -372,11 +372,11 @@ function assert(condition: boolean, message: string): asserts condition {
 }
 
 async function eventually<A>(read: () => Promise<A | undefined>, timeoutMs = 15_000): Promise<A> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   for (;;) {
     const value = await read();
     if (value !== undefined) return value;
-    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    if (performance.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
     await Bun.sleep(250);
   }
 }
