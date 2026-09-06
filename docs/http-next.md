@@ -35,7 +35,9 @@ use `HttpServerResponse.raw` to preserve Web body defaults; SSE uses an Effect
 byte stream. The original Web request URL supplies the create `Location` header.
 HEAD has no body at the framework edge, including errors, as on the old Bun wire.
 
-Read `batch_size` is an integer from 1 through 10,000. Invalid values receive
+Read `batch_size` is converted with JavaScript `Number` and must yield an integer
+from 1 through 10,000. Exponent (`1e0`), hexadecimal (`0x1`), leading zero (`01`)
+and whitespace-padded (`%201%20` in the query) forms are accepted for compatibility. Invalid values receive
 400; it limits catch-up reads only. `readNext`, long-poll, SSE and toolkit follow
 return all currently available stored messages after the offset, so a large
 burst can occupy a large response and framing buffer. Backpressure does not bound
@@ -74,7 +76,10 @@ throughput or memory budget is established by these functional tests.
 
 Request bodies retain the old read-then-size-check policy; `maxMessageSize` is an
 acceptance limit, not a streaming allocation bound. The underlying Bun request
-body cap also applies. Storage expiry remains lazy-on-access in this memory host;
+body cap also applies. All request-body read failures map to 413 as in the old
+handler, even when the failure was a body I/O error rather than an oversized
+payload; this response alone does not identify the underlying cause.
+Storage expiry remains lazy-on-access in this memory host;
 this batch adds no background expiry sweeper.
 
 The temporary core-next alias and old host remain for Batch 5. The new command is

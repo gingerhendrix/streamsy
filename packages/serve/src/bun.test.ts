@@ -1,5 +1,5 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web executable edge lifecycle test.
-import { expect, it } from "bun:test";
+import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Effect, Exit, Layer, Stream } from "effect";
 import {
   Memory,
@@ -11,8 +11,8 @@ import {
 } from "@streamsy/core-next";
 import { serve } from "./bun.ts";
 
-for (const shutdown of ["abort", "stop"] as const) {
-  it(`${shutdown} releases the SSE producing read and changes subscription; stop permits same-port rebind`, async () => {
+for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
+  it(`${shutdown} releases the live producing read and changes subscription; stop permits same-port rebind`, async () => {
     const subscribed = Deferred.makeUnsafe<void>();
     const released = Deferred.makeUnsafe<void>();
     const finished = Deferred.makeUnsafe<void>();
@@ -81,28 +81,95 @@ for (const shutdown of ["abort", "stop"] as const) {
         Protocol.layer({ longPollTimeoutMs: 30_000 }).pipe(Layer.provide(observedStorage)),
       ),
     );
+    const errors = spyOn(console, "error");
+    const warnings = spyOn(console, "warn");
+    const logs = spyOn(console, "log");
+    const stderr = spyOn(process.stderr, "write");
     const host = await serve({ layer: observedProtocol, port: 0 });
     const abort = new AbortController();
     try {
       const url = new URL("s", host.url);
-      expect(
-        (await fetch(url, { method: "PUT", headers: { "content-type": "text/plain" } })).status,
-      ).toBe(201);
-      url.search = "offset=-1&live=sse";
-      const response = await fetch(url, { signal: abort.signal });
-      if (!response.body) throw new Error("Expected SSE response body");
-      const reader = response.body.getReader();
-      const first = await reader.read();
-      expect(new TextDecoder().decode(first.value)).toContain("event: control");
-      await Effect.runPromise(Deferred.await(subscribed).pipe(Effect.timeout(2000)));
+      const created = await fetch(url, {
+        method: "PUT",
+        headers: { "content-type": "text/plain" },
+        body: "seed",
+      });
+      expect(created.status).toBe(201);
+      const tail = created.headers.get("stream-next-offset");
+      if (!tail) throw new Error("Expected current tail");
+      url.search = `offset=${tail}&live=${shutdown === "long-poll-abort" ? "long-poll" : "sse"}`;
+      let pending: Promise<unknown>;
+      if (shutdown === "long-poll-abort") {
+        // Start the request without awaiting headers: it must remain parked for 30 seconds unless interrupted.
+        pending = fetch(url, { signal: abort.signal }).catch((error) => {
+          if (error instanceof Error) return error;
+          throw error;
+        });
+      } else {
+        const response = await fetch(url, { signal: abort.signal });
+        if (!response.body) throw new Error("Expected SSE response body");
+        const reader = response.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toContain("event: control");
+        pending = reader.read().catch(() => ({ done: true }));
+      }
+      await Effect.runPromise(
+        Deferred.await(subscribed).pipe(
+          Effect.timeout(2000),
+          Effect.catch(() =>
+            Effect.die(
+              new Error(
+                "subscription not established; subscribers=" +
+                  subscribers +
+                  ", activeReads=" +
+                  activeReads +
+                  ", interrupted=" +
+                  interrupted,
+              ),
+            ),
+          ),
+        ),
+      );
       expect(subscribers).toBe(1);
       expect(activeReads).toBe(1);
-      const pending = reader.read().catch(() => ({ done: true }));
-      if (shutdown === "abort") abort.abort();
-      else await host.stop();
-      await pending;
-      await Effect.runPromise(Deferred.await(released).pipe(Effect.timeout(2000)));
-      await Effect.runPromise(Deferred.await(finished).pipe(Effect.timeout(2000)));
+      if (shutdown === "stop") await host.stop();
+      else abort.abort();
+      const completed = await pending;
+      if (shutdown === "long-poll-abort") expect(completed).toMatchObject({ name: "AbortError" });
+      await Effect.runPromise(
+        Deferred.await(released).pipe(
+          Effect.timeout(2000),
+          Effect.catch(() =>
+            Effect.die(
+              new Error(
+                "changes subscription not released after client abort; subscribers=" +
+                  subscribers +
+                  ", activeReads=" +
+                  activeReads +
+                  ", interrupted=" +
+                  interrupted,
+              ),
+            ),
+          ),
+        ),
+      );
+      await Effect.runPromise(
+        Deferred.await(finished).pipe(
+          Effect.timeout(2000),
+          Effect.catch(() =>
+            Effect.die(
+              new Error(
+                "readNext fiber not interrupted after client abort; subscribers=" +
+                  subscribers +
+                  ", activeReads=" +
+                  activeReads +
+                  ", interrupted=" +
+                  interrupted,
+              ),
+            ),
+          ),
+        ),
+      );
       expect(subscribers).toBe(0);
       expect(activeReads).toBe(0);
       expect(interrupted).toBe(true);
@@ -119,7 +186,18 @@ for (const shutdown of ["abort", "stop"] as const) {
       await host.stop();
     } finally {
       abort.abort();
-      await host.stop();
+      try {
+        await host.stop();
+        expect(errors).not.toHaveBeenCalled();
+        expect(warnings).not.toHaveBeenCalled();
+        expect(logs).not.toHaveBeenCalled();
+        expect(stderr).not.toHaveBeenCalled();
+      } finally {
+        errors.mockRestore();
+        warnings.mockRestore();
+        logs.mockRestore();
+        stderr.mockRestore();
+      }
     }
   });
 }
