@@ -21,7 +21,7 @@ describe("fixed offsets", () => {
       "0000000000000001_0",
     ]) {
       expect(isValid(invalid)).toBe(false);
-      expect(() => Schema.decodeUnknownSync(Offset)(invalid)).toThrow();
+      expect(() => Schema.decodeSync(Offset)(invalid)).toThrow();
     }
   });
   it("orders lexically including equality and reverse", () => {

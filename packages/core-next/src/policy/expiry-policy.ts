@@ -6,7 +6,7 @@ export interface ExpiryConfig {
 /** Pure rules ported from ExpiryPolicy; touch and expiry execution belong to the protocol. */
 export function computeExpiresAtMs(config: ExpiryConfig, now: number): number | undefined {
   if (config.ttlSeconds !== undefined) return now + config.ttlSeconds * 1000;
-  if (config.expiresAt) return new Date(config.expiresAt).getTime();
+  if (config.expiresAt) return Date.parse(config.expiresAt);
   return undefined;
 }
 export function isExpired(record: StreamRecord, now: number): boolean {

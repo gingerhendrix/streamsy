@@ -37,7 +37,8 @@ export function rejectionToAppendResult(
   currentOffset: string,
   isClosed: boolean,
 ) {
-  switch (rejection._tag) {
+  const { _tag: tag } = rejection;
+  switch (tag) {
     case "Duplicate":
       return {
         status: "duplicate" as const,

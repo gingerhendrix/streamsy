@@ -1,3 +1,4 @@
+import { Predicate } from "effect";
 import { describe, expect, it } from "bun:test";
 import type { CreateOptions } from "./options.ts";
 import { Offset, StreamId, type StoredMessage, type StreamRecord } from "../schema/index.ts";
@@ -6,7 +7,7 @@ import { ZERO_OFFSET } from "../offset/index.ts";
 const formatCounter = (n: number) =>
   Offset.make(`${String(n).padStart(16, "0")}_${"0".repeat(16)}`);
 
-const clock = { now: () => 1_000, date: (value?: number | string) => new Date(value ?? 1_000) };
+const clock = { now: () => 1_000 };
 
 const enc = (value: string) => new TextEncoder().encode(value);
 const dec = (value: Uint8Array) => new TextDecoder().decode(value);
@@ -89,7 +90,7 @@ describe("ForkPlanBuilder", () => {
     const decision = builder.build(StreamId.make("child"), StreamId.make("source"), source(), {
       initialData: new TextEncoder().encode("child"),
     });
-    if (decision._tag !== "Fork") throw new Error("expected fork plan");
+    if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
 
     expect(decision.plan.forkSource?.id).toBe(StreamId.make("source"));
     expect(decision.plan.forkSource).toEqual({
@@ -133,7 +134,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 3 },
         tailMessages(["hello"]),
       );
-      if (decision._tag !== "Fork") throw new Error("expected fork plan");
+      if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hel"]);
       expect(decision.plan.record.lifecycle.forkSubOffset).toBe(3);
       expect(decision.plan.initialMessages?.map((m) => m.offset)).toEqual([formatCounter(1)]);
@@ -147,7 +148,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "application/json", forkOffset: ZERO_OFFSET, forkSubOffset: 2 },
         tailMessages(['{"a":1}', '{"b":2}', '{"c":3}']),
       );
-      if (decision._tag !== "Fork") throw new Error("expected fork plan");
+      if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual([
         '{"a":1}',
         '{"b":2}',
@@ -167,7 +168,7 @@ describe("ForkPlanBuilder", () => {
         },
         tailMessages(["hello"]),
       );
-      if (decision._tag !== "Fork") throw new Error("expected fork plan");
+      if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hel", "XY"]);
     });
 
@@ -179,7 +180,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 0 },
         undefined,
       );
-      if (decision._tag !== "Fork") throw new Error("expected fork plan");
+      if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages ?? []).toEqual([]);
       expect(decision.plan.record.lifecycle.forkSubOffset).toBeUndefined();
     });
@@ -228,7 +229,7 @@ describe("ForkPlanBuilder", () => {
         { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 5 },
         tailMessages(["hello"]),
       );
-      if (decision._tag !== "Fork") throw new Error("expected fork plan");
+      if (!Predicate.isTagged(decision, "Fork")) throw new Error("expected fork plan");
       expect(decision.plan.initialMessages?.map((m) => dec(m.data))).toEqual(["hello"]);
     });
   });

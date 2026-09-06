@@ -19,7 +19,7 @@ function fixedClock(nowMs: number): Clock {
 
 describe("CURSOR_EPOCH_MS / CURSOR_INTERVAL_MS", () => {
   it("epoch is 2024-10-09T00:00:00.000Z", () => {
-    expect(CURSOR_EPOCH_MS).toBe(new Date("2024-10-09T00:00:00.000Z").getTime());
+    expect(CURSOR_EPOCH_MS).toBe(1_728_432_000_000);
   });
 
   it("interval is 20 seconds", () => {

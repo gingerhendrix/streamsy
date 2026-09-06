@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 /**
  * Live-read cursor generation for the durable streams protocol.
  *
@@ -21,7 +22,9 @@ interface Clock {
   now(): number;
 }
 
-export const CURSOR_EPOCH_MS = new Date("2024-10-09T00:00:00.000Z").getTime();
+export const CURSOR_EPOCH_MS = DateTime.toEpochMillis(
+  DateTime.makeUnsafe("2024-10-09T00:00:00.000Z"),
+);
 export const CURSOR_INTERVAL_MS = 20_000;
 
 export function generateCursor(

@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, PubSub, Semaphore } from "effect";
+import { Predicate, Effect, Layer, Option, PubSub, Semaphore } from "effect";
 import { Storage } from "../storage.ts";
 import type { Mutation, MutationOutcome, Operation, OperationResult } from "../mutation.ts";
 import type { StreamId } from "../../schema/index.ts";
@@ -16,7 +16,7 @@ export interface MemoryOptions {
 }
 
 function reject(state: State, operation: Operation, index: number): MutationOutcome | undefined {
-  const id = operation._tag === "Create" ? operation.record.id : operation.streamId;
+  const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
   const entry = state.entries.get(id);
   const record = entry?.record;
   const rejected = (
@@ -27,7 +27,7 @@ function reject(state: State, operation: Operation, index: number): MutationOutc
     reason,
     record: record ? Option.some(copyRecord(record)) : Option.none(),
   });
-  if (operation._tag === "Create") {
+  if (Predicate.isTagged(operation, "Create")) {
     if (record) return rejected("exists");
     if (operation.forkSource) {
       const source = state.entries.get(operation.forkSource.id)?.record;
@@ -38,18 +38,18 @@ function reject(state: State, operation: Operation, index: number): MutationOutc
       )
         return rejected("fork-source-gone");
     }
-    return;
+    return undefined;
   }
   if (!entry || !record) return rejected("not-found");
   if (record.lifecycle.softDeleted) return rejected("gone");
-  if (operation._tag === "Delete") {
+  if (Predicate.isTagged(operation, "Delete")) {
     if (
       operation.reason === "expiry" &&
       (operation.expectedExpiresAtMs === undefined ||
         record.lifecycle.expiresAtMs !== operation.expectedExpiresAtMs)
     )
       return rejected("expiry-mismatch");
-    return;
+    return undefined;
   }
   if (operation.expectedOffset !== undefined && operation.expectedOffset !== record.currentOffset)
     return rejected("offset");
@@ -64,6 +64,7 @@ function reject(state: State, operation: Operation, index: number): MutationOutc
     if (actual?.epoch !== expected?.epoch || actual?.lastSeq !== expected?.lastSeq)
       return rejected("producer");
   }
+  return undefined;
 }
 
 export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
@@ -86,7 +87,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
         const results: OperationResult[] = [];
         // Create edges before deleting sources, independent of operation order.
         for (const operation of mutation.operations) {
-          if (operation._tag !== "Create") continue;
+          if (!Predicate.isTagged(operation, "Create")) continue;
           const record = copyRecord(operation.record);
           state.entries.set(record.id, {
             record,
@@ -97,11 +98,14 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
             addEdge(state, record.lifecycle.forkedFrom, record.id);
         }
         for (const operation of mutation.operations) {
-          const id = operation._tag === "Create" ? operation.record.id : operation.streamId;
+          const id = Predicate.isTagged(operation, "Create")
+            ? operation.record.id
+            : operation.streamId;
           const entry = state.entries.get(id);
           if (!entry) throw new Error("Mutation target disappeared after preflight");
           changed.add(id);
-          switch (operation._tag) {
+          const { _tag: tag } = operation;
+          switch (tag) {
             case "Create":
               results.push({ _tag: "Created", record: copyRecord(entry.record) });
               break;
@@ -163,7 +167,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
         ),
         mutate: Effect.fn("Memory.mutate")(function* (mutation) {
           const ids = mutation.operations.map((operation) =>
-            operation._tag === "Create" ? operation.record.id : operation.streamId,
+            Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId,
           );
           if (ids.length === 0 || new Set(ids).size !== ids.length || (!chain && ids.length > 1))
             return yield* Effect.die(

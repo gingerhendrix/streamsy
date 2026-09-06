@@ -1,3 +1,4 @@
+import { Predicate } from "effect";
 /** Fork-side validation and plan building. */
 
 import type { Operation } from "../storage/mutation.ts";
@@ -137,7 +138,7 @@ export class ForkPlanBuilder {
 
     const subOffset = options.forkSubOffset;
     const prefix = this.materializePrefix(subOffset, contentType, sourceTail);
-    if (prefix._tag === "Invalid") {
+    if (Predicate.isTagged(prefix, "Invalid")) {
       return {
         _tag: "Terminal",
         result: {

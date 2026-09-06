@@ -23,9 +23,9 @@ export function faultyStorage(
             message: `Injected ${options.when} mutation failure`,
             retryable: true,
           });
-          if (fail && options.when === "before") return yield* Effect.fail(fault);
+          if (fail && options.when === "before") return yield* fault;
           const result = yield* storage.mutate(mutation);
-          if (fail && options.when === "after") return yield* Effect.fail(fault);
+          if (fail && options.when === "after") return yield* fault;
           return result;
         }),
       });

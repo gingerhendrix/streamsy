@@ -15,12 +15,12 @@ const constrained: StorageCapabilities = {
 };
 StorageContract.run({
   name: "Memory chain / store / push / indexed",
-  layer: () => layer(),
+  layer: layer(),
   expected: normal,
 });
 StorageContract.run({
   name: "Memory copy / stream / poll / lazy",
-  layer: () => layer({ constrained: true }),
+  layer: layer({ constrained: true }),
   expected: constrained,
 });
 StorageContract.assertModes([normal, constrained]);

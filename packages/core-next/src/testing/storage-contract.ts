@@ -1,6 +1,18 @@
 /** Executable Bun edge: a fresh scoped Layer and virtual clock for every case. */
 import { describe, expect, it } from "bun:test";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Queue, Stream } from "effect";
+import {
+  Predicate,
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { ProducerId, StreamId, type ChangeSnapshot, type StreamRecord } from "../schema/index.ts";
 import { ZERO_OFFSET, next } from "../offset/index.ts";
@@ -11,7 +23,7 @@ import type { MutationOutcome, Operation } from "../storage/mutation.ts";
 
 export interface StorageContractOptions {
   readonly name: string;
-  readonly layer: () => Layer.Layer<Storage>;
+  readonly layer: Layer.Layer<Storage>;
   readonly expected: StorageCapabilities;
 }
 const id = StreamId.make("s");
@@ -45,12 +57,15 @@ const mutate = Effect.fn("Contract.mutate")(function* (operation: Operation) {
   return yield* storage.mutate({ operations: [operation] });
 });
 function applied(out: MutationOutcome, tag: string) {
-  expect(out._tag).toBe("Applied");
-  if (out._tag === "Applied") expect(String(out.results[0]._tag)).toBe(tag);
+  expect(out).toMatchObject({ _tag: "Applied" });
+  if (Predicate.isTagged(out, "Applied")) expect(out.results[0]).toMatchObject({ _tag: tag });
 }
-function rejected(out: MutationOutcome, reason: string) {
-  expect(out._tag).toBe("Rejected");
-  if (out._tag === "Rejected") expect(String(out.reason)).toBe(reason);
+function rejected(
+  out: MutationOutcome,
+  reason: Extract<MutationOutcome, { _tag: "Rejected" }>["reason"],
+) {
+  expect(out).toMatchObject({ _tag: "Rejected" });
+  if (Predicate.isTagged(out, "Rejected")) expect(out.reason).toBe(reason);
 }
 const current = Effect.gen(function* () {
   const storage = yield* Storage;
@@ -105,9 +120,7 @@ const observe = Effect.gen(function* () {
   const initial = yield* Queue.take(queue);
   return { queue, fiber, initial };
 });
-const tick = Effect.gen(function* () {
-  yield* TestClock.adjust(25);
-});
+const tick = TestClock.adjust(25);
 
 export const StorageContract = {
   run(options: StorageContractOptions): void {
@@ -129,15 +142,13 @@ export const StorageContract = {
         it(name, () =>
           expect(
             Effect.gen(function* () {
-              const storage = yield* Storage;
+              const context = yield* Layer.build(
+                options.layer.pipe(Layer.provideMerge(TestClock.layer())),
+              );
+              const storage = Context.get(context, Storage);
               expect(storage.capabilities).toEqual(options.expected);
-              yield* body;
-            }).pipe(
-              Effect.provide(options.layer()),
-              Effect.provide(TestClock.layer()),
-              Effect.scoped,
-              Effect.runPromiseExit,
-            ),
+              yield* body.pipe(Effect.provide(context));
+            }).pipe(Effect.scoped, Effect.runPromiseExit),
           ).resolves.toMatchObject({ _tag: "Success" }),
         );
       };
@@ -199,7 +210,8 @@ export const StorageContract = {
             expect(yield* storage.producer(id, producerId)).toEqual(
               Option.some({ epoch: 1, lastSeq: 0 }),
             );
-            if (out._tag === "Rejected") expect(out.record).toEqual(Option.some(before));
+            if (Predicate.isTagged(out, "Rejected"))
+              expect(out.record).toEqual(Option.some(before));
           }),
         );
       }
@@ -376,7 +388,8 @@ export const StorageContract = {
           yield* mutate(create());
           const out = yield* mutate(create());
           rejected(out, "exists");
-          if (out._tag === "Rejected") expect(out.record).toEqual(Option.some(record()));
+          if (Predicate.isTagged(out, "Rejected"))
+            expect(out.record).toEqual(Option.some(record()));
         }),
       );
       test(
@@ -404,7 +417,7 @@ export const StorageContract = {
           applied(yield* fork(), "Created");
           const exists = yield* fork();
           rejected(exists, "exists");
-          if (exists._tag === "Rejected")
+          if (Predicate.isTagged(exists, "Rejected"))
             expect(exists.record).toEqual(yield* (yield* Storage).record(child));
           rejected(
             yield* mutate({
@@ -535,11 +548,11 @@ export const StorageContract = {
             operations: [create(record(child)), append({ expectedOffset: one })],
           });
           rejected(out, "offset");
-          if (out._tag === "Rejected") expect(out.index).toBe(1);
+          if (Predicate.isTagged(out, "Rejected")) expect(out.index).toBe(1);
           expect(yield* storage.record(child)).toEqual(Option.none());
           expect((yield* current).currentOffset).toBe(ZERO_OFFSET);
           const success = yield* storage.mutate({ operations: [create(record(child)), append()] });
-          expect(success._tag).toBe("Applied");
+          expect(success).toMatchObject({ _tag: "Applied" });
           expect(Option.isSome(yield* storage.record(child))).toBe(true);
         }),
         options.expected.atomicScope === "store",
@@ -722,9 +735,9 @@ export const StorageContract = {
             const outcome = yield* storage.mutate({
               operations: deleteFirst ? [remove(), creation] : [creation, remove()],
             });
-            expect(outcome._tag).toBe("Applied");
-            if (outcome._tag === "Applied")
-              expect(outcome.results.map((r) => r._tag)).toEqual(
+            expect(outcome).toMatchObject({ _tag: "Applied" });
+            if (Predicate.isTagged(outcome, "Applied"))
+              expect(outcome.results.map(({ _tag: tag }) => tag)).toEqual(
                 deleteFirst ? ["SoftDeleted", "Created"] : ["Created", "SoftDeleted"],
               );
             expect((yield* current).lifecycle.softDeleted).toBe(true);

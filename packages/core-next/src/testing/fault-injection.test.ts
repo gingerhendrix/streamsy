@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { Effect, Exit, Option } from "effect";
+import { Context, Effect, Exit, Layer, Option } from "effect";
 import { faultyStorage } from "./fault-injection.ts";
 import { layer } from "../storage/memory/layer.ts";
 import { Storage } from "../storage/storage.ts";
@@ -9,7 +9,8 @@ import { ZERO_OFFSET, next } from "../offset/index.ts";
 for (const when of ["before", "after"] as const) {
   it(`fault injection fails once ${when} the Nth mutation and retries the same producer tuple exactly once`, () =>
     Effect.gen(function* () {
-      const storage = yield* Storage;
+      const context = yield* Layer.build(faultyStorage(layer(), { failOn: 2, when }));
+      const storage = Context.get(context, Storage);
       const id = StreamId.make("s");
       yield* storage.mutate({
         operations: [
@@ -60,11 +61,7 @@ for (const when of ["before", "after"] as const) {
       expect(Option.getOrThrow(yield* storage.record(id)).currentOffset).toBe(offset);
       expect(yield* storage.messages(id, {})).toEqual(operation.messages);
     })
-      .pipe(
-        Effect.provide(faultyStorage(layer(), { failOn: 2, when })),
-        Effect.scoped,
-        Effect.runPromiseExit,
-      )
+      .pipe(Effect.scoped, Effect.runPromiseExit)
       .then((exit) => {
         expect(Exit.isSuccess(exit)).toBe(true);
       }));

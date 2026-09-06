@@ -35,5 +35,5 @@ export function configMatches(existing: StreamRecord, options: CreateOptions): b
     options.forkedFrom && options.ttlSeconds === undefined && options.expiresAt === undefined;
   if (existing.config.ttlSeconds !== options.ttlSeconds && !inheritedForkExpiry) return false;
   if (existing.config.expiresAt !== options.expiresAt && !inheritedForkExpiry) return false;
-  return (existing.lifecycle.closed === true) === (options.closed === true);
+  return existing.lifecycle.closed === (options.closed === true);
 }
