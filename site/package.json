@@ -15,7 +15,7 @@
     "check:og": "bun run scripts/check-og-image.ts",
     "check:terms": "bun run scripts/check-stale-terms.ts",
     "check:links": "bun run scripts/check-links.ts",
-    "check:excerpts": "bun run --cwd ../packages/core typecheck && bun run --cwd ../packages/serve typecheck && bun run scripts/check-excerpts.ts"
+    "check:excerpts": "bun run --cwd ../packages/core build && bun run --cwd ../packages/serve build && bun run --cwd ../packages/core typecheck && bun run --cwd ../packages/serve typecheck && bun run scripts/check-excerpts.ts"
   },
   "dependencies": {
     "@fontsource/knewave": "^5.2.7",

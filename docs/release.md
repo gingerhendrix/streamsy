@@ -31,6 +31,7 @@ bun run test:unit
 bun run test:conformance
 bun run check:perimeter
 bun run pack:dry-run
+bun run site:validate
 git diff --check
 ```
 
@@ -44,7 +45,8 @@ The official memory suite uses the approved Vitest-under-Bun runner and expects
 332 pass plus six skips. Authored tests use Bun. SQL, filesystem, client and hosted
 DO conformance are absent from this gate. Filesystem retirement preserves its
 confirmed, unfixed defect evidence; a green memory gate says nothing about that
-backend. Site validation joins Step 1 acceptance in Batch 7.
+backend. Site validation includes prerequisite builds, compiled excerpt equality,
+three bounded snippet executions, terms, site check/build, OG and rendered links.
 
 ## Release boundary
 
@@ -116,3 +118,40 @@ replacement guidance exists; do not unpublish historical versions or change thei
 metadata during this task. The filesystem backend's confirmed CAS defect remains
 unfixed despite retirement, and release/deprecation language must preserve that
 fact. No registry lookup, publish, publisher setup or deprecation is executed here.
+
+## Documentation target identity and state
+
+`STREAMSY_DOCS_DEPLOYMENT` selects `production` (the default) or `preview`.
+`preview` is a management alias for existing infrastructure, not a resource
+rename. The historical selector `experimental` is also accepted as an alias.
+Unknown selectors fail before Alchemy runs.
+
+| Selector                        | Alchemy app ID               | Website resource ID          | Explicit worker name         | Domains                                |
+| ------------------------------- | ---------------------------- | ---------------------------- | ---------------------------- | -------------------------------------- |
+| `production`                    | `streamsy-docs`              | `streamsy-docs`              | Unset, as before             | `streamsy.gandrew.com`, `streamsy.dev` |
+| `preview` (also `experimental`) | `streamsy-docs-experimental` | `streamsy-docs-experimental` | `streamsy-docs-experimental` | `experimental.streamsy.dev`            |
+
+The compatibility mapping lives in `scripts/docs-deployment-targets.ts`, outside
+the public site's authored-language scan. `site/alchemy.run.ts` consumes that
+mapping without changing app/resource identities, domains, stage selection or
+state-store configuration. Public site prose and source use the preview name.
+The Website build remains under the same resource, preserving its child resource
+path as well. This is static documentation hosting, not protocol-storage hosting.
+
+The owner inspected local state read-only and found Website/build state under
+`example-apps-base/site/.alchemy/streamsy-docs-experimental/gareth/` in the Streamsy
+repository. This worktree has no `site/.alchemy`. The finding proves retained
+local state exists; remote resource status was not queried. Retain the matching
+state context for any separately authorized management operation. This correction
+does not copy, adopt, edit or destroy state, create a replacement target, or query
+an external account. Do not execute deployment or finalization as a validation
+probe: Alchemy finalization manages resource lifecycle.
+
+## Source citations before release
+
+Public GitHub source citations currently target the `effect-first-live-perimeter`
+branch so they identify the reviewed implementation during preparation. Before
+release, retarget them to the approved public release commit or tag and verify
+the resulting URLs. Local site validation verifies the cited files and compiled
+excerpts; it does not prove that an unpushed branch is publicly accessible. This
+pre-release citation task does not authorize a push, tag or publication.

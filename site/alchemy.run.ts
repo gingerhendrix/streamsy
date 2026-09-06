@@ -1,16 +1,15 @@
 import alchemy from "alchemy";
 import { Website } from "alchemy/cloudflare";
+import { docsDeploymentTarget } from "../scripts/docs-deployment-targets.ts";
 
-const deployment = process.env.STREAMSY_DOCS_DEPLOYMENT ?? "production";
-if (deployment !== "production") {
-  throw new Error(`Unknown STREAMSY_DOCS_DEPLOYMENT value: ${deployment}`);
-}
+const target = docsDeploymentTarget(process.env.STREAMSY_DOCS_DEPLOYMENT);
 
 // Static documentation hosting configuration; this does not host protocol storage.
-const app = await alchemy("streamsy-docs");
+const app = await alchemy(target.appId);
 
 // Nitro emits a Workers module plus static assets. Upload the built modules as-is.
-const site = await Website("streamsy-docs", {
+const site = await Website(target.resourceId, {
+  name: target.name,
   build: "bun run build",
   entrypoint: ".output/server/index.mjs",
   assets: ".output/public",
@@ -18,7 +17,7 @@ const site = await Website("streamsy-docs", {
   compatibilityDate: "2026-06-27",
   noBundle: true,
   spa: false,
-  domains: ["streamsy.gandrew.com", "streamsy.dev"],
+  domains: target.domains,
 });
 
 console.log({ url: site.url });

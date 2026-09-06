@@ -1,4 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../../", import.meta.url);
 const pairs = [
@@ -13,4 +15,17 @@ for (const [doc, source] of pairs) {
     throw new Error(`Excerpt drift: ${doc} must cite and include ${source} verbatim`);
   }
   console.log(`ok excerpt ${doc} ← ${source}`);
+  const run = spawnSync(process.execPath, [source], {
+    cwd: fileURLToPath(root),
+    stdio: "inherit",
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+  if (run.error || run.status !== 0) {
+    throw new Error(
+      `Excerpt execution failed: ${source} (status ${run.status}, signal ${run.signal})`,
+      { cause: run.error },
+    );
+  }
+  console.log(`ok executed ${source} (15s bound)`);
 }

@@ -5,9 +5,9 @@ description: Understand outcomes, typed faults, batch boundaries and memory-stor
 
 ## Outcomes and faults
 
-Protocol classifications are success values: `created`, `exists`, `appended`,
+Protocol classifications are success values, including `created`, `exists`, `appended`,
 `duplicate`, `conflict`, `not-found`, `gone`, `timeout`, `stale-epoch` and
-`producer-gap` describe what happened. Inspect the operation's `status` before
+`producer-gap`. These describe what happened. Inspect the operation's `status` before
 advancing application state.
 
 `StorageFault` uses Effect's typed error channel and carries retryability.
@@ -44,9 +44,9 @@ The memory Layer has two tested configurations:
 | Wake         | Push    | Poll        |
 | Expiry index | Indexed | Lazy        |
 
-Multi-stream mutations require store atomicity. Submitting two mutations for the
-same stream, or a multi-stream mutation to a stream-atomic store, is a programmer
-defect. Read-time expiry works in both configurations. The Bun host expires on
+Multi-stream mutations require store atomicity. A single mutation naming the
+same stream twice, or a multi-stream mutation submitted to a stream-atomic store,
+is a programmer defect. Read-time expiry works in both configurations. The Bun host expires on
 access; it does not promise a background expiry sweep.
 
 ## Runtime ownership

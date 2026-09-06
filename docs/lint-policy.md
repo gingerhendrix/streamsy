@@ -20,5 +20,20 @@ is added. Web-boundary tests retain abort controls to prove cancellation.
 
 All authored tests use Bun. Only the official memory suite in conformance-tests
 may import Vitest. Historical parked files and maintainer docs may discuss retired
-names. The temporary alias scan has no exclusions. Site content remains excluded
-from retired-name scans until Batch 7; no new live source exclusion is allowed.
+names. The temporary alias scan has no exclusions. Site content is included
+in retired-name scans; no new live source exclusion is allowed.
+
+## Accepted executable-example warning baseline
+
+The three executable documentation edges intentionally retain these warnings:
+
+| Source                               | Diagnostic                         | Reason                                                                            |
+| ------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------- |
+| `packages/core/test/readme.ts`       | `effecttsgo/strict-effect-provide` | The top-level executable provides its one memory Layer at its owned runtime edge. |
+| `packages/serve/test/basic-usage.ts` | `effecttsgo/strict-effect-provide` | The top-level executable provides its one memory Layer at its owned runtime edge. |
+| `packages/serve/test/host.ts`        | `effecttsgo/global-fetch`          | A native HTTP request verifies the Bun host at an executable Web boundary.        |
+
+Expected baseline: three warnings, zero errors; no suppressions are added for
+these examples. `site:validate` compiles and executes all three, each with a
+15-second process limit. Additional warnings require review rather than silently
+expanding this baseline.
