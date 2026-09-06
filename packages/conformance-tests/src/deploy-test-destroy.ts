@@ -86,16 +86,27 @@ function logFailure(label: string, error: Error): void {
 async function waitForWorkerReady(baseUrl: string): Promise<void> {
   const deadline = Date.now() + 60_000;
   let lastError = new Error("Worker readiness check did not receive a response");
+  let consecutiveReadyResponses = 0;
 
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${baseUrl}/`);
       const body = await response.text();
-      if (response.status === 400 && body.includes("Stream path required")) return;
+      if (response.status === 400 && body.includes("Stream path required")) {
+        consecutiveReadyResponses += 1;
+        if (consecutiveReadyResponses === 5) {
+          console.log("Worker route returned the expected readiness response five times");
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        continue;
+      }
+      consecutiveReadyResponses = 0;
       lastError = new Error(
         `Unexpected readiness response ${response.status}: ${body.slice(0, 120)}`,
       );
     } catch (error) {
+      consecutiveReadyResponses = 0;
       lastError = error instanceof Error ? error : new Error(String(error));
     }
     await new Promise((resolve) => setTimeout(resolve, 2_000));
