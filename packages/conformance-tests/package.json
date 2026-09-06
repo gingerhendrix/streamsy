@@ -10,10 +10,10 @@
     "test:client": "vitest --run src/client.conformance.test.ts",
     "test:fs": "vitest --run src/fs.conformance.test.ts -t '^(?!.*Fork - )'",
     "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
-    "test:do": "STAGE=conformance node src/deploy-test-destroy.ts",
+    "test:do": "STAGE=conformance CONFORMANCE_UNIQUE_STAGE=1 node src/deploy-test-destroy.ts",
     "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
     "test:do:sse-diagnostic:local": "vitest --run src/do.sse-final-append-diagnostic.test.ts --testTimeout=15000 --reporter=verbose",
-    "test:do:sse-diagnostic": "STAGE=conformance STREAMSY_DO_TEST_SCRIPT=test:do:sse-diagnostic:local node src/deploy-test-destroy.ts",
+    "test:do:sse-diagnostic": "STAGE=conformance CONFORMANCE_UNIQUE_STAGE=1 STREAMSY_DO_TEST_SCRIPT=test:do:sse-diagnostic:local node src/deploy-test-destroy.ts",
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",
     "destroy": "alchemy destroy"

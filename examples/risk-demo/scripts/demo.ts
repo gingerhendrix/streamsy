@@ -74,7 +74,11 @@ async function ensureWorkspaceDists(): Promise<void> {
 export async function findFreePort(): Promise<number> {
   return await new Promise((resolvePort, reject) => {
     const probe = createServer();
-    probe.once("error", reject);
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: node:net Server is an EventEmitter at runtime; Bun 1.4's ambient Node compatibility declaration omits this inherited overload.
+    const events = probe as typeof probe & {
+      once(event: "error", listener: (error: Error) => void): void;
+    };
+    events.once("error", reject);
     probe.listen(0, "127.0.0.1", () => {
       try {
         const { port } = Schema.decodeUnknownSync(Schema.Struct({ port: Schema.Finite }))(

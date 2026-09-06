@@ -92,7 +92,8 @@ function parseBase64Encoder(result: NodeBufferResult): Base64Encoder | undefined
 
 export function nodeBufferBase64(bytes: Uint8Array): string | undefined {
   if (!("Buffer" in globalThis)) return undefined;
-  const bufferGlobal: HostValue = globalThis.Buffer;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: the preceding own-or-inherited property check establishes that this host global has a Buffer member; the value is still validated below.
+  const bufferGlobal: HostValue = (globalThis as typeof globalThis & { Buffer: HostValue }).Buffer;
   if (!isReferenceValue(bufferGlobal) || !isNodeBufferGlobal(bufferGlobal)) return undefined;
 
   // `Buffer` stays the receiver: `Buffer.from` is a static method and a host

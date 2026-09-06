@@ -622,7 +622,11 @@ describe("repository-independent external-seat launcher", () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 200));
       await writeFile(cancelFile, "");
-      const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: node:child_process returns an EventEmitter at runtime; Bun 1.4's ambient Node compatibility declaration omits this inherited overload.
+      const events = child as typeof child & {
+        once(event: "close", listener: (code: number | null) => void): void;
+      };
+      const code = await new Promise<number | null>((resolve) => events.once("close", resolve));
       expect(code).toBe(130);
       expect(state.commandBodies).toHaveLength(0);
       expect(await evidenceOf(session)).toContain('"kind":"cancelled"');

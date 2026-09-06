@@ -84,13 +84,11 @@ const interleavedSql = (
       const result = sql.unsafe<object>(statement, params);
       if (paused || !statement.includes(afterQuery)) return result;
       paused = true;
-      return result.pipe(
-        Effect.tap(() =>
-          Effect.promise(() => {
-            reached();
-            return resume;
-          }),
-        ),
+      return Effect.tap(result, () =>
+        Effect.promise(() => {
+          reached();
+          return resume;
+        }),
       );
     }) as SqlClient.SqlClient["unsafe"],
   } as SqlClient.SqlClient;

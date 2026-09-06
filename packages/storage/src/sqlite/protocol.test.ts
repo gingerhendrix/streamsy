@@ -258,7 +258,12 @@ function waitForExit(
     child.stderr?.on("data", (chunk) => {
       stderr += String(chunk);
     });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stderr: stderr.trim() }));
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: node:child_process returns an EventEmitter at runtime; Bun 1.4's ambient Node compatibility declaration omits these inherited overloads.
+    const events = child as typeof child & {
+      on(event: "error", listener: (error: Error) => void): void;
+      on(event: "close", listener: (code: number | null) => void): void;
+    };
+    events.on("error", reject);
+    events.on("close", (code) => resolve({ code, stderr: stderr.trim() }));
   });
 }

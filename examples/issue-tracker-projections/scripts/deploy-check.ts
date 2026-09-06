@@ -55,8 +55,13 @@ function step(label: string, command: string, args: readonly string[]): Promise<
   console.log(`\n==> ${label}`);
   return new Promise((resolve, reject) => {
     const child = spawn(command, [...args], { cwd: packageDir, stdio: "inherit" });
-    child.on("error", reject);
-    child.on("exit", (code) =>
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: node:child_process returns an EventEmitter at runtime; Bun 1.4's ambient Node compatibility declaration omits these inherited overloads.
+    const events = child as typeof child & {
+      on(event: "error", listener: (error: Error) => void): void;
+      on(event: "exit", listener: (code: number | null) => void): void;
+    };
+    events.on("error", reject);
+    events.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(`${label} exited with code ${String(code)}`)),
     );
   });

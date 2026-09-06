@@ -3,7 +3,12 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { deploymentOutputFromJson, workerUrlFrom } from "./deployment-state.ts";
+import { captureWorkerMetadata } from "./cloudflare-worker-metadata.ts";
+import {
+  deploymentOutputFromJson,
+  uniqueConformanceStage,
+  workerUrlFrom,
+} from "./deployment-state.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const alchemyEntrypoint = join(packageDir, "alchemy.run.ts");
@@ -12,7 +17,10 @@ const baseStage = process.env.STAGE || "conformance";
 const runId =
   process.env.CONFORMANCE_RUN_ID ||
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-const stage = process.env.CONFORMANCE_UNIQUE_STAGE === "1" ? `${baseStage}-${runId}` : baseStage;
+const stage =
+  process.env.CONFORMANCE_UNIQUE_STAGE === "1"
+    ? uniqueConformanceStage(baseStage, runId)
+    : baseStage;
 const workerResourceId = "server";
 const testScript = process.env.STREAMSY_DO_TEST_SCRIPT || "test:do:local";
 const statePath = join(packageDir, ".alchemy", appName, stage, `${workerResourceId}.json`);
@@ -52,7 +60,7 @@ async function runCommand(
   });
 }
 
-function readWorkerUrl(): string {
+function readDeploymentOutput() {
   if (!existsSync(statePath)) {
     throw new Error(
       `Alchemy state file not found at ${statePath}. Was the ${stage} deploy successful?`,
@@ -67,7 +75,7 @@ function readWorkerUrl(): string {
     );
   }
 
-  return workerUrlFrom(output);
+  return output;
 }
 
 function logFailure(label: string, error: Error): void {
@@ -96,17 +104,48 @@ async function waitForWorkerReady(baseUrl: string): Promise<void> {
   throw new Error(`Worker did not become ready at ${baseUrl}: ${String(lastError)}`);
 }
 
+async function waitForWorkerDestroyed(baseUrl: string): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  let lastStatus: number | undefined;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/`);
+      lastStatus = response.status;
+      await response.body?.cancel();
+      if (response.status === 404) {
+        console.log(`Post-destroy request returned 404: ${baseUrl}/`);
+        return;
+      }
+    } catch {
+      // A transient network failure while deletion propagates is retried.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+
+  throw new Error(
+    `Worker still did not return 404 after destroy at ${baseUrl}/ (last status: ${String(lastStatus)})`,
+  );
+}
+
 let exitCode = 0;
+let serverBaseUrl: string | undefined;
 
 try {
   await runStep(`deploy test server with STAGE=${stage}`, () =>
     runCommand(process.execPath, [alchemyEntrypoint], { cwd: packageDir, env }),
   );
 
-  const serverBaseUrl = readWorkerUrl();
-  console.log(`\n==> conformance server: ${serverBaseUrl}`);
+  const output = readDeploymentOutput();
+  const deployedUrl = workerUrlFrom(output);
+  serverBaseUrl = deployedUrl;
+  console.log(`\n==> conformance server: ${deployedUrl}`);
 
-  await runStep("wait for deployed worker readiness", () => waitForWorkerReady(serverBaseUrl));
+  await runStep("wait for deployed worker readiness", () => waitForWorkerReady(deployedUrl));
+
+  await runStep("capture deployed Cloudflare Worker metadata", () =>
+    captureWorkerMetadata(output.name, process.env.CONFORMANCE_METADATA_PATH),
+  );
 
   await runStep(`run ${testScript} against deployed server`, () =>
     runCommand(
@@ -116,7 +155,7 @@ try {
         cwd: packageDir,
         env: {
           ...env,
-          SERVER_BASE_URL: serverBaseUrl,
+          SERVER_BASE_URL: deployedUrl,
         },
       },
     ),
@@ -132,6 +171,11 @@ try {
     await runStep(`destroy test server with STAGE=${stage}`, () =>
       runCommand(process.execPath, [alchemyEntrypoint, "--destroy"], { cwd: packageDir, env }),
     );
+    if (serverBaseUrl !== undefined) {
+      await runStep("verify destroyed worker returns 404", () =>
+        waitForWorkerDestroyed(serverBaseUrl!),
+      );
+    }
   } catch (error) {
     exitCode = 1;
     logFailure(
