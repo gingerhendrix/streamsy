@@ -1,50 +1,8 @@
 ---
-title: Experimental demos
-description: Guided tutorials for the demos built on @streamsy/streams and @streamsy/projection — stream identity, bindings, Effect capabilities, bounded StateProjection, durable lineage, and causal coverage.
+title: Demos
+description: A local Hacker News browser demo built on Streamsy's memory host.
 ---
 
-The `experimental` branch ships runnable demo applications under [`examples/`](https://github.com/gingerhendrix/streamsy/tree/experimental/examples). Each demo exercises the experimental derived-state programme in `@streamsy/streams` and `@streamsy/projection`: structured stream identity, inert stream bindings, Effect capabilities, bounded projection catch-up, durable lineage, and causal coverage.
-
-These tutorials explain how each demo was implemented. They walk through the real source code, show the Streamsy APIs the demo uses, and tell you how to run and verify the demo yourself.
-
-## Before you start
-
-`@streamsy/streams` and `@streamsy/projection` are incubating:
-
-- Each public API is reached through the subpath that owns it.
-- Their Effect dependency is pinned to a v4 release candidate.
-- APIs can change or disappear between commits. Nothing here is a compatibility promise.
-- `@streamsy/projection/mesh` is a framework-private incubation area. Two demos use it directly; treat those imports as implementation detail, not public API.
-
-Every demo runs on [Bun](https://bun.sh). From a checkout of the `experimental` branch:
-
-```bash
-bun install
-bun run build
-```
-
-The root build produces the workspace package entry points that the examples import. Re-run it after edits under `packages/`.
-
-## The demos
-
-| Tutorial                                                           | Demonstrates                                                                                                   | Main APIs                                 |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| [Hacker News newest stream](/docs/demos/hackernews-newest-stream)  | A bounded `StateProjection` from a JSON source stream into a Durable State stream, mirrored into the browser   | `stream-identity`, `state-projection`     |
-| [Issue tracker projections](/docs/demos/issue-tracker-projections) | A two-hop projection chain with fan-in, chained coverage, and bounded repair                                   | `binding`, `causal`, `effect`, `ivm-mesh` |
-| [Hex Domination](/docs/demos/risk-demo)                            | A complete event-sourced game with a recovered board projection, verified rebuilds, and a typed browser mirror | `binding`, `causal`, `effect`, `ivm-mesh` |
-
-Read them in that order if the programme is new to you. The Hacker News demo uses the application-facing `StateProjection` facade and is the gentlest entry point. The issue tracker adds projection chains, coverage, and repair. Hex Domination shows the whole approach inside a real application.
-
-## Shared vocabulary
-
-A few terms repeat across the tutorials:
-
-- **Stream identity** — a structured logical name for a stream, separate from its URL and its protocol stream ID. Causal comparisons require matching identities.
-- **Binding** — an inert value that pairs an identity, a protocol client, and a stream ID. Operations receive bindings; bindings do no transport work themselves.
-- **Bounded catch-up** — one finite projection pass under explicit item, page, batch, and byte limits. Outcomes such as `caught-up`, `limit-reached`, and `boundary-too-large` are values, not exceptions.
-- **Lineage** — a reserved row that the projection commits in the same target append as its output rows. It records how far into the source the output provably reaches.
-- **Coverage** — a three-way answer to "does this derived state include that acknowledged write?": `proven`, `not-yet`, or `incomparable`.
-
-## What the demos do not claim
-
-The demos demonstrate designs, not guarantees. None of them establishes production readiness, durability by default (most use in-memory storage), exactly-once processing, or a deployed Cloudflare topology. Each tutorial records its own verification status and limits. Verify against your own checkout before you rely on any behavior described here.
+[Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories, appends
+source changes and serves State facts to a live browser collection. Its private
+projection bridge is incubating. Read the demo's bounds before running it.

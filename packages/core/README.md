@@ -10,11 +10,14 @@ import { Streams, StreamRef } from "@streamsy/core";
 const events = StreamRef.json("events", { schema: Schema.String });
 const program = Effect.gen(function* () {
   yield* Streams.create(events);
-  yield* Streams.append(events, ["hello"]);
+  const appended = yield* Streams.append(events, ["hello"]);
+  if (appended.status !== "appended") return appended;
   return yield* Streams.read(events).pipe(Stream.runCollect);
 });
 await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
+
+Compiled source: `packages/core/test/readme.ts` (checked by `site:validate`).
 
 Applications own the runtime and Layer lifetime. Memory is nonpersistent and
 process-local. Persistent protocol storage and an Effect fetch transport remain

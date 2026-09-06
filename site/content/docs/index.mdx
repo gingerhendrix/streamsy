@@ -1,26 +1,31 @@
 ---
 title: Streamsy
-description: A Durable Streams server implementation and toolkit. Run anywhere, with pluggable backends and TypeScript interfaces for direct protocol access.
+description: An Effect server and toolkit for Durable Streams. Start with typed streams and a local memory host.
 ---
 
-Streamsy is a toolkit for working with [Durable Streams](https://durablestreams.com).
+Streamsy implements the Durable Streams protocol and provides an Effect toolkit
+for typed, addressable event streams. This first release contains three packages:
 
-> Durable Streams are the data primitive for the agent loop.
+| Package           | Purpose                                                             |
+| ----------------- | ------------------------------------------------------------------- |
+| `@streamsy/core`  | Protocol services, typed streams, storage contract and memory Layer |
+| `@streamsy/serve` | Checked serving contracts and the Bun HTTP host                     |
+| `@streamsy/views` | Incremental views and view-store contracts                          |
 
-> Persistent, addressable, real‑time streams for building resilient agent sessions and collaborative multi-user, multi-agent systems.
+Effect is the server and toolkit boundary. Browser applications use the official
+Durable Streams client and State packages; the [Hacker News demo](/docs/demos/hackernews-newest-stream)
+uses `@durable-streams/state` with TanStack DB.
 
-Streamsy provides a server implementation of the Durable Streams protocol with:
+## Storage and hosting
 
-- support for any runtime/framework that supports Web Standards `fetch`
-- pluggable storage backends with in-memory, SQLite, and Durable Object implementations
-- TypeScript interfaces for direct protocol access, including support for JSON mode with typed codecs and Standard Schema support
+Memory is the only shipped protocol storage backend. Data lasts for the acquired
+Layer's lifetime in one process. SQLite protocol storage and Cloudflare hosting
+are future work. Package version 0.4.0 uses Effect 4.0.0-rc.112; it does not provide
+cross-process persistence or a hosted service.
 
 ## Start here
 
-- [Basic usage](/docs/user/basic-usage) — compose a Durable Streams HTTP server, drive the protocol in-process, and choose a storage backend (memory / SQLite / Durable Object).
-- [JSON mode](/docs/user/json-mode) — typed JSON streams with `@streamsy/core/json` (codecs and Standard Schema).
-- [Durable State](/docs/user/durable-state) — typed change/control messages over collections with `@streamsy/state`.
-
-## Experimental demos
-
-The `experimental` branch ships runnable demo applications built on `@streamsy/streams` and `@streamsy/projection`: bounded State projections, durable lineage, and causal coverage. The [experimental demos](/docs/demos) tutorials explain how each demo was implemented, with the Streamsy code that drives it.
+- [Basic usage](/docs/user/basic-usage): compiled create, append, read, follow and Bun hosting examples.
+- [Concepts](/docs/user/concepts): outcomes, faults, offsets, capabilities and resource ownership.
+- [Fold agent](/docs/user/fold-agent): journaled recovery within one memory store.
+- [Demos](/docs/demos): a browser view of the newest Hacker News stories.

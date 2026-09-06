@@ -1,4 +1,4 @@
-/** Final code perimeter. Site content joins the gate in Batch 7. */
+/** Final release perimeter, including all authored site content. */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,7 +46,7 @@ const scan = (label: string, pattern: string, globs: Array<string> = []): boolea
   for (const finding of findings) console.log(finding);
   return passed;
 };
-const historical = ["!parked/**", "!docs/**", "!site/content/**"];
+const historical = ["!parked/**", "!docs/**"];
 const authored = ["packages/*/src/**", "!*.test.ts"];
 // These are existing published Bun test registration kits, not live runtime owners.
 const testKits = [
@@ -84,7 +84,7 @@ const checks = [
       "JsonCodec",
       "streamIdentity",
     ].join("|"),
-    ["packages/**", "examples/**", "site/**", "!site/content/**"],
+    ["packages/**", "examples/**", "site/**"],
   ),
   scan(
     "runtime conversion only at the host and test edges",
@@ -159,4 +159,4 @@ for (const path of inputFiles.filter(
   if (count > 0) console.log(`${path}:${count}`);
 }
 if (checks.some((passed) => !passed)) process.exit(1);
-console.log("Perimeter checks passed; site content remains deferred to Batch 7.");
+console.log("Perimeter checks passed, including site content.");

@@ -6,7 +6,7 @@ export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
       title: <StreamsyLogo className="mx-auto mt-2 h-12 w-auto" />,
-      url: withBasePath("/docs"),
+      url: withBasePath("/"),
     },
     links: [
       { text: "Docs", url: withBasePath("/docs"), active: "nested-url" },

@@ -1,252 +1,46 @@
 ---
-title: "Hacker News newest stream"
-description: Build a bounded StateProjection — poll an external API into a JSON source stream, project it into a Durable State stream with lineage, and mirror it into the browser.
+title: Hacker News newest
+description: Follow newest stories through an Effect server and an official Durable Streams browser client.
 ---
 
-This tutorial walks through [`examples/hackernews-newest-stream`](https://github.com/gingerhendrix/streamsy/tree/experimental/examples/hackernews-newest-stream), the guided demo for the experimental `StateProjection` facade.
+The server polls Hacker News, writes changes to a JSON source stream and uses a
+private, example-local projection bridge to append State facts to a target stream.
+The browser consumes the target with `@durable-streams/state/db` and renders
+TanStack DB live queries. It shows the newest stories, score and comment changes,
+new arrivals and stories leaving the configured set.
 
-A single Bun process:
-
-1. polls the Hacker News Firebase API on an interval;
-2. reconciles each poll into deterministic upsert and delete commands, appended to a JSON **source** stream;
-3. runs a bounded `StateProjection` catch-up that translates those commands into Durable State events on a **target** stream, together with durable lineage;
-4. serves a React client that mirrors the target stream into TanStack DB with `createStreamDB`.
-
-```text
-Hacker News Firebase API
-  -> Effect poller and deterministic reconciliation
-  -> JSON source stream: session/main/source
-  -> bounded StateProjection.catchUp()
-  -> Durable State target stream: session/main
-  -> createStreamDB in the browser
-  -> TanStack DB live query
-  -> React story list
-```
-
-The demo uses two public subpaths, `@streamsy/streams/identity` and `@streamsy/projection`, alongside stable protocol primitives from `@streamsy/core`.
-
-## Declare the streams as resources
-
-A `StateProjection.resource` separates a stream's logical identity from the protocol stream ID it currently lives at. The identity is what lineage and causal comparisons use; the stream ID is just the address.
-
-```ts title="src/server/stream-resources.ts"
-import { streamIdentity } from "@streamsy/streams/identity";
-import * as StateProjection from "@streamsy/projection";
-import { sourceStreamId, targetStreamId } from "./config.ts";
-
-export const hackerNewsSource = StateProjection.resource({
-  identity: streamIdentity("hacker-news-newest-source"),
-  streamId: sourceStreamId,
-});
-
-export const hackerNewsTarget = StateProjection.resource({
-  identity: streamIdentity("hacker-news-newest-state"),
-  streamId: targetStreamId,
-});
-```
-
-The defaults are `session/main/source` for the source and `session/main` for the target, both created inside an in-memory `StreamProtocol` at startup and served under `/streams`.
-
-## Define the projection
-
-`StateProjection.make` declares the projection as a value: a stable ID, a version, an input schema, and a pure per-item mapping. The input schema decodes each source item before your code sees it. The `project` function turns one source command into Durable State events.
-
-```ts title="src/server/story-index-projection.ts"
-export const HackerNewsSourceChange = Schema.Union([
-  Schema.Struct({ operation: Schema.Literal("upsert"), story: HackerNewsStory }),
-  Schema.Struct({
-    operation: Schema.Literal("delete"),
-    key: Schema.String,
-    oldValue: HackerNewsStory,
-  }),
-]);
-
-export const hackerNewsStoryIndex = StateProjection.make({
-  id: "hacker-news-newest-story-index",
-  version: 1,
-  input: HackerNewsSourceChange,
-  project: ({ value, source, index }) => {
-    const headers = {
-      offset: source.position,
-      txid: `${source.position}:${index}`,
-    };
-
-    if (value.operation === "delete") {
-      return [
-        encodeStateChange(
-          hackerNewsState.stories.delete({
-            key: value.key,
-            oldValue: value.oldValue,
-            headers,
-          }),
-        ),
-      ];
-    }
-
-    return [encodeStateChange(hackerNewsState.stories.upsert({ value: value.story, headers }))];
-  },
-});
-```
-
-Two details matter here:
-
-- The output vocabulary is the public [Durable State](/docs/user/durable-state) event shape from `@durable-streams/state`. `hackerNewsState` is a `createStateSchema` definition with one `stories` collection keyed by story `id`. The browser consumes exactly these events.
-- The `headers` carry the source position and an item-scoped `txid`. Consumers can wait for a specific transaction to arrive instead of guessing from wall-clock time.
-
-## Bind and run the projection
-
-`StateProjection.instance` binds the definition to a concrete source, target, output generation, and producer epoch. `StateProjection.catchUp` then runs one finite pass under explicit limits.
-
-```ts title="src/server/projection.ts"
-export function makeStoryProjectionInstance() {
-  return StateProjection.instance(hackerNewsStoryIndex, {
-    source: hackerNewsSource,
-    target: hackerNewsTarget,
-    generation: "v1",
-    producerEpoch: 0,
-  });
-}
-```
-
-The demo wraps `catchUp` so each attempt records its status into a `Ref`, which the `/api/status` endpoint reports:
-
-```ts title="src/server/projection.ts"
-const catchUp = Effect.fn("StoryProjection.catchUp")(function* () {
-  yield* patchStatus({
-    running: true,
-    lastAttemptStartedAt: yield* nowIso,
-    lastError: undefined,
-  });
-
-  yield* StateProjection.catchUp(projection, { limits }).pipe(
-    Effect.tap((outcome) => patchStatus({ lastOutcome: outcome })),
-    Effect.catchCauseIf(
-      (cause) => !Cause.hasInterrupts(cause),
-      (cause) => patchStatus({ lastError: errorMessage(Cause.squash(cause)) }),
-    ),
-    Effect.ensuring(
-      Effect.gen(function* () {
-        yield* patchStatus({
-          running: false,
-          lastAttemptCompletedAt: yield* nowIso,
-        });
-      }),
-    ),
-  );
-});
-```
-
-Catch-up is finite by design. Every attempt has page, batch, item, and byte bounds (the defaults are 10 pages, 10 batches, twice the newest-story limit in items, and 1 MB). The outcome is a value:
-
-- `caught-up` — all available source work was projected;
-- `limit-reached` — the budget ran out with source left; a later attempt continues;
-- `boundary-too-large` — one atomic source boundary exceeds the byte or item bound; the bound must grow before that boundary can be processed.
-
-The projection also commits **durable lineage** to the target at each source boundary. When the process restarts, recovery scans the target history, finds the lineage, and resumes after the last projected boundary. The demo's tests show that a restarted orchestrator emits no duplicate output for already-projected input.
-
-## Supply the client through one Effect runtime
-
-The projection asks for its protocol client as an Effect capability. The host builds one `ManagedRuntime` from `StateProjection.layerClient` and owns it for the process lifetime.
-
-```ts title="src/server/index.ts"
-const streams = new DemoStreams();
-await streams.start();
-
-const runtime = ManagedRuntime.make(StateProjection.layerClient(streams.client));
-const projection = await runtime.runPromise(makeStoryProjection(projectionLimits));
-const poller = await runtime.runPromise(
-  makeNewestStoriesPoller({
-    limit: newestLimit,
-    intervalMs: pollIntervalMs,
-    sink: {
-      appendSourceBatch: appendSourceBatchFromPromise((changes) =>
-        streams.appendSourceBatch(changes),
-      ),
-      catchUpProjection: projection.catchUp,
-    },
-  }),
-);
-```
-
-`DemoStreams` is a small wrapper around stable `@streamsy/core` pieces: a `StreamProtocol` over `createMemoryStorageAdapter`, a `createHttpHandler` mounted at `/streams`, and a `directProtocolClient` for in-process appends.
-
-```ts title="src/server/streams.ts"
-constructor(adapter?: StorageAdapter) {
-  this.protocol = new StreamProtocol({
-    storage: { adapter: adapter ?? createMemoryStorageAdapter() },
-  });
-  this.handler = createHttpHandler({ protocol: this.protocol, pathPrefix: streamPrefix });
-  this.client = directProtocolClient(this.protocol);
-}
-```
-
-## Feed the source stream
-
-The poller is Effect code behind the same runtime. Each pass fetches the bounded newest-story list, refreshes retained stories so mutable fields such as score can change, and hands the result to a pure reconciliation step. Reconciliation emits deterministic deletes for stories that left the set and upserts for new or changed stories. When nothing changed, it suppresses the source write entirely.
-
-The server then appends one JSON batch of source commands and runs one projection catch-up:
-
-```text
-poll pass -> reconcile -> appendSourceBatch (one JSON batch) -> projection.catchUp (one bounded pass)
-```
-
-A manual `POST /api/poll` joins the active pass instead of starting a second one, so concurrent polls coalesce.
-
-## Mirror the target in the browser
-
-The browser needs no experimental code at all. The target stream is an ordinary Durable State stream, so `createStreamDB` from `@durable-streams/state/db` replays it into TanStack DB collections:
-
-```tsx title="src/client/main.tsx"
-function createHnDb(): HnDb {
-  return createStreamDB({
-    streamOptions: {
-      url: new URL("/streams/session/main", window.location.origin).toString(),
-      contentType: "application/json",
-      warnOnHttp: false,
-    },
-    state: hackerNewsState,
-  });
-}
-
-function HnApp({ db }: { db: HnDb }) {
-  const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
-  const stories = useMemo(
-    () => (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || b.id - a.id),
-    [storiesQuery.data],
-  );
-  // ...
-}
-```
-
-The client preloads the stream, then follows it live. Deletes emitted by reconciliation remove rows from the collection; upserts insert or update them. The story list re-renders through `useLiveQuery`.
-
-## Run it
+## Run locally
 
 From the repository root:
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run --cwd examples/hackernews-newest-stream dev
 ```
 
-Open `http://localhost:1339`. Use `dev:api` to skip the client rebuild. `POST /api/poll` waits for one coalesced poll and catch-up attempt; `GET /api/status` reports poll counters, configured bounds, errors, and the last projection outcome. Poll failures are recorded in status rather than raised, so read a successful poll response together with its status fields.
-
-## Verify it
+Open http://localhost:1339. `PORT` selects another port. The status view reports
+poll counts, projection progress and failures. To run the offline HTTP proof:
 
 ```bash
-bun run --cwd examples/hackernews-newest-stream test
-bun run --cwd examples/hackernews-newest-stream typecheck
-bun run --cwd examples/hackernews-newest-stream build
-bun run --cwd examples/hackernews-newest-stream smoke:http
+bun run smoke:hackernews
 ```
 
-The tests cover unchanged-poll suppression, readable state events, bounded resume, orchestration restart, and an oversized source boundary. The HTTP smoke runs against a local Hacker News fixture and verifies initial upserts, an update, entry and removal, projection progress, and suppression.
+The smoke supplies local HN fixtures and checks inserts, updates, deletes and
+unchanged-poll suppression through the public target.
 
-## Limits
+## Incubating bridge and bounds
 
-- The default adapter stores in memory. Data survives for the process lifetime only.
-- Recovery scans the complete target history, so its cost grows with target history.
-- Catch-up is finite; it is not a subscription or a continuous projection service.
-- Failed item fetches are skipped for that pass and retried later. Invalid, dead, deleted, non-story, and incomplete items are omitted.
-- The browser target URL is fixed at `/streams/session/main`. Changing the server stream IDs requires a matching client change.
-- The external fetch, source append, projection, and browser update are separate stages that converge; no single transaction spans them. The restart tests establish lineage-based resume for this configuration, not universal exactly-once delivery.
+One acquired memory store belongs to one server process. Restarting loses it.
+Recovery scans the entire target history and takes progress from fact headers.
+Target-tail CAS detects competing output writes.
+
+The bridge treats a whole source read page as one boundary. A backlog above the
+item or byte bound can repeatedly reject with `boundary-too-large`; another poll
+does not guarantee progress. Raising the relevant bound is necessary for that
+page to fit. Recovery scanning itself is outside the catch-up bounds.
+
+This bridge provides no general replay-safe pending writes, owner fencing or
+generation activation. It requires at least one output fact per source boundary.
+General projection and recovery work is deferred to Step 5. The bridge is
+incubating and is not a public package API. SQLite protocol storage and
+Cloudflare hosting are future work.

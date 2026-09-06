@@ -1,0 +1,50 @@
+---
+title: Fold agent
+description: A journaled Fold session reconstructed within one process and one memory store.
+---
+
+The Fold example uses `@humanlayer/fold-core` for the agent loop and Streamsy for
+its event log and append journal. It proves reconstruction inside one process
+while the same acquired memory store remains open. It does not prove persistence
+across process restarts.
+
+## Journal and producer tuple
+
+Each session has an events stream, a journal stream and a producer id. Under a
+semaphore, the adapter writes the exact pending Fold payload and producer tuple
+(epoch and sequence) to the journal with expected-offset CAS, then appends it to
+the log. Retryable storage failures get five total attempts with the same tuple
+and bytes. An appended or duplicate result acknowledges the intent.
+
+Recovery checks contiguous entry sequences and full payload equality. It settles
+pending intent before writing a resume or takeover marker. Resume retains the
+journal epoch; an explicit epoch must match it exactly. Takeover increments the
+epoch. The marker's journal CAS transfers ownership, and new producer appends
+fence old epochs. This is no activation lease or transparent live-agent handoff.
+
+An interrupted or failed append makes the adapter uncertain: reconstruct it
+before accepting a new payload. Separate journal and log reads may safely reject
+reconstruction during concurrent writes. Recovery scans both histories in full.
+
+## Run the memory proof
+
+From the repository root:
+
+```bash
+bun run --cwd examples/fold-agent typecheck
+bun run --cwd examples/fold-agent test:unit
+```
+
+The tests run a scripted tool turn, drop its session scope and reconstruct over
+the same store. They cover faults before and after commit, journal-only pending
+intent and takeover fencing. See the compiled
+[test/fold-session.test.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/fold-agent/test/fold-session.test.ts)
+and [test/streamsy-event-log.test.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/fold-agent/test/streamsy-event-log.test.ts).
+
+## CLI boundary
+
+The default CLI selects a file-backed store and fails with typed
+`StorageNotAvailable`. Start, resume and inspect through that default are
+unavailable in this release. SQLite storage and the cross-process restart proof
+arrive in Step 2. Closing the memory store discards both log and journal.
+In-flight model requests, snapshots and retention are outside this proof.

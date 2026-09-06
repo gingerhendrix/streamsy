@@ -43,7 +43,7 @@
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "build": "bun run --cwd packages/core build && bun run --cwd packages/views build && bun run --cwd packages/serve build",
     "pack:dry-run": "for dir in packages/core packages/views packages/serve; do (cd \"$dir\" && bun pm pack --dry-run) || exit; done",
-    "site:validate": "bun install --cwd site --frozen-lockfile && bun run --cwd site check && bun run --cwd site build && bun run --cwd site check:og",
+    "site:validate": "bun install --cwd site --frozen-lockfile && bun run --cwd site check:terms && bun run --cwd site check:excerpts && bun run --cwd site check && bun run --cwd site build && bun run --cwd site check:og && bun run --cwd site check:links",
     "check:perimeter": "bun scripts/check-perimeter.ts"
   },
   "devDependencies": {

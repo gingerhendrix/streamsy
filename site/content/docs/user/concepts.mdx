@@ -1,0 +1,61 @@
+---
+title: Concepts
+description: Understand outcomes, typed faults, batch boundaries and memory-store ownership.
+---
+
+## Outcomes and faults
+
+Protocol classifications are success values: `created`, `exists`, `appended`,
+`duplicate`, `conflict`, `not-found`, `gone`, `timeout`, `stale-epoch` and
+`producer-gap` describe what happened. Inspect the operation's `status` before
+advancing application state.
+
+`StorageFault` uses Effect's typed error channel and carries retryability.
+Retries need a bounded policy and a retained intent. Producer duplication
+acknowledges a tuple; it does not compare retry payloads. The producer's caller
+must preserve the same bytes, epoch and sequence across a retry.
+
+At the toolkit tier, `Streams.read` and `Streams.follow` turn missing or gone
+streams into typed `StreamUnavailable` failures. Encoding and decoding failures
+use `EncodeFault` and `DecodeFault`. A decode failure stops that consumer;
+choosing a new offset or skipping bad input is the application's policy.
+
+## Batches and offsets
+
+A batch contains decoded `items`, `nextOffset`, `upToDate` and `closed`.
+`Streams.items` flattens a stream of batches when only values are needed.
+Keep batches when a consumer needs their resume position.
+
+Offsets are opaque, fixed-width tokens. Store and forward them unchanged, and
+compare positions only within one stream. `ZERO_OFFSET` denotes an empty tail.
+An append's `expectedOffset` checks the current tail atomically with the mutation.
+A mismatch returns `conflict` with the actual position and writes nothing.
+This compare-and-swap (CAS) check detects competing writes; it does not establish
+an application session's ownership policy.
+
+## Storage capabilities
+
+The memory Layer has two tested configurations:
+
+| Capability   | Default | Constrained |
+| ------------ | ------- | ----------- |
+| Fork         | Chain   | Copy        |
+| Atomic scope | Store   | Stream      |
+| Wake         | Push    | Poll        |
+| Expiry index | Indexed | Lazy        |
+
+Multi-stream mutations require store atomicity. Submitting two mutations for the
+same stream, or a multi-stream mutation to a stream-atomic store, is a programmer
+defect. Read-time expiry works in both configurations. The Bun host expires on
+access; it does not promise a background expiry sweep.
+
+## Runtime ownership
+
+Libraries return Effects and Streams. Applications run them at an executable
+edge and own scopes, listeners and subscriptions. One acquired memory Layer is
+one store; dispose it and the data is lost. The Bun host owns its HTTP edge and
+listener, while an application that shares protocol services must acquire them
+once for that application's lifetime.
+
+SQLite protocol storage and Cloudflare hosting are future work. The compiled
+[basic usage](/docs/user/basic-usage) demonstrates the shipped memory path.

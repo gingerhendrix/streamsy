@@ -1,119 +1,72 @@
 ---
 title: Basic usage
-description: Compose a Durable Streams HTTP server with @streamsy/core, then choose a durable storage backend.
+description: Create typed streams in Effect, consume batches, and serve the protocol with Bun.
 ---
 
-A Streamsy server is composed from three pieces:
+Use `@streamsy/core` and Effect 4.0.0-rc.112 at the server or toolkit boundary.
+A `StreamRef` describes an id and Schema; it owns no resources.
 
-1. a **`StorageAdapter`** from a storage package (where messages are persisted);
-2. a **protocol facade** from `createStreamProtocol({ storage: { adapter } })` (the Durable Streams operations);
-3. an **HTTP facade** from `createHttpHandler({ protocol, pathPrefix })` (serves the protocol over HTTP).
+## Create, append, read and follow
 
-The protocol and HTTP facades never change — only the adapter you pass decides where data lives.
-
-## Install
-
-Streamsy targets the Bun runtime. Start with the core package, which bundles the in-memory adapter:
-
-```bash
-bun add @streamsy/core
-```
-
-## Compose the server
+Compiled source: [packages/serve/test/basic-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/basic-usage.ts). This complete program runs under the
+serve package typecheck. The example handles create and append classifications
+before reading; a successful Effect alone does not mean an append was accepted.
 
 ```ts
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-} from "@streamsy/core";
+import { Effect, Schema, Stream } from "effect";
+import { Streams, StreamRef } from "@streamsy/core";
 
-const adapter = createMemoryStorageAdapter();
-const protocol = createStreamProtocol({ storage: { adapter } });
-const handler = createHttpHandler({ protocol, pathPrefix: "/" });
-
-Bun.serve({ fetch: (request) => handler.fetch(request) });
+const events = StreamRef.json("events", {
+  schema: Schema.Struct({ text: Schema.String }),
+});
+const program = Effect.gen(function* () {
+  const created = yield* Streams.create(events);
+  if (created.status !== "created" && created.status !== "exists") return created;
+  const appended = yield* Streams.append(events, [{ text: "hello" }]);
+  if (appended.status !== "appended") return appended;
+  const batches = yield* Streams.read(events).pipe(Stream.runCollect);
+  const first = yield* Streams.follow(events).pipe(
+    Streams.items,
+    Stream.take(1),
+    Stream.runCollect,
+  );
+  return { batches, first };
+});
+await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
-The server now speaks the Durable Streams HTTP protocol on the configured `pathPrefix`. The in-memory adapter keeps everything in process — ideal for development, examples, and conformance testing, but not durable across restarts.
+`read` catches up in batches with a next offset. `follow` first catches up, then
+waits for new batches; `Streams.items` flattens their items. Here `take(1)` bounds
+the follow to the seeded item so the example terminates. A live consumer must
+have an owning scope and an explicit shutdown policy.
 
-## Use the protocol directly
+The one provided memory Layer holds data for this program's lifetime. Reusing a
+Layer description across separate runtime acquisitions does not share a store.
+Use one application runtime and dispose it when the application stops.
 
-You can also drive the protocol in-process, without HTTP — useful for tests, scripts, and server-side materializers:
+## Serve with Bun
+
+Compiled source: [packages/serve/test/host.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/host.ts). The Bun host owns its listener and HTTP edge.
+This finite example requests a free local port, creates a stream over HTTP, checks
+the response and closes the host. A running application keeps the host until shutdown.
 
 ```ts
-const created = await protocol.create("events", { contentType: "application/json" });
-if (created.status === "created") {
-  await created.stream.append({ data: new TextEncoder().encode('{"hello":"world"}') });
-  const read = await created.stream.read();
-  // read.status === "ok" -> read.messages
+import { Streams } from "@streamsy/core";
+import * as BunHost from "@streamsy/serve/bun";
+
+const host = await BunHost.serve({ layer: Streams.layerMemory(), port: 0 });
+try {
+  const response = await fetch(new URL("/streams/events", host.url), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+  });
+  if (response.status !== 201) throw new Error(`Create failed: ${response.status}`);
+} finally {
+  await host.stop();
 }
 ```
 
-Results are discriminated unions keyed on `status` (`"created"`, `"exists"`, `"ok"`, `"not-found"`, `"conflict"`, …); narrow on `status` before using a result.
-
-## Choose a durable backend
-
-To persist data, swap `createMemoryStorageAdapter()` for a durable adapter. Nothing else in the composition changes.
-
-### Bun SQLite — `@streamsy/storage/sqlite`
-
-File-backed persistence on `bun:sqlite`, with automatic migrations, in-process mutation locking, live-read notification, and lazy expiry. Requires the Bun runtime.
-
-```bash
-bun add @streamsy/storage
-```
-
-```ts
-import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createSqliteStorageAdapter } from "@streamsy/storage/sqlite";
-
-const adapter = createSqliteStorageAdapter({ filename: "streams.db" }); // omit for :memory:
-const protocol = createStreamProtocol({ storage: { adapter } });
-const handler = createHttpHandler({ protocol, pathPrefix: "/" });
-
-Bun.serve({ fetch: (request) => handler.fetch(request) });
-
-// adapter.close() closes the underlying database connection.
-```
-
-### Cloudflare Durable Object — `@streamsy/storage/durable-object`
-
-SQLite-backed persistence inside a Durable Object, with long-polling, SSE, and TTL/expiry. Each stream id maps to one Durable Object instance.
-
-```bash
-bun add @streamsy/storage
-```
-
-```ts
-import { createHttpHandler, createStreamProtocol } from "@streamsy/core";
-import { createDurableObjectStorageAdapter } from "@streamsy/storage/durable-object";
-import { DurableObjectStreamStorage } from "@streamsy/storage/durable-object/storage";
-
-// Re-export the storage class so Wrangler can bind it as a Durable Object.
-export { DurableObjectStreamStorage };
-
-interface Env {
-  STREAMS: DurableObjectNamespace<DurableObjectStreamStorage>;
-}
-
-export default {
-  fetch(request: Request, env: Env) {
-    const adapter = createDurableObjectStorageAdapter({ namespace: env.STREAMS });
-    const protocol = createStreamProtocol({ storage: { adapter } });
-    const handler = createHttpHandler({ protocol, pathPrefix: "/" });
-    return handler.fetch(request);
-  },
-};
-```
-
-Bind `STREAMS` to the `DurableObjectStreamStorage` class in your Wrangler config (with a SQLite-backed migration). The adapter routes each stream id to its Durable Object via `namespace.idFromName(streamId)`.
-
-## Typed layers
-
-Most applications don't work with raw bytes. Two packages wrap the protocol factory with typed facades:
-
-- **[JSON mode](/docs/user/json-mode)** (`@streamsy/core/json`) — typed JSON messages validated through a codec or Standard Schema.
-- **[Durable State](/docs/user/durable-state)** (`@streamsy/state`) — typed change/control messages over named collections.
-
-Both accept the same `protocol` object returned by `createStreamProtocol`, so you layer them on top of any storage backend.
+The host's Layer is a separate memory store from the program above. Browser
+applications connect over HTTP using official Durable Streams packages.
+See [the HN demo](/docs/demos/hackernews-newest-stream) for the complete browser path,
+and [concepts](/docs/user/concepts#outcomes-and-faults) for failure handling.
