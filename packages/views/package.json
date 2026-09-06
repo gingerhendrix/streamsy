@@ -62,14 +62,13 @@
   "scripts": {
     "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts src/store/memory.ts src/store/sqlite.ts src/store/conformance.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external bun:test",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest --run src --exclude '**/*.bun.test.ts' && bun test src/store"
+    "test:unit": "bun test src"
   },
   "dependencies": {
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
-    "typescript": "catalog:",
-    "vitest": "^4.0.16"
+    "typescript": "catalog:"
   }
 }

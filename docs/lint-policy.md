@@ -7,7 +7,8 @@ architectural choice made per package, not a repository-wide style.
 
 `.oxlintrc.json` holds the general TypeScript, Unicorn, Oxc, Oxlint core, and
 vendored anti-slop policy with type-aware rules enabled. It applies to every
-source and test file in the repository, including the Effect-owned areas.
+live source and test file in the repository, including the Effect-owned areas.
+`parked/**` is excluded from both general lint and formatting.
 
 ```bash
 bun run lint:general
@@ -20,18 +21,20 @@ enables the `effecttsgo` plugin plus the Effect-specific vendored anti-slop
 plugin. It runs against an explicit path allow-list, held in the `lint:effect`
 script:
 
-- `packages/experimental`
+- `packages/serve`
+- `packages/views`
+- `examples/fold-agent`
 - `examples/hackernews-newest-stream`
-- `examples/issue-tracker-projections`
-- `examples/risk-demo`
 
 ```bash
 bun run lint:effect
 ```
 
-Every other package exposes a dependency-light API and declares no dependency on
-`effect`. Applying Effect rules there would report findings that can only be
-resolved by changing those packages' architecture and dependency boundaries.
+The old core and its dependent packages remain under the general policy during
+the Step 1 rebuild. The old `streams` and `projection` packages still depend on
+Effect, but are outside the live Effect allow-list pending their removal in
+Batch 6. The general probe stays in `packages/core/src`; the Effect probe now
+lives in `packages/serve/src`.
 
 Add a path to the allow-list only when that area intentionally adopts Effect,
 which means its manifest declares `effect` and its sources import it. Do not
@@ -58,3 +61,12 @@ built.
 and into an Effect-owned package, lints both policies, asserts that each policy
 reports exactly the violations it owns, and removes the probes. No lint fixtures
 are committed.
+
+## Perimeter verification
+
+`bun run check:perimeter` rejects references to the parked example paths in live
+code and root configuration, retired package names, and Vitest imports outside
+conformance tests, the explicitly reported old-package exceptions, and the two
+existing Hacker News tests (until Batch 5). Parked
+files and maintainer docs are reference material; site content is deferred to
+Batch 7. The temporary runner exceptions preserve the old core until Batch 6.

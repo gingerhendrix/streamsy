@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { RelationPlan } from "./ir/contracts.ts";
 import type { ReducerDeclaration } from "./relation.ts";
 import { checkPlan, collectPlanIssues } from "./check.ts";

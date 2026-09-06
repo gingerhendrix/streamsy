@@ -1,5 +1,5 @@
 {
-  "name": "@streamsy/sinks",
+  "name": "@streamsy/serve",
   "version": "0.3.0",
   "description": "Checked state, stream, document, and action sink contracts, routes, protocol handling, and Effect server adapters.",
   "license": "MIT",

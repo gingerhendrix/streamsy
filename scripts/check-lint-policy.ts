@@ -16,15 +16,10 @@ import { dirname, join } from "node:path";
 const repoRoot = join(import.meta.dirname, "..");
 
 const effectAreas = [
-  "packages/streams",
-  "packages/projection",
-  "packages/sinks",
+  "packages/serve",
   "packages/views",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
-  "examples/issue-tracker",
-  "examples/issue-tracker-projections",
-  "examples/risk-demo",
 ] as const;
 
 /** An async function is an Effect diagnostic; `Array#sort()` is a general one. */
@@ -40,7 +35,7 @@ const probeSource = [
 ].join("\n");
 
 const generalProbe = "packages/core/src/__lint-policy-probe__.ts";
-const effectProbe = "packages/streams/src/__lint-policy-probe__.ts";
+const effectProbe = "packages/serve/src/__lint-policy-probe__.ts";
 
 interface Diagnostic {
   code: string;

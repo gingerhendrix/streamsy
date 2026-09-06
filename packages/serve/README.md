@@ -1,4 +1,4 @@
-# `@streamsy/sinks`
+# `@streamsy/serve`
 
 Every checked sink contract in the repository, the Effect server adapters that
 serve them, and the action-sink delivery runtime.

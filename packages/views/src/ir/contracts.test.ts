@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { Change, Expression, RelationNode, RelationPlan } from "./contracts.ts";
 
 const expressionKind = (expression: Expression): Expression["kind"] => {

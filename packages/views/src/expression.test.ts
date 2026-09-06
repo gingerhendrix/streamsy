@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
+import type { Expression } from "./ir/contracts.ts";
 import { aggregate, literal, parameterReference, selectors } from "./expression.ts";
 
 interface Row {
@@ -11,8 +12,9 @@ interface Row {
 describe("expression construction", () => {
   const x = selectors<Row>();
 
+  // Compare the inert IR; fluent helper methods are non-enumerable.
   it("builds comparisons and nested boolean expressions", () => {
-    expect(x.row.count.gte(2).and(x.row.active.eq(true))).toEqual({
+    expect<Expression>(x.row.count.gte(2).and(x.row.active.eq(true))).toEqual({
       kind: "variadic",
       operator: "and",
       operands: [
@@ -30,7 +32,7 @@ describe("expression construction", () => {
         },
       ],
     });
-    expect(x.row.id.in("issue-1", "issue-2")).toEqual({
+    expect<Expression>(x.row.id.in("issue-1", "issue-2")).toEqual({
       kind: "variadic",
       operator: "in",
       operands: [
@@ -42,12 +44,12 @@ describe("expression construction", () => {
   });
 
   it("keeps optional presence, value and fallback explicit", () => {
-    expect(x.row.assigneeId.isPresent()).toEqual({
+    expect<Expression>(x.row.assigneeId.isPresent()).toEqual({
       kind: "unary",
       operator: "is-present",
       operand: { kind: "reference", scope: "row", path: ["assigneeId"] },
     });
-    expect(x.row.assigneeId.value.eq("user-1")).toEqual({
+    expect<Expression>(x.row.assigneeId.value.eq("user-1")).toEqual({
       kind: "binary",
       operator: "equal",
       left: {
@@ -66,8 +68,16 @@ describe("expression construction", () => {
   it("builds parameters, keys, aggregates and ordering as frozen inert data", () => {
     const parameter = parameterReference<string>("projectId");
     const key = x.key(x.row.id, x.row.count);
-    expect(parameter).toEqual({ kind: "reference", scope: "parameter", path: ["projectId"] });
-    expect(key).toEqual({ kind: "variadic", operator: "key", operands: [x.row.id, x.row.count] });
+    expect<Expression>(parameter).toEqual({
+      kind: "reference",
+      scope: "parameter",
+      path: ["projectId"],
+    });
+    expect<Expression>(key).toEqual({
+      kind: "variadic",
+      operator: "key",
+      operands: [x.row.id, x.row.count],
+    });
     expect(aggregate.countWhere(x.row.active)).toEqual({
       kind: "aggregate",
       function: "count-where",
