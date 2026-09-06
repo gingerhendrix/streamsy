@@ -68,14 +68,19 @@ async function contentEvidence(response: Response): Promise<JsonRecord> {
       file: typeof value !== "string",
     });
   });
+  const modules = parts.filter(
+    (part) =>
+      part.file &&
+      part.name !== "metadata" &&
+      !part.name.endsWith(".map") &&
+      part.contentType !== "application/source-map",
+  );
   return {
     status: response.status,
     headers,
     partCount: parts.length,
-    moduleCount: parts.filter((part) => part.file && part.name !== "metadata").length,
-    downloadedModuleBytes: parts
-      .filter((part) => part.file && part.name !== "metadata")
-      .reduce((total, part) => total + part.bytes, 0),
+    moduleCount: modules.length,
+    downloadedModuleBytes: modules.reduce((total, part) => total + part.bytes, 0),
     parts,
   };
 }
