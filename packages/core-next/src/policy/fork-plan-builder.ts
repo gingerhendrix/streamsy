@@ -3,13 +3,7 @@ import { Predicate } from "effect";
 
 import type { Operation } from "../storage/mutation.ts";
 import type { CreateOptions } from "./options.ts";
-interface CreateOutcome {
-  status: string;
-  nextOffset: string;
-  contentType: string;
-  errorMessage?: string;
-  conflictReason?: string;
-}
+import type { CreateOutcome } from "../protocol/outcomes.ts";
 import { Offset, type StoredMessage, type StreamId, type StreamRecord } from "../schema/index.ts";
 interface Clock {
   now(): number;

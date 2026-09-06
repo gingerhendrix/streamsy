@@ -14,7 +14,7 @@ export function snapshot(state: State, id: StreamId): ChangeSnapshot {
 }
 export function changes(
   state: State,
-  bus: PubSub.PubSub<StreamId>,
+  bus: PubSub.PubSub<void>,
   id: StreamId,
   push: boolean,
   interval: number,
@@ -23,14 +23,13 @@ export function changes(
   if (!push) return Stream.fromEffect(read).pipe(Stream.repeat(Schedule.spaced(interval)));
   return Stream.unwrap(
     Effect.gen(function* () {
+      // A single pending store wake coalesces all commits. Every wake re-reads
+      // this id, so an unrelated commit cannot overwrite a relevant notification.
       // Subscribe before the first read: a commit in the acquisition window cannot be lost.
       const subscription = yield* PubSub.subscribe(bus);
       return Stream.concat(
         Stream.fromEffect(read),
-        Stream.fromSubscription(subscription).pipe(
-          Stream.filter((changed) => changed === id),
-          Stream.mapEffect(() => read),
-        ),
+        Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => read)),
       );
     }),
   );

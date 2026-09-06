@@ -77,7 +77,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
         return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
       const state: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const lock = yield* Semaphore.make(1);
-      const bus = yield* Effect.acquireRelease(PubSub.unbounded<StreamId>(), PubSub.shutdown);
+      const bus = yield* Effect.acquireRelease(PubSub.dropping<void>(1), PubSub.shutdown);
       const commit = (mutation: Mutation): CommitResult => {
         const changed = new Set<StreamId>();
         for (const [index, operation] of mutation.operations.entries()) {
@@ -175,7 +175,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
             );
           return yield* Effect.gen(function* () {
             const { outcome, changed } = yield* Effect.sync(() => commit(mutation));
-            for (const id of changed) yield* PubSub.publish(bus, id);
+            if (changed.size > 0) yield* PubSub.publish(bus, undefined);
             return outcome;
           }).pipe(Semaphore.withPermit(lock), Effect.uninterruptible);
         }),
