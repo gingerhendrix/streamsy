@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   MAX_PREVIEW_WORKER_NAME_LENGTH,
   deploymentOutputFromJson,

@@ -1,4 +1,4 @@
-/** Batch 2 boundary. Expand the scans as the old graph is replaced. */
+/** Batch 4 boundary. Expand the scans as the old graph is replaced. */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -60,9 +60,14 @@ const checks = [
     String.raw`\b(?:Promise|async|AbortSignal|AbortController|setTimeout|structuredClone)\b|tryPromise|Effect\.promise|\.then\(`,
     ["packages/core-next/src/**", "!*.test.ts"],
   ),
+  scan(
+    "authored core-next HTTP does not construct Web streams",
+    String.raw`new\s+ReadableStream\b`,
+    ["packages/core-next/src/http/**", "!*.test.ts"],
+  ),
   scan("no Effect Vitest integration", "@effect[/]vitest"),
 ];
 console.log(`Temporary Vitest exceptions until Batch 6: ${oldRunnerPackages.join(", ")}.`);
 console.log("Temporary Vitest exceptions until Batch 5: the two existing Hacker News test files.");
 if (checks.some((passed) => !passed)) process.exit(1);
-console.log("Perimeter checks passed (Batch 2 scope).");
+console.log("Perimeter checks passed (Batch 4 scope).");

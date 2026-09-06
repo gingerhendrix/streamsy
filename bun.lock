@@ -59,11 +59,12 @@
       "dependencies": {
         "@durable-streams/server-conformance-tests": "^0.3.5",
         "@streamsy/core": "workspace:*",
+        "@streamsy/core-next": "workspace:*",
         "@streamsy/http-client": "workspace:*",
+        "@streamsy/serve": "workspace:*",
         "@streamsy/state": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "valibot": "1.0.0",
-        "vitest": "^4.0.16",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "catalog:",
@@ -71,6 +72,7 @@
         "@types/node": "^22.10.0",
         "alchemy": "catalog:",
         "typescript": "catalog:",
+        "vitest": "^4.0.16",
       },
     },
     "packages/core": {
@@ -124,6 +126,7 @@
       "name": "@streamsy/serve",
       "version": "0.3.0",
       "dependencies": {
+        "@streamsy/core-next": "workspace:*",
         "effect": "4.0.0-rc.112",
       },
       "devDependencies": {

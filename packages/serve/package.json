@@ -78,14 +78,20 @@
       "types": "./dist/action/sqlite.d.ts",
       "import": "./dist/action/sqlite.js",
       "default": "./dist/action/sqlite.js"
+    },
+    "./bun": {
+      "types": "./dist/bun.d.ts",
+      "import": "./dist/bun.js",
+      "default": "./dist/bun.js"
     }
   },
   "scripts": {
-    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite",
+    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test src"
   },
   "dependencies": {
+    "@streamsy/core-next": "workspace:*",
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
