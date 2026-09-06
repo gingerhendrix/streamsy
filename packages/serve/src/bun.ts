@@ -1,7 +1,7 @@
 // oxlint-disable effecttsgo/async-function -- Named Web/Bun boundary owns native request, response and server disposal operations.
 import type { Layer } from "effect";
-import type { StreamsReader, StreamsWriter } from "@streamsy/core-next";
-import { makeEdge, type HttpOptions } from "@streamsy/core-next/http";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core";
+import { makeEdge, type HttpOptions } from "@streamsy/core/http";
 
 export interface ServeOptions<E = never> extends HttpOptions {
   readonly layer: Layer.Layer<StreamsReader | StreamsWriter, E>;

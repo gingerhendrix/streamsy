@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { nodeBufferBase64, toArrayBuffer } from "./bytes.ts";
 import { MessageBodyCodec } from "./message-body-codec.ts";
 

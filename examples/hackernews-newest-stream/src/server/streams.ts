@@ -1,5 +1,5 @@
-import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core-next";
-import * as Http from "@streamsy/core-next/http";
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import * as Http from "@streamsy/core/http";
 import { Context, Effect, Layer } from "effect";
 import { streamPrefix } from "./config.ts";
 import { pollFailure } from "./poller/contract.ts";

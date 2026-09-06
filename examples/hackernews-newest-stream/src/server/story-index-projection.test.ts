@@ -1,4 +1,4 @@
-import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core-next";
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- This Bun integration suite drives Promise protocol adapters and executes Effect descriptions at the test boundary. */
 import * as StateProjection from "./bridge/state-projection.ts";
 import type { Instance as StateProjectionInstance } from "./bridge/state-projection.ts";

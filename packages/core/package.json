@@ -1,11 +1,7 @@
 {
   "name": "@streamsy/core",
-  "version": "0.3.0",
-  "description": "Public protocol and HTTP facades for Streamsy durable streams.",
-  "homepage": "https://github.com/gingerhendrix/streamsy#readme",
-  "bugs": {
-    "url": "https://github.com/gingerhendrix/streamsy/issues"
-  },
+  "version": "0.4.0",
+  "description": "Effect-first Durable Streams protocol, storage contract, memory layer and toolkit.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,35 +13,41 @@
   ],
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./json": {
-      "types": "./dist/json.d.ts",
-      "import": "./dist/json.js",
-      "default": "./dist/json.js"
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "import": "./dist/storage/index.js",
+      "default": "./dist/storage/index.js"
     },
     "./testing": {
-      "types": "./dist/testing/storage-adapter-contract.d.ts",
-      "import": "./dist/testing/storage-adapter-contract.js",
-      "default": "./dist/testing/storage-adapter-contract.js"
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    },
+    "./http": {
+      "types": "./dist/http/index.d.ts",
+      "import": "./dist/http/index.js",
+      "default": "./dist/http/index.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/json.ts src/testing/storage-adapter-contract.ts --format esm --dts --out-dir dist --clean",
+    "build": "tsdown src/index.ts src/storage/index.ts src/testing/index.ts src/http/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
     "typecheck": "tsc --noEmit",
-    "test:unit": "vitest --run src"
+    "test:unit": "bun test src"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
-    "typescript": "catalog:",
-    "vitest": "^4.0.16"
+    "@types/bun": "^1.2.0",
+    "typescript": "catalog:"
   }
 }

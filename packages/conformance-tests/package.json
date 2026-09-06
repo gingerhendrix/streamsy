@@ -1,39 +1,21 @@
 {
   "name": "@streamsy/conformance-tests",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test src/deployment-state.test.ts",
-    "test:memory": "vitest --run src/memory.conformance.test.ts",
-    "test:client": "vitest --run src/client.conformance.test.ts",
-    "test:fs": "vitest --run src/fs.conformance.test.ts -t '^(?!.*Fork - )'",
-    "test:sqlite": "vitest --run src/sqlite.conformance.test.ts",
-    "test:do": "STAGE=conformance CONFORMANCE_UNIQUE_STAGE=1 node src/deploy-test-destroy.ts",
-    "test:do:local": "vitest --run src/do.conformance.test.ts --testTimeout=60000 --sequence.concurrent --maxConcurrency=20",
-    "test:do:sse-diagnostic:local": "vitest --run src/do.sse-final-append-diagnostic.test.ts --testTimeout=15000 --reporter=verbose",
-    "test:do:sse-diagnostic": "STAGE=conformance CONFORMANCE_UNIQUE_STAGE=1 STREAMSY_DO_TEST_SCRIPT=test:do:sse-diagnostic:local node src/deploy-test-destroy.ts",
-    "deploy": "alchemy deploy",
-    "dev": "alchemy dev",
-    "destroy": "alchemy destroy",
-    "test:memory-next": "bun --bun x vitest --run src/memory-next.conformance.test.ts"
+    "test:unit": "bun -e \"console.log('No authored conformance unit tests; official memory suite uses test:memory.')\"",
+    "test:memory": "bun --bun x vitest --run src/memory.conformance.test.ts"
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.5",
     "@streamsy/core": "workspace:*",
-    "@streamsy/core-next": "workspace:*",
-    "@streamsy/http-client": "workspace:*",
-    "@streamsy/serve": "workspace:*",
-    "@streamsy/state": "workspace:*",
-    "@streamsy/storage": "workspace:*",
-    "valibot": "1.0.0"
+    "@streamsy/serve": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
-    "alchemy": "catalog:",
     "typescript": "catalog:",
     "vitest": "^4.0.16"
   }

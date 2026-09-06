@@ -21,9 +21,9 @@ import {
   StreamsWriter,
   Streams,
   StreamRef,
-} from "@streamsy/core-next";
+} from "@streamsy/core";
 import { Context, Deferred, Layer, Schema } from "effect";
-import { faultyStorage } from "@streamsy/core-next/testing";
+import { faultyStorage } from "@streamsy/core/testing";
 import { appendJournal, readHistory, sessionRefs, type Pending } from "../src/session-journal.ts";
 type JsonValue = Schema.Json;
 import { Cause, Effect, Exit, Fiber, Stream } from "effect";

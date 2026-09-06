@@ -5,7 +5,7 @@ import {
   EventLogUnavailableError,
   type LogEntry,
 } from "@humanlayer/fold-core";
-import { Producer, StreamRef, Streams, ZERO_OFFSET } from "@streamsy/core-next";
+import { Producer, StreamRef, Streams, ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Schema, Stream } from "effect";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));

@@ -2,7 +2,7 @@
 
 A Fold Core agent backed by Streamsy's Effect services. Fold owns the agent
 loop, tool settlement and conversation projections. Streamsy stores the Fold
-log and its append journal through `@streamsy/core-next`.
+log and its append journal through `@streamsy/core`.
 
 This release step proves recovery **inside one process and one memory Layer**.
 `openMemoryStore()` acquires the Layer once and returns its context and `close`.

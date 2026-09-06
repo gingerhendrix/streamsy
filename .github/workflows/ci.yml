@@ -49,5 +49,5 @@ jobs:
       - name: Memory conformance tests
         run: bun run test:conformance:memory
 
-      - name: SQLite conformance tests
-        run: bun run test:conformance:sqlite
+      - name: Perimeter
+        run: bun run check:perimeter

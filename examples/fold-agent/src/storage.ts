@@ -1,5 +1,5 @@
 /** Store acquisition is an example edge. One Scope owns one memory Layer. */
-import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core-next";
+import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core";
 import { Context, Effect, Exit, Layer, Schema, Scope } from "effect";
 
 export interface StreamsyStore {

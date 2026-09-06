@@ -30,6 +30,14 @@ export class ReadQueryParser {
       return { ok: false, response: new Response("Invalid batch_size", { status: 400 }) };
     }
 
+    if (
+      cursor !== undefined &&
+      (!/^(0|[1-9]\d*)$/.test(cursor) ||
+        !Number.isSafeInteger(Number(cursor)) ||
+        Number(cursor) > Number.MAX_SAFE_INTEGER - 180)
+    ) {
+      return { ok: false, response: new Response("Invalid cursor", { status: 400 }) };
+    }
     return { ok: true, offset, live, cursor, batchSize };
   }
 }

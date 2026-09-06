@@ -5,8 +5,8 @@ import {
   StreamsReader,
   StreamsWriter,
   ZERO_OFFSET,
-  isValid,
-} from "@streamsy/core-next";
+  Offset,
+} from "@streamsy/core";
 import { Effect, Schema, Stream } from "effect";
 const Positive = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
 const NonNegative = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
@@ -143,10 +143,10 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(function* <Input>(
   options: CatchUpOptions,
 ): Effect.fn.Return<
   CatchUpOutcome,
-  | import("@streamsy/core-next").StorageFault
-  | import("@streamsy/core-next").EncodeFault
-  | import("@streamsy/core-next").DecodeFault
-  | import("@streamsy/core-next").StreamUnavailable
+  | import("@streamsy/core").StorageFault
+  | import("@streamsy/core").EncodeFault
+  | import("@streamsy/core").DecodeFault
+  | import("@streamsy/core").StreamUnavailable
   | Schema.SchemaError
   | BridgeFault,
   ProjectionServices
@@ -163,7 +163,7 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(function* <Input>(
     targetOffset = batch.nextOffset;
     for (const fact of batch.items) {
       const position = yield* Schema.decodeUnknownEffect(FactPosition)(fact);
-      if (!isValid(position.headers.offset))
+      if (!Schema.is(Offset)(position.headers.offset))
         return yield* new BridgeFault({ message: "Invalid recovered source offset" });
       sourceThrough = position.headers.offset;
     }

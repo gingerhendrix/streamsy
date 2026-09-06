@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- Bun test harness owns the runtime edge. */
-import { Streams, StreamRef } from "@streamsy/core-next";
+import { Streams, StreamRef } from "@streamsy/core";
 import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import type { HnStory } from "../state-schema.ts";
 import { StoryProjectionInstance, storyProjectionInstanceLayer } from "./projection.ts";
@@ -12,7 +12,7 @@ export async function demoHarness() {
   const streams = await runtime.runPromise(DemoStreams);
   const context = await runtime.runPromise(
     Effect.context<
-      import("@streamsy/core-next").StreamsReader | import("@streamsy/core-next").StreamsWriter
+      import("@streamsy/core").StreamsReader | import("@streamsy/core").StreamsWriter
     >(),
   );
   return {

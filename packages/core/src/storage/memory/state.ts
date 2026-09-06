@@ -1,50 +1,65 @@
-import { MemoryStream } from "./stream.ts";
+import type {
+  ProducerId,
+  ProducerState,
+  RecordPatch,
+  StoredMessage,
+  StreamId,
+  StreamRecord,
+} from "../../schema/index.ts";
 
-export type MemoryExpiryHandler = (streamId: string) => Promise<void> | void;
-
-/** Shared in-memory stream registry. */
-export class MemoryStreamState {
-  private readonly streams = new Map<string, MemoryStream>();
-  private readonly childEdges = new Map<string, Set<string>>();
-
-  constructor(private readonly onScheduledExpiry?: MemoryExpiryHandler) {}
-
-  getStream(id: string): MemoryStream {
-    let stream = this.streams.get(id);
-    if (!stream) {
-      stream = new MemoryStream(
-        id,
-        () => this.deleteStream(id),
-        () => this.onScheduledExpiry?.(id),
-      );
-      this.streams.set(id, stream);
+export interface Entry {
+  record: StreamRecord;
+  messages: StoredMessage[];
+  producers: Map<ProducerId, ProducerState>;
+}
+export interface State {
+  entries: Map<StreamId, Entry>;
+  children: Map<StreamId, Set<StreamId>>;
+  deadlines: Array<{ at: number; streamId: StreamId }>;
+}
+export const copyRecord = (record: StreamRecord): StreamRecord => ({
+  id: record.id,
+  currentOffset: record.currentOffset,
+  config: { ...record.config },
+  lifecycle: { ...record.lifecycle },
+});
+export const copyMessage = (message: StoredMessage): StoredMessage => ({
+  offset: message.offset,
+  timestamp: message.timestamp,
+  data: new Uint8Array(message.data),
+});
+export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRecord {
+  const config = { ...record.config, ...patch.config };
+  const lifecycle = { ...record.lifecycle, ...patch.lifecycle };
+  for (const key of patch.clear ?? []) {
+    switch (key) {
+      case "ttlSeconds":
+        delete config.ttlSeconds;
+        break;
+      case "expiresAt":
+        delete config.expiresAt;
+        break;
+      case "expiresAtMs":
+        delete lifecycle.expiresAtMs;
+        break;
+      case "lastSeq":
+        delete lifecycle.lastSeq;
+        break;
     }
-    return stream;
   }
-
-  getExistingStream(id: string): MemoryStream | undefined {
-    return this.streams.get(id);
-  }
-
-  addEdge(parent: string, child: string): void {
-    const children = this.childEdges.get(parent) ?? new Set<string>();
-    children.add(child);
-    this.childEdges.set(parent, children);
-  }
-
-  dropEdge(parent: string, child: string): void {
-    const children = this.childEdges.get(parent);
-    if (!children) return;
-    children.delete(child);
-    if (children.size === 0) this.childEdges.delete(parent);
-  }
-
-  countDependents(parent: string): number {
-    return this.childEdges.get(parent)?.size ?? 0;
-  }
-
-  private deleteStream(id: string): void {
-    this.streams.delete(id);
-    this.childEdges.delete(id);
-  }
+  return {
+    id: record.id,
+    currentOffset: patch.currentOffset ?? record.currentOffset,
+    config,
+    lifecycle,
+  };
+}
+export function indexDeadlines(state: State): void {
+  state.deadlines = [...state.entries.values()]
+    .flatMap(({ record }) =>
+      record.lifecycle.softDeleted || record.lifecycle.expiresAtMs === undefined
+        ? []
+        : [{ at: record.lifecycle.expiresAtMs, streamId: record.id }],
+    )
+    .toSorted((a, b) => a.at - b.at || a.streamId.localeCompare(b.streamId));
 }

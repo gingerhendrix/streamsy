@@ -1,242 +1,83 @@
-# Streamsy API
+# Streamsy 0.4.0 API
 
-Streamsy exposes a protocol factory over a flat storage adapter.
+The library describes work as Effects and Streams. Applications provide a Layer
+once at an executable edge and own its scope. Operations take an inert ref or id;
+there are no lifetime-bearing stream handles.
 
-## Core
+## Entry points
 
-```ts
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-} from "@streamsy/core";
+| Entry                    | Intended surface                                                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`         | Schema values and faults, protocol reader/writer tags and outcomes, `Protocol`, `Streams`, `StreamRef`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
+| `@streamsy/core/storage` | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                          |
+| `@streamsy/core/http`    | `makeEdge(options, layer)` and `HttpOptions`                                                                                                                                    |
+| `@streamsy/core/testing` | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`                                                                                                          |
+| `@streamsy/serve/bun`    | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                       |
 
-const adapter = createMemoryStorageAdapter();
-const protocol = createStreamProtocol({ storage: { adapter } });
-const handler = createHttpHandler({ protocol, pathPrefix: "/" });
-```
+Internal offset generation, policy helpers and HTTP implementation modules have no
+public subpaths. Core depends only on `effect@4.0.0-rc.112` at runtime. Its testing
+entry is a Bun test registration boundary; importing the ordinary root does not
+load `bun:test`. Views and serve retain their existing curated subpaths.
 
-`createStreamProtocol({ storage: { adapter }, clock?, longPollTimeoutMs?, offsetGenerator? })` returns a
-protocol factory. Optional dependencies are provided inline on the dependency object.
-
-On success, `create` returns the bound protocol stream directly; existing streams are resolved with
-`get`:
-
-```ts
-const created = await protocol.create("/streams/a", { contentType: "text/plain" });
-if (created.status === "created" || created.status === "exists") {
-  await created.stream.append({ contentType: "text/plain", data: bytes });
-}
-
-const lookup = await protocol.get("/streams/a");
-if (lookup.status === "ok") {
-  const read = await lookup.stream.read({ offset: "-1" });
-  const metadata = await lookup.stream.metadata();
-}
-```
-
-`PUT` uses `protocol.create(...)`. Existing-stream HTTP methods resolve with `protocol.get(...)` first, then call the returned bound protocol stream.
-
-### HTTP read cache visibility
-
-`createHttpHandler` and `createReadOnlyHttpHandler` treat catch-up pages and stable-offset
-long-poll responses as private cache entries by default. A server exposing only shared,
-non-user-specific streams can opt in explicitly with `cacheVisibility: "public"`.
-
-`offset=now`, empty long-poll responses, and every `HEAD` outcome use `Cache-Control: no-store`.
-Stable catch-up and non-empty stable-offset long-poll responses carry closure-sensitive ETags.
-Both built-in HTTP facades answer CORS preflight and allow browser conditional reads using
-`If-None-Match`.
-
-## Offset generation
-
-Offsets are opaque strings ordered by ordinary lexicographic comparison. The default
-`defaultOffsetGenerator` preserves Streamsy's existing wire values
-(`0000000000000000_0000000000000000`, then fixed-width counter values). Default HTTP validation
-accepts only that canonical fixed-width form, so non-canonical values such as `1_0` are rejected
-rather than being used as unsafe lexical boundaries.
-
-Supply `offsetGenerator` to use another scheme such as monotonic ULIDs:
+## Typed in-process work
 
 ```ts
-import { monotonicFactory } from "ulid";
-import { createStreamProtocol, type OffsetGenerator } from "@streamsy/core";
+import { Effect, Schema, Stream } from "effect";
+import { Streams, StreamRef } from "@streamsy/core";
 
-const ulid = monotonicFactory();
-const offsetGenerator: OffsetGenerator = {
-  // Must be a valid token that sorts before every value returned by `next`.
-  initialOffset: "00000000000000000000000000",
-  next: () => ulid(),
-  isValid: (offset) => /^[0-9A-HJKMNP-TV-Z]{26}$/.test(offset),
-};
-
-const protocol = createStreamProtocol({
-  storage: { adapter },
-  offsetGenerator,
+const events = StreamRef.json("events", { schema: Schema.Struct({ text: Schema.String }) });
+const program = Effect.gen(function* () {
+  yield* Streams.create(events);
+  const result = yield* Streams.append(events, [{ text: "hello" }]);
+  if (result.status !== "appended") return result;
+  return yield* Streams.read(events).pipe(Stream.runCollect);
 });
+// The application owns this runtime; reusable library functions return Effects.
+await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
-Core calls `next(previous)` once for every logical message in a mutation (including JSON batch
-items), chains the returned strings, and rejects a value before storage if it is invalid, reserved,
-contains a protocol delimiter, or is not strictly lexicographically greater than `previous`.
-Generators do not parse or update `StreamRecord.counter`; that persisted field remains only for
-backwards-compatible adapter records. Use one offset scheme for the lifetime of persisted streams;
-switching generators over existing data is not an automatic migration.
+`Streams.read` catches up; `follow` includes live reads; `items` flattens batches.
+Missing/gone streams fail with `StreamUnavailable`; codec failures use `EncodeFault`
+and `DecodeFault`. A decode failure stops that read/follow; restarting from an
+explicit offset is the caller's policy, with no automatic bad-item skip.
+`Streams.session(ref)` exposes protocol classifications. `Fold.run` reduces a
+stream. `Producer.append` takes a producer id, epoch and sequence; `Producer.next`
+advances a tuple only after an acknowledged append or duplicate.
 
-## Rich append acknowledgements
+Protocol outcomes are success values such as `created`, `exists`, `appended`,
+`duplicate`, `conflict`, `not-found`, `gone`, `timeout`, `stale-epoch` and
+`producer-gap`. Storage failures use the typed error channel. A duplicate proves
+an accepted tuple, not equality of retry payloads: owners must retain exact bytes.
+Fold's journal enforces that ownership and equality for its memory proof.
 
-The fixed `StreamProtocolHandle.append` method accepts ordinary sequence coordination, an optional
-`producer` tuple, and Streamsy's `expectedOffset` precondition. A successful call returns the exact
-`offset` from that append response. Producer retries distinguish a new `appended` batch from
-`duplicate`, and both results preserve the returned producer epoch and sequence.
+## Expected-offset concurrency
+
+An append's `expectedOffset` checks the current tail atomically with its mutation.
+A mismatch returns `conflict` / `expected-offset` with the actual offset, without
+writing messages or producer state. `ZERO_OFFSET` names an empty stream. Offsets
+are canonical fixed-width opaque tokens, ordered lexicographically; do not compare
+positions belonging to different streams.
+
+HTTP maps malformed expected offsets to 400, mismatches to 409 with
+`stream-next-offset`, and closed conflicts to 409 with `stream-closed: true`.
+Producer validation and the existing content-type/sequence/closed checks retain
+their precedence. Close-only compatibility corners, expiry parsing, caching,
+batch limits and cancellation are documented in [HTTP behavior](http.md).
+
+## Host and storage lifetime
 
 ```ts
-const result = await client.stream("orders").append(serializedBatch, {
-  contentType: "application/json",
-  producer: { producerId: "orders-v1", producerEpoch: 7, producerSeq: 42 },
-  expectedOffset: outputTail,
-});
+import { Streams } from "@streamsy/core";
+import * as BunHost from "@streamsy/serve/bun";
+
+const host = await BunHost.serve({ layer: Streams.layerMemory(), port: 3000 });
+// On shutdown:
+await host.stop();
 ```
 
-`duplicate` means only that the producer sequence was already accepted. It does not verify that a
-retry supplied the same bytes. Stale epochs, producer gaps, invalid epoch/sequence transitions, and
-expected-offset conflicts are separate typed results. Missing required success metadata is a
-`parse-error`; the client never follows an append with `HEAD` to manufacture an acknowledgement.
-
-The pinned `@durable-streams/client` append API discards this response data, so `@streamsy/http-client`
-uses a narrow non-batching POST path for append while retaining the upstream client for reads,
-metadata, and its retry utility. One append call therefore means one POST unless that POST receives
-a retryable transport/server failure. Simple callers that only narrow on `status === "appended"`
-remain source-compatible; producer callers must handle the newly truthful `duplicate` member.
-
-## Optimistic concurrency: `expectedOffset` (Streamsy extension)
-
-`AppendOptions.expectedOffset` is a compare-and-swap precondition: the append succeeds only if the
-stream's tail offset still equals the given offset. On mismatch nothing is written (messages, close
-flag, and producer state are untouched) and the append returns
-`{ status: "conflict", conflictReason: "expected-offset", offset }`, where `offset` is the actual
-tail. `ZERO_OFFSET` means "append only if a default-generator stream is still empty". For a custom scheme, use `protocol.offsetGenerator.initialOffset`. The check is atomic with the
-append because the protocol builds a declarative mutation plan and the storage adapter commits that
-plan with an atomic per-stream compare-and-swap.
-
-The intended pattern is a materialize → validate → append → retry loop:
-
-```ts
-for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-  const { state, headOffset } = await materialize(stream); // read until upToDate
-  const event = buildEvent(state, input); // rebuild from fresh state each attempt
-  const result = await stream.append({ ...event, expectedOffset: headOffset });
-  if (result.status === "appended") return result;
-  if (result.status === "conflict" && result.conflictReason === "expected-offset") continue;
-  throw new Error("append failed");
-}
-```
-
-Because a successful CAS proves no event landed between the read and the append, validation always
-ran against exactly the state the append is conditioned on — correct across processes and storage
-adapters without server-side queues.
-
-Over HTTP the precondition is the `Stream-Expected-Offset` request header on `POST`:
-
-- absent header: appends behave exactly as in the upstream Durable Streams protocol (the extension
-  is opt-in);
-- malformed offset: `400 Invalid expected offset`;
-- mismatch: `409` with body `Expected offset mismatch` and the actual tail in `stream-next-offset`
-  (distinguishable from the closed-stream `409`, which carries `stream-closed: true`).
-
-Notes:
-
-- precedence: `closed`, `content-type`, and `sequence` conflicts are reported before
-  `expected-offset`;
-- a close-only append on an already-closed stream remains an idempotent success and skips the
-  check (nothing is written, so no update can be lost);
-- `expectedOffset` is per-append: it is not meaningful with `@streamsy/core/json`'s `appendMany`, whose
-  appends run concurrently;
-- this is a Streamsy extension — the upstream Durable Streams protocol has no append precondition.
-
-## Storage adapters
-
-Storage packages implement one flat `StorageAdapter`. Every per-stream method takes `streamId`
-first, the lifecycle intents (`create` / `fork` / `delete`) take a plan that carries the id, and
-nothing lifetime-bearing or non-serializable crosses the seam (no returned per-stream handle, no
-`AbortSignal`). See [`adapter-authoring.md`](./adapter-authoring.md) for the full contract.
-
-Storage authors implement:
-
-- **reads**: `getRecord(streamId)`, `listMessages(streamId, options?)`,
-  `getProducerState(streamId, producerId)`.
-- **write**: `append(streamId, AppendPlan)` applies one atomic mutation — pre-framed messages, the
-  required record patch (offset advance plus the compatibility counter, with `lifecycle.closed` folding a close, and a
-  lifecycle-only TTL renewal as the one shape that patches without advancing), an
-  optional producer compare-and-set, all guarded by `preconditions` (`expectedOffset` /
-  `expectedClosed` / producer CAS). It returns `appended` with the fresh record or
-  `precondition-failed` with `reason` (`offset` | `closed` | `producer`) and the latest record. A
-  lifecycle-only TTL "touch" is an `append` whose patch carries only `lifecycle.expiresAtMs`.
-- **live wait** (required): `awaitChange(streamId, AwaitChangeOptions)` is level-triggered and fully
-  serializable. A backend that can wake cheaply does so; one that cannot implements `awaitChange` by
-  polling its own durable reads. Core wires in no polling fallback, but exports the
-  contract-faithful loop (`runAwaitChangeLoop`) so an adapter supplies only `readRecord` +
-  `waitForWake`.
-- **expiry**: `scheduleExpiry(streamId, at)`, `cancelExpiry(streamId)`.
-- **lifecycle**: `create(CreatePlan)`, optional `fork(ForkPlan)`, `delete(DeletePlan)` materialize
-  existence and adapter-private lineage. `fork` is capability-by-presence: omit it and forks are
-  `not-supported` for that backend (no core fork fallback), while every non-fork operation stays
-  fully supported.
-
-Expiry scheduling is core's responsibility: after a successful mutation core calls
-`scheduleExpiry` / `cancelExpiry` back on the adapter. Plans carry no after-commit effects —
-adapters only persist the plan.
-
-Consistency boundary:
-
-- operations on one stream are per-stream linearizable through the adapter's atomic commit point
-  (SQLite transaction/CAS, Durable Object input-gate turn, or synchronous memory section);
-- cross-stream operations are not globally atomic. Fork edge registration and delete/GC cascades are
-  convergent, idempotent sagas. A retry or later GC/delete pass can repair a missing lineage edge or
-  finish reclaiming an already-soft-deleted parent.
-
-Protocol-bound streams are distinct from storage-bound streams:
-
-- storage streams persist records/messages through the storage-author seam;
-- protocol streams expose durable-stream operations: `append`, `read`, `readNext`, `metadata`, and `delete`.
-
-## Packages
-
-| Package                            | Purpose                                                                                                                         |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `@streamsy/core`                   | Protocol factory, HTTP handler, shared result/types, and the in-memory `StorageAdapter` for tests, examples, and local servers. |
-| `@streamsy/core/json`              | Typed JSON protocol/stream wrappers over a `StreamProtocolFactory`.                                                             |
-| `@streamsy/state`                  | Durable State protocol/stream wrappers: typed change/control messages over collections.                                         |
-| `@streamsy/storage/fs`             | JSONL filesystem `StorageAdapter` for simple durable persistence.                                                               |
-| `@streamsy/storage/sqlite`         | Bun `bun:sqlite` `StorageAdapter` for durable local persistence.                                                                |
-| `@streamsy/storage/durable-object` | Cloudflare Durable Object `StorageAdapter`; the `DurableObjectStreamStorage` class lives at `/durable-object/storage`.          |
-
-## Public exports
-
-Core exports include:
-
-- `createStreamProtocol`, `StreamProtocol`, `createHttpHandler`, `HttpHandler`, `ZERO_OFFSET`, `defaultOffsetGenerator`, `InvalidGeneratedOffsetError`, and the `OffsetGenerator` type
-- protocol result/input types including `ProtocolStream`, `ProtocolGetResult`, `CreateResult`, `AppendResult`, `ReadResult`, `ReadNextResult`, `MetadataResult`, and `DeleteResult`
-- the flat storage-adapter seam: `StorageAdapter` (with the grouping facets `StreamReader`, `StreamAppender`, `StreamLiveWaiter`, `StreamExpiryScheduler`), plan types `AppendPlan`, `CreatePlan`, `ForkPlan`, `DeletePlan`, adapter result types `StorageAppendResult`, `StorageCreateResult`, `StorageForkResult`, `StorageDeleteResult`, and the live-wait types `StreamChangeSnapshot`, `AwaitChangeOptions`, `AwaitChangeResult`
-- the core-internal per-stream binding for adapter authors and tests: `bindStream` and `BoundStream`
-- the level-triggered `awaitChange` building blocks every adapter uses to implement its live wait (including a polling one): `runAwaitChangeLoop` (with `AwaitChangeLoopDeps`), `buildChangeSnapshot`, `changeSnapshotDiffers`, and `compareOffsets`
-- the reusable adapter conformance kit: `runStorageAdapterContract` (with `MakeStorageAdapter` and `StorageAdapterContractHarness`), also published on its own at `@streamsy/core/testing`
-- lineage strategy helpers for storage authors: `LineageStore`, `LineagePolicy`, `cascadeReclaim`, `plainPurge`, `refCountLineage`, `reverseIndexLineage`, `copyOnForkReclaim`, and `ttlOnlyReclaim`
-- structured unsupported-feature helpers including `notSupported`, `isNotSupported`, `NotSupportedError`, and `unsupported`
-- the in-memory storage adapter: `createMemoryStorageAdapter` and `MemoryStorageAdapterOptions`
-
-JSON exports (`@streamsy/core/json`):
-
-- `createJsonProtocol`, `JsonProtocol`, `JsonStream`, `JsonValidationError`, `normalizeJsonCodec`, `JSON_CONTENT_TYPE`
-- types including `JsonCodec`, `JsonSchema`, `JsonStoredMessage`, and the typed create/get/read/readNext result and option types
-
-State exports (`@streamsy/state`):
-
-- `createDurableStateProtocol`, `DurableStateProtocol`, `DurableStateStream`
-- types including `DurableStateCollectionDef`, `DurableStateMessage`, `ChangeMessage`, `ControlMessage`, and the typed create/get/read result and option types
-- re-exports `JsonCodec` and `JsonSchema` from `@streamsy/core/json` for schema authoring
-
-Durable Object exports:
-
-- `createDurableObjectStorageAdapter` and `DurableObjectStorageAdapterOptions`
-- `DurableObjectStreamStorage`
+Memory is process-local and nonpersistent. Its default mode provides store-wide
+atomic mutations and chain forks; constrained mode provides stream atomicity,
+copy forks, polling wakes and lazy expiry. The Bun host acquires its Layer lazily
+and expires streams on access. See [storage contract](storage-contract.md) for the
+authoring seam. No persistent protocol backend, hosted DO, read-only trust facade
+or Effect fetch client is shipped by this Step 1 package swap.

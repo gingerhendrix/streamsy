@@ -14,7 +14,7 @@
     "@effect/ai-anthropic": "4.0.0-rc.109",
     "@effect/ai-openai": "4.0.0-rc.109",
     "@humanlayer/fold-core": "0.1.4",
-    "@streamsy/core-next": "workspace:*",
+    "@streamsy/core": "workspace:*",
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {

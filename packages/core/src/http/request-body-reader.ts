@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import type { HttpServerRequest } from "effect/unstable/http";
 import { HttpResponseFactory } from "./responses.ts";
 
 export type BodyReadResult =
@@ -10,17 +12,21 @@ export class RequestBodyReader {
     private responses: HttpResponseFactory,
   ) {}
 
-  async read(request: Request): Promise<BodyReadResult> {
-    let data: ArrayBuffer;
-    try {
-      data = await request.arrayBuffer();
-    } catch (error) {
-      console.error("Error reading request body:", error);
-      return { ok: false, response: this.responses.payloadTooLarge() };
-    }
-    if (data.byteLength > this.maxMessageSize) {
-      return { ok: false, response: this.responses.payloadTooLarge() };
-    }
-    return { ok: true, data: new Uint8Array(data), byteLength: data.byteLength };
-  }
+  readonly read = Effect.fn("Http.readBody")(function* (
+    this: RequestBodyReader,
+    request: HttpServerRequest.HttpServerRequest,
+  ): Effect.fn.Return<BodyReadResult> {
+    return yield* request.arrayBuffer.pipe(
+      Effect.map(
+        (data): BodyReadResult =>
+          data.byteLength > this.maxMessageSize
+            ? { ok: false, response: this.responses.payloadTooLarge() }
+            : { ok: true, data: new Uint8Array(data), byteLength: data.byteLength },
+      ),
+      Effect.orElseSucceed(() => ({
+        ok: false as const,
+        response: this.responses.payloadTooLarge(),
+      })),
+    );
+  });
 }

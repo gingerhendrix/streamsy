@@ -9,12 +9,13 @@
     "build": "bun run scripts/build-client.ts",
     "start": "bun run build && bun run src/server/index.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
-    "test": "bun test src/server",
-    "typecheck": "tsc --noEmit"
+    "test": "bun run test:unit",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test src/server"
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.1",
-    "@streamsy/core-next": "workspace:*",
+    "@streamsy/core": "workspace:*",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "^0.1.83",
     "effect": "4.0.0-rc.112",

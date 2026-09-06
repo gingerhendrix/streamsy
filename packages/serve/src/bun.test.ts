@@ -1,14 +1,7 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web executable edge lifecycle test.
 import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Effect, Exit, Layer, Stream } from "effect";
-import {
-  Memory,
-  Protocol,
-  Storage,
-  Streams,
-  StreamsReader,
-  StreamsWriter,
-} from "@streamsy/core-next";
+import { Memory, Protocol, Storage, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import { serve } from "./bun.ts";
 
 for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {

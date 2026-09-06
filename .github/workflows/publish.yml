@@ -36,11 +36,11 @@ jobs:
 
       - run: bun run test:unit
 
-      - run: bun run test:conformance:client
-
       - run: bun run test:conformance:memory
 
-      - run: bun run test:conformance:sqlite
+      - run: bun run check:perimeter
+
+      - run: bun run lint:policy
 
       - name: Read version from root package.json
         run: |
@@ -56,11 +56,8 @@ jobs:
 
           PACKAGES=(
             packages/core
-            packages/http-client
-            packages/streams
-            packages/projection
-            packages/state
-            packages/storage
+            packages/views
+            packages/serve
           )
 
           for pkg in "${PACKAGES[@]}"; do
@@ -76,11 +73,8 @@ jobs:
         run: |
           PACKAGES=(
             packages/core
-            packages/http-client
-            packages/streams
-            packages/projection
-            packages/state
-            packages/storage
+            packages/views
+            packages/serve
           )
 
           for pkg in "${PACKAGES[@]}"; do

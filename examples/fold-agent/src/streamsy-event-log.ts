@@ -13,7 +13,7 @@ import {
   type EventLogService,
   type LogEntryInput,
 } from "@humanlayer/fold-core";
-import { StreamUnavailable, Streams } from "@streamsy/core-next";
+import { StreamUnavailable, Streams } from "@streamsy/core";
 import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 import type { StreamsyStore } from "./storage.ts";
 import {

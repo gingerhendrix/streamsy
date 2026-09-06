@@ -31,11 +31,15 @@ export class HttpResponseFactory {
     });
   }
 
-  text(message: string | null, status: number, headers?: HeadersInit): Response {
+  text(
+    message: string | null,
+    status: number,
+    headers?: ConstructorParameters<typeof Headers>[0],
+  ): Response {
     return new Response(message, { status, headers });
   }
 
-  empty(status: number, headers?: HeadersInit): Response {
+  empty(status: number, headers?: ConstructorParameters<typeof Headers>[0]): Response {
     return new Response(null, { status, headers });
   }
 
@@ -51,7 +55,7 @@ export class HttpResponseFactory {
     return new Response(message, { status: 410 });
   }
 
-  conflict(message: string | null, headers?: HeadersInit): Response {
+  conflict(message: string | null, headers?: ConstructorParameters<typeof Headers>[0]): Response {
     return new Response(message, { status: 409, headers });
   }
 
