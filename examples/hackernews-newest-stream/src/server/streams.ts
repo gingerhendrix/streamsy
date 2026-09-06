@@ -1,72 +1,52 @@
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  directProtocolClient,
-  StreamProtocol,
-  type JsonValue,
-  type StorageAdapter,
-  type StreamProtocolClient,
-} from "@streamsy/core";
-import { Effect } from "effect";
-import { streamContentType, streamPrefix } from "./config.ts";
-import { pollFailure, type PollFailure } from "./poller/contract.ts";
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core-next";
+import * as Http from "@streamsy/core-next/http";
+import { Context, Effect, Layer } from "effect";
+import { streamPrefix } from "./config.ts";
+import { pollFailure } from "./poller/contract.ts";
 import { hackerNewsResources, hackerNewsSource } from "./stream-resources.ts";
 import type { HackerNewsSourceChange } from "./story-index-projection.ts";
 
 export { hackerNewsResources, hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
-
-export class DemoStreams {
-  private readonly protocol: StreamProtocol;
-  readonly client: StreamProtocolClient;
-  private readonly handler: ReturnType<typeof createHttpHandler>;
-
-  constructor(adapter?: StorageAdapter) {
-    this.protocol = new StreamProtocol({
-      storage: { adapter: adapter ?? createMemoryStorageAdapter() },
-    });
-    this.handler = createHttpHandler({ protocol: this.protocol, pathPrefix: streamPrefix });
-    this.client = directProtocolClient(this.protocol);
+const appendSourceBatch = Effect.fn("DemoStreams.appendSourceBatch")(function* (
+  items: readonly HackerNewsSourceChange[],
+) {
+  const result = yield* Streams.append(hackerNewsSource.ref, items).pipe(
+    Effect.mapError(pollFailure("appendSourceBatch")),
+  );
+  if (result.status !== "appended")
+    return yield* pollFailure("appendSourceBatch")(`Unexpected append: ${result.status}`);
+  return result.offset;
+});
+export class DemoStreams extends Context.Service<
+  DemoStreams,
+  {
+    readonly fetch: (request: Request) => Promise<Response>;
+    readonly appendSourceBatch: (
+      items: readonly HackerNewsSourceChange[],
+    ) => Effect.Effect<string, import("./poller/contract.ts").PollFailure>;
   }
+>()("HackerNews/DemoStreams") {}
 
-  // oxlint-disable-next-line effecttsgo/async-function -- This method preserves the public Promise adapter lifecycle used by the Bun and test edges.
-  async start(): Promise<void> {
+/** The HTTP conversion reuses the acquired services, never builds a second store. */
+export const demoStreamsLayer = Layer.effect(
+  DemoStreams,
+  Effect.gen(function* () {
+    const context = yield* Effect.context<StreamsReader | StreamsWriter>();
     for (const resource of hackerNewsResources) {
-      const result = await this.client
-        .stream(resource.streamId)
-        .create({ contentType: streamContentType });
-      if (result.status !== "created" && result.status !== "conflict") {
-        throw new Error(
-          `Unable to create Streamsy demo stream ${resource.streamId}: ${result.status}`,
+      const result = yield* Streams.create(resource.ref);
+      if (result.status !== "created" && result.status !== "exists")
+        return yield* Effect.die(
+          new Error(`Unable to create ${resource.streamId}: ${result.status}`),
         );
-      }
     }
-  }
-
-  // oxlint-disable-next-line effecttsgo/async-function -- This method preserves the public Promise protocol adapter API consumed by appendSourceBatchFromPromise.
-  async appendSourceBatch(items: readonly JsonValue[]): Promise<string> {
-    const result = await this.client.stream(hackerNewsSource.streamId).appendJsonBatch(items);
-    if (result.status !== "appended" && result.status !== "duplicate") {
-      throw new Error(`Unable to append Hacker News source batch: ${result.status}`);
-    }
-    return result.offset;
-  }
-
-  // oxlint-disable-next-line effecttsgo/async-function -- createHttpHandler exposes a Promise-native Web fetch contract.
-  async fetch(request: Request): Promise<Response> {
-    return this.handler.fetch(request);
-  }
-
-  // oxlint-disable-next-line effecttsgo/async-function -- This method preserves the public Promise adapter lifecycle used by the Bun and test edges.
-  async close(): Promise<void> {
-    await this.client.close();
-  }
-}
-
-/** Adapt a Promise-based source append (such as DemoStreams) to the sink contract. */
-export const appendSourceBatchFromPromise =
-  (append: (changes: readonly HackerNewsSourceChange[]) => Promise<string>) =>
-  (changes: readonly HackerNewsSourceChange[]): Effect.Effect<string, PollFailure> =>
-    Effect.tryPromise({
-      try: () => append(changes),
-      catch: pollFailure("appendSourceBatch"),
+    const edge = yield* Effect.acquireRelease(
+      Effect.sync(() => Http.makeEdge({ pathPrefix: streamPrefix }, Layer.succeedContext(context))),
+      (acquired) => Effect.promise(() => acquired.dispose()),
+    );
+    return DemoStreams.of({
+      fetch: (request) => edge.handler(request),
+      appendSourceBatch: (items) => appendSourceBatch(items).pipe(Effect.provide(context)),
     });
+  }),
+);
+export const demoMemoryLayer = demoStreamsLayer.pipe(Layer.provideMerge(Streams.layerMemory()));

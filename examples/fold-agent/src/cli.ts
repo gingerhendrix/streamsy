@@ -5,11 +5,12 @@
  * stream.
  *
  *   start  <prompt>              start a fresh session and run one turn
- *   resume <stream-id> <prompt>  continue that session in a brand-new process
+ *   resume <stream-id> <prompt>  continue that session (SQLite deferred to Step 2)
  *   inspect <stream-id>          print the durable log without touching a model
  *
  * `start` and `resume` need provider credentials; `inspect` deliberately does
  * not, because reading durable state should never require an API key.
+ * File-backed commands are unavailable until the Step 2 SQLite storage gate.
  */
 import {
   resumeSession,
@@ -22,12 +23,18 @@ import {
 import { Cause, Effect, Exit, Schema } from "effect";
 import { exampleAgent, MissingCredentialsError, modelFromEnv } from "./agent.ts";
 import { formatEntry } from "./render.ts";
-import { databasePathFromEnv, openStore, sessionStreamId, type StreamsyStore } from "./storage.ts";
+import {
+  databasePathFromEnv,
+  openStore,
+  sessionStreamId,
+  StorageNotAvailable,
+  type StreamsyStore,
+} from "./storage.ts";
 import { readFoldLog, streamsyEventLog } from "./streamsy-event-log.ts";
 
 const USAGE = `Usage:
   bun run src/cli.ts start   "<prompt>"
-  bun run src/cli.ts resume  <stream-id> "<prompt>"
+  bun run src/cli.ts resume  <stream-id> [--epoch <n>] [--takeover] "<prompt>"
   bun run src/cli.ts inspect <stream-id>
 
 Environment:
@@ -55,7 +62,7 @@ const printTurn = (session: FoldSession, streamId: string) =>
 
 const withStore = <A, E>(run: (store: StreamsyStore) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {
-    const store = openStore({ filename: databasePathFromEnv(process.env) });
+    const store = yield* openStore({ filename: databasePathFromEnv(process.env) });
     return yield* run(store).pipe(Effect.ensuring(Effect.promise(() => store.close())));
   });
 
@@ -70,7 +77,7 @@ const start = (prompt: string) =>
         Effect.gen(function* () {
           const session = yield* startSession({
             agent: exampleAgent(model),
-            log: streamsyEventLog({ binding: store.bind(streamId), mode: "create" }),
+            log: streamsyEventLog({ store, streamId, mode: "create" }),
             sessionId,
             cwd: process.cwd(),
           });
@@ -81,7 +88,7 @@ const start = (prompt: string) =>
     );
   });
 
-const resume = (streamId: string, prompt: string) =>
+const resume = (streamId: string, prompt: string, epoch?: number, takeover = false) =>
   Effect.gen(function* () {
     const model = yield* modelFromEnv(process.env);
 
@@ -90,7 +97,12 @@ const resume = (streamId: string, prompt: string) =>
         Effect.gen(function* () {
           const session = yield* resumeSession({
             agent: exampleAgent(model),
-            log: streamsyEventLog({ binding: store.bind(streamId), mode: "resume" }),
+            log: streamsyEventLog({
+              store,
+              streamId,
+              mode: takeover ? "takeover" : "resume",
+              epoch,
+            }),
           });
           yield* session.send(prompt);
           yield* printTurn(session, streamId);
@@ -101,7 +113,7 @@ const resume = (streamId: string, prompt: string) =>
 
 const inspect = (streamId: string) =>
   withStore((store) =>
-    readFoldLog(store.bind(streamId)).pipe(
+    readFoldLog(store, streamId).pipe(
       Effect.tap((entries) =>
         Effect.sync(() => {
           for (const entry of entries) console.log(formatEntry(entry));
@@ -113,7 +125,41 @@ const inspect = (streamId: string) =>
     ),
   );
 
-type CliError = UsageError | MissingCredentialsError | EventLogError | SubagentNotFoundError;
+export const parseResumeArgs = (args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const [streamId, ...rest] = args;
+    const promptParts: string[] = [];
+    let epoch: number | undefined;
+    let takeover = false;
+    for (let i = 0; i < rest.length; i++) {
+      const arg = rest[i];
+      if (arg === "--epoch") {
+        const value = rest[++i];
+        if (
+          epoch !== undefined ||
+          value === undefined ||
+          !/^\d+$/.test(value) ||
+          !Number.isSafeInteger(Number(value))
+        )
+          return yield* usage();
+        epoch = Number(value);
+      } else if (arg === "--takeover") {
+        if (takeover) return yield* usage();
+        takeover = true;
+      } else if (arg?.startsWith("--")) return yield* usage();
+      else if (arg !== undefined) promptParts.push(arg);
+    }
+    const prompt = promptParts.join(" ").trim();
+    if (!streamId || !prompt || (epoch !== undefined && takeover)) return yield* usage();
+    return { streamId, prompt, epoch, takeover };
+  });
+
+type CliError =
+  | StorageNotAvailable
+  | UsageError
+  | MissingCredentialsError
+  | EventLogError
+  | SubagentNotFoundError;
 
 const main = (argv: ReadonlyArray<string>): Effect.Effect<unknown, CliError> => {
   const [command, ...rest] = argv;
@@ -124,10 +170,11 @@ const main = (argv: ReadonlyArray<string>): Effect.Effect<unknown, CliError> => 
       return start(prompt);
     }
     case "resume": {
-      const [streamId, ...promptParts] = rest;
-      const prompt = promptParts.join(" ").trim();
-      if (streamId === undefined || prompt === "") return Effect.fail(usage());
-      return resume(streamId, prompt);
+      return parseResumeArgs(rest).pipe(
+        Effect.flatMap(({ streamId, prompt, epoch, takeover }) =>
+          resume(streamId, prompt, epoch, takeover),
+        ),
+      );
     }
     case "inspect": {
       const [streamId] = rest;
@@ -139,13 +186,15 @@ const main = (argv: ReadonlyArray<string>): Effect.Effect<unknown, CliError> => 
   }
 };
 
-const exit = await Effect.runPromiseExit(main(process.argv.slice(2)).pipe(Effect.asVoid));
-if (Exit.isFailure(exit)) {
-  const failure = Cause.findErrorOption(exit.cause);
-  console.error(
-    failure._tag === "Some" && failure.value instanceof Error
-      ? failure.value.message
-      : Cause.pretty(exit.cause),
-  );
-  process.exitCode = 1;
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(main(process.argv.slice(2)).pipe(Effect.asVoid));
+  if (Exit.isFailure(exit)) {
+    const failure = Cause.findErrorOption(exit.cause);
+    console.error(
+      failure._tag === "Some" && failure.value instanceof Error
+        ? failure.value.message
+        : Cause.pretty(exit.cause),
+    );
+    process.exitCode = 1;
+  }
 }

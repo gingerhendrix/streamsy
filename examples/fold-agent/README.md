@@ -1,114 +1,73 @@
 # fold-agent
 
-A [Fold Core](https://www.npmjs.com/package/@humanlayer/fold-core) agent whose
-append-only event log is one Streamsy durable stream, written Effect-native
-against the `@streamsy/streams` capabilities.
+A Fold Core agent backed by Streamsy's Effect services. Fold owns the agent
+loop, tool settlement and conversation projections. Streamsy stores the Fold
+log and its append journal through `@streamsy/core-next`.
 
-Fold runs unchanged: it keeps the agent loop, tool settlement, projections,
-interruption, and resume semantics. Streamsy owns durability through Fold's
-`eventLogSource` seam. The demo message is:
+This release step proves recovery **inside one process and one memory Layer**.
+`openMemoryStore()` acquires the Layer once and returns its context and `close`.
+New Fold session scopes can reuse that context. Closing the store loses its data.
+File-backed `openStore` fails with `StorageNotAvailable`: SQLite arrives in Step 2.
 
-> Durable Streams are the data primitive for the agent loop, while Fold owns
-> the loop semantics.
+## Data flow and ownership
 
-## Effect-native shape
+A session uses `fold/sessions/<id>/events`, `fold/sessions/<id>/journal`, and
+producer id `fold-session:<id>`. Fold entry sequences and producer sequences are
+separate; producer sequence starts at zero in each epoch.
 
-The adapter consumes the experimental Effect capabilities instead of bridging
-the Promise client by hand:
+Under an adapter semaphore, each append mints and encodes one Fold entry, writes
+its exact `Pending` payload and tuple to the journal under `expectedOffset` CAS,
+then calls `Producer.append`. Retryable storage failures get five total attempts
+with the same tuple and bytes. Both `appended` and `duplicate` acknowledge intent.
+No acknowledgement row is necessary: the log itself proves acknowledgement.
 
-- `CreateStreams.create` creates a session log through a typed write capability.
-- `ReadStreams.open` acquires scoped read sessions. One catch-up session backs
-  `entries()`; one long-poll session backs `subscribe()`, so backlog and live
-  tail are the same call and there is no catch-up/live boundary to lose an
-  entry across.
-- `AppendStreams.appendJsonBatch` commits each Fold entry under an
-  exact-offset precondition (`expectedOffset`).
-- `StreamCreateError` / `StreamReadError` / `StreamAppendError` carry the failure classification;
-  the adapter maps them to Fold's typed `EventLog` errors.
-- Capabilities are a `Layer`, so tests can swap in
-  `TestStreamsLayer(...)` from `@streamsy/streams/testing` and
-  script capability behaviour with no transport at all.
+Recovery validates contiguous Fold entries, the initial `session_started`, and
+all journal sequence/payload bindings. It settles the last unacknowledged Pending
+before appending a same-epoch resume marker or a new takeover epoch. That marker's
+CAS transfers journal ownership; an old adapter cannot journal new intent.
+A delayed old log append carries only its already-journaled tuple. It can settle
+that intent before takeover's first new append, or receive `stale-epoch` after it.
+This is not an activation lease or transparent continuation of a live agent.
 
-Stream creation, reads, and appends all cross the same injectable Effect
-capability boundary. The Live layers own Promise-client adaptation, while tests
-can replace the complete stream interface without constructing a transport.
+After an exhausted failure or interruption during append, that adapter refuses
+new payloads; reconstruct through resume to settle uncertain intent first.
+Journal conflicts fail fenced. Invalid producer sequence outcomes are corrupt
+journal defects. Closed/missing streams and operational failures remain errors.
+Entries and subscriptions decode through Fold's own v1 contract.
 
-## Commands
+## CLI and persistence boundary
 
-```bash
-# Start a session, run one prompt, and print the resumable stream id.
-OPENAI_API_KEY=... bun run --cwd examples/fold-agent start \
-  "Use the text_stats tool on 'hello from Streamsy'"
+The CLI compiles, but default `start`, `resume`, and `inspect` use a file path and
+cannot run until Step 2 SQLite support. Their persistence smoke remains explicitly
+skipped with its seed/close/child-inspect body retained in the tests.
 
-# Simulate a new process and continue the same Fold session.
-OPENAI_API_KEY=... bun run --cwd examples/fold-agent resume \
-  <stream-id> "What did the tool return earlier?"
-
-# Inspect the durable Fold facts without starting the model.
-bun run --cwd examples/fold-agent inspect <stream-id>
+```text
+start   <prompt>
+resume  <stream-id> [--epoch <n>] [--takeover] <prompt>
+inspect <stream-id>
 ```
 
-Environment:
+Without an epoch flag, resume uses the last journal epoch. `--epoch` requires an
+exact match; `--takeover` increments it. The flags are mutually exclusive.
+`FOLD_AGENT_DB` retains its default `examples/fold-agent/.data/agent.sqlite`.
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `FOLD_AGENT_MODEL` retain their provider
+selection meanings. Inspect rendering requires no model credentials.
 
-| Variable            | Meaning                                                        |
-| ------------------- | -------------------------------------------------------------- |
-| `FOLD_AGENT_DB`     | SQLite path (default `examples/fold-agent/.data/agent.sqlite`) |
-| `OPENAI_API_KEY`    | Use an OpenAI-compatible provider (first choice)               |
-| `ANTHROPIC_API_KEY` | Use Anthropic when no OpenAI key is set                        |
-| `FOLD_AGENT_MODEL`  | Override the provider model id                                 |
-
-`inspect` needs no credentials. Reading durable state never requires an API
-key.
-
-## Ownership model
-
-One Fold session is one Streamsy stream: `fold/sessions/<session-id>/events`.
-
-| Concern                                         | Authority                                                  |
-| ----------------------------------------------- | ---------------------------------------------------------- |
-| Session history, tool results, completion facts | Fold log entries stored in the Streamsy stream             |
-| Durable ordering and read checkpoint            | Streamsy offset                                            |
-| Agent semantic order                            | Fold `seq`                                                 |
-| Conversation state and model-visible messages   | Fold projections over replayed entries                     |
-| Live text/reasoning deltas                      | Fold ephemeral session events (not persisted)              |
-| SQLite file                                     | Storage implementation detail behind the Streamsy protocol |
-
-Streamsy offsets are opaque transport checkpoints. Fold `seq` is the
-agent-domain sequence carried inside each message. Neither is derived from the
-other.
-
-Appends are committed under an exact-offset compare-and-swap before anything
-becomes observable. A competing writer is fenced with a typed error, never
-silently re-sequenced: re-sequencing would graft an entry from a live Fold
-runtime onto history that runtime has never seen.
-
-## Non-claims
-
-- **Single-writer only.** The CAS detects a competing writer; it does not
-  elect one. No activation lease, no fencing token, no transparent
-  continuation.
-- **No in-flight model-call resume.** Fold's durable markers describe a
-  mid-turn process loss; the upstream provider request is gone.
-- **Full-history replay.** `entries()` re-reads durable storage each call.
-  Fine for an example; a service needs snapshots, retention, and pagination.
-- Fold context compaction writes semantic summary entries; it does not remove
-  old durable facts, and this example never compacts the Streamsy log.
-
-## Tests
+## Verification and limits
 
 ```bash
+bun run --cwd examples/fold-agent typecheck
 bun run --cwd examples/fold-agent test:unit
 ```
 
-The suite runs without provider credentials. A scripted `LanguageModel` drives
-Fold through a real tool turn, a SQLite close/reopen restart, and a resume
-with prior context. Adapter contract tests run over both the memory and SQLite
-storage backends, plus a transport-free capability-injection test through
-`TestStreamsLayer`.
+Tests drive a real scripted Fold tool turn and reconstruct it in a fresh scope,
+exercise faults before/after commit, recover journal-only intent, and fence an old
+owner during takeover. These prove memory-Layer behavior, not cross-process
+persistence. Full-history recovery is O(log + journal); snapshots, retention,
+in-flight provider request recovery, and persistent deployment are not provided.
 
-## Version pins
-
-`@humanlayer/fold-core@0.1.4` pins `effect@4.0.0-rc.109` and the matching
-`@effect/ai-*` packages as exact peers. The example pins the same versions,
-and the repository override keeps one `effect` instance across the workspace.
-Treat a Fold or Effect upgrade as a separate reviewed change.
+`@humanlayer/fold-core@0.1.4` declares rc.109 peers. Effect stays exactly rc.112
+through the workspace override; existing `@effect/ai-*` packages stay rc.109.
+The tool-turn, resume and own-wire decoder tests check this combination. Fold v1
+requires JSON omission of optional undefined usage fields: `fromJsonString` over
+Fold's schema preserves this, while `toCodecJson` would convert them to null.

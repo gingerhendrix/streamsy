@@ -1,4 +1,4 @@
-/** Batch 4 boundary. Expand the scans as the old graph is replaced. */
+/** Batch 5 boundary. Expand the scans as the old graph is replaced. */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
@@ -49,9 +49,6 @@ const checks = [
     [
       ...sourceGlobs,
       "!packages/conformance-tests/**",
-      // Existing Hacker News tests move to Bun with the example rewrite in Batch 5.
-      "!examples/hackernews-newest-stream/src/server/newest-poller.test.ts",
-      "!examples/hackernews-newest-stream/src/server/story-index-projection.test.ts",
       ...oldRunnerPackages.map((name) => `!packages/${name}/**`),
     ],
   ),
@@ -68,6 +65,5 @@ const checks = [
   scan("no Effect Vitest integration", "@effect[/]vitest"),
 ];
 console.log(`Temporary Vitest exceptions until Batch 6: ${oldRunnerPackages.join(", ")}.`);
-console.log("Temporary Vitest exceptions until Batch 5: the two existing Hacker News test files.");
 if (checks.some((passed) => !passed)) process.exit(1);
-console.log("Perimeter checks passed (Batch 4 scope).");
+console.log("Perimeter checks passed (Batch 5 scope).");

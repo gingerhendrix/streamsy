@@ -1,5 +1,5 @@
-import * as StateProjection from "@streamsy/projection";
-import type { CatchUpOutcome, Limits as StateProjectionLimits } from "@streamsy/projection";
+import * as StateProjection from "./bridge/state-projection.ts";
+import type { CatchUpOutcome, Limits as StateProjectionLimits } from "./bridge/state-projection.ts";
 import { Cause, Context, Effect, Layer, Ref } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";

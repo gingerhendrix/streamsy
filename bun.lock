@@ -21,10 +21,8 @@
         "@effect/ai-anthropic": "4.0.0-rc.109",
         "@effect/ai-openai": "4.0.0-rc.109",
         "@humanlayer/fold-core": "0.1.4",
-        "@streamsy/core": "workspace:*",
-        "@streamsy/storage": "workspace:*",
-        "@streamsy/streams": "workspace:*",
-        "effect": "4.0.0-rc.109",
+        "@streamsy/core-next": "workspace:*",
+        "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -36,9 +34,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@durable-streams/state": "^0.3.1",
-        "@streamsy/core": "workspace:*",
-        "@streamsy/projection": "workspace:*",
-        "@streamsy/streams": "workspace:*",
+        "@streamsy/core-next": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",
         "effect": "4.0.0-rc.112",
@@ -50,7 +46,6 @@
         "@types/bun": "^1.2.0",
         "@types/react": "latest",
         "@types/react-dom": "latest",
-        "vitest": "^4.0.16",
       },
     },
     "packages/conformance-tests": {

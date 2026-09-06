@@ -1,19 +1,17 @@
-/* oxlint-disable effecttsgo/async-function -- This Vitest scenario exercises the demo's Promise compatibility edges through one explicit ManagedRuntime. */
-import * as StateProjection from "@streamsy/projection";
-import { Effect, ManagedRuntime } from "effect";
-import { describe, expect, test } from "vitest";
+/* oxlint-disable effecttsgo/async-function -- This Bun scenario exercises the demo's Promise compatibility edges through one explicit ManagedRuntime. */
+import { Effect } from "effect";
+import { describe, expect, test } from "bun:test";
 import type { HnStory } from "../state-schema.ts";
 import { type HackerNewsApi } from "./poller/contract.ts";
 import { makeNewestStoriesPoller } from "./poller/poller.ts";
 import { makeStoryProjection } from "./projection.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
-import { appendSourceBatchFromPromise } from "./streams.ts";
 import { demoHarness, story } from "./test-support.ts";
 
 describe("NewestStoriesPoller", () => {
   test("an unchanged second poll appends no source or projection output", async () => {
     const h = await demoHarness();
-    const runtime = ManagedRuntime.make(StateProjection.layerClient(h.streams.client));
+    const runtime = h.runtime;
     const projection = await runtime.runPromise(
       makeStoryProjection({
         pages: 10,
@@ -42,9 +40,7 @@ describe("NewestStoriesPoller", () => {
         intervalMs: 60_000,
         api,
         sink: {
-          appendSourceBatch: appendSourceBatchFromPromise((changes) =>
-            h.streams.appendSourceBatch(changes),
-          ),
+          appendSourceBatch: h.streams.appendSourceBatch,
           catchUpProjection: projection.catchUp,
         },
       }),
@@ -52,12 +48,12 @@ describe("NewestStoriesPoller", () => {
 
     try {
       await runtime.runPromise(poller.pollNow);
-      const sourceAfterFirst = await h.adapter.listMessages(hackerNewsSource.streamId);
-      const targetAfterFirst = await h.adapter.listMessages(hackerNewsTarget.streamId);
+      const sourceAfterFirst = await h.read(hackerNewsSource.streamId);
+      const targetAfterFirst = await h.read(hackerNewsTarget.streamId);
 
       await runtime.runPromise(poller.pollNow);
-      expect(await h.adapter.listMessages(hackerNewsSource.streamId)).toEqual(sourceAfterFirst);
-      expect(await h.adapter.listMessages(hackerNewsTarget.streamId)).toEqual(targetAfterFirst);
+      expect(await h.read(hackerNewsSource.streamId)).toEqual(sourceAfterFirst);
+      expect(await h.read(hackerNewsTarget.streamId)).toEqual(targetAfterFirst);
       expect(await runtime.runPromise(poller.stats)).toMatchObject({
         lastStoryCount: 2,
         lastFetchedNewStories: 0,
@@ -73,7 +69,6 @@ describe("NewestStoriesPoller", () => {
     } finally {
       await runtime.runPromise(poller.stop);
       await runtime.dispose();
-      await h.streams.close();
     }
   });
 });

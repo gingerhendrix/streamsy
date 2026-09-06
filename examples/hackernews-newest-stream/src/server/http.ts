@@ -1,4 +1,4 @@
-import type { Limits as StateProjectionLimits } from "@streamsy/projection";
+import type { Limits as StateProjectionLimits } from "./bridge/state-projection.ts";
 import { streamContentType } from "./config.ts";
 import type { PollStats } from "./poller/contract.ts";
 import type { ProjectionStatus } from "./projection.ts";

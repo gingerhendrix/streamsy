@@ -1,5 +1,4 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This Bun executable is the Promise-native HTTP/process edge; Effect-owned poller and projection work runs through the single ManagedRuntime below. */
-import * as StateProjection from "@streamsy/projection";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import {
   newestLimit,
@@ -16,27 +15,29 @@ import { NewestStoriesPoller } from "./poller/contract.ts";
 import { newestStoriesPollerLayer } from "./poller/poller.ts";
 import { StoryProjection, storyProjectionLayer } from "./projection.ts";
 import { serveStatic } from "./static.ts";
-import { appendSourceBatchFromPromise, DemoStreams } from "./streams.ts";
+import { demoMemoryLayer, DemoStreams } from "./streams.ts";
 
-const streams = new DemoStreams();
-await streams.start();
-
-const applicationLayer = newestStoriesPollerLayer({
-  limit: newestLimit,
-  intervalMs: pollIntervalMs,
-  sink: {
-    appendSourceBatch: appendSourceBatchFromPromise((changes) =>
-      streams.appendSourceBatch(changes),
-    ),
-  },
-}).pipe(
+const pollerLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const streams = yield* DemoStreams;
+    return newestStoriesPollerLayer({
+      limit: newestLimit,
+      intervalMs: pollIntervalMs,
+      sink: {
+        appendSourceBatch: streams.appendSourceBatch,
+      },
+    });
+  }),
+);
+const applicationLayer = pollerLayer.pipe(
   Layer.provideMerge(storyProjectionLayer(projectionLimits)),
-  Layer.provideMerge(StateProjection.layerClient(streams.client)),
+  Layer.provideMerge(demoMemoryLayer),
 );
 const runtime = ManagedRuntime.make(applicationLayer);
-const { projection, poller } = runtime.runSync(
+const { projection, poller, streams } = await runtime.runPromise(
   Effect.gen(function* () {
     return {
+      streams: yield* DemoStreams,
       projection: yield* StoryProjection,
       poller: yield* NewestStoriesPoller,
     };
@@ -91,7 +92,6 @@ function shutdown(): Promise<void> {
     await server.stop(true);
     await runtime.runPromise(poller.stop);
     await runtime.dispose();
-    await streams.close();
   })();
   return shuttingDown;
 }

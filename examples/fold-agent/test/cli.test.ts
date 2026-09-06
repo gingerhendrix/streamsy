@@ -1,114 +1,69 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- `bun:test` owns this file's control flow: every test callback is a Promise the runner awaits, and the CLI under test is spawned as a real child process with temp-dir plumbing. */
-/**
- * The CLI seam. `inspect` is the interesting one: reading durable agent state
- * must work in a separate process with no provider credentials at all.
- */
+/* oxlint-disable effecttsgo/async-function -- Bun owns the test execution edge. */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { SessionId, startSession } from "@humanlayer/fold-core";
-import { Effect } from "effect";
-import { exampleAgent } from "../src/agent.ts";
-import { openStore, sessionStreamId } from "../src/storage.ts";
-import { streamsyEventLog } from "../src/streamsy-event-log.ts";
-import { scriptedModel, textTurn, toolCallTurn } from "./fixtures/scripted-model.ts";
+import { Effect, Exit } from "effect";
+import { parseResumeArgs } from "../src/cli.ts";
+import { formatEntry } from "../src/render.ts";
+import { databasePathFromEnv, DEFAULT_DATABASE_PATH, openStore } from "../src/storage.ts";
+import { decodeStoredLogEntry, AgentId, EventId, SessionId } from "@humanlayer/fold-core";
 
-const cli = join(dirname(import.meta.dir), "src", "cli.ts");
-
-const runCli = async (args: ReadonlyArray<string>, env: Record<string, string>) => {
-  const proc = Bun.spawn(["bun", "run", cli, ...args], {
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
+describe("Fold CLI parsing and rendering", () => {
+  test("resume defaults to the durable epoch", async () => {
+    expect(await Effect.runPromise(parseResumeArgs(["fold/sessions/a/events", "hello"]))).toEqual({
+      streamId: "fold/sessions/a/events",
+      prompt: "hello",
+      epoch: undefined,
+      takeover: false,
+    });
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { stdout, stderr, exitCode };
-};
-
-const withTempDir = <A>(run: (dir: string) => Promise<A>): Promise<A> => {
-  const dir = mkdtempSync(join(tmpdir(), "fold-streamsy-cli-"));
-  return run(dir).finally(() => rmSync(dir, { recursive: true, force: true }));
-};
-
-/** Seed a real durable session so `inspect` has something honest to read. */
-const seedSession = async (filename: string, streamId: string, sessionId: SessionId) => {
-  const store = openStore({ filename });
-  try {
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const scripted = yield* scriptedModel([
-            toolCallTurn("provider-call-1", "text_stats", { text: "hello" }),
-            textTurn("Five characters."),
-          ]);
-          const session = yield* startSession({
-            agent: exampleAgent(scripted.model),
-            log: streamsyEventLog({ binding: store.bind(streamId), mode: "create" }),
-            sessionId,
-          });
-          yield* session.send("How long is 'hello'?");
-        }),
-      ),
+  test("resume accepts an explicit epoch or takeover", async () => {
+    expect(await Effect.runPromise(parseResumeArgs(["a", "--epoch", "7", "hello"]))).toMatchObject({
+      epoch: 7,
+      takeover: false,
+    });
+    expect(await Effect.runPromise(parseResumeArgs(["a", "--takeover", "hello"]))).toMatchObject({
+      epoch: undefined,
+      takeover: true,
+    });
+  });
+  test("resume rejects malformed, unsafe and conflicting options", async () => {
+    for (const args of [
+      [],
+      ["a"],
+      ["a", "--epoch", "-1", "hi"],
+      ["a", "--epoch", "1.5", "hi"],
+      ["a", "--epoch", "9007199254740992", "hi"],
+      ["a", "--epoch", "1", "--takeover", "hi"],
+      ["a", "--other", "hi"],
+    ]) {
+      expect(Exit.isFailure(await Effect.runPromiseExit(parseResumeArgs(args)))).toBe(true);
+    }
+  });
+  test("inspect rendering needs no model or provider credentials", async () => {
+    const entry = await Effect.runPromise(
+      decodeStoredLogEntry({
+        _tag: "session_started",
+        seq: 0,
+        eventId: EventId.create(),
+        ts: 1,
+        version: 1,
+        agentId: null,
+        parentAgentId: null,
+        toolCallId: null,
+        cwd: null,
+        sessionId: SessionId.create(),
+        rootAgentId: AgentId.create(),
+        meta: {},
+      }),
     );
-  } finally {
-    await store.close();
-  }
-};
-
-describe("fold-agent CLI", () => {
-  test("inspect prints the durable log without provider credentials", async () => {
-    await withTempDir(async (dir) => {
-      const filename = join(dir, "agent.sqlite");
-      const sessionId = SessionId.create();
-      const streamId = sessionStreamId(sessionId);
-      await seedSession(filename, streamId, sessionId);
-
-      const result = await runCli(["inspect", streamId], {
-        FOLD_AGENT_DB: filename,
-        OPENAI_API_KEY: "",
-        ANTHROPIC_API_KEY: "",
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("session_started");
-      expect(result.stdout).toContain("text_stats");
-      expect(result.stdout).toContain("agent-finished");
-      expect(result.stdout).toContain(`stream id: ${streamId}`);
-    });
-  }, 60_000);
-
-  test("inspect fails clearly on an unknown stream", async () => {
-    await withTempDir(async (dir) => {
-      const result = await runCli(["inspect", "fold/sessions/nope/events"], {
-        FOLD_AGENT_DB: join(dir, "agent.sqlite"),
-      });
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("not-found");
-    });
-  }, 60_000);
-
-  test("start without credentials explains what is missing", async () => {
-    await withTempDir(async (dir) => {
-      const result = await runCli(["start", "hello"], {
-        FOLD_AGENT_DB: join(dir, "agent.sqlite"),
-        OPENAI_API_KEY: "",
-        ANTHROPIC_API_KEY: "",
-      });
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("No provider credentials");
-    });
-  }, 60_000);
-
-  test("no command prints usage", async () => {
-    const result = await runCli([], {});
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Usage:");
+    expect(formatEntry(entry)).toContain("session_started");
+    if (entry._tag !== "session_started") throw new Error("expected session_started");
+    expect(formatEntry(entry)).toContain(`session=${entry.sessionId}`);
+  });
+  test("file storage fails explicitly and retains database path configuration", async () => {
+    expect(databasePathFromEnv({})).toBe(DEFAULT_DATABASE_PATH);
+    expect(databasePathFromEnv({ FOLD_AGENT_DB: "custom.sqlite" })).toBe("custom.sqlite");
+    const failure = await Effect.runPromise(Effect.flip(openStore({ filename: "unused.sqlite" })));
+    expect(failure._tag).toBe("StorageNotAvailable");
+    expect(failure.message).toContain("SQLite storage arrives with the next release step");
   });
 });

@@ -3,7 +3,7 @@
 This example is a complete local Streamsy projection path. A Bun server polls Hacker News,
 reconciles the configured newest set, appends only deterministic changes to a JSON source stream,
 and runs a bounded `StateProjection.catchUp()` pass. The derived target is a Durable State stream
-with lineage. The browser replays that target into its own TanStack DB with `createStreamDB` and
+with source-position headers. The browser replays that target into its own TanStack DB with `createStreamDB` and
 renders it through React `useLiveQuery`.
 
 ```mermaid
@@ -11,14 +11,14 @@ flowchart LR
   HN[HN Firebase API] --> Poller[deterministic newest-set poller]
   Poller --> Source[Streamsy JSON source stream]
   Source --> Projection[bounded StateProjection catch-up]
-  Projection --> Target[Durable State target + lineage]
+  Projection --> Target[Durable State target]
   Target --> ClientDB[createStreamDB in browser]
   ClientDB --> React[React useLiveQuery]
 ```
 
-TanStack DB is browser-only in this demo. Server modules use one fixed Streamsy protocol client
-for the source and target streams and one edge-owned Effect `ManagedRuntime` for poller and
-projection work.
+TanStack DB is browser-only in this demo. One Effect `ManagedRuntime` owns a memory
+Layer shared by the poller, projection and HTTP edge. The [private example-local
+bridge](src/server/bridge/README.md) is replaced by `@streamsy/derive` in Step 5.
 
 ## Data flow
 
@@ -31,15 +31,14 @@ projection work.
    sorts changes deterministically. Stories that leave the bounded newest set become source
    deletes.
 2. `src/server/streams.ts` owns distinct `session/main/source` and `session/main` JSON streams
-   through one direct protocol client. The public target remains `/streams/session/main`.
+   through the acquired memory services. The public target remains `/streams/session/main`.
 3. `src/server/story-index-projection.ts` validates source upsert/delete commands and maps them to
    the public Durable State event vocabulary. Story id is the stable row key. `time`, then `id`, is
    the browser ordering rule.
 4. `src/server/projection.ts` describes one bounded catch-up pass as an Effect. The server entry
-   runs it through the edge-owned runtime after each poll. Target lineage makes retries and
-   orchestration restarts resume without duplicate output.
-5. `src/client/main.tsx` consumes only the target stream. Reserved Streamsy lineage events are
-   ignored by StreamDB because they do not match a browser collection type.
+   runs it through the edge-owned runtime after each poll. The last fact's source offset
+   recovers completed progress; expected-offset CAS detects competing target writes.
+5. `src/client/main.tsx` consumes only the target stream's State facts.
 
 `/api/status` reports poll/source counters, the configured catch-up bounds, the last projection
 outcome and progress, and separate poll/projection failures. `POST /api/poll` waits for one poll and
@@ -77,13 +76,15 @@ bun run --cwd examples/hackernews-newest-stream smoke:http
 ```
 
 The HTTP smoke is offline. It starts a local HN fixture, verifies initial upserts, then verifies an
-update, an entering story, a leaving-story delete, projection lineage progress, and unchanged-poll
+update, an entering story, a leaving-story delete, projection source progress, and unchanged-poll
 suppression through the public HTTP target.
 
 ## Current constraints
 
 - Projection recovery scans complete target history, so recovery cost is O(target history).
-- Source and target resources are resolved through one client for one server run.
+- Source and target resources use the same memory Layer for one server run.
+- Producer fencing, lineage, checkpoints, generations and replay-safe pending writes are
+  deferred; the bridge documents its complete limits.
 - The default local server uses in-memory storage. The streams are durable protocol logs for the
   process lifetime; a persistent adapter is required for durability across server-process restarts.
 - Catch-up is deliberately bounded. A `limit-reached` status means later poll/repair passes must
