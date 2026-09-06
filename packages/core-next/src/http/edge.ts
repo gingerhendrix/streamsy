@@ -1,4 +1,4 @@
-import type { Layer } from "effect";
+import { Effect, type Layer } from "effect";
 import { HttpEffect } from "effect/unstable/http";
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { program, type HttpOptions } from "./program.ts";
@@ -7,4 +7,7 @@ import { program, type HttpOptions } from "./program.ts";
 export const makeEdge = <E>(
   options: HttpOptions,
   layer: Layer.Layer<StreamsReader | StreamsWriter, E>,
-) => HttpEffect.toWebHandlerLayer(program(options), layer);
+) =>
+  // rc.112 masks the handled request; restore cancellation for application work
+  // while leaving response delivery and scope finalization owned by HttpEffect.
+  HttpEffect.toWebHandlerLayer(Effect.interruptible(program(options)), layer);

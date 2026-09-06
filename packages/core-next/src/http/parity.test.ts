@@ -216,6 +216,7 @@ const expiryCases: ReadonlyArray<{
   headers: Record<string, string>;
   put: number;
   head: number;
+  effectRejects?: true;
 }> = [
   { name: "positive TTL", headers: { "stream-ttl": "60" }, put: 201, head: 200 },
   { name: "zero TTL", headers: { "stream-ttl": "0" }, put: 201, head: 404 },
@@ -260,17 +261,19 @@ const expiryCases: ReadonlyArray<{
     headers: { "stream-expires-at": "2028-01-01t00:00:00z" },
     put: 201,
     head: 200,
+    effectRejects: true,
   },
   {
     name: "RFC UTC zone",
     headers: { "stream-expires-at": "Sat, 01 Jan 2028 00:00:00 UTC" },
     put: 201,
     head: 200,
+    effectRejects: true,
   },
 ];
 
 for (const fixture of expiryCases) {
-  it(`old/new expiry parsing and HEAD: ${fixture.name}`, async () => {
+  it(`old/new expiry parsing and HEAD: ${fixture.name}${fixture.effectRejects ? " (intentional Effect rejection)" : ""}`, async () => {
     const old = createHttpHandler({
       protocol: new StreamProtocol({
         // This fixture tests parsing and lazy expiry; avoid real-clock legacy scheduler callbacks.
@@ -285,6 +288,29 @@ for (const fixture of expiryCases) {
         const left = await old.fetch(new Request("http://example.test/expiry", init));
         const right = await edge.handler(new Request("http://example.test/expiry", init));
         expect(left.status).toBe(method === "PUT" ? fixture.put : fixture.head);
+        if (fixture.effectRejects) {
+          // Accepted format narrowing: legacy creates the stream, Effect rejects it.
+          expect(right.status).toBe(method === "PUT" ? 400 : 404);
+          expect(right.statusText).toBe("");
+          const securityHeaders = {
+            "cross-origin-resource-policy": "cross-origin",
+            "x-content-type-options": "nosniff",
+          };
+          expect(Object.fromEntries(right.headers)).toEqual(
+            method === "HEAD"
+              ? { ...securityHeaders, "cache-control": "no-store" }
+              : securityHeaders,
+          );
+          expect(await right.text()).toBe(
+            method === "PUT" ? "Invalid Stream-Expires-At format" : "",
+          );
+          if (method === "HEAD") {
+            const expiry = fixture.headers["stream-expires-at"];
+            if (expiry === undefined) throw new Error("Missing fixture expiry header");
+            expect(left.headers.get("stream-expires-at")).toBe(expiry);
+          }
+          continue;
+        }
         expect(right.status).toBe(left.status);
         expect(right.statusText).toBe(left.statusText);
         expect(Object.fromEntries(right.headers)).toEqual(Object.fromEntries(left.headers));

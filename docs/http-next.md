@@ -27,6 +27,12 @@ protocol owns long-poll and SSE deadlines. `stop()` force-closes connections,
 then disposes the Effect layer, and is idempotent. The layer is acquired lazily
 on the first request by Effect's Web edge. No platform-bun package is needed.
 
+The conversion edge explicitly makes application work interruptible: rc.112's
+`HttpEffect.toHandled` masks interruption around the handled request. Bun supplies
+the request abort event and HttpEffect interrupts its fiber; the explicit inner
+`Effect.interruptible` lets parked long-poll work observe it. HttpEffect still owns
+response delivery and request-scope finalization. No host dependency is added.
+
 ## Wire behavior
 
 PUT, POST, GET, HEAD, DELETE and OPTIONS retain the old handler's status,
@@ -34,6 +40,13 @@ response text, security, cache and protocol header conventions. Static responses
 use `HttpServerResponse.raw` to preserve Web body defaults; SSE uses an Effect
 byte stream. The original Web request URL supplies the create `Location` header.
 HEAD has no body at the framework edge, including errors, as on the old Bun wire.
+
+`Stream-Expires-At` uses Effect rc.112 `DateTime.make` for validation and retains
+the original accepted string for storage and HEAD. Uppercase ISO UTC
+(`2028-01-01T00:00:00Z`), ISO offsets and no-zone ISO remain accepted. Lowercase ISO
+(`2028-01-01t00:00:00z`) and RFC UTC (`Sat, 01 Jan 2028 00:00:00 UTC`) intentionally
+return `400 Invalid Stream-Expires-At format`, where the old Date parser returned 201. A rejected create leaves no stream (HEAD 404). This accepted format narrowing
+keeps the Effect parser; invalid dates and numeric millisecond text remain rejected.
 
 Read `batch_size` is converted with JavaScript `Number` and must yield an integer
 from 1 through 10,000. Exponent (`1e0`), hexadecimal (`0x1`), leading zero (`01`)
@@ -67,7 +80,8 @@ started, a later fault fails the body; it cannot change an already sent status.
 
 ## Ownership and limits
 
-SSE reads are scoped Effect streams. Client cancellation and host shutdown
+SSE reads are scoped Effect streams. Plain long-poll client cancellation also
+interrupts its pending read before the protocol timeout. Client cancellation and host shutdown
 interrupt pending reads and release changes subscriptions. Each connection ends
 after 60 seconds, at closure, or when the stream becomes unavailable. The deadline
 interrupts even a pending long poll. Memory notifications cost O(active
