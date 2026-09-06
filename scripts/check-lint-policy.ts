@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 const repoRoot = join(import.meta.dirname, "..");
 
 const effectAreas = [
+  "packages/core-next",
   "packages/serve",
   "packages/views",
   "examples/fold-agent",

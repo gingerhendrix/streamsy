@@ -81,6 +81,17 @@
         "vitest": "^4.0.16",
       },
     },
+    "packages/core-next": {
+      "name": "@streamsy/core-next",
+      "version": "0.4.0",
+      "dependencies": {
+        "effect": "4.0.0-rc.112",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "catalog:",
+      },
+    },
     "packages/http-client": {
       "name": "@streamsy/http-client",
       "version": "0.3.0",
@@ -660,6 +671,8 @@
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
+
+    "@streamsy/core-next": ["@streamsy/core-next@workspace:packages/core-next"],
 
     "@streamsy/http-client": ["@streamsy/http-client@workspace:packages/http-client"],
 

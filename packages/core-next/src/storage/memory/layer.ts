@@ -1,0 +1,186 @@
+import { Effect, Layer, Option, PubSub, Semaphore } from "effect";
+import { Storage } from "../storage.ts";
+import type { Mutation, MutationOutcome, Operation, OperationResult } from "../mutation.ts";
+import type { StreamId } from "../../schema/index.ts";
+import { copyMessage, copyRecord, indexDeadlines, patchRecord, type State } from "./state.ts";
+import { addEdge, composeMessages, hasDependents, purge } from "./lineage.ts";
+import { changes } from "./changes.ts";
+
+interface CommitResult {
+  outcome: MutationOutcome;
+  changed: Set<StreamId>;
+}
+export interface MemoryOptions {
+  readonly constrained?: boolean;
+  readonly pollIntervalMs?: number;
+}
+
+function reject(state: State, operation: Operation, index: number): MutationOutcome | undefined {
+  const id = operation._tag === "Create" ? operation.record.id : operation.streamId;
+  const entry = state.entries.get(id);
+  const record = entry?.record;
+  const rejected = (
+    reason: Extract<MutationOutcome, { _tag: "Rejected" }>["reason"],
+  ): MutationOutcome => ({
+    _tag: "Rejected",
+    index,
+    reason,
+    record: record ? Option.some(copyRecord(record)) : Option.none(),
+  });
+  if (operation._tag === "Create") {
+    if (record) return rejected("exists");
+    if (operation.forkSource) {
+      const source = state.entries.get(operation.forkSource.id)?.record;
+      if (
+        !source ||
+        source.lifecycle.softDeleted ||
+        source.currentOffset < operation.forkSource.liveAtOffset
+      )
+        return rejected("fork-source-gone");
+    }
+    return;
+  }
+  if (!entry || !record) return rejected("not-found");
+  if (record.lifecycle.softDeleted) return rejected("gone");
+  if (operation._tag === "Delete") {
+    if (
+      operation.reason === "expiry" &&
+      (operation.expectedExpiresAtMs === undefined ||
+        record.lifecycle.expiresAtMs !== operation.expectedExpiresAtMs)
+    )
+      return rejected("expiry-mismatch");
+    return;
+  }
+  if (operation.expectedOffset !== undefined && operation.expectedOffset !== record.currentOffset)
+    return rejected("offset");
+  if (
+    operation.expectedClosed !== undefined &&
+    operation.expectedClosed !== record.lifecycle.closed
+  )
+    return rejected("closed");
+  if (operation.producer) {
+    const actual = entry.producers.get(operation.producer.producerId);
+    const expected = Option.getOrUndefined(operation.producer.expected);
+    if (actual?.epoch !== expected?.epoch || actual?.lastSeq !== expected?.lastSeq)
+      return rejected("producer");
+  }
+}
+
+export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
+  Layer.effect(
+    Storage,
+    Effect.gen(function* () {
+      const chain = !options.constrained;
+      const interval = options.pollIntervalMs ?? 25;
+      if (!Number.isFinite(interval) || interval <= 0)
+        return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
+      const state: State = { entries: new Map(), children: new Map(), deadlines: [] };
+      const lock = yield* Semaphore.make(1);
+      const bus = yield* Effect.acquireRelease(PubSub.unbounded<StreamId>(), PubSub.shutdown);
+      const commit = (mutation: Mutation): CommitResult => {
+        const changed = new Set<StreamId>();
+        for (const [index, operation] of mutation.operations.entries()) {
+          const rejection = reject(state, operation, index);
+          if (rejection) return { outcome: rejection, changed };
+        }
+        const results: OperationResult[] = [];
+        // Create edges before deleting sources, independent of operation order.
+        for (const operation of mutation.operations) {
+          if (operation._tag !== "Create") continue;
+          const record = copyRecord(operation.record);
+          state.entries.set(record.id, {
+            record,
+            messages: operation.initialMessages.map(copyMessage),
+            producers: new Map(),
+          });
+          if (chain && record.lifecycle.forkedFrom !== undefined)
+            addEdge(state, record.lifecycle.forkedFrom, record.id);
+        }
+        for (const operation of mutation.operations) {
+          const id = operation._tag === "Create" ? operation.record.id : operation.streamId;
+          const entry = state.entries.get(id);
+          if (!entry) throw new Error("Mutation target disappeared after preflight");
+          changed.add(id);
+          switch (operation._tag) {
+            case "Create":
+              results.push({ _tag: "Created", record: copyRecord(entry.record) });
+              break;
+            case "Append": {
+              entry.messages.push(...operation.messages.map(copyMessage));
+              entry.record = patchRecord(entry.record, operation.patch);
+              if (operation.producer)
+                entry.producers.set(operation.producer.producerId, { ...operation.producer.next });
+              results.push({ _tag: "Appended", record: copyRecord(entry.record) });
+              break;
+            }
+            case "Delete": {
+              if (chain && hasDependents(state, id)) {
+                entry.record = patchRecord(entry.record, { lifecycle: { softDeleted: true } });
+                results.push({ _tag: "SoftDeleted", record: copyRecord(entry.record) });
+              } else {
+                results.push({ _tag: "Purged", record: copyRecord(entry.record) });
+                purge(state, entry.record, chain, changed);
+              }
+              break;
+            }
+          }
+        }
+        if (chain) indexDeadlines(state);
+        const [first, ...rest] = results;
+        if (!first) throw new Error("Empty mutation");
+        return { outcome: { _tag: "Applied", results: [first, ...rest] }, changed };
+      };
+      return Storage.of({
+        capabilities: {
+          fork: chain ? "chain" : "copy",
+          atomicScope: chain ? "store" : "stream",
+          wake: chain ? "push" : "poll",
+          expiryIndex: chain ? "indexed" : "lazy",
+        },
+        record: Effect.fn("Memory.record")((id) =>
+          Effect.sync(() =>
+            Option.fromUndefinedOr(state.entries.get(id)?.record).pipe(Option.map(copyRecord)),
+          ),
+        ),
+        messages: Effect.fn("Memory.messages")((id, window) =>
+          Effect.sync(() =>
+            composeMessages(state, id, chain)
+              .filter(
+                (message) =>
+                  (window.after === undefined || message.offset > window.after) &&
+                  (window.until === undefined || message.offset <= window.until),
+              )
+              .slice(0, window.limit === undefined ? undefined : Math.max(0, window.limit))
+              .map(copyMessage),
+          ),
+        ),
+        producer: Effect.fn("Memory.producer")((id, producerId) =>
+          Effect.sync(() =>
+            Option.fromUndefinedOr(state.entries.get(id)?.producers.get(producerId)).pipe(
+              Option.map((value) => ({ ...value })),
+            ),
+          ),
+        ),
+        mutate: Effect.fn("Memory.mutate")(function* (mutation) {
+          const ids = mutation.operations.map((operation) =>
+            operation._tag === "Create" ? operation.record.id : operation.streamId,
+          );
+          if (ids.length === 0 || new Set(ids).size !== ids.length || (!chain && ids.length > 1))
+            return yield* Effect.die(
+              new Error("Mutation requires distinct streams within atomicScope"),
+            );
+          return yield* Effect.gen(function* () {
+            const { outcome, changed } = yield* Effect.sync(() => commit(mutation));
+            for (const id of changed) yield* PubSub.publish(bus, id);
+            return outcome;
+          }).pipe(Semaphore.withPermit(lock), Effect.uninterruptible);
+        }),
+        changes: (id) => changes(state, bus, id, chain, interval),
+        nextExpiry: Effect.sync(() =>
+          Option.fromUndefinedOr(state.deadlines[0]).pipe(
+            Option.map((deadline) => ({ ...deadline })),
+          ),
+        ),
+      });
+    }),
+  );

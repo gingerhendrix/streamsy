@@ -21,7 +21,7 @@ enables the `effecttsgo` plugin plus the Effect-specific vendored anti-slop
 plugin. It runs against an explicit path allow-list, held in the `lint:effect`
 script:
 
-- `packages/serve`
+- `packages/core-next`, `packages/serve`
 - `packages/views`
 - `examples/fold-agent`
 - `examples/hackernews-newest-stream`
@@ -70,3 +70,5 @@ conformance tests, the explicitly reported old-package exceptions, and the two
 existing Hacker News tests (until Batch 5). Parked
 files and maintainer docs are reference material; site content is deferred to
 Batch 7. The temporary runner exceptions preserve the old core until Batch 6.
+
+Batch 2 applies Effect lint to the private storage tier in `packages/core-next`. Its source perimeter rejects Promise bridges, async functions, abort plumbing, timers, and object cloning; test files alone are excluded. Existing runner exceptions do not include this package.
