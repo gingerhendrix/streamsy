@@ -9,20 +9,20 @@ export const ProducerId = Schema.String.pipe(Schema.brand("ProducerId"));
 
 export const StreamConfig = Schema.Struct({
   contentType: Schema.String,
-  ttlSeconds: Schema.optionalKey(Schema.Number),
+  ttlSeconds: Schema.optionalKey(Schema.Finite),
   expiresAt: Schema.optionalKey(Schema.String),
-  createdAt: Schema.Number,
+  createdAt: Schema.Finite,
 });
 
 export const StreamLifecycle = Schema.Struct({
   lastSeq: Schema.optionalKey(Schema.String),
   closed: Schema.Boolean,
-  closedAt: Schema.optionalKey(Schema.Number),
+  closedAt: Schema.optionalKey(Schema.Finite),
   forkedFrom: Schema.optionalKey(StreamId),
   forkOffset: Schema.optionalKey(Offset),
-  forkSubOffset: Schema.optionalKey(Schema.Number),
+  forkSubOffset: Schema.optionalKey(Schema.Finite),
   softDeleted: Schema.Boolean,
-  expiresAtMs: Schema.optionalKey(Schema.Number),
+  expiresAtMs: Schema.optionalKey(Schema.Finite),
 });
 
 export const StreamRecord = Schema.Struct({
@@ -34,16 +34,16 @@ export const StreamRecord = Schema.Struct({
 
 export const StoredMessage = Schema.Struct({
   offset: Offset,
-  timestamp: Schema.Number,
+  timestamp: Schema.Finite,
   data: Schema.Uint8Array,
 });
 
-export const ProducerState = Schema.Struct({ epoch: Schema.Number, lastSeq: Schema.Number });
+export const ProducerState = Schema.Struct({ epoch: Schema.Finite, lastSeq: Schema.Finite });
 
 export const MessageWindow = Schema.Struct({
   after: Schema.optionalKey(Offset),
   until: Schema.optionalKey(Offset),
-  limit: Schema.optionalKey(Schema.Number),
+  limit: Schema.optionalKey(Schema.Finite),
 });
 
 export const ChangeSnapshot = Schema.Struct({
@@ -77,7 +77,7 @@ export const RecordPatch = Schema.Struct({
   currentOffset: Schema.optionalKey(Offset),
   config: Schema.optionalKey(
     Schema.Struct({
-      ttlSeconds: Schema.optionalKey(Schema.Number),
+      ttlSeconds: Schema.optionalKey(Schema.Finite),
       expiresAt: Schema.optionalKey(Schema.String),
     }),
   ),

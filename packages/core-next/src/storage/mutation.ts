@@ -31,7 +31,7 @@ export const Operation = Schema.Union([
   Schema.TaggedStruct("Delete", {
     streamId: StreamId,
     reason: Schema.Literals(["delete", "expiry"]),
-    expectedExpiresAtMs: Schema.optionalKey(Schema.Number),
+    expectedExpiresAtMs: Schema.optionalKey(Schema.Finite),
   }),
 ]);
 
@@ -47,7 +47,7 @@ export const OperationResult = Schema.Union([
 export const MutationOutcome = Schema.Union([
   Schema.TaggedStruct("Applied", { results: Schema.NonEmptyArray(OperationResult) }),
   Schema.TaggedStruct("Rejected", {
-    index: Schema.Number,
+    index: Schema.Finite,
     reason: Schema.Literals([
       "offset",
       "closed",
