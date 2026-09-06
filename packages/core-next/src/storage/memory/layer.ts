@@ -157,7 +157,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
         producer: Effect.fn("Memory.producer")((id, producerId) =>
           Effect.sync(() =>
             Option.fromUndefinedOr(state.entries.get(id)?.producers.get(producerId)).pipe(
-              Option.map((value) => ({ ...value })),
+              Option.map((value) => ({ epoch: value.epoch, lastSeq: value.lastSeq })),
             ),
           ),
         ),

@@ -18,12 +18,14 @@ export interface State {
   deadlines: Array<{ at: number; streamId: StreamId }>;
 }
 export const copyRecord = (record: StreamRecord): StreamRecord => ({
-  ...record,
+  id: record.id,
+  currentOffset: record.currentOffset,
   config: { ...record.config },
   lifecycle: { ...record.lifecycle },
 });
 export const copyMessage = (message: StoredMessage): StoredMessage => ({
-  ...message,
+  offset: message.offset,
+  timestamp: message.timestamp,
   data: new Uint8Array(message.data),
 });
 export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRecord {
@@ -46,7 +48,7 @@ export function patchRecord(record: StreamRecord, patch: RecordPatch): StreamRec
     }
   }
   return {
-    ...record,
+    id: record.id,
     currentOffset: patch.currentOffset ?? record.currentOffset,
     config,
     lifecycle,

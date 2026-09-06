@@ -235,7 +235,9 @@ export class ForkPlanBuilder {
   private withInitialTail(record: StreamRecord, initialMessages: StoredMessage[]): StreamRecord {
     const lastMessage = initialMessages[initialMessages.length - 1];
     return {
-      ...record,
+      id: record.id,
+      config: record.config,
+      lifecycle: record.lifecycle,
       currentOffset: lastMessage?.offset ?? record.currentOffset,
     };
   }
