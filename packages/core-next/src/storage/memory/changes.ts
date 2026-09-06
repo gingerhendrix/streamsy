@@ -1,6 +1,7 @@
-import { Effect, PubSub, Schedule, Stream } from "effect";
+import { Effect, Schedule, Stream } from "effect";
 import { ZERO_OFFSET } from "../../offset/index.ts";
 import type { ChangeSnapshot, StreamId } from "../../schema/index.ts";
+import type { Notifier } from "./notifier.ts";
 import type { State } from "./state.ts";
 
 export function snapshot(state: State, id: StreamId): ChangeSnapshot {
@@ -14,7 +15,7 @@ export function snapshot(state: State, id: StreamId): ChangeSnapshot {
 }
 export function changes(
   state: State,
-  bus: PubSub.PubSub<void>,
+  bus: Notifier,
   id: StreamId,
   push: boolean,
   interval: number,
@@ -23,13 +24,13 @@ export function changes(
   if (!push) return Stream.fromEffect(read).pipe(Stream.repeat(Schedule.spaced(interval)));
   return Stream.unwrap(
     Effect.gen(function* () {
-      // A single pending store wake coalesces all commits. Every wake re-reads
-      // this id, so an unrelated commit cannot overwrite a relevant notification.
+      // Each subscription coalesces its own wakes, independently of slow peers.
+      // Payload-free wakes always re-read this id, including after unrelated commits.
       // Subscribe before the first read: a commit in the acquisition window cannot be lost.
-      const subscription = yield* PubSub.subscribe(bus);
+      const subscription = yield* bus.subscribe;
       return Stream.concat(
         Stream.fromEffect(read),
-        Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => read)),
+        Stream.fromQueue(subscription).pipe(Stream.mapEffect(() => read)),
       );
     }),
   );

@@ -1,9 +1,10 @@
-import { Predicate, Effect, Layer, Option, PubSub, Semaphore } from "effect";
+import { Predicate, Effect, Layer, Option, Semaphore } from "effect";
 import { Storage } from "../storage.ts";
 import type { Mutation, MutationOutcome, Operation, OperationResult } from "../mutation.ts";
 import type { StreamId } from "../../schema/index.ts";
 import { copyMessage, copyRecord, indexDeadlines, patchRecord, type State } from "./state.ts";
 import { addEdge, composeMessages, hasDependents, purge } from "./lineage.ts";
+import { createNotifier } from "./notifier.ts";
 import { changes } from "./changes.ts";
 
 interface CommitResult {
@@ -77,7 +78,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
         return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
       const state: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const lock = yield* Semaphore.make(1);
-      const bus = yield* Effect.acquireRelease(PubSub.dropping<void>(1), PubSub.shutdown);
+      const bus = yield* createNotifier;
       const commit = (mutation: Mutation): CommitResult => {
         const changed = new Set<StreamId>();
         for (const [index, operation] of mutation.operations.entries()) {
@@ -175,7 +176,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
             );
           return yield* Effect.gen(function* () {
             const { outcome, changed } = yield* Effect.sync(() => commit(mutation));
-            if (changed.size > 0) yield* PubSub.publish(bus, undefined);
+            if (changed.size > 0) yield* bus.publish;
             return outcome;
           }).pipe(Semaphore.withPermit(lock), Effect.uninterruptible);
         }),
