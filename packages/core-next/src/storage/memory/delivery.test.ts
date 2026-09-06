@@ -101,7 +101,8 @@ for (const sameId of [false, true]) {
                 });
               }
               yield* Deferred.await(unchanged);
-              // adjust(0) waits for all fibers to suspend: B has discarded W1 and re-pulled.
+              // rc.112 adjust(0) yields through a child fiber; it is not a quiescence barrier.
+              // The unchanged snapshot proves W1 was taken; a new wake now has room.
               yield* TestClock.adjust(0);
               expect(snapshots).toBe(2);
               const before = yield* Clock.currentTimeMillis;
@@ -109,7 +110,9 @@ for (const sameId of [false, true]) {
                 data: new TextEncoder().encode("relevant"),
                 contentType: "text/plain",
               });
-              yield* TestClock.adjust(0);
+              for (let turns = 0; turns < 100 && reader.pollUnsafe() === undefined; turns++) {
+                yield* Effect.yieldNow;
+              }
               expect(reader.pollUnsafe()).toMatchObject({
                 _tag: "Success",
                 value: { status: "ok", messages: [{ data: new TextEncoder().encode("relevant") }] },
@@ -142,5 +145,38 @@ it("memory layer shutdown ends pending and late changes outside the owner scope"
         .changes(StreamId.make("late"))
         .pipe(Stream.runCollect, Effect.exit);
       expect(Exit.isFailure(late) && Cause.hasInterruptsOnly(late.cause)).toBe(true);
+    }).pipe(Effect.scoped, Effect.runPromiseExit),
+  ).resolves.toEqual(Exit.succeed(undefined)));
+
+it("a rejected mutation emits no wake while a subsequent commit does", () =>
+  expect(
+    Effect.gen(function* () {
+      const context = yield* Layer.build(layer());
+      const storage = Context.get(context, Storage);
+      const id = StreamId.make("rejected");
+      const pull = yield* Stream.toPull(storage.changes(id));
+      expect((yield* pull)[0]).toMatchObject({ present: false });
+      const rejected = yield* storage.mutate({
+        operations: [{ _tag: "Delete", streamId: id, reason: "delete" }],
+      });
+      expect(rejected._tag).toBe("Rejected");
+      const pending = yield* pull.pipe(Effect.forkScoped);
+      for (let turns = 0; turns < 100; turns++) yield* Effect.yieldNow;
+      expect(pending.pollUnsafe()).toBeUndefined();
+      yield* storage.mutate({
+        operations: [
+          {
+            _tag: "Create",
+            record: {
+              id,
+              config: { contentType: "text/plain", createdAt: 0 },
+              lifecycle: { closed: false, softDeleted: false },
+              currentOffset: ZERO_OFFSET,
+            },
+            initialMessages: [],
+          },
+        ],
+      });
+      expect((yield* Fiber.join(pending))[0]).toMatchObject({ present: true });
     }).pipe(Effect.scoped, Effect.runPromiseExit),
   ).resolves.toEqual(Exit.succeed(undefined)));

@@ -133,3 +133,34 @@ it("owner shutdown interrupts pending pulls, detaches queues, and rejects late a
       expect(bus.queues.size).toBe(0);
     }),
   ));
+
+it("a commit between taking a wake and reading is visible and leaves its next wake pending", () =>
+  check(
+    Effect.gen(function* () {
+      const bus = yield* createNotifier;
+      const id = StreamId.make("take-read");
+      let reads = 0;
+      class RacingEntries extends Map<StreamId, Entry> {
+        override get(key: StreamId) {
+          if (++reads === 2) {
+            expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([0]);
+            this.set(key, entry(key, true));
+            for (const queue of bus.queues) Queue.offerUnsafe(queue, undefined);
+          }
+          return super.get(key);
+        }
+      }
+      const state: State = {
+        entries: new RacingEntries([[id, entry(id)]]),
+        children: new Map(),
+        deadlines: [],
+      };
+      const pull = yield* Stream.toPull(changes(state, bus, id, true, 25));
+      expect((yield* pull)[0]).toMatchObject({ closed: false });
+      yield* bus.publish;
+      expect((yield* pull)[0]).toMatchObject({ closed: true });
+      expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([1]);
+      expect((yield* pull)[0]).toMatchObject({ closed: true });
+      expect([...bus.queues].map(Queue.sizeUnsafe)).toEqual([0]);
+    }),
+  ));
