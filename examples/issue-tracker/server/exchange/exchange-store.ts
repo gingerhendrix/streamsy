@@ -59,11 +59,12 @@ const cursorId = (exchange: string, source: string): string => `${exchange}\u000
 
 const sqlite = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
   effect.pipe(
-    Effect.mapError((cause) =>
-      new ExchangeStoreUnavailable({
-        operation,
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
+    Effect.mapError(
+      (cause) =>
+        new ExchangeStoreUnavailable({
+          operation,
+          detail: cause instanceof Error ? cause.message : String(cause),
+        }),
     ),
   );
 
@@ -136,24 +137,35 @@ export function exchangeCursorService(sql: SqlClient.SqlClient): ExchangeCursorS
   return ExchangeCursorStore.of({
     read: Effect.fn("ExchangeCursorStore.read")(function* (exchange, version, source) {
       const key = partitionKeyString(source);
-      const rows = yield* sqlite("read", sql.unsafe<CursorValueRow>(
-        "SELECT exchange, source, value FROM exchange_cursors WHERE exchange = ? AND source = ?",
-        [exchange, key],
-      ));
+      const rows = yield* sqlite(
+        "read",
+        sql.unsafe<CursorValueRow>(
+          "SELECT exchange, source, value FROM exchange_cursors WHERE exchange = ? AND source = ?",
+          [exchange, key],
+        ),
+      );
       const found = rows[0];
       if (found === undefined) return initialCursor(exchange, version, source);
       return yield* restore(exchange, key, version, found.value);
     }),
     advance: (cursor) =>
-      sqlite("advance", sql.unsafe<Record<string, never>>(
-        "INSERT INTO exchange_cursors (exchange, source, value) VALUES (?, ?, ?)" +
-          " ON CONFLICT (exchange, source) DO UPDATE SET value = excluded.value",
-        [cursor.exchange, partitionKeyString(cursor.source), encodeCursor(cursor)],
-      ).pipe(Effect.asVoid)),
+      sqlite(
+        "advance",
+        sql
+          .unsafe<Record<string, never>>(
+            "INSERT INTO exchange_cursors (exchange, source, value) VALUES (?, ?, ?)" +
+              " ON CONFLICT (exchange, source) DO UPDATE SET value = excluded.value",
+            [cursor.exchange, partitionKeyString(cursor.source), encodeCursor(cursor)],
+          )
+          .pipe(Effect.asVoid),
+      ),
     list: Effect.gen(function* () {
-      const found = yield* sqlite("list", sql.unsafe<CursorValueRow>(
-        "SELECT exchange, source, value FROM exchange_cursors ORDER BY exchange, source",
-      ));
+      const found = yield* sqlite(
+        "list",
+        sql.unsafe<CursorValueRow>(
+          "SELECT exchange, source, value FROM exchange_cursors ORDER BY exchange, source",
+        ),
+      );
       const cursors: ExchangeCursor[] = [];
       for (const row of found) {
         cursors.push(yield* restore(row.exchange, row.source, undefined, row.value));

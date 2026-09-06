@@ -5,7 +5,10 @@ import {
   NotificationTarget,
   type NotificationTargetService,
 } from "../../publication/notifications.ts";
-import { AssignmentNotification, decodeAssignmentNotification } from "../../../domain/notifications.ts";
+import {
+  AssignmentNotification,
+  decodeAssignmentNotification,
+} from "../../../domain/notifications.ts";
 
 const NOTIFICATION_SCHEMA = `CREATE TABLE IF NOT EXISTS issue_tracker_notification_acceptances (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

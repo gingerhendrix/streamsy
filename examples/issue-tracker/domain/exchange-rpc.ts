@@ -67,7 +67,7 @@ export type StableHashInput =
       readonly destination: typeof UserDestination.Type;
       readonly fromArrival: number;
       readonly toArrival: number;
-      readonly rows: readonly typeof InboxRow.Type[];
+      readonly rows: readonly (typeof InboxRow.Type)[];
     };
 
 export async function stableHash(value: StableHashInput): Promise<string> {

@@ -33,7 +33,12 @@ import {
   ViewStateRestorePoison,
   type ViewStoreService,
 } from "@streamsy/views/store";
-import { makeMemoryOutboxBacking, outboxStoreLayer, OutboxStore, type OutboxDraft } from "@streamsy/sinks/action/outbox";
+import {
+  makeMemoryOutboxBacking,
+  outboxStoreLayer,
+  OutboxStore,
+  type OutboxDraft,
+} from "@streamsy/sinks/action/outbox";
 import { type OutboxUnavailable } from "@streamsy/sinks/action/errors";
 import { Clock, Context, Effect, Layer, Schema } from "effect";
 import { planHash } from "@streamsy/views";
@@ -521,11 +526,12 @@ export const memoryLayer = (
           receipts.set(key, receipt);
           if (deliveries.length > 0) {
             yield* outbox.enqueue(deliveries).pipe(
-              Effect.mapError((error: OutboxUnavailable) =>
-                new StoreUnavailable({
-                  operation: "recordReceipt",
-                  detail: encodeJsonString(error),
-                }),
+              Effect.mapError(
+                (error: OutboxUnavailable) =>
+                  new StoreUnavailable({
+                    operation: "recordReceipt",
+                    detail: encodeJsonString(error),
+                  }),
               ),
             );
           }

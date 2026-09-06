@@ -217,10 +217,18 @@ await decode(
 const inbox = await eventually(async () => {
   const response = await call("GET", "/api/users/ada/inbox");
   if (!response.ok) return undefined;
-  const value = Schema.decodeUnknownSync(Schema.Struct({
-    userId: Schema.String,
-    rows: Schema.Array(Schema.Struct({ inboxId: Schema.String, workspaceId: Schema.String, issueId: Schema.String })),
-  }))(await response.json());
+  const value = Schema.decodeUnknownSync(
+    Schema.Struct({
+      userId: Schema.String,
+      rows: Schema.Array(
+        Schema.Struct({
+          inboxId: Schema.String,
+          workspaceId: Schema.String,
+          issueId: Schema.String,
+        }),
+      ),
+    }),
+  )(await response.json());
   return value.rows.some((row) => row.workspaceId === workspaceId && row.issueId === issueId)
     ? value
     : undefined;
@@ -228,19 +236,29 @@ const inbox = await eventually(async () => {
 assert(inbox.userId === "ada", "cross-object inbox must be placed at ada");
 const exchange = await decode(
   await call("GET", "/api/global/exchange"),
-  Schema.Struct({ cursors: Schema.Array(Schema.Struct({
-    exchange: Schema.String,
-    source: Schema.Struct({ kind: Schema.String, id: Schema.String }),
-    arrival: Schema.Number,
-    applied: Schema.Number,
-  })) }),
+  Schema.Struct({
+    cursors: Schema.Array(
+      Schema.Struct({
+        exchange: Schema.String,
+        source: Schema.Struct({ kind: Schema.String, id: Schema.String }),
+        arrival: Schema.Number,
+        applied: Schema.Number,
+      }),
+    ),
+  }),
 );
-assert(exchange.cursors.some((cursor) => cursor.source.id === workspaceId && cursor.applied === 1), "global cursor must advance once");
+assert(
+  exchange.cursors.some((cursor) => cursor.source.id === workspaceId && cursor.applied === 1),
+  "global cursor must advance once",
+);
 const sources = await decode(
   await call("GET", "/api/global/sources"),
   Schema.Struct({ sources: Schema.Array(Schema.Struct({ partition: Schema.String })) }),
 );
-assert(sources.sources.some((source) => source.partition === `workspace:${workspaceId}`), "workspace source must remain registered");
+assert(
+  sources.sources.some((source) => source.partition === `workspace:${workspaceId}`),
+  "workspace source must remain registered",
+);
 const beforeDrain = await decode(
   await call("GET", `/api/workspaces/${workspaceId}/notifications`),
   NotificationsResponse,
@@ -283,8 +301,16 @@ console.log(
         className: WORKSPACE_OBJECT_CLASS,
         migration: WORKSPACE_OBJECT_MIGRATION,
       },
-      userDurableObject: { namespaceId: userNamespaceId, binding: "USERS", className: USER_OBJECT_CLASS },
-      globalDurableObject: { namespaceId: globalNamespaceId, binding: "GLOBALS", className: GLOBAL_OBJECT_CLASS },
+      userDurableObject: {
+        namespaceId: userNamespaceId,
+        binding: "USERS",
+        className: USER_OBJECT_CLASS,
+      },
+      globalDurableObject: {
+        namespaceId: globalNamespaceId,
+        binding: "GLOBALS",
+        className: GLOBAL_OBJECT_CLASS,
+      },
       workspaceId,
       planHash: PLAN_HASH,
       sinkFingerprints: {

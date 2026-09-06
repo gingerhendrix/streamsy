@@ -72,14 +72,13 @@ const attempt = <A>(
   effect: Effect.Effect<A, OutboxUnavailable | SqlError>,
 ): Effect.Effect<A, OutboxUnavailable> =>
   effect.pipe(
-    Effect.mapError(
-      (cause) =>
-        isOutboxUnavailable(cause)
-          ? cause
-          : new OutboxUnavailable({
-              operation,
-              detail: cause instanceof Error ? cause.message : String(cause),
-            }),
+    Effect.mapError((cause) =>
+      isOutboxUnavailable(cause)
+        ? cause
+        : new OutboxUnavailable({
+            operation,
+            detail: cause instanceof Error ? cause.message : String(cause),
+          }),
     ),
   );
 
@@ -104,7 +103,9 @@ export function createSqliteOutboxBacking(sql: SqlClient): OutboxBacking {
     attempt(operation, queryAll<Record<string, never>>(statement, params).pipe(Effect.asVoid));
 
   return {
-    enqueue: (drafts: readonly OutboxDraft[]): Effect.Effect<OutboxEnqueueReport, OutboxUnavailable> =>
+    enqueue: (
+      drafts: readonly OutboxDraft[],
+    ): Effect.Effect<OutboxEnqueueReport, OutboxUnavailable> =>
       attempt(
         "enqueue",
         Effect.gen(function* () {

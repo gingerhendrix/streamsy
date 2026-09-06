@@ -2,13 +2,13 @@
 
 Effect-native stream capabilities for Streamsy durable streams, together with the causal vocabulary and stream bindings they operate on. Each public API is reached through the subpath that owns it; there are no re-export modules.
 
-| Subpath                         | Module               | Contents                                                                             |
-| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------ |
-| `@streamsy/streams`             | `src/streams.ts`     | `CreateStreams`, `ReadStreams`, `AppendStreams`, and the schema-backed tagged errors |
-| `@streamsy/streams/binding`     | `src/binding.ts`     | `bindStream()` and `StreamBinding`                                                   |
-| `@streamsy/streams/identity`    | `src/identity.ts`    | `streamIdentity()` and its canonical encoding                                        |
-| `@streamsy/streams/causal`      | `src/causal.ts`      | `coverage()`, `sourceAck()`, `sourceWatermark()`, stream positions                   |
-| `@streamsy/streams/testing`     | `src/testing.ts`     | `TestStreams` and `TestStreamsLayer`                                                 |
+| Subpath                      | Module            | Contents                                                                             |
+| ---------------------------- | ----------------- | ------------------------------------------------------------------------------------ |
+| `@streamsy/streams`          | `src/streams.ts`  | `CreateStreams`, `ReadStreams`, `AppendStreams`, and the schema-backed tagged errors |
+| `@streamsy/streams/binding`  | `src/binding.ts`  | `bindStream()` and `StreamBinding`                                                   |
+| `@streamsy/streams/identity` | `src/identity.ts` | `streamIdentity()` and its canonical encoding                                        |
+| `@streamsy/streams/causal`   | `src/causal.ts`   | `coverage()`, `sourceAck()`, `sourceWatermark()`, stream positions                   |
+| `@streamsy/streams/testing`  | `src/testing.ts`  | `TestStreams` and `TestStreamsLayer`                                                 |
 
 ## Causal vocabulary
 

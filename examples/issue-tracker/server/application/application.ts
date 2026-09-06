@@ -11,7 +11,13 @@
  * reconciles the append to the original offset, so the two mechanisms are
  * independent rather than one guarding the other.
  */
-import { AppendStreams, AppendStreamsLive, ReadStreams, ReadStreamsLive, type StreamReadError } from "@streamsy/streams";
+import {
+  AppendStreams,
+  AppendStreamsLive,
+  ReadStreams,
+  ReadStreamsLive,
+  type StreamReadError,
+} from "@streamsy/streams";
 import type { StreamBinding } from "@streamsy/streams/binding";
 import { OutboxStore, type OutboxDraft } from "@streamsy/sinks/action/outbox";
 import { Clock, DateTime, Effect, Layer } from "effect";
@@ -64,7 +70,11 @@ import {
   type CanonicalSource,
 } from "./command-reconciliation.ts";
 import { advance, type MaintenanceReport } from "./maintenance.ts";
-import { assignmentDrafts, drainAssignments, NotificationTarget } from "../publication/notifications.ts";
+import {
+  assignmentDrafts,
+  drainAssignments,
+  NotificationTarget,
+} from "../publication/notifications.ts";
 import { IssueSink } from "../publication/sink.ts";
 import { IssueStore, type CommandReceipt } from "../persistence/store.ts";
 import { ensureWorkspace, Streams, type WorkspaceBindings } from "../transport/streams.ts";

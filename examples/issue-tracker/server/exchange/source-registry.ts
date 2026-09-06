@@ -77,12 +77,15 @@ export function compareSources(left: RegisteredSource, right: RegisteredSource):
 }
 
 const sqlite = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
-  effect.pipe(Effect.mapError((cause) =>
-      new ExchangeStoreUnavailable({
-        operation,
-        detail: cause instanceof Error ? cause.message : String(cause),
-      }),
-  ));
+  effect.pipe(
+    Effect.mapError(
+      (cause) =>
+        new ExchangeStoreUnavailable({
+          operation,
+          detail: cause instanceof Error ? cause.message : String(cause),
+        }),
+    ),
+  );
 
 /** The in-memory registry. Same ordering rule, no durability. */
 // oxlint-disable-next-line effecttsgo/lazy-effect -- This factory is the host's isolation boundary: each global partition must acquire its own mutable backing.
@@ -113,42 +116,64 @@ export const sourceRegistryMemoryLayer = (): Layer.Layer<ExchangeSourceRegistry>
   });
 
 /** The durable registry, over the global partition's own connection. */
-export const sourceRegistrySqlLayer: Layer.Layer<ExchangeSourceRegistry, never, SqlClient.SqlClient> =
-  Layer.effect(ExchangeSourceRegistry, Effect.map(SqlClient.SqlClient, sourceRegistryService));
+export const sourceRegistrySqlLayer: Layer.Layer<
+  ExchangeSourceRegistry,
+  never,
+  SqlClient.SqlClient
+> = Layer.effect(ExchangeSourceRegistry, Effect.map(SqlClient.SqlClient, sourceRegistryService));
 
 export function sourceRegistryService(sql: SqlClient.SqlClient): ExchangeSourceRegistryService {
   return ExchangeSourceRegistry.of({
     register: (keys, atMs) =>
-      sqlite("register", sql.withTransaction(Effect.forEach(keys, (key) =>
-        sql.unsafe<Record<string, never>>(
-          "INSERT INTO exchange_sources (source, registered_at_ms) VALUES (?, ?)" +
-            " ON CONFLICT (source) DO NOTHING",
-          [partitionKeyString(key), atMs],
-        ), { discard: true }).pipe(Effect.asVoid))),
-    list: sqlite("listSources", sql.unsafe<SourceRow>(
-      "SELECT source, registered_at_ms, last_exchanged_at_ms FROM exchange_sources",
-    )).pipe(Effect.map((rows) => {
-      const sources: RegisteredSource[] = [];
-      for (const row of rows) {
-        // A row whose key no longer parses is a key this host does not serve.
-        // Skipping it is right: it is not a source, and failing the pass over
-        // it would stop every source this host *can* serve.
-        const key = parsePartitionKey(row.source);
-        if (key === undefined) continue;
-        sources.push({
-          key,
-          registeredAtMs: row.registered_at_ms,
-          lastExchangedAtMs: row.last_exchanged_at_ms,
-        });
-      }
-      return sources.toSorted(compareSources);
-    })),
+      sqlite(
+        "register",
+        sql.withTransaction(
+          Effect.forEach(
+            keys,
+            (key) =>
+              sql.unsafe<Record<string, never>>(
+                "INSERT INTO exchange_sources (source, registered_at_ms) VALUES (?, ?)" +
+                  " ON CONFLICT (source) DO NOTHING",
+                [partitionKeyString(key), atMs],
+              ),
+            { discard: true },
+          ).pipe(Effect.asVoid),
+        ),
+      ),
+    list: sqlite(
+      "listSources",
+      sql.unsafe<SourceRow>(
+        "SELECT source, registered_at_ms, last_exchanged_at_ms FROM exchange_sources",
+      ),
+    ).pipe(
+      Effect.map((rows) => {
+        const sources: RegisteredSource[] = [];
+        for (const row of rows) {
+          // A row whose key no longer parses is a key this host does not serve.
+          // Skipping it is right: it is not a source, and failing the pass over
+          // it would stop every source this host *can* serve.
+          const key = parsePartitionKey(row.source);
+          if (key === undefined) continue;
+          sources.push({
+            key,
+            registeredAtMs: row.registered_at_ms,
+            lastExchangedAtMs: row.last_exchanged_at_ms,
+          });
+        }
+        return sources.toSorted(compareSources);
+      }),
+    ),
     touch: (key, atMs) =>
-      sqlite("touchSource", sql.unsafe<Record<string, never>>(
-        "INSERT INTO exchange_sources (source, registered_at_ms, last_exchanged_at_ms)" +
-          " VALUES (?, ?, ?) ON CONFLICT (source) DO UPDATE SET" +
-          " last_exchanged_at_ms = excluded.last_exchanged_at_ms",
-        [partitionKeyString(key), atMs, atMs],
-      ).pipe(Effect.asVoid)),
+      sqlite(
+        "touchSource",
+        sql
+          .unsafe<Record<string, never>>(
+            "INSERT INTO exchange_sources (source, registered_at_ms, last_exchanged_at_ms)" +
+              " VALUES (?, ?, ?) ON CONFLICT (source) DO UPDATE SET" +
+              " last_exchanged_at_ms = excluded.last_exchanged_at_ms",
+            [partitionKeyString(key), atMs, atMs],
+          )
+          .pipe(Effect.asVoid),
+      ),
   });
 }

@@ -27,11 +27,11 @@ The root build produces the workspace package entry points that the examples imp
 
 ## The demos
 
-| Tutorial | Demonstrates | Main APIs |
-|---|---|---|
-| [Hacker News newest stream](/docs/demos/hackernews-newest-stream) | A bounded `StateProjection` from a JSON source stream into a Durable State stream, mirrored into the browser | `stream-identity`, `state-projection` |
-| [Issue tracker projections](/docs/demos/issue-tracker-projections) | A two-hop projection chain with fan-in, chained coverage, and bounded repair | `binding`, `causal`, `effect`, `ivm-mesh` |
-| [Hex Domination](/docs/demos/risk-demo) | A complete event-sourced game with a recovered board projection, verified rebuilds, and a typed browser mirror | `binding`, `causal`, `effect`, `ivm-mesh` |
+| Tutorial                                                           | Demonstrates                                                                                                   | Main APIs                                 |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| [Hacker News newest stream](/docs/demos/hackernews-newest-stream)  | A bounded `StateProjection` from a JSON source stream into a Durable State stream, mirrored into the browser   | `stream-identity`, `state-projection`     |
+| [Issue tracker projections](/docs/demos/issue-tracker-projections) | A two-hop projection chain with fan-in, chained coverage, and bounded repair                                   | `binding`, `causal`, `effect`, `ivm-mesh` |
+| [Hex Domination](/docs/demos/risk-demo)                            | A complete event-sourced game with a recovered board projection, verified rebuilds, and a typed browser mirror | `binding`, `causal`, `effect`, `ivm-mesh` |
 
 Read them in that order if the programme is new to you. The Hacker News demo uses the application-facing `StateProjection` facade and is the gentlest entry point. The issue tracker adds projection chains, coverage, and repair. Hex Domination shows the whole approach inside a real application.
 

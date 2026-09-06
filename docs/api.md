@@ -209,7 +209,7 @@ Protocol-bound streams are distinct from storage-bound streams:
 | `@streamsy/state`                  | Durable State protocol/stream wrappers: typed change/control messages over collections.                                         |
 | `@streamsy/storage/fs`             | JSONL filesystem `StorageAdapter` for simple durable persistence.                                                               |
 | `@streamsy/storage/sqlite`         | Bun `bun:sqlite` `StorageAdapter` for durable local persistence.                                                                |
-| `@streamsy/storage/durable-object` | Cloudflare Durable Object `StorageAdapter`; the `DurableObjectStreamStorage` class lives at `/durable-object/storage`.         |
+| `@streamsy/storage/durable-object` | Cloudflare Durable Object `StorageAdapter`; the `DurableObjectStreamStorage` class lives at `/durable-object/storage`.          |
 
 ## Public exports
 

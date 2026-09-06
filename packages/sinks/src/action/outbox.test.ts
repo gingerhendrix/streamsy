@@ -114,9 +114,9 @@ for (const [name, run] of cases) {
               (entry) => entry.idempotencyKey,
             ),
           ).toEqual(["b"]);
-          expect((yield* outbox.list("test.sink", "left")).map((entry) => entry.idempotencyKey)).toEqual([
-            "a",
-          ]);
+          expect(
+            (yield* outbox.list("test.sink", "left")).map((entry) => entry.idempotencyKey),
+          ).toEqual(["a"]);
         }),
       ));
 

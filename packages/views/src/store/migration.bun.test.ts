@@ -89,10 +89,7 @@ test("reports malformed durable JSON as typed restore poison", () => {
   return runStore(filename, (store) =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        store.getRow(
-          { planName: "p", planHash: "h", partition: "x", sourceId: "s", id: "r" },
-          "k",
-        ),
+        store.getRow({ planName: "p", planHash: "h", partition: "x", sourceId: "s", id: "r" }, "k"),
       );
       expect(Exit.isFailure(exit)).toBe(true);
     }),

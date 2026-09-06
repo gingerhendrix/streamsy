@@ -184,8 +184,7 @@ export function makeMemoryOutboxBacking(): OutboxBacking {
       Effect.sync(() =>
         ordered().filter(
           (entry) =>
-            entry.sink === sink &&
-            (partitionId === undefined || entry.partitionId === partitionId),
+            entry.sink === sink && (partitionId === undefined || entry.partitionId === partitionId),
         ),
       ),
   };

@@ -332,7 +332,9 @@ describe("Cloudflare workspace placement on real workerd storage", () => {
   });
 
   test("production-bound alarms do not create test telemetry", async () => {
-    const harness = await workerdHarness("server/host/cloudflare/cloudflare.ts", { testFailpoints: false });
+    const harness = await workerdHarness("server/host/cloudflare/cloudflare.ts", {
+      testFailpoints: false,
+    });
     open.push(harness);
     const path = "/streams/workspaces/no-test-telemetry/expiring";
     expect(

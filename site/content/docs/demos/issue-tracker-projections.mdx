@@ -144,36 +144,39 @@ The `restore` function is strict on purpose. It checks both the collection tag a
 
 ## Hop two: dynamic fan-in
 
-The board folds *many* issue-detail streams into one target, and the set of members changes as issues join and leave the project. `catchUpDynamicFanInState` follows the membership stream to decide which member streams feed the fold:
+The board folds _many_ issue-detail streams into one target, and the set of members changes as issues join and leave the project. `catchUpDynamicFanInState` follows the membership stream to decide which member streams feed the fold:
 
 ```ts title="server/projections.ts"
-return yield* catchUpDynamicFanInState<BoardState, IssueDetail>({
-  membership: streams.bindings.membership(workspaceId, projectId),
-  target: streams.bindings.board(workspaceId, projectId),
-  lane,
-  limits: PROJECTION_LIMITS,
-  initial: {},
-  restore: restoreBoard,
-  decodeMembership(batch) {
-    // decode IssueJoined / IssueLeft facts into { type: "join" | "leave", member } changes
-  },
-  resolveMember: (identity) => resolveDetailMember(streams, workspaceId, identity),
-  decodeMember(batch) {
-    // decode issue-detail State rows from a member stream
-  },
-  onRecord(state, _member, details) {
-    const latest = details.at(-1);
-    if (latest === undefined) return { state, facts: [] };
-    const row = boardRow(latest);
-    return { state: { ...state, [row.issueId]: row }, facts: [boardFact(row)] };
-  },
-  onRemove(state, member) {
-    const issueId = issueIdFromDetailIdentity(workspaceId, member.identity);
-    if (issueId === undefined) return { state, facts: [] };
-    const { [issueId]: _removed, ...rest } = state;
-    return { state: rest, facts: [boardRemoval(issueId)] };
-  },
-});
+return (
+  yield *
+  catchUpDynamicFanInState<BoardState, IssueDetail>({
+    membership: streams.bindings.membership(workspaceId, projectId),
+    target: streams.bindings.board(workspaceId, projectId),
+    lane,
+    limits: PROJECTION_LIMITS,
+    initial: {},
+    restore: restoreBoard,
+    decodeMembership(batch) {
+      // decode IssueJoined / IssueLeft facts into { type: "join" | "leave", member } changes
+    },
+    resolveMember: (identity) => resolveDetailMember(streams, workspaceId, identity),
+    decodeMember(batch) {
+      // decode issue-detail State rows from a member stream
+    },
+    onRecord(state, _member, details) {
+      const latest = details.at(-1);
+      if (latest === undefined) return { state, facts: [] };
+      const row = boardRow(latest);
+      return { state: { ...state, [row.issueId]: row }, facts: [boardFact(row)] };
+    },
+    onRemove(state, member) {
+      const issueId = issueIdFromDetailIdentity(workspaceId, member.identity);
+      if (issueId === undefined) return { state, facts: [] };
+      const { [issueId]: _removed, ...rest } = state;
+      return { state: rest, facts: [boardRemoval(issueId)] };
+    },
+  })
+);
 ```
 
 `resolveMember` is the guard rail: only issue-detail identities inside this workspace resolve to bindings. Anything else surfaces as an explicit `unknown-member` status instead of being read.

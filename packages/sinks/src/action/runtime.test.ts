@@ -295,9 +295,7 @@ describe("draining an action sink", () => {
       Effect.gen(function* () {
         expect(yield* drainAt(thrower, 0)).toMatchObject({ delivered: 1, retried: 1 });
         const entries = yield* outbox.list(sink.name, undefined);
-        expect(entries[0]?.lastError).toContain(
-          "the notifier client blew up",
-        );
+        expect(entries[0]?.lastError).toContain("the notifier client blew up");
       }),
     );
   });
@@ -305,16 +303,18 @@ describe("draining an action sink", () => {
   test("a stored payload the codec now rejects dead-letters alone", () => {
     const outbox = makeMemoryOutboxBacking();
     const log = recorder();
-    runOutbox(outbox.enqueue([
-      {
-        sink: sink.name,
-        partitionId: "main",
-        idempotencyKey: "poison",
-        payload: JSON.stringify({ nothing: true }),
-        enqueuedAtMs: 0,
-      },
-      ...draftsFor(sink, [note("healthy")], 0),
-    ]));
+    runOutbox(
+      outbox.enqueue([
+        {
+          sink: sink.name,
+          partitionId: "main",
+          idempotencyKey: "poison",
+          payload: JSON.stringify({ nothing: true }),
+          enqueuedAtMs: 0,
+        },
+        ...draftsFor(sink, [note("healthy")], 0),
+      ]),
+    );
 
     return runWithOutbox(
       outbox,

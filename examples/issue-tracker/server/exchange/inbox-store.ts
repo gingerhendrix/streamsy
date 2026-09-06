@@ -18,12 +18,17 @@ export interface InboxBatchResult {
 }
 
 export interface InboxStoreService {
-  readonly upsert: (userId: string, rows: readonly InboxRow[]) => Effect.Effect<number, InboxUnavailable>;
+  readonly upsert: (
+    userId: string,
+    rows: readonly InboxRow[],
+  ) => Effect.Effect<number, InboxUnavailable>;
   readonly applyBatch: (
     userId: string,
     batch: InboxBatch,
   ) => Effect.Effect<InboxBatchResult, InboxUnavailable>;
-  readonly rows: (userId: string) => Effect.Effect<readonly InboxRow[], InboxUnavailable | InboxRestorePoison>;
+  readonly rows: (
+    userId: string,
+  ) => Effect.Effect<readonly InboxRow[], InboxUnavailable | InboxRestorePoison>;
 }
 
 export class InboxStore extends Context.Service<InboxStore, InboxStoreService>()(
@@ -41,15 +46,27 @@ CREATE TABLE IF NOT EXISTS exchange_batch_receipts (
   created_at_ms INTEGER NOT NULL
 );`;
 
-interface InboxValueRow { readonly inbox_id: string; readonly value: string }
-interface BatchReceiptRow { readonly payload_hash: string; readonly applied: number }
+interface InboxValueRow {
+  readonly inbox_id: string;
+  readonly value: string;
+}
+interface BatchReceiptRow {
+  readonly payload_hash: string;
+  readonly applied: number;
+}
 
 const InboxRowJson = Schema.fromJsonString(InboxRow);
 const encodeInboxRow = Schema.encodeUnknownSync(InboxRowJson);
 const misplaced = (userId: string, row: InboxRow): InboxUnavailable =>
-  new InboxUnavailable({ operation: "upsert", detail: `row ${row.inboxId} is placed at user ${row.userId}, not ${userId}` });
+  new InboxUnavailable({
+    operation: "upsert",
+    detail: `row ${row.inboxId} is placed at user ${row.userId}, not ${userId}`,
+  });
 const unavailable = (operation: string, cause: unknown) =>
-  new InboxUnavailable({ operation, detail: cause instanceof Error ? cause.message : String(cause) });
+  new InboxUnavailable({
+    operation,
+    detail: cause instanceof Error ? cause.message : String(cause),
+  });
 const first = <A>(rows: ReadonlyArray<A>): A | undefined => rows[0];
 
 const validateRows = (userId: string, rows: readonly InboxRow[]) => {
@@ -63,7 +80,10 @@ export const inboxMemoryLayer = (): Layer.Layer<InboxStore> =>
   Layer.sync(InboxStore, () => {
     const stored = new Map<string, string>();
     const receipts = new Map<string, BatchReceiptRow>();
-    const upsert = Effect.fn("InboxStore.upsert")(function* (userId: string, rows: readonly InboxRow[]) {
+    const upsert = Effect.fn("InboxStore.upsert")(function* (
+      userId: string,
+      rows: readonly InboxRow[],
+    ) {
       yield* validateRows(userId, rows);
       for (const row of rows) stored.set(`${userId}\u0000${row.inboxId}`, encodeInboxRow(row));
       return rows.length;
@@ -74,9 +94,16 @@ export const inboxMemoryLayer = (): Layer.Layer<InboxStore> =>
         const receipt = receipts.get(batch.operationId);
         if (receipt !== undefined) {
           if (receipt.payload_hash !== batch.payloadHash) {
-            return yield* unavailable("applyBatch", `operation ${batch.operationId} payload conflict`);
+            return yield* unavailable(
+              "applyBatch",
+              `operation ${batch.operationId} payload conflict`,
+            );
           }
-          return { operationId: batch.operationId, payloadHash: receipt.payload_hash, applied: receipt.applied };
+          return {
+            operationId: batch.operationId,
+            payloadHash: receipt.payload_hash,
+            applied: receipt.applied,
+          };
         }
         const applied = yield* upsert(userId, batch.rows);
         receipts.set(batch.operationId, { payload_hash: batch.payloadHash, applied });
@@ -86,7 +113,8 @@ export const inboxMemoryLayer = (): Layer.Layer<InboxStore> =>
         const prefix = `${userId}\u0000`;
         const restored: InboxRow[] = [];
         for (const [key, value] of stored) {
-          if (key.startsWith(prefix)) restored.push(yield* restore(userId, key.slice(prefix.length), value));
+          if (key.startsWith(prefix))
+            restored.push(yield* restore(userId, key.slice(prefix.length), value));
         }
         return restored.toSorted(compareInboxRows);
       }),
@@ -95,7 +123,9 @@ export const inboxMemoryLayer = (): Layer.Layer<InboxStore> =>
 
 export const migrateInboxStore = Effect.fn("InboxStore.migrate")(function* () {
   const sql = yield* SqlClient.SqlClient;
-  for (const statement of INBOX_SCHEMA.split(";").map((value) => value.trim()).filter(Boolean)) {
+  for (const statement of INBOX_SCHEMA.split(";")
+    .map((value) => value.trim())
+    .filter(Boolean)) {
     yield* sql.unsafe<Record<string, never>>(statement).pipe(Effect.asVoid);
   }
 });
@@ -119,11 +149,16 @@ export function inboxService(sql: SqlClient.SqlClient): InboxStoreService {
   const execute = (statement: string, params: ReadonlyArray<unknown> = []) =>
     sql.unsafe<Record<string, never>>(statement, params).pipe(Effect.asVoid);
   const upsertRows = (userId: string, rows: readonly InboxRow[]) =>
-    Effect.forEach(rows, (row) => execute(
-      "INSERT INTO inbox_rows (user_id, inbox_id, value) VALUES (?, ?, ?)" +
-        " ON CONFLICT (user_id, inbox_id) DO UPDATE SET value = excluded.value",
-      [userId, row.inboxId, encodeInboxRow(row)],
-    ), { discard: true });
+    Effect.forEach(
+      rows,
+      (row) =>
+        execute(
+          "INSERT INTO inbox_rows (user_id, inbox_id, value) VALUES (?, ?, ?)" +
+            " ON CONFLICT (user_id, inbox_id) DO UPDATE SET value = excluded.value",
+          [userId, row.inboxId, encodeInboxRow(row)],
+        ),
+      { discard: true },
+    );
   const apply = (userId: string, rows: readonly InboxRow[]) =>
     validateRows(userId, rows).pipe(
       Effect.andThen(sql.withTransaction(upsertRows(userId, rows))),
@@ -134,35 +169,53 @@ export function inboxService(sql: SqlClient.SqlClient): InboxStoreService {
     upsert: apply,
     applyBatch: (userId, batch) =>
       validateRows(userId, batch.rows).pipe(
-        Effect.andThen(sql.withTransaction(Effect.gen(function* () {
-          const receipt = first(yield* sql.unsafe<BatchReceiptRow>(
-            "SELECT payload_hash, applied FROM exchange_batch_receipts WHERE operation_id = ?",
-            [batch.operationId],
-          ));
-          if (receipt !== undefined) {
-            if (receipt.payload_hash !== batch.payloadHash) {
-              return yield* Effect.fail(`operation ${batch.operationId} payload conflict`);
-            }
-            return { operationId: batch.operationId, payloadHash: receipt.payload_hash, applied: receipt.applied };
-          }
-          yield* upsertRows(userId, batch.rows);
-          yield* execute(
-            "INSERT INTO exchange_batch_receipts (operation_id, payload_hash, applied, created_at_ms) VALUES (?, ?, ?, ?)",
-            [batch.operationId, batch.payloadHash, batch.rows.length, Date.now()],
-          );
-          return { operationId: batch.operationId, payloadHash: batch.payloadHash, applied: batch.rows.length };
-        }))),
+        Effect.andThen(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const receipt = first(
+                yield* sql.unsafe<BatchReceiptRow>(
+                  "SELECT payload_hash, applied FROM exchange_batch_receipts WHERE operation_id = ?",
+                  [batch.operationId],
+                ),
+              );
+              if (receipt !== undefined) {
+                if (receipt.payload_hash !== batch.payloadHash) {
+                  return yield* Effect.fail(`operation ${batch.operationId} payload conflict`);
+                }
+                return {
+                  operationId: batch.operationId,
+                  payloadHash: receipt.payload_hash,
+                  applied: receipt.applied,
+                };
+              }
+              yield* upsertRows(userId, batch.rows);
+              yield* execute(
+                "INSERT INTO exchange_batch_receipts (operation_id, payload_hash, applied, created_at_ms) VALUES (?, ?, ?, ?)",
+                [batch.operationId, batch.payloadHash, batch.rows.length, Date.now()],
+              );
+              return {
+                operationId: batch.operationId,
+                payloadHash: batch.payloadHash,
+                applied: batch.rows.length,
+              };
+            }),
+          ),
+        ),
         Effect.mapError((cause) => unavailable("applyBatch", cause)),
       ),
     rows: (userId) =>
-      sql.unsafe<InboxValueRow>(
-        "SELECT inbox_id, value FROM inbox_rows WHERE user_id = ? ORDER BY inbox_id",
-        [userId],
-      ).pipe(
-        Effect.mapError((cause) => unavailable("rows", cause)),
-        Effect.flatMap((found) => Effect.forEach(found, (row) => restore(userId, row.inbox_id, row.value))),
-        Effect.map((rows) => rows.toSorted(compareInboxRows)),
-      ),
+      sql
+        .unsafe<InboxValueRow>(
+          "SELECT inbox_id, value FROM inbox_rows WHERE user_id = ? ORDER BY inbox_id",
+          [userId],
+        )
+        .pipe(
+          Effect.mapError((cause) => unavailable("rows", cause)),
+          Effect.flatMap((found) =>
+            Effect.forEach(found, (row) => restore(userId, row.inbox_id, row.value)),
+          ),
+          Effect.map((rows) => rows.toSorted(compareInboxRows)),
+        ),
   });
 }
 

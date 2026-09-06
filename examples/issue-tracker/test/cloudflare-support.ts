@@ -45,11 +45,11 @@ export async function workerdHarness(
       ? { PARITY: { className: "SqlParityObject", useSQLite: true } }
       : entrypoint.includes("assets")
         ? { WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true } }
-      : {
-          WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true },
-          USERS: { className: "UserPartitionObject", useSQLite: true },
-          GLOBALS: { className: "GlobalExchangeObject", useSQLite: true },
-        },
+        : {
+            WORKSPACES: { className: "WorkspacePartitionObject", useSQLite: true },
+            USERS: { className: "UserPartitionObject", useSQLite: true },
+            GLOBALS: { className: "GlobalExchangeObject", useSQLite: true },
+          },
     durableObjectsPersist: join(root, "state"),
     bindings:
       options.testFailpoints === false
@@ -76,7 +76,8 @@ export async function workerdHarness(
         method: "POST",
         headers: { "x-streamsy-partition-key": "global:global" },
       });
-      if (!response.ok) throw new Error(`global exchange failed: ${response.status} ${await response.text()}`);
+      if (!response.ok)
+        throw new Error(`global exchange failed: ${response.status} ${await response.text()}`);
     },
     runWorkspaceMaintenance: async (workspaceId) => {
       const namespace = await mf.getDurableObjectNamespace("WORKSPACES");

@@ -24,7 +24,7 @@ The command acknowledgement contains `commandId`, `turnId`, and the final canoni
 
 ## The board as a mesh projection
 
-The board is a stateful projection: to emit a row *change*, it must know the rows it previously wrote. `src/board/mesh.ts` expresses the board on the mesh primitives:
+The board is a stateful projection: to emit a row _change_, it must know the rows it previously wrote. `src/board/mesh.ts` expresses the board on the mesh primitives:
 
 ```ts title="src/board/mesh.ts"
 import { bindStream, type StreamBinding } from "@streamsy/streams/binding";
@@ -87,7 +87,7 @@ export function runBoardCatchUp(mesh: BoardMesh) {
 
 Two properties are worth naming:
 
-- **Recovery validation.** `mesh.validateRecovered` checks that the application checkpoint agrees with the mesh lineage *before* any source is read. A mismatch poisons restoration instead of being overwritten by a resumed pass.
+- **Recovery validation.** `mesh.validateRecovered` checks that the application checkpoint agrees with the mesh lineage _before_ any source is read. A mismatch poisons restoration instead of being overwritten by a resumed pass.
 - **No partial boards.** A `limit-reached` checkpoint would describe a partial board, and its watermark would be false proof. `materializeBoard` runs further bounded passes and fails the read outright if the backlog does not drain, rather than returning a board that looks complete.
 
 The honest cost: recovery is O(board history) per call, because the incubating mesh has no bounded recovery anchor yet. For one game's board that is a small scan; it is not a shape to carry into a large history without a snapshot anchor.
@@ -101,7 +101,7 @@ import { coverage, sourceAck, sourceWatermark } from "@streamsy/streams/causal";
 import { streamIdentityEquals } from "@streamsy/streams/identity";
 ```
 
-Both operands are positions in the *canonical* stream, lifted into structured identities. Coverage answers `proven`, `not-yet`, or `incomparable`, and this module turns `incomparable` into a hard error rather than a retry. Nothing ever compares a source offset with a target offset.
+Both operands are positions in the _canonical_ stream, lifted into structured identities. Coverage answers `proven`, `not-yet`, or `incomparable`, and this module turns `incomparable` into a hard error rather than a retry. Nothing ever compares a source offset with a target offset.
 
 ## The typed browser mirror
 

@@ -7,11 +7,13 @@ import { migratedGlobalSqlLayer, type GlobalServices } from "../../exchange/glob
 import { migratedInboxSqlLayer, type InboxStore } from "../../exchange/inbox-store.ts";
 
 const clientLayer = (filename: string): Layer.Layer<SqlClient.SqlClient> =>
-  Layer.effectContext(Effect.gen(function* () {
-    const client = yield* SqliteClient.make({ filename, create: true });
-    yield* client.unsafe<Record<string, never>>("PRAGMA journal_mode = WAL").pipe(Effect.asVoid);
-    return Context.empty().pipe(Context.add(SqlClient.SqlClient, client));
-  })).pipe(Layer.provide(Reactivity.layer), Layer.orDie);
+  Layer.effectContext(
+    Effect.gen(function* () {
+      const client = yield* SqliteClient.make({ filename, create: true });
+      yield* client.unsafe<Record<string, never>>("PRAGMA journal_mode = WAL").pipe(Effect.asVoid);
+      return Context.empty().pipe(Context.add(SqlClient.SqlClient, client));
+    }),
+  ).pipe(Layer.provide(Reactivity.layer), Layer.orDie);
 
 export const userSqliteLayer = (filename: string): Layer.Layer<InboxStore> =>
   migratedInboxSqlLayer.pipe(Layer.orDie, Layer.provide(clientLayer(filename)));
