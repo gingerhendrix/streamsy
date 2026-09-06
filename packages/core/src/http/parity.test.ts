@@ -17,7 +17,7 @@ const expiryFixtures: Readonly<Record<string, ReadonlyArray<WireFixture>>> = fix
 async function assertWire(response: Response, expected: WireFixture, bytes?: Uint8Array) {
   expect(response.status).toBe(expected.status);
   expect(response.statusText).toBe(expected.statusText);
-  expect(expected.headers).toEqual(Object.fromEntries(response.headers));
+  expect(expected.headers).toStrictEqual(Object.fromEntries(response.headers));
   expect(Array.from(bytes ?? new Uint8Array(await response.arrayBuffer()))).toEqual(
     Array.from(expected.bytes),
   );

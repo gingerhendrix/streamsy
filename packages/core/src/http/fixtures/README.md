@@ -17,3 +17,9 @@ The recorder and successful comparison log are retained in the stream's register
 a changed expectation must be reviewed as a wire-contract change. New ingress,
 StorageFault, interruption, subscription cleanup, host shutdown and rebind tests
 remain separate and unchanged by fixture capture.
+
+Historical reconstruction requires checking out that exact base commit in an
+isolated checkout and using the retained recorder script and successful capture
+log as evidence. The recorder imports the comparison implementation that was
+removed by the swap; it cannot be rerun against the current tree. Preserve the
+recorded clock, request ordering and explicitly accepted expiry differences.

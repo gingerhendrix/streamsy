@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun -e \"console.log('No authored conformance unit tests; official memory suite uses test:memory.')\"",
     "test:memory": "bun --bun x vitest --run src/memory.conformance.test.ts"
   },
   "dependencies": {

@@ -51,3 +51,6 @@ jobs:
 
       - name: Perimeter
         run: bun run check:perimeter
+
+      - name: Package dry runs
+        run: bun run pack:dry-run

@@ -10,10 +10,19 @@ const inventory = spawnSync(
   {
     cwd: repoRoot,
     encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
   },
 );
 if (inventory.status !== 0) throw new Error("Cannot inventory repository inputs");
-const inputFiles = inventory.stdout.split("\0").filter(Boolean);
+const inputFiles = [...new Set(inventory.stdout.split("\0").filter(Boolean))];
+const contents = new Map<string, Array<string>>();
+const readLines = (path: string): Array<string> => {
+  const cached = contents.get(path);
+  if (cached !== undefined) return cached;
+  const lines = readFileSync(join(repoRoot, path), "utf8").split("\n");
+  contents.set(path, lines);
+  return lines;
+};
 const matches = (path: string, pattern: string): boolean =>
   new Bun.Glob(pattern).match(pattern.includes("/") ? path : (path.split("/").at(-1) ?? path));
 const scan = (label: string, pattern: string, globs: Array<string> = []): boolean => {
@@ -25,17 +34,16 @@ const scan = (label: string, pattern: string, globs: Array<string> = []): boolea
       !excludes.some((glob) => matches(path, glob)),
   );
   if (paths.length === 0) throw new Error(`Empty perimeter scope: ${label}`);
-  const result = spawnSync("rg", ["--line-number", "--", pattern, ...paths], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (result.error !== undefined) throw result.error;
-  if (result.status !== 0 && result.status !== 1)
-    throw new Error(`rg failed for ${label}: ${result.stderr}`);
-  const passed = result.status === 1;
+  const expression = new RegExp(pattern);
+  const findings: Array<string> = [];
+  for (const path of paths) {
+    for (const [index, line] of readLines(path).entries()) {
+      if (expression.test(line)) findings.push(`${path}:${index + 1}:${line}`);
+    }
+  }
+  const passed = findings.length === 0;
   console.log(`${passed ? "ok  " : "FAIL"} ${label}`);
-  if (!passed) process.stdout.write(result.stdout);
+  for (const finding of findings) console.log(finding);
   return passed;
 };
 const historical = ["!parked/**", "!docs/**", "!site/content/**"];
@@ -120,33 +128,35 @@ for (const path of testKits) {
   checks.push(isTestKit);
   console.log(`${isTestKit ? "ok  " : "FAIL"} test registration boundary: ${path}`);
 }
-const files = spawnSync("git", ["ls-files", "-z", "--", "*package.json"], {
-  cwd: repoRoot,
-  encoding: "utf8",
-});
-if (files.status !== 0) throw new Error("Cannot inventory manifests");
-for (const path of files.stdout.split("\0").filter(Boolean)) {
+for (const path of inputFiles.filter(
+  (file) => file === "package.json" || file.endsWith("/package.json"),
+)) {
   if (path.startsWith("parked/")) continue;
   const manifest: {
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     overrides?: Record<string, string>;
   } = JSON.parse(readFileSync(join(repoRoot, path), "utf8"));
-  for (const deps of [manifest.dependencies, manifest.devDependencies, manifest.overrides]) {
+  for (const section of ["dependencies", "devDependencies", "overrides"] as const) {
+    const deps = manifest[section];
     if (deps?.effect !== undefined) {
       const pinned = deps.effect === "4.0.0-rc.112";
       checks.push(pinned);
       console.log(`${pinned ? "ok  " : "FAIL"} Effect pin: ${path}`);
     }
-    if (deps?.vitest !== undefined) checks.push(path === "packages/conformance-tests/package.json");
+    if (deps?.vitest !== undefined) {
+      const official = path === "packages/conformance-tests/package.json";
+      checks.push(official);
+      console.log(`${official ? "ok  " : "FAIL"} Vitest manifest ownership: ${path} (${section})`);
+    }
   }
 }
-const suppressions = spawnSync("rg", ["--count", "oxlint-disable", "packages", "examples"], {
-  cwd: repoRoot,
-  encoding: "utf8",
-});
-if (suppressions.status !== 0 && suppressions.status !== 1)
-  throw new Error("Cannot inventory suppressions");
-console.log(`Lint suppression inventory (existing reasons retained):\n${suppressions.stdout}`);
+console.log("Lint suppression inventory (existing reasons retained):");
+for (const path of inputFiles.filter(
+  (file) => file.startsWith("packages/") || file.startsWith("examples/"),
+)) {
+  const count = readLines(path).filter((line) => /oxlint-disable/.test(line)).length;
+  if (count > 0) console.log(`${path}:${count}`);
+}
 if (checks.some((passed) => !passed)) process.exit(1);
 console.log("Perimeter checks passed; site content remains deferred to Batch 7.");

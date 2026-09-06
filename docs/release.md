@@ -21,7 +21,7 @@ verification so retired artifacts cannot mask missing exports:
 
 ```sh
 git clean -fdx -- packages/*/dist
-bun install
+bun install --frozen-lockfile
 bun run build
 bun run typecheck
 bun run lint
@@ -53,3 +53,66 @@ deployments and releases require separate authorization. The existing tag workfl
 is kept aligned with the three package directories and memory-only checks; this
 batch does not execute it. Review the final site/support matrix and release
 measurements before authorizing release operations.
+
+## Operational prerequisites
+
+These are release-planning instructions, not authorization to perform a release.
+Before requesting approval, identify the exact reviewed commit and package
+versions, complete the gate above, review all package file lists (including core
+README and LICENSE), and record the remaining site/support and release-measurement
+checks. Work from a clean checkout and preserve the reviewed lockfile.
+
+The existing workflow uses Node 22 and npm 11.11.0; the prior runbook baseline is
+Node 22.14.0 or newer and npm 11.5.1 or newer for provenance/trusted publishing.
+Verify tool versions before an authorized release, alongside Bun and Git. The
+perimeter gate requires Bun and Git and performs its text scans in-process.
+Release tooling additionally needs npm account access to the `@streamsy` scope,
+GitHub access to `gingerhendrix/streamsy`, and permission to create the intended
+release tag. Establish credentials only for the approved release operation.
+
+The private root and all three public manifests must agree on 0.4.0. Check the
+final packed dependency versions as well as workspace manifests. CI and the tag
+workflow run package dry runs before any publication step. A dry run does not
+publish, create a tag or prove npm account configuration.
+
+## Manual first publication and trusted publisher setup
+
+For a package name that has never been published, plan a manual first publication
+from the reviewed release commit. After explicit authorization, check registry
+state for each of core, views and serve; do not assume a name is absent or that an
+existing version may be overwritten. Authenticate using the approved account,
+create and inspect its Bun tarball, then publish that exact tarball with public
+access. Verify the returned name, version and integrity and retain the evidence.
+Do not run manual publication during this package-preparation task.
+
+After a name exists, configure its npm trusted publisher for:
+
+- GitHub organization/user: `gingerhendrix`.
+- Repository: `streamsy`.
+- Workflow filename: `publish.yml`.
+- Environment: none, unless a separately reviewed workflow adds one.
+- Publishing action: `npm publish`.
+
+Record the successful first publication and publisher setup before approving a
+release tag. The existing workflow validates tag/package versions, skips versions
+already present, and publishes missing versions with provenance and public access.
+A partial release needs inspection and an explicit recovery decision; do not bump
+versions or republish blindly. Tag pushes and GitHub release creation are release
+operations and remain permission-gated.
+
+## Retired-package deprecation planning
+
+Inventory published versions and consumers before proposing deprecation wording.
+The retired graph includes `@streamsy/http-client`, `@streamsy/streams`,
+`@streamsy/projection`, `@streamsy/state`, and `@streamsy/storage`; earlier names
+include `@streamsy/client`, `@streamsy/experimental`, and `@streamsy/storage-memory`.
+Do not imply that the three prepared packages replace every retired capability.
+In particular, persistent protocol storage and the Effect fetch transport are
+not available in this Step 1 memory slice.
+
+Prepare package-specific messages, replacement links and affected version ranges
+for review. Deprecation is a separate approved registry operation after suitable
+replacement guidance exists; do not unpublish historical versions or change their
+metadata during this task. The filesystem backend's confirmed CAS defect remains
+unfixed despite retirement, and release/deprecation language must preserve that
+fact. No registry lookup, publish, publisher setup or deprecation is executed here.
