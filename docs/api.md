@@ -15,7 +15,8 @@ there are no lifetime-bearing stream handles.
 | `@streamsy/serve/bun`              | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                       |
 | `@streamsy/storage`                | Driver-package-free SQLite-family `Storage` Layer, `CommitBoundary` and bounded transaction defaults                                                                            |
 | `@streamsy/storage/bun`            | Official Bun SQLite storage Layer and complete persistent `layerProtocol` composition                                                                                           |
-| `@streamsy/storage/durable-object` | Official local Durable Object SQLite storage Layer; hosted routing remains Step 3                                                                                               |
+| `@streamsy/storage/durable-object` | Official Durable Object SQLite storage Layer and `layerProtocol`; its long-poll default is 25 seconds                                                                           |
+| `@streamsy/serve/cloudflare`       | Cloudflare Durable Object router and one-scope protocol host                                                                                                                    |
 
 Internal offset generation, policy helpers and HTTP implementation modules have no
 public subpaths. Core depends only on `effect@4.0.0-rc.112` at runtime. Its testing
@@ -94,5 +95,14 @@ Memory is process-local and nonpersistent. Its default mode provides store-wide
 atomic mutations and chain forks; constrained mode provides stream atomicity,
 copy forks, polling wakes and lazy expiry. The Bun host acquires its Layer lazily
 and expires streams on access. See [storage contract](storage-contract.md) for the
-authoring seam. Persistent Bun SQLite is shipped locally. Hosted DO protocol, a
-read-only trust facade and an Effect fetch client remain later work.
+authoring seam. Persistent Bun SQLite is shipped locally. The Cloudflare host
+routes raw stream paths to placement-selected Durable Objects. Any Worker holding
+the namespace binding can reach any object; the host adds no authorization.
+Cross-object forks are refused until the next fork batch. Its DO `layerProtocol`
+default bounds long-poll reads at 25 seconds (Bun remains 30 seconds), while core
+bounds SSE connections at 60 seconds on both hosts. A failed Layer build returns
+`503` with `retry-after: 1` and is rebuilt on the next call. Alarm retries are
+platform-owned and finite; lazy expiry on reads and reconciliation after the next
+mutating request repair an alarm that is exhausted or missed. With pinned local
+workerd, a client disconnect does not interrupt the object read, so the protocol
+bounds are the local release guarantee.

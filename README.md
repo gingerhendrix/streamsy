@@ -13,7 +13,9 @@ The active examples are [Fold agent](examples/fold-agent/README.md) and
 [Hacker News](examples/hackernews-newest-stream/README.md). The Bun protocol host
 supports retained-file SQLite through `@streamsy/storage/bun`; Fold uses that same
 Layer for retained-file restart and provider-free CLI recovery tests.
-Hosted Durable Object protocol delivery and an Effect fetch transport remain later work.
+The local Cloudflare entry `@streamsy/serve/cloudflare` provides placement routing
+and a Durable Object protocol host; hosted deployment and budget acceptance remain
+outside this local batch.
 
 ## Development
 

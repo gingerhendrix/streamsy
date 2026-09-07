@@ -50,16 +50,17 @@ order within the file.
 
 The Effect tier:
 
-| Subpath             | Owns                                                     |
-| ------------------- | -------------------------------------------------------- |
-| `./server/state`    | `handleStateSink` and the server-side error union schema |
-| `./server/stream`   | `handleStreamSink`                                       |
-| `./server/document` | `handleDocumentSink`                                     |
-| `./action`          | `defineActionSink` and the checked action-sink types     |
-| `./action/errors`   | the action sink's failures and dead-letter reasons       |
-| `./action/outbox`   | the durable outbox contract and its in-memory backing    |
-| `./action/runtime`  | the serialized delivery runtime and drain loop           |
-| `./action/sqlite`   | the SQLite outbox backing and its migration              |
+| Subpath             | Owns                                                          |
+| ------------------- | ------------------------------------------------------------- |
+| `./server/state`    | `handleStateSink` and the server-side error union schema      |
+| `./server/stream`   | `handleStreamSink`                                            |
+| `./server/document` | `handleDocumentSink`                                          |
+| `./action`          | `defineActionSink` and the checked action-sink types          |
+| `./action/errors`   | the action sink's failures and dead-letter reasons            |
+| `./action/outbox`   | the durable outbox contract and its in-memory backing         |
+| `./action/runtime`  | the serialized delivery runtime and drain loop                |
+| `./action/sqlite`   | the SQLite outbox backing and its migration                   |
+| `./cloudflare`      | placement routing and the scoped Durable Object protocol host |
 
 There is no barrel. A subpath points at the module that owns the symbols, so an
 import names where a symbol lives.
@@ -83,3 +84,15 @@ decode, entity tags, and conditional requests. Reading a feed and building a
 document are capabilities a host supplies.
 
 Requires `effect@4.0.0-rc.112` on the `/server` and `/action` subpaths.
+
+The Cloudflare host keeps one scoped Layer for an object and returns `503` with
+`retry-after: 1` when Layer acquisition fails; it retries acquisition on the next
+call. `@streamsy/storage/durable-object`'s `layerProtocol` defaults long-poll reads
+to 25 seconds (Bun remains 30 seconds), and core bounds SSE connections at 60 seconds
+on both hosts. Alarm retries are finite and platform-owned; lazy expiry on reads and
+the next mutating request are the recovery after an exhausted or missed alarm. A
+Worker with the namespace binding can address any object, because this host adds no
+authorization. Cross-object forks are refused until Batch B. On pinned local workerd
+1.20260730.1, client disconnects do not interrupt object reads; the protocol bounds
+are the local release fallback. The propagation proof is available only with
+`STREAMSY_WORKERD_CANCELLATION=1`, and is expected to fail on that pin.

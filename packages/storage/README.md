@@ -7,6 +7,9 @@ drivers and provide both the existing core `Storage` tag and `CommitBoundary`.
 The Bun `layer` also exposes that exact `SqlClient` and `Reactivity` graph so
 application SQL can participate in `CommitBoundary.withTransaction` without a
 second connection. `layerProtocol` keeps those implementation services private.
+The `/durable-object` entry exports the same protocol composition for local Durable
+Objects and defaults long-poll reads to 25 seconds; the Bun entry keeps its existing
+30-second default.
 
 ```ts
 import { layerProtocol } from "@streamsy/storage/bun";
