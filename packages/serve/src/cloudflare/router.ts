@@ -52,17 +52,6 @@ export const router = <Env>(options: RouterOptions<Env>): ExportedHandler<Env> =
       const child = resolvePlacement(placement, streamPath);
       if (!child.ok) return child.response;
 
-      const forkSource = request.headers.get("stream-forked-from");
-      if (forkSource !== null) {
-        const source = resolvePlacement(placement, path.canonicalizeForkSource(forkSource));
-        if (!source.ok) return source.response;
-        if (source.name !== child.name)
-          return new Response("Feature not supported: fork", {
-            status: 400,
-            headers: { ...securityHeaders, "stream-not-supported": "fork" },
-          });
-      }
-
       const namespace = options.namespace(env);
       return namespace.get(namespace.idFromName(child.name)).fetch(request);
     },

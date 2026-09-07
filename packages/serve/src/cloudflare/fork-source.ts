@@ -5,6 +5,7 @@ import {
   Offset,
   StreamId,
   StreamRecord,
+  type StorageFault,
   type StoredMessage,
 } from "@streamsy/core";
 import { HttpServerRequest } from "effect/unstable/http";
@@ -46,6 +47,16 @@ const parseUnsigned = (value: string | null, max?: number): number | undefined =
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && (max === undefined || parsed <= max) ? parsed : undefined;
 };
+
+type ParsedQuery =
+  | { readonly ok: false; readonly response: Response }
+  | {
+      readonly ok: true;
+      readonly stream: string;
+      readonly until?: string;
+      readonly tail: number;
+      readonly budget: number;
+    };
 
 const recordHeaders = (record: StreamRecord): HeadersInit => {
   const headers: Record<string, string> = {
@@ -95,31 +106,38 @@ const readPages = (
     return { messages, truncated: false };
   });
 
-const readQuery = (options: ForkSourceOptions, url: URL) => {
+const readQuery = (options: ForkSourceOptions, url: URL): ParsedQuery => {
   const stream = url.searchParams.get("stream");
-  if (stream === null || stream.length === 0) return { response: invalidPath(options) } as const;
+  if (stream === null || stream.length === 0) return { ok: false, response: invalidPath(options) };
   const rawUntil = url.searchParams.get("until");
   if (rawUntil !== null && !OFFSET_PATTERN.test(rawUntil))
-    return { response: response("Invalid fork-source until", 400) } as const;
+    return { ok: false, response: response("Invalid fork-source until", 400) };
   const tail = parseUnsigned(url.searchParams.get("tail"), MAX_TAIL);
-  if (tail === undefined) return { response: response("Invalid fork-source tail", 400) } as const;
+  if (tail === undefined) return { ok: false, response: response("Invalid fork-source tail", 400) };
   const budget = parseUnsigned(url.searchParams.get("budget"));
   if (budget === undefined)
-    return { response: response("Invalid fork-source budget", 400) } as const;
+    return { ok: false, response: response("Invalid fork-source budget", 400) };
   return {
+    ok: true,
     stream,
     until: rawUntil === null ? undefined : rawUntil,
     tail,
     budget,
-  } as const;
+  };
 };
 
-const runExport = (options: ForkSourceOptions) =>
-  Effect.gen(function* () {
+const runExport = (
+  options: ForkSourceOptions,
+): Effect.Effect<Response, StorageFault, HttpServerRequest.HttpServerRequest | Storage> =>
+  Effect.gen(function* (): Effect.gen.Return<
+    Response,
+    StorageFault,
+    HttpServerRequest.HttpServerRequest | Storage
+  > {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const storage = yield* Storage;
     const parsed = readQuery(options, new URL(request.originalUrl));
-    if ("response" in parsed) return parsed.response;
+    if (!parsed.ok) return parsed.response;
 
     const id = StreamId.make(parsed.stream);
     const current = yield* Protocol.expireIfNeeded(storage, id);
@@ -158,11 +176,13 @@ const runExport = (options: ForkSourceOptions) =>
         truncated = tail.truncated;
       }
     }
-    const body = encodeFrames(messages);
+    const encoded = encodeFrames(messages);
+    const body = new ArrayBuffer(encoded.byteLength);
+    new Uint8Array(body).set(encoded);
     return response(body, 200, {
       ...recordHeaders(record),
       "content-type": FORK_SOURCE_CONTENT_TYPE,
-      "content-length": String(body.byteLength),
+      "content-length": String(encoded.byteLength),
       ...(truncated ? { "streamsy-frames-truncated": "1" } : {}),
     });
   });
