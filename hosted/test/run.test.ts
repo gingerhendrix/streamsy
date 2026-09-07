@@ -194,13 +194,13 @@ test("report persistence failure is surfaced after cleanup", async () => {
 });
 
 test("an interrupted workflow still performs cleanup", async () => {
-  const started = Effect.runSync(Deferred.make<void>());
+  const started = Deferred.makeUnsafe<void>();
   const services = makeServices({
     deploy: () =>
       Effect.gen(function* () {
         services.calls.push("deploy");
         yield* Deferred.succeed(started, undefined);
-        yield* Effect.never;
+        return yield* Effect.never;
       }),
   });
   const exit = await Effect.runPromiseExit(
