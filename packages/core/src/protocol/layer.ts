@@ -7,6 +7,8 @@ import { head, read, readNext } from "./read.ts";
 import type { RemoveOutcome } from "./outcomes.ts";
 import { expireIfNeeded } from "./expiry.ts";
 export { expireDue } from "./expiry.ts";
+export { create } from "./create.ts";
+export { expireIfNeeded } from "./expiry.ts";
 
 export interface ProtocolOptions {
   readonly longPollTimeoutMs?: number;
