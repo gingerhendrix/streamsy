@@ -500,6 +500,7 @@ test.skipIf(Bun.env.STREAMSY_FORK_TIMING !== "1")(
     ).toBe(201);
     console.info(`B6 twenty-thousand-small-copy-ms=${Date.now() - started}`);
   },
+  { timeout: 60_000 },
 );
 
 test("B7 missing, soft-deleted, and expired source classifications are exact", async () => {
