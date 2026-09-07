@@ -135,7 +135,7 @@ test("byStream isolates objects and reuses the same object identity", async () =
   expect((await probe(harness, "a")).layerAcquisitions).toBe(1);
 });
 
-test("byKey co-locates same-family forks and refuses cross-family forks before object dispatch", async () => {
+test("byKey co-locates same-family forks and copies cross-family forks", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   expect((await create(harness, "/streams/t1/x")).status).toBe(201);
   const same = await dispatch(harness, "/streams/t1/y", {
@@ -149,10 +149,12 @@ test("byKey co-locates same-family forks and refuses cross-family forks before o
     method: "PUT",
     headers: { "stream-forked-from": "/streams/t1/x" },
   });
-  expect(cross.status).toBe(400);
-  expect(cross.headers.get("stream-not-supported")).toBe("fork");
-  expect(await cross.text()).toBe("Feature not supported: fork");
-  expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(1);
+  expect(cross.status).toBe(201);
+  expect(await cross.text()).toBe("");
+  expect(await dispatch(harness, "/streams/t2/z").then((response) => response.text())).toContain(
+    "source",
+  );
+  expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(2);
 });
 
 test("the configured prefix keeps raw encoded and slash paths distinct", async () => {

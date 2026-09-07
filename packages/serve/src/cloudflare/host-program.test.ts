@@ -90,7 +90,7 @@ test("an alarm StorageFault keeps the standard response security headers", async
       ),
     ),
   );
-  const web = HttpServerResponse.toWeb(response);
+  const web = response instanceof Response ? response : HttpServerResponse.toWeb(response);
 
   expect(web.status).toBe(500);
   expect(web.headers.get("x-content-type-options")).toBe("nosniff");

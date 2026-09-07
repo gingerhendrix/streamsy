@@ -2,8 +2,9 @@
 import type { AlarmInvocationInfo, DurableObjectNamespace } from "@cloudflare/workers-types";
 import { Context, Effect, Layer } from "effect";
 import { Storage, StorageFault, StreamsReader, StreamsWriter, type StreamId } from "@streamsy/core";
-import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import { StreamsyObject, router, type ObjectOptions } from "@streamsy/serve/cloudflare";
 import { layerProtocol } from "@streamsy/storage/durable-object";
+import { byKeyOptions, byStreamOptions } from "./fixture-options.ts";
 
 interface Env {
   readonly STREAMS: DurableObjectNamespace;
@@ -22,10 +23,21 @@ class ProbeObject extends StreamsyObject<Env> {
   #alarmInfo: Array<AlarmObservation> = [];
   #failLayerOnce = false;
   #failNextExpiry = false;
+  #failExpiryWhile = false;
+  #copyLimit: number | undefined;
   #longPollTimeoutMs = 1_000;
+  #alarmAfterMutation: number | null = null;
 
-  override options() {
-    return { pathPrefix: "/streams" };
+  override options(): ObjectOptions<Env> {
+    return {
+      ...byStreamOptions,
+      namespace: (env: Env) => env.STREAMS,
+      ...(this.#copyLimit === undefined ? {} : { copyOnForkMaxBytes: this.#copyLimit }),
+    };
+  }
+
+  protected copyLimit(): number | undefined {
+    return this.#copyLimit;
   }
 
   override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
@@ -53,6 +65,7 @@ class ProbeObject extends StreamsyObject<Env> {
       this.#failNextExpiry = false;
       return true;
     };
+    const failExpiryWhile = () => this.#failExpiryWhile;
     const incrementActiveReads = () => {
       this.#activeReads += 1;
     };
@@ -67,7 +80,7 @@ class ProbeObject extends StreamsyObject<Env> {
         const observedStorage = Storage.of({
           ...storage,
           nextExpiry: Effect.suspend(() => {
-            if (failNextExpiry()) {
+            if (failExpiryWhile() || failNextExpiry()) {
               return Effect.fail(
                 new StorageFault({
                   operation: "fixture.nextExpiry",
@@ -97,26 +110,45 @@ class ProbeObject extends StreamsyObject<Env> {
     return observed.pipe(Layer.provideMerge(protocol));
   }
 
-  override fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.host === "streamsy.internal" && url.pathname === "/fork-source")
+      this.#exportRequests += 1;
     if (url.pathname === "/__probe") {
       if (url.searchParams.has("fail-layer-once")) {
         this.#failLayerOnce = true;
-        return Promise.resolve(Response.json({ ok: true }));
+        return Response.json({ ok: true });
       }
       if (url.searchParams.has("fail-next-expiry")) {
         this.#failNextExpiry = true;
-        return Promise.resolve(Response.json({ ok: true }));
+        return Response.json({ ok: true });
+      }
+      if (url.searchParams.has("fail-expiry-while")) {
+        this.#failExpiryWhile = true;
+        return Response.json({ ok: true });
+      }
+      if (url.searchParams.has("clear-fail-expiry")) {
+        this.#failExpiryWhile = false;
+        return Response.json({ ok: true });
+      }
+      const copyLimit = url.searchParams.get("copy-limit");
+      if (copyLimit !== null) {
+        const parsed = Number(copyLimit);
+        if (Number.isSafeInteger(parsed) && parsed > 0) this.#copyLimit = parsed;
+        return Response.json({ ok: true });
       }
       const longPollTimeoutMs = url.searchParams.get("long-poll-timeout");
       if (longPollTimeoutMs !== null) {
         const parsed = Number(longPollTimeoutMs);
         if (Number.isFinite(parsed) && parsed > 0) this.#longPollTimeoutMs = parsed;
-        return Promise.resolve(Response.json({ ok: true }));
+        return Response.json({ ok: true });
       }
       return this.#probe();
     }
-    return super.fetch(request);
+    const response = await super.fetch(request);
+    if (request.method === "PUT" || request.method === "POST" || request.method === "DELETE")
+      this.#alarmAfterMutation = await this.ctx.storage.getAlarm();
+    return response;
   }
 
   override alarm(info?: AlarmInvocationInfo): Promise<void> {
@@ -128,8 +160,23 @@ class ProbeObject extends StreamsyObject<Env> {
   async #probe(): Promise<Response> {
     const rows = Array.from(
       this.ctx.storage.sql
-        .exec<{ readonly stream_id: string; readonly expires_at_ms: number | null }>(
-          "SELECT stream_id, expires_at_ms FROM streamsy_streams ORDER BY stream_id",
+        .exec<{
+          readonly stream_id: string;
+          readonly expires_at_ms: number | null;
+          readonly forked_from: string | null;
+        }>("SELECT stream_id, expires_at_ms, forked_from FROM streamsy_streams ORDER BY stream_id")
+        .raw(),
+    );
+    const messages = Array.from(
+      this.ctx.storage.sql
+        .exec<{
+          readonly stream_id: string;
+          readonly offset: string;
+          readonly timestamp: number;
+          readonly length: number;
+        }>(
+          "SELECT stream_id, offset, timestamp, length(data) FROM streamsy_messages " +
+            "ORDER BY stream_id, offset",
         )
         .raw(),
     );
@@ -139,13 +186,28 @@ class ProbeObject extends StreamsyObject<Env> {
       alarmInvocations: this.#alarmInvocations,
       activeReads: this.#activeReads,
       alarmInfo: this.#alarmInfo,
+      exportRequests: this.#exportRequests,
+      alarmAfterMutation: this.#alarmAfterMutation,
       alarm: await this.ctx.storage.getAlarm(),
       rows,
+      messages,
     });
+  }
+
+  #exportRequests = 0;
+}
+
+export class ProbeByKeyObject extends ProbeObject {
+  override options(): ObjectOptions<Env> {
+    return {
+      ...byKeyOptions,
+      namespace: (env: Env) => env.STREAMS,
+      ...(this.copyLimit() === undefined ? {} : { copyOnForkMaxBytes: this.copyLimit() }),
+    };
   }
 }
 
-const app = router<Env>({ namespace: (env) => env.STREAMS, pathPrefix: "/streams" });
+const app = router<Env>({ namespace: (env) => env.STREAMS, ...byStreamOptions });
 
 export default {
   fetch: app.fetch,

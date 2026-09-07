@@ -1,7 +1,6 @@
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
-import { router } from "@streamsy/serve/cloudflare";
-import { ProbeByKeyObject } from "./worker.ts";
-import { byKeyOptions } from "./fixture-options.ts";
+import { Placement, router } from "@streamsy/serve/cloudflare";
+import { ProbeObject } from "./worker.ts";
 
 interface Env {
   readonly STREAMS: DurableObjectNamespace;
@@ -9,8 +8,9 @@ interface Env {
 
 const app = router<Env>({
   namespace: (env) => env.STREAMS,
-  ...byKeyOptions,
+  pathPrefix: "/streams",
+  placement: Placement.byKey((streamPath) => streamPath.split("/", 1)[0] ?? ""),
 });
 
 export default { fetch: app.fetch };
-export { ProbeByKeyObject as ProbeObject };
+export { ProbeObject };

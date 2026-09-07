@@ -50,7 +50,7 @@ test("router uses the raw stripped stream path and forwards the unchanged reques
   expect(namespace.requests[0]).toBe(request);
 });
 
-test("byKey co-locates same-family streams and refuses a cross-family fork", async () => {
+test("byKey forwards forks to the child object without resolving the source key", async () => {
   const namespace = makeNamespace();
   const handler = router({
     namespace: () => namespace,
@@ -74,10 +74,10 @@ test("byKey co-locates same-family streams and refuses a cross-family fork", asy
       headers: { "stream-forked-from": "/t1/x" },
     }),
   );
-  expect(cross?.status).toBe(400);
-  expect(cross?.headers.get("stream-not-supported")).toBe("fork");
-  expect(await cross?.text()).toBe("Feature not supported: fork");
-  expect(namespace.names).toEqual(["t1"]);
+  expect(cross?.status).toBe(200);
+  expect(cross?.headers.get("stream-not-supported")).toBeNull();
+  expect(await cross?.text()).toBe("t2");
+  expect(namespace.names).toEqual(["t1", "t2"]);
 });
 
 test("router follows the core prefix grammar and reports every invalid placement path", async () => {
