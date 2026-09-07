@@ -10,6 +10,7 @@
  * separate "is it still current" path that could disagree with the body path.
  */
 import { Effect, Schema } from "effect";
+import type * as Cause from "effect/Cause";
 import type { DecodedSinkParams, SinkParamCodecs } from "../route.ts";
 import {
   type CheckedDocumentSink,
@@ -18,10 +19,18 @@ import {
 } from "../document.ts";
 import { canonicalJson, documentEtag, type CanonicalValue } from "../fingerprint.ts";
 
-export class DocumentSinkSourceFailure extends Schema.TaggedError<DocumentSinkSourceFailure>()(
+type DocumentSinkSourceFailureSchema = Schema.TaggedStruct<
   "DocumentSinkSourceFailure",
-  { detail: Schema.String },
-) {}
+  { readonly detail: Schema.String }
+>;
+const DocumentSinkSourceFailureBase: Schema.Class<
+  DocumentSinkSourceFailure,
+  DocumentSinkSourceFailureSchema,
+  Cause.YieldableError
+> = Schema.TaggedError<DocumentSinkSourceFailure>()("DocumentSinkSourceFailure", {
+  detail: Schema.String,
+});
+export class DocumentSinkSourceFailure extends DocumentSinkSourceFailureBase {}
 
 export interface DocumentSinkServerCapabilities<Params, Requirements = never> {
   /** Build the current document for these parameters, as JSON the declared schema accepts. */

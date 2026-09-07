@@ -11,6 +11,7 @@
  * order.
  */
 import { Effect, Schema } from "effect";
+import type * as Cause from "effect/Cause";
 import type { SinkParamCodecs, DecodedSinkParams } from "../route.ts";
 import {
   type CheckedStreamSink,
@@ -19,13 +20,24 @@ import {
   STREAM_SINK_VERSION_HEADER,
 } from "../stream.ts";
 
-export class StreamSinkSourceFailure extends Schema.TaggedError<StreamSinkSourceFailure>()(
+type StreamSinkSourceFailureSchema = Schema.TaggedStruct<
   "StreamSinkSourceFailure",
   {
-    reason: Schema.Literals(["unavailable", "invalid-offset", "history-unavailable"]),
-    detail: Schema.String,
-  },
-) {}
+    readonly reason: Schema.Literals<
+      readonly ["unavailable", "invalid-offset", "history-unavailable"]
+    >;
+    readonly detail: Schema.String;
+  }
+>;
+const StreamSinkSourceFailureBase: Schema.Class<
+  StreamSinkSourceFailure,
+  StreamSinkSourceFailureSchema,
+  Cause.YieldableError
+> = Schema.TaggedError<StreamSinkSourceFailure>()("StreamSinkSourceFailure", {
+  reason: Schema.Literals(["unavailable", "invalid-offset", "history-unavailable"]),
+  detail: Schema.String,
+});
+export class StreamSinkSourceFailure extends StreamSinkSourceFailureBase {}
 
 /** One bounded page of the feed, already read in arrival order. */
 export interface StreamSinkPage {

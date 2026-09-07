@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import type * as Cause from "effect/Cause";
 import {
   type CheckedStateSink,
   type StateSinkPublicError,
@@ -9,13 +10,22 @@ import {
 } from "../state.ts";
 import type { SinkParamCodecs, DecodedSinkParams } from "../route.ts";
 
-export class StateSinkSourceFailure extends Schema.TaggedError<StateSinkSourceFailure>()(
+type StateSinkSourceFailureSchema = Schema.TaggedStruct<
   "StateSinkSourceFailure",
   {
-    phase: Schema.Literals(["snapshot", "suffix"]),
-    detail: Schema.String,
-  },
-) {}
+    readonly phase: Schema.Literals<readonly ["snapshot", "suffix"]>;
+    readonly detail: Schema.String;
+  }
+>;
+const StateSinkSourceFailureBase: Schema.Class<
+  StateSinkSourceFailure,
+  StateSinkSourceFailureSchema,
+  Cause.YieldableError
+> = Schema.TaggedError<StateSinkSourceFailure>()("StateSinkSourceFailure", {
+  phase: Schema.Literals(["snapshot", "suffix"]),
+  detail: Schema.String,
+});
+export class StateSinkSourceFailure extends StateSinkSourceFailureBase {}
 
 export interface StateSinkSnapshot<Row> {
   readonly rows: readonly Row[];
