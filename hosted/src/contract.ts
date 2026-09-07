@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import type { LatencyMeasurement, ThroughputMeasurement } from "./measurement.ts";
 
 export const STACK_NAME = "streamsy-conf";
 export const COMPATIBILITY_DATE = "2026-07-30";
@@ -69,12 +70,13 @@ export type StepStatus = "pending" | "success" | "failure" | "unavailable";
 export type StepResult<T> =
   | { readonly status: "pending" }
   | { readonly status: "success"; readonly value: T }
-  | { readonly status: "failure"; readonly reason: string }
+  | { readonly status: "failure"; readonly reason: string; readonly details?: T }
   | { readonly status: "unavailable"; readonly reason: string };
 
 export const pending = <T>(): StepResult<T> => ({ status: "pending" });
 export const success = <T>(value: T): StepResult<T> => ({ status: "success", value });
-export const failure = <T>(reason: string): StepResult<T> => ({ status: "failure", reason });
+export const failure = <T>(reason: string, details?: T): StepResult<T> =>
+  details === undefined ? { status: "failure", reason } : { status: "failure", reason, details };
 export const unavailable = <T>(reason: string): StepResult<T> => ({
   status: "unavailable",
   reason,
@@ -110,7 +112,7 @@ export interface EvidenceReport extends RunIdentity {
     readonly skipped: number;
     readonly status: string;
   }>;
-  readonly measurement: StepResult<unknown>;
+  readonly measurement: StepResult<MeasurementEvidence>;
   readonly destroyFirst: StepResult<{ readonly code: number }>;
   readonly destroySecond: StepResult<{ readonly code: number }>;
   readonly gone: StepResult<{ readonly status: number }>;
@@ -122,4 +124,9 @@ export interface EvidenceReport extends RunIdentity {
   readonly cleanupFailures: ReadonlyArray<string>;
   readonly reportWriteFailure?: string;
   readonly hostedStatus: string;
+}
+
+export interface MeasurementEvidence {
+  readonly latency: LatencyMeasurement;
+  readonly throughput: ThroughputMeasurement;
 }

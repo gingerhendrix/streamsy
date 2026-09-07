@@ -80,8 +80,39 @@ test("latency preserves historical all-first-then-warm ordering and paired sampl
   );
   expect(requests).toEqual(["PUT", "PUT", "HEAD", "HEAD"]);
   expect(result.protocol).toBe("after-all-first");
+  expect(result.warmOrdering).toBe("after-all-first");
+  expect(result.firstPutBody).toBe("x");
+  expect(result.step0FirstPutBody).toBe("");
   expect(result.pairs).toHaveLength(2);
   expect(result.valid).toBe(true);
+});
+
+test("latency deltas preserve the historical first-minus-warm sign", async () => {
+  const exit = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* measureLatency({
+        baseUrl: "https://example.test",
+        paths: ["/a"],
+        concurrency: 1,
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      return yield* Fiber.join(fiber);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.sleep(request.method === "PUT" ? "10 millis" : "3 millis").pipe(
+                Effect.as({ status: 200, body: "" }),
+              ),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+  expect(exit.pairs[0]?.firstMinusWarmMs).toBe(7);
+  expect(exit.deltas.status).toBe("success");
 });
 
 test("latency does not produce a valid aggregate after a failed response", async () => {

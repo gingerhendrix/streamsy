@@ -39,7 +39,7 @@ export interface LatencyPair {
   readonly path: string;
   readonly firstMs?: number;
   readonly warmMs?: number;
-  readonly deltaMs?: number;
+  readonly firstMinusWarmMs?: number;
   readonly firstStatus?: number;
   readonly warmStatus?: number;
   readonly error?: string;
@@ -57,6 +57,9 @@ export interface Summary {
 
 export interface LatencyMeasurement {
   readonly protocol: "after-all-first";
+  readonly warmOrdering: "after-all-first";
+  readonly firstPutBody: "x";
+  readonly step0FirstPutBody: "";
   readonly concurrency: number;
   readonly pairs: ReadonlyArray<LatencyPair>;
   readonly first: StepResult<Summary>;
@@ -203,9 +206,9 @@ export const measureLatency = (
         path,
         firstMs: first?.elapsedMs,
         warmMs: warm?.elapsedMs,
-        deltaMs:
+        firstMinusWarmMs:
           first?.elapsedMs !== undefined && warm?.elapsedMs !== undefined
-            ? warm.elapsedMs - first.elapsedMs
+            ? first.elapsedMs - warm.elapsedMs
             : undefined,
         firstStatus: first?.status,
         warmStatus: warm?.status,
@@ -216,12 +219,12 @@ export const measureLatency = (
     const first = sampleSummary(writes, "first");
     const warm = sampleSummary(warms, "warm");
     let deltas: StepResult<Summary>;
-    if (pairs.every((pair) => pair.deltaMs !== undefined && pair.error === undefined)) {
+    if (pairs.every((pair) => pair.firstMinusWarmMs !== undefined && pair.error === undefined)) {
       try {
         deltas = success(
           summarize(
             pairs
-              .map((pair) => pair.deltaMs)
+              .map((pair) => pair.firstMinusWarmMs)
               .filter((value): value is number => value !== undefined),
           ),
         );
@@ -233,6 +236,9 @@ export const measureLatency = (
     }
     return {
       protocol: "after-all-first",
+      warmOrdering: "after-all-first",
+      firstPutBody: "x",
+      step0FirstPutBody: "",
       concurrency,
       pairs,
       first,
