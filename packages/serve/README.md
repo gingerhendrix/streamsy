@@ -92,7 +92,16 @@ to 25 seconds (Bun remains 30 seconds), and core bounds SSE connections at 60 se
 on both hosts. Alarm retries are finite and platform-owned; lazy expiry on reads and
 the next mutating request are the recovery after an exhausted or missed alarm. A
 Worker with the namespace binding can address any object, because this host adds no
-authorization. Cross-object forks are refused until Batch B. On pinned local workerd
+authorization. `StreamsyObject.options()` accepts `ObjectOptions`: its `placement` must
+be the same `{ pathPrefix, placement }` configuration used by `router`, `namespace` enables
+cross-object copy-on-fork, and `copyOnForkMaxBytes` is a positive safe-integer bound on
+encoded frame bytes (8 MiB by default). Same-object forks remain atomic chains; cross-object
+forks copy the selected prefix after one bounded snapshot, answer `409 Fork copy exceeds
+copyOnForkMaxBytes` when the bound is exceeded, and commit independently of later source
+changes, expiry, recreation, or deletion. The `streamsy.internal/fork-source` frames
+representation is reachable only through a Worker holding the namespace binding. It exposes
+content already readable through the public protocol plus message boundaries and timestamps;
+it is an internal representation, not a public protocol or authorization credential. On pinned local workerd
 1.20260730.1, client disconnects do not interrupt object reads; the protocol bounds
 are the local release fallback. The propagation proof is available only with
 `STREAMSY_WORKERD_CANCELLATION=1`, and is expected to fail on that pin.

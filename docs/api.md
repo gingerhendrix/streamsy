@@ -98,7 +98,10 @@ and expires streams on access. See [storage contract](storage-contract.md) for t
 authoring seam. Persistent Bun SQLite is shipped locally. The Cloudflare host
 routes raw stream paths to placement-selected Durable Objects. Any Worker holding
 the namespace binding can reach any object; the host adds no authorization.
-Cross-object forks are refused until the next fork batch. Its DO `layerProtocol`
+Same-object forks chain atomically. Cross-object forks copy the selected prefix into the child,
+bounded by `copyOnForkMaxBytes` (8 MiB of encoded frames by default), keep provenance for
+idempotent retries, and leave no retention edge on the source, which may change or be deleted
+afterwards. Its DO `layerProtocol`
 default bounds long-poll reads at 25 seconds (Bun remains 30 seconds), while core
 bounds SSE connections at 60 seconds on both hosts. A failed Layer build returns
 `503` with `retry-after: 1` and is rebuilt on the next call. Alarm retries are
