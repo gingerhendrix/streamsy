@@ -624,12 +624,15 @@ const makeLayer = (
 /** Generic SQLite-family SQL layer. Hosts supply one matching SqlClient/Reactivity graph. */
 export const layer = (
   options: SqlStorageOptions = {},
-  transactionMaxOpsBeforeYield?: number,
 ): Layer.Layer<
   Storage | CommitBoundary,
   StorageFault,
   SqlClient.SqlClient | Reactivity.Reactivity
-> => makeLayer(options, undefined, transactionMaxOpsBeforeYield);
+> => makeLayer(options);
+
+/** Internal host seam for the official Durable Object transaction boundary. */
+export const layerWithDurableObjectTransactions = (options: SqlStorageOptions) =>
+  makeLayer(options, undefined, Number.MAX_SAFE_INTEGER);
 
 /** Internal test seam; deliberately absent from the package export map. */
 export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTestProbe) =>
