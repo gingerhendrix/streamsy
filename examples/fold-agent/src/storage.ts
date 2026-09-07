@@ -1,6 +1,10 @@
-/** Store acquisition is an example edge. One Scope owns one memory Layer. */
+/* oxlint-disable effecttsgo/node-builtin-import -- This executable example prepares its configured SQLite parent directory at the Bun edge. */
+/** Store acquisition is an example edge. One Scope owns one complete protocol Layer. */
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core";
+import * as BunStorage from "@streamsy/storage/bun";
 import { Context, Effect, Exit, Layer, Schema, Scope } from "effect";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export interface StreamsyStore {
   readonly context: Context.Context<StreamsReader | StreamsWriter>;
@@ -34,12 +38,36 @@ export const openMemoryStore = (options: { longPollTimeoutMs?: number } = {}) =>
     } satisfies StreamsyStore;
   });
 
-export const openStore = (options: StreamsyStoreOptions = {}) =>
-  options.filename === undefined || options.filename === ":memory:"
-    ? openMemoryStore(options)
-    : Effect.fail(
+const openSqliteStore = (filename: string, options: StreamsyStoreOptions) =>
+  Effect.gen(function* () {
+    yield* Effect.tryPromise({
+      try: () => mkdir(dirname(filename), { recursive: true }),
+      catch: (cause) =>
         new StorageNotAvailable({
-          message:
-            "SQLite storage arrives with the next release step (Step 2); file-backed Fold storage is unavailable.",
+          message: `Cannot prepare SQLite directory for ${filename}: ${String(cause)}`,
         }),
-      );
+    });
+    const scope = yield* Scope.make();
+    const context = yield* Layer.buildWithScope(
+      BunStorage.layerProtocol({
+        client: { filename },
+        ...(options.longPollTimeoutMs === undefined
+          ? {}
+          : { longPollTimeoutMs: options.longPollTimeoutMs }),
+      }),
+      scope,
+    ).pipe(
+      Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
+    );
+    return {
+      context,
+      close: closeScope(scope),
+    } satisfies StreamsyStore;
+  });
+
+export const openStore = (options: StreamsyStoreOptions = {}) => {
+  const filename = options.filename;
+  return filename === undefined || filename === ":memory:"
+    ? openMemoryStore(options)
+    : openSqliteStore(filename, options);
+};

@@ -1,9 +1,12 @@
-/* oxlint-disable effecttsgo/async-function -- Bun owns Promise test callbacks; effects run only at the test edge. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- Bun owns Promise test callbacks and temporary SQLite fixture plumbing; effects run only at the test edge. */
 /**
  * Contract tests for the Streamsy-backed Fold EventLog over a memory Layer. Each test names a claim the example makes about durability, and
  * asserts it against Fold's own wire contract rather than a local copy of it.
  */
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   AgentId,
   decodeStoredLogEntry,
@@ -27,7 +30,12 @@ import { faultyStorage } from "@streamsy/core/testing";
 import { appendJournal, readHistory, sessionRefs, type Pending } from "../src/session-journal.ts";
 type JsonValue = Schema.Json;
 import { Cause, Effect, Exit, Fiber, Stream } from "effect";
-import { openMemoryStore, type StreamsyStore } from "../src/storage.ts";
+import {
+  openMemoryStore,
+  openStore,
+  StorageNotAvailable,
+  type StreamsyStore,
+} from "../src/storage.ts";
 import { readFoldLog, makeEventLog, type StreamsyEventLogMode } from "../src/streamsy-event-log.ts";
 
 const openLog = (store: StreamsyStore, streamId: string, mode: StreamsyEventLogMode) =>
@@ -106,238 +114,256 @@ const failureOf = <A, E>(exit: Exit.Exit<A, E>): { _tag?: string; message?: stri
   )(error.value);
 };
 
-describe("Streamsy EventLog (memory)", () => {
-  const withStore = async <A>(run: (store: StreamsyStore) => Promise<A>): Promise<A> => {
-    const store = await Effect.runPromise(openMemoryStore());
-    try {
-      return await run(store);
-    } finally {
-      await store.close();
-    }
-  };
+const registerEventLogContract = (
+  backend: string,
+  open: () => Effect.Effect<StreamsyStore, StorageFault | StorageNotAvailable>,
+) =>
+  describe(`Streamsy EventLog (${backend})`, () => {
+    const withStore = async <A>(run: (store: StreamsyStore) => Promise<A>): Promise<A> => {
+      const store = await Effect.runPromise(open());
+      try {
+        return await run(store);
+      } finally {
+        await store.close();
+      }
+    };
 
-  test("stores Fold entries as Streamsy messages that decode through Fold's own contract", async () => {
-    await withStore(async (store) => {
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const log = yield* openLog(store, "fold/sessions/a/events", "create");
-            yield* log.append(sessionStarted());
-            yield* log.append(sessionTitle("first"));
-          }),
-        ),
-      );
+    test("stores Fold entries as Streamsy messages that decode through Fold's own contract", async () => {
+      await withStore(async (store) => {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const log = yield* openLog(store, "fold/sessions/a/events", "create");
+              yield* log.append(sessionStarted());
+              yield* log.append(sessionTitle("first"));
+            }),
+          ),
+        );
 
-      // Read the raw JSON Streamsy actually persisted, then hand each value to
-      // Fold's decoder. Nothing in this assertion trusts the adapter.
-      const stored = await Effect.runPromise(
-        Streams.read(StreamRef.json("fold/sessions/a/events", { schema: Schema.Json })).pipe(
-          Streams.items,
-          Stream.runCollect,
-          Effect.provide(store.context),
-        ),
-      );
+        // Read the raw JSON Streamsy actually persisted, then hand each value to
+        // Fold's decoder. Nothing in this assertion trusts the adapter.
+        const stored = await Effect.runPromise(
+          Streams.read(StreamRef.json("fold/sessions/a/events", { schema: Schema.Json })).pipe(
+            Streams.items,
+            Stream.runCollect,
+            Effect.provide(store.context),
+          ),
+        );
 
-      const decoded = await Effect.runPromise(
-        Effect.forEach(stored, (value) => decodeStoredLogEntry(value)),
-      );
-      expect(decoded.map((entry) => entry._tag)).toEqual(["session_started", "session_title"]);
-      expect(decoded.map((entry) => entry.seq)).toEqual([0, 1]);
-      expect(decoded.every((entry) => entry.version === 1)).toBe(true);
+        const decoded = await Effect.runPromise(
+          Effect.forEach(stored, (value) => decodeStoredLogEntry(value)),
+        );
+        expect(decoded.map((entry) => entry._tag)).toEqual(["session_started", "session_title"]);
+        expect(decoded.map((entry) => entry.seq)).toEqual([0, 1]);
+        expect(decoded.every((entry) => entry.version === 1)).toBe(true);
+      });
     });
-  });
 
-  test("assigns contiguous Fold sequences independent of Streamsy offsets", async () => {
-    await withStore(async (store) => {
-      const entries = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const log = yield* openLog(store, "fold/sessions/b/events", "create");
-            yield* log.append(sessionStarted());
-            yield* log.append(sessionTitle("one"));
-            yield* log.append(sessionTitle("two"));
-            return yield* Stream.runCollect(log.entries());
-          }),
-        ),
-      );
+    test("assigns contiguous Fold sequences independent of Streamsy offsets", async () => {
+      await withStore(async (store) => {
+        const entries = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const log = yield* openLog(store, "fold/sessions/b/events", "create");
+              yield* log.append(sessionStarted());
+              yield* log.append(sessionTitle("one"));
+              yield* log.append(sessionTitle("two"));
+              return yield* Stream.runCollect(log.entries());
+            }),
+          ),
+        );
 
-      expect(entries.map((entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
+        expect(entries.map((entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
+      });
     });
-  });
 
-  test("entries(fromSeq) replays from durable storage and completes", async () => {
-    await withStore(async (store) => {
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const log = yield* openLog(store, "fold/sessions/c/events", "create");
-            yield* log.append(sessionStarted());
-            yield* log.append(sessionTitle("one"));
-            yield* log.append(sessionTitle("two"));
-          }),
-        ),
-      );
+    test("entries(fromSeq) replays from durable storage and completes", async () => {
+      await withStore(async (store) => {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const log = yield* openLog(store, "fold/sessions/c/events", "create");
+              yield* log.append(sessionStarted());
+              yield* log.append(sessionTitle("one"));
+              yield* log.append(sessionTitle("two"));
+            }),
+          ),
+        );
 
-      const replayed = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const log = yield* openLog(store, "fold/sessions/c/events", "resume");
-            return yield* Stream.runCollect(log.entries(1));
-          }),
-        ),
-      );
+        const replayed = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const log = yield* openLog(store, "fold/sessions/c/events", "resume");
+              return yield* Stream.runCollect(log.entries(1));
+            }),
+          ),
+        );
 
-      expect(replayed.map((entry: LogEntry) => entry.seq)).toEqual([1, 2]);
+        expect(replayed.map((entry: LogEntry) => entry.seq)).toEqual([1, 2]);
+      });
     });
-  });
 
-  test("create mode refuses a stream that already exists", async () => {
-    await withStore(async (store) => {
-      await plant(store, "fold/sessions/d/events", [rawTitleEntry(0)]);
+    test("create mode refuses a stream that already exists", async () => {
+      await withStore(async (store) => {
+        await plant(store, "fold/sessions/d/events", [rawTitleEntry(0)]);
 
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(openLog(store, "fold/sessions/d/events", "create")),
-      );
-      const error = failureOf(exit);
-      expect(error._tag).toBe("EventLogUnavailableError");
-      expect(error.message).toContain("already exists");
+        const exit = await Effect.runPromiseExit(
+          Effect.scoped(openLog(store, "fold/sessions/d/events", "create")),
+        );
+        const error = failureOf(exit);
+        expect(error._tag).toBe("EventLogUnavailableError");
+        expect(error.message).toContain("already exists");
+      });
     });
-  });
 
-  test("resume mode refuses a stream that does not exist", async () => {
-    await withStore(async (store) => {
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(openLog(store, "fold/sessions/missing/events", "resume")),
-      );
-      const error = failureOf(exit);
-      expect(error._tag).toBe("EventLogUnavailableError");
-      expect(error.message).toContain("not-found");
+    test("resume mode refuses a stream that does not exist", async () => {
+      await withStore(async (store) => {
+        const exit = await Effect.runPromiseExit(
+          Effect.scoped(openLog(store, "fold/sessions/missing/events", "resume")),
+        );
+        const error = failureOf(exit);
+        expect(error._tag).toBe("EventLogUnavailableError");
+        expect(error.message).toContain("not-found");
+      });
     });
-  });
 
-  test("resume mode refuses a log that does not start with session_started", async () => {
-    await withStore(async (store) => {
-      await plant(store, "fold/sessions/e/events", [rawTitleEntry(0)]);
+    test("resume mode refuses a log that does not start with session_started", async () => {
+      await withStore(async (store) => {
+        await plant(store, "fold/sessions/e/events", [rawTitleEntry(0)]);
 
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(openLog(store, "fold/sessions/e/events", "resume")),
-      );
-      const error = failureOf(exit);
-      expect(error._tag).toBe("EventLogCorruptEntryError");
-      expect(error.message).toContain("session_started");
+        const exit = await Effect.runPromiseExit(
+          Effect.scoped(openLog(store, "fold/sessions/e/events", "resume")),
+        );
+        const error = failureOf(exit);
+        expect(error._tag).toBe("EventLogCorruptEntryError");
+        expect(error.message).toContain("session_started");
+      });
     });
-  });
 
-  test("a sequence gap is a typed corruption failure, not a silent repair", async () => {
-    await withStore(async (store) => {
-      await plant(store, "fold/sessions/f/events", [rawSessionStartedEntry(0), rawTitleEntry(2)]);
+    test("a sequence gap is a typed corruption failure, not a silent repair", async () => {
+      await withStore(async (store) => {
+        await plant(store, "fold/sessions/f/events", [rawSessionStartedEntry(0), rawTitleEntry(2)]);
 
-      const exit = await Effect.runPromiseExit(readFoldLog(store, "fold/sessions/f/events"));
-      const error = failureOf(exit);
-      expect(error._tag).toBe("EventLogCorruptEntryError");
-      expect(error.message).toContain("expected 1, got 2");
+        const exit = await Effect.runPromiseExit(readFoldLog(store, "fold/sessions/f/events"));
+        const error = failureOf(exit);
+        expect(error._tag).toBe("EventLogCorruptEntryError");
+        expect(error.message).toContain("expected 1, got 2");
+      });
     });
-  });
 
-  test("a non-entry JSON value is a typed corruption failure", async () => {
-    await withStore(async (store) => {
-      await plant(store, "fold/sessions/g/events", ["not an entry"]);
+    test("a non-entry JSON value is a typed corruption failure", async () => {
+      await withStore(async (store) => {
+        await plant(store, "fold/sessions/g/events", ["not an entry"]);
 
-      const exit = await Effect.runPromiseExit(readFoldLog(store, "fold/sessions/g/events"));
-      expect(failureOf(exit)._tag).toBe("EventLogCorruptEntryError");
+        const exit = await Effect.runPromiseExit(readFoldLog(store, "fold/sessions/g/events"));
+        expect(failureOf(exit)._tag).toBe("EventLogCorruptEntryError");
+      });
     });
-  });
 
-  test("a future Fold wire version preserves its typed unsupported-version error", async () => {
-    await withStore(async (store) => {
-      await plant(store, "fold/sessions/future/events", [{ ...rawTitleEntry(0), version: 2 }]);
-      const exit = await Effect.runPromiseExit(readFoldLog(store, "fold/sessions/future/events"));
-      expect(failureOf(exit)._tag).toBe("EventLogUnsupportedVersionError");
+    test("a future Fold wire version preserves its typed unsupported-version error", async () => {
+      await withStore(async (store) => {
+        await plant(store, "fold/sessions/future/events", [{ ...rawTitleEntry(0), version: 2 }]);
+        const exit = await Effect.runPromiseExit(readFoldLog(store, "fold/sessions/future/events"));
+        expect(failureOf(exit)._tag).toBe("EventLogUnsupportedVersionError");
+      });
     });
-  });
 
-  test("a competing writer is fenced by the exact-offset precondition", async () => {
-    await withStore(async (store) => {
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const owner = yield* openLog(store, "fold/sessions/h/events", "create");
-            yield* owner.append(sessionStarted());
+    test("a competing writer is fenced by the exact-offset precondition", async () => {
+      await withStore(async (store) => {
+        const exit = await Effect.runPromiseExit(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const owner = yield* openLog(store, "fold/sessions/h/events", "create");
+              yield* owner.append(sessionStarted());
 
-            // A second adapter claims the journal at the same producer epoch.
-            const rival = yield* openLog(store, "fold/sessions/h/events", "resume");
-            // The new journal owner moves the log on.
-            yield* rival.append(sessionTitle("rival owns the journal"));
-            // The old owner cannot silently re-sequence onto new history.
-            yield* owner.append(sessionTitle("old owner is behind"));
-          }),
-        ),
-      );
+              // A second adapter claims the journal at the same producer epoch.
+              const rival = yield* openLog(store, "fold/sessions/h/events", "resume");
+              // The new journal owner moves the log on.
+              yield* rival.append(sessionTitle("rival owns the journal"));
+              // The old owner cannot silently re-sequence onto new history.
+              yield* owner.append(sessionTitle("old owner is behind"));
+            }),
+          ),
+        );
 
-      const error = failureOf(exit);
-      expect(error._tag).toBe("EventLogUnavailableError");
-      expect(error.message).toContain("Fenced");
+        const error = failureOf(exit);
+        expect(error._tag).toBe("EventLogUnavailableError");
+        expect(error.message).toContain("Fenced");
+      });
     });
-  });
 
-  test("subscribe loses nothing across the catch-up/live boundary", async () => {
-    await withStore(async (store) => {
-      const collected = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const log = yield* openLog(store, "fold/sessions/i/events", "create");
-            // One entry exists before anyone subscribes: it must be replayed.
-            yield* log.append(sessionStarted());
+    test("subscribe loses nothing across the catch-up/live boundary", async () => {
+      await withStore(async (store) => {
+        const collected = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const log = yield* openLog(store, "fold/sessions/i/events", "create");
+              // One entry exists before anyone subscribes: it must be replayed.
+              yield* log.append(sessionStarted());
 
-            const observed = yield* Deferred.make<void>();
-            const running = yield* Effect.forkChild(
-              Stream.runCollect(
-                log.subscribe().pipe(
-                  Stream.tap((entry) =>
-                    entry.seq === 1 ? Deferred.succeed(observed, undefined) : Effect.void,
+              const observed = yield* Deferred.make<void>();
+              const running = yield* Effect.forkChild(
+                Stream.runCollect(
+                  log.subscribe().pipe(
+                    Stream.tap((entry) =>
+                      entry.seq === 1 ? Deferred.succeed(observed, undefined) : Effect.void,
+                    ),
+                    Stream.take(3),
                   ),
-                  Stream.take(3),
                 ),
-              ),
-            );
-            // These land after the subscription starts, some of them while the
-            // first long poll is already in flight.
-            yield* log.append(sessionTitle("live one"));
-            yield* Deferred.await(observed);
-            yield* log.append(sessionTitle("live two"));
+              );
+              // These land after the subscription starts, some of them while the
+              // first long poll is already in flight.
+              yield* log.append(sessionTitle("live one"));
+              yield* Deferred.await(observed);
+              yield* log.append(sessionTitle("live two"));
 
-            return yield* Fiber.join(running);
-          }),
-        ),
-      );
+              return yield* Fiber.join(running);
+            }),
+          ),
+        );
 
-      expect(collected.map((entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
-      expect(collected.map((entry: LogEntry) => entry._tag)).toEqual([
-        "session_started",
-        "session_title",
-        "session_title",
-      ]);
-    });
-  }, 20_000);
+        expect(collected.map((entry: LogEntry) => entry.seq)).toEqual([0, 1, 2]);
+        expect(collected.map((entry: LogEntry) => entry._tag)).toEqual([
+          "session_started",
+          "session_title",
+          "session_title",
+        ]);
+      });
+    }, 20_000);
 
-  test("subscribe(fromSeq) skips entries before the requested sequence", async () => {
-    await withStore(async (store) => {
-      const collected = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const log = yield* openLog(store, "fold/sessions/j/events", "create");
-            yield* log.append(sessionStarted());
-            yield* log.append(sessionTitle("one"));
-            yield* log.append(sessionTitle("two"));
+    test("subscribe(fromSeq) skips entries before the requested sequence", async () => {
+      await withStore(async (store) => {
+        const collected = await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const log = yield* openLog(store, "fold/sessions/j/events", "create");
+              yield* log.append(sessionStarted());
+              yield* log.append(sessionTitle("one"));
+              yield* log.append(sessionTitle("two"));
 
-            return yield* Stream.runCollect(log.subscribe(2).pipe(Stream.take(1)));
-          }),
-        ),
-      );
+              return yield* Stream.runCollect(log.subscribe(2).pipe(Stream.take(1)));
+            }),
+          ),
+        );
 
-      expect(collected.map((entry: LogEntry) => entry.seq)).toEqual([2]);
-    });
-  }, 20_000);
+        expect(collected.map((entry: LogEntry) => entry.seq)).toEqual([2]);
+      });
+    }, 20_000);
+  });
+
+registerEventLogContract("memory", openMemoryStore);
+registerEventLogContract("SQLite", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fold-streamsy-contract-"));
+  return openStore({ filename: join(dir, "event-log.sqlite"), longPollTimeoutMs: 25 }).pipe(
+    Effect.map((store) => ({
+      ...store,
+      close: async () => {
+        await store.close();
+        rmSync(dir, { recursive: true, force: true });
+      },
+    })),
+  );
 });
 
 describe("Fold journal fault recovery and ownership", () => {

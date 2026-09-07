@@ -4,10 +4,10 @@ A Fold Core agent backed by Streamsy's Effect services. Fold owns the agent
 loop, tool settlement and conversation projections. Streamsy stores the Fold
 log and its append journal through `@streamsy/core`.
 
-This release step proves recovery **inside one process and one memory Layer**.
-`openMemoryStore()` acquires the Layer once and returns its context and `close`.
-New Fold session scopes can reuse that context. Closing the store loses its data.
-File-backed `openStore` fails with `StorageNotAvailable`: SQLite arrives in Step 2.
+`openMemoryStore()` acquires the memory Layer once. `openStore({ filename })`
+acquires the official Bun SQLite protocol Layer and creates the parent directory.
+Both return one context and idempotent `close`; failed acquisition and CLI exit
+close the scope. Memory disappears at close, while SQLite survives processes.
 
 ## Data flow and ownership
 
@@ -37,9 +37,7 @@ Entries and subscriptions decode through Fold's own v1 contract.
 
 ## CLI and persistence boundary
 
-The CLI compiles, but default `start`, `resume`, and `inspect` use a file path and
-cannot run until Step 2 SQLite support. Their persistence smoke remains explicitly
-skipped with its seed/close/child-inspect body retained in the tests.
+The CLI's `start`, `resume`, and `inspect` use retained-file SQLite by default.
 
 ```text
 start   <prompt>
@@ -52,6 +50,8 @@ exact match; `--takeover` increments it. The flags are mutually exclusive.
 `FOLD_AGENT_DB` retains its default `examples/fold-agent/.data/agent.sqlite`.
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `FOLD_AGENT_MODEL` retain their provider
 selection meanings. Inspect rendering requires no model credentials.
+`FOLD_AGENT_SCRIPT` accepts deterministic JSON `text` and `tool` turns for the
+provider-free verification fixture; normal users should select a provider.
 
 ## Verification and limits
 
@@ -60,10 +60,12 @@ bun run --cwd examples/fold-agent typecheck
 bun run --cwd examples/fold-agent test:unit
 ```
 
-Tests drive a real scripted Fold tool turn and reconstruct it in a fresh scope,
-exercise faults before/after commit, recover journal-only intent, and fence an old
-owner during takeover. These prove memory-Layer behavior, not cross-process
-persistence. Full-history recovery is O(log + journal); snapshots, retention,
+The same EventLog contract runs on memory and SQLite. Separate writer processes
+prove retained producer identity, exact crash-retained tuple and payload recovery,
+intervening unrelated activity, takeover fencing, and a log/journal read race.
+Real CLI subprocesses run start, resume, and inspect with the scripted fixture;
+inspect separately proves it needs no provider credentials. Full-history recovery
+is O(log + journal); snapshots, retention,
 in-flight provider request recovery, and persistent deployment are not provided.
 
 `@humanlayer/fold-core@0.1.4` declares rc.109 peers. Effect stays exactly rc.112

@@ -7,6 +7,7 @@ const pairs = [
   ["packages/core/README.md", "packages/core/test/readme.ts"],
   ["site/content/docs/user/basic-usage.mdx", "packages/serve/test/basic-usage.ts"],
   ["site/content/docs/user/basic-usage.mdx", "packages/serve/test/host.ts"],
+  ["site/content/docs/user/sql-storage.mdx", "packages/storage/test/shared-transaction-usage.ts"],
 ];
 for (const [doc, source] of pairs) {
   const text = await readFile(new URL(doc, root), "utf8");

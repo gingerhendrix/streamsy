@@ -51,7 +51,7 @@ Protocol outcomes are success values such as `created`, `exists`, `appended`,
 `duplicate`, `conflict`, `not-found`, `gone`, `timeout`, `stale-epoch` and
 `producer-gap`. Storage failures use the typed error channel. A duplicate proves
 an accepted tuple, not equality of retry payloads: owners must retain exact bytes.
-Fold's journal enforces that ownership and equality for its memory proof.
+Fold's journal enforces that ownership and equality on memory and retained-file SQLite.
 
 ## Expected-offset concurrency
 
@@ -83,6 +83,12 @@ Replace the memory Layer with
 `@streamsy/storage/bun` for durable local protocol state. Its scoped shutdown
 closes subscriptions, repair fibers and the SQL client before the same port is
 rebound.
+
+For application SQL that must share a transaction with Streamsy mutation, build
+`BunStorage.layer(...)` rather than `layerProtocol`. It exposes the one official
+`SqlClient`, `Reactivity`, `Storage`, and `CommitBoundary` graph. Raise a private
+failure for a rejected mutation inside the boundary and recover only outside it;
+the compiled example in the SQL guide checks that the application row rolls back.
 
 Memory is process-local and nonpersistent. Its default mode provides store-wide
 atomic mutations and chain forks; constrained mode provides stream atomicity,

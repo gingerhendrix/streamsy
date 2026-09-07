@@ -11,8 +11,8 @@ and [HTTP behavior](docs/http.md).
 
 The active examples are [Fold agent](examples/fold-agent/README.md) and
 [Hacker News](examples/hackernews-newest-stream/README.md). The Bun protocol host
-supports retained-file SQLite through `@streamsy/storage/bun`; wiring Fold restart
-and its CLI to that storage remains the final Step 2 follow-up.
+supports retained-file SQLite through `@streamsy/storage/bun`; Fold uses that same
+Layer for retained-file restart and provider-free CLI recovery tests.
 Hosted Durable Object protocol delivery and an Effect fetch transport remain later work.
 
 ## Development

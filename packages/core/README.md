@@ -21,9 +21,10 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 Compiled source: `packages/core/test/readme.ts` (checked by `site:validate`).
 
 Applications own the runtime and Layer lifetime. Memory is nonpersistent and
-process-local. Persistent protocol storage and an Effect fetch transport remain
-later work; a successful memory run proves neither cross-process persistence nor
-hosted support.
+process-local. `@streamsy/storage/bun` provides retained-file Bun SQLite protocol
+storage; hosted Durable Object protocol and an Effect fetch transport remain later
+work. A successful memory run proves neither cross-process persistence nor hosted
+support.
 
 | Entry                    | Surface                                                                                       |
 | ------------------------ | --------------------------------------------------------------------------------------------- |

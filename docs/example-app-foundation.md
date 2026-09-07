@@ -1,19 +1,20 @@
 # Example application foundation
 
-The active Step 1 applications are Fold agent and Hacker News. Both compose the
-Effect protocol over memory and own their runtime at an executable edge.
+The active applications are Fold agent and Hacker News. Both compose the
+Effect protocol and own their runtime at an executable edge.
 Their evidence informs later library work without claiming capabilities that the
 current store cannot provide.
 
 ## Fold agent
 
 `examples/fold-agent` persists exact pending payloads and producer tuples into a
-session journal in the same acquired memory store. Reconstruction settles pending
+session journal in one acquired memory or Bun SQLite store. Reconstruction settles pending
 work before new input or epoch takeover, checks full acknowledged payload equality
 and uses journal expected-offset CAS for ownership. Its tests cover ambiguous
 completion and fencing. Separate journal/log reads can safely reject during
-concurrent writes; callers may retry reconstruction. Store lifetime is the limit:
-persistent restart and cross-process CLI smoke remain Step 2.
+concurrent writes; callers may retry reconstruction. Retained-file tests run the
+writer, restart, ambiguous-completion recovery, takeover, and CLI commands in
+separate Bun processes without provider credentials or network calls.
 
 ## Hacker News
 

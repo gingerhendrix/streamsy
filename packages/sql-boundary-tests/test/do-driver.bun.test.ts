@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns the retained local workerd harness and unique evidence paths. */
-import { mkdtempSync, renameSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
@@ -9,17 +9,23 @@ import { Miniflare } from "miniflare";
 const scratch = Effect.runSync(
   Config.string("STREAMSY_SQL_BOUNDARY_SCRATCH").pipe(Config.withDefault(tmpdir())),
 );
+mkdirSync(scratch, { recursive: true });
 const open: Array<{ readonly miniflare: Miniflare; readonly root: string }> = [];
 
 afterEach(async () => {
   for (const { miniflare, root } of open.splice(0)) {
-    await miniflare.dispose();
-    renameSync(root, join(scratch, `${basename(root)}-${crypto.randomUUID()}`));
+    try {
+      await miniflare.dispose();
+    } finally {
+      const retained = join(scratch, `${basename(root)}-${crypto.randomUUID()}`);
+      cpSync(root, retained, { recursive: true });
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
 test("official Durable Object driver proves the SQL commit and bounded wake boundary in workerd", async () => {
-  const root = mkdtempSync(".streamsy-sql-boundary-workerd-");
+  const root = mkdtempSync(join(import.meta.dir, ".streamsy-sql-boundary-workerd-"));
   const bundle = join(root, "bundle");
   const built = await Bun.build({
     entrypoints: [join(import.meta.dir, "do-worker.test.ts")],

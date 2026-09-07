@@ -1,5 +1,6 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid, effecttsgo/node-builtin-import -- Bun owns the executable driver harness and unique retained database path. */
 import { SqliteClient } from "@effect/sql-sqlite-bun";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { expect, test } from "bun:test";
 import { Config, Context, Effect, Exit, Layer, Scope } from "effect";
@@ -17,6 +18,7 @@ import {
 const scratch = Effect.runSync(
   Config.string("STREAMSY_SQL_BOUNDARY_SCRATCH").pipe(Config.withDefault(tmpdir())),
 );
+mkdirSync(scratch, { recursive: true });
 
 test("official Bun driver proves the SQL commit and bounded wake boundary", async () => {
   const filename = `${scratch}/bun-boundary-${process.pid}-${crypto.randomUUID()}.sqlite`;

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Effect, Exit } from "effect";
 import { parseResumeArgs } from "../src/cli.ts";
 import { formatEntry } from "../src/render.ts";
-import { databasePathFromEnv, DEFAULT_DATABASE_PATH, openStore } from "../src/storage.ts";
+import { databasePathFromEnv, DEFAULT_DATABASE_PATH } from "../src/storage.ts";
 import { decodeStoredLogEntry, AgentId, EventId, SessionId } from "@humanlayer/fold-core";
 
 describe("Fold CLI parsing and rendering", () => {
@@ -59,11 +59,8 @@ describe("Fold CLI parsing and rendering", () => {
     if (entry._tag !== "session_started") throw new Error("expected session_started");
     expect(formatEntry(entry)).toContain(`session=${entry.sessionId}`);
   });
-  test("file storage fails explicitly and retains database path configuration", async () => {
+  test("retains database path configuration", () => {
     expect(databasePathFromEnv({})).toBe(DEFAULT_DATABASE_PATH);
     expect(databasePathFromEnv({ FOLD_AGENT_DB: "custom.sqlite" })).toBe("custom.sqlite");
-    const failure = await Effect.runPromise(Effect.flip(openStore({ filename: "unused.sqlite" })));
-    expect(failure._tag).toBe("StorageNotAvailable");
-    expect(failure.message).toContain("SQLite storage arrives with the next release step");
   });
 });

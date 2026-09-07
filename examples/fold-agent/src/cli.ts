@@ -5,12 +5,11 @@
  * stream.
  *
  *   start  <prompt>              start a fresh session and run one turn
- *   resume <stream-id> <prompt>  continue that session (SQLite deferred to Step 2)
+ *   resume <stream-id> <prompt>  continue that session from SQLite
  *   inspect <stream-id>          print the durable log without touching a model
  *
  * `start` and `resume` need provider credentials; `inspect` deliberately does
  * not, because reading durable state should never require an API key.
- * File-backed commands are unavailable until the Step 2 SQLite storage gate.
  */
 import {
   resumeSession,
@@ -20,6 +19,7 @@ import {
   type FoldSession,
   type SubagentNotFoundError,
 } from "@humanlayer/fold-core";
+import { StorageFault } from "@streamsy/core";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { exampleAgent, MissingCredentialsError, modelFromEnv } from "./agent.ts";
 import { formatEntry } from "./render.ts";
@@ -41,7 +41,8 @@ Environment:
   FOLD_AGENT_DB      SQLite path (default: examples/fold-agent/.data/agent.sqlite)
   OPENAI_API_KEY     use an OpenAI-compatible provider (first choice)
   ANTHROPIC_API_KEY  use Anthropic when no OpenAI key is set
-  FOLD_AGENT_MODEL   override the provider model id`;
+  FOLD_AGENT_MODEL   override the provider model id
+  FOLD_AGENT_SCRIPT  deterministic JSON turns for provider-free verification`;
 
 /** A command line that cannot be accepted. Printed as usage, exit code 1. */
 class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
@@ -156,6 +157,7 @@ export const parseResumeArgs = (args: ReadonlyArray<string>) =>
 
 type CliError =
   | StorageNotAvailable
+  | StorageFault
   | UsageError
   | MissingCredentialsError
   | EventLogError

@@ -1,12 +1,11 @@
 ---
 title: Fold agent
-description: A journaled Fold session reconstructed within one process and one memory store.
+description: A journaled Fold session recovered across retained SQLite process restarts.
 ---
 
 The Fold example uses `@humanlayer/fold-core` for the agent loop and Streamsy for
-its event log and append journal. It proves reconstruction inside one process
-while the same acquired memory store remains open. It does not prove persistence
-across process restarts.
+its event log and append journal. The contract runs on memory and Bun SQLite;
+retained-file schedules prove reconstruction across real process restarts.
 
 ## Journal and producer tuple
 
@@ -26,7 +25,7 @@ An interrupted or failed append makes the adapter uncertain: reconstruct it
 before accepting a new payload. Separate journal and log reads may safely reject
 reconstruction during concurrent writes. Recovery scans both histories in full.
 
-## Run the memory proof
+## Run the durable proof
 
 From the repository root:
 
@@ -35,17 +34,18 @@ bun run --cwd examples/fold-agent typecheck
 bun run --cwd examples/fold-agent test:unit
 ```
 
-The tests run a scripted tool turn, drop its session scope and reconstruct over
-the same store. They cover faults before and after commit, journal-only pending
-intent and takeover fencing. See the compiled
+The tests run the same EventLog contract on memory and SQLite. They then use
+separate Bun processes for writer restart, a crash immediately after the log
+append, intervening activity, ownership takeover, stale-owner fencing, and a
+commit between the separate recovery reads. See the compiled
 [test/fold-session.test.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/fold-agent/test/fold-session.test.ts)
 and [test/streamsy-event-log.test.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/fold-agent/test/streamsy-event-log.test.ts).
 
 ## CLI boundary
 
-The default CLI selects a file-backed store and fails with typed
-`StorageNotAvailable`. Start, resume and inspect through that default are
-unavailable until the example is wired to the shipped SQL Storage Layer. That
-file-backed integration and its cross-process restart proof remain Step 2 work.
-Closing the current memory store discards both log and journal.
+The default CLI selects `examples/fold-agent/.data/agent.sqlite`, overridable by
+`FOLD_AGENT_DB`. Start and resume select a configured provider. The verification
+suite passes `FOLD_AGENT_SCRIPT` deterministic JSON turns so those actual command
+paths make zero paid or network calls. Inspect opens only storage and works with
+both provider credentials absent. Every command closes the SQL Layer on exit.
 In-flight model requests, snapshots and retention are outside this proof.

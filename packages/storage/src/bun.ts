@@ -187,7 +187,7 @@ export const layer = (options: BunStorageOptions) => {
       yield* preflightFile(options.client.filename, retryPolicy);
       yield* validateClientOpen(options.client, retryPolicy);
       if (preparesJournal) yield* prepareJournal(options.client, retryPolicy);
-      return sqlLayer(options).pipe(Layer.provide(clientLayer));
+      return sqlLayer(options).pipe(Layer.provideMerge(clientLayer));
     }),
   );
 };

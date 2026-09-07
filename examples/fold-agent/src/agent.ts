@@ -13,6 +13,7 @@ import {
   type FoldModel,
 } from "@humanlayer/fold-core";
 import { Effect, Schema } from "effect";
+import { scriptedModel, textTurn, toolCallTurn } from "./scripted-model.ts";
 
 export const SYSTEM_PROMPT = [
   "You are the Streamsy Fold example agent.",
@@ -61,6 +62,18 @@ const missingCredentials = () =>
       "No provider credentials found. Set OPENAI_API_KEY (optionally FOLD_AGENT_MODEL) or ANTHROPIC_API_KEY.",
   });
 
+const ScriptCommands = Schema.Array(
+  Schema.Union([
+    Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+    Schema.Struct({
+      type: Schema.Literal("tool"),
+      id: Schema.String,
+      name: Schema.String,
+      params: Schema.Json,
+    }),
+  ]),
+);
+
 /**
  * Pick a live provider from the environment. OpenAI is the documented first
  * path; Anthropic is accepted when only that key is present. Tests never reach
@@ -70,6 +83,27 @@ export const modelFromEnv = (
   env: Record<string, string | undefined>,
 ): Effect.Effect<FoldModel, MissingCredentialsError> =>
   Effect.suspend(() => {
+    const fixture = env["FOLD_AGENT_SCRIPT"];
+    if (fixture !== undefined && fixture !== "") {
+      return Schema.decodeEffect(Schema.fromJsonString(ScriptCommands))(fixture).pipe(
+        Effect.mapError(
+          (cause) =>
+            new MissingCredentialsError({
+              message: `Invalid FOLD_AGENT_SCRIPT fixture: ${String(cause)}`,
+            }),
+        ),
+        Effect.flatMap((commands) =>
+          scriptedModel(
+            commands.map((command) =>
+              command.type === "text"
+                ? textTurn(command.text)
+                : toolCallTurn(command.id, command.name, command.params),
+            ),
+          ),
+        ),
+        Effect.map(({ model }) => model),
+      );
+    }
     const openaiKey = env["OPENAI_API_KEY"];
     if (openaiKey !== undefined && openaiKey !== "") {
       return Effect.succeed(

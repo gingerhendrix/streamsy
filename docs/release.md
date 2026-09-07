@@ -44,10 +44,13 @@ stale source should enter its tarball. The testing entry intentionally imports
 
 The official suite uses the approved Vitest-under-Bun runner and expects 332 pass
 plus six skips independently on memory and Bun SQLite. Authored tests use Bun.
+The final Step 2 authored baseline is 525 passes and seven expected skips: the
+Fold SQLite CLI skip was enabled, while five core capability skips and two SQL
+host-capability skips remain declared.
 Filesystem, client and hosted DO conformance are absent from this gate. Filesystem retirement preserves its
 confirmed, unfixed defect evidence; a green memory gate says nothing about that
 backend. Site validation includes prerequisite builds, compiled excerpt equality,
-three bounded snippet executions, terms, site check/build, OG and rendered links.
+four bounded snippet executions, terms, site check/build, OG and rendered links.
 
 ## Release boundary
 
