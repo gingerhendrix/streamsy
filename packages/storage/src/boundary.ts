@@ -13,6 +13,8 @@ import {
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { isSqlError } from "effect/unstable/sql/SqlError";
+import { retryWithPolicy, type TransactionRetryPolicy } from "./transaction-retry.ts";
 
 class PendingInvalidations extends Context.Service<PendingInvalidations, Set<string>>()(
   "@streamsy/storage/PendingInvalidations",
@@ -40,6 +42,10 @@ export interface BoundaryTestProbe {
   repairPasses: number;
   repairsPaused: boolean;
   closed: boolean;
+  transactionAttempts: number;
+  migrationAttempts: number;
+  invalidations: number;
+  completedMutations: number;
   readonly queues: Set<Queue.Queue<void>>;
   afterRegister?: Effect.Effect<void>;
 }
@@ -50,6 +56,10 @@ export const makeBoundaryTestProbe = (): BoundaryTestProbe => ({
   repairPasses: 0,
   repairsPaused: false,
   closed: false,
+  transactionAttempts: 0,
+  migrationAttempts: 0,
+  invalidations: 0,
+  completedMutations: 0,
   queues: new Set(),
 });
 
@@ -60,6 +70,7 @@ export interface BoundaryRuntime extends CommitBoundaryApi {
     readonly keys: ReadonlyArray<string>;
     readonly effect: Effect.Effect<A, E, R>;
     readonly committed: (value: A) => boolean;
+    readonly retryable: (error: E) => boolean;
   }) => Effect.Effect<A, E | SqlError, R>;
   readonly changes: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
@@ -72,8 +83,8 @@ export class BoundaryRuntimeService extends Context.Service<
   BoundaryRuntime
 >()("@streamsy/storage/BoundaryRuntime") {}
 
-export const sharedSqlClientLayer = <A extends SqlClient.SqlClient>(
-  makeClient: Effect.Effect<A, never, Scope.Scope | Reactivity.Reactivity>,
+export const sharedSqlClientLayer = <A extends SqlClient.SqlClient, E>(
+  makeClient: Effect.Effect<A, E, Scope.Scope | Reactivity.Reactivity>,
 ) =>
   Context.empty().pipe(
     Effect.succeed,
@@ -93,6 +104,7 @@ export const sharedSqlClientLayer = <A extends SqlClient.SqlClient>(
 
 const makeBoundary = (
   repairIntervalMs: number,
+  transactionRetry: TransactionRetryPolicy,
   probe?: BoundaryTestProbe,
 ): Effect.Effect<
   BoundaryRuntime,
@@ -118,6 +130,21 @@ const makeBoundary = (
       }),
     );
 
+    const ownedTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+      Effect.suspend(() => {
+        if (probe !== undefined) probe.transactionAttempts += 1;
+        const pending = new Set<string>();
+        return sql
+          .withTransaction(body.pipe(Effect.provideService(PendingInvalidations, pending)))
+          .pipe(
+            Effect.tap(() => {
+              if (pending.size === 0) return Effect.void;
+              if (probe !== undefined) probe.invalidations += 1;
+              return reactivity.invalidate([...pending]);
+            }),
+          );
+      });
+
     const withTransaction: CommitBoundaryApi["withTransaction"] = (body) =>
       Effect.flatMap(Effect.serviceOption(PendingInvalidations), (owned) => {
         if (Option.isSome(owned)) return body;
@@ -126,18 +153,11 @@ const makeBoundary = (
             return Effect.die(
               new Error("Commit boundary cannot enter an unowned ambient SQL transaction"),
             );
-          const pending = new Set<string>();
-          return sql
-            .withTransaction(body.pipe(Effect.provideService(PendingInvalidations, pending)))
-            .pipe(
-              Effect.tap(() =>
-                pending.size === 0 ? Effect.void : reactivity.invalidate([...pending]),
-              ),
-            );
+          return ownedTransaction(body);
         });
       });
 
-    const mutation: BoundaryRuntime["mutation"] = ({ keys, effect, committed }) =>
+    const mutation: BoundaryRuntime["mutation"] = ({ keys, effect, committed, retryable }) =>
       Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) =>
         Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pendingBefore) => {
           // This check is deliberately before `effect`: a foreign raw ambient
@@ -153,8 +173,18 @@ const makeBoundary = (
               });
             }),
           );
-          return Option.isSome(ambient) ? run : withTransaction(run);
+          return Option.isSome(ambient)
+            ? run
+            : retryWithPolicy(ownedTransaction(run), transactionRetry, (error) =>
+                isSqlError(error) ? error.isRetryable : retryable(error),
+              );
         }),
+      ).pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (probe !== undefined) probe.completedMutations += 1;
+          }),
+        ),
       );
 
     const changes: BoundaryRuntime["changes"] = ({ keys, read }) =>
@@ -228,5 +258,8 @@ const makeBoundary = (
     return { withTransaction, mutation, changes };
   });
 
-export const boundaryLayer = (repairIntervalMs: number, probe?: BoundaryTestProbe) =>
-  Layer.effect(BoundaryRuntimeService, makeBoundary(repairIntervalMs, probe));
+export const boundaryLayer = (
+  repairIntervalMs: number,
+  transactionRetry: TransactionRetryPolicy,
+  probe?: BoundaryTestProbe,
+) => Layer.effect(BoundaryRuntimeService, makeBoundary(repairIntervalMs, transactionRetry, probe));

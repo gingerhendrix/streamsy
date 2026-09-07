@@ -26,13 +26,23 @@ import {
   type BoundaryRuntime,
 } from "./boundary.ts";
 import { migrate } from "./migrations.ts";
+import {
+  DEFAULT_TRANSACTION_RETRY_ATTEMPTS,
+  DEFAULT_TRANSACTION_RETRY_DELAY_MS,
+  transactionRetryPolicy,
+} from "./transaction-retry.ts";
 
 export const DEFAULT_REPAIR_INTERVAL_MS = 1_000;
+export { DEFAULT_TRANSACTION_RETRY_ATTEMPTS, DEFAULT_TRANSACTION_RETRY_DELAY_MS };
 const STORAGE_KEY = "streamsy:storage";
 
 export interface SqlStorageOptions {
   /** Cross-process and post-commit-interruption staleness bound. */
   readonly repairIntervalMs?: number;
+  /** Total attempts for a standalone storage-owned transaction. */
+  readonly transactionRetryAttempts?: number;
+  /** Yield between retryable, known-rolled-back transaction attempts. */
+  readonly transactionRetryDelayMs?: number;
 }
 
 const RecordRow = Schema.Struct({
@@ -546,8 +556,11 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
           keys: [STORAGE_KEY],
           effect: applyMutation(sql, mutation),
           committed: Predicate.isTagged("Applied"),
+          retryable: (error) => error.retryable,
         })
-        .pipe(Effect.catchIf(isSqlError, (error) => Effect.die(error)));
+        .pipe(
+          Effect.catchIf(isSqlError, (error) => Effect.fail(sqlFault("mutate.transaction", error))),
+        );
     }),
     changes: (id): Stream.Stream<ChangeSnapshot, StorageFault> =>
       boundary.changes({ keys: [STORAGE_KEY], read: snapshot(sql, id) }),
@@ -569,10 +582,22 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
   });
 
 const makeLayer = (options: SqlStorageOptions, probe?: BoundaryTestProbe) => {
+  const transactionRetry = transactionRetryPolicy(options);
   const services = Layer.effectContext(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* migrate(sql);
+      yield* migrate(
+        sql,
+        {
+          onTransactionAttempt:
+            probe === undefined
+              ? undefined
+              : () => {
+                  probe.migrationAttempts += 1;
+                },
+        },
+        transactionRetry,
+      );
       const boundary = yield* BoundaryRuntimeService;
       return Context.empty().pipe(
         Context.add(Storage, makeStorage(sql, boundary)),
@@ -581,7 +606,13 @@ const makeLayer = (options: SqlStorageOptions, probe?: BoundaryTestProbe) => {
     }),
   );
   return services.pipe(
-    Layer.provide(boundaryLayer(options.repairIntervalMs ?? DEFAULT_REPAIR_INTERVAL_MS, probe)),
+    Layer.provide(
+      boundaryLayer(
+        options.repairIntervalMs ?? DEFAULT_REPAIR_INTERVAL_MS,
+        transactionRetry,
+        probe,
+      ),
+    ),
   );
 };
 

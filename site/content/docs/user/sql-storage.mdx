@@ -11,14 +11,32 @@ shared SqlClient/Reactivity graph and expose both `Storage` and `CommitBoundary`
 
 ```ts
 import * as SqlStorage from "@streamsy/storage/bun";
+import * as BunHost from "@streamsy/serve/bun";
 
-const layer = SqlStorage.layer({
-  client: { filename: "./streamsy.sqlite", busyTimeout: "100 millis" },
+const host = await BunHost.serve({
+  layer: SqlStorage.layerProtocol({
+    client: { filename: "./streamsy.sqlite" },
+  }),
+  port: 3000,
 });
+
+await host.stop();
 ```
 
-The busy timeout is a driver setting. Bounded retry and contention defaults are
-being measured in the next integration batch; this page does not promise them yet.
+The Bun entry sets the synchronous driver busy timeout to zero unless you
+explicitly override it. A standalone storage-owned transaction makes 16 total
+attempts with a fixed 25 ms yielding delay, so its default scheduled-delay ceiling
+is 375 ms. The previous driver default waited up to five seconds inside
+`bun:sqlite`, blocking Bun's event loop. An explicit nonzero `busyTimeout` adds
+that blocking wait to every attempt and to the shutdown bound.
+
+`transactionRetryAttempts` and `transactionRetryDelayMs` configure the storage
+owner. The default was measured under a separate-process writer lock with an
+unrelated HTTP p95 below 1 ms and maximum below 4 ms on the acceptance machine;
+the fixed acceptance budgets were 100 ms and 250 ms respectively. Treat these as
+functional contention evidence, not a general throughput benchmark.
+The read-only format preflight, WAL preparation and migrations use that same
+bounded yielding policy during scoped Layer acquisition.
 
 ## Durable Object SQLite
 
@@ -76,7 +94,10 @@ const program = Effect.gen(function* () {
 
 The `catchTag` is outside `withTransaction`, so rejection first rolls back both
 application and protocol writes. The future fused Commit Layer will own this
-policy; it is not part of the low-level Batch B boundary.
+policy; it is not part of this low-level boundary. The caller also owns any retry
+of this fused transaction. Nested storage mutation never retries independently.
+Commit or rollback failure remains a defect and is never automatically replayed,
+because commit acknowledgement failure is an uncertain outcome.
 
 Each `Storage.changes` subscription owns one capacity-1 payload-free dropping
 queue. Registration happens before the initial authoritative SQL read. Local

@@ -36,7 +36,7 @@ jobs:
 
       - run: bun run test:unit
 
-      - run: bun run test:conformance:memory
+      - run: bun run test:conformance
 
       - run: bun run check:perimeter
 
@@ -59,6 +59,7 @@ jobs:
 
           PACKAGES=(
             packages/core
+            packages/storage
             packages/views
             packages/serve
           )
@@ -76,6 +77,7 @@ jobs:
         run: |
           PACKAGES=(
             packages/core
+            packages/storage
             packages/views
             packages/serve
           )

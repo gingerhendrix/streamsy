@@ -10,8 +10,9 @@ and `@streamsy/serve`. Use `@streamsy/storage/bun` for file-backed SQLite and
 and [HTTP behavior](docs/http.md).
 
 The active examples are [Fold agent](examples/fold-agent/README.md) and
-[Hacker News](examples/hackernews-newest-stream/README.md). They still use memory;
-wiring Fold restart and the Bun protocol host to SQLite remains Step 2 follow-up.
+[Hacker News](examples/hackernews-newest-stream/README.md). The Bun protocol host
+supports retained-file SQLite through `@streamsy/storage/bun`; wiring Fold restart
+and its CLI to that storage remains the final Step 2 follow-up.
 Hosted Durable Object protocol delivery and an Effect fetch transport remain later work.
 
 ## Development

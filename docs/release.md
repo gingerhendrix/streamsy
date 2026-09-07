@@ -1,12 +1,13 @@
 # Streamsy 0.4.0 package verification
 
-The private root version and the three publishable package versions are `0.4.0`:
+The private root version and the four publishable package versions are `0.4.0`:
 
-| Package           | Directory        |
-| ----------------- | ---------------- |
-| `@streamsy/core`  | `packages/core`  |
-| `@streamsy/views` | `packages/views` |
-| `@streamsy/serve` | `packages/serve` |
+| Package             | Directory          |
+| ------------------- | ------------------ |
+| `@streamsy/core`    | `packages/core`    |
+| `@streamsy/storage` | `packages/storage` |
+| `@streamsy/views`   | `packages/views`   |
+| `@streamsy/serve`   | `packages/serve`   |
 
 Conformance and examples remain private. Core exposes only `.`, `./http`,
 `./storage`, `./testing` and has exactly one runtime dependency:
@@ -41,9 +42,9 @@ declaration chunks required by those entries. No retired entry, test fixture or
 stale source should enter its tarball. The testing entry intentionally imports
 `bun:test`; ordinary core/http/storage must not.
 
-The official memory suite uses the approved Vitest-under-Bun runner and expects
-332 pass plus six skips. Authored tests use Bun. SQL, filesystem, client and hosted
-DO conformance are absent from this gate. Filesystem retirement preserves its
+The official suite uses the approved Vitest-under-Bun runner and expects 332 pass
+plus six skips independently on memory and Bun SQLite. Authored tests use Bun.
+Filesystem, client and hosted DO conformance are absent from this gate. Filesystem retirement preserves its
 confirmed, unfixed defect evidence; a green memory gate says nothing about that
 backend. Site validation includes prerequisite builds, compiled excerpt equality,
 three bounded snippet executions, terms, site check/build, OG and rendered links.
@@ -52,7 +53,7 @@ three bounded snippet executions, terms, site check/build, OG and rendered links
 
 This is package preparation only. Publishing, tags, pushes, deprecations,
 deployments and releases require separate authorization. The existing tag workflow
-is kept aligned with the three package directories and memory-only checks; this
+is kept aligned with the four package directories and memory-plus-SQLite checks; this
 batch does not execute it. Review the final site/support matrix and release
 measurements before authorizing release operations.
 
@@ -72,7 +73,7 @@ Release tooling additionally needs npm account access to the `@streamsy` scope,
 GitHub access to `gingerhendrix/streamsy`, and permission to create the intended
 release tag. Establish credentials only for the approved release operation.
 
-The private root and all three public manifests must agree on 0.4.0. Check the
+The private root and all four public manifests must agree on 0.4.0. Check the
 final packed dependency versions as well as workspace manifests. CI and the tag
 workflow run package dry runs before any publication step. A dry run does not
 publish, create a tag or prove npm account configuration.
@@ -81,7 +82,7 @@ publish, create a tag or prove npm account configuration.
 
 For a package name that has never been published, plan a manual first publication
 from the reviewed release commit. After explicit authorization, check registry
-state for each of core, views and serve; do not assume a name is absent or that an
+state for each of core, storage, views and serve; do not assume a name is absent or that an
 existing version may be overwritten. Authenticate using the approved account,
 create and inspect its Bun tarball, then publish that exact tarball with public
 access. Verify the returned name, version and integrity and retain the evidence.
@@ -106,11 +107,12 @@ operations and remain permission-gated.
 
 Inventory published versions and consumers before proposing deprecation wording.
 The retired graph includes `@streamsy/http-client`, `@streamsy/streams`,
-`@streamsy/projection`, `@streamsy/state`, and `@streamsy/storage`; earlier names
+`@streamsy/projection` and `@streamsy/state`; earlier names
 include `@streamsy/client`, `@streamsy/experimental`, and `@streamsy/storage-memory`.
-Do not imply that the three prepared packages replace every retired capability.
-In particular, persistent protocol storage and the Effect fetch transport are
-not available in this Step 1 memory slice.
+Do not imply that the four prepared packages replace every retired capability.
+Local persistent Bun protocol storage is available through `@streamsy/storage`,
+but hosted Durable Object protocol and the Effect fetch transport remain later
+work.
 
 Prepare package-specific messages, replacement links and affected version ranges
 for review. Deprecation is a separate approved registry operation after suitable

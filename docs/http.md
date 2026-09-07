@@ -21,6 +21,28 @@ const host = await BunHost.serve({
 await host.stop();
 ```
 
+For durable Bun storage, compose the complete protocol Layer at the storage host
+entry:
+
+```ts
+import * as SqlStorage from "@streamsy/storage/bun";
+import * as BunHost from "@streamsy/serve/bun";
+
+const host = await BunHost.serve({
+  layer: SqlStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
+  port: 3000,
+});
+await host.stop();
+```
+
+That scope owns the listener, protocol services, SQL client, active changes
+subscriptions and their 1,000 ms repair fibers. The Bun storage entry defaults
+`busyTimeout` to zero and retries a standalone owned transaction 15 times after
+its initial attempt with a fixed 25 ms yield. Fused boundary transactions remain
+caller-owned and unretried; uncertain commit failures are never replayed.
+The read-only format preflight, WAL preparation and migrations use the same
+bounded yielding policy during scoped Layer acquisition.
+
 The host defaults to `127.0.0.1:3000`; set `hostname` explicitly for another bind
 address. The default prefix is `/`. Bun's idle timeout is disabled so the
 protocol owns long-poll and SSE deadlines. `stop()` force-closes connections,
@@ -93,12 +115,14 @@ acceptance limit, not a streaming allocation bound. The underlying Bun request
 body cap also applies. All request-body read failures map to 413 as in the old
 handler, even when the failure was a body I/O error rather than an oversized
 payload; this response alone does not identify the underlying cause.
-Storage expiry remains lazy-on-access in this memory host;
-this batch adds no background expiry sweeper.
+Storage expiry remains lazy-on-access in both memory and SQLite hosts; there is no
+background expiry sweeper or expiry fiber in this host.
 
-`bun run test:conformance` executes the unchanged bundled official memory suite
-with the approved Vitest-under-Bun runner. Every authored test uses `bun:test`.
+`bun run test:conformance` executes the unchanged bundled official suite once on
+memory and once on retained-file Bun SQLite with the approved Vitest-under-Bun
+runner. Each backend passes 332 tests with six declared skips. Every authored test uses `bun:test`.
 The old graph and its runner exceptions have been removed. Frozen response
 fixtures preserve status, status text, every header and body byte after removal
-of the comparison implementation. No hosted, persistent protocol storage,
-browser Effect transport or release support is added.
+of the comparison implementation. Hosted Durable Object protocol, browser Effect
+transport and release support are not added; retained-file Bun SQLite is the local
+persistent host described above.

@@ -2,7 +2,7 @@
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { Config, Context, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import * as SqlClientTag from "effect/unstable/sql/SqlClient";
 import { layer as bunLayer } from "../src/bun.ts";
@@ -42,6 +42,67 @@ test("fresh creation and repeated open retain the current version", async () => 
       .get()?.version,
   ).toBe(STORAGE_SCHEMA_VERSION);
   db.close(false);
+});
+
+test("public Bun acquisition preserves explicit create and readonly open modes", async () => {
+  const expectTypedMissing = async (
+    label: string,
+    options: { readonly?: boolean; create?: boolean; disableWAL?: boolean },
+  ) => {
+    const missing = filename(label);
+    expect(await Bun.file(missing).exists()).toBe(false);
+    const exit = await Effect.runPromise(
+      Effect.scoped(Layer.build(bunLayer({ client: { filename: missing, ...options } }))).pipe(
+        Effect.exit,
+      ),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isSuccess(exit)) throw new Error("Expected missing-file acquisition to fail");
+    expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+      _tag: "StorageFault",
+      retryable: false,
+    });
+    expect(await Bun.file(missing).exists()).toBe(false);
+  };
+  await expectTypedMissing("create-false", { create: false });
+  await expectTypedMissing("readonly-missing", { readonly: true });
+  await expectTypedMissing("create-false-no-wal", { create: false, disableWAL: true });
+
+  const missingParent = `${scratch}/missing-parent-${process.pid}-${crypto.randomUUID()}`;
+  const unopenable = `${missingParent}/storage.sqlite`;
+  const unopenableExit = await Effect.runPromise(
+    Effect.scoped(Layer.build(bunLayer({ client: { filename: unopenable } }))).pipe(Effect.exit),
+  );
+  expect(Exit.isFailure(unopenableExit)).toBe(true);
+  if (Exit.isSuccess(unopenableExit)) throw new Error("Expected unopenable acquisition to fail");
+  expect(Option.getOrThrow(Cause.findErrorOption(unopenableExit.cause))).toMatchObject({
+    _tag: "StorageFault",
+    retryable: false,
+  });
+  expect(await Bun.file(unopenable).exists()).toBe(false);
+
+  const readonly = filename("readonly-delete");
+  const initialized = await Effect.runPromise(acquire(readonly));
+  await Effect.runPromise(Scope.close(initialized.scope, Exit.void));
+  const writable = new Database(readonly, { readwrite: true });
+  expect(
+    writable.query<{ journal_mode: string }, []>("PRAGMA journal_mode=DELETE").get()?.journal_mode,
+  ).toBe("delete");
+  writable.close(false);
+  const before = new Uint8Array(await Bun.file(readonly).arrayBuffer());
+  const readonlyExit = await Effect.runPromise(
+    Effect.scoped(Layer.build(bunLayer({ client: { filename: readonly, readonly: true } }))).pipe(
+      Effect.exit,
+    ),
+  );
+  expect(Exit.isSuccess(readonlyExit)).toBe(true);
+  const after = new Uint8Array(await Bun.file(readonly).arrayBuffer());
+  expect(after).toEqual(before);
+  const inspected = new Database(readonly, { readonly: true });
+  expect(
+    inspected.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode,
+  ).toBe("delete");
+  inspected.close(false);
 });
 
 test("upgrades a nonempty supported new-format v1 database", async () => {

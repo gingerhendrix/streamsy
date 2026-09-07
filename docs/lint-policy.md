@@ -18,8 +18,8 @@ Bun host and tests, including the two existing published Bun contract kits.
 These test entry points must import `bun:test`; no live library runtime exception
 is added. Web-boundary tests retain abort controls to prove cancellation.
 
-All authored tests use Bun. Only the official memory suite in conformance-tests
-may import Vitest. Historical parked files and maintainer docs may discuss retired
+All authored tests use Bun. Only the official memory and SQLite suite registration
+files in conformance-tests may import Vitest. Historical parked files and maintainer docs may discuss retired
 names. The temporary alias scan has no exclusions. Site content is included
 in retired-name scans; no new live source exclusion is allowed.
 

@@ -5,14 +5,17 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:memory": "bun --bun x vitest --run src/memory.conformance.test.ts"
+    "test:memory": "bun --bun x vitest --run src/memory.conformance.test.ts",
+    "test:sqlite": "bun --bun x vitest --run src/sqlite.conformance.test.ts"
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.5",
     "@streamsy/core": "workspace:*",
-    "@streamsy/serve": "workspace:*"
+    "@streamsy/serve": "workspace:*",
+    "@streamsy/storage": "workspace:*"
   },
   "devDependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
     "typescript": "catalog:",

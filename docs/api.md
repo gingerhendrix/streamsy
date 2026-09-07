@@ -6,13 +6,16 @@ there are no lifetime-bearing stream handles.
 
 ## Entry points
 
-| Entry                    | Intended surface                                                                                                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@streamsy/core`         | Schema values and faults, protocol reader/writer tags and outcomes, `Protocol`, `Streams`, `StreamRef`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
-| `@streamsy/core/storage` | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                          |
-| `@streamsy/core/http`    | `makeEdge(options, layer)` and `HttpOptions`                                                                                                                                    |
-| `@streamsy/core/testing` | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`                                                                                                          |
-| `@streamsy/serve/bun`    | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                       |
+| Entry                              | Intended surface                                                                                                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`                   | Schema values and faults, protocol reader/writer tags and outcomes, `Protocol`, `Streams`, `StreamRef`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
+| `@streamsy/core/storage`           | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                          |
+| `@streamsy/core/http`              | `makeEdge(options, layer)` and `HttpOptions`                                                                                                                                    |
+| `@streamsy/core/testing`           | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`                                                                                                          |
+| `@streamsy/serve/bun`              | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                       |
+| `@streamsy/storage`                | Driver-package-free SQLite-family `Storage` Layer, `CommitBoundary` and bounded transaction defaults                                                                            |
+| `@streamsy/storage/bun`            | Official Bun SQLite storage Layer and complete persistent `layerProtocol` composition                                                                                           |
+| `@streamsy/storage/durable-object` | Official local Durable Object SQLite storage Layer; hosted routing remains Step 3                                                                                               |
 
 Internal offset generation, policy helpers and HTTP implementation modules have no
 public subpaths. Core depends only on `effect@4.0.0-rc.112` at runtime. Its testing
@@ -75,9 +78,15 @@ const host = await BunHost.serve({ layer: Streams.layerMemory(), port: 3000 });
 await host.stop();
 ```
 
+Replace the memory Layer with
+`SqlStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } })` from
+`@streamsy/storage/bun` for durable local protocol state. Its scoped shutdown
+closes subscriptions, repair fibers and the SQL client before the same port is
+rebound.
+
 Memory is process-local and nonpersistent. Its default mode provides store-wide
 atomic mutations and chain forks; constrained mode provides stream atomicity,
 copy forks, polling wakes and lazy expiry. The Bun host acquires its Layer lazily
 and expires streams on access. See [storage contract](storage-contract.md) for the
-authoring seam. No persistent protocol backend, hosted DO, read-only trust facade
-or Effect fetch client is shipped by this Step 1 package swap.
+authoring seam. Persistent Bun SQLite is shipped locally. Hosted DO protocol, a
+read-only trust facade and an Effect fetch client remain later work.

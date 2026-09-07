@@ -117,12 +117,13 @@ const checks = [
   ),
   scan("no SQL in core", String.raw`bun:sqlite|@effect/sql`, ["packages/core/**"]),
   scan(
-    "Vitest only in the official memory suite",
+    "Vitest only in the official conformance suites",
     String.raw`(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["']vitest(?:/[^"']*)?["']`,
     [
       "*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       "!parked/**",
       "!packages/conformance-tests/src/memory.conformance.test.ts",
+      "!packages/conformance-tests/src/sqlite.conformance.test.ts",
     ],
   ),
   scan("no Effect Vitest integration", "@effect[/]vitest", ["!parked/**"]),

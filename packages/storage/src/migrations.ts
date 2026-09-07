@@ -3,6 +3,11 @@ import { StorageFault } from "@streamsy/core";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import { STORAGE_MIGRATIONS, STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "./schema.ts";
+import {
+  retryWithPolicy,
+  transactionRetryPolicy,
+  type TransactionRetryPolicy,
+} from "./transaction-retry.ts";
 
 interface TableRow {
   readonly name: string;
@@ -14,6 +19,7 @@ interface VersionRow {
 
 export interface MigrationHooks {
   readonly beforeVersion?: (version: number) => Effect.Effect<void, StorageFault>;
+  readonly onTransactionAttempt?: () => void;
 }
 
 const fault = (operation: string, error: SqlError): StorageFault =>
@@ -35,75 +41,81 @@ const sqlAttempt = <A>(operation: string, effect: Effect.Effect<A, SqlError>) =>
 export const migrate = (
   sql: SqlClient,
   hooks: MigrationHooks = {},
+  transactionRetry: TransactionRetryPolicy = transactionRetryPolicy({}),
 ): Effect.Effect<void, StorageFault> =>
-  sql
-    .withTransaction(
-      Effect.gen(function* () {
-        const tables = yield* sqlAttempt(
-          "migration.inspect",
-          sql.unsafe<TableRow>("SELECT name FROM sqlite_master WHERE type = 'table'"),
-        );
-        const names = new Set(tables.map(({ name }) => name));
-        const ownsFormat = names.has(STORAGE_VERSION_TABLE);
-        const legacy =
-          names.has("streamsy_schema_version") ||
-          (!ownsFormat &&
-            ["streamsy_streams", "streamsy_messages", "streamsy_producers"].some((name) =>
-              names.has(name),
-            ));
-        if (legacy)
-          return yield* new StorageFault({
-            operation: "migration.open",
-            message:
-              "Unsupported pre-0.4 Streamsy SQLite format; use a fresh database path (the file was not modified)",
-            retryable: false,
-          });
-
-        if (!ownsFormat)
-          yield* sqlAttempt(
-            "migration.create-version-table",
-            sql
-              .unsafe(
-                `CREATE TABLE ${STORAGE_VERSION_TABLE} (` +
-                  "version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
-              )
-              .pipe(Effect.asVoid),
+  retryWithPolicy(
+    Effect.suspend(() => {
+      hooks.onTransactionAttempt?.();
+      return sql.withTransaction(
+        Effect.gen(function* () {
+          const tables = yield* sqlAttempt(
+            "migration.inspect",
+            sql.unsafe<TableRow>("SELECT name FROM sqlite_master WHERE type = 'table'"),
           );
+          const names = new Set(tables.map(({ name }) => name));
+          const ownsFormat = names.has(STORAGE_VERSION_TABLE);
+          const legacy =
+            names.has("streamsy_schema_version") ||
+            (!ownsFormat &&
+              ["streamsy_streams", "streamsy_messages", "streamsy_producers"].some((name) =>
+                names.has(name),
+              ));
+          if (legacy)
+            return yield* new StorageFault({
+              operation: "migration.open",
+              message:
+                "Unsupported pre-0.4 Streamsy SQLite format; use a fresh database path (the file was not modified)",
+              retryable: false,
+            });
 
-        const current = yield* sqlAttempt(
-          "migration.read-version",
-          sql
-            .unsafe<VersionRow>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
-            .pipe(Effect.map((rows) => rows[0]?.version ?? 0)),
-        );
-        if (current > STORAGE_SCHEMA_VERSION)
-          return yield* new StorageFault({
-            operation: "migration.open",
-            message: `Unsupported newer Streamsy SQLite schema version ${current}; supported version is ${STORAGE_SCHEMA_VERSION}`,
-            retryable: false,
-          });
-
-        for (let version = current + 1; version <= STORAGE_SCHEMA_VERSION; version++) {
-          if (hooks.beforeVersion !== undefined) yield* hooks.beforeVersion(version);
-          const statements = STORAGE_MIGRATIONS[version - 1];
-          if (statements === undefined) return yield* Effect.die(new Error("Missing migration"));
-          for (const statement of statements)
+          if (!ownsFormat)
             yield* sqlAttempt(
-              `migration.apply.${version}`,
-              sql.unsafe(statement).pipe(Effect.asVoid),
+              "migration.create-version-table",
+              sql
+                .unsafe(
+                  `CREATE TABLE ${STORAGE_VERSION_TABLE} (` +
+                    "version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)",
+                )
+                .pipe(Effect.asVoid),
             );
-          yield* sqlAttempt(
-            `migration.record.${version}`,
+
+          const current = yield* sqlAttempt(
+            "migration.read-version",
             sql
-              .unsafe(
-                `INSERT INTO ${STORAGE_VERSION_TABLE}(version, applied_at_ms) ` +
-                  "VALUES (?, CAST(unixepoch('subsec') * 1000 AS INTEGER))",
-                [version],
-              )
-              .pipe(Effect.asVoid),
+              .unsafe<VersionRow>(`SELECT MAX(version) version FROM ${STORAGE_VERSION_TABLE}`)
+              .pipe(Effect.map((rows) => rows[0]?.version ?? 0)),
           );
-        }
-        return undefined;
-      }),
-    )
-    .pipe(Effect.catchIf(isSqlError, (error) => Effect.die(error)));
+          if (current > STORAGE_SCHEMA_VERSION)
+            return yield* new StorageFault({
+              operation: "migration.open",
+              message: `Unsupported newer Streamsy SQLite schema version ${current}; supported version is ${STORAGE_SCHEMA_VERSION}`,
+              retryable: false,
+            });
+
+          for (let version = current + 1; version <= STORAGE_SCHEMA_VERSION; version++) {
+            if (hooks.beforeVersion !== undefined) yield* hooks.beforeVersion(version);
+            const statements = STORAGE_MIGRATIONS[version - 1];
+            if (statements === undefined) return yield* Effect.die(new Error("Missing migration"));
+            for (const statement of statements)
+              yield* sqlAttempt(
+                `migration.apply.${version}`,
+                sql.unsafe(statement).pipe(Effect.asVoid),
+              );
+            yield* sqlAttempt(
+              `migration.record.${version}`,
+              sql
+                .unsafe(
+                  `INSERT INTO ${STORAGE_VERSION_TABLE}(version, applied_at_ms) ` +
+                    "VALUES (?, CAST(unixepoch('subsec') * 1000 AS INTEGER))",
+                  [version],
+                )
+                .pipe(Effect.asVoid),
+            );
+          }
+          return undefined;
+        }),
+      );
+    }),
+    transactionRetry,
+    (error) => (isSqlError(error) ? error.isRetryable : error.retryable),
+  ).pipe(Effect.catchIf(isSqlError, (error) => Effect.fail(fault("migration.transaction", error))));

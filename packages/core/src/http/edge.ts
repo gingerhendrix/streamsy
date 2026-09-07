@@ -1,4 +1,4 @@
-import { Effect, type Layer } from "effect";
+import { Deferred, Effect, type Layer } from "effect";
 import { HttpEffect } from "effect/unstable/http";
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { program, type HttpOptions } from "./program.ts";
@@ -7,7 +7,27 @@ import { program, type HttpOptions } from "./program.ts";
 export const makeEdge = <E>(
   options: HttpOptions,
   layer: Layer.Layer<StreamsReader | StreamsWriter, E>,
-) =>
-  // rc.112 masks the handled request; restore cancellation for application work
-  // while leaving response delivery and scope finalization owned by HttpEffect.
-  HttpEffect.toWebHandlerLayer(Effect.interruptible(program(options)), layer);
+) => {
+  const active = new Set<Deferred.Deferred<void>>();
+  const application = Effect.suspend(() => {
+    const completed = Deferred.makeUnsafe<void>();
+    active.add(completed);
+    return Effect.interruptible(program(options)).pipe(
+      Effect.ensuring(
+        Effect.sync(() => active.delete(completed)).pipe(
+          Effect.andThen(Deferred.succeed(completed, undefined)),
+          Effect.asVoid,
+        ),
+      ),
+    );
+  });
+  const edge = HttpEffect.toWebHandlerLayer(application, layer);
+  const awaitIdle: Effect.Effect<void> = Effect.suspend(() =>
+    active.size === 0
+      ? Effect.void
+      : Effect.forEach([...active], Deferred.await, { discard: true }).pipe(
+          Effect.andThen(awaitIdle),
+        ),
+  );
+  return { ...edge, awaitIdle };
+};

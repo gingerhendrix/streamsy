@@ -6,10 +6,23 @@ requires a SQLite-family `SqlClient` (SQLite 3.42 or newer) plus its shared `Rea
 drivers and provide both the existing core `Storage` tag and `CommitBoundary`.
 
 ```ts
-import { layer } from "@streamsy/storage/bun";
+import { layerProtocol } from "@streamsy/storage/bun";
+import * as BunHost from "@streamsy/serve/bun";
 
-const storage = layer({ client: { filename: "./streamsy.sqlite" } });
+const host = await BunHost.serve({
+  layer: layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
+  port: 3000,
+});
+await host.stop();
 ```
+
+The Bun entry defaults the synchronous driver `busyTimeout` to zero. Standalone
+storage-owned transactions make 16 total attempts with a fixed 25 ms yielding
+delay (375 ms maximum scheduled delay). Override these with an explicit client
+`busyTimeout`, `transactionRetryAttempts` or `transactionRetryDelayMs` only after
+accounting for event-loop and shutdown latency.
+The read-only format preflight, WAL preparation and schema migration use the
+same bounded yielding policy during scoped Layer acquisition.
 
 Use `CommitBoundary.withTransaction` when application SQL and a Streamsy
 mutation must commit together. Nested boundary calls join the outer boundary.
@@ -22,6 +35,11 @@ successful Effect value and does not roll back application SQL by itself. To mak
 rejection atomic, raise a private typed error inside the boundary and recover it
 only outside `withTransaction`; the site SQL storage guide contains the complete
 pattern.
+
+`CommitBoundary.withTransaction` belongs to its caller and is not automatically
+retried. A storage mutation nested inside it does not add its own retry loop.
+Commit and rollback failures remain defects and are never replayed because a
+failed commit acknowledgement can hide a successful commit.
 
 `Storage.changes` keeps one capacity-1 payload-free dropping queue per active
 subscriber. It registers before the initial read and performs an authoritative
