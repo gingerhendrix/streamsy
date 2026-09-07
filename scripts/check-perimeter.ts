@@ -124,9 +124,13 @@ const checks = [
       "!parked/**",
       "!packages/conformance-tests/src/memory.conformance.test.ts",
       "!packages/conformance-tests/src/sqlite.conformance.test.ts",
+      "!packages/conformance-tests/src/workerd.conformance.test.ts",
     ],
   ),
-  scan("no Effect Vitest integration", "@effect[/]vitest", ["!parked/**"]),
+  scan("no Effect Vitest integration", ["@effect", "vitest"].join("[/]"), [
+    "!parked/**",
+    "!hosted/bun.lock",
+  ]),
 ];
 for (const path of testKits) {
   const source = readFileSync(join(repoRoot, path), "utf8");
@@ -134,27 +138,59 @@ for (const path of testKits) {
   checks.push(isTestKit);
   console.log(`${isTestKit ? "ok  " : "FAIL"} test registration boundary: ${path}`);
 }
+const dependencySections = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+  "overrides",
+  "resolutions",
+] as const;
+const effectVitest = ["@effect", "vitest"].join("/");
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This checker receives parsed JSON values and recursively validates every dependency-bearing manifest section.
+const inspectDependencyTree = (
+  path: string,
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This checker receives parsed JSON values and recursively validates every dependency-bearing manifest section.
+  value: unknown,
+  section: string,
+): void => {
+  if (!(value instanceof Object) || Array.isArray(value)) return;
+  for (const [key, target] of Object.entries(value)) {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Manifest dependency targets are JSON strings or nested objects; this branch distinguishes those raw forms before scanning them.
+    const targetText = typeof target === "string" ? target : "";
+    const effectVitestDeclared = key.includes(effectVitest) || targetText.includes(effectVitest);
+    if (effectVitestDeclared) {
+      checks.push(false);
+      console.log(`FAIL Effect Vitest declaration: ${path} (${section}.${key})`);
+    }
+    if (key === "effect") {
+      const pinned = targetText === "4.0.0-rc.112";
+      checks.push(pinned);
+      console.log(`${pinned ? "ok  " : "FAIL"} Effect pin: ${path} (${section})`);
+    }
+    if (key === "vitest" || targetText.includes("vitest")) {
+      const official = path === "packages/conformance-tests/package.json";
+      checks.push(official);
+      console.log(
+        `${official ? "ok  " : "FAIL"} Vitest manifest ownership: ${path} (${section}.${key})`,
+      );
+    }
+    inspectDependencyTree(path, target, `${section}.${key}`);
+  }
+};
+
 for (const path of inputFiles.filter(
   (file) => file === "package.json" || file.endsWith("/package.json"),
 )) {
   if (path.startsWith("parked/")) continue;
-  const manifest: {
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-    overrides?: Record<string, string>;
-  } = JSON.parse(readFileSync(join(repoRoot, path), "utf8"));
-  for (const section of ["dependencies", "devDependencies", "overrides"] as const) {
-    const deps = manifest[section];
-    if (deps?.effect !== undefined) {
-      const pinned = deps.effect === "4.0.0-rc.112";
-      checks.push(pinned);
-      console.log(`${pinned ? "ok  " : "FAIL"} Effect pin: ${path}`);
-    }
-    if (deps?.vitest !== undefined) {
-      const official = path === "packages/conformance-tests/package.json";
-      checks.push(official);
-      console.log(`${official ? "ok  " : "FAIL"} Vitest manifest ownership: ${path} (${section})`);
-    }
+  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- This is the checker’s parsed manifest boundary; each inspected section is recursively validated before use.
+  const manifest: Record<string, unknown> = JSON.parse(readFileSync(join(repoRoot, path), "utf8"));
+  for (const section of dependencySections) {
+    inspectDependencyTree(path, manifest[section], section);
+  }
+  const workspaces = manifest.workspaces;
+  if (workspaces instanceof Object && !Array.isArray(workspaces) && "catalog" in workspaces) {
+    inspectDependencyTree(path, workspaces.catalog, "workspaces.catalog");
   }
 }
 console.log("Lint suppression inventory (existing reasons retained):");

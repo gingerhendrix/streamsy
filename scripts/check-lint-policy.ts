@@ -23,6 +23,7 @@ const effectAreas = [
   "packages/sql-boundary-tests",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
+  "hosted",
 ] as const;
 
 /** An async function is an Effect diagnostic; `Array#sort()` is a general one. */
@@ -39,6 +40,7 @@ const probeSource = [
 
 const generalProbe = "packages/conformance-tests/src/__lint-policy-probe__.ts";
 const effectProbe = "packages/serve/src/__lint-policy-probe__.ts";
+const hostedEffectProbe = "hosted/src/__lint-policy-probe__.ts";
 
 interface Diagnostic {
   code: string;
@@ -111,6 +113,7 @@ const writeProbe = (relative: string): void => {
 try {
   writeProbe(generalProbe);
   writeProbe(effectProbe);
+  writeProbe(hostedEffectProbe);
 
   const general = lint(["."]);
   const effect = lint(["--config", ".oxlintrc.effect.json", ...effectAreas]);
@@ -140,6 +143,12 @@ try {
     "Effect policy reports an Effect violation in an Effect-owned area",
   );
   check(
+    effect.some(
+      (d) => normalise(d.filename) === hostedEffectProbe && d.code === "effecttsgo(async-function)",
+    ),
+    "Effect policy reports an Effect violation in hosted",
+  );
+  check(
     effect.every((d) => effectAreas.some((area) => normalise(d.filename).startsWith(`${area}/`))),
     "Effect policy reports only inside the Effect-owned areas",
   );
@@ -150,6 +159,7 @@ try {
 } finally {
   rmSync(join(repoRoot, generalProbe), { force: true });
   rmSync(join(repoRoot, effectProbe), { force: true });
+  rmSync(join(repoRoot, hostedEffectProbe), { force: true });
 }
 
 if (failures.length > 0) {

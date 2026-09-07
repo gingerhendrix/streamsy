@@ -15,6 +15,26 @@ Conformance and examples remain private. Core exposes only `.`, `./http`,
 to the package version when packing. Existing Effect pins and root overrides stay
 unchanged. Views and serve retain their existing curated subpaths.
 
+## Local C preparation
+
+The local C batch adds an official local workerd registration alongside memory
+and SQLite, an isolated `hosted/` typecheck/test package, and informational
+`measure:bundle`. Hosted execution and acceptance remain blocked by remote
+permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's
+budget/topology decision. The accepted Batch B local signal is 81,574 B gzip
+against the unchanged 27,160 B proposal; the 542.85 ms first-object p95 proposal
+remains unmeasured. Local conformance is not hosted evidence.
+
+The official local workerd runner uses `Placement.byKey(() => "conformance")`,
+placing all suite streams in one Durable Object while retaining distinct stream
+IDs. It exercises same-object chain semantics, including source retention and
+cascade collection. Cross-object copy behavior is verified separately by the
+accepted real-workerd host tests. Default `Placement.byStream()` copies have no
+source retention edge and do not satisfy the official suite's nine
+chain-lifecycle assertions. The fixture uses a 1,500 ms test long-poll override.
+Its single-object artifact does not represent distinct first-object activations;
+the first-object p95 remains unmeasured.
+
 ## Review gate
 
 From a clean checkout, remove only generated `packages/*/dist` outputs before
@@ -30,6 +50,8 @@ bun run lint:policy
 bun run format:check
 bun run test:unit
 bun run test:conformance
+bun run hosted:check
+bun run measure:bundle
 bun run check:perimeter
 bun run pack:dry-run
 bun run site:validate
