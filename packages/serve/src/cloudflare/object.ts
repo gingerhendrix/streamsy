@@ -65,15 +65,15 @@ export abstract class StreamsyObject<Env = unknown> extends DurableObject<Env> {
         new Request("https://streamsy.internal/alarm", { method: "POST" }),
         Context.make(HostCommand, { _tag: "ExpireDue" }),
       )
-      .then((response) => {
-        if (response.status < 200 || response.status >= 300)
-          throw new Error(`Streamsy expiry alarm failed: ${response.status}`);
-        void info;
-      })
       .catch((error) =>
         this.#recover(edge).then(() => {
           throw error;
         }),
-      );
+      )
+      .then((response) => {
+        if (response.status < 200 || response.status >= 300)
+          throw new Error(`Streamsy expiry alarm failed: ${response.status}`);
+        void info;
+      });
   }
 }
