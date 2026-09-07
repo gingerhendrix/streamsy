@@ -15,6 +15,7 @@ import type { Placement } from "./placement.ts";
 import {
   FORK_SOURCE_CONTENT_TYPE,
   FORK_SOURCE_HOST,
+  FORK_SOURCE_MAX_TAIL,
   FORK_SOURCE_MARKER,
   FORK_SOURCE_PATH,
 } from "./fork-source.ts";
@@ -164,7 +165,9 @@ export const fetchForkSource = (
     rawOffset !== undefined && OFFSET_PATTERN.test(rawOffset) ? rawOffset : undefined;
   const invalidOffset = rawOffset !== undefined && validOffset === undefined;
   const tail =
-    options.forkSubOffset !== undefined && options.forkSubOffset > 0 ? options.forkSubOffset : 0;
+    options.forkSubOffset !== undefined && options.forkSubOffset > 0
+      ? Math.min(options.forkSubOffset, FORK_SOURCE_MAX_TAIL)
+      : 0;
   const budget = invalidOffset ? 0 : host.copyOnForkMaxBytes;
   const url = new URL(`https://${FORK_SOURCE_HOST}${FORK_SOURCE_PATH}`);
   url.searchParams.set("stream", sourceId);

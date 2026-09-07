@@ -5,7 +5,7 @@ import {
   Offset,
   StreamId,
   StreamRecord,
-  type StorageFault,
+  StorageFault,
   type StoredMessage,
 } from "@streamsy/core";
 import { HttpServerRequest } from "effect/unstable/http";
@@ -17,8 +17,9 @@ export const FORK_SOURCE_PATH = "/fork-source";
 export const FORK_SOURCE_CONTENT_TYPE = "application/vnd.streamsy.frames";
 export const FORK_SOURCE_MARKER = "1";
 const PAGE_SIZE = 16;
-const MAX_TAIL = 10_000;
+export const FORK_SOURCE_MAX_TAIL = 10_000;
 const OFFSET_PATTERN = /^\d{16}_\d{16}$/;
+const ZERO_SUB_OFFSET = "0".repeat(16);
 type ForkSourceWindow = { after?: Offset; until?: Offset; limit: number };
 
 export interface ForkSourceOptions {
@@ -106,7 +107,7 @@ const readPages = (
       if (page.length === 0) break;
       for (const message of page) {
         const frameBytes = 45 + message.data.byteLength;
-        if (used + frameBytes > budget) return { messages, truncated: true };
+        if (used + frameBytes > budget) return { messages, truncated: true, used };
         messages.push(message);
         used += frameBytes;
         cursor = message.offset;
@@ -114,7 +115,7 @@ const readPages = (
       }
       if (page.length < limit) break;
     }
-    return { messages, truncated: false };
+    return { messages, truncated: false, used };
   });
 
 const readQuery = (options: ForkSourceOptions, url: URL): ParsedQuery => {
@@ -123,7 +124,7 @@ const readQuery = (options: ForkSourceOptions, url: URL): ParsedQuery => {
   const rawUntil = url.searchParams.get("until");
   if (rawUntil !== null && !OFFSET_PATTERN.test(rawUntil))
     return { ok: false, response: response("Invalid fork-source until", 400) };
-  const tail = parseUnsigned(url.searchParams.get("tail"), MAX_TAIL);
+  const tail = parseUnsigned(url.searchParams.get("tail"), FORK_SOURCE_MAX_TAIL);
   if (tail === undefined) return { ok: false, response: response("Invalid fork-source tail", 400) };
   const budget = parseUnsigned(url.searchParams.get("budget"));
   if (budget === undefined)
@@ -170,21 +171,45 @@ const runExport = (
     const budget = Math.min(parsed.budget, options.copyOnForkMaxBytes);
     let messages: ReadonlyArray<StoredMessage> = [];
     let truncated = false;
+    let used = 0;
+    let prefixCount = 0;
     if (budget > 0) {
       const prefix = yield* readPages(storage, id, undefined, until, undefined, budget);
       messages = prefix.messages;
       truncated = prefix.truncated;
+      used = prefix.used;
+      prefixCount = prefix.messages.length;
       if (!truncated && parsed.tail > 0) {
-        const tail = yield* readPages(
-          storage,
-          id,
-          until,
-          undefined,
-          parsed.tail,
-          budget - messages.reduce((sum, message) => sum + 45 + message.data.byteLength, 0),
-        );
+        const tail = yield* readPages(storage, id, until, undefined, parsed.tail, budget - used);
         messages = [...messages, ...tail.messages];
         truncated = tail.truncated;
+      }
+    }
+    if (!truncated && budget > 0) {
+      const latest = yield* storage.record(id);
+      if (
+        Option.isNone(latest) ||
+        latest.value.lifecycle.softDeleted ||
+        latest.value.config.createdAt !== record.config.createdAt ||
+        latest.value.currentOffset < until
+      ) {
+        return yield* Effect.fail(
+          new StorageFault({
+            operation: "fork.source",
+            message: "Fork source changed during snapshot",
+            retryable: true,
+          }),
+        );
+      }
+      const expectedPrefixCount = BigInt(until.slice(0, 16));
+      if (until.slice(17) === ZERO_SUB_OFFSET && BigInt(prefixCount) !== expectedPrefixCount) {
+        return yield* Effect.fail(
+          new StorageFault({
+            operation: "fork.source",
+            message: "Fork source prefix is incomplete",
+            retryable: true,
+          }),
+        );
       }
     }
     const encoded = encodeFrames(messages);
