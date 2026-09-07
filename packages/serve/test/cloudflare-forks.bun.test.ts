@@ -1,8 +1,16 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/crypto-random-uuid, anti-slop/no-chained-type-assertions -- These tests own the real local workerd boundary and its Bun harness. */
 import { afterEach, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Layer } from "effect";
 import { Memory, Protocol } from "@streamsy/core";
 import { serve as serveBun } from "../src/bun.ts";
@@ -49,18 +57,37 @@ interface ProbeResult {
 
 const open: Array<Harness> = [];
 const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
+const ownedRoots = new Set<string>();
+const ownedBundles = new Set<string>();
+
+const isDescendant = (source: string, candidate: string): boolean => {
+  const path = relative(source, candidate);
+  return path !== "" && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+};
+
+const rejectSymlinkPath = (path: string): void => {
+  let current = resolve(path);
+  for (;;) {
+    if (existsSync(current) && lstatSync(current).isSymbolicLink())
+      throw new Error(`Retention path must not contain a symlink: ${current}`);
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+};
 
 const retentionDestination = (root: string): string | undefined => {
   if (retentionRoot === undefined) return undefined;
   if (!isAbsolute(retentionRoot)) throw new Error("STREAMSY_STORAGE_SCRATCH must be absolute");
   const destination = resolve(retentionRoot, basename(root));
-  const sourceToDestination = relative(root, destination);
-  if (
-    destination === resolve(root) ||
-    (sourceToDestination !== "" &&
-      !sourceToDestination.startsWith("..") &&
-      !isAbsolute(sourceToDestination))
-  ) {
+  rejectSymlinkPath(root);
+  rejectSymlinkPath(retentionRoot);
+  rejectSymlinkPath(destination);
+  const sourceReal = realpathSync(root);
+  const destinationReal = existsSync(destination)
+    ? realpathSync(destination)
+    : resolve(realpathSync(dirname(destination)), basename(destination));
+  if (destinationReal === sourceReal || isDescendant(sourceReal, destinationReal)) {
     throw new Error("STREAMSY_STORAGE_SCRATCH must not point inside the owned harness root");
   }
   return destination;
@@ -71,9 +98,12 @@ const isFiniteNumber = (value: unknown): value is number => Number.isFinite(valu
 
 const makeHarness = async (entry = "worker.ts", root?: string) => {
   const ownedRoot = root ?? mkdtempSync(join(tmpdir(), ".streamsy-cloudflare-batch-b-"));
+  ownedRoots.add(ownedRoot);
   let bundleRoot: string | undefined;
+  let miniflare: Miniflare | undefined;
   try {
     bundleRoot = mkdtempSync(".streamsy-cloudflare-batch-b-bundle-");
+    ownedBundles.add(bundleRoot);
     const bundle = join(bundleRoot, `bundle-${crypto.randomUUID()}`);
     const built = await Bun.build({
       entrypoints: [join(import.meta.dir, "cloudflare", entry)],
@@ -85,7 +115,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
     expect(built.success).toBe(true);
     const output = built.outputs[0];
     if (output === undefined) throw new Error("Batch B workerd proof produced no bundle");
-    const miniflare = new Miniflare({
+    miniflare = new Miniflare({
       scriptPath: output.path,
       modules: true,
       compatibilityDate: "2026-08-06",
@@ -95,59 +125,87 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
       durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
       durableObjectsPersist: join(ownedRoot, "state"),
     });
-    try {
-      await miniflare.ready;
-      // SAFETY: the fixture only uses the namespace's idFromName/get/fetch boundary.
-      const namespace = (await miniflare.getDurableObjectNamespace(
-        "STREAMS",
-      )) as unknown as TestNamespace;
-      const harness = { bundleRoot, miniflare, root: ownedRoot, namespace };
-      open.push(harness);
-      return harness;
-    } catch (error) {
-      await miniflare.dispose().catch(() => undefined);
-      throw error;
-    }
+    await miniflare.ready;
+    // SAFETY: the fixture only uses the namespace's idFromName/get/fetch boundary.
+    const namespace = (await miniflare.getDurableObjectNamespace(
+      "STREAMS",
+    )) as unknown as TestNamespace;
+    const harness = { bundleRoot, miniflare, root: ownedRoot, namespace };
+    open.push(harness);
+    return harness;
   } catch (error) {
-    rmSync(ownedRoot, { recursive: true, force: true });
-    if (bundleRoot !== undefined) rmSync(bundleRoot, { recursive: true, force: true });
+    const cleanupErrors: Array<unknown> = [];
+    if (miniflare !== undefined) {
+      try {
+        await miniflare.dispose();
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (bundleRoot !== undefined) {
+      try {
+        rmSync(bundleRoot, { recursive: true, force: true });
+        ownedBundles.delete(bundleRoot);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (root === undefined) {
+      try {
+        rmSync(ownedRoot, { recursive: true, force: true });
+        ownedRoots.delete(ownedRoot);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      // oxlint-disable-next-line eslint(preserve-caught-error) -- AggregateError retains the primary acquisition error and every cleanup error.
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        "Cloudflare fork harness acquisition failed",
+        {
+          cause: error,
+        },
+      );
+    }
     throw error;
   }
 };
 
 const disposeHarness = async (harness: Harness, retainRoot = false) => {
-  let cleanupError: unknown;
+  const cleanupErrors: Array<unknown> = [];
   try {
     await harness.miniflare.dispose();
   } catch (error) {
-    cleanupError = error;
-  } finally {
-    const index = open.indexOf(harness);
-    if (index >= 0) open.splice(index, 1);
+    cleanupErrors.push(error);
+  }
+  const index = open.indexOf(harness);
+  if (index >= 0) open.splice(index, 1);
+  try {
+    rmSync(harness.bundleRoot, { recursive: true, force: true });
+    ownedBundles.delete(harness.bundleRoot);
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (!retainRoot) {
     try {
-      rmSync(harness.bundleRoot, { recursive: true, force: true });
-    } catch (error) {
-      cleanupError ??= error;
-    }
-    if (!retainRoot) {
-      try {
-        const destination = retentionDestination(harness.root);
-        if (destination !== undefined) {
-          mkdirSync(resolve(destination, ".."), { recursive: true });
-          cpSync(harness.root, destination, { recursive: true });
-        }
-      } catch (error) {
-        cleanupError ??= error;
-      } finally {
-        try {
-          rmSync(harness.root, { recursive: true, force: true });
-        } catch (error) {
-          cleanupError ??= error;
-        }
+      const destination = retentionDestination(harness.root);
+      if (destination !== undefined) {
+        mkdirSync(resolve(destination, ".."), { recursive: true });
+        cpSync(harness.root, destination, { recursive: true });
       }
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      rmSync(harness.root, { recursive: true, force: true });
+      ownedRoots.delete(harness.root);
+    } catch (error) {
+      cleanupErrors.push(error);
     }
   }
-  if (cleanupError !== undefined) throw cleanupError;
+  if (cleanupErrors.length > 0)
+    throw new AggregateError(cleanupErrors, "Cloudflare fork harness cleanup failed");
 };
 
 afterEach(async () => {
@@ -156,12 +214,42 @@ afterEach(async () => {
     try {
       await server.stop();
     } catch (error) {
+      openBun.push(server);
+      errors.push(error);
+    }
+  }
+  for (const server of openBun.splice(0)) {
+    try {
+      await server.stop();
+    } catch (error) {
+      openBun.push(server);
       errors.push(error);
     }
   }
   for (const harness of open.splice(0)) {
     try {
       await disposeHarness(harness);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  for (const bundleRoot of ownedBundles) {
+    try {
+      rmSync(bundleRoot, { recursive: true, force: true });
+      ownedBundles.delete(bundleRoot);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  for (const root of ownedRoots) {
+    try {
+      const destination = retentionDestination(root);
+      if (destination !== undefined) {
+        mkdirSync(resolve(destination, ".."), { recursive: true });
+        cpSync(root, destination, { recursive: true });
+      }
+      rmSync(root, { recursive: true, force: true });
+      ownedRoots.delete(root);
     } catch (error) {
       errors.push(error);
     }
@@ -854,8 +942,16 @@ test("B15 recreation under load restores and purges alarms in both object layout
   ).toBe(201);
   const byKeyRoot = byKey.root;
   const byStreamRoot = byStream.root;
-  await disposeHarness(byKey, true);
-  await disposeHarness(byStream, true);
+  const retentionErrors: Array<unknown> = [];
+  for (const retained of [byKey, byStream]) {
+    try {
+      await disposeHarness(retained, true);
+    } catch (error) {
+      retentionErrors.push(error);
+    }
+  }
+  if (retentionErrors.length > 0)
+    throw new AggregateError(retentionErrors, "B15 retention cleanup failed");
   const recreatedByKey = await makeHarness("worker-by-key.ts", byKeyRoot);
   const recreatedByStream = await makeHarness("worker.ts", byStreamRoot);
   await waitUntil(async () => (await probe(recreatedByKey, "t1")).rows.length === 0, 5_000);

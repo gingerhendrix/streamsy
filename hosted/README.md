@@ -19,3 +19,6 @@ accepted real-workerd host tests. Default `Placement.byStream()` copies have no
 source retention edge and do not satisfy the official suite's nine
 chain-lifecycle assertions. The worker uses a 1,500 ms test long-poll override;
 its single-object artifact cannot establish distinct first-object activations.
+Fake measurement tests use the historical all-first-then-warm ordering and
+report `firstMinusWarm` (the candidate PUT body is `"x"`; Step 0 used an empty
+PUT), so their arithmetic is not a hosted comparison.

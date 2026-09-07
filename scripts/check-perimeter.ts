@@ -195,7 +195,10 @@ for (const path of inputFiles.filter(
 }
 console.log("Lint suppression inventory (existing reasons retained):");
 for (const path of inputFiles.filter(
-  (file) => file.startsWith("packages/") || file.startsWith("examples/"),
+  (file) =>
+    (file.startsWith("packages/") || file.startsWith("examples/") || file.startsWith("hosted/")) &&
+    !file.startsWith("hosted/node_modules/") &&
+    !file.startsWith("hosted/dist/"),
 )) {
   const count = readLines(path).filter((line) => /oxlint-disable/.test(line)).length;
   if (count > 0) console.log(`${path}:${count}`);

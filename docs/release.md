@@ -33,7 +33,10 @@ accepted real-workerd host tests. Default `Placement.byStream()` copies have no
 source retention edge and do not satisfy the official suite's nine
 chain-lifecycle assertions. The fixture uses a 1,500 ms test long-poll override.
 Its single-object artifact does not represent distinct first-object activations;
-the first-object p95 remains unmeasured.
+the first-object p95 remains unmeasured. Fake measurement tests preserve the
+historical all-first-then-warm ordering and report `firstMinusWarm`; their PUT
+body is `"x"`, while Step 0 used an empty PUT, so the local arithmetic is not a
+hosted comparison.
 
 ## Review gate
 

@@ -24,8 +24,12 @@ directly and does not author an integration adapter. The all-input Effect-Vitest
 token scan retains root/site/source/docs coverage and excludes only generated
 `hosted/bun.lock`, because Alchemy's transitive graph records that peer. Direct
 and aliased manifest declarations remain forbidden outside the official
-conformance manifest. Historical parked files and maintainer docs may discuss
-retired names. The temporary alias scan has no exclusions. Site content is
+conformance manifest, which owns the plain `vitest` runner declarations. Only
+the generated `hosted/bun.lock` is exempt from the Effect-Vitest token scan;
+authored hosted suppressions are inventoried with focused reasons while its
+dependency/build directories remain outside authored-input scope. Historical
+parked files and maintainer docs may discuss retired names. The temporary alias
+scan has no exclusions. Site content is
 included in retired-name scans; no new live source exclusion is allowed.
 
 ## Accepted executable-example warning baseline

@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(scriptDirectory, "..");
@@ -51,6 +51,25 @@ const assertOwnedDirectory = (path: string, label: string): void => {
   }
 };
 
+const assertOwnedAncestors = (path: string, label: string): void => {
+  const absolute = resolve(path);
+  const repository = resolve(repositoryRoot);
+  const outside = relative(repository, absolute);
+  if (outside.startsWith("..") || isAbsolute(outside)) {
+    throw new Error(`${label} escaped the repository output boundary: ${absolute}`);
+  }
+  let current = absolute;
+  for (;;) {
+    const stats = lstatIfExists(current);
+    if (stats !== undefined && (!stats.isDirectory() || stats.isSymbolicLink())) {
+      throw new Error(`${label} has an unowned ancestor: ${current}`);
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+};
+
 const invalidateReport = (): void => {
   const stats = lstatIfExists(reportPath);
   if (stats === undefined) return;
@@ -61,6 +80,8 @@ const invalidateReport = (): void => {
 };
 
 const cleanOwnedUploadDirectory = (): void => {
+  assertOwnedAncestors(outputRoot, "Worker output root");
+  assertOwnedAncestors(uploadDirectory, "Worker upload directory");
   assertOwnedDirectory(outputRoot, "Worker output root");
   assertOwnedDirectory(uploadDirectory, "Worker upload directory");
   mkdirSync(outputRoot, { recursive: true });
@@ -89,6 +110,8 @@ const inspectUploadDirectory = (): number => {
   }
   return 1;
 };
+
+let outputRootValidated = false;
 
 const outputFile = (outputs: Array<Bun.BuildArtifact>, label: string): Bun.BuildArtifact => {
   const output = outputs.find((candidate) => candidate.path.endsWith("worker.js"));
@@ -124,7 +147,10 @@ const commandText = async (command: Array<string>, cwd: string = repositoryRoot)
   new TextDecoder().decode(await spawnBytes(command, undefined, cwd));
 
 const build = async (): Promise<void> => {
+  assertOwnedAncestors(outputRoot, "Worker output root");
+  outputRootValidated = true;
   invalidateReport();
+  assertOwnedAncestors(uploadDirectory, "Worker upload directory");
   assertBuiltExports();
   cleanOwnedUploadDirectory();
   let temporaryRoot: string | undefined;
@@ -222,8 +248,13 @@ const build = async (): Promise<void> => {
 try {
   await build();
 } catch (error) {
+  // Only a validated output root may be touched by stale-report invalidation;
+  // an unowned/symlinked root is left entirely untouched on every failure path.
   try {
-    invalidateReport();
+    if (outputRootValidated) {
+      assertOwnedAncestors(outputRoot, "Worker output root");
+      invalidateReport();
+    }
   } catch (cleanupError) {
     // oxlint-disable-next-line eslint(preserve-caught-error) -- AggregateError retains both the original build failure and report-cleanup failure.
     throw new AggregateError(

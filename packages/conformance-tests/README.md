@@ -18,7 +18,10 @@ date `2026-07-30`, `nodejs_compat`, loopback networking, and a 1,500 ms test
 long-poll override. Its result is local conformance, not hosted evidence. The
 single artifact and its bundle report are attributed to this named profile; the
 profile cannot establish distinct first-object activations or the proposed
-first-object latency p95.
+first-object latency p95. Fake measurement tests preserve the historical
+all-first-then-warm ordering and name the arithmetic `firstMinusWarm`; the
+candidate first PUT body is `"x"`, whereas Step 0 used an empty PUT, so no
+hosted comparison is implied.
 
 The worker has no probes and imports only built public package exports. Hosted
 deployment, metadata, remote measurement, and arbitrary external targets remain
