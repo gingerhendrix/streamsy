@@ -52,7 +52,7 @@ const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
 
 const makeHarness = async (
   entry = "worker.ts",
-  root = mkdtempSync(join("/tmp", "streamsy-cloudflare-batch-b-")),
+  root = mkdtempSync(".streamsy-cloudflare-batch-b-"),
 ) => {
   const bundle = join(root, `bundle-${crypto.randomUUID()}`);
   const built = await Bun.build({
