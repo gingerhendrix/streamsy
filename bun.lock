@@ -22,6 +22,7 @@
         "@effect/ai-openai": "4.0.0-rc.109",
         "@humanlayer/fold-core": "0.1.4",
         "@streamsy/core": "workspace:*",
+        "@streamsy/storage": "workspace:*",
         "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
@@ -55,8 +56,10 @@
         "@durable-streams/server-conformance-tests": "^0.3.5",
         "@streamsy/core": "workspace:*",
         "@streamsy/serve": "workspace:*",
+        "@streamsy/storage": "workspace:*",
       },
       "devDependencies": {
+        "@effect/sql-sqlite-bun": "4.0.0-rc.112",
         "@types/bun": "^1.2.0",
         "@types/node": "^22.10.0",
         "typescript": "catalog:",
@@ -82,7 +85,11 @@
         "effect": "4.0.0-rc.112",
       },
       "devDependencies": {
+        "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/sql-sqlite-do": "4.0.0-rc.112",
+        "@streamsy/storage": "workspace:*",
         "@types/bun": "^1.2.0",
+        "miniflare": "4.20260730.0",
         "typescript": "catalog:",
       },
     },
@@ -113,6 +120,7 @@
         "@cloudflare/workers-types": "4.20251228.0",
         "@effect/sql-sqlite-bun": "4.0.0-rc.112",
         "@effect/sql-sqlite-do": "4.0.0-rc.112",
+        "@streamsy/serve": "workspace:*",
         "@types/bun": "^1.2.0",
         "miniflare": "4.20260730.0",
         "typescript": "catalog:",

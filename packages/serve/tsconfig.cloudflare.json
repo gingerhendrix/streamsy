@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": [
+    "src/cloudflare.ts",
+    "src/cloudflare/**/*",
+    "test/cloudflare-host.bun.test.ts",
+    "test/cloudflare/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/cloudflare/**/*.test.ts",
+    "test/cloudflare-host.bun.test.ts"
+  ]
+}

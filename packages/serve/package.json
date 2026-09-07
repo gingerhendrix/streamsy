@@ -83,22 +83,31 @@
       "types": "./dist/bun.d.ts",
       "import": "./dist/bun.js",
       "default": "./dist/bun.js"
+    },
+    "./cloudflare": {
+      "types": "./dist/cloudflare.d.ts",
+      "import": "./dist/cloudflare.js",
+      "default": "./dist/cloudflare.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite",
-    "typecheck": "tsc --noEmit",
-    "test:unit": "bun test src"
+    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts src/cloudflare.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external cloudflare:workers",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit",
+    "test:unit": "bun test src test/*.bun.test.ts"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
     "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20251228.0",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112",
+    "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.2.0",
+    "miniflare": "4.20260730.0",
     "typescript": "catalog:"
   }
 }
