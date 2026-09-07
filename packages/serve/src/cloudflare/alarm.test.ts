@@ -46,6 +46,7 @@ test("reconcileAlarm follows the indexed deadline table", async () => {
   expect(await run(Option.some({ at: 10_000, streamId: "a" }), Option.some(11_000))).toEqual([
     10_000,
   ]);
+  expect(await run(Option.some({ at: 0, streamId: "a" }), Option.some(0))).toEqual(["clear", 1]);
   expect(await run(Option.some({ at: 0, streamId: "a" }), Option.none())).toEqual([1]);
 });
 
