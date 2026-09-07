@@ -40,6 +40,7 @@ const responseBody = (bytes: Uint8Array): ArrayBuffer => {
 
 const namespaceFor = (response: Response) => {
   let fetches = 0;
+  // SAFETY: this test double implements the namespace methods exercised by the fork boundary.
   const namespace = {
     idFromName: (name: string) => ({ name }),
     get: () => ({

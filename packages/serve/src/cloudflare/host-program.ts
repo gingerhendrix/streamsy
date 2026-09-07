@@ -6,6 +6,7 @@ import { program } from "@streamsy/core/http";
 import { reconcileAlarm } from "./alarm.ts";
 import { HostCommand } from "./host-command.ts";
 import { FORK_SOURCE_HOST, FORK_SOURCE_PATH, forkSource } from "./fork-source.ts";
+// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- the host must install this per-request writer with provideServiceEffect, without a second Layer scope.
 import { makeForkWriter, type ForkHost } from "./fork-writer.ts";
 
 const mutates = (method: string): boolean =>

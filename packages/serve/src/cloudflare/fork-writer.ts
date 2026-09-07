@@ -9,7 +9,6 @@ import {
   StreamsWriter,
   type CreateOptions,
   type CreateOutcome,
-  type StorageShape,
   type StoredMessage,
 } from "@streamsy/core";
 import type { Placement } from "./placement.ts";
@@ -22,6 +21,12 @@ import {
 import { decodeFrames } from "./fork-frames.ts";
 
 const OFFSET_PATTERN = /^\d{16}_\d{16}$/;
+type ForkSourceConfig = {
+  contentType: string;
+  createdAt: number;
+  ttlSeconds?: number;
+  expiresAt?: string;
+};
 
 export interface ForkHost {
   readonly namespace?: DurableObjectNamespace;
@@ -124,14 +129,15 @@ const decodeRecord = (response: Response, sourceId: StreamId, softDeleted: boole
         throw new Error("Missing fork source header: streamsy-source-created-at");
       const ttlSeconds = optionalFiniteHeader(response, "streamsy-source-ttl");
       const expiresAt = response.headers.get("streamsy-source-expires-at");
+      const config: ForkSourceConfig = {
+        contentType,
+        createdAt,
+      };
+      if (ttlSeconds !== undefined) config.ttlSeconds = ttlSeconds;
+      if (expiresAt !== null) config.expiresAt = expiresAt;
       return {
         id: sourceId,
-        config: {
-          contentType,
-          createdAt,
-          ...(ttlSeconds === undefined ? {} : { ttlSeconds }),
-          ...(expiresAt === null ? {} : { expiresAt }),
-        },
+        config,
         lifecycle: { closed: false, softDeleted },
         currentOffset,
       };
@@ -220,7 +226,7 @@ const sourceMessages =
     storage: typeof Storage.Service,
     sourceId: StreamId,
     snapshot: ForkSnapshot,
-  ): StorageShape["messages"] =>
+  ): (typeof Storage.Service)["messages"] =>
   (id, window) => {
     if (id !== sourceId) return storage.messages(id, window);
     const after = window.after;
@@ -241,10 +247,18 @@ export const sourceView = (
   snapshot: ForkSnapshot,
 ): typeof Storage.Service =>
   Storage.of({
-    ...storage,
-    capabilities: { ...storage.capabilities, fork: "copy" },
+    capabilities: {
+      fork: "copy",
+      atomicScope: storage.capabilities.atomicScope,
+      wake: storage.capabilities.wake,
+      expiryIndex: storage.capabilities.expiryIndex,
+    },
     record: (id) => (id === sourceId ? Effect.succeed(snapshot.record) : storage.record(id)),
     messages: sourceMessages(storage, sourceId, snapshot),
+    producer: storage.producer,
+    mutate: storage.mutate,
+    changes: storage.changes,
+    nextExpiry: storage.nextExpiry,
   });
 
 export const makeForkWriter = (host: ForkHost) =>

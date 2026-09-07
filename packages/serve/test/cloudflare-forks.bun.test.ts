@@ -49,6 +49,7 @@ interface ProbeResult {
 
 const open: Array<Harness> = [];
 const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
+const isFiniteNumber = (value: unknown): value is number => Number.isFinite(value);
 
 const makeHarness = async (
   entry = "worker.ts",
@@ -73,6 +74,7 @@ const makeHarness = async (
     durableObjectsPersist: join(root, "state"),
   });
   await miniflare.ready;
+  // SAFETY: the fixture only uses the namespace's idFromName/get/fetch boundary.
   const namespace = (await miniflare.getDurableObjectNamespace(
     "STREAMS",
   )) as unknown as TestNamespace;
@@ -95,6 +97,8 @@ const dispatchFetch = (
   input: string | Request,
   init?: RequestInit,
 ): Promise<Response> =>
+  // SAFETY: Miniflare's declaration uses the workers-types Request overload;
+  // this adapter exposes the equivalent Bun Fetch signature used by the tests.
   (
     miniflare.dispatchFetch as unknown as (
       input: string | Request,
@@ -116,6 +120,7 @@ const directInternal = (harness: Harness, name: string, path: string, init?: Req
     .fetch(new Request(`https://streamsy.internal${path}`, init));
 
 const probe = async (harness: Harness, name: string) =>
+  // SAFETY: the fixture's /__probe branch always returns this fixed JSON shape.
   (await direct(harness, name, "/__probe")).json() as unknown as ProbeResult;
 
 const setProbe = (harness: Harness, name: string, query: string) =>
@@ -611,7 +616,7 @@ test("B11 copied TTL and absolute expiry inherit into the child alarm", async ()
   ).toBe(201);
   const child = await probe(harness, "ttl-child");
   const expiry = child.rows[0]?.[1];
-  if (typeof expiry !== "number") throw new Error("B11 inherited TTL was not persisted");
+  if (!isFiniteNumber(expiry)) throw new Error("B11 inherited TTL was not persisted");
   expect(expiry - now).toBeGreaterThan(500);
   expect(expiry - now).toBeLessThan(2_500);
   await waitUntil(async () => (await probe(harness, "ttl-child")).rows.length === 0, 4_000);
@@ -632,7 +637,7 @@ test("B11 copied TTL and absolute expiry inherit into the child alarm", async ()
   ).toBe(201);
   const override = await probe(harness, "override-child");
   const overrideExpiry = override.rows[0]?.[1];
-  if (typeof overrideExpiry !== "number") throw new Error("B11 override expiry was not persisted");
+  if (!isFiniteNumber(overrideExpiry)) throw new Error("B11 override expiry was not persisted");
   expect(overrideExpiry - Date.now()).toBeGreaterThan(58_000);
 
   const absolute = new Date(Date.now() + 2_000).toISOString();
@@ -652,7 +657,7 @@ test("B11 copied TTL and absolute expiry inherit into the child alarm", async ()
   ).toBe(201);
   const dateChild = await probe(harness, "date-child");
   const dateExpiry = dateChild.rows[0]?.[1];
-  if (typeof dateExpiry !== "number")
+  if (!isFiniteNumber(dateExpiry))
     throw new Error("B11 inherited absolute expiry was not persisted");
   expect(dateExpiry).toBe(new Date(absolute).getTime());
 });
@@ -685,7 +690,7 @@ test("B13 a stale deadline re-arms after a sliding read without rebuilding the s
   const renewed = await probe(harness, "stale");
   const renewedExpiry = renewed.rows[0]?.[1];
   const initialExpiry = before.rows[0]?.[1];
-  if (typeof renewedExpiry !== "number" || typeof initialExpiry !== "number")
+  if (!isFiniteNumber(renewedExpiry) || !isFiniteNumber(initialExpiry))
     throw new Error("B13 expiry rows missing");
   expect(renewedExpiry).toBeGreaterThan(initialExpiry);
   await waitUntil(async () => (await probe(harness, "stale")).alarmInvocations >= 1, 3_000);

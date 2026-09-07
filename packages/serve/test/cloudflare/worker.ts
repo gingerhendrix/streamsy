@@ -29,11 +29,13 @@ class ProbeObject extends StreamsyObject<Env> {
   #alarmAfterMutation: number | null = null;
 
   override options(): ObjectOptions<Env> {
-    return {
+    const options: ObjectOptions<Env> = {
       ...byStreamOptions,
       namespace: (env: Env) => env.STREAMS,
-      ...(this.#copyLimit === undefined ? {} : { copyOnForkMaxBytes: this.#copyLimit }),
     };
+    return this.#copyLimit === undefined
+      ? options
+      : { ...options, copyOnForkMaxBytes: this.#copyLimit };
   }
 
   protected copyLimit(): number | undefined {
@@ -199,11 +201,12 @@ class ProbeObject extends StreamsyObject<Env> {
 
 export class ProbeByKeyObject extends ProbeObject {
   override options(): ObjectOptions<Env> {
-    return {
+    const options: ObjectOptions<Env> = {
       ...byKeyOptions,
       namespace: (env: Env) => env.STREAMS,
-      ...(this.copyLimit() === undefined ? {} : { copyOnForkMaxBytes: this.copyLimit() }),
     };
+    const copyLimit = this.copyLimit();
+    return copyLimit === undefined ? options : { ...options, copyOnForkMaxBytes: copyLimit };
   }
 }
 

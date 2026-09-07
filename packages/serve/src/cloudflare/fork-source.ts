@@ -19,6 +19,7 @@ export const FORK_SOURCE_MARKER = "1";
 const PAGE_SIZE = 16;
 const MAX_TAIL = 10_000;
 const OFFSET_PATTERN = /^\d{16}_\d{16}$/;
+type ForkSourceWindow = { after?: Offset; until?: Offset; limit: number };
 
 export interface ForkSourceOptions {
   readonly pathPrefix?: string;
@@ -30,11 +31,22 @@ const securityHeaders = {
   "cross-origin-resource-policy": "cross-origin",
 };
 
-const response = (body: BodyInit | null, status: number, headers: HeadersInit = {}): Response =>
-  new Response(body, {
-    status,
-    headers: { ...securityHeaders, "cache-control": "no-store", ...headers },
-  });
+const response = (
+  body: string | ArrayBuffer | null,
+  status: number,
+  headers: HeadersInit = {},
+): Response => {
+  const responseHeaders = new Headers(securityHeaders);
+  responseHeaders.set("cache-control", "no-store");
+  if (headers instanceof Headers) {
+    headers.forEach((value, name) => responseHeaders.set(name, value));
+  } else if (Array.isArray(headers)) {
+    for (const [name, value] of headers) responseHeaders.set(name, value);
+  } else {
+    for (const [name, value] of Object.entries(headers)) responseHeaders.set(name, value);
+  }
+  return new Response(body, { status, headers: responseHeaders });
+};
 
 const invalidPath = (options: ForkSourceOptions): Response =>
   response(
@@ -58,17 +70,17 @@ type ParsedQuery =
       readonly budget: number;
     };
 
-const recordHeaders = (record: StreamRecord): HeadersInit => {
-  const headers: Record<string, string> = {
+const recordHeaders = (record: StreamRecord): Headers => {
+  const headers = new Headers({
     "streamsy-fork-source": FORK_SOURCE_MARKER,
     "streamsy-source-content-type": record.config.contentType,
     "streamsy-source-next-offset": record.currentOffset,
     "streamsy-source-created-at": String(record.config.createdAt),
-  };
+  });
   if (record.config.ttlSeconds !== undefined)
-    headers["streamsy-source-ttl"] = String(record.config.ttlSeconds);
+    headers.set("streamsy-source-ttl", String(record.config.ttlSeconds));
   if (record.config.expiresAt !== undefined)
-    headers["streamsy-source-expires-at"] = record.config.expiresAt;
+    headers.set("streamsy-source-expires-at", record.config.expiresAt);
   return headers;
 };
 
@@ -87,11 +99,10 @@ const readPages = (
     let used = 0;
     while (remaining === undefined || remaining > 0) {
       const limit = Math.min(PAGE_SIZE, remaining ?? PAGE_SIZE);
-      const page = yield* storage.messages(id, {
-        ...(cursor === undefined ? {} : { after: cursor }),
-        ...(until === undefined ? {} : { until }),
-        limit,
-      });
+      const window: ForkSourceWindow = { limit };
+      if (cursor !== undefined) window.after = cursor;
+      if (until !== undefined) window.until = until;
+      const page = yield* storage.messages(id, window);
       if (page.length === 0) break;
       for (const message of page) {
         const frameBytes = 45 + message.data.byteLength;
@@ -148,13 +159,13 @@ const runExport = (
       return response("Stream is soft-deleted", 410, recordHeaders(record));
 
     const until = parsed.until === undefined ? record.currentOffset : Offset.make(parsed.until);
-    if (parsed.until !== undefined && until > record.currentOffset)
-      return response(null, 200, {
-        ...recordHeaders(record),
-        "streamsy-frames-omitted": "until-beyond-tail",
-        "content-type": FORK_SOURCE_CONTENT_TYPE,
-        "content-length": "0",
-      });
+    if (parsed.until !== undefined && until > record.currentOffset) {
+      const headers = recordHeaders(record);
+      headers.set("streamsy-frames-omitted", "until-beyond-tail");
+      headers.set("content-type", FORK_SOURCE_CONTENT_TYPE);
+      headers.set("content-length", "0");
+      return response(null, 200, headers);
+    }
 
     const budget = Math.min(parsed.budget, options.copyOnForkMaxBytes);
     let messages: ReadonlyArray<StoredMessage> = [];
@@ -179,12 +190,11 @@ const runExport = (
     const encoded = encodeFrames(messages);
     const body = new ArrayBuffer(encoded.byteLength);
     new Uint8Array(body).set(encoded);
-    return response(body, 200, {
-      ...recordHeaders(record),
-      "content-type": FORK_SOURCE_CONTENT_TYPE,
-      "content-length": String(encoded.byteLength),
-      ...(truncated ? { "streamsy-frames-truncated": "1" } : {}),
-    });
+    const headers = recordHeaders(record);
+    headers.set("content-type", FORK_SOURCE_CONTENT_TYPE);
+    headers.set("content-length", String(encoded.byteLength));
+    if (truncated) headers.set("streamsy-frames-truncated", "1");
+    return response(body, 200, headers);
   });
 
 export const forkSource = (options: ForkSourceOptions) => runExport(options);
