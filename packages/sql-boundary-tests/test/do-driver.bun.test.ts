@@ -42,6 +42,9 @@ test("official Durable Object driver proves the SQL commit and bounded wake boun
     scriptPath: output.path,
     modules: true,
     compatibilityDate: "2026-08-06",
+    host: "127.0.0.1",
+    port: 0,
+    cf: false,
     durableObjects: { PROOF: { className: "SqlBoundaryProofObject", useSQLite: true } },
     durableObjectsPersist: join(root, "state"),
   });

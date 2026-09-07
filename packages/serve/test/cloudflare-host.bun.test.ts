@@ -1,15 +1,14 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, anti-slop/no-chained-type-assertions -- This is the real local workerd boundary test; Miniflare exposes a workers-types Fetch overload while the Bun test uses Bun Fetch values. */
 import { afterEach, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Miniflare } from "miniflare";
 
-const scratch =
-  Bun.env.STREAMSY_STORAGE_SCRATCH ??
-  "/home/gareth/Documents/Personal/scratch/2026-09-07-step-3-batch-a";
-mkdirSync(scratch, { recursive: true });
+const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
 
 interface Harness {
+  readonly bundleRoot: string;
   readonly miniflare: Miniflare;
   readonly root: string;
   readonly namespace: TestNamespace;
@@ -38,50 +37,112 @@ interface ProbeResult {
 
 const open: Array<Harness> = [];
 
-const makeHarness = async (
-  entry = "worker.ts",
-  root = mkdtempSync(".streamsy-cloudflare-workerd-"),
-) => {
-  const bundle = join(root, `bundle-${crypto.randomUUID()}`);
-  const built = await Bun.build({
-    entrypoints: [join(import.meta.dir, "cloudflare", entry)],
-    outdir: bundle,
-    target: "browser",
-    format: "esm",
-    external: ["cloudflare:workers"],
-  });
-  expect(built.success).toBe(true);
-  const output = built.outputs[0];
-  if (output === undefined) throw new Error("Cloudflare host proof produced no bundle");
-  const miniflare = new Miniflare({
-    scriptPath: output.path,
-    modules: true,
-    compatibilityDate: "2026-08-06",
-    durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
-    durableObjectsPersist: join(root, "state"),
-  });
+const retentionDestination = (root: string): string | undefined => {
+  if (retentionRoot === undefined) return undefined;
+  if (!isAbsolute(retentionRoot)) throw new Error("STREAMSY_STORAGE_SCRATCH must be absolute");
+  const destination = resolve(retentionRoot, basename(root));
+  const sourceToDestination = relative(root, destination);
+  if (
+    destination === resolve(root) ||
+    (sourceToDestination !== "" &&
+      !sourceToDestination.startsWith("..") &&
+      !isAbsolute(sourceToDestination))
+  ) {
+    throw new Error("STREAMSY_STORAGE_SCRATCH must not point inside the owned harness root");
+  }
+  return destination;
+};
+
+const makeHarness = async (entry = "worker.ts", root?: string) => {
+  const ownedRoot = root ?? mkdtempSync(join(tmpdir(), ".streamsy-cloudflare-workerd-"));
+  let bundleRoot: string | undefined;
   try {
-    await miniflare.ready;
+    bundleRoot = mkdtempSync(".streamsy-cloudflare-workerd-bundle-");
+    const bundle = join(bundleRoot, `bundle-${crypto.randomUUID()}`);
+    const built = await Bun.build({
+      entrypoints: [join(import.meta.dir, "cloudflare", entry)],
+      outdir: bundle,
+      target: "browser",
+      format: "esm",
+      external: ["cloudflare:workers"],
+    });
+    expect(built.success).toBe(true);
+    const output = built.outputs[0];
+    if (output === undefined) throw new Error("Cloudflare host proof produced no bundle");
+    const miniflare = new Miniflare({
+      scriptPath: output.path,
+      modules: true,
+      compatibilityDate: "2026-08-06",
+      host: "127.0.0.1",
+      port: 0,
+      cf: false,
+      durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
+      durableObjectsPersist: join(ownedRoot, "state"),
+    });
+    try {
+      await miniflare.ready;
+      // SAFETY: Miniflare's namespace exposes exactly the idFromName/get/fetch operations used by this harness.
+      const namespace = (await miniflare.getDurableObjectNamespace(
+        "STREAMS",
+      )) as unknown as TestNamespace;
+      const harness = { bundleRoot, miniflare, root: ownedRoot, namespace };
+      open.push(harness);
+      return harness;
+    } catch (error) {
+      await miniflare.dispose().catch(() => undefined);
+      throw error;
+    }
   } catch (error) {
-    await miniflare.dispose();
+    rmSync(ownedRoot, { recursive: true, force: true });
+    if (bundleRoot !== undefined) rmSync(bundleRoot, { recursive: true, force: true });
     throw error;
   }
-  // SAFETY: The test only uses the namespace's idFromName/get/fetch boundary;
-  // Miniflare's workers-types overload is not the Bun Fetch type used here.
-  const namespace = (await miniflare.getDurableObjectNamespace(
-    "STREAMS",
-  )) as unknown as TestNamespace;
-  const harness = { miniflare, root, namespace };
-  open.push(harness);
-  return harness;
+};
+
+const disposeHarness = async (harness: Harness, retainRoot = false): Promise<void> => {
+  const errors: Array<unknown> = [];
+  try {
+    await harness.miniflare.dispose();
+  } catch (error) {
+    errors.push(error);
+  }
+  const index = open.indexOf(harness);
+  if (index >= 0) open.splice(index, 1);
+  try {
+    rmSync(harness.bundleRoot, { recursive: true, force: true });
+  } catch (error) {
+    errors.push(error);
+  }
+  if (!retainRoot) {
+    try {
+      const destination = retentionDestination(harness.root);
+      if (destination !== undefined) {
+        mkdirSync(resolve(destination, ".."), { recursive: true });
+        cpSync(harness.root, destination, { recursive: true });
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      rmSync(harness.root, { recursive: true, force: true });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) throw new AggregateError(errors, "Cloudflare host harness cleanup failed");
 };
 
 afterEach(async () => {
+  const errors: Array<unknown> = [];
   for (const harness of open.splice(0)) {
-    await harness.miniflare.dispose();
-    cpSync(harness.root, join(scratch, basename(harness.root)), { recursive: true });
-    rmSync(harness.root, { recursive: true });
+    try {
+      await disposeHarness(harness);
+    } catch (error) {
+      errors.push(error);
+    }
   }
+  if (errors.length > 0)
+    throw new AggregateError(errors, "Cloudflare host afterEach cleanup failed");
 });
 
 const dispatchFetch = (
@@ -315,8 +376,7 @@ test("a recreated Miniflare instance receives the persisted alarm", async () => 
   const first = await makeHarness();
   expect((await create(first, "/streams/recreated", 1)).status).toBe(201);
   const root = first.root;
-  await first.miniflare.dispose();
-  open.splice(open.indexOf(first), 1);
+  await disposeHarness(first, true);
   const second = await makeHarness("worker.ts", root);
   await waitUntil(async () => (await probe(second, "recreated")).rows.length === 0, 5_000);
   const observation = await probe(second, "recreated");

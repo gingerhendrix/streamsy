@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test:memory": "bun --bun x vitest --run src/memory.conformance.test.ts",
-    "test:sqlite": "bun --bun x vitest --run src/sqlite.conformance.test.ts"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test:memory": "bun ./node_modules/vitest/vitest.mjs --run src/memory.conformance.test.ts",
+    "test:sqlite": "bun ./node_modules/vitest/vitest.mjs --run src/sqlite.conformance.test.ts",
+    "test:workerd": "bun run build:worker && bun ./node_modules/vitest/vitest.mjs --run src/workerd.conformance.test.ts",
+    "build:worker": "bun run scripts/build-worker.ts",
+    "measure:bundle": "bun run build:worker && cat dist/bundle-report.json"
   },
   "dependencies": {
     "@durable-streams/server-conformance-tests": "^0.3.5",
@@ -15,9 +18,13 @@
     "@streamsy/storage": "workspace:*"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "4.20251228.0",
     "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112",
     "@types/bun": "^1.2.0",
     "@types/node": "^22.10.0",
+    "effect": "4.0.0-rc.112",
+    "miniflare": "4.20260730.0",
     "typescript": "catalog:",
     "vitest": "^4.0.16"
   }

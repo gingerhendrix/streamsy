@@ -1,19 +1,18 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/crypto-random-uuid, anti-slop/no-chained-type-assertions -- These tests own the real local workerd boundary and its Bun harness. */
 import { afterEach, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Layer } from "effect";
 import { Memory, Protocol } from "@streamsy/core";
 import { serve as serveBun } from "../src/bun.ts";
 import { Miniflare } from "miniflare";
 import { decodeFrames } from "../src/cloudflare/fork-frames.ts";
 
-const scratch =
-  Bun.env.STREAMSY_STORAGE_SCRATCH ??
-  "/home/gareth/Documents/Personal/scratch/2026-09-07-step-3-batch-b";
-mkdirSync(scratch, { recursive: true });
+const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
 
 interface Harness {
+  readonly bundleRoot: string;
   readonly miniflare: Miniflare;
   readonly root: string;
   readonly namespace: TestNamespace;
@@ -50,54 +49,125 @@ interface ProbeResult {
 
 const open: Array<Harness> = [];
 const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
+
+const retentionDestination = (root: string): string | undefined => {
+  if (retentionRoot === undefined) return undefined;
+  if (!isAbsolute(retentionRoot)) throw new Error("STREAMSY_STORAGE_SCRATCH must be absolute");
+  const destination = resolve(retentionRoot, basename(root));
+  const sourceToDestination = relative(root, destination);
+  if (
+    destination === resolve(root) ||
+    (sourceToDestination !== "" &&
+      !sourceToDestination.startsWith("..") &&
+      !isAbsolute(sourceToDestination))
+  ) {
+    throw new Error("STREAMSY_STORAGE_SCRATCH must not point inside the owned harness root");
+  }
+  return destination;
+};
 // SAFETY: JSON probe values are untrusted here; Number.isFinite is the parser for this narrow test domain.
 // oxlint-disable-next-line anti-slop/no-unknown-parameters
 const isFiniteNumber = (value: unknown): value is number => Number.isFinite(value);
 
-const makeHarness = async (
-  entry = "worker.ts",
-  root = mkdtempSync(".streamsy-cloudflare-batch-b-"),
-) => {
-  const bundle = join(root, `bundle-${crypto.randomUUID()}`);
-  const built = await Bun.build({
-    entrypoints: [join(import.meta.dir, "cloudflare", entry)],
-    outdir: bundle,
-    target: "browser",
-    format: "esm",
-    external: ["cloudflare:workers"],
-  });
-  expect(built.success).toBe(true);
-  const output = built.outputs[0];
-  if (output === undefined) throw new Error("Batch B workerd proof produced no bundle");
-  const miniflare = new Miniflare({
-    scriptPath: output.path,
-    modules: true,
-    compatibilityDate: "2026-08-06",
-    durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
-    durableObjectsPersist: join(root, "state"),
-  });
-  await miniflare.ready;
-  // SAFETY: the fixture only uses the namespace's idFromName/get/fetch boundary.
-  const namespace = (await miniflare.getDurableObjectNamespace(
-    "STREAMS",
-  )) as unknown as TestNamespace;
-  const harness = { miniflare, root, namespace };
-  open.push(harness);
-  return harness;
+const makeHarness = async (entry = "worker.ts", root?: string) => {
+  const ownedRoot = root ?? mkdtempSync(join(tmpdir(), ".streamsy-cloudflare-batch-b-"));
+  let bundleRoot: string | undefined;
+  try {
+    bundleRoot = mkdtempSync(".streamsy-cloudflare-batch-b-bundle-");
+    const bundle = join(bundleRoot, `bundle-${crypto.randomUUID()}`);
+    const built = await Bun.build({
+      entrypoints: [join(import.meta.dir, "cloudflare", entry)],
+      outdir: bundle,
+      target: "browser",
+      format: "esm",
+      external: ["cloudflare:workers"],
+    });
+    expect(built.success).toBe(true);
+    const output = built.outputs[0];
+    if (output === undefined) throw new Error("Batch B workerd proof produced no bundle");
+    const miniflare = new Miniflare({
+      scriptPath: output.path,
+      modules: true,
+      compatibilityDate: "2026-08-06",
+      host: "127.0.0.1",
+      port: 0,
+      cf: false,
+      durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
+      durableObjectsPersist: join(ownedRoot, "state"),
+    });
+    try {
+      await miniflare.ready;
+      // SAFETY: the fixture only uses the namespace's idFromName/get/fetch boundary.
+      const namespace = (await miniflare.getDurableObjectNamespace(
+        "STREAMS",
+      )) as unknown as TestNamespace;
+      const harness = { bundleRoot, miniflare, root: ownedRoot, namespace };
+      open.push(harness);
+      return harness;
+    } catch (error) {
+      await miniflare.dispose().catch(() => undefined);
+      throw error;
+    }
+  } catch (error) {
+    rmSync(ownedRoot, { recursive: true, force: true });
+    if (bundleRoot !== undefined) rmSync(bundleRoot, { recursive: true, force: true });
+    throw error;
+  }
 };
 
 const disposeHarness = async (harness: Harness, retainRoot = false) => {
-  await harness.miniflare.dispose();
-  const index = open.indexOf(harness);
-  if (index >= 0) open.splice(index, 1);
-  if (retainRoot) return;
-  cpSync(harness.root, join(scratch, basename(harness.root)), { recursive: true });
-  rmSync(harness.root, { recursive: true });
+  let cleanupError: unknown;
+  try {
+    await harness.miniflare.dispose();
+  } catch (error) {
+    cleanupError = error;
+  } finally {
+    const index = open.indexOf(harness);
+    if (index >= 0) open.splice(index, 1);
+    try {
+      rmSync(harness.bundleRoot, { recursive: true, force: true });
+    } catch (error) {
+      cleanupError ??= error;
+    }
+    if (!retainRoot) {
+      try {
+        const destination = retentionDestination(harness.root);
+        if (destination !== undefined) {
+          mkdirSync(resolve(destination, ".."), { recursive: true });
+          cpSync(harness.root, destination, { recursive: true });
+        }
+      } catch (error) {
+        cleanupError ??= error;
+      } finally {
+        try {
+          rmSync(harness.root, { recursive: true, force: true });
+        } catch (error) {
+          cleanupError ??= error;
+        }
+      }
+    }
+  }
+  if (cleanupError !== undefined) throw cleanupError;
 };
 
 afterEach(async () => {
-  for (const server of openBun.splice(0)) await server.stop();
-  for (const harness of open.splice(0)) await disposeHarness(harness);
+  const errors: Array<unknown> = [];
+  for (const server of openBun.splice(0)) {
+    try {
+      await server.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  for (const harness of open.splice(0)) {
+    try {
+      await disposeHarness(harness);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0)
+    throw new AggregateError(errors, "Cloudflare fork afterEach cleanup failed");
 });
 
 const dispatchFetch = (

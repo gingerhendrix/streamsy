@@ -59,9 +59,13 @@
         "@streamsy/storage": "workspace:*",
       },
       "devDependencies": {
+        "@cloudflare/workers-types": "4.20251228.0",
         "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+        "@effect/sql-sqlite-do": "4.0.0-rc.112",
         "@types/bun": "^1.2.0",
         "@types/node": "^22.10.0",
+        "effect": "4.0.0-rc.112",
+        "miniflare": "4.20260730.0",
         "typescript": "catalog:",
         "vitest": "^4.0.16",
       },
