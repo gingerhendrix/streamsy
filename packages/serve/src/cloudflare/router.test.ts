@@ -1,9 +1,15 @@
 /* oxlint-disable effecttsgo/async-function -- Web router tests await the real Fetch boundary. */
 import { expect, test } from "bun:test";
+import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
 import { Placement } from "./placement.ts";
 import { router } from "./router.ts";
 
-const makeNamespace = () => {
+type FakeNamespace = DurableObjectNamespace & {
+  readonly names: Array<string>;
+  readonly requests: Array<Request>;
+};
+
+const makeNamespace = (): FakeNamespace => {
   const names: Array<string> = [];
   const requests: Array<Request> = [];
   const namespace = {
@@ -22,8 +28,13 @@ const makeNamespace = () => {
       };
     },
   };
-  return namespace;
+  // SAFETY: The router only uses idFromName, get and the returned stub's fetch;
+  // the fake deliberately leaves unrelated Cloudflare namespace methods out.
+  return namespace as unknown as FakeNamespace;
 };
+
+const invoke = (handler: ExportedHandler<unknown>, request: Request) =>
+  handler.fetch?.(request, {}, undefined as never);
 
 test("router uses the raw stripped stream path and forwards the unchanged request", async () => {
   const namespace = makeNamespace();
@@ -33,7 +44,7 @@ test("router uses the raw stripped stream path and forwards the unchanged reques
     body: "payload",
   });
 
-  const response = await handler.fetch?.(request, {});
+  const response = await invoke(handler, request);
   expect(response?.status).toBe(200);
   expect(namespace.names).toEqual(["a%2Fb"]);
   expect(namespace.requests[0]).toBe(request);
@@ -46,22 +57,22 @@ test("byKey co-locates same-family streams and refuses a cross-family fork", asy
     placement: Placement.byKey((streamPath) => streamPath.split("/", 1)[0] ?? ""),
   });
 
-  const same = await handler.fetch?.(
+  const same = await invoke(
+    handler,
     new Request("https://streams.test/t1/y", {
       method: "PUT",
       headers: { "stream-forked-from": "/t1/x" },
     }),
-    {},
   );
   expect(same?.status).toBe(200);
   expect(namespace.names).toEqual(["t1"]);
 
-  const cross = await handler.fetch?.(
+  const cross = await invoke(
+    handler,
     new Request("https://streams.test/t2/z", {
       method: "PUT",
       headers: { "stream-forked-from": "/t1/x" },
     }),
-    {},
   );
   expect(cross?.status).toBe(400);
   expect(cross?.headers.get("stream-not-supported")).toBe("fork");
@@ -73,15 +84,12 @@ test("router follows the core prefix grammar and reports every invalid placement
   const namespace = makeNamespace();
   const handler = router({ namespace: () => namespace, pathPrefix: "/streams" });
   for (const path of ["/streams", "/streams/", "/other/x"]) {
-    const response = await handler.fetch?.(new Request(`https://streams.test${path}`), {});
+    const response = await invoke(handler, new Request(`https://streams.test${path}`));
     expect(response?.status).toBe(400);
     expect(await response?.text()).toBe("Stream path required: /streams/{path}");
   }
 
-  const routed = await handler.fetch?.(
-    new Request("https://streams.test/streams/a/b?offset=-1"),
-    {},
-  );
+  const routed = await invoke(handler, new Request("https://streams.test/streams/a/b?offset=-1"));
   expect(routed?.status).toBe(200);
   expect(namespace.names).toEqual(["a/b"]);
 });
@@ -93,14 +101,14 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
       throw new Error("defect");
     }),
   });
-  const defect = await throwing.fetch?.(new Request("https://streams.test/a"), {});
+  const defect = await invoke(throwing, new Request("https://streams.test/a"));
   expect(defect?.status).toBe(500);
 
   const invalid = router({
     namespace: () => makeNamespace(),
     placement: Placement.byKey(() => ""),
   });
-  const empty = await invalid.fetch?.(new Request("https://streams.test/a"), {});
+  const empty = await invoke(invalid, new Request("https://streams.test/a"));
   expect(empty?.status).toBe(400);
   expect(await empty?.text()).toBe("Invalid placement key");
 
@@ -109,7 +117,7 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
     // SAFETY: This intentionally violates Placement's type to exercise the runtime boundary.
     placement: Placement.byKey(() => 7 as never),
   });
-  const number = await nonString.fetch?.(new Request("https://streams.test/a"), {});
+  const number = await invoke(nonString, new Request("https://streams.test/a"));
   expect(number?.status).toBe(400);
   expect(await number?.text()).toBe("Invalid placement key");
 });

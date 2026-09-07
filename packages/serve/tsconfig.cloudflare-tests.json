@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "@cloudflare/workers-types": ["test/cloudflare/workers-types-test.d.ts"]
+    },
+    "skipLibCheck": true
+  },
+  "include": ["src/cloudflare/**/*.test.ts", "test/cloudflare-host.bun.test.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Stream } from "effect";
 import { TestClock } from "effect/testing";
-import { Storage } from "@streamsy/core";
+import { Storage, StreamId } from "@streamsy/core";
 import { DEFAULT_LONG_POLL_TIMEOUT_MS, layerProtocol } from "@streamsy/storage/durable-object";
 import { Alarm, reconcileAlarm } from "./alarm.ts";
 
@@ -13,7 +13,11 @@ const fakeStorage = (next: Option.Option<{ readonly at: number; readonly streamI
     producer: () => Effect.succeed(Option.none()),
     mutate: () => Effect.die("unused"),
     changes: () => Stream.empty,
-    nextExpiry: Effect.succeed(next),
+    nextExpiry: Effect.succeed(
+      Option.isSome(next)
+        ? Option.some({ ...next.value, streamId: StreamId.make(next.value.streamId) })
+        : Option.none(),
+    ),
   });
 
 const run = (

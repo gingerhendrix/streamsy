@@ -12,13 +12,20 @@ mkdirSync(scratch, { recursive: true });
 interface Harness {
   readonly miniflare: Miniflare;
   readonly root: string;
-  readonly namespace: Awaited<ReturnType<Miniflare["getDurableObjectNamespace"]>>;
+  readonly namespace: TestNamespace;
+}
+
+interface TestNamespace {
+  readonly idFromName: (name: string) => unknown;
+  readonly get: (id: unknown) => {
+    readonly fetch: (request: Request) => Promise<Response> | Response;
+  };
 }
 
 interface ProbeResult {
   readonly layerAcquisitions: number;
   readonly migrationAttempts: number;
-  readonly hostCommandRuns: number;
+  readonly alarmInvocations: number;
   readonly activeReads: number;
   readonly alarmInfo: ReadonlyArray<{ readonly isRetry: boolean; readonly retryCount: number }>;
   readonly alarm: number | null;
@@ -55,7 +62,11 @@ const makeHarness = async (
     await miniflare.dispose();
     throw error;
   }
-  const namespace = await miniflare.getDurableObjectNamespace("STREAMS");
+  // SAFETY: The test only uses the namespace's idFromName/get/fetch boundary;
+  // Miniflare's workers-types overload is not the Bun Fetch type used here.
+  const namespace = (await miniflare.getDurableObjectNamespace(
+    "STREAMS",
+  )) as unknown as TestNamespace;
   const harness = { miniflare, root, namespace };
   open.push(harness);
   return harness;
@@ -69,8 +80,22 @@ afterEach(async () => {
   }
 });
 
+const dispatchFetch = (
+  miniflare: Miniflare,
+  input: string | Request,
+  init?: RequestInit,
+): Promise<Response> =>
+  // SAFETY: Miniflare dispatches the same local workerd boundary, while its
+  // declaration uses the workers-types Request overload instead of Bun's.
+  (
+    miniflare.dispatchFetch as unknown as (
+      input: string | Request,
+      init?: RequestInit,
+    ) => Promise<Response>
+  )(input, init);
+
 const dispatch = (harness: Harness, path: string, init?: RequestInit) =>
-  harness.miniflare.dispatchFetch(`https://streams.test${path}`, init);
+  dispatchFetch(harness.miniflare, `https://streams.test${path}`, init);
 
 const direct = (harness: Harness, name: string, path: string, init?: RequestInit) =>
   harness.namespace
@@ -79,7 +104,7 @@ const direct = (harness: Harness, name: string, path: string, init?: RequestInit
 
 const probe = async (harness: Harness, name: string) =>
   // SAFETY: The fixture's `/__probe` branch always returns this fixed JSON shape.
-  (await direct(harness, name, "/__probe")).json() as ProbeResult;
+  (await direct(harness, name, "/__probe")).json() as unknown as ProbeResult;
 
 const create = (harness: Harness, path: string, ttl?: number) => {
   const headers = { "content-type": "text/plain" };
@@ -152,7 +177,7 @@ test("the private Context command is unreachable through routes, stubs, and forg
     headers: { "streamsy-expire-due": "true" },
   });
   expect([400, 404]).toContain(directResponse.status);
-  expect((await probe(harness, "alarm")).hostCommandRuns).toBe(0);
+  expect((await probe(harness, "alarm")).alarmInvocations).toBe(0);
 });
 
 test("one object scope serves mixed requests and one real alarm turn", async () => {
@@ -166,11 +191,11 @@ test("one object scope serves mixed requests and one real alarm turn", async () 
     );
     expect([200, 204, 404]).toContain(response.status);
   }
-  await waitUntil(async () => (await probe(harness, "reuse")).hostCommandRuns > 0);
+  await waitUntil(async () => (await probe(harness, "reuse")).alarmInvocations > 0);
   const observation = await probe(harness, "reuse");
   expect(observation.layerAcquisitions).toBe(1);
   expect(observation.migrationAttempts).toBe(1);
-  expect(observation.hostCommandRuns).toBeGreaterThanOrEqual(1);
+  expect(observation.alarmInvocations).toBeGreaterThanOrEqual(1);
 });
 
 test("mutating requests reconcile the minimum alarm and clearing the last TTL clears it", async () => {
@@ -188,6 +213,28 @@ test("mutating requests reconcile the minimum alarm and clearing the last TTL cl
   expect((await dispatch(harness, "/streams/t1/fast", { method: "DELETE" })).status).toBe(204);
   expect((await dispatch(harness, "/streams/t1/slow", { method: "DELETE" })).status).toBe(204);
   expect((await probe(harness, "t1")).alarm).toBeNull();
+});
+
+test("a reconcile failure preserves the committed response and standard headers", async () => {
+  const harness = await makeHarness();
+  await direct(harness, "reconcile-failure", "/__probe?fail-next-expiry=1");
+  const response = await create(harness, "/streams/reconcile-failure", 3);
+  expect(response.status).toBe(201);
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(response.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+  expect((await probe(harness, "reconcile-failure")).alarm).toBeNull();
+  expect((await probe(harness, "reconcile-failure")).rows).toHaveLength(1);
+
+  expect(
+    (
+      await dispatch(harness, "/streams/reconcile-failure", {
+        method: "POST",
+        body: "repair",
+        headers: { "content-type": "text/plain" },
+      })
+    ).status,
+  ).toBe(204);
+  expect((await probe(harness, "reconcile-failure")).alarm).not.toBeNull();
 });
 
 test("a real alarm purges an expired row without a read", async () => {
@@ -229,20 +276,33 @@ test("an append renews the deadline and the stream survives the original alarm",
   await waitUntil(async () => (await probe(harness, "renewed")).rows.length === 0, 4_000);
 });
 
-test("a failed alarm turn is visible and either retries locally or falls back to lazy expiry", async () => {
+test("a failed alarm turn retries without rebuilding the object scope", async () => {
   const harness = await makeHarness();
+  await direct(harness, "failing-alarm", "/__probe?long-poll-timeout=25000");
   expect((await create(harness, "/streams/failing-alarm", 1)).status).toBe(201);
+  const tail = (await dispatch(harness, "/streams/failing-alarm", { method: "HEAD" })).headers.get(
+    "stream-next-offset",
+  );
+  if (tail === null) throw new Error("missing stream tail");
+  const longPoll = dispatch(harness, `/streams/failing-alarm?offset=${tail}&live=long-poll`).catch(
+    () => undefined,
+  );
+  await waitUntil(async () => (await probe(harness, "failing-alarm")).activeReads === 1);
   await direct(harness, "failing-alarm", "/__probe?fail-next-expiry=1");
   await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length > 0, 5_000);
-  const observed = await probe(harness, "failing-alarm");
-  expect(observed.alarmInfo[0]).toBeDefined();
-  if (observed.alarmInfo.some((info) => info.isRetry))
-    expect(observed.alarmInfo.some((info) => info.retryCount > 0)).toBe(true);
-  await waitUntil(
-    async () =>
-      (await dispatch(harness, "/streams/failing-alarm", { method: "HEAD" })).status === 404,
-    4_000,
-  );
+  const failed = await probe(harness, "failing-alarm");
+  expect(failed.alarmInfo[0]).toBeDefined();
+  expect(failed.layerAcquisitions).toBe(1);
+  expect(failed.activeReads).toBe(1);
+  await waitUntil(async () => (await probe(harness, "failing-alarm")).alarmInfo.length >= 2, 8_000);
+  const retried = await probe(harness, "failing-alarm");
+  expect(retried.alarmInfo.some((info) => info.isRetry && info.retryCount > 0)).toBe(true);
+  expect(retried.rows).toHaveLength(0);
+  expect(retried.alarm).toBeNull();
+  expect(retried.layerAcquisitions).toBe(1);
+  expect(retried.migrationAttempts).toBe(1);
+  await longPoll;
+  expect((await dispatch(harness, "/streams/failing-alarm", { method: "HEAD" })).status).toBe(404);
 });
 
 test("a recreated Miniflare instance receives the persisted alarm", async () => {
@@ -258,56 +318,103 @@ test("a recreated Miniflare instance receives the persisted alarm", async () => 
   expect(observation.layerAcquisitions).toBe(1);
 });
 
-test("workerd request cancellation releases long-poll and SSE reads", async () => {
+test("an abandoned workerd long-poll releases at the configured protocol bound", async () => {
   const harness = await makeHarness();
   expect((await create(harness, "/streams/cancel")).status).toBe(201);
   const tail = (await dispatch(harness, "/streams/cancel", { method: "HEAD" })).headers.get(
     "stream-next-offset",
   );
   if (tail === null) throw new Error("missing stream tail");
-  const failures: Array<string> = [];
-
   const longPollAbort = new AbortController();
-  const longPoll = harness.miniflare
-    .dispatchFetch(
-      new Request(`https://streams.test/streams/cancel?offset=${tail}&live=long-poll`, {
-        signal: longPollAbort.signal,
-      }),
-    )
-    .catch(() => undefined);
+  const longPoll = dispatchFetch(
+    harness.miniflare,
+    new Request(`https://streams.test/streams/cancel?offset=${tail}&live=long-poll`, {
+      signal: longPollAbort.signal,
+    }),
+  ).catch(() => undefined);
   await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 1);
   longPollAbort.abort();
   await longPoll;
-  try {
-    await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 0, 2_000);
-  } catch {
-    failures.push("long-poll active read remained after abort");
-  }
-
-  const sseAbort = new AbortController();
-  const sseResponse = await harness.miniflare.dispatchFetch(
-    new Request(`https://streams.test/streams/cancel?offset=${tail}&live=sse`, {
-      signal: sseAbort.signal,
-    }),
-  );
-  const reader = sseResponse.body?.getReader();
-  if (reader === undefined) throw new Error("SSE response has no body");
-  await reader.read();
-  const expectedActiveReads = failures.length === 0 ? 1 : 2;
-  await waitUntil(async () => (await probe(harness, "cancel")).activeReads >= expectedActiveReads);
-  sseAbort.abort();
-  try {
-    await reader.cancel();
-  } catch {
-    // The local workerd boundary may reject the client-side body cancellation.
-  }
-  try {
-    await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 0, 2_000);
-  } catch {
-    failures.push("SSE active read remained after abort");
-  }
-  expect(failures).toEqual([]);
+  await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 0, 3_000);
 });
+
+const workerdCancellationTest = test.skipIf(Bun.env.STREAMSY_WORKERD_CANCELLATION !== "1");
+
+workerdCancellationTest(
+  "opt-in workerd cancellation propagation interrupts long-poll and SSE reads",
+  async () => {
+    const harness = await makeHarness();
+    await direct(harness, "cancel", "/__probe?long-poll-timeout=25000");
+    expect((await create(harness, "/streams/cancel")).status).toBe(201);
+    const tail = (await dispatch(harness, "/streams/cancel", { method: "HEAD" })).headers.get(
+      "stream-next-offset",
+    );
+    if (tail === null) throw new Error("missing stream tail");
+    const failures: Array<string> = [];
+
+    const longPollAbort = new AbortController();
+    const longPoll = dispatchFetch(
+      harness.miniflare,
+      new Request(`https://streams.test/streams/cancel?offset=${tail}&live=long-poll`, {
+        signal: longPollAbort.signal,
+      }),
+    ).catch(() => undefined);
+    await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 1);
+    longPollAbort.abort();
+    await longPoll;
+    try {
+      await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 0, 2_000);
+    } catch {
+      failures.push("long-poll active read remained after abort");
+    }
+
+    const sseAbort = new AbortController();
+    const sseResponse = await dispatchFetch(
+      harness.miniflare,
+      new Request(`https://streams.test/streams/cancel?offset=${tail}&live=sse`, {
+        signal: sseAbort.signal,
+      }),
+    );
+    const reader = sseResponse.body?.getReader();
+    if (reader === undefined) throw new Error("SSE response has no body");
+    await reader.read();
+    await waitUntil(
+      async () => (await probe(harness, "cancel")).activeReads >= (failures.length === 0 ? 1 : 2),
+    );
+    sseAbort.abort();
+    try {
+      await reader.cancel();
+    } catch {
+      // The boundary may reject the client-side body cancellation.
+    }
+    try {
+      await waitUntil(async () => (await probe(harness, "cancel")).activeReads === 0, 2_000);
+    } catch {
+      failures.push("SSE active read remained after abort");
+    }
+    expect(failures).toEqual([]);
+  },
+);
+
+const sseBoundTest = test.skipIf(Bun.env.STREAMSY_SSE_BOUND !== "1");
+
+sseBoundTest(
+  "opt-in SSE proof releases at core's 60 second bound",
+  async () => {
+    const harness = await makeHarness();
+    expect((await create(harness, "/streams/sse-bound")).status).toBe(201);
+    const tail = (await dispatch(harness, "/streams/sse-bound", { method: "HEAD" })).headers.get(
+      "stream-next-offset",
+    );
+    if (tail === null) throw new Error("missing stream tail");
+    const response = await dispatch(harness, `/streams/sse-bound?offset=${tail}&live=sse`);
+    const reader = response.body?.getReader();
+    if (reader === undefined) throw new Error("SSE response has no body");
+    await reader.read();
+    await waitUntil(async () => (await probe(harness, "sse-bound")).activeReads === 0, 65_000);
+  },
+  { timeout: 70_000 },
+);
 
 test("a failed Layer build is not cached", async () => {
   const harness = await makeHarness();

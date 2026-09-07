@@ -17,11 +17,12 @@ interface AlarmObservation {
 class ProbeObject extends StreamsyObject<Env> {
   #layerAcquisitions = 0;
   #migrationAttempts = 0;
-  #hostCommandRuns = 0;
+  #alarmInvocations = 0;
   #activeReads = 0;
   #alarmInfo: Array<AlarmObservation> = [];
   #failLayerOnce = false;
   #failNextExpiry = false;
+  #longPollTimeoutMs = 1_000;
 
   override options() {
     return { pathPrefix: "/streams" };
@@ -43,7 +44,10 @@ class ProbeObject extends StreamsyObject<Env> {
       );
     }
 
-    const protocol = layerProtocol({ client: { storage: this.ctx.storage } });
+    const protocol = layerProtocol({
+      client: { storage: this.ctx.storage },
+      longPollTimeoutMs: this.#longPollTimeoutMs,
+    });
     const failNextExpiry = () => {
       if (!this.#failNextExpiry) return false;
       this.#failNextExpiry = false;
@@ -104,13 +108,19 @@ class ProbeObject extends StreamsyObject<Env> {
         this.#failNextExpiry = true;
         return Promise.resolve(Response.json({ ok: true }));
       }
+      const longPollTimeoutMs = url.searchParams.get("long-poll-timeout");
+      if (longPollTimeoutMs !== null) {
+        const parsed = Number(longPollTimeoutMs);
+        if (Number.isFinite(parsed) && parsed > 0) this.#longPollTimeoutMs = parsed;
+        return Promise.resolve(Response.json({ ok: true }));
+      }
       return this.#probe();
     }
     return super.fetch(request);
   }
 
   override alarm(info?: AlarmInvocationInfo): Promise<void> {
-    this.#hostCommandRuns += 1;
+    this.#alarmInvocations += 1;
     if (info !== undefined) this.#alarmInfo.push(info);
     return super.alarm(info);
   }
@@ -126,7 +136,7 @@ class ProbeObject extends StreamsyObject<Env> {
     return Response.json({
       layerAcquisitions: this.#layerAcquisitions,
       migrationAttempts: this.#migrationAttempts,
-      hostCommandRuns: this.#hostCommandRuns,
+      alarmInvocations: this.#alarmInvocations,
       activeReads: this.#activeReads,
       alarmInfo: this.#alarmInfo,
       alarm: await this.ctx.storage.getAlarm(),
