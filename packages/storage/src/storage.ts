@@ -581,7 +581,11 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
     ),
   });
 
-const makeLayer = (options: SqlStorageOptions, probe?: BoundaryTestProbe) => {
+const makeLayer = (
+  options: SqlStorageOptions,
+  probe?: BoundaryTestProbe,
+  transactionMaxOpsBeforeYield?: number,
+) => {
   const transactionRetry = transactionRetryPolicy(options);
   const services = Layer.effectContext(
     Effect.gen(function* () {
@@ -611,6 +615,7 @@ const makeLayer = (options: SqlStorageOptions, probe?: BoundaryTestProbe) => {
         options.repairIntervalMs ?? DEFAULT_REPAIR_INTERVAL_MS,
         transactionRetry,
         probe,
+        transactionMaxOpsBeforeYield,
       ),
     ),
   );
@@ -619,11 +624,12 @@ const makeLayer = (options: SqlStorageOptions, probe?: BoundaryTestProbe) => {
 /** Generic SQLite-family SQL layer. Hosts supply one matching SqlClient/Reactivity graph. */
 export const layer = (
   options: SqlStorageOptions = {},
+  transactionMaxOpsBeforeYield?: number,
 ): Layer.Layer<
   Storage | CommitBoundary,
   StorageFault,
   SqlClient.SqlClient | Reactivity.Reactivity
-> => makeLayer(options);
+> => makeLayer(options, undefined, transactionMaxOpsBeforeYield);
 
 /** Internal test seam; deliberately absent from the package export map. */
 export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTestProbe) =>

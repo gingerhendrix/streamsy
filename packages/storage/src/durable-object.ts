@@ -21,7 +21,7 @@ export interface DurableObjectProtocolOptions
 /** Official local/host Durable Object SQLite layer with commit-boundary support. */
 export const layer = (options: DurableObjectStorageOptions) => {
   const clientLayer = Layer.effectContext(sharedSqlClientLayer(SqliteClient.make(options.client)));
-  return sqlLayer(options).pipe(Layer.provide(clientLayer));
+  return sqlLayer(options, Number.MAX_SAFE_INTEGER).pipe(Layer.provide(clientLayer));
 };
 
 /** Protocol over the official Durable Object SQLite layer. */

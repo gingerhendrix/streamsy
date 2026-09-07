@@ -10,6 +10,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import * as Scheduler from "effect/Scheduler";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
@@ -106,6 +107,7 @@ const makeBoundary = (
   repairIntervalMs: number,
   transactionRetry: TransactionRetryPolicy,
   probe?: BoundaryTestProbe,
+  transactionMaxOpsBeforeYield?: number,
 ): Effect.Effect<
   BoundaryRuntime,
   never,
@@ -134,15 +136,21 @@ const makeBoundary = (
       Effect.suspend(() => {
         if (probe !== undefined) probe.transactionAttempts += 1;
         const pending = new Set<string>();
-        return sql
-          .withTransaction(body.pipe(Effect.provideService(PendingInvalidations, pending)))
-          .pipe(
-            Effect.tap(() => {
-              if (pending.size === 0) return Effect.void;
-              if (probe !== undefined) probe.invalidations += 1;
-              return reactivity.invalidate([...pending]);
-            }),
-          );
+        const transactionBody = body.pipe(Effect.provideService(PendingInvalidations, pending));
+        const transaction = sql.withTransaction(transactionBody);
+        const guardedTransaction =
+          transactionMaxOpsBeforeYield === undefined
+            ? transaction
+            : transaction.pipe(
+                Effect.provideService(Scheduler.MaxOpsBeforeYield, transactionMaxOpsBeforeYield),
+              );
+        return guardedTransaction.pipe(
+          Effect.tap(() => {
+            if (pending.size === 0) return Effect.void;
+            if (probe !== undefined) probe.invalidations += 1;
+            return reactivity.invalidate([...pending]);
+          }),
+        );
       });
 
     const withTransaction: CommitBoundaryApi["withTransaction"] = (body) =>
@@ -262,4 +270,9 @@ export const boundaryLayer = (
   repairIntervalMs: number,
   transactionRetry: TransactionRetryPolicy,
   probe?: BoundaryTestProbe,
-) => Layer.effect(BoundaryRuntimeService, makeBoundary(repairIntervalMs, transactionRetry, probe));
+  transactionMaxOpsBeforeYield?: number,
+) =>
+  Layer.effect(
+    BoundaryRuntimeService,
+    makeBoundary(repairIntervalMs, transactionRetry, probe, transactionMaxOpsBeforeYield),
+  );
