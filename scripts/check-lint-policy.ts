@@ -19,6 +19,7 @@ const effectAreas = [
   "packages/core",
   "packages/serve",
   "packages/views",
+  "packages/sql-boundary-tests",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
 ] as const;
