@@ -49,6 +49,8 @@ interface ProbeResult {
 
 const open: Array<Harness> = [];
 const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
+// SAFETY: JSON probe values are untrusted here; Number.isFinite is the parser for this narrow test domain.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters
 const isFiniteNumber = (value: unknown): value is number => Number.isFinite(value);
 
 const makeHarness = async (
