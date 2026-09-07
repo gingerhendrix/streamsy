@@ -103,4 +103,13 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
   const empty = await invalid.fetch?.(new Request("https://streams.test/a"), {});
   expect(empty?.status).toBe(400);
   expect(await empty?.text()).toBe("Invalid placement key");
+
+  const nonString = router({
+    namespace: () => makeNamespace(),
+    // SAFETY: This intentionally violates Placement's type to exercise the runtime boundary.
+    placement: Placement.byKey(() => 7 as never),
+  });
+  const number = await nonString.fetch?.(new Request("https://streams.test/a"), {});
+  expect(number?.status).toBe(400);
+  expect(await number?.text()).toBe("Invalid placement key");
 });
