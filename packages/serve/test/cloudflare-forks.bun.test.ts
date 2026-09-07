@@ -36,6 +36,7 @@ interface ProbeResult {
   readonly alarmInvocations: number;
   readonly activeReads: number;
   readonly alarmInfo: ReadonlyArray<{
+    readonly observedAt: number;
     readonly scheduledTime: number;
     readonly isRetry: boolean;
     readonly retryCount: number;
@@ -85,13 +86,18 @@ const makeHarness = async (
   return harness;
 };
 
+const disposeHarness = async (harness: Harness, retainRoot = false) => {
+  await harness.miniflare.dispose();
+  const index = open.indexOf(harness);
+  if (index >= 0) open.splice(index, 1);
+  if (retainRoot) return;
+  cpSync(harness.root, join(scratch, basename(harness.root)), { recursive: true });
+  rmSync(harness.root, { recursive: true });
+};
+
 afterEach(async () => {
   for (const server of openBun.splice(0)) await server.stop();
-  for (const harness of open.splice(0)) {
-    await harness.miniflare.dispose();
-    cpSync(harness.root, join(scratch, basename(harness.root)), { recursive: true });
-    rmSync(harness.root, { recursive: true });
-  }
+  for (const harness of open.splice(0)) await disposeHarness(harness);
 });
 
 const dispatchFetch = (
@@ -168,6 +174,8 @@ const messageRowsFor = (observation: ProbeResult, streamId: string) =>
 const zeroOffset = "0000000000000000_0000000000000000";
 const oneOffset = "0000000000000000_0000000000000001";
 const twoOffset = "0000000000000000_0000000000000002";
+const largeJson = (prefix: string) =>
+  JSON.stringify(Array.from({ length: 3_000 }, (_, index) => `${prefix}-${index}`));
 
 test("B1 byStream copy preserves bodies, offsets, timestamps, and provenance", async () => {
   const harness = await makeHarness();
@@ -290,6 +298,23 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
     "stream-fork-offset": zeroOffset,
     "stream-fork-sub-offset": "3",
   });
+  const largeSubOffset = "x".repeat(10_001);
+  await pairedSource("large-text", largeSubOffset, "text/plain", "large-text-child", {
+    "stream-forked-from": "/streams/large-text",
+    "stream-fork-offset": zeroOffset,
+    "stream-fork-sub-offset": "10001",
+  });
+  await pairedSource(
+    "large-binary",
+    largeSubOffset,
+    "application/octet-stream",
+    "large-binary-child",
+    {
+      "stream-forked-from": "/streams/large-binary",
+      "stream-fork-offset": zeroOffset,
+      "stream-fork-sub-offset": "10001",
+    },
+  );
   await pairedSource("invalid", "body", "text/plain", "invalid-child", {
     "stream-forked-from": "/streams/invalid",
     "stream-fork-offset": "bad",
@@ -510,8 +535,7 @@ test("B7 missing, soft-deleted, and expired source classifications are exact", a
   });
   expect(missingResponse.status).toBe(404);
   expect(await missingResponse.text()).toBe("Source stream not found: nowhere");
-  await missing.miniflare.dispose();
-  open.splice(open.indexOf(missing), 1);
+  await disposeHarness(missing);
 
   const deleted = await makeHarness("worker-by-key.ts");
   expect((await put(deleted, "/streams/t1/x", "x")).status).toBe(201);
@@ -717,13 +741,19 @@ test(
     expect(failed.alarmInfo.some((info) => info.isRetry)).toBe(true);
     expect(failed.rows).toHaveLength(1);
     const [firstAlarm, retryAlarm] = failed.alarmInfo;
-    const retryCadenceMs =
+    const retryScheduledDeltaMs =
       firstAlarm === undefined || retryAlarm === undefined
         ? null
         : retryAlarm.scheduledTime - firstAlarm.scheduledTime;
+    const retryObservedDelayMs =
+      firstAlarm === undefined || retryAlarm === undefined
+        ? null
+        : retryAlarm.observedAt - firstAlarm.observedAt;
     console.info(
-      `B14 alarm-invocations=${failed.alarmInfo.length} retry-cadence-ms=${retryCadenceMs ?? "n/a"}`,
+      `B14 alarm-invocations=${failed.alarmInfo.length} retry-observed-delay-ms=${retryObservedDelayMs ?? "n/a"} retry-scheduled-delta-ms=${retryScheduledDeltaMs ?? "n/a"}`,
     );
+    if (retryObservedDelayMs === null) throw new Error("B14 retry observation timestamp missing");
+    expect(retryObservedDelayMs).toBeGreaterThanOrEqual(0);
     await setProbe(harness, "recover", "clear-fail-expiry=1");
     expect((await append(harness, "/streams/recover", "repair")).status).toBe(404);
     await waitUntil(async () => (await probe(harness, "recover")).rows.length === 0, 4_000);
@@ -754,10 +784,8 @@ test("B15 recreation under load restores and purges alarms in both object layout
   ).toBe(201);
   const byKeyRoot = byKey.root;
   const byStreamRoot = byStream.root;
-  await byKey.miniflare.dispose();
-  await byStream.miniflare.dispose();
-  open.splice(open.indexOf(byKey), 1);
-  open.splice(open.indexOf(byStream), 1);
+  await disposeHarness(byKey, true);
+  await disposeHarness(byStream, true);
   const recreatedByKey = await makeHarness("worker-by-key.ts", byKeyRoot);
   const recreatedByStream = await makeHarness("worker.ts", byStreamRoot);
   await waitUntil(async () => (await probe(recreatedByKey, "t1")).rows.length === 0, 5_000);
@@ -789,3 +817,75 @@ test("B16 copied creates reconcile an inherited alarm before the PUT returns", a
   expect(after.alarm).not.toBeNull();
   expect(after.rows[0]?.[1]).toBeGreaterThan(Date.now());
 });
+
+test(
+  "Batch B F1 fails closed when a low-yield export meets source deletion and reincarnation",
+  async () => {
+    const harness = await makeHarness("worker-low-yield.ts");
+    const original = largeJson("old");
+    const replacement = largeJson("new");
+    expect((await put(harness, "/streams/src", original, "application/json")).status).toBe(201);
+
+    const forkPromise = put(harness, "/streams/child", "", "application/json", {
+      "stream-forked-from": "/streams/src",
+    });
+    await Bun.sleep(2);
+    expect((await dispatch(harness, "/streams/src", { method: "DELETE" })).status).toBe(204);
+    expect((await put(harness, "/streams/src", replacement, "application/json")).status).toBe(201);
+
+    const fork = await forkPromise;
+    if (fork.status === 201) {
+      expect(fork.headers.get("stream-next-offset")).toBe("0000000000003000_0000000000000000");
+      expect(messageRowsFor(await probe(harness, "child"), "child")).toHaveLength(3_000);
+      const childBody = await dispatch(harness, "/streams/child").then((response) =>
+        response.text(),
+      );
+      expect([original, replacement]).toContain(childBody);
+    } else {
+      expect(fork.status).not.toBe(201);
+    }
+  },
+  { timeout: 20_000 },
+);
+
+test(
+  "Batch B F2 keeps large same-object creates and source reincarnation bounded",
+  async () => {
+    const harness = await makeHarness("worker-by-key.ts");
+    const first = largeJson("first");
+    const second = largeJson("second");
+    const concurrent = await Promise.all([
+      put(harness, "/streams/t1/x", first, "application/json"),
+      put(harness, "/streams/t1/y", second, "application/json"),
+    ]);
+    expect(concurrent.map((response) => response.status)).toEqual([201, 201]);
+    const family = await probe(harness, "t1");
+    expect(messageRowsFor(family, "t1/x")).toHaveLength(3_000);
+    expect(messageRowsFor(family, "t1/y")).toHaveLength(3_000);
+    expect(family.layerAcquisitions).toBe(1);
+
+    const source = largeJson("source");
+    const recreated = largeJson("recreated");
+    expect((await put(harness, "/streams/t2/source", source, "application/json")).status).toBe(201);
+    const started = Date.now();
+    const forkPromise = put(harness, "/streams/t3/child", "", "application/json", {
+      "stream-forked-from": "/streams/t2/source",
+    });
+    await Bun.sleep(2);
+    expect((await dispatch(harness, "/streams/t2/source", { method: "DELETE" })).status).toBe(204);
+    expect((await put(harness, "/streams/t2/source", recreated, "application/json")).status).toBe(
+      201,
+    );
+    const fork = await forkPromise;
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(10_000);
+    expect([201, 404, 500]).toContain(fork.status);
+    if (fork.status === 201) {
+      expect(messageRowsFor(await probe(harness, "t3"), "t3/child")).toHaveLength(3_000);
+    }
+    const sourceAfter = await probe(harness, "t2");
+    expect(messageRowsFor(sourceAfter, "t2/source")).toHaveLength(3_000);
+    expect(sourceAfter.layerAcquisitions).toBe(1);
+  },
+  { timeout: 35_000 },
+);

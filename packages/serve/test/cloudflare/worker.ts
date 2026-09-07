@@ -11,6 +11,7 @@ interface Env {
 }
 
 interface AlarmObservation {
+  readonly observedAt: number;
   readonly isRetry: boolean;
   readonly retryCount: number;
 }
@@ -155,7 +156,7 @@ class ProbeObject extends StreamsyObject<Env> {
 
   override alarm(info?: AlarmInvocationInfo): Promise<void> {
     this.#alarmInvocations += 1;
-    if (info !== undefined) this.#alarmInfo.push(info);
+    if (info !== undefined) this.#alarmInfo.push({ ...info, observedAt: Date.now() });
     return super.alarm(info);
   }
 
