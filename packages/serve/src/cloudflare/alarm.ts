@@ -28,7 +28,8 @@ export const reconcileAlarm = Effect.fn("Cloudflare.reconcileAlarm")(function* (
   }
 
   const current = yield* alarm.current;
-  if (Option.isSome(current) && current.value <= next.value.at) return;
   const now = yield* Clock.currentTimeMillis;
+  if (Option.isSome(current) && current.value <= next.value.at && current.value > now) return;
+  if (Option.isSome(current) && current.value <= now) yield* alarm.clear;
   yield* alarm.arm(Math.max(next.value.at, now + 1));
 });
