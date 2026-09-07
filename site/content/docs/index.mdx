@@ -1,16 +1,17 @@
 ---
 title: Streamsy
-description: An Effect server and toolkit for Durable Streams. Start with typed streams and a local memory host.
+description: An Effect server and toolkit for Durable Streams, with memory and SQLite storage.
 ---
 
 Streamsy implements the Durable Streams protocol and provides an Effect toolkit
-for typed, addressable event streams. This first release contains three packages:
+for typed, addressable event streams. This first release contains four packages:
 
-| Package           | Purpose                                                             |
-| ----------------- | ------------------------------------------------------------------- |
-| `@streamsy/core`  | Protocol services, typed streams, storage contract and memory Layer |
-| `@streamsy/serve` | Checked serving contracts and the Bun HTTP host                     |
-| `@streamsy/views` | Incremental views and view-store contracts                          |
+| Package             | Purpose                                                             |
+| ------------------- | ------------------------------------------------------------------- |
+| `@streamsy/core`    | Protocol services, typed streams, storage contract and memory Layer |
+| `@streamsy/storage` | Effect SQL storage plus Bun and Durable Object SQLite Layers        |
+| `@streamsy/serve`   | Checked serving contracts and the Bun HTTP host                     |
+| `@streamsy/views`   | Incremental views and view-store contracts                          |
 
 Effect is the server and toolkit boundary. Browser applications use the official
 Durable Streams client and State packages; the [Hacker News demo](/docs/demos/hackernews-newest-stream)
@@ -18,14 +19,15 @@ uses `@durable-streams/state` with TanStack DB.
 
 ## Storage and hosting
 
-Memory is the only shipped protocol storage backend. Data lasts for the acquired
-Layer's lifetime in one process. SQLite protocol storage and Cloudflare hosting
-are future work. Package version 0.4.0 uses Effect 4.0.0-rc.112; it does not provide
-cross-process persistence or a hosted service.
+The memory Layer lasts for one acquired scope. `@streamsy/storage` persists the
+same Storage contract through Effect SQL, with official Bun SQLite and local
+Durable Object SQLite entries. Package version 0.4.0 pins Effect 4.0.0-rc.112.
+Hosted Durable Object protocol delivery remains future work.
 
 ## Start here
 
 - [Basic usage](/docs/user/basic-usage): compiled create, append, read, follow and Bun hosting examples.
 - [Concepts](/docs/user/concepts): outcomes, faults, offsets, capabilities and resource ownership.
+- [SQL storage](/docs/user/sql-storage): file-backed setup, commit ownership, repair and fresh-format rules.
 - [Fold agent](/docs/user/fold-agent): journaled recovery within one memory store.
 - [Demos](/docs/demos): a browser view of the newest Hacker News stories.

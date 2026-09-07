@@ -45,6 +45,7 @@ and [test/streamsy-event-log.test.ts](https://github.com/gingerhendrix/streamsy/
 
 The default CLI selects a file-backed store and fails with typed
 `StorageNotAvailable`. Start, resume and inspect through that default are
-unavailable in this release. SQLite storage and the cross-process restart proof
-are deferred to a later release. Closing the memory store discards both log and journal.
+unavailable until the example is wired to the shipped SQL Storage Layer. That
+file-backed integration and its cross-process restart proof remain Step 2 work.
+Closing the current memory store discards both log and journal.
 In-flight model requests, snapshots and retention are outside this proof.

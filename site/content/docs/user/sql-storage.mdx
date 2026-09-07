@@ -1,0 +1,95 @@
+---
+title: SQL storage
+description: Persist Streamsy protocol state with Effect SQL on Bun SQLite or inside a Durable Object.
+---
+
+`@streamsy/storage` implements the core `Storage` tag with a SQLite-family Effect
+`SqlClient` using SQLite 3.42 or newer. Its root entry imports no host driver package. The host entries create one
+shared SqlClient/Reactivity graph and expose both `Storage` and `CommitBoundary`.
+
+## Bun SQLite
+
+```ts
+import * as SqlStorage from "@streamsy/storage/bun";
+
+const layer = SqlStorage.layer({
+  client: { filename: "./streamsy.sqlite", busyTimeout: "100 millis" },
+});
+```
+
+The busy timeout is a driver setting. Bounded retry and contention defaults are
+being measured in the next integration batch; this page does not promise them yet.
+
+## Durable Object SQLite
+
+```ts
+import * as SqlStorage from "@streamsy/storage/durable-object";
+
+const layer = SqlStorage.layer({ client: { storage: ctx.storage } });
+```
+
+Pass the full Durable Object storage handle, not only `ctx.storage.sql`, because
+the official driver needs the transaction API. This is a local storage Layer;
+hosted protocol routing, placement and alarms are outside this release step.
+
+## One truthful commit boundary
+
+Application SQL and protocol mutation can commit together only through
+`CommitBoundary.withTransaction`. Nested boundary calls join their outer owner,
+and wakes publish after the outermost commit. A boundary or direct storage
+mutation inside a foreign raw `SqlClient.withTransaction` defects before its
+body or storage SQL executes. Raw ambient transactions receive no commit-wake
+guarantee.
+
+A returned `Rejected` value is still a successful Effect value. The low-level
+boundary therefore commits unless the caller turns that rejection into a private
+failure and recovers it only after leaving the boundary:
+
+```ts
+import { Data, Effect, Predicate } from "effect";
+import { Storage, type Mutation, type MutationOutcome } from "@streamsy/core";
+import { CommitBoundary } from "@streamsy/storage";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+class Rejected extends Data.TaggedError("Rejected")<{
+  readonly outcome: Extract<MutationOutcome, { _tag: "Rejected" }>;
+}> {}
+
+declare const mutation: Mutation;
+
+const program = Effect.gen(function* () {
+  const boundary = yield* CommitBoundary;
+  const storage = yield* Storage;
+  const sql = yield* SqlClient.SqlClient;
+  return yield* boundary
+    .withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe("INSERT INTO application_rows(id) VALUES (?)", ["example"]);
+        const result = yield* storage.mutate(mutation);
+        if (Predicate.isTagged(result, "Rejected")) return yield* new Rejected({ outcome: result });
+        return result;
+      }),
+    )
+    .pipe(Effect.catchTag("Rejected", ({ outcome }) => Effect.succeed(outcome)));
+});
+```
+
+The `catchTag` is outside `withTransaction`, so rejection first rolls back both
+application and protocol writes. The future fused Commit Layer will own this
+policy; it is not part of the low-level Batch B boundary.
+
+Each `Storage.changes` subscription owns one capacity-1 payload-free dropping
+queue. Registration happens before the initial authoritative SQL read. Local
+commits wake the shared Reactivity graph; a scoped repair rereads every 1,000 ms
+by default. That interval is the cross-process staleness bound and covers the
+small interruption window between commit and local invalidation. Set a positive
+finite `repairIntervalMs` when a different bound is required.
+
+## Fresh-format files
+
+Only fresh 0.4-format databases and supported upgrades of that format are
+accepted. Pre-0.4 files and newer unknown versions are rejected without schema
+mutation. The dedicated migrator records new-format versions in
+`streamsy_storage_schema_version`. Streamsy does not import, reset or delete
+unsupported files. See the
+[0.4 migration note](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/migration-0.4.md).

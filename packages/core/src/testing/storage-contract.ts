@@ -620,16 +620,32 @@ export const StorageContract = {
           const input = { ...record(), config: { contentType: "text/plain", createdAt: 0 } };
           const bytes = encode("a");
           const storage = yield* Storage;
-          yield* mutate({
+          const outcome = yield* mutate({
             _tag: "Create",
             record: input,
             initialMessages: [{ offset: one, data: bytes, timestamp: 0 }],
           });
+          const created = Option.getOrThrow(
+            Option.fromUndefinedOr(
+              Predicate.isTagged(outcome, "Applied") ? outcome.results[0]?.record : undefined,
+            ),
+          );
+          expect(created).not.toBe(input);
+          expect(created.config).not.toBe(input.config);
+          expect(created.lifecycle).not.toBe(input.lifecycle);
           input.config.contentType = "changed";
+          // SAFETY: this test deliberately mutates readonly API output to prove it cannot alias storage.
+          const mutableCreated = created as {
+            config: { contentType: string };
+            lifecycle: { closed: boolean };
+          };
+          mutableCreated.config.contentType = "result-changed";
+          mutableCreated.lifecycle.closed = true;
           bytes[0] = 98;
           const messages = yield* storage.messages(id, {});
           messages[0]?.data.fill(99);
           expect((yield* current).config.contentType).toBe("text/plain");
+          expect((yield* current).lifecycle.closed).toBe(false);
           expect(new TextDecoder().decode((yield* storage.messages(id, {}))[0]?.data)).toBe("a");
           const first = yield* current,
             second = yield* current;

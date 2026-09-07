@@ -62,12 +62,17 @@ const checks = [
   ),
   scan(
     "no retired package imports",
-    String.raw`@streamsy/(?:http-client|state|streams|projection|tanstack-db|sinks|storage|core/json)\b`,
+    String.raw`@streamsy/(?:http-client|state|streams|projection|tanstack-db|sinks|core/json)\b`,
+    historical,
+  ),
+  scan(
+    "no legacy storage entry imports",
+    String.raw`@streamsy/storage/(?:fs|sqlite|durable-object/(?:adapter|storage))\b`,
     historical,
   ),
   scan(
     "no retired core APIs",
-    [
+    String.raw`\b(?:${[
       "createStreamProtocol",
       "createMemoryStorageAdapter",
       "createHttpHandler",
@@ -83,7 +88,7 @@ const checks = [
       "awaitChange",
       "JsonCodec",
       "streamIdentity",
-    ].join("|"),
+    ].join("|")})\b`,
     ["packages/**", "examples/**", "site/**"],
   ),
   scan(

@@ -1,0 +1,67 @@
+{
+  "name": "@streamsy/storage",
+  "version": "0.4.0",
+  "description": "Effect SQL storage for Streamsy with Bun and Durable Object SQLite host layers.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gingerhendrix/streamsy.git",
+    "directory": "packages/storage"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./bun": {
+      "types": "./dist/bun.d.ts",
+      "import": "./dist/bun.js",
+      "default": "./dist/bun.js"
+    },
+    "./durable-object": {
+      "types": "./dist/durable-object.d.ts",
+      "import": "./dist/durable-object.js",
+      "default": "./dist/durable-object.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external @streamsy/core --external @effect/sql-sqlite-bun --external @effect/sql-sqlite-do",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test test/*.bun.test.ts"
+  },
+  "dependencies": {
+    "@streamsy/core": "workspace:*",
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251228.0",
+    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112",
+    "@types/bun": "^1.2.0",
+    "miniflare": "4.20260730.0",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+    "@effect/sql-sqlite-do": "4.0.0-rc.112"
+  },
+  "peerDependenciesMeta": {
+    "@effect/sql-sqlite-bun": {
+      "optional": true
+    },
+    "@effect/sql-sqlite-do": {
+      "optional": true
+    }
+  }
+}

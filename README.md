@@ -1,17 +1,18 @@
 # Streamsy
 
 Streamsy provides an Effect-first [Durable Streams](https://durablestreams.com) protocol,
-a typed toolkit, a storage contract and an in-process memory Layer.
+a typed toolkit, a storage contract, an in-process memory Layer and Effect SQL storage.
 
-The `0.4.0` package surface is `@streamsy/core`, `@streamsy/views` and `@streamsy/serve`.
-Use `@streamsy/serve/bun` for the memory HTTP host. See [the API](docs/api.md),
-[storage contract](docs/storage-contract.md) and [HTTP behavior](docs/http.md).
+The `0.4.0` package surface is `@streamsy/core`, `@streamsy/storage`, `@streamsy/views`
+and `@streamsy/serve`. Use `@streamsy/storage/bun` for file-backed SQLite and
+`@streamsy/storage/durable-object` inside a SQLite Durable Object. See [the API](docs/api.md),
+[storage contract](docs/storage-contract.md), [SQLite migration policy](docs/migration-0.4.md)
+and [HTTP behavior](docs/http.md).
 
 The active examples are [Fold agent](examples/fold-agent/README.md) and
-[Hacker News](examples/hackernews-newest-stream/README.md). Their proofs use memory;
-Fold reconstruction lasts for one store lifetime. Persistent protocol storage,
-hosted Durable Objects and an Effect fetch transport remain later work.
-The site content is awaiting its separate Step 1 Batch 7 rewrite.
+[Hacker News](examples/hackernews-newest-stream/README.md). They still use memory;
+wiring Fold restart and the Bun protocol host to SQLite remains Step 2 follow-up.
+Hosted Durable Object protocol delivery and an Effect fetch transport remain later work.
 
 ## Development
 

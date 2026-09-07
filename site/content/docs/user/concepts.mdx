@@ -57,5 +57,7 @@ one store; dispose it and the data is lost. The Bun host owns its HTTP edge and
 listener, while an application that shares protocol services must acquire them
 once for that application's lifetime.
 
-SQLite protocol storage and Cloudflare hosting are future work. The compiled
-[basic usage](/docs/user/basic-usage) demonstrates the shipped memory path.
+The SQL Layer has store-wide atomicity, chain forks, push wakes with repair, and
+an indexed expiry query. See [SQL storage](/docs/user/sql-storage). Hosted
+Cloudflare protocol delivery is future work; the Durable Object entry currently
+provides the storage capability inside an object.
