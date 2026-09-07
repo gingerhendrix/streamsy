@@ -1,18 +1,33 @@
 import { Deferred, Effect, type Layer } from "effect";
-import { HttpEffect } from "effect/unstable/http";
+import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import type { StorageFault } from "../fault.ts";
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { program, type HttpOptions } from "./program.ts";
 
 /** Framework conversion boundary; the caller owns disposal for the edge lifetime. */
-export const makeEdge = <E>(
+export const makeEdge = <E, R = never>(
   options: HttpOptions,
-  layer: Layer.Layer<StreamsReader | StreamsWriter, E>,
+  layer: Layer.Layer<StreamsReader | StreamsWriter | R, E>,
+  application?: Effect.Effect<
+    Response | HttpServerResponse.HttpServerResponse,
+    StorageFault,
+    HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter | R
+  >,
 ) => {
   const active = new Set<Deferred.Deferred<void>>();
-  const application = Effect.suspend(() => {
+  const effect = Effect.suspend(() => {
     const completed = Deferred.makeUnsafe<void>();
     active.add(completed);
-    return Effect.interruptible(program(options)).pipe(
+    return Effect.interruptible(application ?? program(options)).pipe(
+      Effect.map((response) =>
+        response instanceof Response
+          ? HttpServerResponse.raw(response, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: Object.fromEntries(response.headers),
+            })
+          : response,
+      ),
       Effect.ensuring(
         Effect.sync(() => active.delete(completed)).pipe(
           Effect.andThen(Deferred.succeed(completed, undefined)),
@@ -21,7 +36,7 @@ export const makeEdge = <E>(
       ),
     );
   });
-  const edge = HttpEffect.toWebHandlerLayer(application, layer);
+  const edge = HttpEffect.toWebHandlerLayer(effect, layer);
   const awaitIdle: Effect.Effect<void> = Effect.suspend(() =>
     active.size === 0
       ? Effect.void
