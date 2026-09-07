@@ -16,7 +16,11 @@ test("the public root keeps migration internals private", () => {
 
 test("host entries and optional peers keep the package graph exact", async () => {
   expect(Object.keys(BunStorage).toSorted()).toEqual(["layer", "layerProtocol"]);
-  expect(Object.keys(DurableObjectStorage)).toEqual(["layer"]);
+  expect(Object.keys(DurableObjectStorage).toSorted()).toEqual([
+    "DEFAULT_LONG_POLL_TIMEOUT_MS",
+    "layer",
+    "layerProtocol",
+  ]);
   const root = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
   expect(root).not.toContain("@effect/sql-sqlite-bun");
   expect(root).not.toContain("@effect/sql-sqlite-do");
