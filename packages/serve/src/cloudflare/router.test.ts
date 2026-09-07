@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function -- Web router tests await the real Fetch boundary. */
+/* oxlint-disable effecttsgo/async-function, anti-slop/no-chained-type-assertions -- The fake namespace and Bun Fetch boundary intentionally narrow Cloudflare test doubles. */
 import { expect, test } from "bun:test";
 import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
 import { Placement } from "./placement.ts";
@@ -30,11 +30,11 @@ const makeNamespace = (): FakeNamespace => {
   };
   // SAFETY: The router only uses idFromName, get and the returned stub's fetch;
   // the fake deliberately leaves unrelated Cloudflare namespace methods out.
-  return namespace as unknown as FakeNamespace;
+  return namespace as FakeNamespace;
 };
 
 const invoke = (handler: ExportedHandler<unknown>, request: Request) =>
-  handler.fetch?.(request, {}, undefined as never);
+  handler.fetch?.(request, {}, {});
 
 test("router uses the raw stripped stream path and forwards the unchanged request", async () => {
   const namespace = makeNamespace();
@@ -115,7 +115,10 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
   const nonString = router({
     namespace: () => makeNamespace(),
     // SAFETY: This intentionally violates Placement's type to exercise the runtime boundary.
-    placement: Placement.byKey(() => 7 as never),
+    placement: Placement.byKey(
+      () =>
+        /* SAFETY: This intentionally violates Placement's type to exercise the runtime boundary. */ 7 as never,
+    ),
   });
   const number = await invoke(nonString, new Request("https://streams.test/a"));
   expect(number?.status).toBe(400);

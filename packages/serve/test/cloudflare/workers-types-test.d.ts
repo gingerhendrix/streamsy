@@ -24,6 +24,12 @@ export interface DurableObjectNamespace {
   readonly get: (id: DurableObjectId) => DurableObjectStub;
 }
 
+export interface TestExecutionContext {}
+
 export interface ExportedHandler<Env = unknown> {
-  readonly fetch?: (request: Request, env: Env, ctx: unknown) => Response | Promise<Response>;
+  readonly fetch?: (
+    request: Request,
+    env: Env,
+    ctx: TestExecutionContext,
+  ) => Response | Promise<Response>;
 }

@@ -36,7 +36,7 @@ test("mutation reconciliation runs after an interrupted committed mutation", asy
                 Effect.andThen(Deferred.succeed(committed, undefined)),
               ),
             );
-            yield* Effect.never;
+            return yield* Effect.never;
           }),
           Effect.sync(() => events.push("reconciled")),
         ),

@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- This is the real local workerd boundary test. */
+/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, anti-slop/no-chained-type-assertions -- This is the real local workerd boundary test; Miniflare exposes a workers-types Fetch overload while the Bun test uses Bun Fetch values. */
 import { afterEach, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -16,10 +16,14 @@ interface Harness {
 }
 
 interface TestNamespace {
-  readonly idFromName: (name: string) => unknown;
-  readonly get: (id: unknown) => {
+  readonly idFromName: (name: string) => TestObjectId;
+  readonly get: (id: TestObjectId) => {
     readonly fetch: (request: Request) => Promise<Response> | Response;
   };
+}
+
+interface TestObjectId {
+  readonly name: string;
 }
 
 interface ProbeResult {
