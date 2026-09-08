@@ -289,7 +289,7 @@ const hasRenderedCitation = (text: string, source: string): boolean => {
     const homogeneous =
       fenceRun !== undefined &&
       fenceMarkerValue !== undefined &&
-      [...fenceRun].every((character) => character === fenceMarkerValue);
+      fenceRun.split("").every((character) => character === fenceMarkerValue);
     const fenceMarker: "`" | "~" | undefined =
       homogeneous && (fenceMarkerValue === "`" || fenceMarkerValue === "~")
         ? fenceMarkerValue
