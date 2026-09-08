@@ -18,8 +18,16 @@ const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
 interface Harness {
   readonly bundleRoot: string;
   readonly miniflare: Miniflare;
+  readonly ownership: OwnedHarness;
   readonly root: string;
   readonly namespace: TestNamespace;
+}
+
+interface OwnedHarness {
+  readonly bundleRoot: string;
+  readonly miniflare: Miniflare;
+  readonly root: string;
+  disposed: boolean;
 }
 
 interface TestNamespace {
@@ -44,6 +52,7 @@ interface ProbeResult {
 }
 
 const open: Array<Harness> = [];
+const pending = new Set<OwnedHarness>();
 const ownedRoots = new Set<string>();
 const ownedBundles = new Set<string>();
 
@@ -114,7 +123,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
   const ownedRoot = root ?? mkdtempSync(join(tmpdir(), ".streamsy-cloudflare-workerd-"));
   ownedRoots.add(ownedRoot);
   let bundleRoot: string | undefined;
-  let miniflare: Miniflare | undefined;
+  let ownership: OwnedHarness | undefined;
   try {
     bundleRoot = mkdtempSync(".streamsy-cloudflare-workerd-bundle-");
     ownedBundles.add(bundleRoot);
@@ -129,7 +138,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
     expect(built.success).toBe(true);
     const output = built.outputs[0];
     if (output === undefined) throw new Error("Cloudflare host proof produced no bundle");
-    miniflare = new Miniflare({
+    const miniflare = new Miniflare({
       scriptPath: output.path,
       modules: true,
       compatibilityDate: "2026-08-06",
@@ -139,24 +148,27 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
       durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
       durableObjectsPersist: join(ownedRoot, "state"),
     });
+    ownership = { bundleRoot, miniflare, root: ownedRoot, disposed: false };
+    pending.add(ownership);
     await miniflare.ready;
     // SAFETY: Miniflare's namespace exposes exactly the idFromName/get/fetch operations used by this harness.
     const namespace = (await miniflare.getDurableObjectNamespace(
       "STREAMS",
     )) as unknown as TestNamespace;
-    const harness = { bundleRoot, miniflare, root: ownedRoot, namespace };
+    const harness = { bundleRoot, miniflare, ownership, root: ownedRoot, namespace };
     open.push(harness);
     return harness;
   } catch (error) {
     const cleanupErrors: Array<unknown> = [];
-    if (miniflare !== undefined) {
+    if (ownership !== undefined) {
       try {
-        await miniflare.dispose();
+        await ownership.miniflare.dispose();
+        ownership.disposed = true;
       } catch (cleanupError) {
         cleanupErrors.push(cleanupError);
       }
     }
-    if (bundleRoot !== undefined) {
+    if (ownership?.disposed === true && bundleRoot !== undefined) {
       try {
         rmSync(bundleRoot, { recursive: true, force: true });
         ownedBundles.delete(bundleRoot);
@@ -164,7 +176,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
         cleanupErrors.push(cleanupError);
       }
     }
-    if (root === undefined) {
+    if (ownership?.disposed === true && root === undefined) {
       try {
         rmSync(ownedRoot, { recursive: true, force: true });
         ownedRoots.delete(ownedRoot);
@@ -172,7 +184,8 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
         cleanupErrors.push(cleanupError);
       }
     }
-    if (cleanupErrors.length > 0) {
+    if (ownership?.disposed === true && cleanupErrors.length === 0) pending.delete(ownership);
+    if (cleanupErrors.length > 0 || ownership?.disposed !== true) {
       // oxlint-disable-next-line preserve-caught-error -- AggregateError retains the primary acquisition error and every cleanup error.
       throw new AggregateError(
         [error, ...cleanupErrors],
@@ -186,26 +199,31 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
   }
 };
 
-const disposeHarness = async (harness: Harness, retainRoot = false): Promise<void> => {
+type CleanupHarness = Pick<Harness, "bundleRoot" | "miniflare" | "ownership" | "root">;
+
+const disposeHarness = async (harness: CleanupHarness, retainRoot = false): Promise<void> => {
   const errors: Array<unknown> = [];
-  let disposed = false;
-  try {
-    await harness.miniflare.dispose();
-    disposed = true;
-  } catch (error) {
-    errors.push(error);
+  if (!harness.ownership.disposed) {
+    try {
+      await harness.miniflare.dispose();
+      harness.ownership.disposed = true;
+    } catch (error) {
+      errors.push(error);
+    }
   }
-  if (disposed) {
-    const index = open.indexOf(harness);
+  if (harness.ownership.disposed) {
+    const index = open.findIndex((item) => item.ownership === harness.ownership);
     if (index >= 0) open.splice(index, 1);
   }
-  try {
-    rmSync(harness.bundleRoot, { recursive: true, force: true });
-    ownedBundles.delete(harness.bundleRoot);
-  } catch (error) {
-    errors.push(error);
+  if (harness.ownership.disposed && ownedBundles.has(harness.bundleRoot)) {
+    try {
+      rmSync(harness.bundleRoot, { recursive: true, force: true });
+      ownedBundles.delete(harness.bundleRoot);
+    } catch (error) {
+      errors.push(error);
+    }
   }
-  if (!retainRoot) {
+  if (harness.ownership.disposed && !retainRoot && ownedRoots.has(harness.root)) {
     try {
       const destination = retentionDestination(harness.root);
       if (destination !== undefined) {
@@ -222,7 +240,17 @@ const disposeHarness = async (harness: Harness, retainRoot = false): Promise<voi
       errors.push(error);
     }
   }
-  if (errors.length > 0) throw new AggregateError(errors, "Cloudflare host harness cleanup failed");
+  if (
+    harness.ownership.disposed &&
+    !ownedBundles.has(harness.bundleRoot) &&
+    (retainRoot || !ownedRoots.has(harness.root))
+  )
+    pending.delete(harness.ownership);
+  if (errors.length > 0 || !harness.ownership.disposed)
+    throw new AggregateError(
+      errors.length > 0 ? errors : [new Error("Miniflare disposal remains unresolved")],
+      "Cloudflare host harness cleanup failed",
+    );
 };
 
 afterEach(async () => {
@@ -241,7 +269,24 @@ afterEach(async () => {
       errors.push(error);
     }
   }
+  for (const ownership of pending) {
+    if (open.some((harness) => harness.ownership === ownership)) continue;
+    try {
+      const harness: CleanupHarness = {
+        bundleRoot: ownership.bundleRoot,
+        miniflare: ownership.miniflare,
+        ownership,
+        root: ownership.root,
+      };
+      await disposeHarness(harness);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  const pendingRoots = new Set(Array.from(pending, (ownership) => ownership.root));
+  const pendingBundles = new Set(Array.from(pending, (ownership) => ownership.bundleRoot));
   for (const bundleRoot of ownedBundles) {
+    if (pendingBundles.has(bundleRoot)) continue;
     try {
       rmSync(bundleRoot, { recursive: true, force: true });
       ownedBundles.delete(bundleRoot);
@@ -250,6 +295,7 @@ afterEach(async () => {
     }
   }
   for (const root of ownedRoots) {
+    if (pendingRoots.has(root)) continue;
     reclaimOwnedRoot(root, errors);
   }
   if (errors.length > 0)
@@ -286,6 +332,61 @@ test("retention paths reject descendants and support a fresh destination", () =>
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(retention, { recursive: true, force: true });
+  }
+});
+
+test("failed Miniflare disposal remains owned until the afterEach retry succeeds", async () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-host-dispose-state-"));
+  const bundleRoot = mkdtempSync(join(tmpdir(), ".streamsy-host-dispose-bundle-"));
+  let disposeAttempts = 0;
+  const ownership: OwnedHarness = {
+    root,
+    bundleRoot,
+    disposed: false,
+    // SAFETY: this fake supplies the only Miniflare method used by disposeHarness.
+    miniflare: {
+      dispose: async () => {
+        disposeAttempts += 1;
+        if (disposeAttempts === 1) throw new Error("dispose failed");
+      },
+    } as unknown as Miniflare,
+  };
+  const harness: Harness = {
+    root,
+    bundleRoot,
+    miniflare: ownership.miniflare,
+    ownership,
+    namespace: {
+      idFromName: () => ({ name: "fake" }),
+      get: () => ({ fetch: () => new Response() }),
+    },
+  };
+  ownedRoots.add(root);
+  ownedBundles.add(bundleRoot);
+  pending.add(ownership);
+  open.push(harness);
+  try {
+    let firstError: unknown;
+    try {
+      await disposeHarness(harness);
+    } catch (error) {
+      firstError = error;
+    }
+    expect(firstError).toBeInstanceOf(AggregateError);
+    expect(pending.has(ownership)).toBe(true);
+    expect(ownedRoots.has(root)).toBe(true);
+    await disposeHarness(harness);
+    expect(disposeAttempts).toBe(2);
+    expect(pending.has(ownership)).toBe(false);
+    expect(ownedRoots.has(root)).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(bundleRoot, { recursive: true, force: true });
+    pending.delete(ownership);
+    ownedRoots.delete(root);
+    ownedBundles.delete(bundleRoot);
+    const index = open.indexOf(harness);
+    if (index >= 0) open.splice(index, 1);
   }
 });
 

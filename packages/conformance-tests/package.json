@@ -8,6 +8,7 @@
     "test:memory": "bun ./node_modules/vitest/vitest.mjs --run src/memory.conformance.test.ts",
     "test:sqlite": "bun ./node_modules/vitest/vitest.mjs --run src/sqlite.conformance.test.ts",
     "test:workerd": "bun run build:worker && bun ./node_modules/vitest/vitest.mjs --run src/workerd.conformance.test.ts",
+    "test:workerd:ownership": "bun test src/workerd-harness-ownership.test.ts",
     "build:worker": "bun run scripts/build-worker.ts",
     "measure:bundle": "bun run build:worker && cat dist/bundle-report.json"
   },

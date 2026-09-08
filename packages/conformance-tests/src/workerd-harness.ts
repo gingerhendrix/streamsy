@@ -70,3 +70,39 @@ export const reclaimRoot = (
   }
   return errors;
 };
+
+export interface WorkerdDisposable {
+  readonly dispose: () => Promise<void>;
+}
+
+export interface WorkerdOwnedState<I extends WorkerdDisposable = WorkerdDisposable> {
+  readonly root: string;
+  instance?: I;
+  disposed: boolean;
+}
+
+export const cleanupWorkerdState = async (
+  state: WorkerdOwnedState,
+  configuredRetention: string | undefined,
+  removeOwned?: (path: string) => void,
+): Promise<{ readonly done: boolean; readonly errors: ReadonlyArray<unknown> }> => {
+  const errors: Array<unknown> = [];
+  if (!state.disposed && state.instance !== undefined) {
+    try {
+      await state.instance.dispose();
+      state.disposed = true;
+    } catch (error) {
+      errors.push(error);
+    }
+  } else if (state.instance === undefined) {
+    state.disposed = true;
+  }
+  if (!state.disposed) {
+    errors.push(new Error("Persistence root retained while Miniflare disposal is unresolved"));
+    return { done: false, errors };
+  }
+  const rootErrors = reclaimRoot(state.root, configuredRetention, removeOwned);
+  errors.push(...rootErrors);
+  const rootGone = !existsSync(state.root);
+  return { done: rootGone, errors };
+};
