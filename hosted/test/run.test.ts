@@ -350,23 +350,21 @@ const superviseInterruptedWorkflow = async (
 ) => {
   const started = Deferred.makeUnsafe<void>();
   let services: ReturnType<typeof makeServices>;
-  services = makeServices(
-    {
-      deploy: () =>
-        Effect.gen(function* () {
-          services.calls.push("deploy");
-          yield* Deferred.succeed(started, undefined);
-          return yield* Effect.never;
-        }),
-      ...(secondary
-        ? {
-            destroy: () => Effect.fail(new ContractError({ message: "destroy secondary" })),
-            auditExactWorker: () => Effect.fail(new ContractError({ message: "audit secondary" })),
-          }
-        : {}),
-    },
-    reportFailure,
-  );
+  const operationOverrides: Partial<EvidenceOperationsService> = {
+    deploy: () =>
+      Effect.gen(function* () {
+        services.calls.push("deploy");
+        yield* Deferred.succeed(started, undefined);
+        return yield* Effect.never;
+      }),
+  };
+  if (secondary) {
+    operationOverrides.destroy = () =>
+      Effect.fail(new ContractError({ message: "destroy secondary" }));
+    operationOverrides.auditExactWorker = () =>
+      Effect.fail(new ContractError({ message: "audit secondary" }));
+  }
+  services = makeServices(operationOverrides, reportFailure);
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const child = yield* runEvidence(identity).pipe(Effect.forkChild);
@@ -396,7 +394,8 @@ test("the actual workflow supervisor preserves interruption under clean cleanup"
   expect(Exit.isFailure(result.joinExit)).toBe(true);
   expect(result.observed).toBe(true);
   expect(result.typedRecovered).toBe(false);
-  if (Exit.isFailure(result.childExit)) expect(Cause.hasInterrupts(result.childExit.cause)).toBe(true);
+  if (Exit.isFailure(result.childExit))
+    expect(Cause.hasInterrupts(result.childExit.cause)).toBe(true);
   expect(result.services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
 });
 

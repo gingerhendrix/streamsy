@@ -36,9 +36,9 @@ interface OwnedHarness {
 }
 
 interface HarnessProcess {
-  readonly ready: Promise<unknown>;
+  readonly ready: Promise<void>;
   readonly dispose: () => Promise<void>;
-  readonly getDurableObjectNamespace: (binding: string) => Promise<unknown>;
+  readonly getDurableObjectNamespace: (binding: string) => Promise<TestNamespace>;
   readonly listDurableObjectIds: (binding: string) => Promise<ReadonlyArray<string>>;
   readonly dispatchFetch: (input: string | Request, init?: RequestInit) => Promise<Response>;
 }
@@ -91,21 +91,25 @@ const realHarnessDependencies: HarnessDependencies = {
       durableObjectsPersist: join(root, "state"),
     });
     return {
-      ready: miniflare.ready,
+      ready: miniflare.ready.then(() => undefined),
       dispose: () => miniflare.dispose(),
-      getDurableObjectNamespace: (binding) => miniflare.getDurableObjectNamespace(binding),
+      getDurableObjectNamespace: async (binding) => {
+        const namespace = await miniflare.getDurableObjectNamespace(binding);
+        // SAFETY: the local fixture exposes only idFromName/get/fetch to this harness.
+        return namespace as unknown as TestNamespace;
+      },
       listDurableObjectIds: (binding) => miniflare.listDurableObjectIds(binding),
       dispatchFetch: (input, init) =>
         // SAFETY: Miniflare's local dispatch is adapted to the Bun Fetch signature used here.
-        (miniflare.dispatchFetch as unknown as (input: string | Request, init?: RequestInit) => Promise<Response>)(
-          input,
-          init,
-        ),
+        (
+          miniflare.dispatchFetch as unknown as (
+            input: string | Request,
+            init?: RequestInit,
+          ) => Promise<Response>
+        )(input, init),
     };
   },
-  namespace: async (process) =>
-    // SAFETY: the local fixture exposes only idFromName/get/fetch to this harness.
-    ((await process.getDurableObjectNamespace("STREAMS")) as unknown as TestNamespace),
+  namespace: (process) => process.getDurableObjectNamespace("STREAMS"),
   remove: (path) => rmSync(path, { recursive: true, force: true }),
   copy: (source, destination) => cpSync(source, destination, { recursive: true }),
 };
@@ -427,12 +431,14 @@ test("retention paths reject descendants and support a fresh destination", () =>
   }
 });
 
-const fakeHarnessDependencies = (options: {
-  readonly readyFailure?: boolean;
-  readonly namespaceFailure?: boolean;
-  readonly disposeFailures?: number;
-  readonly removeFailures?: number;
-} = {}): HarnessDependencies => {
+const fakeHarnessDependencies = (
+  options: {
+    readonly readyFailure?: boolean;
+    readonly namespaceFailure?: boolean;
+    readonly disposeFailures?: number;
+    readonly removeFailures?: number;
+  } = {},
+): HarnessDependencies => {
   let disposeAttempts = 0;
   let removeAttempts = 0;
   const process: HarnessProcess = {
@@ -467,11 +473,23 @@ const fakeHarnessDependencies = (options: {
   };
 };
 
+const expectRejected = async (operation: Promise<unknown>, message: string): Promise<void> => {
+  let caught: unknown;
+  try {
+    await operation;
+  } catch (error) {
+    caught = error;
+  }
+  if (!(caught instanceof Error)) throw new Error(`Expected rejection containing ${message}`);
+  expect(caught.message).toContain(message);
+};
+
 test("real acquisition and afterEach retry retain a failed ready owner", async () => {
   const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-acquire-state-"));
   const dependencies = fakeHarnessDependencies({ readyFailure: true, disposeFailures: 1 });
   try {
-    await expect(makeHarness("worker.ts", root, dependencies)).rejects.toThrow(
+    await expectRejected(
+      makeHarness("worker.ts", root, dependencies),
       "harness acquisition failed",
     );
     expect(pending.size).toBe(1);
@@ -489,7 +507,8 @@ test("namespace acquisition and persistent disposal retain ownership until recov
   const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-namespace-state-"));
   const dependencies = fakeHarnessDependencies({ namespaceFailure: true, disposeFailures: 4 });
   try {
-    await expect(makeHarness("worker.ts", root, dependencies)).rejects.toThrow(
+    await expectRejected(
+      makeHarness("worker.ts", root, dependencies),
       "harness acquisition failed",
     );
     expect(pending.size).toBe(1);
@@ -507,7 +526,8 @@ test("actual hook retries root removal after acquisition cleanup", async () => {
   const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-remove-state-"));
   const dependencies = fakeHarnessDependencies({ removeFailures: 6 });
   try {
-    await expect(makeHarness("worker.ts", root, dependencies)).resolves.toBeDefined();
+    const acquired = await makeHarness("worker.ts", root, dependencies);
+    expect(acquired).toBeDefined();
     await cleanupOwnedHarnesses().catch(() => undefined);
     expect(ownedRoots.has(root)).toBe(true);
     await cleanupOwnedHarnesses();
@@ -526,7 +546,7 @@ test("B15 recreation failure reclaims the retained owner through the hook", asyn
     const first = await makeHarness("worker.ts", root, firstDependencies);
     await disposeHarness(first, true);
     expect(ownedRoots.has(root)).toBe(true);
-    await expect(makeHarness("worker.ts", root, secondDependencies)).rejects.toThrow("ready failed");
+    await expectRejected(makeHarness("worker.ts", root, secondDependencies), "ready failed");
     expect(ownedRoots.has(root)).toBe(true);
     await cleanupOwnedHarnesses().catch(() => undefined);
     expect(ownedRoots.has(root)).toBe(false);

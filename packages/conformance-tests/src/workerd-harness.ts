@@ -85,7 +85,9 @@ export interface WorkerdOwnedRegistry<I extends WorkerdDisposable = WorkerdDispo
   readonly states: Set<WorkerdOwnedState<I>>;
 }
 
-export const createWorkerdOwnedRegistry = <I extends WorkerdDisposable = WorkerdDisposable>(): WorkerdOwnedRegistry<I> => ({
+export const createWorkerdOwnedRegistry = <
+  I extends WorkerdDisposable = WorkerdDisposable,
+>(): WorkerdOwnedRegistry<I> => ({
   states: new Set(),
 });
 
