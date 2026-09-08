@@ -80,7 +80,7 @@ Observed local counts:
 | SQL boundary                            | 2 passed, 0 failed                                                                                                                                                            |
 | Lint                                    | pass; 139 warning lines, unchanged inventory                                                                                                                                  |
 | Lint policy / format / perimeter / pack | pass / 361 files / pass / four public package dry-runs                                                                                                                        |
-| Site validation                         | 0 stale-term hits across 40 authored files; 7 excerpts (5 executed, 2 typechecked-only); 11 rendered routes; 161 internal links/images/anchors; checker process group stopped |
+| Site validation                         | 0 stale-term hits across 41 authored files; 7 excerpts (5 executed, 2 typechecked-only); 11 rendered routes; 161 internal links/images/anchors; checker process group stopped |
 
 The usage excerpt is a local smoke check and the official workerd result is the
 single-object-chain profile. The default `byStream()` profile's nine
