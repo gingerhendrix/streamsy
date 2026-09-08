@@ -20,9 +20,10 @@ const expectRejected = async (operation: Promise<unknown>, message: string): Pro
     caught = error;
   }
   if (!(caught instanceof Error)) throw new Error(`Expected rejection containing ${message}`);
-  const details = caught instanceof AggregateError
-    ? [caught.message, ...caught.errors.map((error) => String(error))].join(" ")
-    : caught.message;
+  const details =
+    caught instanceof AggregateError
+      ? [caught.message, ...caught.errors.map((error) => String(error))].join(" ")
+      : caught.message;
   expect(details).toContain(message);
 };
 

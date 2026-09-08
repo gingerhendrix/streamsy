@@ -6,10 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Miniflare } from "miniflare";
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
-import {
-  createWorkerdRunnerLifecycle,
-  type WorkerdDisposable,
-} from "./workerd-harness.ts";
+import { createWorkerdRunnerLifecycle, type WorkerdDisposable } from "./workerd-harness.ts";
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/worker/worker.js");
 const config = { baseUrl: "" };
