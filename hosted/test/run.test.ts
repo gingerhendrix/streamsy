@@ -309,6 +309,7 @@ test("external interruption preserves typed and synchronous report failures", as
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const message = Cause.pretty(exit.cause);
+      expect(Cause.hasInterrupts(exit.cause)).toBe(true);
       expect(message).toContain("interrupted");
       expect(message).toContain("write");
     }
@@ -335,11 +336,74 @@ test("external interruption preserves cleanup and report failures together", asy
   expect(Exit.isFailure(exit)).toBe(true);
   if (Exit.isFailure(exit)) {
     const message = Cause.pretty(exit.cause);
+    expect(Cause.hasInterrupts(exit.cause)).toBe(true);
     expect(message).toContain("interrupted");
     expect(message).toContain("destroy secondary");
     expect(message).toContain("audit secondary");
     expect(message).toContain("write failed");
   }
+});
+
+test("a supervising parent observes the original interruption Cause", async () => {
+  const started = Deferred.makeUnsafe<void>();
+  const services = makeServices({
+    deploy: () =>
+      Effect.gen(function* () {
+        services.calls.push("deploy");
+        yield* Deferred.succeed(started, undefined);
+        return yield* Effect.never;
+      }),
+  });
+  const childExit = await Effect.runPromise(
+    Effect.gen(function* () {
+      const child = yield* runEvidence(identity).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(child);
+      return yield* Fiber.await(child);
+    }).pipe(Effect.provide(services.layer)),
+  );
+  expect(Exit.isFailure(childExit)).toBe(true);
+  if (Exit.isFailure(childExit)) {
+    expect(Cause.hasInterrupts(childExit.cause)).toBe(true);
+    expect(Cause.pretty(childExit.cause)).toContain("interrupted");
+  }
+});
+
+test("supervisors distinguish an interrupt Cause from typed recovery", async () => {
+  const started = Deferred.makeUnsafe<void>();
+  let typedCaught = false;
+  let interruptObserved = false;
+  const services = makeServices({
+    deploy: () =>
+      Effect.gen(function* () {
+        services.calls.push("deploy");
+        yield* Deferred.succeed(started, undefined);
+        return yield* Effect.never;
+      }),
+  });
+  const cause = await Effect.runPromise(
+    Effect.gen(function* () {
+      const observer = yield* Effect.never.pipe(
+        Effect.onInterrupt(() => Effect.sync(() => void (interruptObserved = true))),
+        Effect.forkChild,
+      );
+      const child = yield* runEvidence(identity).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(observer);
+      yield* Fiber.interrupt(child);
+      return yield* Fiber.join(child);
+    }).pipe(
+      Effect.catch(() => {
+        typedCaught = true;
+        return Effect.succeed(Cause.empty);
+      }),
+      Effect.catchCause(Effect.succeed),
+      Effect.provide(services.layer),
+    ),
+  );
+  expect(interruptObserved).toBe(true);
+  expect(typedCaught).toBe(false);
+  expect(Cause.hasInterrupts(cause)).toBe(true);
 });
 
 test("interrupted attempted conformance and metadata steps are reported as failures", async () => {
@@ -402,6 +466,31 @@ test("interrupted configured measurement is not reported as unavailable", async 
   expect(services.report?.measurement.status).toBe("failure");
   if (services.report?.measurement.status === "failure")
     expect(services.report.measurement.reason).toContain("interrupted");
+});
+
+test("configured but unreached measurement has an accurate reason", async () => {
+  const options = {
+    measurement: {
+      latency: { baseUrl: target.url, paths: ["/streams/a"], concurrency: 1 },
+      throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
+    },
+  } as const;
+  for (const step of ["conformance", "metadata"] as const) {
+    const services = makeServices(
+      step === "conformance"
+        ? {
+            runOfficialSuite: () =>
+              Effect.fail(new ContractError({ message: "conformance failed" })),
+          }
+        : { captureMetadata: () => Effect.fail(new ContractError({ message: "metadata failed" })) },
+    );
+    const exit = await runWithClock(runEvidence(identity, options), services.layer);
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(services.report?.measurement).toEqual({
+      status: "unavailable",
+      reason: "Measurement configured but not reached",
+    });
+  }
 });
 
 test("synchronous cleanup throws do not skip later cleanup or reporting", async () => {

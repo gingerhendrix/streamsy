@@ -118,7 +118,8 @@ test("latency deltas preserve the historical first-minus-warm sign", async () =>
 test("latency enforces bounded concurrent phases and completes all PUTs before HEADs", async () => {
   const paths = Array.from({ length: 7 }, (_, index) => `/streams/${index}`);
   let active = 0;
-  let maximum = 0;
+  let maximumPut = 0;
+  let maximumHead = 0;
   let putsCompleted = 0;
   let headBeforeAllPuts = false;
   const result = await Effect.runPromise(
@@ -144,7 +145,8 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
             request: (request) =>
               Effect.gen(function* () {
                 active += 1;
-                maximum = Math.max(maximum, active);
+                if (request.method === "PUT") maximumPut = Math.max(maximumPut, active);
+                if (request.method === "HEAD") maximumHead = Math.max(maximumHead, active);
                 if (request.method === "HEAD" && putsCompleted !== paths.length)
                   headBeforeAllPuts = true;
                 yield* Effect.sleep("10 millis");
@@ -159,7 +161,8 @@ test("latency enforces bounded concurrent phases and completes all PUTs before H
     ),
   );
   expect(result.valid).toBe(true);
-  expect(maximum).toBe(3);
+  expect(maximumPut).toBe(3);
+  expect(maximumHead).toBe(3);
   expect(headBeforeAllPuts).toBe(false);
 });
 

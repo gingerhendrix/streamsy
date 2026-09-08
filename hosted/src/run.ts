@@ -127,12 +127,14 @@ export const awaitGone = (
 ): Effect.Effect<{ readonly attempts: number }, ContractError, HttpOperation> =>
   boundedPoll(url, (response) => response.status === 404, "Gone");
 
-const initialReport = (identity: RunIdentity): EvidenceReport => ({
+const initialReport = (identity: RunIdentity, measurementConfigured: boolean): EvidenceReport => ({
   ...identity,
   readiness: pending(),
   metadata: pending(),
   conformance: pending(),
-  measurement: unavailable<MeasurementEvidence>("No fake measurement configuration was supplied"),
+  measurement: measurementConfigured
+    ? unavailable<MeasurementEvidence>("Measurement configured but not reached")
+    : unavailable<MeasurementEvidence>("No fake measurement configuration was supplied"),
   destroyFirst: pending(),
   destroySecond: pending(),
   gone: pending(),
@@ -259,7 +261,10 @@ export const runEvidence = (
         error instanceof ContractError ? error : new ContractError({ message: String(error) }),
       );
     }
-    const stateRef = yield* Ref.make<State>({ report: initialReport(identity), started: false });
+    const stateRef = yield* Ref.make<State>({
+      report: initialReport(identity, options.measurement !== undefined),
+      started: false,
+    });
     const scoped = Effect.scoped(
       Effect.gen(function* () {
         const operations = yield* EvidenceOperations;
@@ -482,8 +487,19 @@ export const runEvidence = (
         for (const reason of final.report.cleanupFailures) reasons.add(reason);
         if (final.report.reportWriteFailure !== undefined)
           reasons.add(final.report.reportWriteFailure);
-        if (reasons.size > 0)
-          return yield* Effect.fail(new ContractError({ message: [...reasons].join("; ") }));
+        if (reasons.size > 0) {
+          const message = [...reasons].join("; ");
+          if (Exit.isFailure(result)) {
+            // Keep the original Cause (including interruption) and add the
+            // structured evidence as a second failure. Supervisors can still
+            // observe cancellation with Cause.hasInterrupts/onInterrupt.
+            const secondary = Cause.hasInterrupts(result.cause)
+              ? Cause.die(new ContractError({ message }))
+              : Cause.fail(new ContractError({ message }));
+            return yield* Effect.failCause(Cause.combine(result.cause, secondary));
+          }
+          return yield* Effect.fail(new ContractError({ message }));
+        }
         return yield* Effect.void;
       }),
     );
