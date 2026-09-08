@@ -269,18 +269,20 @@ afterEach(async () => {
       errors.push(error);
     }
   }
-  for (const ownership of pending) {
-    if (open.some((harness) => harness.ownership === ownership)) continue;
-    try {
-      const harness: CleanupHarness = {
-        bundleRoot: ownership.bundleRoot,
-        miniflare: ownership.miniflare,
-        ownership,
-        root: ownership.root,
-      };
-      await disposeHarness(harness);
-    } catch (error) {
-      errors.push(error);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (const ownership of Array.from(pending)) {
+      if (open.some((harness) => harness.ownership === ownership)) continue;
+      try {
+        const harness: CleanupHarness = {
+          bundleRoot: ownership.bundleRoot,
+          miniflare: ownership.miniflare,
+          ownership,
+          root: ownership.root,
+        };
+        await disposeHarness(harness);
+      } catch (error) {
+        errors.push(error);
+      }
     }
   }
   const pendingRoots = new Set(Array.from(pending, (ownership) => ownership.root));
