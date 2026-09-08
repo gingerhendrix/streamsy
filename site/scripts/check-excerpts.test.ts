@@ -34,7 +34,10 @@ const isAlive = (pid: number): boolean => {
 
 const pair = { doc: "guide.mdx", source: "src/example.ts", execute: false } as const;
 const code = "export const answer = 42;";
-const citedDocument = `Source: [${pair.source}](https://example.test/${pair.source}).\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`;
+const repositorySourcePrefix =
+  "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/";
+const citation = `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).`;
+const citedDocument = `${citation}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`;
 
 test("excerpt validation requires a citation outside the code fence", () => {
   expect(() => assertExcerpt(pair, `\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code)).toThrow(
@@ -44,18 +47,33 @@ test("excerpt validation requires a citation outside the code fence", () => {
 
 test("excerpt validation requires a rendered source destination", () => {
   const bypasses = [
-    `~~~md\n[${pair.source}](https://example.test/${pair.source})\n~~~`,
-    `\`${"[" + pair.source + "](https://example.test/" + pair.source + ")"}\``,
-    `<!-- [source](${pair.source}) -->`,
-    `    [source](${pair.source})`,
-    `![source](${pair.source})`,
-    `[${pair.source}](https://example.test/unrelated.ts)`,
+    `Compiled source: \\[${pair.source}](${repositorySourcePrefix}${pair.source}).`,
+    `Compiled source: [${pair.source}] (${repositorySourcePrefix}${pair.source}).`,
+    `Compiled source: [${pair.source}]\n(${repositorySourcePrefix}${pair.source}).`,
+    `Compiled source: ![${pair.source}](${repositorySourcePrefix}${pair.source}).`,
+    `~~~md\nCompiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).\n~~~`,
+    `> ~~~md\n> Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).\n> ~~~`,
+    `<pre>\nCompiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).\n</pre>`,
+    `\`Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).\``,
+    `<!-- Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}). -->`,
+    `    Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}).`,
+    `Compiled source: [${pair.source}](${repositorySourcePrefix}unrelated.ts).`,
+    `Compiled source: [${pair.source}](${repositorySourcePrefix}unrelated?source=${pair.source}).`,
+    `Compiled source: [${pair.source}](${repositorySourcePrefix}unrelated#${pair.source}).`,
+    `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}.bak).`,
   ];
   for (const bypass of bypasses) {
     expect(() =>
       assertExcerpt(pair, `${bypass}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
     ).toThrow("citation");
   }
+});
+
+test("excerpt validation accepts only the exact repository path with an optional line anchor", () => {
+  const withLineAnchor =
+    `Compiled source: [${pair.source}](${repositorySourcePrefix}${pair.source}#L12-L18).\n\n` +
+    `\x60\x60\x60ts\n${code}\n\x60\x60\x60`;
+  expect(() => assertExcerpt(pair, withLineAnchor, code)).not.toThrow();
 });
 
 test("excerpt validation rejects code drift", () => {

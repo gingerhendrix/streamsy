@@ -102,8 +102,10 @@ Commit or rollback failure remains a defect and is never automatically replayed,
 because commit acknowledgement failure is an uncertain outcome.
 
 `BunStorage.layer` exposes its one official client alongside Storage and the
-boundary. The compiled [packages/storage/test/shared-transaction-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/storage/test/shared-transaction-usage.ts)
-opens a real file, builds and closes the Layer scope, and proves the rejection
+boundary.
+
+Compiled source: [packages/storage/test/shared-transaction-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/storage/test/shared-transaction-usage.ts).
+This example opens a real file, builds and closes the Layer scope, and proves the rejection
 rolls back the application row:
 
 ```ts

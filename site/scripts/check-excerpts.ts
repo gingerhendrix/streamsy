@@ -248,56 +248,77 @@ export const runExcerpt = (
   options?: ProcessRunOptions,
 ): Promise<void> => runOwnedProcess([source], label, options);
 
-const markdownWithoutNonRenderedBlocks = (text: string): string => {
+const repositorySourcePrefix =
+  "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/";
+
+const renderedLines = (text: string): ReadonlyArray<string> => {
   const lines = text.split("\n");
   let fence: { readonly marker: "`" | "~"; readonly length: number } | undefined;
+  let htmlPre = false;
+  let inComment = false;
   const visible: string[] = [];
   for (const line of lines) {
-    const fenceMatch = line.match(/^\s*([`~]{3,})/);
-    const fenceMarker = fenceMatch?.[1]?.[0];
-    const fenceLength = fenceMatch?.[1]?.length;
-    if (fence !== undefined) {
-      if (fenceMarker === fence.marker && fenceLength !== undefined && fenceLength >= fence.length)
-        fence = undefined;
+    let candidate = line;
+    if (inComment) {
+      const end = candidate.indexOf("-->");
+      if (end < 0) continue;
+      candidate = candidate.slice(end + 3);
+      inComment = false;
+    }
+    const commentStart = candidate.indexOf("<!--");
+    if (commentStart >= 0) {
+      const commentEnd = candidate.indexOf("-->", commentStart + 4);
+      if (commentEnd < 0) {
+        inComment = true;
+        candidate = candidate.slice(0, commentStart);
+      } else {
+        candidate = `${candidate.slice(0, commentStart)}${candidate.slice(commentEnd + 3)}`;
+      }
+    }
+    if (htmlPre) {
+      if (/<\/pre\s*>/i.test(candidate)) htmlPre = false;
       continue;
     }
-    if ((fenceMarker === "`" || fenceMarker === "~") && fenceLength !== undefined) {
+    if (/<pre(?:\s|>)/i.test(candidate)) {
+      htmlPre = !/<\/pre\s*>/i.test(candidate);
+      continue;
+    }
+    const fenceMatch = candidate.match(/^(?: {0,3}>[ \t]?)*(?: {0,3})([`~]{3,})(.*)$/);
+    const fenceMarker = fenceMatch?.[1]?.[0];
+    const fenceLength = fenceMatch?.[1]?.length;
+    const fenceRemainder = fenceMatch?.[2] ?? "";
+    if (fence !== undefined) {
+      if (
+        fenceMarker === fence.marker &&
+        fenceLength !== undefined &&
+        fenceLength >= fence.length &&
+        /^\s*$/.test(fenceRemainder)
+      ) {
+        fence = undefined;
+      }
+      continue;
+    }
+    if (fenceMarker !== undefined && fenceLength !== undefined) {
       fence = { marker: fenceMarker, length: fenceLength };
       continue;
     }
-    if (/^(?: {4}|\t)/.test(line)) continue;
-    visible.push(line);
+    if (/^(?: {4}|\t)/.test(candidate)) continue;
+    visible.push(candidate.replace(/(`+)([\s\S]*?)\1/g, ""));
   }
-  let result = visible.join("\n");
-  result = result.replace(/<!--[\s\S]*?-->/g, "");
-  result = result.replace(/(`+)([\s\S]*?)\1/g, "");
-  return result;
+  return visible;
 };
 
 const hasRenderedCitation = (text: string, source: string): boolean => {
-  const visible = markdownWithoutNonRenderedBlocks(text);
-  for (let index = 0; index < visible.length; index++) {
-    if (visible[index] !== "[" || (index > 0 && visible[index - 1] === "!")) continue;
-    const closeLabel = visible.indexOf("]", index + 1);
-    if (closeLabel < 0) continue;
-    let openDestination = closeLabel + 1;
-    while (/\s/.test(visible[openDestination] ?? "")) openDestination++;
-    if (visible[openDestination] !== "(") continue;
-    let closeDestination = openDestination + 1;
-    let depth = 1;
-    while (closeDestination < visible.length && depth > 0) {
-      if (visible[closeDestination] === "(") depth++;
-      if (visible[closeDestination] === ")") depth--;
-      closeDestination++;
+  for (const line of renderedLines(text)) {
+    const match = line.match(/^Compiled source: \[([^\]\r\n]+)\]\(([^)\s]+)\)\.(?:\s|$)/);
+    if (match === null || match[1] !== source) continue;
+    const destination = match[2];
+    if (!destination.startsWith(repositorySourcePrefix)) continue;
+    const remainder = destination.slice(repositorySourcePrefix.length);
+    const suffix = remainder.slice(source.length);
+    if (remainder.startsWith(source) && (suffix === "" || /^#L\d+(?:-L\d+)?$/.test(suffix))) {
+      return true;
     }
-    if (depth !== 0) continue;
-    const destination = visible.slice(openDestination + 1, closeDestination - 1).trim();
-    const normalized =
-      destination.startsWith("<") && destination.endsWith(">")
-        ? destination.slice(1, -1)
-        : destination.split(/\s+/)[0];
-    if (normalized.includes(source)) return true;
-    index = closeDestination - 1;
   }
   return false;
 };
