@@ -1,5 +1,6 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["scripts/check-excerpts.test.ts"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",
