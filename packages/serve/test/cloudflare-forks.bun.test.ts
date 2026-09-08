@@ -159,7 +159,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
       }
     }
     if (cleanupErrors.length > 0) {
-      // oxlint-disable-next-line eslint(preserve-caught-error) -- AggregateError retains the primary acquisition error and every cleanup error.
+      // oxlint-disable-next-line preserve-caught-error -- AggregateError retains the primary acquisition error and every cleanup error.
       throw new AggregateError(
         [error, ...cleanupErrors],
         "Cloudflare fork harness acquisition failed",
