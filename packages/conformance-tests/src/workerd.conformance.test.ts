@@ -30,14 +30,20 @@ const cleanupHarness = async (current: {
   } catch (error) {
     errors.push(error);
   }
+  let disposed = current.miniflare === undefined;
   try {
     await current.miniflare?.dispose();
+    disposed = true;
   } catch (error) {
     errors.push(error);
   }
-  const rootErrors = reclaimRoot(current.root, Bun.env.STREAMSY_WORKERD_RETENTION);
-  errors.push(...rootErrors);
-  if (rootErrors.length === 0) ownedRoots.delete(current.root);
+  if (disposed) {
+    const rootErrors = reclaimRoot(current.root, Bun.env.STREAMSY_WORKERD_RETENTION);
+    errors.push(...rootErrors);
+    if (rootErrors.length === 0) ownedRoots.delete(current.root);
+  } else {
+    errors.push(new Error("Persistence root retained while Miniflare disposal is unresolved"));
+  }
   if (errors.length > 0) throw new AggregateError(errors, "Workerd harness cleanup failed");
 };
 
@@ -94,6 +100,13 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
         await cleanupHarness(current);
       } catch (error) {
         errors.push(error);
+        if (ownedRoots.has(current.root)) {
+          try {
+            await cleanupHarness(current);
+          } catch (retryError) {
+            errors.push(retryError);
+          }
+        }
       }
     }
     for (const root of Array.from(ownedRoots)) {
