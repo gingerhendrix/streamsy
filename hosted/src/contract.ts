@@ -6,7 +6,7 @@ export const COMPATIBILITY_DATE = "2026-07-30";
 export const COMPATIBILITY_FLAGS = ["nodejs_compat"] as const;
 export const CONFORMANCE_LONG_POLL_TIMEOUT_MS = 1_500;
 export const HOSTED_STATUS =
-  "Hosted execution and acceptance remain blocked by remote permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.";
+  "Alchemy deployment for Step 3 is authorized. Hosted execution remains disabled in this local package pending independently reviewed live adapters and a reconciled run plan, including destroy/cleanup and required query scope. Hosted acceptance still requires hosted evidence, the uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.";
 
 export class ContractError extends Schema.TaggedError<ContractError>()("ContractError", {
   message: Schema.String,

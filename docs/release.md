@@ -19,11 +19,14 @@ unchanged. Views and serve retain their existing curated subpaths.
 
 The local C batch adds an official local workerd registration alongside memory
 and SQLite, an isolated `hosted/` typecheck/test package, and informational
-`measure:bundle`. Hosted execution and acceptance remain blocked by remote
-permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's
-budget/topology decision. The accepted Batch B local signal is 81,574 B gzip
-against the unchanged 27,160 B proposal; the 542.85 ms first-object p95 proposal
-remains unmeasured. Local conformance is not hosted evidence.
+`measure:bundle`. Alchemy deployment for Step 3 is authorized. Hosted execution
+remains disabled in this local package pending independently reviewed live
+adapters and a reconciled run plan, including destroy/cleanup and required query
+scope. Hosted acceptance still requires hosted evidence, the
+uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology
+decision. The accepted Batch B local signal is 81,574 B gzip against the
+unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains
+unmeasured. Local conformance is not hosted evidence.
 
 The official local workerd runner uses `Placement.byKey(() => "conformance")`,
 placing all suite streams in one Durable Object while retaining distinct stream
@@ -52,17 +55,32 @@ The site publishes the same distinction in the Cloudflare hosting guide. Its
 Worker excerpt is typechecked with real Worker declarations but is not executed
 as a Bun program. The local usage excerpt bundles that Worker into an owned
 temporary directory, runs Miniflare with `cf: false`, loopback and an ephemeral
-port, checks a JSON PUT, and always disposes and removes its state. The cited
+port, checks a JSON PUT, disposes before removing its state, and retains an
+unresolved cleanup root for diagnosis. The cited
 Alchemy stack is typechecked only; it is never evaluated by site validation.
 
 ## Review gate
 
-From a clean checkout, remove only generated `packages/*/dist` outputs before
-verification so retired artifacts cannot mask missing exports:
+Optional registry preparation is separate from the local gate. Only when a
+fresh environment needs it, inspect lifecycle hooks first, then use scripts
+disabled for lockfile preparation and frozen installation:
+
+```sh
+bun install --lockfile-only --ignore-scripts
+bun install --cwd hosted --lockfile-only --ignore-scripts
+bun install --frozen-lockfile --ignore-scripts
+bun install --cwd hosted --frozen-lockfile --ignore-scripts
+bun run prepare
+```
+
+No registry preparation was needed for the accepted D candidate or its
+correction. From a clean checkout, remove only generated `packages/*/dist`
+outputs before verification so retired artifacts cannot mask missing exports.
+Set `STREAMSY_STORAGE_SCRATCH` to an existing absolute directory outside owned
+test roots and set `CLOUDFLARE_CF_FETCH_ENABLED=false` for the gate process:
 
 ```sh
 git clean -fdx -- packages/*/dist
-bun install --frozen-lockfile
 bun run build
 bun run typecheck
 bun run lint
@@ -71,12 +89,19 @@ bun run format:check
 bun run test:unit
 bun run test:conformance
 bun run hosted:check
+bun run test:sql-boundary
 bun run measure:bundle
 bun run check:perimeter
 bun run pack:dry-run
 bun run site:validate
 git diff --check
 ```
+
+The observed D candidate and correction results are recorded in the repository
+[D-local verification ledger](d-local-verification.md) and the stream's
+`batch-d-result.md` / `batch-d-fixes-result.md` artifacts. The ledger records
+the exact SHA, command environment, counts, artifact identity and site route
+and link totals; it does not authorize a hosted run.
 
 Inspect each dry-run file list and resolve every types/import/default export.
 Core has four public entry pairs; the bundler may emit shared implementation and
@@ -88,6 +113,8 @@ The official suite uses the approved Vitest-under-Bun runner and expects 332 pas
 plus six skips independently on memory, Bun SQLite, and local workerd. Authored
 tests use Bun. The accepted C unit baseline is core 305/5 skipped, storage 53/2,
 views 44/0, serve 135/3, Fold 47/0, and Hacker News 12/0; SQL boundary is 2/0.
+The isolated hosted fake workflow reports 37 passed/0 failed, and workerd
+ownership reports 8 passed/0 failed.
 The final Step 2 authored baseline is 525 passes and seven expected skips: the
 Fold SQLite CLI skip was enabled, while five core capability skips and two SQL
 host-capability skips remain declared.
@@ -103,7 +130,7 @@ check/build, OG, and rendered links. It sets
 modules, one output module, and worker SHA-256
 `2b32a617c8129a4f805754c398e67da963935d5c9cbb58d3f7849ef760c5e898`. These
 local figures sit beside the accepted Batch B 81,574 B signal and unchanged
-27,160 B proposal; hosted evidence and budget acceptance remain blocked.
+27,160 B proposal; hosted evidence and budget acceptance remain pending.
 
 ## Release boundary
 

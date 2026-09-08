@@ -18,7 +18,7 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
-Compiled source: `packages/core/test/readme.ts` (checked by `site:validate`).
+Compiled source: [packages/core/test/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/test/readme.ts) (checked by `site:validate`).
 
 Applications own the runtime and Layer lifetime. Memory is nonpersistent and
 process-local. `@streamsy/storage/bun` provides retained-file Bun SQLite protocol

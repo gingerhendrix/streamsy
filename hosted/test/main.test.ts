@@ -24,7 +24,7 @@ test("help is side-effect free and exits successfully", async () => {
   const result = await runMain("--help");
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("streamsy hosted evidence preparation");
-  expect(result.stdout).toContain("Hosted execution and acceptance remain blocked");
+  expect(result.stdout).toContain("Alchemy deployment for Step 3 is authorized");
 });
 
 test("evidence remains blocked even with populated fake opt-in inputs", async () => {

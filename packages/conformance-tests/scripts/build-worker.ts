@@ -235,7 +235,7 @@ const build = async (): Promise<void> => {
       acceptedBatchBGzipBytes: 81_574,
       proposalGzipBytes: 27_160,
       hostedStatus:
-        "Hosted execution and acceptance remain blocked by remote permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision.",
+        "Alchemy deployment for Step 3 is authorized. Hosted execution remains disabled in this local package pending independently reviewed live adapters and a reconciled run plan, including destroy/cleanup and required query scope. Hosted acceptance still requires hosted evidence, the uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.",
       hostedComparison:
         "Local bytes are not uploaded compressed bytes and do not establish hosted acceptance.",
     };

@@ -10,19 +10,20 @@ semantics; cross-object copy behavior is tested separately. The default
 `byStream()` topology retains nine chain-lifecycle divergences in that suite.
 Those are a topology distinction, not a hosted result or a changed assertion.
 
-The fixed status is:
+The current status is:
 
-> Hosted execution and acceptance remain blocked by remote permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.
+> Alchemy deployment for Step 3 is authorized. Hosted execution remains disabled in this local package pending independently reviewed live adapters and a reconciled run plan, including destroy/cleanup and required query scope. Hosted acceptance still requires hosted evidence, the uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.
 
 For the complete ownership, routing, expiry, fork, authorization, cancellation,
 and evidence contract, see the [hosting reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).
 
 ## A minimal Worker entry
 
-This example uses the production defaults: a shared `/streams` prefix,
-`byStream()` placement, Durable Object SQLite, and the namespace binding. It is
-typechecked with the Worker declarations and is not executed directly by the
-site checker.
+This example keeps the production timeout and body defaults while explicitly
+selecting a `/streams` prefix, `byStream()` placement, Durable Object SQLite,
+and the namespace binding. The host default path prefix is `/`. The source is
+typechecked with Worker declarations and is not executed directly by the site
+checker.
 
 Compiled source: [packages/serve/test/cloudflare/example-worker.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/cloudflare/example-worker.ts).
 
@@ -59,11 +60,12 @@ mapping from that identity.
 
 ## Run the example locally
 
-The checked local usage runner bundles the Worker, starts Miniflare with a
-loopback host, an ephemeral port, `cf: false`, compatibility date `2026-07-30`,
-and `nodejs_compat`, then creates `/streams/events`. It consumes the response,
-disposes Miniflare, and removes its owned temporary directory even after a
-failed startup.
+The checked local usage runner is a local usage smoke check, not the official
+332-pass/6-skip conformance profile. It bundles the Worker, starts Miniflare
+with a loopback host, an ephemeral port, `cf: false`, compatibility date
+`2026-07-30`, and `nodejs_compat`, then creates `/streams/events`. It consumes
+the response, disposes Miniflare, and removes its owned temporary directory
+after confirmed shutdown; an unresolved cleanup root is retained and reported.
 
 Compiled source: [packages/serve/test/cloudflare-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/cloudflare-usage.ts).
 
@@ -71,57 +73,150 @@ Compiled source: [packages/serve/test/cloudflare-usage.ts](https://github.com/gi
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/global-fetch -- This executable example owns the local Miniflare, temporary I/O, and HTTP boundaries. */
 import { mkdtemp, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(sourceDirectory, "../../..");
 const entrypoint = resolve(root, "packages/serve/test/cloudflare/example-worker.ts");
-const ownedRoot = await mkdtemp(join(sourceDirectory, ".streamsy-cloudflare-example-"));
-let miniflare: Miniflare | undefined;
 
-try {
-  const outputRoot = join(ownedRoot, "worker");
-  const build = await Bun.build({
-    entrypoints: [entrypoint],
-    outdir: outputRoot,
-    target: "browser",
-    format: "esm",
-    minify: false,
-    sourcemap: "none",
-    external: ["cloudflare:workers"],
-  });
-  if (!build.success) throw new Error("Cloudflare example Worker build failed");
-  const worker = build.outputs.find((output) => output.path.endsWith(".js"));
-  if (worker === undefined) throw new Error("Cloudflare example Worker emitted no JavaScript");
-
-  miniflare = new Miniflare({
-    scriptPath: worker.path,
-    modules: true,
-    compatibilityDate: "2026-07-30",
-    compatibilityFlags: ["nodejs_compat"],
-    host: "127.0.0.1",
-    port: 0,
-    cf: false,
-    durableObjects: { STREAMS: { className: "StreamsObject", useSQLite: true } },
-    durableObjectsPersist: join(ownedRoot, "state"),
-  });
-  const origin = (await miniflare.ready).origin;
-  const response = await fetch(new URL("/streams/events", origin), {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
-  });
-  await response.arrayBuffer();
-  if (response.status !== 201)
-    throw new Error(`Cloudflare example create failed: ${response.status}`);
-} finally {
-  try {
-    await miniflare?.dispose();
-  } finally {
-    await rm(ownedRoot, { recursive: true, force: true });
-  }
+export interface ExampleInstance {
+  readonly ready: Promise<{ readonly origin: string }>;
+  readonly dispose: () => Promise<void>;
 }
+
+export interface ExampleResponse {
+  readonly status: number;
+  readonly arrayBuffer: () => Promise<ArrayBuffer>;
+}
+
+export interface ExampleLifecycle {
+  readonly build: (outputRoot: string) => Promise<string>;
+  readonly start: (workerPath: string, statePath: string) => ExampleInstance;
+  readonly request: (origin: string) => Promise<ExampleResponse>;
+  readonly removeRoot?: (path: string) => Promise<void>;
+  readonly disposalTimeoutMs?: number;
+  readonly onRoot?: (path: string) => void;
+}
+
+const withTimeout = async <A>(promise: Promise<A>, timeoutMs: number): Promise<A> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<A>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Example disposal exceeded ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
+const aggregate = (primary: unknown | undefined, cleanup: ReadonlyArray<unknown>): never => {
+  const errors = primary === undefined ? [...cleanup] : [primary, ...cleanup];
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, "Cloudflare example failed and cleanup was incomplete", {
+    cause: primary ?? errors[0],
+  });
+};
+
+export const runOwnedExample = async (lifecycle: ExampleLifecycle): Promise<void> => {
+  const ownedRoot = await mkdtemp(join(tmpdir(), ".streamsy-cloudflare-example-"));
+  let instance: ExampleInstance | undefined;
+  let primaryError: unknown;
+  const cleanupErrors: unknown[] = [];
+
+  try {
+    lifecycle.onRoot?.(ownedRoot);
+    const workerPath = await lifecycle.build(join(ownedRoot, "worker"));
+    instance = lifecycle.start(workerPath, join(ownedRoot, "state"));
+    const { origin } = await instance.ready;
+    const response = await lifecycle.request(origin);
+    await response.arrayBuffer();
+    if (response.status !== 201) {
+      throw new Error(`Cloudflare example create failed: ${response.status}`);
+    }
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    let disposed = instance === undefined;
+    if (instance !== undefined) {
+      const disposalErrors: unknown[] = [];
+      const timeoutMs = lifecycle.disposalTimeoutMs ?? 1_000;
+      for (let attempt = 0; attempt < 2 && !disposed; attempt++) {
+        try {
+          await withTimeout(instance.dispose(), timeoutMs);
+          disposed = true;
+        } catch (error) {
+          disposalErrors.push(error);
+        }
+      }
+      if (!disposed) {
+        cleanupErrors.push(
+          ...disposalErrors,
+          new Error(`Cloudflare example instance remains owned; retained root: ${ownedRoot}`),
+        );
+      }
+    }
+    if (disposed) {
+      try {
+        await (lifecycle.removeRoot?.(ownedRoot) ??
+          rm(ownedRoot, { recursive: true, force: true }));
+      } catch (error) {
+        cleanupErrors.push(error, new Error(`Cloudflare example root retained: ${ownedRoot}`));
+      }
+    }
+  }
+
+  if (primaryError !== undefined || cleanupErrors.length > 0)
+    aggregate(primaryError, cleanupErrors);
+};
+
+const lifecycle: ExampleLifecycle = {
+  build: async (outputRoot) => {
+    const build = await Bun.build({
+      entrypoints: [entrypoint],
+      outdir: outputRoot,
+      target: "browser",
+      format: "esm",
+      minify: false,
+      sourcemap: "none",
+      external: ["cloudflare:workers"],
+    });
+    if (!build.success) throw new Error("Cloudflare example Worker build failed");
+    const worker = build.outputs.find((output) => output.path.endsWith(".js"));
+    if (worker === undefined) throw new Error("Cloudflare example Worker emitted no JavaScript");
+    return worker.path;
+  },
+  start: (workerPath, statePath) =>
+    new Miniflare({
+      scriptPath: workerPath,
+      modules: true,
+      modulesRoot: "/",
+      compatibilityDate: "2026-07-30",
+      compatibilityFlags: ["nodejs_compat"],
+      host: "127.0.0.1",
+      port: 0,
+      cf: false,
+      durableObjects: { STREAMS: { className: "StreamsObject", useSQLite: true } },
+      durableObjectsPersist: statePath,
+    }),
+  request: (origin) =>
+    fetch(new URL("/streams/events", origin), {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+};
+
+export const runExample = (): Promise<void> => runOwnedExample(lifecycle);
+
+if (import.meta.main) await runExample();
 ```
 
 This is local conformance evidence, not hosted evidence. The local Worker uses
@@ -133,10 +228,13 @@ on both hosts, and the default body limit is 1 MiB.
 
 The isolated hosted package contains a pinned v2 stack and a fake-only Effect
 workflow. The stack is typechecked for API compatibility; site validation does
-not evaluate it. Its executable always reports the fixed blocked status for
-evidence requests, including when placeholder credentials or permission values
-are present. Live deployment, cleanup, metadata capture, hosted measurements,
-and activation require a later reviewed boundary.
+not evaluate it. Alchemy deployment for Step 3 is authorized, but hosted
+execution remains disabled in this local package pending independently reviewed
+live adapters and a reconciled run plan, including destroy/cleanup and required
+query scope. Its executable always exits 2 for evidence requests, including
+when placeholder credentials or permission values are present. Hosted
+acceptance still requires hosted evidence, the uploaded-compressed-byte/startup-
+CPU policy, and Gareth's budget/topology decision.
 
 Compiled source: [hosted/alchemy.run.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/hosted/alchemy.run.ts).
 
@@ -166,5 +264,6 @@ export default Alchemy.Stack(
 );
 ```
 
-The fixed local ledger and deferred gates are maintained in the [hosting
-reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).
+The local ledger and deferred gates are maintained in the [D-local verification
+ledger](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/d-local-verification.md)
+and the [hosting reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).

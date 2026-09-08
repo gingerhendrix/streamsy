@@ -6,9 +6,9 @@ Object host are implemented and have local tests. Cloudflare hosted execution
 and release acceptance are still pending. celld is unconfirmed, outside the
 supported-host set, and evidence-only.
 
-The fixed release status is:
+The current release status is:
 
-> Hosted execution and acceptance remain blocked by remote permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.
+> Alchemy deployment for Step 3 is authorized. Hosted execution remains disabled in this local package pending independently reviewed live adapters and a reconciled run plan, including destroy/cleanup and required query scope. Hosted acceptance still requires hosted evidence, the uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.
 
 ## Host ownership
 
@@ -57,9 +57,10 @@ at the protocol deadlines. Hosted disconnect propagation is unmeasured.
 
 The router and object use the same literal `{ pathPrefix, placement }` pair.
 The default placement is `byStream()`. `byKey()` is a pure function of the
-path after its prefix is stripped. Keep this mapping stable for stored data.
-Invalid placement returns the accepted route errors; there is no magic
-placement header. A prefix is a routing boundary, not authentication.
+path after its prefix is stripped. Keep this mapping stable for stored data. An
+empty or non-string placement key returns `400 Invalid placement key`; a
+placement callback that throws returns `500 Internal server error`. There is no
+magic placement header. A prefix is a routing boundary, not authentication.
 
 Neither host implements authorization. Authenticate and authorize before
 forwarding to the router, derive tenant and path mapping from the authenticated
@@ -67,9 +68,10 @@ identity, and enforce it there. A caller-chosen prefix or object id is not an
 isolation boundary; possession of a namespace binding reaches its objects.
 
 The internal `streamsy.internal/fork-source` authority grants no privilege. A
-nonempty prefix keeps it off public routes; an empty-prefix object can still be
-reached with that authority. Private expiry authority is an in-process Context
-value, never a request marker or header.
+non-root effective prefix such as `/streams` keeps it off public routes; the
+root `/` prefix normalizes like an empty prefix and does not exclude that
+authority. Private expiry authority is an in-process Context value, never a
+request marker or header.
 
 ## Forks and copy limits
 
@@ -115,14 +117,14 @@ figures are labeled local and do not establish uploaded compressed bytes,
 startup CPU, or a budget pass.
 
 The isolated `hosted/` package typechecks the pinned Alchemy v2 stack and tests
-a fake-only Effect workflow. Its executable is intentionally blocked: `--help`
-prints the purpose and fixed status with exit 0, while evidence invocation
-prints the status and “Live hosted adapters are not enabled in this local range”
-with exit 2, even when fake credentials or permission values are supplied. No
-live deploy, destroy, metadata query, remote conformance, hosted measurement,
-or celld operation is reachable from the default commands. Later enablement
-needs separately reviewed live adapters, cleanup, measurement policy, and
-Gareth's budget/topology decision.
+a fake-only Effect workflow. Its executable remains disabled for evidence:
+`--help` prints the purpose and current status with exit 0, while evidence
+invocation prints the status and “Live hosted adapters are not enabled in this
+local range” with exit 2, even when fake credentials or permission values are
+supplied. No live deploy, destroy, metadata query, remote conformance, hosted
+measurement, or celld operation is reachable from the default commands. Later
+enablement needs separately reviewed live adapters, cleanup, measurement policy,
+and Gareth's budget/topology decision.
 
 Metadata fields remain distinct. Reported script size, downloaded module bytes,
 actual uploaded compressed bytes, and startup CPU are separate availability
@@ -137,12 +139,17 @@ This documentation does not reopen those items or enlarge the local scope.
 ## Local ledger
 
 The D-local gate starts at accepted C commit
-`e09213c1f88e1f68f3e1c3f8a556baa442fb430b`. The reproducible command sequence
-is recorded in the stream result and includes build, typecheck, hosted fake
-workflow, unit and three-backend conformance suites, SQL boundary, bundle
-measurement, lint and perimeter policy, format, package dry runs, and
-`site:validate`. Site validation checks terms, compiled excerpts, the local
-Cloudflare usage example, site build/OG output, and rendered internal links.
+`e09213c1f88e1f68f3e1c3f8a556baa442fb430b`. The complete reproducible command
+sequence, required scratch environment, observed correction SHA and result are
+recorded in the repository's [D-local verification ledger](d-local-verification.md)
+and the stream's correction result. It includes build, typecheck, hosted fake
+workflow, unit and three-backend conformance suites, ownership, SQL boundary,
+bundle measurement, lint and perimeter policy, format, package dry runs, and
+`site:validate`. Site validation checks terms, compiled excerpts, citation
+drift tests, the local Cloudflare usage smoke check, site build/OG output, and
+rendered internal links. The accepted hosted fake workflow is 37 passed/0
+failed, with workerd ownership 8 passed/0 failed; these are local checks, not
+hosted evidence.
 
 All claims in this page are either accepted C evidence, the local source
 contract, or explicitly marked as an observation or deferred gate. No claim in
