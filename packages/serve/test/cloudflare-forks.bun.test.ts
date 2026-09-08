@@ -1255,8 +1255,6 @@ test("B15 recreation under load restores and purges alarms in both object layout
       })
     ).status,
   ).toBe(201);
-  const byKeyRoot = byKey.root;
-  const byStreamRoot = byStream.root;
   const { byKey: recreatedByKey, byStream: recreatedByStream } = await recreateB15Harnesses(
     byKey,
     byStream,
