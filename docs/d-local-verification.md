@@ -4,10 +4,10 @@ This is the repository-local record for the D correction. It is a local
 verification ledger, not hosted evidence and not authorization to deploy. The
 correction code was verified from `7497d7173b7995979b448058aca835de397fd951`,
 the tip after the F1/F2 ownership corrections and their lint repairs. The
-documentation-only follow-up keeps that code and artifact identity unchanged;
-the final repository tip and the stream receipt are linked from the [Batch D
-correction result](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/../../personal-vault/daily/2026-09-07/step-3-codex-fable/batch-d-fixes-result.md)
-where private stream access is available to the coordinator.
+documentation-only follow-up keeps that code and artifact identity unchanged.
+The coordinator's stream result records the final documentation tip and private
+scratch receipt; this ledger keeps the reproducible facts available in the
+repository.
 
 ## Boundary and preparation
 
