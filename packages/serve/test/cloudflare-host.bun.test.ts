@@ -63,21 +63,51 @@ const rejectSymlinkPath = (path: string): void => {
   }
 };
 
-const retentionDestination = (root: string): string | undefined => {
-  if (retentionRoot === undefined) return undefined;
-  if (!isAbsolute(retentionRoot)) throw new Error("STREAMSY_STORAGE_SCRATCH must be absolute");
-  const destination = resolve(retentionRoot, basename(root));
+const retentionDestination = (root: string, configured = retentionRoot): string | undefined => {
+  if (configured === undefined) return undefined;
+  if (!isAbsolute(configured)) throw new Error("STREAMSY_STORAGE_SCRATCH must be absolute");
   rejectSymlinkPath(root);
-  rejectSymlinkPath(retentionRoot);
-  rejectSymlinkPath(destination);
   const sourceReal = realpathSync(root);
+  const retention = resolve(configured);
+  rejectSymlinkPath(retention);
+  if (retention === sourceReal || isDescendant(sourceReal, retention)) {
+    throw new Error("STREAMSY_STORAGE_SCRATCH must not point inside the owned harness root");
+  }
+  mkdirSync(retention, { recursive: true });
+  rejectSymlinkPath(retention);
+  const destination = resolve(retention, basename(root));
+  rejectSymlinkPath(destination);
   const destinationReal = existsSync(destination)
     ? realpathSync(destination)
-    : resolve(realpathSync(dirname(destination)), basename(destination));
+    : resolve(realpathSync(retention), basename(destination));
   if (destinationReal === sourceReal || isDescendant(sourceReal, destinationReal)) {
     throw new Error("STREAMSY_STORAGE_SCRATCH must not point inside the owned harness root");
   }
   return destination;
+};
+
+const reclaimOwnedRoot = (
+  root: string,
+  errors: Array<unknown>,
+  resolveDestination: () => string | undefined = () => retentionDestination(root),
+  copy: (source: string, destination: string) => void = (source, destination) => {
+    mkdirSync(resolve(destination, ".."), { recursive: true });
+    cpSync(source, destination, { recursive: true });
+  },
+  remove: (path: string) => void = (path) => rmSync(path, { recursive: true, force: true }),
+): void => {
+  try {
+    const destination = resolveDestination();
+    if (destination !== undefined) copy(root, destination);
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    remove(root);
+    ownedRoots.delete(root);
+  } catch (error) {
+    errors.push(error);
+  }
 };
 
 const makeHarness = async (entry = "worker.ts", root?: string) => {
@@ -158,13 +188,17 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
 
 const disposeHarness = async (harness: Harness, retainRoot = false): Promise<void> => {
   const errors: Array<unknown> = [];
+  let disposed = false;
   try {
     await harness.miniflare.dispose();
+    disposed = true;
   } catch (error) {
     errors.push(error);
   }
-  const index = open.indexOf(harness);
-  if (index >= 0) open.splice(index, 1);
+  if (disposed) {
+    const index = open.indexOf(harness);
+    if (index >= 0) open.splice(index, 1);
+  }
   try {
     rmSync(harness.bundleRoot, { recursive: true, force: true });
     ownedBundles.delete(harness.bundleRoot);
@@ -193,7 +227,14 @@ const disposeHarness = async (harness: Harness, retainRoot = false): Promise<voi
 
 afterEach(async () => {
   const errors: Array<unknown> = [];
-  for (const harness of open.splice(0)) {
+  for (const harness of open.slice()) {
+    try {
+      await disposeHarness(harness);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  for (const harness of open.slice()) {
     try {
       await disposeHarness(harness);
     } catch (error) {
@@ -209,20 +250,43 @@ afterEach(async () => {
     }
   }
   for (const root of ownedRoots) {
-    try {
-      const destination = retentionDestination(root);
-      if (destination !== undefined) {
-        mkdirSync(resolve(destination, ".."), { recursive: true });
-        cpSync(root, destination, { recursive: true });
-      }
-      rmSync(root, { recursive: true, force: true });
-      ownedRoots.delete(root);
-    } catch (error) {
-      errors.push(error);
-    }
+    reclaimOwnedRoot(root, errors);
   }
   if (errors.length > 0)
     throw new AggregateError(errors, "Cloudflare host afterEach cleanup failed");
+});
+
+test("owned-root reclamation removes a root after retention copy failure", () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-host-reclaim-"));
+  const errors: Array<unknown> = [];
+  let removed = false;
+  reclaimOwnedRoot(
+    root,
+    errors,
+    () => "/retained/root",
+    () => {
+      throw new Error("copy failed");
+    },
+    () => {
+      removed = true;
+      rmSync(root, { recursive: true, force: true });
+    },
+  );
+  expect(removed).toBe(true);
+  expect(errors).toHaveLength(1);
+});
+
+test("retention paths reject descendants and support a fresh destination", () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-host-retention-"));
+  const retention = mkdtempSync(join(tmpdir(), ".streamsy-host-retention-target-"));
+  const fresh = join(retention, "fresh");
+  try {
+    expect(retentionDestination(root, fresh)).toBe(join(fresh, basename(root)));
+    expect(() => retentionDestination(root, root)).toThrow();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(retention, { recursive: true, force: true });
+  }
 });
 
 const dispatchFetch = (

@@ -1,60 +1,17 @@
 /* oxlint-disable typescript/consistent-return -- The cleanup boundary returns Effect-style failure exits while successful branches complete with void. */
-import {
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Miniflare } from "miniflare";
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
+import { reclaimRoot } from "./workerd-harness.ts";
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/worker/worker.js");
 const config = { baseUrl: "" };
 let harness: { readonly miniflare: Miniflare; readonly root: string } | undefined;
-
-const isDescendant = (source: string, candidate: string): boolean => {
-  const path = relative(source, candidate);
-  return path !== "" && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
-};
-
-const rejectSymlinkPath = (path: string): void => {
-  let current = resolve(path);
-  for (;;) {
-    if (existsSync(current) && lstatSync(current).isSymbolicLink())
-      throw new Error(`Retention path must not contain a symlink: ${current}`);
-    const parent = dirname(current);
-    if (parent === current) return;
-    current = parent;
-  }
-};
-
-const retentionDestination = (root: string): string | undefined => {
-  const configured = Bun.env.STREAMSY_WORKERD_RETENTION;
-  if (configured === undefined) return undefined;
-  if (!isAbsolute(configured)) throw new Error("STREAMSY_WORKERD_RETENTION must be absolute");
-  const retention = resolve(configured);
-  const destination = resolve(retention, basename(root));
-  rejectSymlinkPath(root);
-  rejectSymlinkPath(retention);
-  rejectSymlinkPath(destination);
-  const sourceReal = realpathSync(root);
-  const destinationReal = existsSync(destination)
-    ? realpathSync(destination)
-    : resolve(realpathSync(dirname(destination)), basename(destination));
-  if (destinationReal === sourceReal || isDescendant(sourceReal, destinationReal)) {
-    throw new Error(
-      "STREAMSY_WORKERD_RETENTION must not be the persistence root or its descendant",
-    );
-  }
-  return destination;
-};
+const ownedRoots = new Set<string>();
 
 const cleanupHarness = async (current: {
   readonly miniflare?: Miniflare;
@@ -78,20 +35,9 @@ const cleanupHarness = async (current: {
   } catch (error) {
     errors.push(error);
   }
-  try {
-    const destination = retentionDestination(current.root);
-    if (destination !== undefined) {
-      mkdirSync(resolve(destination, ".."), { recursive: true });
-      cpSync(current.root, destination, { recursive: true });
-    }
-  } catch (error) {
-    errors.push(error);
-  }
-  try {
-    rmSync(current.root, { recursive: true, force: true });
-  } catch (error) {
-    errors.push(error);
-  }
+  const rootErrors = reclaimRoot(current.root, Bun.env.STREAMSY_WORKERD_RETENTION);
+  errors.push(...rootErrors);
+  if (rootErrors.length === 0) ownedRoots.delete(current.root);
   if (errors.length > 0) throw new AggregateError(errors, "Workerd harness cleanup failed");
 };
 
@@ -101,6 +47,7 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
       throw new Error("Missing workerd artifact; run bun run build:worker first");
     }
     const root = mkdtempSync(join(tmpdir(), "streamsy-conformance-workerd-"));
+    ownedRoots.add(root);
     let miniflare: Miniflare | undefined;
     try {
       miniflare = new Miniflare({
@@ -117,7 +64,6 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
       harness = { miniflare, root };
       config.baseUrl = (await miniflare.ready).origin;
     } catch (error) {
-      harness = undefined;
       const cleanupErrors: Array<unknown> = [];
       try {
         await miniflare?.dispose();
@@ -126,6 +72,7 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
       }
       try {
         rmSync(root, { recursive: true, force: true });
+        ownedRoots.delete(root);
       } catch (cleanupError) {
         cleanupErrors.push(cleanupError);
       }
@@ -141,8 +88,21 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
   afterAll(async () => {
     const current = harness;
     harness = undefined;
-    if (current === undefined) return;
-    await cleanupHarness(current);
+    const errors: Array<unknown> = [];
+    if (current !== undefined) {
+      try {
+        await cleanupHarness(current);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    for (const root of Array.from(ownedRoots)) {
+      const rootErrors = reclaimRoot(root, Bun.env.STREAMSY_WORKERD_RETENTION);
+      errors.push(...rootErrors);
+      if (rootErrors.length === 0) ownedRoots.delete(root);
+    }
+    if (errors.length > 0)
+      throw new AggregateError(errors, "Workerd afterAll cleanup failed");
   });
   runConformanceTests(config);
 });
