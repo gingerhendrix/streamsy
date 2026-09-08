@@ -42,6 +42,22 @@ test("excerpt validation requires a citation outside the code fence", () => {
   );
 });
 
+test("excerpt validation requires a rendered source destination", () => {
+  const bypasses = [
+    `~~~md\n[${pair.source}](https://example.test/${pair.source})\n~~~`,
+    `\`${"[" + pair.source + "](https://example.test/" + pair.source + ")"}\``,
+    `<!-- [source](${pair.source}) -->`,
+    `    [source](${pair.source})`,
+    `![source](${pair.source})`,
+    `[${pair.source}](https://example.test/unrelated.ts)`,
+  ];
+  for (const bypass of bypasses) {
+    expect(() =>
+      assertExcerpt(pair, `${bypass}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
+    ).toThrow("citation");
+  }
+});
+
 test("excerpt validation rejects code drift", () => {
   expect(() => assertExcerpt(pair, citedDocument, "export const answer = 7;")).toThrow("verbatim");
 });
@@ -87,6 +103,59 @@ test("hung excerpt descendants and owned state are reaped before root removal", 
     expect(isAlive(pid)).toBe(false);
     expect(await exists(ownedRoot)).toBe(false);
   } finally {
+    await rm(probeRoot, { recursive: true, force: true });
+  }
+});
+
+test("resistant descendants are hard-killed at the outer deadline", async () => {
+  const probeRoot = await mkdtemp(join(tmpdir(), ".streamsy-excerpt-resistant-"));
+  const source = join(probeRoot, "resistant.mjs");
+  const pidFile = join(probeRoot, "child.pid");
+  const readyFile = join(probeRoot, "child.ready");
+  await writeFile(
+    source,
+    [
+      'import { writeFileSync } from "node:fs";',
+      'import { spawn } from "node:child_process";',
+      "const root = process.env.STREAMSY_EXCERPT_ROOT;",
+      "const pidFile = process.env.PROBE_PID_FILE;",
+      "const readyFile = process.env.PROBE_READY_FILE;",
+      "const child = spawn(process.execPath, [\"-e\", `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(process.env.PROBE_READY_FILE, 'ready'); setInterval(() => {}, 1000);`], {",
+      "  env: { ...process.env, PROBE_READY_FILE: readyFile },",
+      '  stdio: "ignore",',
+      "});",
+      "writeFileSync(pidFile, String(child.pid));",
+      'process.on("SIGTERM", () => process.exit(0));',
+      'writeFileSync(`${root}/state`, "owned");',
+      "setInterval(() => {}, 1000);",
+    ].join("\n"),
+  );
+
+  let ownedRoot = "";
+  let execution: Promise<void> | undefined;
+  const timeoutMs = 300;
+  const startedAt = Date.now();
+  try {
+    execution = runExcerpt(source, "resistant excerpt", {
+      timeoutMs,
+      graceMs: 100,
+      reapTimeoutMs: 1_000,
+      environment: { PROBE_PID_FILE: pidFile, PROBE_READY_FILE: readyFile },
+      onRoot: (path) => {
+        ownedRoot = path;
+      },
+    });
+    await waitForFile(readyFile);
+    const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
+    const beforeDeadline = Math.max(0, timeoutMs - (Date.now() - startedAt) - 30);
+    await delay(beforeDeadline);
+    expect(isAlive(pid)).toBe(true);
+    await expect(execution).rejects.toThrow("exceeded 300 ms");
+    expect(Date.now() - startedAt).toBeLessThan(timeoutMs + 700);
+    expect(isAlive(pid)).toBe(false);
+    expect(await exists(ownedRoot)).toBe(false);
+  } finally {
+    await execution?.catch(() => undefined);
     await rm(probeRoot, { recursive: true, force: true });
   }
 });

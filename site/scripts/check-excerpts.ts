@@ -116,6 +116,11 @@ const runOwnedProcess = async (
   let exit: ChildExit | undefined;
   let primaryError: Error | undefined;
   const cleanupErrors: Error[] = [];
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + timeoutMs;
+  let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let hardKillError: Error | undefined;
+  let hardKillScheduled = false;
 
   try {
     options.onRoot?.(ownedRoot);
@@ -130,6 +135,17 @@ const runOwnedProcess = async (
       },
       stdio: ["ignore", "inherit", "inherit"],
     });
+    hardKillTimer = setTimeout(
+      () => {
+        hardKillScheduled = true;
+        try {
+          signalGroup(child?.pid, "SIGKILL");
+        } catch (error) {
+          hardKillError = error instanceof Error ? error : new Error(String(error));
+        }
+      },
+      Math.max(0, deadlineAt - Date.now()),
+    );
     const closed = new Promise<ChildExit>((resolve) => {
       let settled = false;
       const finish = (value: ChildExit): void => {
@@ -170,14 +186,17 @@ const runOwnedProcess = async (
     if (child?.pid !== undefined) {
       let gone = false;
       try {
-        gone = await waitForGroupGone(child.pid, reapTimeoutMs);
+        gone = await waitForGroupGone(child.pid, Math.max(0, deadlineAt - Date.now()));
       } catch (error) {
         cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
       }
       if (!gone) {
         try {
-          signalGroup(child.pid, "SIGTERM");
-          gone = await waitForGroupGone(child.pid, Math.max(100, graceMs));
+          if (!hardKillScheduled) {
+            hardKillScheduled = true;
+            signalGroup(child.pid, "SIGKILL");
+          }
+          gone = await waitForGroupGone(child.pid, reapTimeoutMs);
         } catch (error) {
           cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
         }
@@ -195,7 +214,9 @@ const runOwnedProcess = async (
           new Error(`${label} process group remains; retained root: ${ownedRoot}`),
         );
       }
+      if (hardKillError !== undefined) cleanupErrors.push(hardKillError);
       if (gone) {
+        if (hardKillTimer !== undefined) clearTimeout(hardKillTimer);
         try {
           await rm(ownedRoot, { recursive: true, force: true });
         } catch (error) {
@@ -206,6 +227,7 @@ const runOwnedProcess = async (
         }
       }
     } else {
+      if (hardKillTimer !== undefined) clearTimeout(hardKillTimer);
       try {
         await rm(ownedRoot, { recursive: true, force: true });
       } catch (error) {
@@ -226,14 +248,65 @@ export const runExcerpt = (
   options?: ProcessRunOptions,
 ): Promise<void> => runOwnedProcess([source], label, options);
 
-const markdownWithoutCodeFences = (text: string): string => text.replace(/```[\s\S]*?```/g, "");
+const markdownWithoutNonRenderedBlocks = (text: string): string => {
+  const lines = text.split("\n");
+  let fence: { readonly marker: "`" | "~"; readonly length: number } | undefined;
+  const visible: string[] = [];
+  for (const line of lines) {
+    const fenceMatch = line.match(/^\s*([`~]{3,})/);
+    if (fence !== undefined) {
+      if (
+        fenceMatch !== null &&
+        fenceMatch[1]![0] === fence.marker &&
+        fenceMatch[1]!.length >= fence.length
+      )
+        fence = undefined;
+      continue;
+    }
+    if (fenceMatch !== null) {
+      fence = { marker: fenceMatch[1]![0] as "`" | "~", length: fenceMatch[1]!.length };
+      continue;
+    }
+    if (/^(?: {4}|\t)/.test(line)) continue;
+    visible.push(line);
+  }
+  let result = visible.join("\n");
+  result = result.replace(/<!--[\s\S]*?-->/g, "");
+  result = result.replace(/(`+)([\s\S]*?)\1/g, "");
+  return result;
+};
+
+const hasRenderedCitation = (text: string, source: string): boolean => {
+  const visible = markdownWithoutNonRenderedBlocks(text);
+  for (let index = 0; index < visible.length; index++) {
+    if (visible[index] !== "[" || (index > 0 && visible[index - 1] === "!")) continue;
+    const closeLabel = visible.indexOf("]", index + 1);
+    if (closeLabel < 0) continue;
+    let openDestination = closeLabel + 1;
+    while (/\s/.test(visible[openDestination] ?? "")) openDestination++;
+    if (visible[openDestination] !== "(") continue;
+    let closeDestination = openDestination + 1;
+    let depth = 1;
+    while (closeDestination < visible.length && depth > 0) {
+      if (visible[closeDestination] === "(") depth++;
+      if (visible[closeDestination] === ")") depth--;
+      closeDestination++;
+    }
+    if (depth !== 0) continue;
+    const destination = visible.slice(openDestination + 1, closeDestination - 1).trim();
+    const normalized =
+      destination.startsWith("<") && destination.endsWith(">")
+        ? destination.slice(1, -1)
+        : destination.split(/\s+/)[0];
+    if (normalized.includes(source)) return true;
+    index = closeDestination - 1;
+  }
+  return false;
+};
 
 export const assertExcerpt = (pair: ExcerptPair, text: string, code: string): void => {
-  const citationText = markdownWithoutCodeFences(text);
-  const cited = [...citationText.matchAll(/\[([^\]]*)\]\(([^)]*)\)/g)].some((match) =>
-    `${match[1]} ${match[2]}`.includes(pair.source),
-  );
-  if (!cited) throw new Error(`Excerpt citation missing: ${pair.doc} must link ${pair.source}`);
+  if (!hasRenderedCitation(text, pair.source))
+    throw new Error(`Excerpt citation missing: ${pair.doc} must link ${pair.source}`);
   if (!text.includes(`\x60\x60\x60ts\n${code}\n\x60\x60\x60`)) {
     throw new Error(`Excerpt drift: ${pair.doc} must include ${pair.source} verbatim`);
   }

@@ -70,11 +70,12 @@ bun install --lockfile-only --ignore-scripts
 bun install --cwd hosted --lockfile-only --ignore-scripts
 bun install --frozen-lockfile --ignore-scripts
 bun install --cwd hosted --frozen-lockfile --ignore-scripts
+bun install --cwd site --frozen-lockfile --ignore-scripts
 bun run prepare
 ```
 
-No registry preparation was needed for the accepted D candidate or its
-correction. From a clean checkout, remove only generated `packages/*/dist`
+No registry preparation was needed for the prior D candidate (whose review
+disposition was FIX) or its correction. From a clean checkout, remove only generated `packages/*/dist`
 outputs before verification so retired artifacts cannot mask missing exports.
 Set `STREAMSY_STORAGE_SCRATCH` to an existing absolute directory outside owned
 test roots and set `CLOUDFLARE_CF_FETCH_ENABLED=false` for the gate process:
