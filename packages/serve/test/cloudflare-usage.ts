@@ -45,7 +45,7 @@ const withTimeout = async <A>(promise: Promise<A>, timeoutMs: number): Promise<A
   }
 };
 
-const aggregate = (primary: unknown | undefined, cleanup: ReadonlyArray<unknown>): never => {
+const aggregate = (primary: Error | undefined, cleanup: ReadonlyArray<Error>): never => {
   const errors = primary === undefined ? [...cleanup] : [primary, ...cleanup];
   if (errors.length === 1) throw errors[0];
   throw new AggregateError(errors, "Cloudflare example failed and cleanup was incomplete", {
@@ -56,8 +56,8 @@ const aggregate = (primary: unknown | undefined, cleanup: ReadonlyArray<unknown>
 export const runOwnedExample = async (lifecycle: ExampleLifecycle): Promise<void> => {
   const ownedRoot = await mkdtemp(join(tmpdir(), ".streamsy-cloudflare-example-"));
   let instance: ExampleInstance | undefined;
-  let primaryError: unknown;
-  const cleanupErrors: unknown[] = [];
+  let primaryError: Error | undefined;
+  const cleanupErrors: Error[] = [];
 
   try {
     lifecycle.onRoot?.(ownedRoot);
@@ -70,18 +70,18 @@ export const runOwnedExample = async (lifecycle: ExampleLifecycle): Promise<void
       throw new Error(`Cloudflare example create failed: ${response.status}`);
     }
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
   } finally {
     let disposed = instance === undefined;
     if (instance !== undefined) {
-      const disposalErrors: unknown[] = [];
+      const disposalErrors: Error[] = [];
       const timeoutMs = lifecycle.disposalTimeoutMs ?? 1_000;
       for (let attempt = 0; attempt < 2 && !disposed; attempt++) {
         try {
           await withTimeout(instance.dispose(), timeoutMs);
           disposed = true;
         } catch (error) {
-          disposalErrors.push(error);
+          disposalErrors.push(error instanceof Error ? error : new Error(String(error)));
         }
       }
       if (!disposed) {
@@ -96,7 +96,10 @@ export const runOwnedExample = async (lifecycle: ExampleLifecycle): Promise<void
         await (lifecycle.removeRoot?.(ownedRoot) ??
           rm(ownedRoot, { recursive: true, force: true }));
       } catch (error) {
-        cleanupErrors.push(error, new Error(`Cloudflare example root retained: ${ownedRoot}`));
+        cleanupErrors.push(
+          error instanceof Error ? error : new Error(String(error)),
+          new Error(`Cloudflare example root retained: ${ownedRoot}`),
+        );
       }
     }
   }

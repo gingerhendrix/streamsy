@@ -65,15 +65,14 @@ interface ChildExit {
   readonly error?: Error;
 }
 
-const isNoSuchProcess = (error: unknown): boolean =>
-  error instanceof Error && "code" in error && error.code === "ESRCH";
+const isNoSuchProcess = (error: Error): boolean => "code" in error && error.code === "ESRCH";
 
 const signalGroup = (pid: number | undefined, signal: NodeJS.Signals): void => {
   if (pid === undefined) return;
   try {
     process.kill(-pid, signal);
   } catch (error) {
-    if (!isNoSuchProcess(error)) throw error;
+    if (!(error instanceof Error) || !isNoSuchProcess(error)) throw error;
   }
 };
 
@@ -82,7 +81,7 @@ const groupExists = (pid: number): boolean => {
     process.kill(-pid, 0);
     return true;
   } catch (error) {
-    if (isNoSuchProcess(error)) return false;
+    if (error instanceof Error && isNoSuchProcess(error)) return false;
     throw error;
   }
 };
@@ -96,7 +95,7 @@ const waitForGroupGone = async (pid: number, timeoutMs: number): Promise<boolean
   return true;
 };
 
-const combine = (primary: unknown | undefined, cleanup: ReadonlyArray<unknown>): never => {
+const combine = (primary: Error | undefined, cleanup: ReadonlyArray<Error>): never => {
   const errors = primary === undefined ? [...cleanup] : [primary, ...cleanup];
   if (errors.length === 1) throw errors[0];
   throw new AggregateError(errors, "Excerpt process failed and cleanup was incomplete", {
@@ -115,8 +114,8 @@ const runOwnedProcess = async (
   const reapTimeoutMs = options.reapTimeoutMs ?? DEFAULT_REAP_TIMEOUT_MS;
   let child: ReturnType<typeof spawn> | undefined;
   let exit: ChildExit | undefined;
-  let primaryError: unknown;
-  const cleanupErrors: unknown[] = [];
+  let primaryError: Error | undefined;
+  const cleanupErrors: Error[] = [];
 
   try {
     options.onRoot?.(ownedRoot);
@@ -139,9 +138,7 @@ const runOwnedProcess = async (
         resolve(value);
       };
       child?.once("error", (error) => finish({ code: null, signal: null, error }));
-      child?.once("close", (code, signal) =>
-        finish({ code, signal: signal as NodeJS.Signals | null }),
-      );
+      child?.once("close", (code, signal) => finish({ code, signal }));
     });
     const beforeDeadline = await Promise.race([
       closed,
@@ -168,21 +165,21 @@ const runOwnedProcess = async (
       );
     }
   } catch (error) {
-    primaryError ??= error;
+    primaryError ??= error instanceof Error ? error : new Error(String(error));
   } finally {
     if (child?.pid !== undefined) {
       let gone = false;
       try {
         gone = await waitForGroupGone(child.pid, reapTimeoutMs);
       } catch (error) {
-        cleanupErrors.push(error);
+        cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
       }
       if (!gone) {
         try {
           signalGroup(child.pid, "SIGTERM");
           gone = await waitForGroupGone(child.pid, Math.max(100, graceMs));
         } catch (error) {
-          cleanupErrors.push(error);
+          cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
         }
       }
       if (!gone) {
@@ -190,7 +187,7 @@ const runOwnedProcess = async (
           signalGroup(child.pid, "SIGKILL");
           gone = await waitForGroupGone(child.pid, reapTimeoutMs);
         } catch (error) {
-          cleanupErrors.push(error);
+          cleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
         }
       }
       if (!gone) {
@@ -202,14 +199,20 @@ const runOwnedProcess = async (
         try {
           await rm(ownedRoot, { recursive: true, force: true });
         } catch (error) {
-          cleanupErrors.push(error, new Error(`${label} root retained: ${ownedRoot}`));
+          cleanupErrors.push(
+            error instanceof Error ? error : new Error(String(error)),
+            new Error(`${label} root retained: ${ownedRoot}`),
+          );
         }
       }
     } else {
       try {
         await rm(ownedRoot, { recursive: true, force: true });
       } catch (error) {
-        cleanupErrors.push(error, new Error(`${label} root retained: ${ownedRoot}`));
+        cleanupErrors.push(
+          error instanceof Error ? error : new Error(String(error)),
+          new Error(`${label} root retained: ${ownedRoot}`),
+        );
       }
     }
   }

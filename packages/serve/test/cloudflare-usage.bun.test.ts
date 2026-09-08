@@ -17,7 +17,7 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
-const messages = (error: unknown): string =>
+const messages = (error: Error | AggregateError): string =>
   error instanceof AggregateError
     ? error.errors.map((item) => messages(item)).join(" | ")
     : error instanceof Error
@@ -102,7 +102,13 @@ test.each([
       },
     }),
   );
-  await expect(runOwnedExample(lifecycle)).rejects.toThrow();
+  let failed = false;
+  try {
+    await runOwnedExample(lifecycle);
+  } catch {
+    failed = true;
+  }
+  expect(failed).toBe(true);
   expect(await exists(root)).toBe(false);
 });
 
@@ -131,7 +137,7 @@ test("unresolved disposal retains the root and combines the primary failure", as
   let root = "";
   let attempts = 0;
   const primary = new Error("ready failed");
-  let caught: unknown;
+  let caught: Error | AggregateError | undefined;
   try {
     await runOwnedExample(
       baseLifecycle({
@@ -150,9 +156,10 @@ test("unresolved disposal retains the root and combines the primary failure", as
       }),
     );
   } catch (error) {
-    caught = error;
+    caught = error instanceof Error ? error : new Error(String(error));
   }
   expect(attempts).toBe(2);
+  if (caught === undefined) throw new Error("expected unresolved disposal to fail");
   expect(messages(caught)).toContain("ready failed");
   expect(messages(caught)).toContain("retained root");
   expect(await exists(root)).toBe(true);
@@ -162,7 +169,7 @@ test("unresolved disposal retains the root and combines the primary failure", as
 test("root-removal failure is retained rather than reported as cleanup success", async () => {
   let root = "";
   const removal = new Error("remove failed");
-  let caught: unknown;
+  let caught: Error | AggregateError | undefined;
   try {
     await runOwnedExample(
       baseLifecycle({
@@ -175,8 +182,9 @@ test("root-removal failure is retained rather than reported as cleanup success",
       }),
     );
   } catch (error) {
-    caught = error;
+    caught = error instanceof Error ? error : new Error(String(error));
   }
+  if (caught === undefined) throw new Error("expected removal failure");
   expect(messages(caught)).toContain("remove failed");
   expect(await exists(root)).toBe(true);
   await rm(root, { recursive: true, force: true });
