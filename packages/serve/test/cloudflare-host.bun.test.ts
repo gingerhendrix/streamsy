@@ -484,6 +484,24 @@ test("actual hook retries root removal after acquisition cleanup", async () => {
   }
 });
 
+test("host recreation failure reclaims the retained owner through the hook", async () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-host-recreate-state-"));
+  const firstDependencies = fakeHarnessDependencies();
+  const secondDependencies = fakeHarnessDependencies({ readyFailure: true });
+  try {
+    const first = await makeHarness("worker.ts", root, firstDependencies);
+    await disposeHarness(first, true);
+    expect(ownedRoots.has(root)).toBe(true);
+    await expect(makeHarness("worker.ts", root, secondDependencies)).rejects.toThrow("ready failed");
+    expect(ownedRoots.has(root)).toBe(true);
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    expect(ownedRoots.has(root)).toBe(false);
+  } finally {
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 const dispatchFetch = (
   miniflare: HarnessProcess,
   input: string | Request,
