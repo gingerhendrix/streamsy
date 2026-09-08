@@ -115,6 +115,54 @@ test("latency deltas preserve the historical first-minus-warm sign", async () =>
   expect(exit.deltas.status).toBe("success");
 });
 
+test("latency enforces bounded concurrent phases and completes all PUTs before HEADs", async () => {
+  const paths = Array.from({ length: 7 }, (_, index) => `/streams/${index}`);
+  let active = 0;
+  let maximum = 0;
+  let putsCompleted = 0;
+  let headBeforeAllPuts = false;
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* measureLatency({
+        baseUrl: "https://example.test",
+        paths,
+        concurrency: 3,
+      }).pipe(Effect.forkChild);
+      const ticker = yield* Effect.forever(
+        Effect.gen(function* () {
+          yield* TestClock.adjust("10 millis");
+          yield* Effect.yieldNow;
+        }),
+      ).pipe(Effect.forkChild);
+      const value = yield* Fiber.join(fiber);
+      yield* Fiber.interrupt(ticker);
+      return value;
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.gen(function* () {
+                active += 1;
+                maximum = Math.max(maximum, active);
+                if (request.method === "HEAD" && putsCompleted !== paths.length)
+                  headBeforeAllPuts = true;
+                yield* Effect.sleep("10 millis");
+                if (request.method === "PUT") putsCompleted += 1;
+                active -= 1;
+                return { status: 200, body: "" };
+              }),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+  expect(result.valid).toBe(true);
+  expect(maximum).toBe(3);
+  expect(headBeforeAllPuts).toBe(false);
+});
+
 test("latency does not produce a valid aggregate after a failed response", async () => {
   const layer = Layer.succeed(HttpOperation, {
     request: (request) =>
@@ -217,6 +265,53 @@ test("throughput preserves trial ordering and historical diagnostics", async () 
   expect(result.medianRate).toBe(1);
   expect(result.diagnostics.step0Rate).toBe(54.60448413131066);
   expect(result.diagnostics.priorReferenceRate).toBe(91);
+});
+
+test("throughput bounds POST concurrency and keeps trials sequential", async () => {
+  let activePosts = 0;
+  let maximumPosts = 0;
+  let trialOverlap = false;
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* measureThroughput({
+        baseUrl: "https://example.test",
+        trials: 5,
+        postsPerTrial: 5,
+        concurrency: 2,
+      }).pipe(Effect.forkChild);
+      const ticker = yield* Effect.forever(
+        Effect.gen(function* () {
+          yield* TestClock.adjust("10 millis");
+          yield* Effect.yieldNow;
+        }),
+      ).pipe(Effect.forkChild);
+      const value = yield* Fiber.join(fiber);
+      yield* Fiber.interrupt(ticker);
+      return value;
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(HttpOperation, {
+            request: (request) =>
+              Effect.gen(function* () {
+                if (request.method === "PUT" && activePosts > 0) trialOverlap = true;
+                if (request.method === "POST") {
+                  activePosts += 1;
+                  maximumPosts = Math.max(maximumPosts, activePosts);
+                  yield* Effect.sleep("10 millis");
+                  activePosts -= 1;
+                }
+                return { status: request.method === "PUT" ? 201 : 204, body: "" };
+              }),
+          }),
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+  expect(result.valid).toBe(true);
+  expect(maximumPosts).toBe(2);
+  expect(trialOverlap).toBe(false);
 });
 
 const clockLayer = (

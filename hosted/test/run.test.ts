@@ -23,7 +23,7 @@ const target = { workerName: identity.workerName, url: "https://streamsy.example
 
 const makeServices = (
   overrides: Partial<EvidenceOperationsService> = {},
-  reportFailure = false,
+  reportFailure: boolean | "sync" = false,
 ) => {
   let destroyed = false;
   let report: EvidenceReport | undefined;
@@ -81,18 +81,20 @@ const makeServices = (
   const persistence = {
     write: (value: EvidenceReport) => {
       report = value;
+      if (reportFailure === "sync") throw new Error("sync write failed");
       return reportFailure
         ? Effect.fail(new ContractError({ message: "write failed" }))
         : Effect.succeed(undefined);
     },
   };
-  const layer = Layer.mergeAll(
-    Layer.succeed(EvidenceOperations, operations),
-    Layer.succeed(HttpOperation, http),
-    Layer.succeed(ReportPersistence, persistence),
-  );
+  const operationsLayer = Layer.succeed(EvidenceOperations, operations);
+  const httpLayer = Layer.succeed(HttpOperation, http);
+  const persistenceLayer = Layer.succeed(ReportPersistence, persistence);
+  const layer = Layer.mergeAll(operationsLayer, httpLayer, persistenceLayer);
   return {
     layer,
+    operationsLayer,
+    persistenceLayer,
     calls,
     get report() {
       return report;
@@ -191,6 +193,23 @@ test("a declared failing official result is recorded as a failed step", async ()
   expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
 });
 
+test("only the fixed affirmative conformance profile is successful", async () => {
+  for (const status of ["", "error", "pending", "failed", "failure", "success"] as const) {
+    const services = makeServices({
+      runOfficialSuite: () => Effect.succeed({ passed: 332, skipped: 6, status }),
+    });
+    const exit = await runWithClock(runEvidence(identity), services.layer);
+    expect(Exit.isFailure(exit)).toBe(status !== "success");
+    expect(services.report?.conformance.status).toBe(status === "success" ? "success" : "failure");
+  }
+  const zero = makeServices({
+    runOfficialSuite: () => Effect.succeed({ passed: 0, skipped: 6, status: "success" }),
+  });
+  const zeroExit = await runWithClock(runEvidence(identity), zero.layer);
+  expect(Exit.isFailure(zeroExit)).toBe(true);
+  expect(zero.report?.conformance.status).toBe("failure");
+});
+
 test("conformance failure still runs both destroys and exact audit", async () => {
   const services = makeServices({
     runOfficialSuite: () => {
@@ -248,6 +267,141 @@ test("an interrupted workflow still performs cleanup", async () => {
   expect(Exit.isFailure(exit)).toBe(true);
   expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
   expect(services.report?.primaryFailure).toContain("interrupted");
+});
+
+const interruptAt = async (
+  program: Parameters<typeof runEvidence>[1] extends never ? never : ReturnType<typeof runEvidence>,
+  started: Deferred.Deferred<void>,
+  layer: Layer.Layer<EvidenceOperations | HttpOperation | ReportPersistence>,
+) =>
+  Effect.runPromiseExit(
+    Effect.gen(function* () {
+      const fiber = yield* program.pipe(Effect.forkChild);
+      const ticker = yield* Effect.forever(
+        Effect.gen(function* () {
+          yield* TestClock.adjust("2 seconds");
+          yield* Effect.yieldNow;
+        }),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const interruption = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+      yield* Fiber.join(interruption);
+      yield* Fiber.interrupt(ticker);
+      return yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))),
+  );
+
+test("external interruption preserves typed and synchronous report failures", async () => {
+  for (const reportFailure of [true, "sync"] as const) {
+    const started = Deferred.makeUnsafe<void>();
+    const services = makeServices(
+      {
+        deploy: () =>
+          Effect.gen(function* () {
+            services.calls.push("deploy");
+            yield* Deferred.succeed(started, undefined);
+            return yield* Effect.never;
+          }),
+      },
+      reportFailure,
+    );
+    const exit = await interruptAt(runEvidence(identity), started, services.layer);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const message = Cause.pretty(exit.cause);
+      expect(message).toContain("interrupted");
+      expect(message).toContain("write");
+    }
+    expect(services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
+  }
+});
+
+test("external interruption preserves cleanup and report failures together", async () => {
+  const started = Deferred.makeUnsafe<void>();
+  const services = makeServices(
+    {
+      deploy: () =>
+        Effect.gen(function* () {
+          services.calls.push("deploy");
+          yield* Deferred.succeed(started, undefined);
+          return yield* Effect.never;
+        }),
+      destroy: () => Effect.fail(new ContractError({ message: "destroy secondary" })),
+      auditExactWorker: () => Effect.fail(new ContractError({ message: "audit secondary" })),
+    },
+    true,
+  );
+  const exit = await interruptAt(runEvidence(identity), started, services.layer);
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    const message = Cause.pretty(exit.cause);
+    expect(message).toContain("interrupted");
+    expect(message).toContain("destroy secondary");
+    expect(message).toContain("audit secondary");
+    expect(message).toContain("write failed");
+  }
+});
+
+test("interrupted attempted conformance and metadata steps are reported as failures", async () => {
+  for (const step of ["conformance", "metadata"] as const) {
+    const started = Deferred.makeUnsafe<void>();
+    let services: ReturnType<typeof makeServices>;
+    const overrides =
+      step === "conformance"
+        ? {
+            runOfficialSuite: () =>
+              Effect.gen(function* () {
+                services.calls.push("conformance");
+                yield* Deferred.succeed(started, undefined);
+                return yield* Effect.never;
+              }),
+          }
+        : {
+            captureMetadata: () =>
+              Effect.gen(function* () {
+                services.calls.push("metadata");
+                yield* Deferred.succeed(started, undefined);
+                return yield* Effect.never;
+              }),
+          };
+    services = makeServices(overrides);
+    const exit = await interruptAt(runEvidence(identity), started, services.layer);
+    expect(Exit.isFailure(exit)).toBe(true);
+    const stepResult = services.report?.[step];
+    expect(stepResult?.status).toBe("failure");
+    if (stepResult?.status === "failure") expect(stepResult.reason).toContain("interrupted");
+  }
+});
+
+test("interrupted configured measurement is not reported as unavailable", async () => {
+  const started = Deferred.makeUnsafe<void>();
+  const services = makeServices();
+  const options = {
+    measurement: {
+      latency: { baseUrl: target.url, paths: ["/streams/a"], concurrency: 1 },
+      throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
+    },
+  } as const;
+  const measurementHttp = Layer.succeed(HttpOperation, {
+    request: (request: { readonly method: string }) =>
+      request.method === "GET"
+        ? Effect.succeed({ status: 400, body: "Stream path required: /{path}" })
+        : request.method === "PUT"
+          ? Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              return yield* Effect.never;
+            })
+          : Effect.succeed({ status: 200, body: "" }),
+  });
+  const exit = await interruptAt(
+    runEvidence(identity, options),
+    started,
+    Layer.mergeAll(services.operationsLayer, services.persistenceLayer, measurementHttp),
+  );
+  expect(Exit.isFailure(exit)).toBe(true);
+  expect(services.report?.measurement.status).toBe("failure");
+  if (services.report?.measurement.status === "failure")
+    expect(services.report.measurement.reason).toContain("interrupted");
 });
 
 test("synchronous cleanup throws do not skip later cleanup or reporting", async () => {

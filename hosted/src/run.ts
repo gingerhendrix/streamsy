@@ -152,6 +152,14 @@ interface ExitStep {
   readonly error?: string;
 }
 
+const interruptedStep = <A>(label: string) =>
+  failure<A>(`${label} was interrupted before completion`);
+
+const isSuccessfulConformance = (result: ConformanceResult): boolean =>
+  result.passed === 332 &&
+  result.skipped === 6 &&
+  (result.status === "local-only" || result.status === "success");
+
 const errorMessage = (cause: Cause.Cause<unknown>): string => Cause.pretty(cause);
 
 const captureEffect = <A, R>(
@@ -317,6 +325,13 @@ export const runEvidence = (
           url: target.value.url,
           report: { ...state.report, url: target.value.url },
         }));
+        yield* Ref.update(stateRef, (state) => ({
+          ...state,
+          report: {
+            ...state.report,
+            readiness: interruptedStep<{ readonly attempts: number }>("Readiness"),
+          },
+        }));
         const ready = yield* captureEffect(() => awaitReady(target.value.url));
         if (Exit.isFailure(ready)) {
           const reason = errorMessage(ready.cause);
@@ -333,6 +348,13 @@ export const runEvidence = (
         yield* Ref.update(stateRef, (state) => ({
           ...state,
           report: { ...state.report, readiness: success(ready.value) },
+        }));
+        yield* Ref.update(stateRef, (state) => ({
+          ...state,
+          report: {
+            ...state.report,
+            conformance: interruptedStep<ConformanceResult>("Official conformance"),
+          },
         }));
         const conformanceExit = yield* captureEffect<ConformanceResult, EvidenceOperations>(() =>
           operations.runOfficialSuite({
@@ -355,13 +377,10 @@ export const runEvidence = (
         const conformance = conformanceExit.value;
         if (
           !Number.isInteger(conformance.passed) ||
-          conformance.passed < 0 ||
           !Number.isInteger(conformance.skipped) ||
-          conformance.skipped < 0 ||
-          conformance.status.toLowerCase() === "failure" ||
-          conformance.status.toLowerCase() === "failed"
+          !isSuccessfulConformance(conformance)
         ) {
-          const reason = "Official conformance reported a failing or invalid result";
+          const reason = "Official conformance did not report the fixed successful profile";
           yield* Ref.update(stateRef, (state) => ({
             ...state,
             report: {
@@ -375,6 +394,13 @@ export const runEvidence = (
         yield* Ref.update(stateRef, (state) => ({
           ...state,
           report: { ...state.report, conformance: success(conformance) },
+        }));
+        yield* Ref.update(stateRef, (state) => ({
+          ...state,
+          report: {
+            ...state.report,
+            metadata: interruptedStep<MetadataResult>("Metadata capture"),
+          },
         }));
         const metadataExit = yield* captureEffect<MetadataResult, EvidenceOperations>(() =>
           operations.captureMetadata({ ...identity, url: target.value.url }),
@@ -398,6 +424,13 @@ export const runEvidence = (
         }));
         if (options.measurement !== undefined) {
           const measurementOptions = options.measurement;
+          yield* Ref.update(stateRef, (state) => ({
+            ...state,
+            report: {
+              ...state.report,
+              measurement: interruptedStep<MeasurementEvidence>("Measurement"),
+            },
+          }));
           const measurementExit = yield* captureEffect<MeasurementEvidence, HttpOperation>(() =>
             Effect.gen(function* () {
               const latency = yield* measureLatency(measurementOptions.latency);
@@ -439,14 +472,19 @@ export const runEvidence = (
         return yield* Effect.void;
       }),
     );
-    const result = yield* Effect.exit(scoped);
-    const final = yield* Ref.get(stateRef);
-    const reasons = new Set<string>();
-    if (Exit.isFailure(result)) reasons.add(errorMessage(result.cause));
-    if (final.report.primaryFailure !== undefined) reasons.add(final.report.primaryFailure);
-    for (const reason of final.report.cleanupFailures) reasons.add(reason);
-    if (final.report.reportWriteFailure !== undefined) reasons.add(final.report.reportWriteFailure);
-    if (reasons.size > 0)
-      return yield* Effect.fail(new ContractError({ message: [...reasons].join("; ") }));
-    return yield* Effect.void;
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const result = yield* Effect.exit(restore(scoped));
+        const final = yield* Ref.get(stateRef);
+        const reasons = new Set<string>();
+        if (Exit.isFailure(result)) reasons.add(errorMessage(result.cause));
+        if (final.report.primaryFailure !== undefined) reasons.add(final.report.primaryFailure);
+        for (const reason of final.report.cleanupFailures) reasons.add(reason);
+        if (final.report.reportWriteFailure !== undefined)
+          reasons.add(final.report.reportWriteFailure);
+        if (reasons.size > 0)
+          return yield* Effect.fail(new ContractError({ message: [...reasons].join("; ") }));
+        return yield* Effect.void;
+      }),
+    );
   });
