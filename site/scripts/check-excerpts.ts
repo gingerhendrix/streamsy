@@ -284,7 +284,9 @@ const renderedLines = (text: string): ReadonlyArray<string> => {
       continue;
     }
     const fenceMatch = candidate.match(/^(?: {0,3}>[ \t]?)*(?: {0,3})([`~]{3,})(.*)$/);
-    const fenceMarker = fenceMatch?.[1]?.[0];
+    const fenceMarkerValue = fenceMatch?.[1]?.[0];
+    const fenceMarker: "`" | "~" | undefined =
+      fenceMarkerValue === "`" || fenceMarkerValue === "~" ? fenceMarkerValue : undefined;
     const fenceLength = fenceMatch?.[1]?.length;
     const fenceRemainder = fenceMatch?.[2] ?? "";
     if (fence !== undefined) {
@@ -310,7 +312,7 @@ const renderedLines = (text: string): ReadonlyArray<string> => {
 
 const hasRenderedCitation = (text: string, source: string): boolean => {
   for (const line of renderedLines(text)) {
-    const match = line.match(/^Compiled source: \[([^\]\r\n]+)\]\(([^)\s]+)\)\.(?:\s|$)/);
+    const match = line.match(/^Compiled source: \[([^\]\r\n]+)\]\(([^)\s]+)\)(?:\.|\s|$)/);
     if (match === null || match[1] !== source) continue;
     const destination = match[2];
     if (!destination.startsWith(repositorySourcePrefix)) continue;
