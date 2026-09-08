@@ -145,3 +145,85 @@ export const cleanupWorkerdRegistry = async <I extends WorkerdDisposable>(
   }
   return errors;
 };
+
+export interface WorkerdRunnerLifecycleOptions<I extends WorkerdDisposable> {
+  readonly createRoot: () => string;
+  readonly createInstance: (root: string) => I;
+  readonly ready: (instance: I) => Promise<string>;
+  readonly inspect?: (instance: I) => Promise<void>;
+  readonly configuredRetention?: string;
+  readonly removeOwned?: (path: string) => void;
+}
+
+export interface WorkerdRunnerLifecycle<I extends WorkerdDisposable> {
+  readonly registry: WorkerdOwnedRegistry<I>;
+  readonly beforeAll: () => Promise<string>;
+  readonly afterAll: () => Promise<void>;
+}
+
+/**
+ * Shared lifecycle used by the real Vitest hooks and by deterministic ownership tests.
+ * Registration precedes construction, and an unresolved instance keeps its root owned.
+ */
+export const createWorkerdRunnerLifecycle = <I extends WorkerdDisposable>(
+  options: WorkerdRunnerLifecycleOptions<I>,
+): WorkerdRunnerLifecycle<I> => {
+  const registry = createWorkerdOwnedRegistry<I>();
+
+  const cleanupOne = async (
+    state: WorkerdOwnedState<I>,
+    inspect: boolean,
+  ): Promise<ReadonlyArray<unknown>> => {
+    const errors: Array<unknown> = [];
+    if (inspect && state.instance !== undefined && options.inspect !== undefined) {
+      try {
+        await options.inspect(state.instance);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      const cleanup = await cleanupWorkerdState(
+        state,
+        options.configuredRetention,
+        options.removeOwned,
+      );
+      errors.push(...cleanup.errors);
+      if (cleanup.done) registry.states.delete(state);
+    } catch (error) {
+      errors.push(error);
+    }
+    return errors;
+  };
+
+  const beforeAll = async (): Promise<string> => {
+    const root = options.createRoot();
+    const state = registerWorkerdState(registry, root);
+    try {
+      const instance = options.createInstance(root);
+      state.instance = instance;
+      return await options.ready(instance);
+    } catch (error) {
+      const cleanupErrors = await cleanupOne(state, false);
+      if (cleanupErrors.length > 0) {
+        // oxlint-disable-next-line eslint(preserve-caught-error) -- Preserve startup and cleanup causes together.
+        throw new AggregateError([error, ...cleanupErrors], "Workerd runner startup failed", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  };
+
+  const afterAll = async (): Promise<void> => {
+    const errors: Array<unknown> = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (const state of Array.from(registry.states)) {
+        errors.push(...(await cleanupOne(state, true)));
+      }
+    }
+    if (errors.length > 0) throw new AggregateError(errors, "Workerd runner cleanup failed");
+  };
+
+  return { registry, beforeAll, afterAll };
+};

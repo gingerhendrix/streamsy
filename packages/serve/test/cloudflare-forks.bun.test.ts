@@ -1215,6 +1215,28 @@ test(
   { timeout: 12_000 },
 );
 
+const recreateB15Harnesses = async (
+  byKey: Harness,
+  byStream: Harness,
+  acquire: (entry: string, root: string) => Promise<Harness> = (entry, root) =>
+    makeHarness(entry, root),
+): Promise<{ readonly byKey: Harness; readonly byStream: Harness }> => {
+  const retentionErrors: Array<unknown> = [];
+  for (const retained of [byKey, byStream]) {
+    try {
+      await disposeHarness(retained, true);
+    } catch (error) {
+      retentionErrors.push(error);
+    }
+  }
+  if (retentionErrors.length > 0)
+    throw new AggregateError(retentionErrors, "B15 retention cleanup failed");
+  return {
+    byKey: await acquire("worker-by-key.ts", byKey.root),
+    byStream: await acquire("worker.ts", byStream.root),
+  };
+};
+
 test("B15 recreation under load restores and purges alarms in both object layouts", async () => {
   const byKey = await makeHarness("worker-by-key.ts");
   const byStream = await makeHarness("worker.ts");
@@ -1235,24 +1257,57 @@ test("B15 recreation under load restores and purges alarms in both object layout
   ).toBe(201);
   const byKeyRoot = byKey.root;
   const byStreamRoot = byStream.root;
-  const retentionErrors: Array<unknown> = [];
-  for (const retained of [byKey, byStream]) {
-    try {
-      await disposeHarness(retained, true);
-    } catch (error) {
-      retentionErrors.push(error);
-    }
-  }
-  if (retentionErrors.length > 0)
-    throw new AggregateError(retentionErrors, "B15 retention cleanup failed");
-  const recreatedByKey = await makeHarness("worker-by-key.ts", byKeyRoot);
-  const recreatedByStream = await makeHarness("worker.ts", byStreamRoot);
+  const { byKey: recreatedByKey, byStream: recreatedByStream } = await recreateB15Harnesses(
+    byKey,
+    byStream,
+  );
   await waitUntil(async () => (await probe(recreatedByKey, "t1")).rows.length === 0, 5_000);
   await waitUntil(async () => (await probe(recreatedByStream, "child")).rows.length === 0, 5_000);
   expect((await probe(recreatedByKey, "t1")).alarm).toBeNull();
   expect((await probe(recreatedByStream, "child")).alarm).toBeNull();
   expect((await probe(recreatedByKey, "t1")).layerAcquisitions).toBe(1);
   expect((await probe(recreatedByStream, "child")).layerAcquisitions).toBe(1);
+});
+
+const runB15ReacquisitionFailure = async (failureAt: 1 | 2): Promise<void> => {
+  const byKeyRoot = mkdtempSync(join(tmpdir(), ".streamsy-fork-b15-key-fault-"));
+  const byStreamRoot = mkdtempSync(join(tmpdir(), ".streamsy-fork-b15-stream-fault-"));
+  try {
+    const byKey = await makeHarness("worker-by-key.ts", byKeyRoot, fakeHarnessDependencies());
+    const byStream = await makeHarness("worker.ts", byStreamRoot, fakeHarnessDependencies());
+    let acquisition = 0;
+    await expectRejected(
+      recreateB15Harnesses(byKey, byStream, (entry, root) => {
+        acquisition += 1;
+        return makeHarness(
+          entry,
+          root,
+          fakeHarnessDependencies({ readyFailure: acquisition === failureAt }),
+        );
+      }),
+      "ready failed",
+    );
+    expect(acquisition).toBe(failureAt);
+    expect(byKey.ownership.disposed).toBe(true);
+    expect(byStream.ownership.disposed).toBe(true);
+    expect(ownedRoots.has(byKeyRoot)).toBe(true);
+    expect(ownedRoots.has(byStreamRoot)).toBe(true);
+    await cleanupOwnedHarnesses();
+    expect(ownedRoots.has(byKeyRoot)).toBe(false);
+    expect(ownedRoots.has(byStreamRoot)).toBe(false);
+  } finally {
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    rmSync(byKeyRoot, { recursive: true, force: true });
+    rmSync(byStreamRoot, { recursive: true, force: true });
+  }
+};
+
+test("B15 first reacquisition failure retains and reclaims both roots", async () => {
+  await runB15ReacquisitionFailure(1);
+});
+
+test("B15 second reacquisition failure retains and reclaims both roots", async () => {
+  await runB15ReacquisitionFailure(2);
 });
 
 test("B16 copied creates reconcile an inherited alarm before the PUT returns", async () => {
