@@ -6,7 +6,8 @@ first correction's code snapshot was `7497d7173b7995979b448058aca835de397fd951`,
 but its later site TypeScript boundary change (`site/tsconfig.json`, commit
 `37eb1c78b8b052651aae27520edcdab1fed6c63e`) was a material prerequisite for
 the passing site gate. The second correction code snapshot is
-`b3c95fceccadbb269c1815801de84a97775f9809` (hard deadline and rendered citation enforcement); the complete gate
+`b3c95fceccadbb269c1815801de84a97775f9809` (hard deadline and rendered citation
+enforcement); the complete gate
 rows below are attributed to the final tree named in the companion correction
 result, not retroactively to the earlier `7497d71` snapshot. This ledger keeps
 the reproducible facts and attempt ownership available in the repository.
@@ -52,7 +53,10 @@ executables and no network-capable fallback. The first correction's writer log
 `/home/gareth/Documents/Personal/scratch/2026-09-08-step-3-batch-d-fixes/gates/final-final/05-conformance.log`
 contains the retained socket-close transport failure; the unchanged retry in
 `.../final-final/05-conformance-retry.log` passed all profiles and ownership.
-The final correction result records the clean bundle measurement separately.
+The final correction result records the clean bundle measurement separately and
+identifies the exact final tree. The second correction adds a synchronized
+resistant-descendant control and rendered-link destination regressions; both
+are included in the final excerpt-check test count.
 The first unit invocation exposed one transient B14 alarm failure; its
 unchanged package test rerun passed.
 
