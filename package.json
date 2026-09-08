@@ -49,7 +49,7 @@
     "hosted:check": "bun run --cwd hosted typecheck && bun run --cwd hosted test",
     "measure:bundle": "bun run --cwd packages/conformance-tests measure:bundle",
     "pack:dry-run": "for dir in packages/core packages/storage packages/views packages/serve; do (cd \"$dir\" && bun pm pack --dry-run) || exit; done",
-    "site:validate": "bun install --cwd site --frozen-lockfile && bun run --cwd site check:terms && bun run --cwd site check:excerpts && bun run --cwd site check && bun run --cwd site build && bun run --cwd site check:og && bun run --cwd site check:links",
+    "site:validate": "env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:terms && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:excerpts && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site build && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:og && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:links",
     "check:perimeter": "bun scripts/check-perimeter.ts"
   },
   "devDependencies": {

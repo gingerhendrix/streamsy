@@ -11,6 +11,7 @@
     "src/cloudflare.ts",
     "src/cloudflare/**/*",
     "test/cloudflare-host.bun.test.ts",
+    "test/cloudflare-usage.ts",
     "test/cloudflare/**/*"
   ]
 }

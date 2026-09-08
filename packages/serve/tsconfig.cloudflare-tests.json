@@ -9,6 +9,6 @@
     },
     "skipLibCheck": true
   },
-  "include": ["src/cloudflare/**/*.test.ts", "test/*.bun.test.ts"],
+  "include": ["src/cloudflare/**/*.test.ts", "test/*.bun.test.ts", "test/cloudflare-usage.ts"],
   "exclude": ["node_modules", "dist"]
 }
