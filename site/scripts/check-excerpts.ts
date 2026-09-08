@@ -251,47 +251,55 @@ export const runExcerpt = (
 const repositorySourcePrefix =
   "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/";
 
-const renderedLines = (text: string): ReadonlyArray<string> => {
-  const lines = text.split("\n");
-  let fence: { readonly marker: "`" | "~"; readonly length: number } | undefined;
+const hasRenderedCitation = (text: string, source: string): boolean => {
+  const lines = text.split(/\r?\n/);
+  let fence:
+    | { readonly marker: "`" | "~"; readonly length: number; readonly quotePrefix: string }
+    | undefined;
   let htmlPre = false;
   let inComment = false;
-  const visible: string[] = [];
-  for (const line of lines) {
-    let candidate = line;
-    if (inComment) {
-      const end = candidate.indexOf("-->");
-      if (end < 0) continue;
-      candidate = candidate.slice(end + 3);
-      inComment = false;
-    }
-    const commentStart = candidate.indexOf("<!--");
-    if (commentStart >= 0) {
-      const commentEnd = candidate.indexOf("-->", commentStart + 4);
-      if (commentEnd < 0) {
-        inComment = true;
-        candidate = candidate.slice(0, commentStart);
+  for (const [index, line] of lines.entries()) {
+    const wasInComment = inComment;
+    let cursor = 0;
+    while (cursor < line.length) {
+      if (inComment) {
+        const end = line.indexOf("-->", cursor);
+        if (end < 0) {
+          cursor = line.length;
+          break;
+        }
+        inComment = false;
+        cursor = end + 3;
       } else {
-        candidate = `${candidate.slice(0, commentStart)}${candidate.slice(commentEnd + 3)}`;
+        const start = line.indexOf("<!--", cursor);
+        if (start < 0) break;
+        inComment = true;
+        cursor = start + 4;
       }
     }
-    if (htmlPre) {
-      if (/<\/pre\s*>/i.test(candidate)) htmlPre = false;
-      continue;
-    }
-    if (/<pre(?:\s|>)/i.test(candidate)) {
-      htmlPre = !/<\/pre\s*>/i.test(candidate);
-      continue;
-    }
-    const fenceMatch = candidate.match(/^(?: {0,3}>[ \t]?)*(?: {0,3})([`~]{3,})(.*)$/);
-    const fenceMarkerValue = fenceMatch?.[1]?.[0];
+    const hasComment = wasInComment || inComment || line.includes("-->");
+    const wasInHtmlPre = htmlPre;
+    if (htmlPre && /<\/pre\s*>/i.test(line)) htmlPre = false;
+    if (/<pre(?:\s|>)/i.test(line) && !/<\/pre\s*>/i.test(line)) htmlPre = true;
+    if (wasInHtmlPre || htmlPre || /<pre(?:\s|>)|<\/pre\s*>/i.test(line)) continue;
+    const fenceMatch = line.match(/^((?: {0,3}>[ \t]?)*)(?: {0,3})([`~]{3,})(.*)$/);
+    const quotePrefix = fenceMatch?.[1] ?? "";
+    const fenceRun = fenceMatch?.[2];
+    const fenceMarkerValue = fenceRun?.[0];
+    const homogeneous =
+      fenceRun !== undefined &&
+      fenceMarkerValue !== undefined &&
+      [...fenceRun].every((character) => character === fenceMarkerValue);
     const fenceMarker: "`" | "~" | undefined =
-      fenceMarkerValue === "`" || fenceMarkerValue === "~" ? fenceMarkerValue : undefined;
-    const fenceLength = fenceMatch?.[1]?.length;
-    const fenceRemainder = fenceMatch?.[2] ?? "";
+      homogeneous && (fenceMarkerValue === "`" || fenceMarkerValue === "~")
+        ? fenceMarkerValue
+        : undefined;
+    const fenceLength = homogeneous ? fenceRun?.length : undefined;
+    const fenceRemainder = fenceMatch?.[3] ?? "";
     if (fence !== undefined) {
       if (
         fenceMarker === fence.marker &&
+        quotePrefix === fence.quotePrefix &&
         fenceLength !== undefined &&
         fenceLength >= fence.length &&
         /^\s*$/.test(fenceRemainder)
@@ -301,24 +309,27 @@ const renderedLines = (text: string): ReadonlyArray<string> => {
       continue;
     }
     if (fenceMarker !== undefined && fenceLength !== undefined) {
-      fence = { marker: fenceMarker, length: fenceLength };
+      fence = { marker: fenceMarker, length: fenceLength, quotePrefix };
       continue;
     }
-    if (/^(?: {4}|\t)/.test(candidate)) continue;
-    visible.push(candidate.replace(/(`+)([\s\S]*?)\1/g, ""));
-  }
-  return visible;
-};
-
-const hasRenderedCitation = (text: string, source: string): boolean => {
-  for (const line of renderedLines(text)) {
-    const match = line.match(/^Compiled source: \[([^\]\r\n]+)\]\(([^)\s]+)\)(?:\.|\s|$)/);
+    if (hasComment || /^(?: {4}|\t| {0,3}>)/.test(line)) continue;
+    const match = line.match(/^Compiled source: \[([^\]\r\n]+)\]\(([^)\s]+)\)\.$/);
     if (match === null || match[1] !== source) continue;
+    const previous = lines[index - 1];
+    const next = lines[index + 1];
+    if (
+      (previous !== undefined && !/^\s*$/.test(previous)) ||
+      (next !== undefined && !/^\s*$/.test(next))
+    )
+      continue;
     const destination = match[2];
     if (!destination.startsWith(repositorySourcePrefix)) continue;
     const remainder = destination.slice(repositorySourcePrefix.length);
     const suffix = remainder.slice(source.length);
-    if (remainder.startsWith(source) && (suffix === "" || /^#L\d+(?:-L\d+)?$/.test(suffix))) {
+    if (
+      remainder === source ||
+      (remainder.startsWith(source) && /^#L\d+(?:-L\d+)?$/.test(suffix))
+    ) {
       return true;
     }
   }

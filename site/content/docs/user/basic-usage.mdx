@@ -8,7 +8,9 @@ A `StreamRef` describes an id and Schema; it owns no resources.
 
 ## Create, append, read and follow
 
-Compiled source: [packages/serve/test/basic-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/basic-usage.ts). This complete program runs under the
+Compiled source: [packages/serve/test/basic-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/basic-usage.ts).
+
+This complete program runs under the
 serve package typecheck. The example handles create and append classifications
 before reading; a successful Effect alone does not mean an append was accepted.
 
@@ -46,7 +48,9 @@ Use one application runtime and dispose it when the application stops.
 
 ## Serve with Bun
 
-Compiled source: [packages/serve/test/host.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/host.ts). The Bun host owns its listener and HTTP edge.
+Compiled source: [packages/serve/test/host.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/host.ts).
+
+The Bun host owns its listener and HTTP edge.
 This finite example requests a free local port, creates a stream over HTTP, checks
 the response and closes the host. A running application keeps the host until shutdown.
 

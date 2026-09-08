@@ -78,6 +78,38 @@ test("excerpt validation accepts only the exact repository path with an optional
   expect(() => assertExcerpt(pair, withLineAnchor, code)).not.toThrow();
 });
 
+test("excerpt validation rejects ambiguous multiline Markdown context", () => {
+  const multilineCases = [
+    `\x60start\n${citation}\nend\x60`,
+    `\x60\x60start\n${citation}\nend\x60\x60`,
+    `![outer\n${citation}\n](image.png)`,
+    `~~~md\n~~~<!-- still code -->\n${citation}\n~~~`,
+    `~~~md\n~~~\x60\x60\x60\n${citation}\n~~~`,
+    `~~~md\n> ~~~\n${citation}\n~~~`,
+    `Intro <!-- first --><!--\n${citation}\n-->`,
+    citation.replace(`${pair.source})`, `src/ex<!--x-->ample.ts)`),
+    citation.replace(`${pair.source})`, `src/ex\x60x\x60ample.ts)`),
+  ];
+  for (const candidate of multilineCases) {
+    expect(() =>
+      assertExcerpt(pair, `${candidate}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
+    ).toThrow("citation");
+  }
+});
+
+test("excerpt validation requires a top-level citation paragraph", () => {
+  expect(() =>
+    assertExcerpt(pair, `Intro ${citation}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
+  ).toThrow("citation");
+  expect(() =>
+    assertExcerpt(
+      pair,
+      `${citation} trailing prose\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`,
+      code,
+    ),
+  ).toThrow("citation");
+});
+
 test("excerpt validation rejects code drift", () => {
   expect(() => assertExcerpt(pair, citedDocument, "export const answer = 7;")).toThrow("verbatim");
 });
