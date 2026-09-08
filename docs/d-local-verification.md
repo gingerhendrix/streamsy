@@ -6,7 +6,7 @@ first correction's code snapshot was `7497d7173b7995979b448058aca835de397fd951`,
 but its later site TypeScript boundary change (`site/tsconfig.json`, commit
 `37eb1c78b8b052651aae27520edcdab1fed6c63e`) was a material prerequisite for
 the passing site gate. The second correction code snapshot is
-`b3c95fc3af3d0e7e06f8147d43ef1f090ee2a7f` (hard deadline and rendered citation enforcement); the complete gate
+`b3c95fceccadbb269c1815801de84a97775f9809` (hard deadline and rendered citation enforcement); the complete gate
 rows below are attributed to the final tree named in the companion correction
 result, not retroactively to the earlier `7497d71` snapshot. This ledger keeps
 the reproducible facts and attempt ownership available in the repository.
