@@ -2,12 +2,14 @@
 
 This is the repository-local record for the D correction. It is a local
 verification ledger, not hosted evidence and not authorization to deploy. The
-correction code was verified from `7497d7173b7995979b448058aca835de397fd951`,
-the tip after the F1/F2 ownership corrections and their lint repairs. The
-documentation-only follow-up keeps that code and artifact identity unchanged.
-The coordinator's stream result records the final documentation tip and private
-scratch receipt; this ledger keeps the reproducible facts available in the
-repository.
+first correction's code snapshot was `7497d7173b7995979b448058aca835de397fd951`,
+but its later site TypeScript boundary change (`site/tsconfig.json`, commit
+`37eb1c78b8b052651aae27520edcdab1fed6c63e`) was a material prerequisite for
+the passing site gate. The second correction code snapshot is
+`b3c95fc3af3d0e7e06f8147d43ef1f090ee2a7f` (hard deadline and rendered citation enforcement); the complete gate
+rows below are attributed to the final tree named in the companion correction
+result, not retroactively to the earlier `7497d71` snapshot. This ledger keeps
+the reproducible facts and attempt ownership available in the repository.
 
 ## Boundary and preparation
 
@@ -46,9 +48,13 @@ if disposal cannot be confirmed.
 ## Gate commands and observed results
 
 The following commands were run with the environment above, using installed
-executables and no network-capable fallback. The first unit invocation exposed
-one transient B14 alarm failure; its unchanged package test rerun passed. The
-recorded gate run is the passing rerun.
+executables and no network-capable fallback. The first correction's writer log
+`/home/gareth/Documents/Personal/scratch/2026-09-08-step-3-batch-d-fixes/gates/final-final/05-conformance.log`
+contains the retained socket-close transport failure; the unchanged retry in
+`.../final-final/05-conformance-retry.log` passed all profiles and ownership.
+The final correction result records the clean bundle measurement separately.
+The first unit invocation exposed one transient B14 alarm failure; its
+unchanged package test rerun passed.
 
 ```sh
 bun run build
