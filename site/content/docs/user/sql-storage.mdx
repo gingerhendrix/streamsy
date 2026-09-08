@@ -48,7 +48,9 @@ const layer = SqlStorage.layer({ client: { storage: ctx.storage } });
 
 Pass the full Durable Object storage handle, not only `ctx.storage.sql`, because
 the official driver needs the transaction API. This is a local storage Layer;
-hosted protocol routing, placement and alarms are outside this release step.
+the local host, routing, placement and alarms are described in [Cloudflare
+hosting](/docs/user/cloudflare-hosting). Hosted execution and release evidence
+remain pending.
 
 ## One truthful commit boundary
 

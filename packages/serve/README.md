@@ -48,7 +48,7 @@ Each family is one module. Its wire protocol, its checked contract, and the
 browser-safe error union a consumer decodes have one owner between them, in that
 order within the file.
 
-The Effect tier:
+## Effect tier
 
 | Subpath             | Owns                                                          |
 | ------------------- | ------------------------------------------------------------- |
@@ -85,27 +85,21 @@ document are capabilities a host supplies.
 
 Requires `effect@4.0.0-rc.112` on the `/server` and `/action` subpaths.
 
-The Cloudflare host keeps one scoped Layer for an object and returns `503` with
-`retry-after: 1` when Layer acquisition fails; it retries acquisition on the next
-call. `@streamsy/storage/durable-object`'s `layerProtocol` defaults long-poll reads
-to 25 seconds (Bun remains 30 seconds), and core bounds SSE connections at 60 seconds
-on both hosts. Alarm retries are finite and platform-owned; lazy expiry on reads and
-the next mutating request are the recovery after an exhausted or missed alarm. A
-Worker with the namespace binding can address any object, because this host adds no
-authorization. `StreamsyObject.options()` accepts `ObjectOptions`: its `placement` must
-be the same `{ pathPrefix, placement }` configuration used by `router`, `namespace` enables
-cross-object copy-on-fork, and `copyOnForkMaxBytes` is a positive safe-integer bound on
-encoded frame bytes (8 MiB by default). Same-object forks remain atomic chains; cross-object
-forks copy the selected prefix after one bounded, incarnation-checked snapshot, answer `409
-Fork copy exceeds copyOnForkMaxBytes` when the bound is exceeded, and commit independently of
-later source changes, expiry, recreation, or deletion. Cloudflare text and binary sub-offset
-tails are capped at 10,000 messages for the internal snapshot; JSON sub-offsets above 10,000
-are unsupported on that host. The `streamsy.internal/fork-source` frames representation is
-kept off public routes when the router uses a non-empty `pathPrefix` (the recommended
-configuration). With an empty prefix, a caller can select that representation by authority,
-but it grants no privilege and is not a public protocol. A Worker holding the namespace
-binding can address it directly. It exposes content already readable through the public
-protocol plus message boundaries and timestamps; it is not an authorization credential. On pinned local workerd
-1.20260730.1, client disconnects do not interrupt object reads; the protocol bounds
-are the local release fallback. The propagation proof is available only with
-`STREAMSY_WORKERD_CANCELLATION=1`, and is expected to fail on that pin.
+## Hosts
+
+The Bun host owns one listener and one HTTP edge. `serve()` acquires the caller's
+reader/writer Layer lazily; `stop()` closes connections, waits for handlers and
+reads, and disposes the scope. Bun has no automatic Layer rebuild policy.
+
+The Cloudflare entry keeps one scoped Layer per in-memory Durable Object and
+shares it across `fetch` and `alarm`. `StreamsyObject.layer()` supplies the
+reader, writer, and Durable Object SQLite storage Layer. A failed acquisition
+returns `503 Storage unavailable` with `retry-after: 1`; the failed edge is
+discarded and the next request retries acquisition. See the complete
+[hosting reference](../../docs/hosting.md) for placement, routing, forks,
+expiry, cancellation, authorization, and evidence boundaries.
+
+Local workerd, memory, and Bun SQLite each have an accepted 332-pass/6-skip
+official profile. The workerd profile deliberately uses one `byKey` object for
+same-object chain semantics; cross-object copies are tested separately. Hosted
+Cloudflare execution and release acceptance remain pending.

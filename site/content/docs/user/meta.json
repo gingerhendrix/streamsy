@@ -1,4 +1,4 @@
 {
   "title": "User docs",
-  "pages": ["basic-usage", "concepts", "sql-storage", "fold-agent"]
+  "pages": ["basic-usage", "concepts", "sql-storage", "cloudflare-hosting", "fold-agent"]
 }

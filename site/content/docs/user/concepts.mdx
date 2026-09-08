@@ -58,6 +58,7 @@ listener, while an application that shares protocol services must acquire them
 once for that application's lifetime.
 
 The SQL Layer has store-wide atomicity, chain forks, push wakes with repair, and
-an indexed expiry query. See [SQL storage](/docs/user/sql-storage). Hosted
-Cloudflare protocol delivery is future work; the Durable Object entry currently
-provides the storage capability inside an object.
+an indexed expiry query. See [SQL storage](/docs/user/sql-storage). The local
+Cloudflare entry provides the Durable Object protocol host and placement
+selection; hosted execution and release evidence remain pending. See
+[Cloudflare hosting](/docs/user/cloudflare-hosting).

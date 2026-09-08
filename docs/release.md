@@ -38,6 +38,23 @@ historical all-first-then-warm ordering and report `firstMinusWarm`; their PUT
 body is `"x"`, while Step 0 used an empty PUT, so the local arithmetic is not a
 hosted comparison.
 
+## D-local public contract
+
+The public host contract is consolidated in [docs/hosting.md](hosting.md).
+It records Bun ownership, the Cloudflare Durable Object scope and alarm model,
+routing and authorization boundaries, copy-fork limits, cancellation, local
+workerd evidence, and the still-pending hosted boundary. The local Cloudflare
+entry is implemented and exercised by workerd; this does not establish a
+deployed Worker, upload metadata, startup CPU, hosted latency, hosted alarm or
+disconnect evidence, or a budget pass.
+
+The site publishes the same distinction in the Cloudflare hosting guide. Its
+Worker excerpt is typechecked with real Worker declarations but is not executed
+as a Bun program. The local usage excerpt bundles that Worker into an owned
+temporary directory, runs Miniflare with `cf: false`, loopback and an ephemeral
+port, checks a JSON PUT, and always disposes and removes its state. The cited
+Alchemy stack is typechecked only; it is never evaluated by site validation.
+
 ## Review gate
 
 From a clean checkout, remove only generated `packages/*/dist` outputs before
@@ -68,14 +85,25 @@ stale source should enter its tarball. The testing entry intentionally imports
 `bun:test`; ordinary core/http/storage must not.
 
 The official suite uses the approved Vitest-under-Bun runner and expects 332 pass
-plus six skips independently on memory and Bun SQLite. Authored tests use Bun.
+plus six skips independently on memory, Bun SQLite, and local workerd. Authored
+tests use Bun. The accepted C unit baseline is core 305/5 skipped, storage 53/2,
+views 44/0, serve 135/3, Fold 47/0, and Hacker News 12/0; SQL boundary is 2/0.
 The final Step 2 authored baseline is 525 passes and seven expected skips: the
 Fold SQLite CLI skip was enabled, while five core capability skips and two SQL
 host-capability skips remain declared.
-Filesystem, client and hosted DO conformance are absent from this gate. Filesystem retirement preserves its
-confirmed, unfixed defect evidence; a green memory gate says nothing about that
-backend. Site validation includes prerequisite builds, compiled excerpt equality,
-four bounded snippet executions, terms, site check/build, OG and rendered links.
+Hosted execution, client transport, and celld evidence are absent from this
+gate. Site validation performs no registry install: it runs terms, prerequisite
+core/storage/serve builds and typechecks, hosted typecheck, compiled excerpt
+equality, five executed snippets plus two typechecked-only snippets, site
+check/build, OG, and rendered links. It sets
+`CLOUDFLARE_CF_FETCH_ENABLED=false` for the complete site process chain.
+
+`measure:bundle` remains informational. The accepted C artifact is raw
+534,562 B, minified 252,866 B, deterministic stdin gzip 81,486 B, 116 input
+modules, one output module, and worker SHA-256
+`2b32a617c8129a4f805754c398e67da963935d5c9cbb58d3f7849ef760c5e898`. These
+local figures sit beside the accepted Batch B 81,574 B signal and unchanged
+27,160 B proposal; hosted evidence and budget acceptance remain blocked.
 
 ## Release boundary
 

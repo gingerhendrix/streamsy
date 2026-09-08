@@ -22,12 +22,16 @@ uses `@durable-streams/state` with TanStack DB.
 The memory Layer lasts for one acquired scope. `@streamsy/storage` persists the
 same Storage contract through Effect SQL, with official Bun SQLite and local
 Durable Object SQLite entries. Package version 0.4.0 pins Effect 4.0.0-rc.112.
-Hosted Durable Object protocol delivery remains future work.
+The local Cloudflare Durable Object host is implemented and exercised with
+workerd. Hosted execution and release acceptance remain pending; see the
+[Cloudflare hosting guide](/docs/user/cloudflare-hosting) and the repository's
+[full hosting reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).
 
 ## Start here
 
 - [Basic usage](/docs/user/basic-usage): compiled create, append, read, follow and Bun hosting examples.
 - [Concepts](/docs/user/concepts): outcomes, faults, offsets, capabilities and resource ownership.
 - [SQL storage](/docs/user/sql-storage): file-backed setup, commit ownership, repair and fresh-format rules.
+- [Cloudflare hosting](/docs/user/cloudflare-hosting): the local Durable Object entry, Miniflare example, and hosted evidence boundary.
 - [Fold agent](/docs/user/fold-agent): journaled recovery across retained-file process restarts.
 - [Demos](/docs/demos): a browser view of the newest Hacker News stories.

@@ -95,17 +95,15 @@ Memory is process-local and nonpersistent. Its default mode provides store-wide
 atomic mutations and chain forks; constrained mode provides stream atomicity,
 copy forks, polling wakes and lazy expiry. The Bun host acquires its Layer lazily
 and expires streams on access. See [storage contract](storage-contract.md) for the
-authoring seam. Persistent Bun SQLite is shipped locally. The Cloudflare host
-routes raw stream paths to placement-selected Durable Objects. Any Worker holding
-the namespace binding can reach any object; the host adds no authorization.
-Same-object forks chain atomically. Cross-object forks copy the selected prefix into the child,
-bounded by `copyOnForkMaxBytes` (8 MiB of encoded frames by default), keep provenance for
-idempotent retries, and leave no retention edge on the source, which may change or be deleted
-afterwards. Its DO `layerProtocol`
-default bounds long-poll reads at 25 seconds (Bun remains 30 seconds), while core
-bounds SSE connections at 60 seconds on both hosts. A failed Layer build returns
-`503` with `retry-after: 1` and is rebuilt on the next call. Alarm retries are
-platform-owned and finite; lazy expiry on reads and reconciliation after the next
-mutating request repair an alarm that is exhausted or missed. With pinned local
-workerd, a client disconnect does not interrupt the object read, so the protocol
-bounds are the local release guarantee.
+authoring seam. Persistent Bun SQLite is shipped locally. The Cloudflare entry
+routes raw stream paths to placement-selected Durable Objects and owns one Layer
+scope per in-memory object. Any Worker holding the namespace binding can reach
+any object; neither host adds authorization. Same-object forks chain atomically;
+cross-object forks copy a bounded prefix with provenance and no source retention
+edge. The Durable Object `layerProtocol` long-poll default is 25 seconds (Bun is
+30 seconds), while core bounds SSE connections at 60 seconds on both hosts. A
+failed Cloudflare Layer build returns `503` with `retry-after: 1` and is retried
+on the next request. Alarm retries are finite and platform-owned; lazy expiry
+and later mutations repair missed or exhausted alarms. See the complete
+[hosting reference](hosting.md) for the public host contract, local evidence,
+copy errors, cancellation, and the still-pending hosted boundary.

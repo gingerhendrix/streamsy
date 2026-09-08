@@ -1,0 +1,170 @@
+---
+title: Cloudflare Durable Object hosting
+description: Run the local Durable Object host with Miniflare and understand the boundary before hosted release evidence.
+---
+
+Streamsy has a Cloudflare Durable Object host entry and local workerd evidence.
+Hosted execution and release acceptance are still pending. The local official
+profile uses one `byKey(() => "conformance")` object for same-object chain
+semantics; cross-object copy behavior is tested separately. The default
+`byStream()` topology retains nine chain-lifecycle divergences in that suite.
+Those are a topology distinction, not a hosted result or a changed assertion.
+
+The fixed status is:
+
+> Hosted execution and acceptance remain blocked by remote permission, the missing uploaded-compressed-byte/startup-CPU policy, and Gareth's budget/topology decision. The accepted Batch B local signal is 81,574 B gzip against the unchanged 27,160 B proposal. The 542.85 ms first-object p95 proposal remains unmeasured.
+
+For the complete ownership, routing, expiry, fork, authorization, cancellation,
+and evidence contract, see the [hosting reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).
+
+## A minimal Worker entry
+
+This example uses the production defaults: a shared `/streams` prefix,
+`byStream()` placement, Durable Object SQLite, and the namespace binding. It is
+typechecked with the Worker declarations and is not executed directly by the
+site checker.
+
+Compiled source: [packages/serve/test/cloudflare/example-worker.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/cloudflare/example-worker.ts).
+
+```ts
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { Layer } from "effect";
+import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
+import { Placement, StreamsyObject, router, type ObjectOptions } from "@streamsy/serve/cloudflare";
+import { layerProtocol } from "@streamsy/storage/durable-object";
+
+interface Env {
+  readonly STREAMS: DurableObjectNamespace;
+}
+
+const host = { pathPrefix: "/streams", placement: Placement.byStream() } as const;
+
+export class StreamsObject extends StreamsyObject<Env> {
+  override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
+    return layerProtocol({ client: { storage: this.ctx.storage } });
+  }
+
+  override options(): ObjectOptions<Env> {
+    return { ...host, namespace: (env) => env.STREAMS };
+  }
+}
+
+export default router<Env>({ ...host, namespace: (env) => env.STREAMS });
+```
+
+The same `{ pathPrefix, placement }` object belongs on the router and the
+object. A prefix is a route boundary, not an authorization boundary. Authenticate
+and authorize before forwarding to this entry, and derive the path and object
+mapping from that identity.
+
+## Run the example locally
+
+The checked local usage runner bundles the Worker, starts Miniflare with a
+loopback host, an ephemeral port, `cf: false`, compatibility date `2026-07-30`,
+and `nodejs_compat`, then creates `/streams/events`. It consumes the response,
+disposes Miniflare, and removes its owned temporary directory even after a
+failed startup.
+
+Compiled source: [packages/serve/test/cloudflare-usage.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/serve/test/cloudflare-usage.ts).
+
+```ts
+/* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/global-fetch -- This executable example owns the local Miniflare, temporary I/O, and HTTP boundaries. */
+import { mkdtemp, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Miniflare } from "miniflare";
+
+const sourceDirectory = dirname(fileURLToPath(import.meta.url));
+const root = resolve(sourceDirectory, "../../..");
+const entrypoint = resolve(root, "packages/serve/test/cloudflare/example-worker.ts");
+const ownedRoot = await mkdtemp(join(sourceDirectory, ".streamsy-cloudflare-example-"));
+let miniflare: Miniflare | undefined;
+
+try {
+  const outputRoot = join(ownedRoot, "worker");
+  const build = await Bun.build({
+    entrypoints: [entrypoint],
+    outdir: outputRoot,
+    target: "browser",
+    format: "esm",
+    minify: false,
+    sourcemap: "none",
+    external: ["cloudflare:workers"],
+  });
+  if (!build.success) throw new Error("Cloudflare example Worker build failed");
+  const worker = build.outputs.find((output) => output.path.endsWith(".js"));
+  if (worker === undefined) throw new Error("Cloudflare example Worker emitted no JavaScript");
+
+  miniflare = new Miniflare({
+    scriptPath: worker.path,
+    modules: true,
+    compatibilityDate: "2026-07-30",
+    compatibilityFlags: ["nodejs_compat"],
+    host: "127.0.0.1",
+    port: 0,
+    cf: false,
+    durableObjects: { STREAMS: { className: "StreamsObject", useSQLite: true } },
+    durableObjectsPersist: join(ownedRoot, "state"),
+  });
+  const origin = (await miniflare.ready).origin;
+  const response = await fetch(new URL("/streams/events", origin), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  await response.arrayBuffer();
+  if (response.status !== 201)
+    throw new Error(`Cloudflare example create failed: ${response.status}`);
+} finally {
+  try {
+    await miniflare?.dispose();
+  } finally {
+    await rm(ownedRoot, { recursive: true, force: true });
+  }
+}
+```
+
+This is local conformance evidence, not hosted evidence. The local Worker uses
+a 1,500 ms long-poll override only in the conformance fixture; the production
+Durable Object storage default is 25,000 ms. Core SSE is bounded at 60,000 ms
+on both hosts, and the default body limit is 1 MiB.
+
+## Typechecked hosted preparation
+
+The isolated hosted package contains a pinned v2 stack and a fake-only Effect
+workflow. The stack is typechecked for API compatibility; site validation does
+not evaluate it. Its executable always reports the fixed blocked status for
+evidence requests, including when placeholder credentials or permission values
+are present. Live deployment, cleanup, metadata capture, hosted measurements,
+and activation require a later reviewed boundary.
+
+Compiled source: [hosted/alchemy.run.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/hosted/alchemy.run.ts).
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { STACK_NAME } from "./src/contract.ts";
+
+const Streams = Cloudflare.DurableObject("Streams", { className: "StreamsObject" });
+
+export default Alchemy.Stack(
+  STACK_NAME,
+  { providers: Cloudflare.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const stage = yield* Alchemy.Stage;
+    const server = yield* Cloudflare.Worker("Server", {
+      name: `${STACK_NAME}-${stage}`,
+      main: "../packages/conformance-tests/dist/worker/worker.js",
+      bundle: false,
+      compatibility: { date: "2026-07-30", flags: ["nodejs_compat"] },
+      workersDev: true,
+      env: { STREAMS: Streams },
+    });
+    return { url: server.url, workerName: server.workerName };
+  }),
+);
+```
+
+The fixed local ledger and deferred gates are maintained in the [hosting
+reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).

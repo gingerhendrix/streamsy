@@ -118,11 +118,13 @@ payload; this response alone does not identify the underlying cause.
 Storage expiry remains lazy-on-access in both memory and SQLite hosts; there is no
 background expiry sweeper or expiry fiber in this host.
 
-`bun run test:conformance` executes the unchanged bundled official suite once on
-memory and once on retained-file Bun SQLite with the approved Vitest-under-Bun
-runner. Each backend passes 332 tests with six declared skips. Every authored test uses `bun:test`.
-The old graph and its runner exceptions have been removed. Frozen response
-fixtures preserve status, status text, every header and body byte after removal
-of the comparison implementation. Hosted Durable Object protocol, browser Effect
-transport and release support are not added; retained-file Bun SQLite is the local
-persistent host described above.
+`bun run test:conformance` executes the unchanged bundled official suite on
+memory, retained-file Bun SQLite, and the local workerd Durable Object entry
+with the approved Vitest-under-Bun runner. Each accepted profile passes 332 tests
+with six declared skips. Every authored test uses `bun:test`. The workerd profile
+uses one `byKey` object for same-object chain semantics; cross-object copy tests
+remain separate. Frozen response fixtures preserve status, status text, every
+header and body byte after removal of the comparison implementation. Cloudflare
+host code is implemented locally, while hosted execution, release support,
+browser Effect transport, and hosted measurements remain pending; see the
+[hosting reference](hosting.md).
