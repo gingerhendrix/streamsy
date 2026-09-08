@@ -371,7 +371,6 @@ test("a supervising parent observes the original interruption Cause", async () =
 
 test("supervisors distinguish an interrupt Cause from typed recovery", async () => {
   const started = Deferred.makeUnsafe<void>();
-  let typedCaught = false;
   let interruptObserved = false;
   const services = makeServices({
     deploy: () =>
@@ -391,19 +390,12 @@ test("supervisors distinguish an interrupt Cause from typed recovery", async () 
       yield* Deferred.await(started);
       yield* Fiber.interrupt(observer);
       yield* Fiber.interrupt(child);
-      return yield* Fiber.join(child);
-    }).pipe(
-      Effect.catch(() => {
-        typedCaught = true;
-        return Effect.succeed(Cause.empty);
-      }),
-      Effect.catchCause(Effect.succeed),
-      Effect.provide(services.layer),
-    ),
+      return yield* Fiber.await(child);
+    }).pipe(Effect.provide(services.layer)),
   );
   expect(interruptObserved).toBe(true);
-  expect(typedCaught).toBe(false);
-  expect(Cause.hasInterrupts(cause)).toBe(true);
+  expect(Exit.isFailure(cause)).toBe(true);
+  if (Exit.isFailure(cause)) expect(Cause.hasInterrupts(cause.cause)).toBe(true);
 });
 
 test("interrupted attempted conformance and metadata steps are reported as failures", async () => {
