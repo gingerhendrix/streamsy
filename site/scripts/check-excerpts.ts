@@ -254,17 +254,15 @@ const markdownWithoutNonRenderedBlocks = (text: string): string => {
   const visible: string[] = [];
   for (const line of lines) {
     const fenceMatch = line.match(/^\s*([`~]{3,})/);
+    const fenceMarker = fenceMatch?.[1]?.[0];
+    const fenceLength = fenceMatch?.[1]?.length;
     if (fence !== undefined) {
-      if (
-        fenceMatch !== null &&
-        fenceMatch[1]![0] === fence.marker &&
-        fenceMatch[1]!.length >= fence.length
-      )
+      if (fenceMarker === fence.marker && fenceLength !== undefined && fenceLength >= fence.length)
         fence = undefined;
       continue;
     }
-    if (fenceMatch !== null) {
-      fence = { marker: fenceMatch[1]![0] as "`" | "~", length: fenceMatch[1]!.length };
+    if ((fenceMarker === "`" || fenceMarker === "~") && fenceLength !== undefined) {
+      fence = { marker: fenceMarker, length: fenceLength };
       continue;
     }
     if (/^(?: {4}|\t)/.test(line)) continue;
