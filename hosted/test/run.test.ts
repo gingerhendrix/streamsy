@@ -102,6 +102,10 @@ const makeServices = (
   };
 };
 
+type MutableOperationOverrides = {
+  -readonly [Key in keyof EvidenceOperationsService]?: EvidenceOperationsService[Key];
+};
+
 const runWithClock = (
   program: Effect.Effect<
     void,
@@ -350,7 +354,7 @@ const superviseInterruptedWorkflow = async (
 ) => {
   const started = Deferred.makeUnsafe<void>();
   let services: ReturnType<typeof makeServices>;
-  const operationOverrides: Partial<EvidenceOperationsService> = {
+  const operationOverrides: MutableOperationOverrides = {
     deploy: () =>
       Effect.gen(function* () {
         services.calls.push("deploy");
