@@ -23,14 +23,10 @@ test("workerd reclamation attempts removal after copy failure", () => {
   closeSync(openSync(destination, "w"));
   const calls: Array<string> = [];
   try {
-    const errors = reclaimRoot(
-      root,
-      retention,
-      (path) => {
-        calls.push(path);
-        throw new Error("removal failed");
-      },
-    );
+    const errors = reclaimRoot(root, retention, (path) => {
+      calls.push(path);
+      throw new Error("removal failed");
+    });
     expect(calls).toEqual([root]);
     expect(errors).toHaveLength(2);
   } finally {

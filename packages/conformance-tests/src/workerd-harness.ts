@@ -1,11 +1,4 @@
-import {
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-} from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export const isDescendant = (source: string, candidate: string): boolean => {
@@ -24,10 +17,7 @@ const rejectSymlinkPath = (path: string): void => {
   }
 };
 
-export const retentionDestination = (
-  root: string,
-  configured?: string,
-): string | undefined => {
+export const retentionDestination = (root: string, configured?: string): string | undefined => {
   if (configured === undefined) return undefined;
   if (!isAbsolute(configured)) throw new Error("STREAMSY_WORKERD_RETENTION must be absolute");
   rejectSymlinkPath(root);

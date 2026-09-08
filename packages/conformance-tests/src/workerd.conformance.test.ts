@@ -101,8 +101,7 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
       errors.push(...rootErrors);
       if (rootErrors.length === 0) ownedRoots.delete(root);
     }
-    if (errors.length > 0)
-      throw new AggregateError(errors, "Workerd afterAll cleanup failed");
+    if (errors.length > 0) throw new AggregateError(errors, "Workerd afterAll cleanup failed");
   });
   runConformanceTests(config);
 });
