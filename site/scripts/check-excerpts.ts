@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { mdxFromMarkdown } from "mdast-util-mdx";
+import { mdxjs } from "micromark-extension-mdxjs";
+import type { Root } from "mdast";
 
 const root = new URL("../../", import.meta.url);
 
@@ -251,93 +255,40 @@ export const runExcerpt = (
 const repositorySourcePrefix =
   "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/";
 
-const hasRenderedCitation = (text: string, source: string): boolean => {
-  const lines = text.split(/\r?\n/);
-  let fence:
-    | { readonly marker: "`" | "~"; readonly length: number; readonly quotePrefix: string }
-    | undefined;
-  let htmlPre = false;
-  let inComment = false;
-  for (const [index, line] of lines.entries()) {
-    const wasInComment = inComment;
-    let cursor = 0;
-    while (cursor < line.length) {
-      if (inComment) {
-        const end = line.indexOf("-->", cursor);
-        if (end < 0) {
-          cursor = line.length;
-          break;
-        }
-        inComment = false;
-        cursor = end + 3;
-      } else {
-        const start = line.indexOf("<!--", cursor);
-        if (start < 0) break;
-        inComment = true;
-        cursor = start + 4;
-      }
-    }
-    const hasComment = wasInComment || inComment || line.includes("-->");
-    const wasInHtmlPre = htmlPre;
-    if (htmlPre && /<\/pre\s*>/i.test(line)) htmlPre = false;
-    if (/<pre(?:\s|>)/i.test(line) && !/<\/pre\s*>/i.test(line)) htmlPre = true;
-    if (wasInHtmlPre || htmlPre || /<pre(?:\s|>)|<\/pre\s*>/i.test(line)) continue;
-    const fenceMatch = line.match(/^((?: {0,3}>[ \t]?)*)(?: {0,3})([`~]{3,})(.*)$/);
-    const quotePrefix = fenceMatch?.[1] ?? "";
-    const fenceRun = fenceMatch?.[2];
-    const fenceMarkerValue = fenceRun?.[0];
-    const homogeneous =
-      fenceRun !== undefined &&
-      fenceMarkerValue !== undefined &&
-      fenceRun.split("").every((character) => character === fenceMarkerValue);
-    const fenceMarker: "`" | "~" | undefined =
-      homogeneous && (fenceMarkerValue === "`" || fenceMarkerValue === "~")
-        ? fenceMarkerValue
-        : undefined;
-    const fenceLength = homogeneous ? fenceRun?.length : undefined;
-    const fenceRemainder = fenceMatch?.[3] ?? "";
-    if (fence !== undefined) {
-      if (
-        fenceMarker === fence.marker &&
-        quotePrefix === fence.quotePrefix &&
-        fenceLength !== undefined &&
-        fenceLength >= fence.length &&
-        /^\s*$/.test(fenceRemainder)
-      ) {
-        fence = undefined;
-      }
-      continue;
-    }
-    if (fenceMarker !== undefined && fenceLength !== undefined) {
-      fence = { marker: fenceMarker, length: fenceLength, quotePrefix };
-      continue;
-    }
-    if (hasComment || /^(?: {4}|\t| {0,3}>)/.test(line)) continue;
-    const match = line.match(/^Compiled source: \[([^\]\r\n]+)\]\(([^)\s]+)\)\.$/);
-    if (match === null || match[1] !== source) continue;
-    const previous = lines[index - 1];
-    const next = lines[index + 1];
-    if (
-      (previous !== undefined && !/^\s*$/.test(previous)) ||
-      (next !== undefined && !/^\s*$/.test(next))
-    )
-      continue;
-    const destination = match[2];
-    if (!destination.startsWith(repositorySourcePrefix)) continue;
-    const remainder = destination.slice(repositorySourcePrefix.length);
-    const suffix = remainder.slice(source.length);
-    if (
-      remainder === source ||
-      (remainder.startsWith(source) && /^#L\d+(?:-L\d+)?$/.test(suffix))
-    ) {
-      return true;
-    }
+const isExactCitationParagraph = (node: Root["children"][number], source: string): boolean => {
+  if (node.type !== "paragraph" || node.position?.start.column !== 1 || node.children.length !== 3)
+    return false;
+  const [prefix, link, suffix] = node.children;
+  if (prefix?.type !== "text" || prefix.value !== "Compiled source: ") return false;
+  if (suffix?.type !== "text" || suffix.value !== ".") return false;
+  if (link?.type !== "link" || link.title !== null || link.children.length !== 1) return false;
+  const visible = link.children[0];
+  if (visible?.type !== "text" || visible.value !== source) return false;
+  const destination = link.url;
+  if (!destination.startsWith(repositorySourcePrefix)) return false;
+  const remainder = destination.slice(repositorySourcePrefix.length);
+  const suffixPath = remainder.slice(source.length);
+  return (
+    remainder === source || (remainder.startsWith(source) && /^#L\d+(?:-L\d+)?$/.test(suffixPath))
+  );
+};
+
+const hasRenderedCitation = (text: string, source: string, doc: string): boolean => {
+  try {
+    const tree = doc.endsWith(".mdx")
+      ? fromMarkdown(text, {
+          extensions: [mdxjs()],
+          mdastExtensions: [mdxFromMarkdown()],
+        })
+      : fromMarkdown(text);
+    return tree.children.some((node) => isExactCitationParagraph(node, source));
+  } catch {
+    return false;
   }
-  return false;
 };
 
 export const assertExcerpt = (pair: ExcerptPair, text: string, code: string): void => {
-  if (!hasRenderedCitation(text, pair.source))
+  if (!hasRenderedCitation(text, pair.source, pair.doc))
     throw new Error(`Excerpt citation missing: ${pair.doc} must link ${pair.source}`);
   if (!text.includes(`\x60\x60\x60ts\n${code}\n\x60\x60\x60`)) {
     throw new Error(`Excerpt drift: ${pair.doc} must include ${pair.source} verbatim`);

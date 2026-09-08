@@ -97,6 +97,27 @@ test("excerpt validation rejects ambiguous multiline Markdown context", () => {
   }
 });
 
+test("excerpt validation rejects parser-only code, image and raw HTML contexts", () => {
+  const nbsp = "\u00a0";
+  const parserContexts = [
+    `~~~\x60\x60\x60\n${citation}\n~~~`,
+    `\x60\x60\x60~~~\n${citation}\n\x60\x60\x60`,
+    `~~~<pre>\n</pre>\n${citation}\n~~~`,
+    `<!--\n~~~\n-->\n~~~\n${citation}\n~~~`,
+    `\x60start\n${nbsp}\n${citation}\n${nbsp}\nend\x60`,
+    `\x60\x60start\n${nbsp}\n${citation}\n${nbsp}\nend\x60\x60`,
+    `![outer\n${nbsp}\n${citation}\n${nbsp}\n](image.png)`,
+    `~~~md\n~~~${nbsp}\n\n${citation}\n\n~~~`,
+    `<script>\n\n${citation}\n\n</script>`,
+    `<style>\n\n${citation}\n\n</style>`,
+  ];
+  for (const candidate of parserContexts) {
+    expect(() =>
+      assertExcerpt(pair, `${candidate}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
+    ).toThrow("citation");
+  }
+});
+
 test("excerpt validation requires a top-level citation paragraph", () => {
   expect(() =>
     assertExcerpt(pair, `Intro ${citation}\n\n\x60\x60\x60ts\n${code}\n\x60\x60\x60`, code),
