@@ -78,7 +78,7 @@ Observed local counts:
 | Official memory, SQLite, workerd        | 332 passed, 6 skipped independently on each backend                                                                                                                           |
 | Workerd ownership                       | 8 passed, 0 failed                                                                                                                                                            |
 | SQL boundary                            | 2 passed, 0 failed                                                                                                                                                            |
-| Lint                                    | pass; 161 warning lines, no errors                                                                                                                                             |
+| Lint                                    | pass; 161 warning lines, no errors                                                                                                                                            |
 | Lint policy / format / perimeter / pack | pass / 362 files / pass / four public package dry-runs                                                                                                                        |
 | Site validation                         | 0 stale-term hits across 41 authored files; 7 excerpts (5 executed, 2 typechecked-only); 11 rendered routes; 161 internal links/images/anchors; checker process group stopped |
 
