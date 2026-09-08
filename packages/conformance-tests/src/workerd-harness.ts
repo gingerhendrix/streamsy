@@ -206,7 +206,7 @@ export const createWorkerdRunnerLifecycle = <I extends WorkerdDisposable>(
     } catch (error) {
       const cleanupErrors = await cleanupOne(state, false);
       if (cleanupErrors.length > 0) {
-        // oxlint-disable-next-line eslint(preserve-caught-error) -- Preserve startup and cleanup causes together.
+        // oxlint-disable-next-line preserve-caught-error -- Preserve startup and cleanup causes together.
         throw new AggregateError([error, ...cleanupErrors], "Workerd runner startup failed", {
           cause: error,
         });
