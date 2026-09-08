@@ -12,6 +12,13 @@ rows below are attributed to the final tree named in the companion correction
 result, not retroactively to the earlier `7497d71` snapshot. This ledger keeps
 the reproducible facts and attempt ownership available in the repository.
 
+The complete final2 gate was executed at verified code tree
+`8a0ce1dd1c18b8b2256ca834956857c74baca4f2`; its bundle report records that
+same `sourceSha`. The ledger and release wording commits after that run are
+documentation-only attribution updates. The companion result records their
+final tip separately, so the earlier code snapshot is not presented as having
+passed a later site gate.
+
 ## Boundary and preparation
 
 The accepted C base is
@@ -80,17 +87,17 @@ git diff --check e09213c1f88e1f68f3e1c3f8a556baa442fb430b..HEAD
 
 Observed local counts:
 
-| Check                                   | Result                                                                                                                                                                        |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hosted:check`                          | 37 passed, 0 failed; 167 expectations                                                                                                                                         |
-| Unit: core / storage / views            | 305 passed, 5 skipped / 53 passed, 2 skipped / 44 passed, 0 skipped                                                                                                           |
-| Unit: serve / Fold / Hacker News        | 143 passed, 3 skipped / 47 passed, 0 skipped / 12 passed, 0 skipped                                                                                                           |
-| Official memory, SQLite, workerd        | 332 passed, 6 skipped independently on each backend                                                                                                                           |
-| Workerd ownership                       | 8 passed, 0 failed                                                                                                                                                            |
-| SQL boundary                            | 2 passed, 0 failed                                                                                                                                                            |
-| Lint                                    | pass; 161 warning lines, no errors                                                                                                                                            |
-| Lint policy / format / perimeter / pack | pass / 362 files / pass / four public package dry-runs                                                                                                                        |
-| Site validation                         | 0 stale-term hits across 41 authored files; 7 excerpts (5 executed, 2 typechecked-only); 11 rendered routes; 161 internal links/images/anchors; checker process group stopped |
+| Check                                   | Result                                                                                                                                                                                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hosted:check`                          | 37 passed, 0 failed; 167 expectations                                                                                                                                                                                 |
+| Unit: core / storage / views            | 305 passed, 5 skipped / 53 passed, 2 skipped / 44 passed, 0 skipped                                                                                                                                                   |
+| Unit: serve / Fold / Hacker News        | 143 passed, 3 skipped / 47 passed, 0 skipped / 12 passed, 0 skipped                                                                                                                                                   |
+| Official memory, SQLite, workerd        | 332 passed, 6 skipped independently on each backend                                                                                                                                                                   |
+| Workerd ownership                       | 8 passed, 0 failed                                                                                                                                                                                                    |
+| SQL boundary                            | 2 passed, 0 failed                                                                                                                                                                                                    |
+| Lint                                    | pass; 161 warning lines, no errors                                                                                                                                                                                    |
+| Lint policy / format / perimeter / pack | pass / 362 files / pass / four public package dry-runs                                                                                                                                                                |
+| Site validation                         | 0 stale-term hits across 41 authored files; 7 excerpts (5 executed, 2 typechecked-only); checker tests 6/0 with 18 expectations; 11 rendered routes; 161 internal links/images/anchors; checker process group stopped |
 
 The usage excerpt is a local smoke check and the official workerd result is the
 single-object-chain profile. The default `byStream()` profile's nine
