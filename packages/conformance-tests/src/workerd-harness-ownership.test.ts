@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   cleanupWorkerdState,
+  cleanupWorkerdRegistry,
+  createWorkerdOwnedRegistry,
   reclaimRoot,
+  registerWorkerdState,
   retentionDestination,
-  type WorkerdOwnedState,
 } from "./workerd-harness.ts";
 
 test("workerd retention accepts a fresh destination and rejects overlap", () => {
@@ -58,16 +60,14 @@ test("workerd startup ownership can be reclaimed after a transient removal failu
 
 test("failed disposal keeps the instance and persistence root owned for retry", async () => {
   const root = mkdtempSync(join(tmpdir(), ".streamsy-workerd-disposal-"));
+  const registry = createWorkerdOwnedRegistry();
   let disposeAttempts = 0;
   let removeAttempts = 0;
-  const state: WorkerdOwnedState = {
-    root,
-    disposed: false,
-    instance: {
-      dispose: async () => {
-        disposeAttempts += 1;
-        if (disposeAttempts === 1) throw new Error("dispose failed");
-      },
+  const state = registerWorkerdState(registry, root);
+  state.instance = {
+    dispose: async () => {
+      disposeAttempts += 1;
+      if (disposeAttempts === 1) throw new Error("dispose failed");
     },
   };
   try {
@@ -90,24 +90,26 @@ test("failed disposal keeps the instance and persistence root owned for retry", 
   }
 });
 
-test("startup state transitions retain a root when removal fails, then reclaim it", async () => {
+test("runner registry deletes a startup owner only after afterAll cleanup succeeds", async () => {
   const root = mkdtempSync(join(tmpdir(), ".streamsy-workerd-startup-state-"));
+  const registry = createWorkerdOwnedRegistry();
   let removeAttempts = 0;
-  const state: WorkerdOwnedState = { root, disposed: true };
+  const state = registerWorkerdState(registry, root);
+  state.disposed = true;
   try {
-    const first = await cleanupWorkerdState(state, undefined, () => {
+    const first = await cleanupWorkerdRegistry(registry, undefined, () => {
       removeAttempts += 1;
-      if (removeAttempts === 1) throw new Error("startup removal failed");
+      throw new Error("startup removal failed");
+    });
+    expect(first.length).toBe(2);
+    expect(registry.states.has(state)).toBe(true);
+    const second = await cleanupWorkerdRegistry(registry, undefined, () => {
+      removeAttempts += 1;
       rmSync(root, { recursive: true, force: true });
     });
-    expect(first.done).toBe(false);
-    expect(state.root).toBe(root);
-    const second = await cleanupWorkerdState(state, undefined, () => {
-      removeAttempts += 1;
-      rmSync(root, { recursive: true, force: true });
-    });
-    expect(second.done).toBe(true);
-    expect(removeAttempts).toBe(2);
+    expect(second).toHaveLength(0);
+    expect(registry.states.has(state)).toBe(false);
+    expect(removeAttempts).toBe(3);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

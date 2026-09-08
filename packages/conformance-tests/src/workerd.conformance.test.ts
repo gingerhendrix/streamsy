@@ -8,15 +8,19 @@ import { Miniflare } from "miniflare";
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import {
   cleanupWorkerdState,
+  createWorkerdOwnedRegistry,
+  registerWorkerdState,
   type WorkerdDisposable,
   type WorkerdOwnedState,
 } from "./workerd-harness.ts";
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/worker/worker.js");
 const config = { baseUrl: "" };
-const ownedStates = new Set<WorkerdOwnedState>();
+const ownedStates = createWorkerdOwnedRegistry<WorkerdDisposable & Miniflare>();
 
-const cleanupHarness = async (current: WorkerdOwnedState): Promise<void> => {
+const cleanupHarness = async (
+  current: WorkerdOwnedState<WorkerdDisposable & Miniflare>,
+): Promise<void> => {
   const errors: Array<unknown> = [];
   try {
     if (current.instance !== undefined && "listDurableObjectIds" in current.instance) {
@@ -34,7 +38,7 @@ const cleanupHarness = async (current: WorkerdOwnedState): Promise<void> => {
   }
   const cleanup = await cleanupWorkerdState(current, Bun.env.STREAMSY_WORKERD_RETENTION);
   errors.push(...cleanup.errors);
-  if (cleanup.done) ownedStates.delete(current);
+  if (cleanup.done) ownedStates.states.delete(current);
   if (errors.length > 0) throw new AggregateError(errors, "Workerd harness cleanup failed");
 };
 
@@ -44,11 +48,7 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
       throw new Error("Missing workerd artifact; run bun run build:worker first");
     }
     const root = mkdtempSync(join(tmpdir(), "streamsy-conformance-workerd-"));
-    const state: WorkerdOwnedState<WorkerdDisposable & Miniflare> = {
-      root,
-      disposed: false,
-    };
-    ownedStates.add(state);
+    const state = registerWorkerdState<WorkerdDisposable & Miniflare>(ownedStates, root);
     try {
       const miniflare = new Miniflare({
         scriptPath: workerPath,
@@ -68,7 +68,7 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
       try {
         const cleanup = await cleanupWorkerdState(state, Bun.env.STREAMSY_WORKERD_RETENTION);
         cleanupErrors.push(...cleanup.errors);
-        if (cleanup.done) ownedStates.delete(state);
+        if (cleanup.done) ownedStates.states.delete(state);
       } catch (cleanupError) {
         cleanupErrors.push(cleanupError);
       }
@@ -83,12 +83,12 @@ describe("Effect workerd Cloudflare Durable Object host", () => {
   });
   afterAll(async () => {
     const errors: Array<unknown> = [];
-    for (const current of Array.from(ownedStates)) {
+    for (const current of Array.from(ownedStates.states)) {
       try {
         await cleanupHarness(current);
       } catch (error) {
         errors.push(error);
-        if (ownedStates.has(current)) {
+        if (ownedStates.states.has(current)) {
           try {
             await cleanupHarness(current);
           } catch (retryError) {

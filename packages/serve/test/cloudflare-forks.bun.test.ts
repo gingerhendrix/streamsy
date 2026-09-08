@@ -21,7 +21,7 @@ const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
 
 interface Harness {
   readonly bundleRoot: string;
-  readonly miniflare: Miniflare;
+  readonly miniflare: HarnessProcess;
   readonly ownership: OwnedHarness;
   readonly root: string;
   readonly namespace: TestNamespace;
@@ -29,9 +29,29 @@ interface Harness {
 
 interface OwnedHarness {
   readonly bundleRoot: string;
-  readonly miniflare: Miniflare;
+  readonly miniflare: HarnessProcess;
   readonly root: string;
+  readonly cleanup: HarnessCleanup;
   disposed: boolean;
+}
+
+interface HarnessProcess {
+  readonly ready: Promise<unknown>;
+  readonly dispose: () => Promise<void>;
+  readonly getDurableObjectNamespace: (binding: string) => Promise<unknown>;
+  readonly listDurableObjectIds: (binding: string) => Promise<ReadonlyArray<string>>;
+  readonly dispatchFetch: (input: string | Request, init?: RequestInit) => Promise<Response>;
+}
+
+interface HarnessCleanup {
+  readonly remove: (path: string) => void;
+  readonly copy: (source: string, destination: string) => void;
+}
+
+interface HarnessDependencies extends HarnessCleanup {
+  readonly build: (entry: string, outdir: string) => Promise<string>;
+  readonly create: (scriptPath: string, root: string) => HarnessProcess;
+  readonly namespace: (process: HarnessProcess) => Promise<TestNamespace>;
 }
 
 interface TestNamespace {
@@ -44,6 +64,51 @@ interface TestNamespace {
 interface TestObjectId {
   readonly name: string;
 }
+
+const realHarnessDependencies: HarnessDependencies = {
+  build: async (entry, outdir) => {
+    const built = await Bun.build({
+      entrypoints: [join(import.meta.dir, "cloudflare", entry)],
+      outdir,
+      target: "browser",
+      format: "esm",
+      external: ["cloudflare:workers"],
+    });
+    if (!built.success) throw new Error("Batch B workerd proof build failed");
+    const output = built.outputs[0];
+    if (output === undefined) throw new Error("Batch B workerd proof produced no bundle");
+    return output.path;
+  },
+  create: (scriptPath, root) => {
+    const miniflare = new Miniflare({
+      scriptPath,
+      modules: true,
+      compatibilityDate: "2026-08-06",
+      host: "127.0.0.1",
+      port: 0,
+      cf: false,
+      durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
+      durableObjectsPersist: join(root, "state"),
+    });
+    return {
+      ready: miniflare.ready,
+      dispose: () => miniflare.dispose(),
+      getDurableObjectNamespace: (binding) => miniflare.getDurableObjectNamespace(binding),
+      listDurableObjectIds: (binding) => miniflare.listDurableObjectIds(binding),
+      dispatchFetch: (input, init) =>
+        // SAFETY: Miniflare's local dispatch is adapted to the Bun Fetch signature used here.
+        (miniflare.dispatchFetch as unknown as (input: string | Request, init?: RequestInit) => Promise<Response>)(
+          input,
+          init,
+        ),
+    };
+  },
+  namespace: async (process) =>
+    // SAFETY: the local fixture exposes only idFromName/get/fetch to this harness.
+    ((await process.getDurableObjectNamespace("STREAMS")) as unknown as TestNamespace),
+  remove: (path) => rmSync(path, { recursive: true, force: true }),
+  copy: (source, destination) => cpSync(source, destination, { recursive: true }),
+};
 
 interface ProbeResult {
   readonly layerAcquisitions: number;
@@ -135,7 +200,11 @@ const reclaimOwnedRoot = (
 // oxlint-disable-next-line anti-slop/no-unknown-parameters
 const isFiniteNumber = (value: unknown): value is number => Number.isFinite(value);
 
-const makeHarness = async (entry = "worker.ts", root?: string) => {
+const makeHarness = async (
+  entry = "worker.ts",
+  root?: string,
+  dependencies: HarnessDependencies = realHarnessDependencies,
+) => {
   const ownedRoot = root ?? mkdtempSync(join(tmpdir(), ".streamsy-cloudflare-batch-b-"));
   ownedRoots.add(ownedRoot);
   let bundleRoot: string | undefined;
@@ -144,33 +213,18 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
     bundleRoot = mkdtempSync(".streamsy-cloudflare-batch-b-bundle-");
     ownedBundles.add(bundleRoot);
     const bundle = join(bundleRoot, `bundle-${crypto.randomUUID()}`);
-    const built = await Bun.build({
-      entrypoints: [join(import.meta.dir, "cloudflare", entry)],
-      outdir: bundle,
-      target: "browser",
-      format: "esm",
-      external: ["cloudflare:workers"],
-    });
-    expect(built.success).toBe(true);
-    const output = built.outputs[0];
-    if (output === undefined) throw new Error("Batch B workerd proof produced no bundle");
-    const miniflare = new Miniflare({
-      scriptPath: output.path,
-      modules: true,
-      compatibilityDate: "2026-08-06",
-      host: "127.0.0.1",
-      port: 0,
-      cf: false,
-      durableObjects: { STREAMS: { className: "ProbeObject", useSQLite: true } },
-      durableObjectsPersist: join(ownedRoot, "state"),
-    });
-    ownership = { bundleRoot, miniflare, root: ownedRoot, disposed: false };
+    const scriptPath = await dependencies.build(entry, bundle);
+    const miniflare = dependencies.create(scriptPath, ownedRoot);
+    ownership = {
+      bundleRoot,
+      miniflare,
+      root: ownedRoot,
+      cleanup: dependencies,
+      disposed: false,
+    };
     pending.add(ownership);
     await miniflare.ready;
-    // SAFETY: the fixture only uses the namespace's idFromName/get/fetch boundary.
-    const namespace = (await miniflare.getDurableObjectNamespace(
-      "STREAMS",
-    )) as unknown as TestNamespace;
+    const namespace = await dependencies.namespace(miniflare);
     const harness = { bundleRoot, miniflare, ownership, root: ownedRoot, namespace };
     open.push(harness);
     return harness;
@@ -186,7 +240,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
     }
     if (ownership?.disposed === true && bundleRoot !== undefined) {
       try {
-        rmSync(bundleRoot, { recursive: true, force: true });
+        dependencies.remove(bundleRoot);
         ownedBundles.delete(bundleRoot);
       } catch (cleanupError) {
         cleanupErrors.push(cleanupError);
@@ -194,7 +248,7 @@ const makeHarness = async (entry = "worker.ts", root?: string) => {
     }
     if (ownership?.disposed === true && root === undefined) {
       try {
-        rmSync(ownedRoot, { recursive: true, force: true });
+        dependencies.remove(ownedRoot);
         ownedRoots.delete(ownedRoot);
       } catch (cleanupError) {
         cleanupErrors.push(cleanupError);
@@ -233,7 +287,7 @@ const disposeHarness = async (harness: CleanupHarness, retainRoot = false) => {
   }
   if (harness.ownership.disposed && ownedBundles.has(harness.bundleRoot)) {
     try {
-      rmSync(harness.bundleRoot, { recursive: true, force: true });
+      harness.ownership.cleanup.remove(harness.bundleRoot);
       ownedBundles.delete(harness.bundleRoot);
     } catch (error) {
       cleanupErrors.push(error);
@@ -244,13 +298,13 @@ const disposeHarness = async (harness: CleanupHarness, retainRoot = false) => {
       const destination = retentionDestination(harness.root);
       if (destination !== undefined) {
         mkdirSync(resolve(destination, ".."), { recursive: true });
-        cpSync(harness.root, destination, { recursive: true });
+        harness.ownership.cleanup.copy(harness.root, destination);
       }
     } catch (error) {
       cleanupErrors.push(error);
     }
     try {
-      rmSync(harness.root, { recursive: true, force: true });
+      harness.ownership.cleanup.remove(harness.root);
       ownedRoots.delete(harness.root);
     } catch (error) {
       cleanupErrors.push(error);
@@ -271,7 +325,7 @@ const disposeHarness = async (harness: CleanupHarness, retainRoot = false) => {
     );
 };
 
-afterEach(async () => {
+const cleanupOwnedHarnesses = async (): Promise<void> => {
   const errors: Array<unknown> = [];
   for (const server of openBun.splice(0)) {
     try {
@@ -336,7 +390,9 @@ afterEach(async () => {
   }
   if (errors.length > 0)
     throw new AggregateError(errors, "Cloudflare fork afterEach cleanup failed");
-});
+};
+
+afterEach(cleanupOwnedHarnesses);
 
 test("owned-root reclamation removes a root after retention copy failure", () => {
   const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-reclaim-"));
@@ -371,74 +427,105 @@ test("retention paths reject descendants and support a fresh destination", () =>
   }
 });
 
-test("failed Miniflare disposal remains owned until the afterEach retry succeeds", async () => {
-  const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-dispose-state-"));
-  const bundleRoot = mkdtempSync(join(tmpdir(), ".streamsy-fork-dispose-bundle-"));
+const fakeHarnessDependencies = (options: {
+  readonly readyFailure?: boolean;
+  readonly namespaceFailure?: boolean;
+  readonly disposeFailures?: number;
+  readonly removeFailures?: number;
+} = {}): HarnessDependencies => {
   let disposeAttempts = 0;
-  const ownership: OwnedHarness = {
-    root,
-    bundleRoot,
-    disposed: false,
-    // SAFETY: this fake supplies the only Miniflare method used by disposeHarness.
-    miniflare: {
-      dispose: async () => {
-        disposeAttempts += 1;
-        if (disposeAttempts === 1) throw new Error("dispose failed");
-      },
-    } as unknown as Miniflare,
-  };
-  const harness: Harness = {
-    root,
-    bundleRoot,
-    miniflare: ownership.miniflare,
-    ownership,
-    namespace: {
-      idFromName: () => ({ name: "fake" }),
-      get: () => ({ fetch: () => new Response() }),
+  let removeAttempts = 0;
+  const process: HarnessProcess = {
+    ready: options.readyFailure ? Promise.reject(new Error("ready failed")) : Promise.resolve(),
+    dispose: async () => {
+      disposeAttempts += 1;
+      if (disposeAttempts <= (options.disposeFailures ?? 0)) throw new Error("dispose failed");
     },
+    getDurableObjectNamespace: async () => ({
+      idFromName: (name: string) => ({ name }),
+      get: () => ({ fetch: () => new Response() }),
+    }),
+    listDurableObjectIds: async () => [],
+    dispatchFetch: async () => new Response(),
   };
-  ownedRoots.add(root);
-  ownedBundles.add(bundleRoot);
-  pending.add(ownership);
-  open.push(harness);
+  return {
+    build: async (_entry, outdir) => join(outdir, "worker.js"),
+    create: () => process,
+    namespace: async () => {
+      if (options.namespaceFailure) throw new Error("namespace failed");
+      return {
+        idFromName: (name) => ({ name }),
+        get: () => ({ fetch: () => new Response() }),
+      };
+    },
+    remove: (path) => {
+      removeAttempts += 1;
+      if (removeAttempts <= (options.removeFailures ?? 0)) throw new Error("remove failed");
+      rmSync(path, { recursive: true, force: true });
+    },
+    copy: (source, destination) => cpSync(source, destination, { recursive: true }),
+  };
+};
+
+test("real acquisition and afterEach retry retain a failed ready owner", async () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-acquire-state-"));
+  const dependencies = fakeHarnessDependencies({ readyFailure: true, disposeFailures: 1 });
   try {
-    let firstError: unknown;
-    try {
-      await disposeHarness(harness);
-    } catch (error) {
-      firstError = error;
-    }
-    expect(firstError).toBeInstanceOf(AggregateError);
-    expect(pending.has(ownership)).toBe(true);
+    await expect(makeHarness("worker.ts", root, dependencies)).rejects.toThrow(
+      "harness acquisition failed",
+    );
+    expect(pending.size).toBe(1);
     expect(ownedRoots.has(root)).toBe(true);
-    await disposeHarness(harness);
-    expect(disposeAttempts).toBe(2);
-    expect(pending.has(ownership)).toBe(false);
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    expect(pending.size).toBe(0);
     expect(ownedRoots.has(root)).toBe(false);
   } finally {
+    await cleanupOwnedHarnesses().catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
-    rmSync(bundleRoot, { recursive: true, force: true });
-    pending.delete(ownership);
-    ownedRoots.delete(root);
-    ownedBundles.delete(bundleRoot);
-    const index = open.indexOf(harness);
-    if (index >= 0) open.splice(index, 1);
+  }
+});
+
+test("namespace acquisition and persistent disposal retain ownership until recovery", async () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-namespace-state-"));
+  const dependencies = fakeHarnessDependencies({ namespaceFailure: true, disposeFailures: 4 });
+  try {
+    await expect(makeHarness("worker.ts", root, dependencies)).rejects.toThrow(
+      "harness acquisition failed",
+    );
+    expect(pending.size).toBe(1);
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    expect(pending.size).toBe(1);
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    expect(pending.size).toBe(0);
+  } finally {
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("actual hook retries root removal after acquisition cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), ".streamsy-fork-remove-state-"));
+  const dependencies = fakeHarnessDependencies({ removeFailures: 6 });
+  try {
+    await expect(makeHarness("worker.ts", root, dependencies)).resolves.toBeDefined();
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    expect(ownedRoots.has(root)).toBe(true);
+    await cleanupOwnedHarnesses();
+    expect(ownedRoots.has(root)).toBe(false);
+  } finally {
+    await cleanupOwnedHarnesses().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 const dispatchFetch = (
-  miniflare: Miniflare,
+  miniflare: HarnessProcess,
   input: string | Request,
   init?: RequestInit,
 ): Promise<Response> =>
   // SAFETY: Miniflare's declaration uses the workers-types Request overload;
   // this adapter exposes the equivalent Bun Fetch signature used by the tests.
-  (
-    miniflare.dispatchFetch as unknown as (
-      input: string | Request,
-      init?: RequestInit,
-    ) => Promise<Response>
-  )(input, init);
+  miniflare.dispatchFetch(input, init);
 
 const dispatch = (harness: Harness, path: string, init?: RequestInit) =>
   dispatchFetch(harness.miniflare, `https://streams.test${path}`, init);

@@ -81,6 +81,23 @@ export interface WorkerdOwnedState<I extends WorkerdDisposable = WorkerdDisposab
   disposed: boolean;
 }
 
+export interface WorkerdOwnedRegistry<I extends WorkerdDisposable = WorkerdDisposable> {
+  readonly states: Set<WorkerdOwnedState<I>>;
+}
+
+export const createWorkerdOwnedRegistry = <I extends WorkerdDisposable = WorkerdDisposable>(): WorkerdOwnedRegistry<I> => ({
+  states: new Set(),
+});
+
+export const registerWorkerdState = <I extends WorkerdDisposable>(
+  registry: WorkerdOwnedRegistry<I>,
+  root: string,
+): WorkerdOwnedState<I> => {
+  const state: WorkerdOwnedState<I> = { root, disposed: false };
+  registry.states.add(state);
+  return state;
+};
+
 export const cleanupWorkerdState = async (
   state: WorkerdOwnedState,
   configuredRetention: string | undefined,
@@ -105,4 +122,24 @@ export const cleanupWorkerdState = async (
   errors.push(...rootErrors);
   const rootGone = !existsSync(state.root);
   return { done: rootGone, errors };
+};
+
+export const cleanupWorkerdRegistry = async <I extends WorkerdDisposable>(
+  registry: WorkerdOwnedRegistry<I>,
+  configuredRetention: string | undefined,
+  removeOwned?: (path: string) => void,
+): Promise<ReadonlyArray<unknown>> => {
+  const errors: Array<unknown> = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (const state of Array.from(registry.states)) {
+      try {
+        const result = await cleanupWorkerdState(state, configuredRetention, removeOwned);
+        errors.push(...result.errors);
+        if (result.done) registry.states.delete(state);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  }
+  return errors;
 };

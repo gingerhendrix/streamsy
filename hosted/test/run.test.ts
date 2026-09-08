@@ -344,61 +344,95 @@ test("external interruption preserves cleanup and report failures together", asy
   }
 });
 
-test("a supervising parent observes the original interruption Cause", async () => {
+const superviseInterruptedWorkflow = async (
+  reportFailure: boolean | "sync" = false,
+  secondary = false,
+) => {
   const started = Deferred.makeUnsafe<void>();
-  const services = makeServices({
-    deploy: () =>
-      Effect.gen(function* () {
-        services.calls.push("deploy");
-        yield* Deferred.succeed(started, undefined);
-        return yield* Effect.never;
-      }),
-  });
-  const childExit = await Effect.runPromise(
+  let services: ReturnType<typeof makeServices>;
+  services = makeServices(
+    {
+      deploy: () =>
+        Effect.gen(function* () {
+          services.calls.push("deploy");
+          yield* Deferred.succeed(started, undefined);
+          return yield* Effect.never;
+        }),
+      ...(secondary
+        ? {
+            destroy: () => Effect.fail(new ContractError({ message: "destroy secondary" })),
+            auditExactWorker: () => Effect.fail(new ContractError({ message: "audit secondary" })),
+          }
+        : {}),
+    },
+    reportFailure,
+  );
+  const result = await Effect.runPromise(
     Effect.gen(function* () {
       const child = yield* runEvidence(identity).pipe(Effect.forkChild);
       yield* Deferred.await(started);
       yield* Fiber.interrupt(child);
-      return yield* Fiber.await(child);
+      const childExit = yield* Fiber.await(child);
+      let observed = false;
+      let typedRecovered = false;
+      const joinExit = yield* Effect.exit(
+        Fiber.join(child).pipe(
+          Effect.onInterrupt(() => Effect.sync(() => void (observed = true))),
+          Effect.catch(() => {
+            typedRecovered = true;
+            return Effect.succeed(undefined);
+          }),
+        ),
+      );
+      return { childExit, joinExit, observed, typedRecovered };
     }).pipe(Effect.provide(services.layer)),
   );
-  expect(Exit.isFailure(childExit)).toBe(true);
-  if (Exit.isFailure(childExit)) {
-    expect(Cause.hasInterrupts(childExit.cause)).toBe(true);
-    expect(Cause.pretty(childExit.cause)).toContain("interrupted");
+  return { ...result, services };
+};
+
+test("the actual workflow supervisor preserves interruption under clean cleanup", async () => {
+  const result = await superviseInterruptedWorkflow();
+  expect(Exit.isFailure(result.childExit)).toBe(true);
+  expect(Exit.isFailure(result.joinExit)).toBe(true);
+  expect(result.observed).toBe(true);
+  expect(result.typedRecovered).toBe(false);
+  if (Exit.isFailure(result.childExit)) expect(Cause.hasInterrupts(result.childExit.cause)).toBe(true);
+  expect(result.services.calls).toEqual(["deploy", "destroy", "destroy", "audit"]);
+});
+
+test("the actual workflow supervisor preserves report-failure evidence under interruption", async () => {
+  const result = await superviseInterruptedWorkflow(true);
+  expect(Exit.isFailure(result.joinExit)).toBe(true);
+  expect(result.observed).toBe(true);
+  expect(result.typedRecovered).toBe(false);
+  if (Exit.isFailure(result.joinExit)) {
+    const message = Cause.pretty(result.joinExit.cause);
+    expect(Cause.hasInterrupts(result.joinExit.cause)).toBe(true);
+    expect(message).toContain("write");
   }
 });
 
-test("supervisors distinguish an interrupt Cause from typed recovery", async () => {
-  const started = Deferred.makeUnsafe<void>();
-  let interruptObserved = false;
-  const services = makeServices({
-    deploy: () =>
-      Effect.gen(function* () {
-        services.calls.push("deploy");
-        yield* Deferred.succeed(started, undefined);
-        return yield* Effect.never;
-      }),
-  });
-  const cause = await Effect.runPromise(
-    Effect.gen(function* () {
-      const observer = yield* Effect.never.pipe(
-        Effect.onInterrupt(() => Effect.sync(() => void (interruptObserved = true))),
-        Effect.forkChild,
-      );
-      const child = yield* runEvidence(identity).pipe(Effect.forkChild);
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(observer);
-      yield* Fiber.interrupt(child);
-      return yield* Fiber.await(child);
-    }).pipe(Effect.provide(services.layer)),
-  );
-  expect(interruptObserved).toBe(true);
-  expect(Exit.isFailure(cause)).toBe(true);
-  if (Exit.isFailure(cause)) expect(Cause.hasInterrupts(cause.cause)).toBe(true);
+test("the actual workflow supervisor preserves all secondary failures under interruption", async () => {
+  const result = await superviseInterruptedWorkflow(true, true);
+  expect(Exit.isFailure(result.joinExit)).toBe(true);
+  expect(result.observed).toBe(true);
+  expect(result.typedRecovered).toBe(false);
+  if (Exit.isFailure(result.joinExit)) {
+    const message = Cause.pretty(result.joinExit.cause);
+    expect(Cause.hasInterrupts(result.joinExit.cause)).toBe(true);
+    expect(message).toContain("destroy secondary");
+    expect(message).toContain("audit secondary");
+    expect(message).toContain("write failed");
+  }
 });
 
-test("interrupted attempted conformance and metadata steps are reported as failures", async () => {
+test("interrupted configured conformance and metadata steps report configured measurement as unreached", async () => {
+  const options = {
+    measurement: {
+      latency: { baseUrl: target.url, paths: ["/streams/a"], concurrency: 1 },
+      throughput: { baseUrl: target.url, trials: 1, postsPerTrial: 1, concurrency: 1 },
+    },
+  } as const;
   for (const step of ["conformance", "metadata"] as const) {
     const started = Deferred.makeUnsafe<void>();
     let services: ReturnType<typeof makeServices>;
@@ -421,11 +455,15 @@ test("interrupted attempted conformance and metadata steps are reported as failu
               }),
           };
     services = makeServices(overrides);
-    const exit = await interruptAt(runEvidence(identity), started, services.layer);
+    const exit = await interruptAt(runEvidence(identity, options), started, services.layer);
     expect(Exit.isFailure(exit)).toBe(true);
     const stepResult = services.report?.[step];
     expect(stepResult?.status).toBe("failure");
     if (stepResult?.status === "failure") expect(stepResult.reason).toContain("interrupted");
+    expect(services.report?.measurement).toEqual({
+      status: "unavailable",
+      reason: "Measurement configured but not reached",
+    });
   }
 });
 
