@@ -4,7 +4,7 @@ import { StreamsReader, StreamsWriter } from "./tags.ts";
 import { create } from "./create.ts";
 import { append } from "./append.ts";
 import { head, read, readNext } from "./read.ts";
-import type { RemoveOutcome } from "./outcomes.ts";
+import { StreamNotFound, StreamGone, type RemoveError } from "./errors.ts";
 import { expireIfNeeded } from "./expiry.ts";
 export { expireDue } from "./expiry.ts";
 export { create } from "./create.ts";
@@ -32,16 +32,16 @@ export const layer = (
         fork: (id, source, opts) => create(storage, id, { ...opts, forkedFrom: source }),
         append: (id, opts) => append(storage, id, opts),
         remove: Effect.fn("Protocol.remove")(function* (id): Effect.fn.Return<
-          RemoveOutcome,
-          import("../fault.ts").StorageFault
+          void,
+          RemoveError | import("../fault.ts").StorageFault
         > {
           yield* expireIfNeeded(storage, id);
           const outcome = yield* storage
             .mutate({ operations: [{ _tag: "Delete", streamId: id, reason: "delete" }] })
             .pipe(Effect.uninterruptible);
-          if (Predicate.isTagged(outcome, "Applied")) return { status: "ok" };
-          if (outcome.reason === "not-found" || outcome.reason === "gone")
-            return { status: outcome.reason };
+          if (Predicate.isTagged(outcome, "Applied")) return;
+          if (outcome.reason === "not-found") return yield* new StreamNotFound({ id });
+          if (outcome.reason === "gone") return yield* new StreamGone({ id });
           return yield* Effect.die(new Error(`Unexpected delete rejection: ${outcome.reason}`));
         }),
       });

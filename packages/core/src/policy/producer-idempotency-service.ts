@@ -1,5 +1,7 @@
 /** Pure producer idempotency decisions. */
 
+import { StaleEpoch, ProducerGap, InvalidEpochSeq } from "../protocol/errors.ts";
+import type { StreamId } from "../schema/index.ts";
 import type { ProducerState } from "../schema/index.ts";
 
 export type ProducerValidation =
@@ -32,35 +34,20 @@ export function validateProducer(
   return { _tag: "Gap", expectedSeq: state.lastSeq + 1, receivedSeq: seq };
 }
 
-export function rejectionToAppendResult(
-  rejection: ProducerRejection,
-  currentOffset: string,
-  isClosed: boolean,
+export function rejectionToAppendError(
+  rejection: Exclude<ProducerRejection, { _tag: "Duplicate" }>,
+  id: StreamId,
 ) {
-  const { _tag: tag } = rejection;
-  switch (tag) {
-    case "Duplicate":
-      return {
-        status: "duplicate" as const,
-        offset: currentOffset,
-        producerEpoch: rejection.epoch,
-        producerSeq: rejection.lastSeq,
-        closed: isClosed,
-      };
+  switch (rejection._tag) {
     case "StaleEpoch":
-      return { status: "stale-epoch" as const, currentEpoch: rejection.currentEpoch };
+      return new StaleEpoch({ id, currentEpoch: rejection.currentEpoch });
     case "Gap":
-      return {
-        status: "producer-gap" as const,
+      return new ProducerGap({
+        id,
         expectedSeq: rejection.expectedSeq,
         receivedSeq: rejection.receivedSeq,
-      };
+      });
     case "InvalidEpochSeq":
-      return { status: "invalid-epoch-seq" as const };
+      return new InvalidEpochSeq({ id });
   }
-  return exhaustive(rejection);
-}
-
-function exhaustive(value: never): never {
-  throw new TypeError(`Unexpected producer rejection: ${String(value)}`);
 }

@@ -49,10 +49,10 @@ for (const constrained of [false, true]) {
     check(
       Effect.gen(function* () {
         const writer = yield* StreamsWriter;
-        expect((yield* writer.create(id, { contentType: "text/plain" })).status).toBe("created");
+        expect((yield* writer.create(id, { contentType: "text/plain" }))._tag).toBe("Created");
         expect(
-          (yield* writer.create(id, { contentType: "text/plain", initialData: data })).status,
-        ).toBe("exists");
+          (yield* writer.create(id, { contentType: "text/plain", initialData: data }))._tag,
+        ).toBe("Exists");
         for (const options of [
           { contentType: "application/json" },
           { ttlSeconds: 2 },
@@ -62,9 +62,9 @@ for (const constrained of [false, true]) {
           { forkOffset: ZERO_OFFSET },
           { forkSubOffset: 1 },
         ]) {
-          expect(yield* writer.create(id, options)).toMatchObject({
-            status: "conflict",
-            conflictReason: "config-mismatch",
+          expect(yield* Effect.flip(writer.create(id, options))).toMatchObject({
+            _tag: "CreateConflict",
+            reason: "config-mismatch",
           });
         }
         const closed = yield* writer.create(StreamId.make("closed"), {
@@ -72,7 +72,7 @@ for (const constrained of [false, true]) {
           initialData: data,
         });
         expect(closed).toMatchObject({
-          status: "created",
+          _tag: "Created",
           closed: true,
           nextOffset: next(ZERO_OFFSET),
         });
@@ -85,31 +85,38 @@ for (const constrained of [false, true]) {
       Effect.gen(function* () {
         const writer = yield* StreamsWriter;
         const reader = yield* StreamsReader;
-        expect(yield* writer.append(id, appendOptions)).toEqual({ status: "not-found" });
+        expect(yield* Effect.flip(writer.append(id, appendOptions))).toMatchObject({
+          _tag: "StreamNotFound",
+        });
         yield* writer.create(id, { contentType: "text/plain" });
         expect(
-          yield* writer.append(id, { ...appendOptions, expectedOffset: "broken" }),
+          yield* Effect.flip(writer.append(id, { ...appendOptions, expectedOffset: "broken" })),
         ).toMatchObject({
-          status: "conflict",
-          conflictReason: "expected-offset",
-          offset: ZERO_OFFSET,
+          _tag: "OffsetMismatch",
+          actual: ZERO_OFFSET,
         });
         expect(
           yield* writer.append(id, { ...appendOptions, expectedOffset: ZERO_OFFSET, seq: "b" }),
-        ).toMatchObject({ status: "appended", offset: next(ZERO_OFFSET) });
+        ).toMatchObject({ _tag: "Appended", offset: next(ZERO_OFFSET) });
         expect(
-          yield* writer.append(id, { ...appendOptions, expectedOffset: ZERO_OFFSET, close: true }),
-        ).toMatchObject({ status: "conflict", conflictReason: "expected-offset" });
+          yield* Effect.flip(
+            writer.append(id, { ...appendOptions, expectedOffset: ZERO_OFFSET, close: true }),
+          ),
+        ).toMatchObject({ _tag: "OffsetMismatch" });
         expect(
-          yield* writer.append(id, { ...appendOptions, contentType: "application/json" }),
-        ).toEqual({ status: "conflict", conflictReason: "content-type" });
-        expect(yield* writer.append(id, { ...appendOptions, seq: "a" })).toEqual({
-          status: "conflict",
-          conflictReason: "sequence",
-        });
+          yield* Effect.flip(
+            writer.append(id, { ...appendOptions, contentType: "application/json" }),
+          ),
+        ).toMatchObject({ _tag: "AppendConflict", message: "Content-Type mismatch" });
+        expect(yield* Effect.flip(writer.append(id, { ...appendOptions, seq: "a" }))).toMatchObject(
+          {
+            _tag: "AppendConflict",
+            message: "Sequence conflict",
+          },
+        );
         const result = yield* reader.read(id);
-        expect(result).toMatchObject({ status: "ok", closed: false });
-        if (result.status === "ok") expect(result.messages.length).toBe(1);
+        expect(result).toMatchObject({ closed: false });
+        expect(result.messages.length).toBe(1);
         expect(
           yield* writer.append(id, {
             ...appendOptions,
@@ -117,10 +124,9 @@ for (const constrained of [false, true]) {
             close: true,
             expectedOffset: next(ZERO_OFFSET),
           }),
-        ).toMatchObject({ status: "appended", closed: true });
-        expect(yield* writer.append(id, appendOptions)).toMatchObject({
-          status: "conflict",
-          conflictReason: "closed",
+        ).toMatchObject({ _tag: "Appended", closed: true });
+        expect(yield* Effect.flip(writer.append(id, appendOptions))).toMatchObject({
+          _tag: "StreamClosed",
         });
         expect(
           yield* writer.append(id, {
@@ -129,10 +135,10 @@ for (const constrained of [false, true]) {
             close: true,
             expectedOffset: "stale",
           }),
-        ).toMatchObject({ status: "appended", closed: true });
-        expect(yield* writer.remove(id)).toEqual({ status: "ok" });
-        expect(yield* writer.remove(id)).toEqual({ status: "not-found" });
-        expect(yield* reader.head(id)).toEqual({ status: "not-found" });
+        ).toMatchObject({ _tag: "Appended", closed: true });
+        expect(yield* writer.remove(id)).toBeUndefined();
+        expect(yield* Effect.flip(writer.remove(id))).toMatchObject({ _tag: "StreamNotFound" });
+        expect(yield* Effect.flip(reader.head(id))).toMatchObject({ _tag: "StreamNotFound" });
       }),
       constrained,
     ));
@@ -144,19 +150,21 @@ for (const constrained of [false, true]) {
         const control = yield* StreamsTest;
         yield* writer.create(id, { contentType: "text/plain" });
         expect(
-          yield* writer.append(id, {
-            ...appendOptions,
-            producer: producer(0, 2),
-            expectedOffset: "bad",
-          }),
-        ).toEqual({ status: "producer-gap", expectedSeq: 0, receivedSeq: 2 });
+          yield* Effect.flip(
+            writer.append(id, {
+              ...appendOptions,
+              producer: producer(0, 2),
+              expectedOffset: "bad",
+            }),
+          ),
+        ).toMatchObject({ _tag: "ProducerGap", expectedSeq: 0, receivedSeq: 2 });
         expect(
           yield* writer.append(id, {
             ...appendOptions,
             producer: producer(0, 0),
             expectedOffset: ZERO_OFFSET,
           }),
-        ).toMatchObject({ status: "appended", producerSeq: 0 });
+        ).toMatchObject({ _tag: "Appended", producerSeq: 0 });
         expect(
           yield* writer.append(id, {
             ...appendOptions,
@@ -164,35 +172,41 @@ for (const constrained of [false, true]) {
             expectedOffset: "bad",
             contentType: "wrong",
           }),
-        ).toMatchObject({ status: "duplicate", producerSeq: 0 });
+        ).toMatchObject({ _tag: "Duplicate", producerSeq: 0 });
         expect(
-          yield* writer.append(id, {
-            ...appendOptions,
-            producer: producer(1, 1),
-            expectedOffset: "bad",
-          }),
-        ).toEqual({ status: "invalid-epoch-seq" });
-        expect(yield* writer.append(id, { ...appendOptions, producer: producer(0, 2) })).toEqual({
-          status: "producer-gap",
+          yield* Effect.flip(
+            writer.append(id, {
+              ...appendOptions,
+              producer: producer(1, 1),
+              expectedOffset: "bad",
+            }),
+          ),
+        ).toMatchObject({ _tag: "InvalidEpochSeq" });
+        expect(
+          yield* Effect.flip(writer.append(id, { ...appendOptions, producer: producer(0, 2) })),
+        ).toMatchObject({
+          _tag: "ProducerGap",
           expectedSeq: 1,
           receivedSeq: 2,
         });
         expect(
           yield* writer.append(id, { ...appendOptions, producer: producer(0, 1) }),
-        ).toMatchObject({ status: "appended", producerSeq: 1 });
+        ).toMatchObject({ _tag: "Appended", producerSeq: 1 });
         expect(
           yield* writer.append(id, { ...appendOptions, producer: producer(0, 0) }),
-        ).toMatchObject({ status: "duplicate", producerSeq: 1 });
+        ).toMatchObject({ _tag: "Duplicate", producerSeq: 1 });
         expect(
           yield* writer.append(id, { ...appendOptions, producer: producer(1, 0) }),
-        ).toMatchObject({ status: "appended", producerEpoch: 1 });
+        ).toMatchObject({ _tag: "Appended", producerEpoch: 1 });
         expect(
-          yield* writer.append(id, {
-            ...appendOptions,
-            producer: producer(0, 1),
-            expectedOffset: "bad",
-          }),
-        ).toEqual({ status: "stale-epoch", currentEpoch: 1 });
+          yield* Effect.flip(
+            writer.append(id, {
+              ...appendOptions,
+              producer: producer(0, 1),
+              expectedOffset: "bad",
+            }),
+          ),
+        ).toMatchObject({ _tag: "StaleEpoch", currentEpoch: 1 });
         expect(yield* control.storage.producer(id, ProducerId.make("p"))).toEqual(
           Option.some({ epoch: 1, lastSeq: 0 }),
         );
@@ -207,49 +221,59 @@ for (const constrained of [false, true]) {
         const writer = yield* StreamsWriter;
         const reader = yield* StreamsReader;
         const child = StreamId.make("child");
-        expect((yield* writer.fork(child, id)).status).toBe("not-found");
+        expect((yield* Effect.flip(writer.fork(child, id)))._tag).toBe("ForkSourceNotFound");
         yield* writer.create(id, {
           contentType: "text/plain",
           initialData: new TextEncoder().encode("abc"),
           ttlSeconds: 5,
         });
-        expect(yield* writer.fork(child, id, { contentType: "application/json" })).toMatchObject({
-          status: "conflict",
-          conflictReason: "fork-content-type",
+        expect(
+          yield* Effect.flip(writer.fork(child, id, { contentType: "application/json" })),
+        ).toMatchObject({
+          _tag: "CreateConflict",
+          reason: "fork-content-type",
         });
-        expect((yield* writer.fork(child, id, { forkOffset: "bad" })).status).toBe("bad-request");
+        expect((yield* Effect.flip(writer.fork(child, id, { forkOffset: "bad" })))._tag).toBe(
+          "InvalidForkRequest",
+        );
         expect(
-          (yield* writer.fork(child, id, { forkOffset: next(next(ZERO_OFFSET)) })).status,
-        ).toBe("bad-request");
+          (yield* Effect.flip(writer.fork(child, id, { forkOffset: next(next(ZERO_OFFSET)) })))
+            ._tag,
+        ).toBe("InvalidForkRequest");
         expect(
-          (yield* writer.fork(child, id, { forkOffset: ZERO_OFFSET, forkSubOffset: 4 })).status,
-        ).toBe("bad-request");
+          (yield* Effect.flip(
+            writer.fork(child, id, { forkOffset: ZERO_OFFSET, forkSubOffset: 4 }),
+          ))._tag,
+        ).toBe("InvalidForkRequest");
         expect(
-          (yield* writer.fork(child, id, { forkOffset: ZERO_OFFSET, forkSubOffset: 2 })).status,
-        ).toBe("created");
+          (yield* writer.fork(child, id, { forkOffset: ZERO_OFFSET, forkSubOffset: 2 }))._tag,
+        ).toBe("Created");
         expect(
-          (yield* writer.fork(child, id, { forkOffset: ZERO_OFFSET, forkSubOffset: 2 })).status,
-        ).toBe("exists");
+          (yield* writer.fork(child, id, { forkOffset: ZERO_OFFSET, forkSubOffset: 2 }))._tag,
+        ).toBe("Exists");
         const result = yield* reader.read(child);
-        if (result.status !== "ok") throw new Error("expected child");
         expect(new TextDecoder().decode(result.messages[0]?.data)).toBe("ab");
         expect(yield* reader.head(child)).toMatchObject({ ttlSeconds: 5 });
         yield* writer.fork(StreamId.make("full"), id);
         yield* writer.remove(id);
-        expect((yield* reader.read(StreamId.make("full"))).status).toBe("ok");
+        expect(yield* reader.read(StreamId.make("full"))).toBeDefined();
         if (!constrained) {
-          expect(yield* writer.append(id, appendOptions)).toEqual({ status: "gone" });
-          expect(yield* reader.head(id)).toEqual({ status: "gone" });
-          expect(yield* reader.read(id)).toEqual({ status: "gone" });
-          expect((yield* reader.readNext(id, { offset: ZERO_OFFSET })).status).toBe("gone");
-          expect(yield* writer.remove(id)).toEqual({ status: "gone" });
-          expect(yield* writer.create(id)).toMatchObject({
-            status: "conflict",
-            conflictReason: "soft-deleted",
+          expect(yield* Effect.flip(writer.append(id, appendOptions))).toMatchObject({
+            _tag: "StreamGone",
           });
-          expect(yield* writer.fork(StreamId.make("gone-source"), id)).toMatchObject({
-            status: "conflict",
-            conflictReason: "fork-source-soft-deleted",
+          expect(yield* Effect.flip(reader.head(id))).toMatchObject({ _tag: "StreamGone" });
+          expect(yield* Effect.flip(reader.read(id))).toMatchObject({ _tag: "StreamGone" });
+          expect((yield* Effect.flip(reader.readNext(id, { offset: ZERO_OFFSET })))._tag).toBe(
+            "StreamGone",
+          );
+          expect(yield* Effect.flip(writer.remove(id))).toMatchObject({ _tag: "StreamGone" });
+          expect(yield* Effect.flip(writer.create(id))).toMatchObject({
+            _tag: "CreateConflict",
+            reason: "soft-deleted",
+          });
+          expect(yield* Effect.flip(writer.fork(StreamId.make("gone-source"), id))).toMatchObject({
+            _tag: "CreateConflict",
+            reason: "fork-source-soft-deleted",
           });
         }
       }),
@@ -268,22 +292,19 @@ for (const constrained of [false, true]) {
         });
         const first = yield* reader.read(id, { offset: "-1", limit: 1 });
         expect(first).toMatchObject({
-          status: "ok",
           nextOffset: next(ZERO_OFFSET),
           upToDate: false,
           closed: false,
         });
         expect(yield* reader.read(id, { offset: "now" })).toMatchObject({
-          status: "ok",
           messages: [],
           closed: true,
         });
         expect(yield* reader.readNext(id, { offset: ZERO_OFFSET })).toMatchObject({
-          status: "ok",
           closed: true,
         });
         expect(yield* reader.readNext(id, { offset: next(next(next(ZERO_OFFSET))) })).toMatchObject(
-          { status: "timeout", closed: true },
+          { timedOut: true, closed: true },
         );
       }),
       constrained,
@@ -308,9 +329,13 @@ for (const constrained of [false, true]) {
               close: change === "close",
             });
           if (constrained) yield* TestClock.adjust(25);
-          const result = yield* Fiber.join(fiber);
-          expect(result.status).toBe(change === "remove" ? "not-found" : "ok");
-          if (change === "close") expect(result).toMatchObject({ closed: true });
+          if (change === "remove")
+            expect((yield* Effect.flip(Fiber.join(fiber)))._tag).toBe("StreamNotFound");
+          else {
+            const result = yield* Fiber.join(fiber);
+            expect(result.timedOut).toBe(false);
+            if (change === "close") expect(result.closed).toBe(true);
+          }
           expect(yield* control.subscribers).toBe(0);
         }).pipe(Effect.scoped),
         constrained,
@@ -334,7 +359,7 @@ for (const constrained of [false, true]) {
         expect(fiber.pollUnsafe()).toBeUndefined();
         yield* TestClock.adjust(100);
         expect(yield* Fiber.join(fiber)).toMatchObject({
-          status: "timeout",
+          timedOut: true,
           nextOffset: ZERO_OFFSET,
         });
         expect(yield* control.subscribers).toBe(0);
@@ -384,7 +409,7 @@ for (const constrained of [false, true]) {
           2000,
         );
         yield* TestClock.adjust(1000);
-        expect(yield* reader.head(id)).toEqual({ status: "not-found" });
+        expect(yield* Effect.flip(reader.head(id))).toMatchObject({ _tag: "StreamNotFound" });
         yield* writer.create(id, { expiresAt: "1970-01-01T00:00:03.000Z" });
         yield* TestClock.adjust(500);
         yield* reader.read(id);
@@ -392,7 +417,7 @@ for (const constrained of [false, true]) {
           3000,
         );
         yield* TestClock.adjust(500);
-        expect(yield* reader.read(id)).toEqual({ status: "not-found" });
+        expect(yield* Effect.flip(reader.read(id))).toMatchObject({ _tag: "StreamNotFound" });
       }),
       constrained,
     ));
@@ -419,11 +444,13 @@ it("fork none refuses before any storage operation, even for an existing target"
       });
       yield* Effect.gen(function* () {
         const writer = yield* StreamsWriter;
-        expect(yield* writer.fork(id, StreamId.make("source"))).toEqual({
-          status: "not-supported",
+        expect(yield* Effect.flip(writer.fork(id, StreamId.make("source")))).toMatchObject({
+          _tag: "NotSupported",
           feature: "fork",
         });
-        expect((yield* writer.create(id, { forkedFrom: "source" })).status).toBe("not-supported");
+        expect((yield* Effect.flip(writer.create(id, { forkedFrom: "source" })))._tag).toBe(
+          "NotSupported",
+        );
       }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, source)))));
     }),
   ));
@@ -450,9 +477,11 @@ for (const rejects of [7, 8]) {
           }),
         });
         const result = yield* Effect.gen(function* () {
-          return yield* (yield* StreamsWriter).append(id, appendOptions);
+          const attempt = (yield* StreamsWriter).append(id, appendOptions);
+          if (rejects === 8) return yield* Effect.flip(attempt);
+          return yield* attempt;
         }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, source)))));
-        expect(result.status).toBe(rejects === 7 ? "appended" : "busy");
+        expect(result._tag).toBe(rejects === 7 ? "Appended" : "StreamBusy");
         expect(calls).toBe(8);
       }),
     ));
@@ -474,11 +503,11 @@ for (const when of ["before", "after"] as const) {
           const exit = yield* writer.append(id, options).pipe(Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(StorageFault);
-          expect((yield* writer.append(id, options)).status).toBe(
-            when === "before" ? "appended" : "duplicate",
+          expect((yield* writer.append(id, options))._tag).toBe(
+            when === "before" ? "Appended" : "Duplicate",
           );
           const result = yield* reader.read(id);
-          if (result.status === "ok") expect(result.messages.length).toBe(1);
+          expect(result.messages.length).toBe(1);
         }).pipe(
           provideTest(
             Protocol.layer().pipe(
@@ -517,13 +546,13 @@ it("readNext sees a commit in the read-to-subscribe window", () =>
             Effect.gen(function* () {
               yield* writer.append(id, appendOptions);
               return control.storage.changes(target);
-            }).pipe(Effect.catchTag("TransportFault", Effect.die)),
+            }).pipe(Effect.catch(Effect.die)),
           ),
       });
       const result = yield* Effect.gen(function* () {
         return yield* (yield* StreamsReader).readNext(id, { offset: ZERO_OFFSET });
       }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, storage)))));
-      expect(result).toMatchObject({ status: "ok", nextOffset: next(ZERO_OFFSET) });
+      expect(result).toMatchObject({ nextOffset: next(ZERO_OFFSET) });
       expect(yield* control.subscribers).toBe(0);
     }),
   ));
@@ -566,7 +595,7 @@ it("timeout re-reads a fresh snapshot even when storage emits no wake", () =>
         close: true,
       });
       yield* TestClock.adjust(100);
-      expect(yield* Fiber.join(fiber)).toMatchObject({ status: "timeout", closed: true });
+      expect(yield* Fiber.join(fiber)).toMatchObject({ timedOut: true, closed: true });
     }).pipe(Effect.scoped),
   ));
 
@@ -596,7 +625,7 @@ it("expiry precondition protects a concurrently renewed deadline", () =>
         yield* Effect.gen(function* () {
           return yield* (yield* StreamsReader).head(id);
         }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, storage))))),
-      ).toMatchObject({ status: "ok" });
+      ).toMatchObject({});
       expect(Option.getOrThrow(yield* control.storage.record(id)).lifecycle.expiresAtMs).toBe(2000);
     }),
   ));
@@ -639,7 +668,7 @@ it("remove classifies an already expired stream as not-found", () =>
       const writer = yield* StreamsWriter;
       yield* writer.create(id, { ttlSeconds: 1 });
       yield* TestClock.adjust(1000);
-      expect(yield* writer.remove(id)).toEqual({ status: "not-found" });
+      expect(yield* Effect.flip(writer.remove(id))).toMatchObject({ _tag: "StreamNotFound" });
     }),
   ));
 
@@ -685,7 +714,7 @@ it("parked readNext observes soft deletion as gone", () =>
       const fiber = yield* reader.readNext(id, { offset: ZERO_OFFSET }).pipe(Effect.forkScoped);
       yield* control.snapshot;
       yield* writer.remove(id);
-      expect((yield* Fiber.join(fiber)).status).toBe("gone");
+      expect((yield* Effect.flip(Fiber.join(fiber)))._tag).toBe("StreamGone");
       expect(yield* control.subscribers).toBe(0);
     }).pipe(Effect.scoped),
   ));
@@ -704,13 +733,13 @@ it("purge/recreate with a lower tail is a change, including when its wake was co
               yield* writer.remove(id);
               yield* writer.create(id, { contentType: "text/plain" });
               return control.storage.changes(target);
-            }).pipe(Effect.catchTag("TransportFault", Effect.die)),
+            }).pipe(Effect.catch(Effect.die)),
           ),
       });
       const result = yield* Effect.gen(function* () {
         return yield* (yield* StreamsReader).readNext(id, { offset: next(ZERO_OFFSET) });
       }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, storage)))));
-      expect(result).toMatchObject({ status: "ok", nextOffset: ZERO_OFFSET, messages: [] });
+      expect(result).toMatchObject({ nextOffset: ZERO_OFFSET, messages: [] });
       expect(yield* control.subscribers).toBe(0);
     }),
   ));
@@ -721,12 +750,11 @@ it("catch-up preserves lexical filtering of noncanonical offsets", () =>
       yield* (yield* StreamsWriter).create(id, { contentType: "text/plain", initialData: data });
       const reader = yield* StreamsReader;
       expect(yield* reader.read(id, { offset: "zz" })).toMatchObject({
-        status: "ok",
         messages: [],
       });
       const result = yield* reader.read(id, { offset: "0", limit: 1 });
-      expect(result).toMatchObject({ status: "ok", nextOffset: next(ZERO_OFFSET) });
-      if (result.status === "ok") expect(result.messages.length).toBe(1);
+      expect(result).toMatchObject({ nextOffset: next(ZERO_OFFSET) });
+      expect(result.messages.length).toBe(1);
     }),
   ));
 
@@ -752,13 +780,12 @@ it("readNext holds its cursor behind a reported tail until messages become visib
         yield* Deferred.await(ready);
         yield* TestClock.adjust(100);
         expect(yield* Fiber.join(fiber)).toMatchObject({
-          status: "timeout",
+          timedOut: true,
           nextOffset: ZERO_OFFSET,
           closed: false,
         });
         visible = true;
         expect(yield* reader.readNext(id, { offset: ZERO_OFFSET })).toMatchObject({
-          status: "ok",
           nextOffset: next(ZERO_OFFSET),
         });
       }).pipe(

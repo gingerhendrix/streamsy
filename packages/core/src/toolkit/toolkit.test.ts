@@ -35,9 +35,9 @@ it("refs are inert and layerMemory supplies real tags", () =>
     Effect.runPromiseExit(
       Effect.gen(function* () {
         expect(String(ref.id)).toBe("events");
-        expect(yield* Streams.create(ref)).toMatchObject({ status: "created" });
+        expect(yield* Streams.create(ref)).toMatchObject({ _tag: "Created" });
         expect(yield* Streams.append(ref, [{ n: 1 }, { n: 2 }])).toMatchObject({
-          status: "appended",
+          _tag: "Appended",
         });
         const batches = yield* Streams.read(ref, { limit: 1 }).pipe(Stream.runCollect);
         expect(batches.map((batch) => batch.items)).toEqual([[{ n: 1 }], [{ n: 2 }]]);
@@ -46,10 +46,9 @@ it("refs are inert and layerMemory supplies real tags", () =>
           { n: 2 },
         ]);
         expect(yield* Streams.head(ref)).toMatchObject({
-          status: "ok",
           contentType: "application/json",
         });
-        expect(yield* Streams.remove(ref)).toEqual({ status: "ok" });
+        expect(yield* Streams.remove(ref)).toBeUndefined();
       }).pipe(provideTest(Streams.layerMemory())),
     ),
   ).resolves.toEqual(Exit.succeed(undefined)));
@@ -114,16 +113,17 @@ for (const body of ['{"n":"wrong"}', "{bad"]) {
 }
 
 for (const operation of [Streams.read, Streams.follow]) {
-  it(`${operation.name} fails with StreamUnavailable while session exposes missing`, () =>
+  it(`${operation.name} and session fail with StreamNotFound`, () =>
     check(
       Effect.gen(function* () {
         const exit = yield* operation(ref).pipe(Stream.runCollect, Effect.exit);
         expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
-          _tag: "StreamUnavailable",
-          ref: ref.id,
-          status: "not-found",
+          id: ref.id,
+          _tag: "StreamNotFound",
         });
-        expect((yield* Streams.session(ref, { offset: ZERO_OFFSET })).status).toBe("not-found");
+        expect((yield* Effect.flip(Streams.session(ref, { offset: ZERO_OFFSET })))._tag).toBe(
+          "StreamNotFound",
+        );
       }),
     ));
 }
@@ -184,10 +184,10 @@ it("Producer replay keeps one item and next advances only its inert tuple", () =
     Effect.gen(function* () {
       yield* Streams.create(ref);
       const position = { producerId: "p", epoch: 0, seq: 0 };
-      expect((yield* Producer.append(ref, [{ n: 1 }], position)).status).toBe("appended");
+      expect((yield* Producer.append(ref, [{ n: 1 }], position))._tag).toBe("Appended");
       expect(
-        (yield* Producer.append(ref, [{ n: 1 }], position, { expectedOffset: "bad" })).status,
-      ).toBe("duplicate");
+        (yield* Producer.append(ref, [{ n: 1 }], position, { expectedOffset: "bad" }))._tag,
+      ).toBe("Duplicate");
       expect(Producer.next(position)).toEqual({ producerId: "p", epoch: 0, seq: 1 });
       expect(position.seq).toBe(0);
       expect(yield* Streams.read(ref).pipe(Streams.items, Stream.runCollect)).toEqual([{ n: 1 }]);
@@ -204,11 +204,12 @@ it("read and follow fail with gone while session preserves the classification", 
       for (const source of [Streams.read(ref), Streams.follow(ref)]) {
         const exit = yield* source.pipe(Stream.runCollect, Effect.exit);
         expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
-          _tag: "StreamUnavailable",
-          status: "gone",
+          _tag: "StreamGone",
         });
       }
-      expect((yield* Streams.session(ref, { offset: ZERO_OFFSET })).status).toBe("gone");
+      expect((yield* Effect.flip(Streams.session(ref, { offset: ZERO_OFFSET })))._tag).toBe(
+        "StreamGone",
+      );
     }),
   ));
 
@@ -216,7 +217,7 @@ it("JSON empty close can be retried without a closed conflict", () =>
   check(
     Effect.gen(function* () {
       yield* Streams.create(ref);
-      expect((yield* Streams.append(ref, [], { close: true })).status).toBe("appended");
-      expect((yield* Streams.append(ref, [], { close: true })).status).toBe("appended");
+      expect((yield* Streams.append(ref, [], { close: true }))._tag).toBe("Appended");
+      expect((yield* Streams.append(ref, [], { close: true }))._tag).toBe("Appended");
     }),
   ));

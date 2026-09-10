@@ -3,28 +3,44 @@ import type { StorageFault, StreamsFault } from "../fault.ts";
 import type { StreamId } from "../schema/index.ts";
 import type { AppendOptions, CreateOptions, ReadOptions, ReadNextOptions } from "./options.ts";
 import type {
-  AppendOutcome,
-  CreateOutcome,
-  HeadOutcome,
-  ReadOutcome,
-  ReadNextOutcome,
-  RemoveOutcome,
-} from "./outcomes.ts";
+  HeadError,
+  ReadError,
+  ReadNextError,
+  CreateError,
+  AppendError,
+  RemoveError,
+} from "./errors.ts";
+import type {
+  AppendResult,
+  CreateResult,
+  HeadResult,
+  ReadResult,
+  ReadNextResult,
+} from "./results.ts";
 
 export interface Reader<E = StorageFault> {
-  readonly head: (id: StreamId) => Effect.Effect<HeadOutcome, E>;
-  readonly read: (id: StreamId, options?: ReadOptions) => Effect.Effect<ReadOutcome, E>;
-  readonly readNext: (id: StreamId, options: ReadNextOptions) => Effect.Effect<ReadNextOutcome, E>;
+  readonly head: (id: StreamId) => Effect.Effect<HeadResult, HeadError | E>;
+  readonly read: (id: StreamId, options?: ReadOptions) => Effect.Effect<ReadResult, ReadError | E>;
+  readonly readNext: (
+    id: StreamId,
+    options: ReadNextOptions,
+  ) => Effect.Effect<ReadNextResult, ReadNextError | E>;
 }
 export interface Writer<E = StorageFault> {
-  readonly create: (id: StreamId, options?: CreateOptions) => Effect.Effect<CreateOutcome, E>;
+  readonly create: (
+    id: StreamId,
+    options?: CreateOptions,
+  ) => Effect.Effect<CreateResult, CreateError | E>;
   readonly fork: (
     id: StreamId,
     source: StreamId,
     options?: Omit<CreateOptions, "forkedFrom">,
-  ) => Effect.Effect<CreateOutcome, E>;
-  readonly append: (id: StreamId, options: AppendOptions) => Effect.Effect<AppendOutcome, E>;
-  readonly remove: (id: StreamId) => Effect.Effect<RemoveOutcome, E>;
+  ) => Effect.Effect<CreateResult, CreateError | E>;
+  readonly append: (
+    id: StreamId,
+    options: AppendOptions,
+  ) => Effect.Effect<AppendResult, AppendError | E>;
+  readonly remove: (id: StreamId) => Effect.Effect<void, RemoveError | E>;
 }
 export class StreamsReader extends Context.Service<StreamsReader, Reader<StreamsFault>>()(
   "@streamsy/core/StreamsReader",

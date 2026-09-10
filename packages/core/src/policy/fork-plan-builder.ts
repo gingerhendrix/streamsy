@@ -3,7 +3,13 @@ import { Predicate } from "effect";
 
 import type { Operation } from "../storage/mutation.ts";
 import type { CreateOptions } from "./options.ts";
-import type { CreateOutcome } from "../protocol/outcomes.ts";
+import {
+  ForkSourceNotFound,
+  CreateConflict,
+  InvalidForkRequest,
+  type CreateError,
+} from "../protocol/errors.ts";
+import type { CreateResult } from "../protocol/results.ts";
 import { Offset, type StoredMessage, type StreamId, type StreamRecord } from "../schema/index.ts";
 interface Clock {
   now(): number;
@@ -25,11 +31,11 @@ export interface ForkExpiryOptions {
 }
 
 export type ForkBuildResult =
-  | { _tag: "Terminal"; result: CreateOutcome }
+  | { _tag: "Rejected"; error: CreateError }
   | {
       _tag: "Fork";
       plan: Extract<Operation, { _tag: "Create" }>;
-      toResult: (record: StreamRecord) => CreateOutcome;
+      toResult: (record: StreamRecord) => CreateResult;
     };
 
 export interface ForkPlanBuilderDeps {
@@ -67,37 +73,32 @@ export class ForkPlanBuilder {
   ): ForkBuildResult {
     if (!source)
       return {
-        _tag: "Terminal",
-        result: {
-          status: "not-found",
-          nextOffset: "",
-          contentType: "",
-          errorMessage: `Source stream not found: ${sourcePath}`,
-        },
+        _tag: "Rejected",
+        error: new ForkSourceNotFound({
+          id: targetId,
+          source: sourcePath,
+          message: `Source stream not found: ${sourcePath}`,
+        }),
       };
     if (source.lifecycle.softDeleted) {
       return {
-        _tag: "Terminal",
-        result: {
-          status: "conflict",
-          nextOffset: "",
-          contentType: "",
-          conflictReason: "fork-source-soft-deleted",
-          errorMessage: `Source stream is soft-deleted: ${sourcePath}`,
-        },
+        _tag: "Rejected",
+        error: new CreateConflict({
+          id: targetId,
+          reason: "fork-source-soft-deleted",
+          message: `Source stream is soft-deleted: ${sourcePath}`,
+        }),
       };
     }
 
     const forkOffset = options.forkOffset ?? source.currentOffset;
     if (!isValid(forkOffset)) {
       return {
-        _tag: "Terminal",
-        result: {
-          status: "bad-request",
-          nextOffset: "",
-          contentType: "",
-          errorMessage: "Invalid Stream-Fork-Offset format",
-        },
+        _tag: "Rejected",
+        error: new InvalidForkRequest({
+          id: targetId,
+          message: "Invalid Stream-Fork-Offset format",
+        }),
       };
     }
     if (
@@ -105,13 +106,11 @@ export class ForkPlanBuilder {
       compareOffsets(forkOffset, source.currentOffset) > 0
     ) {
       return {
-        _tag: "Terminal",
-        result: {
-          status: "bad-request",
-          nextOffset: "",
-          contentType: "",
-          errorMessage: "Stream-Fork-Offset exceeds source tail",
-        },
+        _tag: "Rejected",
+        error: new InvalidForkRequest({
+          id: targetId,
+          message: "Stream-Fork-Offset exceeds source tail",
+        }),
       };
     }
 
@@ -119,14 +118,12 @@ export class ForkPlanBuilder {
     if (!contentType || contentType.trim() === "") contentType = source.config.contentType;
     else if (!contentTypeMatches(contentType, source.config.contentType)) {
       return {
-        _tag: "Terminal",
-        result: {
-          status: "conflict",
-          nextOffset: "",
-          contentType: "",
-          conflictReason: "fork-content-type",
-          errorMessage: "Fork Content-Type does not match source",
-        },
+        _tag: "Rejected",
+        error: new CreateConflict({
+          id: targetId,
+          reason: "fork-content-type",
+          message: "Fork Content-Type does not match source",
+        }),
       };
     }
 
@@ -134,13 +131,8 @@ export class ForkPlanBuilder {
     const prefix = this.materializePrefix(subOffset, contentType, sourceTail);
     if (Predicate.isTagged(prefix, "Invalid")) {
       return {
-        _tag: "Terminal",
-        result: {
-          status: "bad-request",
-          nextOffset: "",
-          contentType: "",
-          errorMessage: prefix.errorMessage,
-        },
+        _tag: "Rejected",
+        error: new InvalidForkRequest({ id: targetId, message: prefix.errorMessage }),
       };
     }
 
@@ -169,9 +161,10 @@ export class ForkPlanBuilder {
       _tag: "Fork",
       plan,
       toResult: (record) => ({
-        status: "created",
+        _tag: "Created",
         nextOffset: record.currentOffset,
         contentType,
+        closed: record.lifecycle.closed,
       }),
     };
   }

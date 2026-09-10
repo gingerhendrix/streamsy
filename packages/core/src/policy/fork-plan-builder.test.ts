@@ -69,8 +69,8 @@ describe("ForkPlanBuilder", () => {
     const builder = new ForkPlanBuilder({ clock, newRecord });
 
     expect(builder.build(StreamId.make("child"), StreamId.make("source"), null, {})).toMatchObject({
-      _tag: "Terminal",
-      result: { status: "not-found" },
+      _tag: "Rejected",
+      error: { _tag: "ForkSourceNotFound" },
     });
     expect(
       builder.build(
@@ -80,8 +80,8 @@ describe("ForkPlanBuilder", () => {
         {},
       ),
     ).toMatchObject({
-      _tag: "Terminal",
-      result: { status: "conflict", conflictReason: "fork-source-soft-deleted" },
+      _tag: "Rejected",
+      error: { _tag: "CreateConflict", reason: "fork-source-soft-deleted" },
     });
   });
 
@@ -111,8 +111,8 @@ describe("ForkPlanBuilder", () => {
         forkOffset: "0000000000000003_0000000000000000",
       }),
     ).toMatchObject({
-      _tag: "Terminal",
-      result: { status: "bad-request", errorMessage: "Stream-Fork-Offset exceeds source tail" },
+      _tag: "Rejected",
+      error: { _tag: "InvalidForkRequest", message: "Stream-Fork-Offset exceeds source tail" },
     });
     expect(
       builder.build(StreamId.make("child"), StreamId.make("source"), source(), {
@@ -194,7 +194,7 @@ describe("ForkPlanBuilder", () => {
           { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 5 },
           tailMessages(["hi"]),
         ),
-      ).toMatchObject({ _tag: "Terminal", result: { status: "bad-request" } });
+      ).toMatchObject({ _tag: "Rejected", error: { _tag: "InvalidForkRequest" } });
     });
 
     it("rejects a JSON sub-offset that overshoots the message count", () => {
@@ -206,7 +206,7 @@ describe("ForkPlanBuilder", () => {
           { contentType: "application/json", forkOffset: ZERO_OFFSET, forkSubOffset: 4 },
           tailMessages(['{"a":1}', '{"b":2}', '{"c":3}']),
         ),
-      ).toMatchObject({ _tag: "Terminal", result: { status: "bad-request" } });
+      ).toMatchObject({ _tag: "Rejected", error: { _tag: "InvalidForkRequest" } });
     });
 
     it("rejects a positive sub-offset with no source message to fork", () => {
@@ -218,7 +218,7 @@ describe("ForkPlanBuilder", () => {
           { contentType: "text/plain", forkOffset: ZERO_OFFSET, forkSubOffset: 1 },
           [],
         ),
-      ).toMatchObject({ _tag: "Terminal", result: { status: "bad-request" } });
+      ).toMatchObject({ _tag: "Rejected", error: { _tag: "InvalidForkRequest" } });
     });
 
     it("accepts a binary sub-offset equal to the message length", () => {

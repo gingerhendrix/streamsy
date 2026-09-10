@@ -6,19 +6,25 @@ import { ZERO_OFFSET, isValid } from "../offset/index.ts";
 import type { Storage } from "../storage/storage.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";
 import { expireIfNeeded, touch } from "./expiry.ts";
-import type { HeadOutcome, ReadOutcome, ReadNextOutcome } from "./outcomes.ts";
+import {
+  StreamNotFound,
+  StreamGone,
+  type HeadError,
+  type ReadError,
+  type ReadNextError,
+} from "./errors.ts";
+import type { HeadResult, ReadResult, ReadNextResult } from "./results.ts";
 import type { ReadOptions, ReadNextOptions } from "./options.ts";
 
 export const head = Effect.fn("Protocol.head")(function* (
   storage: typeof Storage.Service,
   id: StreamId,
-): Effect.fn.Return<HeadOutcome, StorageFault> {
+): Effect.fn.Return<HeadResult, HeadError | StorageFault> {
   const found = yield* expireIfNeeded(storage, id);
-  if (Option.isNone(found)) return { status: "not-found" };
+  if (Option.isNone(found)) return yield* new StreamNotFound({ id });
   const record = found.value;
-  if (record.lifecycle.softDeleted) return { status: "gone" };
+  if (record.lifecycle.softDeleted) return yield* new StreamGone({ id });
   return {
-    status: "ok",
     contentType: record.config.contentType,
     nextOffset: record.currentOffset,
     ttlSeconds: record.config.ttlSeconds,
@@ -52,7 +58,6 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
   const nextOffset = messages.at(-1)?.offset ?? record.currentOffset;
   const upToDate = nextOffset === record.currentOffset;
   return {
-    status: "ok" as const,
     messages: messages.map((message) => ({ data: message.data })),
     nextOffset,
     upToDate,
@@ -63,25 +68,14 @@ export const read = Effect.fn("Protocol.read")(function* (
   storage: typeof Storage.Service,
   id: StreamId,
   options: ReadOptions = {},
-): Effect.fn.Return<ReadOutcome, StorageFault> {
+): Effect.fn.Return<ReadResult, ReadError | StorageFault> {
   const found = yield* expireIfNeeded(storage, id);
-  if (Option.isNone(found)) return { status: "not-found" };
-  if (found.value.lifecycle.softDeleted) return { status: "gone" };
+  if (Option.isNone(found)) return yield* new StreamNotFound({ id });
+  if (found.value.lifecycle.softDeleted) return yield* new StreamGone({ id });
   return yield* readRecord(storage, found.value, options);
 });
 
-const missing = (status: "not-found" | "gone"): ReadNextOutcome => ({
-  status,
-  messages: [],
-  nextOffset: "",
-  upToDate: false,
-  cursor: "",
-});
-function liveResult(
-  result: Extract<ReadOutcome, { status: "ok" }>,
-  record: StreamRecord,
-  from: string,
-) {
+function liveResult(result: ReadResult, record: StreamRecord, from: string) {
   // A storage observer can report the tail before a subsequent message read
   // exposes it. Keep the cursor behind invisible data so a later read repairs it.
   const nextOffset =
@@ -98,11 +92,11 @@ export const readNext = Effect.fn("Protocol.readNext")(function* (
   id: StreamId,
   options: ReadNextOptions,
   timeoutMs: number,
-): Effect.fn.Return<ReadNextOutcome, StorageFault> {
+): Effect.fn.Return<ReadNextResult, ReadNextError | StorageFault> {
   const found = yield* expireIfNeeded(storage, id);
-  if (Option.isNone(found)) return missing("not-found");
+  if (Option.isNone(found)) return yield* new StreamNotFound({ id });
   const record = found.value;
-  if (record.lifecycle.softDeleted) return missing("gone");
+  if (record.lifecycle.softDeleted) return yield* new StreamGone({ id });
   const from =
     options.offset === "now"
       ? record.currentOffset
@@ -120,7 +114,7 @@ export const readNext = Effect.fn("Protocol.readNext")(function* (
     return {
       ...initial,
       upToDate: true,
-      status: initial.messages.length > 0 ? "ok" : "timeout",
+      timedOut: initial.messages.length === 0,
       cursor: yield* cursor,
     };
   const waited = yield* storage.changes(id).pipe(
@@ -137,12 +131,12 @@ export const readNext = Effect.fn("Protocol.readNext")(function* (
   );
   // The timeout and wake paths both consult authoritative state after subscription teardown.
   const latest = yield* expireIfNeeded(storage, id);
-  if (Option.isNone(latest)) return missing("not-found");
-  if (latest.value.lifecycle.softDeleted) return missing("gone");
+  if (Option.isNone(latest)) return yield* new StreamNotFound({ id });
+  if (latest.value.lifecycle.softDeleted) return yield* new StreamGone({ id });
   const result = yield* readRecord(storage, latest.value, { offset: from });
   return {
     ...liveResult(result, latest.value, from),
-    status: result.messages.length > 0 || Option.isSome(waited) ? "ok" : "timeout",
+    timedOut: result.messages.length === 0 && Option.isNone(waited),
     cursor: yield* cursor,
   };
 });

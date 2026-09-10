@@ -1,6 +1,5 @@
 import { Effect, Option, Predicate, Schema, Stream } from "effect";
 import { DecodeFault, EncodeFault } from "../fault.ts";
-import { StreamId } from "../schema/index.ts";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import type {
   AppendOptions,
@@ -8,14 +7,10 @@ import type {
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
-import type { ReadOutcome, ReadNextOutcome } from "../protocol/outcomes.ts";
+import type { ReadResult, ReadNextResult } from "../protocol/results.ts";
 import type { StreamRef } from "./ref.ts";
 export { layerMemory } from "./layers.ts";
 
-export class StreamUnavailable extends Schema.TaggedError<StreamUnavailable>()(
-  "StreamUnavailable",
-  { ref: StreamId, status: Schema.Literals(["not-found", "gone"]) },
-) {}
 export interface Batch<A> {
   readonly items: ReadonlyArray<A>;
   readonly nextOffset: string;
@@ -65,15 +60,8 @@ function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
 }
 const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
   ref: StreamRef<A, RD, RE>,
-  result: ReadOutcome | ReadNextOutcome,
+  result: ReadResult | ReadNextResult,
 ) {
-  if (result.status === "not-found" || result.status === "gone")
-    return yield* new StreamUnavailable({ ref: ref.id, status: result.status });
-  // Neither accepted storage mode lacks reads. A future transport must implement this family.
-  if (result.status === "not-supported")
-    return yield* new DecodeFault({
-      message: result.message ?? `Read not supported: ${result.feature}`,
-    });
   const items = yield* Effect.forEach(result.messages, (message, index) =>
     Schema.decodeEffect(ref.codec)(
       Predicate.isTagged(ref, "Json") ? new TextDecoder().decode(message.data) : message.data,

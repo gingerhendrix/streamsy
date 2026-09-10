@@ -8,7 +8,8 @@ import { computeExpiresAtMs } from "../policy/expiry-policy.ts";
 import { ForkPlanBuilder, type ForkDescriptor } from "../policy/fork-plan-builder.ts";
 import { frameMessages } from "../policy/message-framer.ts";
 import type { CreateOptions } from "./options.ts";
-import type { CreateOutcome } from "./outcomes.ts";
+import { CreateConflict, ForkSourceNotFound, NotSupported, type CreateError } from "./errors.ts";
+import type { CreateResult } from "./results.ts";
 import { expireIfNeeded } from "./expiry.ts";
 
 type WritableConfig = { -readonly [K in keyof StreamConfig]: StreamConfig[K] };
@@ -34,33 +35,39 @@ function newRecord(
   if (at !== undefined) lifecycle.expiresAtMs = at;
   return { id, currentOffset: fork?.forkOffset ?? ZERO_OFFSET, config, lifecycle };
 }
-function existingResult(record: StreamRecord, options: CreateOptions): CreateOutcome {
+const existingResult = Effect.fn("Protocol.existingResult")(function* (
+  record: StreamRecord,
+  options: CreateOptions,
+): Effect.fn.Return<CreateResult, CreateConflict> {
   if (record.lifecycle.softDeleted)
-    return { status: "conflict", nextOffset: "", contentType: "", conflictReason: "soft-deleted" };
+    return yield* new CreateConflict({
+      id: record.id,
+      reason: "soft-deleted",
+      message: "Stream exists with different configuration",
+    });
   if (!configMatches(record, options))
-    return {
-      status: "conflict",
-      nextOffset: "",
-      contentType: "",
-      conflictReason: "config-mismatch",
-    };
+    return yield* new CreateConflict({
+      id: record.id,
+      reason: "config-mismatch",
+      message: "Stream exists with different configuration",
+    });
   return {
-    status: "exists",
+    _tag: "Exists",
     nextOffset: record.currentOffset,
     contentType: record.config.contentType,
     closed: record.lifecycle.closed,
   };
-}
+});
 export const create = Effect.fn("Protocol.create")(function* (
   storage: typeof Storage.Service,
   id: StreamId,
   options: CreateOptions = {},
-): Effect.fn.Return<CreateOutcome, StorageFault> {
+): Effect.fn.Return<CreateResult, CreateError | StorageFault> {
   // Capability refusal must not acquire records, read messages or attempt writes.
   if (options.forkedFrom !== undefined && storage.capabilities.fork === "none")
-    return { status: "not-supported", feature: "fork" };
+    return yield* new NotSupported({ id, feature: "fork" });
   const existing = yield* expireIfNeeded(storage, id);
-  if (Option.isSome(existing)) return existingResult(existing.value, options);
+  if (Option.isSome(existing)) return yield* existingResult(existing.value, options);
   const now = yield* Clock.currentTimeMillis;
   let plan: Extract<import("../storage/mutation.ts").Operation, { _tag: "Create" }>;
   if (options.forkedFrom !== undefined) {
@@ -76,7 +83,7 @@ export const create = Effect.fn("Protocol.create")(function* (
       newRecord: (target, type, opts, fork) => newRecord(target, type, opts, now, fork),
     });
     const built = builder.build(id, sourceId, Option.getOrNull(source), options, tail);
-    if (Predicate.isTagged(built, "Terminal")) return built.result;
+    if (Predicate.isTagged(built, "Rejected")) return yield* built.error;
     plan = built.plan;
     if (storage.capabilities.fork === "copy") {
       const prefix = yield* storage.messages(sourceId, { until: plan.record.lifecycle.forkOffset });
@@ -109,18 +116,17 @@ export const create = Effect.fn("Protocol.create")(function* (
   if (Predicate.isTagged(result, "Applied")) {
     const record = result.results[0].record;
     return {
-      status: "created",
+      _tag: "Created",
       nextOffset: record.currentOffset,
       contentType: record.config.contentType,
       closed: record.lifecycle.closed,
     };
   }
   if (result.reason === "exists" && Option.isSome(result.record))
-    return existingResult(result.record.value, options);
-  return {
-    status: "not-found",
-    nextOffset: "",
-    contentType: "",
-    errorMessage: "Source stream disappeared during fork",
-  };
+    return yield* existingResult(result.record.value, options);
+  return yield* new ForkSourceNotFound({
+    id,
+    source: StreamId.make(options.forkedFrom ?? id),
+    message: "Source stream disappeared during fork",
+  });
 });

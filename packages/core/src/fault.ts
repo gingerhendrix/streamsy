@@ -14,7 +14,7 @@ export class DecodeFault extends Schema.TaggedError<DecodeFault>()("DecodeFault"
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 
-/** Failures of the remote boundary; protocol classifications remain values. */
+/** Failures of the remote boundary; protocol rejections have their own typed errors. */
 export class TransportFault extends Schema.TaggedError<TransportFault>()("TransportFault", {
   operation: Schema.String,
   reason: Schema.Literals(["request", "response", "decode", "configuration"]),

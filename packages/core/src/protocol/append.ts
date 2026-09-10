@@ -5,24 +5,33 @@ import { next } from "../offset/index.ts";
 import { contentTypeMatches } from "../policy/content-type-matcher.ts";
 import { frameMessages } from "../policy/message-framer.ts";
 import {
-  rejectionToAppendResult,
+  rejectionToAppendError,
   validateProducer,
 } from "../policy/producer-idempotency-service.ts";
 import { expireIfNeeded } from "./expiry.ts";
 import type { AppendOptions } from "./options.ts";
-import type { AppendOutcome } from "./outcomes.ts";
+import {
+  StreamNotFound,
+  StreamGone,
+  StreamClosed,
+  OffsetMismatch,
+  AppendConflict,
+  StreamBusy,
+  type AppendError,
+} from "./errors.ts";
+import type { AppendResult } from "./results.ts";
 
 export const append = Effect.fn("Protocol.append")(function* (
   storage: typeof Storage.Service,
   id: StreamId,
   options: AppendOptions,
-): Effect.fn.Return<AppendOutcome, import("../fault.ts").StorageFault> {
+): Effect.fn.Return<AppendResult, AppendError | import("../fault.ts").StorageFault> {
   // These are semantic replans, not retries of an opaque write or its fault.
   for (let attempt = 0; attempt < 8; attempt++) {
     const found = yield* expireIfNeeded(storage, id);
-    if (Option.isNone(found)) return { status: "not-found" };
+    if (Option.isNone(found)) return yield* new StreamNotFound({ id });
     const record = found.value;
-    if (record.lifecycle.softDeleted) return { status: "gone" };
+    if (record.lifecycle.softDeleted) return yield* new StreamGone({ id });
     const producer = options.producer;
     const saved = producer
       ? yield* storage.producer(id, ProducerId.make(producer.producerId))
@@ -31,34 +40,37 @@ export const append = Effect.fn("Protocol.append")(function* (
       ? validateProducer(Option.getOrUndefined(saved), producer.producerEpoch, producer.producerSeq)
       : undefined;
     // A retried acknowledged tuple wins even over a stale or malformed expected offset.
+    if (validation && Predicate.isTagged(validation, "Duplicate"))
+      return {
+        _tag: "Duplicate",
+        offset: record.currentOffset,
+        producerEpoch: validation.epoch,
+        producerSeq: validation.lastSeq,
+        closed: record.lifecycle.closed,
+      };
     if (validation && !Predicate.isTagged(validation, "Accepted"))
-      return rejectionToAppendResult(validation, record.currentOffset, record.lifecycle.closed);
+      return yield* rejectionToAppendError(validation, id);
     const wantClose = options.close === true;
     const closeOnly = wantClose && options.data.byteLength === 0;
     if (closeOnly && record.lifecycle.closed)
-      return { status: "appended", offset: record.currentOffset, closed: true };
+      return { _tag: "Appended", offset: record.currentOffset, closed: true };
     if (record.lifecycle.closed)
-      return {
-        status: "conflict",
-        conflictReason: "closed",
-        offset: record.currentOffset,
-        closed: true,
-      };
+      return yield* new StreamClosed({ id, offset: record.currentOffset });
     if (!closeOnly && !contentTypeMatches(record.config.contentType, options.contentType))
-      return { status: "conflict", conflictReason: "content-type" };
+      return yield* new AppendConflict({ id, message: "Content-Type mismatch" });
     if (
       !closeOnly &&
       options.seq &&
       record.lifecycle.lastSeq &&
       options.seq <= record.lifecycle.lastSeq
     )
-      return { status: "conflict", conflictReason: "sequence" };
+      return yield* new AppendConflict({ id, message: "Sequence conflict" });
     if (options.expectedOffset !== undefined && options.expectedOffset !== record.currentOffset)
-      return {
-        status: "conflict",
-        conflictReason: "expected-offset",
-        offset: record.currentOffset,
-      };
+      return yield* new OffsetMismatch({
+        id,
+        expected: options.expectedOffset,
+        actual: record.currentOffset,
+      });
     const now = yield* Clock.currentTimeMillis;
     let offset = record.currentOffset;
     const messages = (closeOnly ? [] : frameMessages(options.data, record.config.contentType)).map(
@@ -98,12 +110,12 @@ export const append = Effect.fn("Protocol.append")(function* (
       .pipe(Effect.uninterruptible);
     if (Predicate.isTagged(outcome, "Applied"))
       return {
-        status: "appended",
+        _tag: "Appended",
         offset,
         closed: wantClose,
         producerEpoch: accepted?.proposedState.epoch,
         producerSeq: accepted?.proposedState.lastSeq,
       };
   }
-  return { status: "busy" };
+  return yield* new StreamBusy({ id });
 });
