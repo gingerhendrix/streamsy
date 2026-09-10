@@ -7,7 +7,7 @@ export interface MessageWithData {
 export class MessageBodyCodec {
   private decoder = new TextDecoder();
 
-  encodeHttpBody(messages: MessageWithData[], contentType: string): string | ArrayBuffer {
+  encodeHttpBody(messages: readonly MessageWithData[], contentType: string): string | ArrayBuffer {
     const lower = contentType.toLowerCase();
     if (lower.startsWith("application/json")) {
       const items = messages.map((msg) => this.decoder.decode(msg.data));
@@ -23,7 +23,7 @@ export class MessageBodyCodec {
     return contentType.toLowerCase().startsWith("application/json") ? "[]" : "";
   }
 
-  concatBytes(messages: MessageWithData[]): Uint8Array {
+  concatBytes(messages: readonly MessageWithData[]): Uint8Array {
     const totalLength = messages.reduce((acc, msg) => acc + msg.data.length, 0);
     const combined = new Uint8Array(totalLength);
     let pos = 0;

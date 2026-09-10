@@ -1,35 +1,44 @@
-/**
- * Decode one standard Durable Streams HTTP response into its protocol outcome.
- *
- * Status and documented headers are the source of truth. The direct Layer
- * supplies more than the public wire can carry, so the transport reports what
- * the wire expresses: batch-level read metadata, message payloads, and the
- * conflict classifications the host's fixed 409 bodies name.
- */
+/** Decode standard HTTP successes and fail with the protocol details carried by the wire. */
 import { DateTime, Effect, Option } from "effect";
 import type {
-  AppendOutcome,
-  CreateOutcome,
-  HeadOutcome,
+  AppendResult,
+  CreateResult,
+  HeadResult,
   ReadMessage,
-  ReadNextOutcome,
-  ReadOutcome,
-  RemoveOutcome,
-} from "../protocol/outcomes.ts";
+  ReadNextResult,
+  ReadResult,
+} from "../protocol/results.ts";
+import { StreamId } from "../schema/index.ts";
+import {
+  StreamNotFound,
+  StreamGone,
+  StreamBusy,
+  StreamClosed,
+  OffsetMismatch,
+  AppendConflict,
+  StaleEpoch,
+  ProducerGap,
+  InvalidAppendRequest,
+  CreateConflict,
+  ForkSourceNotFound,
+  InvalidForkRequest,
+  NotSupported,
+  type HeadError,
+  type ReadError,
+  type ReadNextError,
+  type CreateError,
+  type AppendError,
+  type RemoveError,
+} from "../protocol/errors.ts";
 import type { TransportFault } from "../fault.ts";
 import * as Wire from "./wire.ts";
 
 export type Operation = "head" | "read" | "readNext" | "create" | "append" | "remove";
 
-export type Outcome =
-  | AppendOutcome
-  | CreateOutcome
-  | HeadOutcome
-  | ReadOutcome
-  | ReadNextOutcome
-  | RemoveOutcome;
-
 export interface DecodeContext {
+  readonly id: StreamId;
+  readonly source?: StreamId;
+  readonly expectedOffset?: string;
   /** The request carried producer headers: 200 acknowledges a write, 204 a duplicate. */
   readonly producer?: boolean;
 }
@@ -42,10 +51,11 @@ const emptyToUndefined = (value: string): string | undefined => {
 export const head = (
   operation: Operation,
   response: Wire.HttpResponse,
-): Effect.Effect<HeadOutcome, TransportFault> =>
+  context: DecodeContext,
+): Effect.Effect<HeadResult, HeadError | TransportFault> =>
   Effect.gen(function* () {
-    if (response.status === 404) return { status: "not-found" as const };
-    if (response.status === 410) return { status: "gone" as const };
+    if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
+    if (response.status === 410) return yield* new StreamGone({ id: context.id });
     if (response.status !== 200) return yield* Wire.unexpected(operation, response);
     const contentType = yield* Wire.contentType(operation, response);
     const nextOffset = yield* Wire.offset(operation, response);
@@ -60,20 +70,21 @@ export const head = (
         Wire.failure(operation, "response", `Invalid stream-expires-at header: ${expiresAt}`),
       );
     const closed = yield* Wire.closedHeader(operation, response);
-    return { status: "ok" as const, contentType, nextOffset, ttlSeconds, expiresAt, closed };
+    return { contentType, nextOffset, ttlSeconds, expiresAt, closed };
   });
 
 export const create = (
   operation: Operation,
   response: Wire.HttpResponse,
-): Effect.Effect<CreateOutcome, TransportFault> =>
+  context: DecodeContext,
+): Effect.Effect<CreateResult, CreateError | TransportFault> =>
   Effect.gen(function* () {
     if (response.status === 200 || response.status === 201) {
       const contentType = yield* Wire.contentType(operation, response);
       const nextOffset = yield* Wire.offset(operation, response);
       const closed = yield* Wire.closedHeader(operation, response);
       return {
-        status: response.status === 201 ? ("created" as const) : ("exists" as const),
+        _tag: response.status === 201 ? ("Created" as const) : ("Exists" as const),
         nextOffset,
         contentType,
         closed,
@@ -82,28 +93,28 @@ export const create = (
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
       const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
-      if (feature !== undefined) return { status: "not-supported" as const, feature, message };
-      return {
-        status: "bad-request" as const,
-        nextOffset: "",
-        contentType: "",
-        errorMessage: message,
-      };
+      if (feature !== undefined)
+        return yield* new NotSupported({ id: context.id, feature, message });
+      return yield* new InvalidForkRequest({
+        id: context.id,
+        message: message ?? "Invalid fork parameters",
+      });
     }
-    if (response.status === 404)
-      return {
-        status: "not-found" as const,
-        nextOffset: "",
-        contentType: "",
-        errorMessage: emptyToUndefined(yield* Wire.bodyText(operation, response)),
-      };
+    if (response.status === 404) {
+      const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
+      return yield* new ForkSourceNotFound({
+        id: context.id,
+        source: context.source ?? context.id,
+        message: message ?? "Source stream not found",
+      });
+    }
     if (response.status === 409)
-      return {
-        status: "conflict" as const,
-        nextOffset: "",
-        contentType: "",
-        errorMessage: emptyToUndefined(yield* Wire.bodyText(operation, response)),
-      };
+      return yield* new CreateConflict({
+        id: context.id,
+        message:
+          (yield* Wire.bodyText(operation, response)) ||
+          "Stream exists with different configuration",
+      });
     return yield* Wire.unexpected(operation, response);
   });
 
@@ -111,7 +122,7 @@ export const append = (
   operation: Operation,
   response: Wire.HttpResponse,
   context: DecodeContext,
-): Effect.Effect<AppendOutcome, TransportFault> =>
+): Effect.Effect<AppendResult, AppendError | TransportFault> =>
   Effect.gen(function* () {
     if (response.status === 200 || response.status === 204) {
       const offset = yield* Wire.offset(operation, response);
@@ -127,9 +138,9 @@ export const append = (
       );
       const closed = yield* Wire.closedHeader(operation, response);
       if (response.status === 200)
-        return { status: "appended" as const, offset, producerEpoch, producerSeq, closed };
+        return { _tag: "Appended" as const, offset, producerEpoch, producerSeq, closed };
       // The public wire acknowledges a producer write and a duplicate with 204.
-      if (context.producer !== true) return { status: "appended" as const, offset, closed };
+      if (context.producer !== true) return { _tag: "Appended" as const, offset, closed };
       if (producerEpoch === undefined || producerSeq === undefined)
         return yield* Effect.fail(
           Wire.failure(
@@ -138,11 +149,11 @@ export const append = (
             "Duplicate acknowledgement is missing producer state",
           ),
         );
-      return { status: "duplicate" as const, offset, producerEpoch, producerSeq, closed };
+      return { _tag: "Duplicate" as const, offset, producerEpoch, producerSeq, closed };
     }
-    if (response.status === 404) return { status: "not-found" as const };
-    if (response.status === 410) return { status: "gone" as const };
-    if (response.status === 503) return { status: "busy" as const };
+    if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
+    if (response.status === 410) return yield* new StreamGone({ id: context.id });
+    if (response.status === 503) return yield* new StreamBusy({ id: context.id });
     if (response.status === 403) {
       const currentEpoch = yield* Wire.integer(
         operation,
@@ -153,28 +164,27 @@ export const append = (
         return yield* Effect.fail(
           Wire.failure(operation, "response", "Stale epoch response is missing producer-epoch"),
         );
-      return { status: "stale-epoch" as const, currentEpoch };
+      return yield* new StaleEpoch({ id: context.id, currentEpoch });
     }
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
       if (feature !== undefined) {
         const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
-        return { status: "not-supported" as const, feature, message };
+        return yield* new NotSupported({ id: context.id, feature, message });
       }
       const detail = yield* Wire.bodyText(operation, response);
-      // The public classification for a new-epoch sequence error is a plain 400 body.
-      if (detail.includes("New epoch must start at seq=0"))
-        return { status: "invalid-epoch-seq" as const };
-      return yield* Effect.fail(Wire.unexpectedWith(operation, response.status, detail));
+      // A bare 400 cannot distinguish invalid epoch/sequence from other request errors.
+      return yield* new InvalidAppendRequest({ id: context.id, message: detail });
     }
-    if (response.status === 409) return yield* appendConflict(operation, response);
+    if (response.status === 409) return yield* appendConflict(operation, response, context);
     return yield* Wire.unexpected(operation, response);
   });
 
 const appendConflict = (
   operation: Operation,
   response: Wire.HttpResponse,
-): Effect.Effect<AppendOutcome, TransportFault> =>
+  context: DecodeContext,
+): Effect.Effect<AppendResult, AppendError | TransportFault> =>
   Effect.gen(function* () {
     const expectedSeq = yield* Wire.integer(
       operation,
@@ -187,42 +197,35 @@ const appendConflict = (
       Wire.header(response, "producer-received-seq"),
     );
     if (expectedSeq !== undefined && receivedSeq !== undefined)
-      return { status: "producer-gap" as const, expectedSeq, receivedSeq };
+      return yield* new ProducerGap({ id: context.id, expectedSeq, receivedSeq });
     const closed = yield* Wire.closedHeader(operation, response);
     const offset = yield* Wire.optionalOffset(operation, response);
-    if (closed && offset !== undefined)
-      return {
-        status: "conflict" as const,
-        conflictReason: "closed" as const,
-        offset,
-        closed: true as const,
-      };
-    if (!closed && offset !== undefined)
-      return { status: "conflict" as const, conflictReason: "expected-offset" as const, offset };
-    // A public Durable Streams host names these two failures in the 409 body only.
-    const detail = yield* Wire.bodyText(operation, response);
-    if (detail.includes("Content-Type mismatch"))
-      return { status: "conflict" as const, conflictReason: "content-type" as const };
-    if (detail.includes("Sequence conflict"))
-      return { status: "conflict" as const, conflictReason: "sequence" as const };
-    return yield* Effect.fail(
-      Wire.failure(operation, "response", `Unclassified 409 conflict: ${detail.trim()}`),
-    );
+    if (closed && offset !== undefined) return yield* new StreamClosed({ id: context.id, offset });
+    if (!closed && offset !== undefined && context.expectedOffset !== undefined)
+      return yield* new OffsetMismatch({
+        id: context.id,
+        expected: context.expectedOffset,
+        actual: offset,
+      });
+    return yield* new AppendConflict({
+      id: context.id,
+      message: yield* Wire.bodyText(operation, response),
+    });
   });
 
 export const read = (
   operation: Operation,
   response: Wire.HttpResponse,
-): Effect.Effect<ReadOutcome, TransportFault> =>
+  context: DecodeContext,
+): Effect.Effect<ReadResult, ReadError | TransportFault> =>
   Effect.gen(function* () {
-    if (response.status === 404) return { status: "not-found" as const };
-    if (response.status === 410) return { status: "gone" as const };
+    if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
+    if (response.status === 410) return yield* new StreamGone({ id: context.id });
     if (response.status !== 200) return yield* Wire.unexpected(operation, response);
     const nextOffset = yield* Wire.offset(operation, response);
     const messages = yield* readBatch(operation, response);
     const closed = yield* Wire.closedHeader(operation, response);
     return {
-      status: "ok" as const,
       messages,
       nextOffset,
       upToDate: Wire.upToDate(response),
@@ -233,15 +236,16 @@ export const read = (
 export const readNext = (
   operation: Operation,
   response: Wire.HttpResponse,
-): Effect.Effect<ReadNextOutcome, TransportFault> =>
+  context: DecodeContext,
+): Effect.Effect<ReadNextResult, ReadNextError | TransportFault> =>
   Effect.gen(function* () {
-    if (response.status === 404) return missing("not-found");
-    if (response.status === 410) return missing("gone");
+    if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
+    if (response.status === 410) return yield* new StreamGone({ id: context.id });
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
       if (feature === undefined) return yield* Wire.unexpected(operation, response);
       const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
-      return { status: "not-supported" as const, feature, message };
+      return yield* new NotSupported({ id: context.id, feature, message });
     }
     if (response.status !== 200 && response.status !== 204)
       return yield* Wire.unexpected(operation, response);
@@ -250,7 +254,7 @@ export const readNext = (
     // An empty long poll is 204 whether it timed out or woke without data.
     if (response.status === 204)
       return {
-        status: "timeout" as const,
+        timedOut: true,
         messages: [],
         nextOffset,
         upToDate: Wire.upToDate(response),
@@ -259,22 +263,14 @@ export const readNext = (
       };
     const messages = yield* readBatch(operation, response);
     return {
-      status: "ok" as const,
       messages,
+      timedOut: false,
       nextOffset,
       upToDate: Wire.upToDate(response),
       cursor: Wire.cursor(response),
       closed,
     };
   });
-
-const missing = (status: "not-found" | "gone"): ReadNextOutcome => ({
-  status,
-  messages: [],
-  nextOffset: "",
-  upToDate: false,
-  cursor: "",
-});
 
 const readBatch = (
   operation: Operation,
@@ -287,11 +283,12 @@ const readBatch = (
 export const remove = (
   operation: Operation,
   response: Wire.HttpResponse,
-): Effect.Effect<RemoveOutcome, TransportFault> =>
+  context: DecodeContext,
+): Effect.Effect<void, RemoveError | TransportFault> =>
   Effect.gen(function* () {
-    if (response.status === 204) return { status: "ok" as const };
-    if (response.status === 404) return { status: "not-found" as const };
-    if (response.status === 410) return { status: "gone" as const };
-    if (response.status === 503) return { status: "busy" as const };
+    if (response.status === 204) return;
+    if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
+    if (response.status === 410) return yield* new StreamGone({ id: context.id });
+    if (response.status === 503) return yield* new StreamBusy({ id: context.id });
     return yield* Wire.unexpected(operation, response);
   });

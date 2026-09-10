@@ -93,13 +93,14 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
       let observed: import("../protocol/options.ts").ReadNextOptions | undefined;
       const reader = StreamsReader.of({
         head: () =>
-          Effect.succeed({ status: "ok", contentType: "text/plain", nextOffset: ZERO_OFFSET }),
+          Effect.succeed({ closed: false, contentType: "text/plain", nextOffset: ZERO_OFFSET }),
         read: () => Effect.die("unexpected catch-up"),
         readNext: (_id, options) =>
           Effect.sync(() => {
             observed = options;
             return {
-              status: "timeout" as const,
+              timedOut: true,
+              closed: false,
               messages: [],
               nextOffset: ZERO_OFFSET,
               upToDate: true,
@@ -143,7 +144,7 @@ it("preserves close-only sequence lowering and unpersisted fresh tuple on an alr
           seq: "a",
           close: true,
         }),
-      ).toMatchObject({ status: "appended", closed: true });
+      ).toMatchObject({ _tag: "Appended", closed: true });
       const record = yield* storage.record(id);
       expect(record).toMatchObject({ _tag: "Some", value: { lifecycle: { lastSeq: "a" } } });
       const producer = { producerId: "fresh", producerEpoch: 0, producerSeq: 0 };
@@ -154,15 +155,17 @@ it("preserves close-only sequence lowering and unpersisted fresh tuple on an alr
           close: true,
           producer,
         }),
-      ).toMatchObject({ status: "appended", closed: true });
+      ).toMatchObject({ _tag: "Appended", closed: true });
       expect(
-        yield* writer.append(id, {
-          data: new Uint8Array(),
-          contentType: "other",
-          close: true,
-          producer: { ...producer, producerSeq: 1 },
-        }),
-      ).toMatchObject({ status: "producer-gap", expectedSeq: 0, receivedSeq: 1 });
+        yield* Effect.flip(
+          writer.append(id, {
+            data: new Uint8Array(),
+            contentType: "other",
+            close: true,
+            producer: { ...producer, producerSeq: 1 },
+          }),
+        ),
+      ).toMatchObject({ _tag: "ProducerGap", expectedSeq: 0, receivedSeq: 1 });
     }).pipe(
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test is the runtime owner and provides its complete layer here.
       Effect.provide(inspectedLayer),
@@ -180,15 +183,14 @@ it("keeps direct zero-limit semantics while live reads return the entire availab
         initialData: new TextEncoder().encode("[1,2,3]"),
       });
       const head = yield* reader.head(id);
-      if (head.status !== "ok") return yield* Effect.die("missing stream");
+
       expect(yield* reader.read(id, { limit: 0 })).toMatchObject({
-        status: "ok",
         messages: [],
         nextOffset: head.nextOffset,
         upToDate: true,
       });
       const live = yield* reader.readNext(id, { offset: ZERO_OFFSET });
-      if (live.status !== "ok") return yield* Effect.die("missing burst");
+
       expect(live.messages).toHaveLength(3);
       return undefined;
     }).pipe(

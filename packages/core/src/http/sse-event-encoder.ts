@@ -19,7 +19,7 @@ export class SseEventEncoder {
 
   constructor(private bodyCodec: MessageBodyCodec) {}
 
-  dataEvent(messages: MessageWithData[], options: SseEncodingOptions): Uint8Array[] {
+  dataEvent(messages: readonly MessageWithData[], options: SseEncodingOptions): Uint8Array[] {
     const chunks: Uint8Array[] = [this.encode("event: data\n")];
     if (options.useBase64) {
       const combined = this.bodyCodec.concatBytes(messages);

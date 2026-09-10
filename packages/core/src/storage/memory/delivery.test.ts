@@ -115,7 +115,10 @@ for (const sameId of [false, true]) {
               }
               expect(reader.pollUnsafe()).toMatchObject({
                 _tag: "Success",
-                value: { status: "ok", messages: [{ data: new TextEncoder().encode("relevant") }] },
+                value: {
+                  timedOut: false,
+                  messages: [{ data: new TextEncoder().encode("relevant") }],
+                },
               });
               expect(yield* Clock.currentTimeMillis).toBe(before);
               yield* Fiber.join(reader);

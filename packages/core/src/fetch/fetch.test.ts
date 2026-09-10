@@ -84,22 +84,25 @@ const fixture = Effect.gen(function* () {
   results.push(yield* Streams.append(ref, [{ id: 4 }], { producer }));
   results.push(yield* Streams.append(ref, [{ id: 4 }], { producer }));
   const tail = yield* Streams.head(ref);
-  if (tail.status !== "ok") return yield* Effect.die("missing fixture stream");
   results.push(
     yield* Streams.session(ref, { offset: tail.nextOffset }).pipe(
       Effect.map((result) => ({ ...result, cursor: "cursor" })),
     ),
   );
-  results.push(yield* Streams.append(ref, [{ id: 5 }], { expectedOffset: ZERO_OFFSET }));
-  results.push(yield* writer.append(ref.id, { data: bytes, contentType: "text/plain" }));
+  results.push(
+    yield* Effect.flip(Streams.append(ref, [{ id: 5 }], { expectedOffset: ZERO_OFFSET })),
+  );
+  results.push(
+    yield* Effect.flip(writer.append(ref.id, { data: bytes, contentType: "text/plain" })),
+  );
   results.push(yield* Streams.append(ref, [], { close: true }));
-  results.push(yield* Streams.append(ref, [{ id: 6 }]));
+  results.push(yield* Effect.flip(Streams.append(ref, [{ id: 6 }])));
   results.push(yield* batches(Streams.follow(ref)));
   results.push(yield* Streams.remove(ref));
   const failure = yield* Streams.read(ref).pipe(Stream.runCollect, Effect.flip);
-  if (!Predicate.isTagged(failure, "StreamUnavailable"))
+  if (!Predicate.isTagged(failure, "StreamNotFound"))
     return yield* Effect.die("Expected a removed stream");
-  results.push({ tag: "StreamUnavailable", ref: failure.ref, status: failure.status });
+  results.push({ tag: "StreamNotFound", id: failure.id });
   return results;
 });
 
@@ -255,7 +258,6 @@ it("reads the head outcome from standard headers", async () => {
         }),
     ),
   ).toEqual({
-    status: "ok",
     contentType: "text/plain",
     nextOffset: ZERO_OFFSET,
     ttlSeconds: 60,
@@ -314,8 +316,7 @@ it("splits a JSON read body into one payload per message", async () => {
         },
       }),
   );
-  expect(result.status).toBe("ok");
-  if (result.status !== "ok") return;
+  expect(result).toBeDefined();
   expect(result.messages.map((message) => asText(message.data))).toEqual(['{"a":1}', '{"b":2}']);
   expect(result.upToDate).toBe(true);
 });
@@ -327,8 +328,7 @@ it("keeps a non-JSON read body as one merged payload", async () => {
         headers: { "content-type": "text/plain", "stream-next-offset": ZERO_OFFSET },
       }),
   );
-  expect(result.status).toBe("ok");
-  if (result.status !== "ok") return;
+  expect(result).toBeDefined();
   expect(result.messages.map((message) => asText(message.data))).toEqual(["abcd"]);
   expect(result.upToDate).toBe(false);
 });
@@ -347,7 +347,7 @@ it("reads an empty long poll as a timeout", async () => {
         }),
     ),
   ).toEqual({
-    status: "timeout",
+    timedOut: true,
     messages: [],
     nextOffset: ZERO_OFFSET,
     upToDate: true,
@@ -357,9 +357,7 @@ it("reads an empty long poll as a timeout", async () => {
 });
 
 for (const [label, response] of [
-  ["unclassified conflict", () => new Response("Some other conflict", { status: 409 })],
   ["stale epoch without a current epoch", () => new Response(null, { status: 403 })],
-  ["unrecognized rejection", () => new Response("Empty body not allowed", { status: 400 })],
 ] as const) {
   it(`rejects ${label} on append as a response fault`, async () => {
     expect(await appendFailure(response)).toMatchObject({
@@ -369,7 +367,7 @@ for (const [label, response] of [
   });
 }
 
-it("classifies the new-epoch sequence rejection from its plain 400 body", async () => {
+it("keeps a bare append 400 generic without classifying its wording", async () => {
   const appended = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsWriter).append(id, {
@@ -378,6 +376,7 @@ it("classifies the new-epoch sequence rejection from its plain 400 body", async 
         producer: { producerId: "p", producerEpoch: 2, producerSeq: 1 },
       });
     }).pipe(
+      Effect.flip,
       Effect.provide(
         against(() => new Response("New epoch must start at seq=0", { status: 400 }), {
           producer: true,
@@ -385,7 +384,11 @@ it("classifies the new-epoch sequence rejection from its plain 400 body", async 
       ),
     ),
   );
-  expect(appended).toEqual({ status: "invalid-epoch-seq" });
+  expect(appended).toMatchObject({
+    _tag: "InvalidAppendRequest",
+    id,
+    message: "New epoch must start at seq=0",
+  });
 });
 
 it("sends no Streamsy-specific request headers", async () => {
@@ -405,7 +408,7 @@ it("sends no Streamsy-specific request headers", async () => {
     Effect.runPromise(
       Effect.gen(function* () {
         return yield* (yield* StreamsReader).head(id);
-      }).pipe(Effect.provide(transport)),
+      }).pipe(Effect.flip, Effect.provide(transport)),
     );
   await probe(Fetch.layer({ baseUrl: "http://localhost/streams" }).pipe(Layer.provide(capture)));
   expect(accept).toBeUndefined();
@@ -419,7 +422,7 @@ it("sends no Streamsy-specific request headers", async () => {
   expect(accept).toBe("application/json");
 });
 
-it("unknown CAS and producer support return values before any HTTP request", async () => {
+it("unknown CAS and producer support fail before any HTTP request", async () => {
   let requests = 0;
   const transport = Fetch.layer({ baseUrl: "http://localhost/streams" }).pipe(
     Layer.provide(
@@ -433,19 +436,23 @@ it("unknown CAS and producer support return values before any HTTP request", asy
     Effect.gen(function* () {
       const writer = yield* StreamsWriter;
       expect(
-        yield* writer.append(id, {
-          data: bytes,
-          contentType: "application/json",
-          expectedOffset: ZERO_OFFSET,
-        }),
-      ).toEqual({ status: "not-supported", feature: "expected-offset" });
+        yield* Effect.flip(
+          writer.append(id, {
+            data: bytes,
+            contentType: "application/json",
+            expectedOffset: ZERO_OFFSET,
+          }),
+        ),
+      ).toMatchObject({ _tag: "NotSupported", feature: "expected-offset" });
       expect(
-        yield* writer.append(id, {
-          data: bytes,
-          contentType: "application/json",
-          producer: { producerId: "p", producerEpoch: 0, producerSeq: 0 },
-        }),
-      ).toEqual({ status: "not-supported", feature: "producer" });
+        yield* Effect.flip(
+          writer.append(id, {
+            data: bytes,
+            contentType: "application/json",
+            producer: { producerId: "p", producerEpoch: 0, producerSeq: 0 },
+          }),
+        ),
+      ).toMatchObject({ _tag: "NotSupported", feature: "producer" });
     }).pipe(Effect.provide(transport)),
   );
   expect(requests).toBe(0);
@@ -566,21 +573,19 @@ for (const mode of ["direct", "fetch"] as const) {
             const data = contentType.startsWith("application/json")
               ? new TextEncoder().encode('{"n":1}')
               : new Uint8Array([0, 1, 65]);
-            expect((yield* writer.create(id, { contentType })).status).toBe("created");
+            expect((yield* writer.create(id, { contentType }))._tag).toBe("Created");
             const empty = yield* reader.read(id);
-            expect(empty).toMatchObject({ status: "ok", messages: [], upToDate: true });
+            expect(empty).toMatchObject({ messages: [], upToDate: true });
             const first = yield* writer.append(id, { data, contentType });
-            if (first.status !== "appended") return yield* Effect.die("Append not accepted");
+            expect(first._tag).toBe("Appended");
             expect(yield* reader.read(id, { offset: first.offset })).toMatchObject({
-              status: "ok",
               messages: [],
             });
             const final = yield* writer.append(id, { data, contentType, close: true });
-            if (final.status !== "appended") return yield* Effect.die("Close not accepted");
+            expect(final._tag).toBe("Appended");
             const read = yield* reader.read(id, { offset: first.offset });
-            expect(read).toMatchObject({ status: "ok", nextOffset: final.offset, closed: true });
-            if (read.status === "ok")
-              expect(read.messages.map((message) => message.data)).toEqual([data]);
+            expect(read).toMatchObject({ nextOffset: final.offset, closed: true });
+            expect(read.messages.map((message) => message.data)).toEqual([data]);
           }).pipe(Effect.provide(modeTransport)),
         );
       } finally {
@@ -608,7 +613,7 @@ it("resolves prefixes and application headers without letting IDs escape", async
   await Effect.runPromise(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
-      yield* reader.head(id);
+      expect((yield* Effect.flip(reader.head(id)))._tag).toBe("StreamNotFound");
       for (const invalid of [
         "../escape",
         "/absolute",
@@ -626,4 +631,19 @@ it("resolves prefixes and application headers without letting IDs escape", async
     }).pipe(Effect.provide(transport)),
   );
   expect(seen).toEqual(["https://example.test/api/streams/orders/nested"]);
+});
+
+it("keeps arbitrary append conflict bodies as typed conflicts", async () => {
+  for (const message of ["Content-Type mismatch", "Sequence conflict", "Some other conflict"]) {
+    expect(await appendFailure(() => new Response(message, { status: 409 }))).toMatchObject({
+      _tag: "AppendConflict",
+      id,
+      message,
+    });
+  }
+});
+it("keeps arbitrary append bad-request bodies as typed request errors", async () => {
+  expect(
+    await appendFailure(() => new Response("Empty body not allowed", { status: 400 })),
+  ).toMatchObject({ _tag: "InvalidAppendRequest", id, message: "Empty body not allowed" });
 });

@@ -32,17 +32,12 @@ export function sse(
         const result = initial
           ? yield* reader.read(id, { offset: currentOffset })
           : yield* reader.readNext(id, { offset: currentOffset, cursor: currentCursor });
-        if (
-          result.status === "not-found" ||
-          result.status === "gone" ||
-          result.status === "not-supported"
-        )
-          return { chunks: [], done: true };
         if (initial) {
           const now = yield* Clock.currentTimeMillis;
           const random = yield* Random.next;
           currentCursor = generateCursor({ now: () => now }, currentCursor, () => random);
-        } else if ("cursor" in result) currentCursor = result.cursor;
+        } else if ("cursor" in result && typeof result.cursor === "string")
+          currentCursor = result.cursor;
         initial = false;
         currentOffset = result.nextOffset;
         const chunks = result.messages.length ? events.dataEvent(result.messages, encoding) : [];
@@ -52,7 +47,13 @@ export function sse(
         if (!result.closed && result.upToDate) control.upToDate = true;
         chunks.push(events.controlEvent(control));
         return { chunks, done: result.closed === true };
-      }),
+      }).pipe(
+        Effect.catchTags({
+          StreamNotFound: () => Effect.succeed({ chunks: [], done: true }),
+          StreamGone: () => Effect.succeed({ chunks: [], done: true }),
+          NotSupported: () => Effect.succeed({ chunks: [], done: true }),
+        }),
+      ),
     ).pipe(
       Stream.takeUntil((batch) => batch.done),
       Stream.flatMap((batch) => Stream.fromIterable(batch.chunks)),

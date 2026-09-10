@@ -10,7 +10,8 @@ import * as Create from "./create.ts";
 import * as Append from "./append.ts";
 import { read } from "./read.ts";
 import { requestUrl } from "./route.ts";
-import { notSupported } from "./unsupported.ts";
+import { protocolErrorResponse } from "./protocol-error-response.ts";
+import type { ProtocolError } from "../protocol/errors.ts";
 
 export interface HttpOptions {
   readonly pathPrefix?: string;
@@ -23,9 +24,13 @@ export function program(options: HttpOptions = {}) {
   const path = new StreamPathService(options.pathPrefix ?? "/");
   const bodyReader = new RequestBodyReader(options.maxMessageSize ?? 1024 * 1024, responses);
   const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");
+  const failure = (error: ProtocolError) =>
+    Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+      protocolErrorResponse(error, { method: request.method }),
+    );
   return Effect.gen(function* (): Effect.fn.Return<
     Response | HttpServerResponse.HttpServerResponse,
-    StreamsFault,
+    StreamsFault | ProtocolError,
     HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter
   > {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -55,9 +60,7 @@ export function program(options: HttpOptions = {}) {
         forkOffset: parsed.forkOffset,
         forkSubOffset: parsed.forkSubOffset,
       });
-      return result.status === "not-supported"
-        ? notSupported(result)
-        : Create.toResponse(result, url.href);
+      return Create.toResponse(result, url.href);
     }
     if (request.method === "OPTIONS")
       return responses.empty(204, {
@@ -70,12 +73,6 @@ export function program(options: HttpOptions = {}) {
     if (!["POST", "GET", "HEAD", "DELETE"].includes(request.method))
       return responses.methodNotAllowed();
     const meta = yield* reader.head(id);
-    if (meta.status === "not-found")
-      return request.method === "HEAD"
-        ? responses.noStore(responses.notFound())
-        : responses.notFound();
-    if (meta.status === "gone")
-      return request.method === "HEAD" ? responses.noStore(responses.gone()) : responses.gone();
     switch (request.method) {
       case "POST": {
         const parsed = Append.parseHeaders({ headers });
@@ -98,9 +95,7 @@ export function program(options: HttpOptions = {}) {
           close: parsed.wantClose,
           expectedOffset: parsed.expectedOffset,
         });
-        return result.status === "not-supported"
-          ? notSupported(result)
-          : Append.toResponse(result, parsed.producerHeaders, isEmpty);
+        return Append.toResponse(result, parsed.producerHeaders, isEmpty);
       }
       case "GET":
         return yield* read(reader, id, url, headers, cacheControl);
@@ -116,16 +111,29 @@ export function program(options: HttpOptions = {}) {
         return responses.empty(200, output);
       }
       case "DELETE": {
-        const result = yield* writer.remove(id);
-        if (result.status === "not-found") return responses.notFound();
-        if (result.status === "gone") return responses.gone();
-        if (result.status === "busy") return responses.text("Stream busy, retry later", 503);
+        yield* writer.remove(id);
         return responses.empty(204);
       }
       default:
         return responses.methodNotAllowed();
     }
   }).pipe(
+    Effect.catchTags({
+      StreamNotFound: failure,
+      StreamGone: failure,
+      ForkSourceNotFound: failure,
+      CreateConflict: failure,
+      AppendConflict: failure,
+      InvalidForkRequest: failure,
+      InvalidAppendRequest: failure,
+      StreamClosed: failure,
+      OffsetMismatch: failure,
+      StreamBusy: failure,
+      StaleEpoch: failure,
+      ProducerGap: failure,
+      InvalidEpochSeq: failure,
+      NotSupported: failure,
+    }),
     Effect.catchTags({
       StorageFault: () => Effect.succeed(responses.internalError()),
       TransportFault: () => Effect.succeed(responses.internalError()),

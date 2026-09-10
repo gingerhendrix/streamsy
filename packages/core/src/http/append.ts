@@ -1,4 +1,4 @@
-import type { AppendOutcome } from "../protocol/outcomes.ts";
+import type { AppendResult } from "../protocol/results.ts";
 import { isValid } from "../offset/index.ts";
 import { ProducerHeaderParser, type ProducerHeaderResult } from "./producer-header-parser.ts";
 const producerParser = new ProducerHeaderParser();
@@ -32,45 +32,12 @@ export function parseHeaders(request: { readonly headers: Headers }):
 }
 
 export function toResponse(
-  result: Exclude<AppendOutcome, { status: "not-supported" }>,
+  result: AppendResult,
   producerHeaders: ProducerHeaderResult,
   isEmpty: boolean,
 ): Response {
-  switch (result.status) {
-    case "not-found":
-      return responses.notFound();
-    case "gone":
-      return responses.gone();
-    case "conflict": {
-      if (result.conflictReason === "closed") {
-        return responses.empty(409, {
-          "stream-closed": "true",
-          "stream-next-offset": result.offset,
-        });
-      }
-      if (result.conflictReason === "expected-offset") {
-        return responses.conflict("Expected offset mismatch", {
-          "stream-next-offset": result.offset,
-        });
-      }
-      return responses.conflict(
-        result.conflictReason === "content-type" ? "Content-Type mismatch" : "Sequence conflict",
-      );
-    }
-    case "busy":
-      return responses.text("Stream busy, retry later", 503);
-    case "stale-epoch":
-      return responses.text("Stale producer epoch", 403, {
-        "producer-epoch": String(result.currentEpoch),
-      });
-    case "producer-gap":
-      return responses.conflict("Producer sequence gap", {
-        "producer-expected-seq": String(result.expectedSeq),
-        "producer-received-seq": String(result.receivedSeq),
-      });
-    case "invalid-epoch-seq":
-      return responses.badRequest("New epoch must start at seq=0");
-    case "duplicate":
+  switch (result._tag) {
+    case "Duplicate":
       const duplicateHeaders = new Headers({
         "stream-next-offset": result.offset,
         "producer-epoch": String(result.producerEpoch),
@@ -78,7 +45,7 @@ export function toResponse(
       });
       if (result.closed) duplicateHeaders.set("stream-closed", "true");
       return responses.empty(204, duplicateHeaders);
-    case "appended": {
+    case "Appended": {
       const headers = new Headers({
         "stream-next-offset": result.offset,
       });

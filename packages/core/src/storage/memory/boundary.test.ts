@@ -15,7 +15,7 @@ for (const outcome of ["commit", "failure", "defect", "interrupt"]) {
       Effect.gen(function* () {
         const boundary = yield* MemoryCommitBoundary;
         const storage = yield* Storage;
-        expect((yield* Streams.create(sink)).status).toBe("created");
+        expect((yield* Streams.create(sink))._tag).toBe("Created");
         yield* boundary.write("state", "0");
         yield* boundary.write("checkpoint", "0");
         const read = Effect.gen(function* () {
@@ -38,7 +38,7 @@ for (const outcome of ["commit", "failure", "defect", "interrupt"]) {
             Effect.gen(function* () {
               yield* boundary.withTransaction(
                 Effect.gen(function* () {
-                  expect((yield* Streams.append(sink, ["one"])).status).toBe("appended");
+                  expect((yield* Streams.append(sink, ["one"]))._tag).toBe("Appended");
                   yield* boundary.write("state", "1");
                   yield* boundary.write("checkpoint", "1");
                 }),

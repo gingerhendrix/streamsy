@@ -9,7 +9,7 @@ import { MessageBodyCodec } from "./message-body-codec.ts";
 import { ReadQueryParser } from "./read-query-parser.ts";
 import { HttpResponseFactory } from "./responses.ts";
 import { sse } from "./sse.ts";
-import { notSupported } from "./unsupported.ts";
+import type { ReadNextError } from "../protocol/errors.ts";
 
 const responses = new HttpResponseFactory();
 const bodyCodec = new MessageBodyCodec();
@@ -21,19 +21,20 @@ export const read = Effect.fn("Http.read")(function* (
   url: URL,
   requestHeaders: Headers,
   cacheControl: string,
-): Effect.fn.Return<Response | HttpServerResponse.HttpServerResponse, StreamsFault> {
+): Effect.fn.Return<
+  Response | HttpServerResponse.HttpServerResponse,
+  StreamsFault | ReadNextError
+> {
   const query = queryParser.parse(url);
   if (!query.ok) return query.response;
   let offset = query.offset;
   if (offset === "now") {
     const meta = yield* reader.head(id);
-    if (meta.status === "not-found") return responses.notFound();
-    if (meta.status === "gone") return responses.gone();
+
     offset = meta.nextOffset;
     if (!query.live) {
       const result = yield* reader.read(id, { offset: "now" });
-      if (result.status === "not-found") return responses.notFound();
-      if (result.status === "gone") return responses.gone();
+
       const headers = new Headers({
         "content-type": meta.contentType,
         "stream-next-offset": result.nextOffset,
@@ -47,8 +48,7 @@ export const read = Effect.fn("Http.read")(function* (
   if (query.live && !offset) return responses.badRequest("offset required for live modes");
   if (query.live === "sse" && offset) {
     const meta = yield* reader.head(id);
-    if (meta.status === "not-found") return responses.notFound();
-    if (meta.status === "gone") return responses.gone();
+
     return sse(reader, id, meta.contentType, offset, query.cursor);
   }
   const live = query.live === "long-poll" && offset !== undefined;
@@ -56,13 +56,12 @@ export const read = Effect.fn("Http.read")(function* (
     live && offset !== undefined
       ? yield* reader.readNext(id, { offset, cursor: query.cursor })
       : yield* reader.read(id, { offset, limit: query.batchSize });
-  if (result.status === "not-supported") return notSupported(result);
-  if (result.status === "not-found") return responses.notFound();
-  if (result.status === "gone") return responses.gone();
+
   const headers = new Headers({ "stream-next-offset": result.nextOffset });
   if (result.closed) headers.set("stream-closed", "true");
   if (live || result.upToDate) headers.set("stream-up-to-date", "true");
-  if (live && !result.closed && "cursor" in result) headers.set("stream-cursor", result.cursor);
+  if (live && !result.closed && "cursor" in result && typeof result.cursor === "string")
+    headers.set("stream-cursor", result.cursor);
   if (live && result.messages.length === 0) {
     headers.set("cache-control", "no-store");
     return responses.empty(204, headers);
@@ -81,8 +80,7 @@ export const read = Effect.fn("Http.read")(function* (
     headers.set("etag", etag);
   }
   const meta = yield* reader.head(id);
-  if (meta.status === "not-found") return responses.notFound();
-  if (meta.status === "gone") return responses.gone();
+
   headers.set("content-type", meta.contentType);
   return new Response(bodyCodec.encodeHttpBody(result.messages, meta.contentType), { headers });
 });

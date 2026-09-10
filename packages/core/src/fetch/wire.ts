@@ -9,7 +9,7 @@
 import { Effect, Schema, Stream } from "effect";
 import type { HttpClientResponse } from "effect/unstable/http";
 import { TransportFault } from "../fault.ts";
-import type { ReadMessage } from "../protocol/outcomes.ts";
+import type { ReadMessage } from "../protocol/results.ts";
 
 export type HttpResponse = HttpClientResponse.HttpClientResponse;
 export type FaultReason = "request" | "response" | "decode" | "configuration";

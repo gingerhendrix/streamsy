@@ -1,5 +1,5 @@
 import { DateTime, Option } from "effect";
-import type { CreateOutcome } from "../protocol/outcomes.ts";
+import type { CreateResult } from "../protocol/results.ts";
 import { StreamPathService } from "./stream-path-service.ts";
 import { HttpResponseFactory } from "./responses.ts";
 const responses = new HttpResponseFactory();
@@ -92,22 +92,11 @@ export function normalizeInitialData(
   return { ok: true, initialData: effectiveInitialData };
 }
 
-export function toResponse(
-  result: Exclude<CreateOutcome, { status: "not-supported" }>,
-  location: string,
-): Response {
-  switch (result.status) {
-    case "not-found":
-      return responses.notFound(result.errorMessage ?? "Source stream not found");
-    case "bad-request":
-      return responses.badRequest(result.errorMessage ?? "Invalid fork parameters");
-    case "conflict":
-      return responses.conflict(
-        result.errorMessage ?? "Stream exists with different configuration",
-      );
-    case "created":
-    case "exists": {
-      const status = result.status === "created" ? 201 : 200;
+export function toResponse(result: CreateResult, location: string): Response {
+  switch (result._tag) {
+    case "Created":
+    case "Exists": {
+      const status = result._tag === "Created" ? 201 : 200;
       const headers = new Headers({
         "content-type": result.contentType,
         "stream-next-offset": result.nextOffset,
