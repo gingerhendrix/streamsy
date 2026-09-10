@@ -6,17 +6,17 @@ there are no lifetime-bearing stream handles.
 
 ## Entry points
 
-| Entry                              | Intended surface                                                                                                                                                                |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@streamsy/core`                   | Schema values and faults, protocol reader/writer tags and outcomes, `Protocol`, `Streams`, `StreamRef`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
-| `@streamsy/core/storage`           | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                          |
-| `@streamsy/core/http`              | `makeEdge(options, layer)` and `HttpOptions`                                                                                                                                    |
-| `@streamsy/core/testing`           | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`                                                                                                          |
-| `@streamsy/serve/bun`              | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                       |
-| `@streamsy/storage`                | Driver-package-free SQLite-family `Storage` Layer, `CommitBoundary` and bounded transaction defaults                                                                            |
-| `@streamsy/storage/bun`            | Official Bun SQLite storage Layer and complete persistent `layerProtocol` composition                                                                                           |
-| `@streamsy/storage/durable-object` | Official Durable Object SQLite storage Layer and `layerProtocol`; its long-poll default is 25 seconds                                                                           |
-| `@streamsy/serve/cloudflare`       | Cloudflare Durable Object router and one-scope protocol host                                                                                                                    |
+| Entry                              | Intended surface                                                                                                                                                                       |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`                   | Schema values and faults, protocol reader/writer tags, results and errors, `Protocol`, `Streams`, `StreamRef`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
+| `@streamsy/core/storage`           | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                                 |
+| `@streamsy/core/http`              | `makeEdge(options, layer)` and `HttpOptions`                                                                                                                                           |
+| `@streamsy/core/testing`           | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`, `expectFailureTag`                                                                                             |
+| `@streamsy/serve/bun`              | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                              |
+| `@streamsy/storage`                | Driver-package-free SQLite-family `Storage` Layer, `CommitBoundary` and bounded transaction defaults                                                                                   |
+| `@streamsy/storage/bun`            | Official Bun SQLite storage Layer and complete persistent `layerProtocol` composition                                                                                                  |
+| `@streamsy/storage/durable-object` | Official Durable Object SQLite storage Layer and `layerProtocol`; its long-poll default is 25 seconds                                                                                  |
+| `@streamsy/serve/cloudflare`       | Cloudflare Durable Object router and one-scope protocol host                                                                                                                           |
 
 Internal offset generation, policy helpers and HTTP implementation modules have no
 public subpaths. Core depends only on `effect@4.0.0-rc.112` at runtime. Its testing
@@ -32,8 +32,7 @@ import { Streams, StreamRef } from "@streamsy/core";
 const events = StreamRef.json("events", { schema: Schema.Struct({ text: Schema.String }) });
 const program = Effect.gen(function* () {
   yield* Streams.create(events);
-  const result = yield* Streams.append(events, [{ text: "hello" }]);
-  if (result.status !== "appended") return result;
+  yield* Streams.append(events, [{ text: "hello" }]);
   return yield* Streams.read(events).pipe(Stream.runCollect);
 });
 // The application owns this runtime; reusable library functions return Effects.
@@ -41,18 +40,40 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
 `Streams.read` catches up; `follow` includes live reads; `items` flattens batches.
-Missing/gone streams fail with `StreamUnavailable`; codec failures use `EncodeFault`
+Missing/gone streams fail with `StreamNotFound` / `StreamGone`; codec failures use `EncodeFault`
 and `DecodeFault`. A decode failure stops that read/follow; restarting from an
 explicit offset is the caller's policy, with no automatic bad-item skip.
-`Streams.session(ref)` exposes protocol classifications. `Fold.run` reduces a
+`Streams.session(ref, { offset })` returns a long-poll batch or fails with a protocol error. `Fold.run` reduces a
 stream. `Producer.append` takes a producer id, epoch and sequence; `Producer.next`
 advances a tuple only after an acknowledged append or duplicate.
 
-Protocol outcomes are success values such as `created`, `exists`, `appended`,
-`duplicate`, `conflict`, `not-found`, `gone`, `timeout`, `stale-epoch` and
-`producer-gap`. Storage failures use the typed error channel. A duplicate proves
-an accepted tuple, not equality of retry payloads: owners must retain exact bytes.
-Fold's journal enforces that ownership and equality on memory and retained-file SQLite.
+Create succeeds with `_tag: "Created" | "Exists"`; append succeeds with
+`_tag: "Appended" | "Duplicate"`. Head and read return metadata or batches directly,
+remove succeeds with `void`, and `readNext` adds `cursor` and `timedOut: boolean`.
+Every success that carries `closed` supplies a boolean. Read messages retain only
+`data`; per-message offsets and timestamps belong to storage.
+
+Protocol rejections are `Schema.TaggedError` classes in the Effect error channel.
+Every error carries the stream `id`. Use `Effect.catchTag` / `Effect.catchTags` to
+handle `StreamNotFound`, `StreamGone`, `StreamClosed`, `OffsetMismatch`,
+`AppendConflict`, `StreamBusy`, `StaleEpoch`, `ProducerGap`, `InvalidEpochSeq`,
+`InvalidAppendRequest`, `CreateConflict`, `ForkSourceNotFound`, `InvalidForkRequest`,
+or `NotSupported`. The per-operation `HeadError`, `ReadError`, `ReadNextError`,
+`CreateError`, `AppendError`, and `RemoveError` unions describe each service method.
+Infrastructure errors remain `StorageFault` (direct) or `TransportFault` (fetch).
+Storage mutation rejection remains a value at the separate storage boundary.
+
+Content-type and stream-sequence conflicts use one `AppendConflict` with a message.
+`CreateConflict.reason` has four direct reasons: `config-mismatch`, `soft-deleted`,
+`fork-content-type`, and `fork-source-soft-deleted`. Fetch omits the reason because
+standard HTTP does not encode it. A bare append 400 becomes `InvalidAppendRequest`
+with its body as the message; fetch does not infer `InvalidEpochSeq` from wording.
+`ForkSourceNotFound` retains the requested source and its error message.
+
+A duplicate proves an accepted tuple, not equality of retry payloads: owners must
+retain exact bytes. Fold's journal enforces that ownership and equality on memory
+and retained-file SQLite. Protocol errors propagate through Streams, Fold and
+Producer; they do not advance application state as successful results.
 
 `Stream-Fork-Sub-Offset` is an upstream fork header used with `Stream-Forked-From`
 and an anchor `Stream-Fork-Offset`. It selects an additional prefix after that
@@ -64,7 +85,7 @@ against the source data and includes the sub-offset in fork retry identity.
 ## Expected-offset concurrency
 
 An append's `expectedOffset` checks the current tail atomically with its mutation.
-A mismatch returns `conflict` / `expected-offset` with the actual offset, without
+A mismatch fails with `OffsetMismatch { id, expected, actual }`, without
 writing messages or producer state. `ZERO_OFFSET` names an empty stream. Offsets
 are canonical fixed-width opaque tokens, ordered lexicographically; do not compare
 positions belonging to different streams.

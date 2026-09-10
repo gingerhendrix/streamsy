@@ -142,6 +142,10 @@ The read contract carries message payloads and batch metadata. Per-message offse
 and timestamps stay in storage, because no reader consumes them and no public response
 can express them. Two wire limits follow. A text or binary read body is one
 concatenated payload, so that batch carries a single message. JSON messages return by
-value, which re-serializes them rather than reproducing the stored bytes. The append
-conflict sub-reasons for content type and sequence come from the fixed 409 body text
-that this host writes.
+value, which re-serializes them rather than reproducing the stored bytes. Append
+content-type and sequence conflicts become `AppendConflict` errors carrying the
+409 body message, without matching its wording. A bare append 400 becomes
+`InvalidAppendRequest`, and create conflict reasons are absent from standard HTTP.
+Protocol failures use the Effect error channel; this changes no HTTP status, header
+or body. A producer close-only append and duplicate both answer 204, decoded as
+`Duplicate` with `closed: true`; empty long polls decode with `timedOut: true`.

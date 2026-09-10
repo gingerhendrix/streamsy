@@ -5,20 +5,25 @@ description: Understand outcomes, typed faults, batch boundaries and memory-stor
 
 ## Outcomes and faults
 
-Protocol classifications are success values, including `created`, `exists`, `appended`,
-`duplicate`, `conflict`, `not-found`, `gone`, `timeout`, `stale-epoch` and
-`producer-gap`. These describe what happened. Inspect the operation's `status` before
-advancing application state.
+Protocol success results contain only accepted states. Create returns `Created` or
+`Exists`; append returns `Appended` or `Duplicate`, discriminated by `_tag`. Head
+and reads return their data directly; remove returns `void`. Long-poll batches add
+`timedOut: boolean`, and `closed` is always boolean.
 
-`StorageFault` uses Effect's typed error channel and carries retryability.
-Retries need a bounded policy and a retained intent. Producer duplication
-acknowledges a tuple; it does not compare retry payloads. The producer's caller
-must preserve the same bytes, epoch and sequence across a retry.
+Expected protocol failures use Effect's error channel. All carry `id` and can be
+handled with `Effect.catchTag`, such as `StreamNotFound`, `StreamGone`,
+`OffsetMismatch`, or `AppendConflict`. `Streams.read`, `Streams.follow`, and
+`Streams.session` preserve these errors. `StorageFault` carries infrastructure
+retryability; remote infrastructure uses `TransportFault`.
 
-At the toolkit tier, `Streams.read` and `Streams.follow` turn missing or gone
-streams into typed `StreamUnavailable` failures. Encoding and decoding failures
-use `EncodeFault` and `DecodeFault`. A decode failure stops that consumer;
-choosing a new offset or skipping bad input is the application's policy.
+Retries need a bounded policy and retained intent. Producer duplication
+acknowledges a tuple; it does not compare retry payloads. The caller must preserve
+the same bytes, epoch and sequence across a retry.
+
+Encoding and decoding failures use `EncodeFault` and `DecodeFault`. A decode
+failure stops that consumer; choosing a new offset or skipping bad input is the
+application's policy. Storage mutation rejection is still a value in the separate
+storage contract.
 
 ## Batches and offsets
 

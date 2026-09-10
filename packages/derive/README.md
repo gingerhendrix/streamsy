@@ -98,7 +98,8 @@ as zero; generic Sources without byte reporting cannot promise a byte bound.
 Counters describe accepted work, not all I/O or memory used to read a boundary.
 Whole boundaries are never split by the kernel. An oversized boundary returns
 `limit-reached` without committing it; resume with a sufficient budget. Custom
-Sources should respect the requested item bound. Empty-output steps still save
+Sources return `_tag: "Boundary"` or `_tag: "LimitReached"` and fail through the
+`DeriveFault` channel when history is unavailable. They should respect the requested item bound. Empty-output steps still save
 state and checkpoint while leaving the sink position unchanged. Empty caught-up
 reads do not create records or increment revisions.
 
@@ -133,7 +134,10 @@ Expected failures use `DeriveFault.reason`: `history-unavailable`,
 or reset occurs. Schema failures and mismatched/missing paired records stop.
 A failing commit discards all three writes. Failures must escape the outer
 transaction to roll back; nested transactions have no savepoints. Protocol
-rejection values are converted to sink-conflict by the stream Sink.
+errors are mapped to `DeriveFault` by the stream adapters. `OffsetMismatch` becomes
+`sink-conflict` with expected and actual offsets. Missing/gone source streams and
+source offset regression become `history-unavailable`; infrastructure failures remain
+`storage-failure`. These errors escape the transaction before recovery.
 
 ## Retention and storage
 

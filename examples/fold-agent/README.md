@@ -31,7 +31,7 @@ This is not an activation lease or transparent continuation of a live agent.
 
 After an exhausted failure or interruption during append, that adapter refuses
 new payloads; reconstruct through resume to settle uncertain intent first.
-Journal conflicts fail fenced. Invalid producer sequence outcomes are corrupt
+Journal conflicts fail fenced. Typed producer sequence rejections are corrupt
 journal defects. Closed/missing streams and operational failures remain errors.
 Entries and subscriptions decode through Fold's own v1 contract.
 

@@ -9,10 +9,10 @@ import { Streams, StreamRef } from "@streamsy/core";
 
 const events = StreamRef.json("events", { schema: Schema.String });
 const program = Effect.gen(function* () {
-  const created = yield* Streams.create(events);
-  if (created.status !== "created" && created.status !== "exists") return created;
-  const appended = yield* Streams.append(events, ["hello"]);
-  if (appended.status !== "appended") return appended;
+  yield* Streams.create(events);
+
+  yield* Streams.append(events, ["hello"]);
+
   return yield* Streams.read(events).pipe(Stream.runCollect);
 });
 await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
@@ -22,18 +22,25 @@ Compiled source: [packages/core/test/readme.ts](https://github.com/gingerhendrix
 
 The example is checked by `site:validate`.
 
+Create and append return only `Created` / `Exists` and `Appended` / `Duplicate`
+variants, discriminated by `_tag`. Reads and head return their successful data;
+remove returns `void`. Long polls add `timedOut`, and `closed` is always boolean.
+Protocol failures carry `id` and are handled with `Effect.catchTag`, including
+`StreamNotFound`, `StreamGone`, `OffsetMismatch`, and `AppendConflict`. Codec errors
+remain `EncodeFault` / `DecodeFault`; direct infrastructure failures use `StorageFault`.
+
 Applications own the runtime and Layer lifetime. Memory is nonpersistent and
 process-local. `@streamsy/storage/bun` provides retained-file Bun SQLite protocol
-storage; hosted Durable Object protocol and an Effect fetch transport remain later
-work. A successful memory run proves neither cross-process persistence nor hosted
+storage. The Effect fetch Layer is available; hosted Durable Object execution
+and release acceptance remain unverified. A successful memory run proves neither cross-process persistence nor hosted
 support.
 
-| Entry                    | Surface                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------- |
-| `@streamsy/core`         | Schema values, protocol tags/outcomes, Streams, StreamRef, Fold, Producer, Memory and Storage |
-| `@streamsy/core/storage` | Storage contract, capabilities and mutation model                                             |
-| `@streamsy/core/http`    | `makeEdge` Web conversion; owner must dispose the edge                                        |
-| `@streamsy/core/testing` | Bun contract registration, fault injection and test Layers                                    |
+| Entry                    | Surface                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`         | Schema values, protocol tags, results and errors, Streams, StreamRef, Fold, Producer, Memory and Storage |
+| `@streamsy/core/storage` | Storage contract, capabilities and mutation model                                                        |
+| `@streamsy/core/http`    | `makeEdge` Web conversion; owner must dispose the edge                                                   |
+| `@streamsy/core/testing` | Bun contract registration, fault injection and test Layers                                               |
 
 `@streamsy/serve/bun` owns a Bun listener and HTTP edge together. The ordinary
 core, HTTP and storage entries do not load the Bun test runner. Internal offset
@@ -52,10 +59,10 @@ existing reader and writer services, including finite reads and one-shot long po
 over the standard Durable Streams HTTP protocol, so it works against any conformant
 host. Read results carry message payloads and batch metadata; per-message offsets and
 timestamps stay in storage. Text and binary bodies merge into one payload, and JSON
-messages return by value. Protocol classifications remain values; remote failures use
+messages return by value. Protocol rejections use tagged errors; remote infrastructure failures use
 `TransportFault`, and interruption cancels requests. Dispose the owning runtime at
 shutdown. CAS and producer appends require explicit deployment capability assertions;
-unknown support returns `not-supported` before sending.
+unknown support fails with `NotSupported` before sending.
 
 Browsers use the official `@durable-streams/client`, `@durable-streams/state`, and
 `@durable-streams/state/db` packages directly with an Effect-free validator.
