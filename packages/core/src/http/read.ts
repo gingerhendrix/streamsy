@@ -55,12 +55,14 @@ export const read = Effect.fn("Http.read")(function* (
   const result =
     live && offset !== undefined
       ? yield* reader.readNext(id, { offset, cursor: query.cursor })
-      : yield* reader.read(id, { offset, limit: query.batchSize });
+      : yield* reader
+          .read(id, { offset, limit: query.batchSize })
+          .pipe(Effect.map((batch) => ({ ...batch, cursor: undefined })));
 
   const headers = new Headers({ "stream-next-offset": result.nextOffset });
   if (result.closed) headers.set("stream-closed", "true");
   if (live || result.upToDate) headers.set("stream-up-to-date", "true");
-  if (live && !result.closed && "cursor" in result && typeof result.cursor === "string")
+  if (live && !result.closed && result.cursor !== undefined)
     headers.set("stream-cursor", result.cursor);
   if (live && result.messages.length === 0) {
     headers.set("cache-control", "no-store");

@@ -30,14 +30,15 @@ export function sse(
     return Stream.fromEffectRepeat(
       Effect.gen(function* () {
         const result = initial
-          ? yield* reader.read(id, { offset: currentOffset })
+          ? yield* reader
+              .read(id, { offset: currentOffset })
+              .pipe(Effect.map((batch) => ({ ...batch, cursor: undefined })))
           : yield* reader.readNext(id, { offset: currentOffset, cursor: currentCursor });
         if (initial) {
           const now = yield* Clock.currentTimeMillis;
           const random = yield* Random.next;
           currentCursor = generateCursor({ now: () => now }, currentCursor, () => random);
-        } else if ("cursor" in result && typeof result.cursor === "string")
-          currentCursor = result.cursor;
+        } else if (result.cursor !== undefined) currentCursor = result.cursor;
         initial = false;
         currentOffset = result.nextOffset;
         const chunks = result.messages.length ? events.dataEvent(result.messages, encoding) : [];

@@ -9,7 +9,7 @@ export const remote = Fetch.layer({
 }).pipe(Layer.provide(FetchHttpClient.layer));
 
 export const program = Effect.gen(function* () {
-  const created = yield* Streams.create(orders);
-  if (created.status !== "created" && created.status !== "exists") return created;
+  yield* Streams.create(orders);
+
   return yield* Streams.append(orders, [{ id: "order-1" }]);
 }).pipe(Effect.provide(remote));
