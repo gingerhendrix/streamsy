@@ -13,7 +13,7 @@ import {
   type EventLogService,
   type LogEntryInput,
 } from "@humanlayer/fold-core";
-import { StreamUnavailable, Streams } from "@streamsy/core";
+import { StreamNotFound, StreamGone, Streams } from "@streamsy/core";
 import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 import type { StreamsyStore } from "./storage.ts";
 import {
@@ -44,8 +44,8 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
     Schema.is(EventLogUnsupportedVersionError)(error)
   )
     return error;
-  if (Schema.is(StreamUnavailable)(error))
-    return unavailable(`Stream ${error.ref}: ${error.status}`);
+  if (Schema.is(StreamNotFound)(error)) return unavailable(`Stream ${error.id}: not-found`);
+  if (Schema.is(StreamGone)(error)) return unavailable(`Stream ${error.id}: gone`);
   if (error._tag === "DecodeFault") return corrupt(error.message ?? "Invalid stored JSON");
   return unavailable(
     error.message || error._tag,
@@ -62,9 +62,9 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     if (options.mode === "create") {
       for (const ref of [refs.log, refs.journal]) {
         const result = yield* Streams.create(ref);
-        if (result.status !== "created")
+        if (result._tag === "Exists")
           return yield* unavailable(
-            `Stream ${ref.id} already exists or is unavailable: ${result.status}`,
+            `Stream ${ref.id} already exists or is unavailable: ${result._tag}`,
           );
       }
       yield* appendJournal(

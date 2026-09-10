@@ -93,9 +93,9 @@ const plant = async (store: StreamsyStore, streamId: string, values: ReadonlyArr
   const ref = StreamRef.json(streamId, { schema: Schema.Json });
   await Effect.runPromise(
     Effect.gen(function* () {
-      expect((yield* Streams.create(ref)).status).toBe("created");
+      expect((yield* Streams.create(ref))._tag).toBe("Created");
       for (const value of values)
-        expect((yield* Streams.append(ref, [value])).status).toBe("appended");
+        expect((yield* Streams.append(ref, [value]))._tag).toBe("Appended");
     }).pipe(Effect.provide(store.context)),
   );
 };
@@ -403,7 +403,7 @@ describe("Fold journal fault recovery and ownership", () => {
                   Effect.gen(function* () {
                     if (id === refs.log.id) payloads.push(options.data.slice());
                     const result = yield* writer.append(id, options);
-                    if (id === refs.log.id) outcomes.push(result.status);
+                    if (id === refs.log.id) outcomes.push(result._tag);
                     return result;
                   }),
               }),
@@ -426,7 +426,7 @@ describe("Fold journal fault recovery and ownership", () => {
             expect(pending[0]?.entryId).toBe(first.eventId);
             expect(yield* readFoldLog(store, streamId)).toHaveLength(2);
             expect(payloads[0]).toEqual(payloads[1]);
-            expect(outcomes[0]).toBe(when === "after" ? "duplicate" : "appended");
+            expect(outcomes[0]).toBe(when === "after" ? "Duplicate" : "Appended");
           }),
         observed,
       );
@@ -471,8 +471,8 @@ describe("Fold journal fault recovery and ownership", () => {
           producerId: refs.producerId,
           epoch: 0,
           seq: 1,
-        }).pipe(Effect.provide(store.context));
-        expect(result.status).toBe("stale-epoch");
+        }).pipe(Effect.flip, Effect.provide(store.context));
+        expect(result._tag).toBe("StaleEpoch");
         const journal = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
         expect(journal.items.map((row) => row._tag)).toEqual([
           "Epoch",

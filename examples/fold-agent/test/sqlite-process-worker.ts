@@ -1,7 +1,7 @@
 /* oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import, anti-slop-effect/no-service-constructor-imports -- JSON stdout is the subprocess test protocol; makeEventLog is the adapter constructor under process-boundary test. */
 import { writeFileSync } from "node:fs";
 import { AgentId, EventId, SessionId, type LogEntryInput } from "@humanlayer/fold-core";
-import { StreamsWriter, type AppendOutcome } from "@streamsy/core";
+import { StreamsWriter, type AppendResult } from "@streamsy/core";
 import { Context, Effect } from "effect";
 import { readHistory, sessionRefs, settle } from "../src/session-journal.ts";
 import { openStore, type StreamsyStore } from "../src/storage.ts";
@@ -64,7 +64,7 @@ const program = Effect.acquireUseRelease(
                   if (id === refs.log.id && evidencePath !== undefined)
                     writeFileSync(evidencePath, options.data);
                   const result = yield* writer.append(id, options);
-                  if (id === refs.log.id && result.status === "appended") {
+                  if (id === refs.log.id && result._tag === "Appended") {
                     process.exit(86);
                   }
                   return result;
@@ -100,7 +100,7 @@ const program = Effect.acquireUseRelease(
         const pending = journal.items.at(-1);
         if (pending?._tag !== "Pending")
           return yield* Effect.die(new Error("settle-pending requires a final Pending row"));
-        const settlement: AppendOutcome = yield* settle(refs, pending).pipe(
+        const settlement: AppendResult = yield* settle(refs, pending).pipe(
           Effect.provide(observing.context),
         );
         return { status: "settled", settlement };

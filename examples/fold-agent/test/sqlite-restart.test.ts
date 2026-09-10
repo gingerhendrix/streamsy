@@ -164,7 +164,7 @@ describe("Fold retained-file process recovery", () => {
               seq: acknowledged.producerSeq,
             }).pipe(Effect.provide(store.context)),
           ),
-        ).toMatchObject({ status: "duplicate" });
+        ).toMatchObject({ _tag: "Duplicate" });
         expect(
           (await Effect.runPromise(readFoldLog(store, streamId))).map((row) => row.seq),
         ).toEqual([0, 1]);
@@ -224,14 +224,14 @@ describe("Fold retained-file process recovery", () => {
         const unrelated = StreamRef.json("unrelated/activity", { schema: Schema.Json });
         expect(
           await Effect.runPromise(Streams.create(unrelated).pipe(Effect.provide(between.context))),
-        ).toMatchObject({ status: "created" });
+        ).toMatchObject({ _tag: "Created" });
         expect(
           await Effect.runPromise(
             Streams.append(unrelated, [{ happened: "between attempts" }]).pipe(
               Effect.provide(between.context),
             ),
           ),
-        ).toMatchObject({ status: "appended" });
+        ).toMatchObject({ _tag: "Appended" });
         const activeSession = sessionStreamId(SessionId.create());
         expect((await runWorker(["create", filename, activeSession])).exitCode).toBe(0);
       } finally {
@@ -248,7 +248,7 @@ describe("Fold retained-file process recovery", () => {
       expect(settled.exitCode).toBe(0);
       expect(JSON.parse(settled.stdout)).toMatchObject({
         status: "settled",
-        settlement: { status: "duplicate", producerEpoch: 0, producerSeq: 1 },
+        settlement: { _tag: "Duplicate", producerEpoch: 0, producerSeq: 1 },
       });
       expect(new Uint8Array(readFileSync(recoveryBytesPath))).toEqual(crashBytes);
 

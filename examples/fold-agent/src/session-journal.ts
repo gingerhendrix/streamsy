@@ -131,26 +131,29 @@ export const settle = Effect.fn("Fold.settlePending")(function* (
   refs: SessionRefs,
   pending: Pending,
 ) {
-  const result = yield* Producer.append(refs.log, [pending.entry], {
+  return yield* Producer.append(refs.log, [pending.entry], {
     producerId: refs.producerId,
     epoch: pending.epoch,
     seq: pending.producerSeq,
   }).pipe(
     Effect.retry({ times: 4, while: (error) => error._tag === "StorageFault" && error.retryable }),
+    Effect.catchTags({
+      StaleEpoch: () => unavailable("Fenced: stale-epoch"),
+      ProducerGap: () => Effect.die(corrupt("Corrupt journal: producer-gap")),
+      InvalidEpochSeq: () => Effect.die(corrupt("Corrupt journal: invalid-epoch-seq")),
+      StreamBusy: () => unavailable("Streamsy log append: busy", true),
+      StreamNotFound: appendUnavailable,
+      StreamGone: appendUnavailable,
+      StreamClosed: appendUnavailable,
+      OffsetMismatch: appendUnavailable,
+      AppendConflict: appendUnavailable,
+      InvalidAppendRequest: appendUnavailable,
+      NotSupported: appendUnavailable,
+    }),
   );
-  switch (result.status) {
-    case "appended":
-    case "duplicate":
-      return result;
-    case "stale-epoch":
-      return yield* unavailable("Fenced: stale-epoch");
-    case "producer-gap":
-    case "invalid-epoch-seq":
-      return yield* Effect.die(corrupt(`Corrupt journal: ${result.status}`));
-    default:
-      return yield* unavailable(`Streamsy log append: ${result.status}`, result.status === "busy");
-  }
 });
+const appendUnavailable = (error: { readonly _tag: string }) =>
+  unavailable(`Streamsy log append: ${error._tag}`);
 
 /** CAS is the ownership boundary. Never retry a journal append with a new tail. */
 export const appendJournal = Effect.fn("Fold.appendJournal")(function* (
@@ -158,16 +161,20 @@ export const appendJournal = Effect.fn("Fold.appendJournal")(function* (
   row: JournalEntry,
   offset: string,
 ) {
-  const result = yield* Streams.append(refs.journal, [row], { expectedOffset: offset });
-  if (result.status === "appended") return result.offset;
-  if (result.status === "conflict" && result.conflictReason === "expected-offset") {
-    const current = yield* readHistory(refs.journal);
-    const epoch = current.items.findLast((item) => item._tag === "Epoch")?.epoch;
-    return yield* unavailable(
-      epoch !== undefined && epoch > row.epoch
-        ? "Fenced: stale-epoch (journal owner advanced)"
-        : "Fenced: journal expected-offset conflict",
-    );
-  }
-  return yield* unavailable(`Streamsy journal append: ${result.status}`, result.status === "busy");
+  return yield* Streams.append(refs.journal, [row], { expectedOffset: offset }).pipe(
+    Effect.map((result) => result.offset),
+    Effect.catchTags({
+      OffsetMismatch: () =>
+        Effect.gen(function* () {
+          const current = yield* readHistory(refs.journal);
+          const epoch = current.items.findLast((item) => item._tag === "Epoch")?.epoch;
+          return yield* unavailable(
+            epoch !== undefined && epoch > row.epoch
+              ? "Fenced: stale-epoch (journal owner advanced)"
+              : "Fenced: journal expected-offset conflict",
+          );
+        }),
+      StreamBusy: () => unavailable("Streamsy journal append: busy", true),
+    }),
+  );
 });
