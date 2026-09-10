@@ -6,9 +6,10 @@ description: Run the local Durable Object host with Miniflare and understand the
 Streamsy has a Cloudflare Durable Object host entry and local workerd evidence.
 Hosted execution and release acceptance are still pending. The local official
 profile uses one `byKey(() => "conformance")` object for same-object chain
-semantics; cross-object copy behavior is tested separately. The default
-`byStream()` topology retains nine chain-lifecycle divergences in that suite.
-Those are a topology distinction, not a hosted result or a changed assertion.
+semantics. Forks require the source and child to share an object. The default
+`byStream()` placement does not support forks and answers 404 for a source in
+another object; use `byKey` to co-locate each fork family. These local results
+do not establish hosted behavior.
 
 The current status is:
 
@@ -38,23 +39,27 @@ interface Env {
   readonly STREAMS: DurableObjectNamespace;
 }
 
-const host = { pathPrefix: "/streams", placement: Placement.byStream() } as const;
+const host = { pathPrefix: "/streams" } as const;
 
 export class StreamsObject extends StreamsyObject<Env> {
   override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
     return layerProtocol({ client: { storage: this.ctx.storage } });
   }
 
-  override options(): ObjectOptions<Env> {
-    return { ...host, namespace: (env) => env.STREAMS };
+  override options(): ObjectOptions {
+    return host;
   }
 }
 
-export default router<Env>({ ...host, namespace: (env) => env.STREAMS });
+export default router<Env>({
+  ...host,
+  placement: Placement.byStream(),
+  namespace: (env) => env.STREAMS,
+});
 ```
 
-The same `{ pathPrefix, placement }` object belongs on the router and the
-object. A prefix is a route boundary, not an authorization boundary. Authenticate
+The router takes `{ pathPrefix, placement, namespace }`; the object takes
+`{ pathPrefix }` through its HTTP options. A prefix is a route boundary, not an authorization boundary. Authenticate
 and authorize before forwarding to this entry, and derive the path and object
 mapping from that identity.
 

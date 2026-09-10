@@ -100,9 +100,10 @@ Observed local counts:
 | Site validation                         | 0 stale-term hits across 41 authored files; 7 excerpts (5 executed, 2 typechecked-only); checker tests 6/0 with 18 expectations; 11 rendered routes; 161 internal links/images/anchors; checker process group stopped |
 
 The usage excerpt is a local smoke check and the official workerd result is the
-single-object-chain profile. The default `byStream()` profile's nine
-chain-lifecycle divergences remain a topology distinction. Cross-object copy
-tests remain separate. None of these local results is hosted evidence.
+single-object-chain profile. For current deployments, forks require the source
+and child to share an object; see [fork placement](hosting.md#forks). The default
+`byStream()` placement no longer supports forks and answers 404. The historical
+figures above are unchanged. None of these local results is hosted evidence.
 
 ## Artifact and status
 

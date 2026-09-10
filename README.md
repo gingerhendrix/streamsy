@@ -15,8 +15,8 @@ supports retained-file SQLite through `@streamsy/storage/bun`; Fold uses that sa
 Layer for retained-file restart and provider-free CLI recovery tests.
 The local Cloudflare entry `@streamsy/serve/cloudflare` provides placement routing
 and a Durable Object protocol host with local workerd evidence. The official
-workerd profile uses one `byKey` object for chain semantics; cross-object copies
-are tested separately. Hosted execution, release acceptance, and the budget
+workerd profile uses one `byKey` object for chain semantics. Forks require the
+source and child to share an object. Hosted execution, release acceptance, and the budget
 decision remain pending; see the [hosting reference](docs/hosting.md).
 
 Derive commits stream output, current state and source progress in one host-local

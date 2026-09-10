@@ -54,6 +54,13 @@ Protocol outcomes are success values such as `created`, `exists`, `appended`,
 an accepted tuple, not equality of retry payloads: owners must retain exact bytes.
 Fold's journal enforces that ownership and equality on memory and retained-file SQLite.
 
+`Stream-Fork-Sub-Offset` is an upstream fork header used with `Stream-Forked-From`
+and an anchor `Stream-Fork-Offset`. It selects an additional prefix after that
+anchor: a count of flattened JSON messages for JSON streams, or decoded body
+bytes for text and binary streams. Zero selects no additional prefix; a positive
+value requires an explicit anchor offset. Core validates the requested prefix
+against the source data and includes the sub-offset in fork retry identity.
+
 ## Expected-offset concurrency
 
 An append's `expectedOffset` checks the current tail atomically with its mutation.
@@ -99,14 +106,14 @@ authoring seam. Persistent Bun SQLite is shipped locally. The Cloudflare entry
 routes raw stream paths to placement-selected Durable Objects and owns one Layer
 scope per in-memory object. Any Worker holding the namespace binding can reach
 any object; neither host adds authorization. Same-object forks chain atomically;
-cross-object forks copy a bounded prefix with provenance and no source retention
-edge. The Durable Object `layerProtocol` long-poll default is 25 seconds (Bun is
+forks require placement that co-locates the source and child. A source in another
+object is not found (404). The Durable Object `layerProtocol` long-poll default is 25 seconds (Bun is
 30 seconds), while core bounds SSE connections at 60 seconds on both hosts. A
 failed Cloudflare Layer build returns `503` with `retry-after: 1` and is retried
 on the next request. Alarm retries are finite and platform-owned; lazy expiry
 and later mutations repair missed or exhausted alarms. See the complete
 [hosting reference](hosting.md) for the public host contract, local evidence,
-copy errors, cancellation, and the still-pending hosted boundary.
+fork placement, cancellation, and the still-pending hosted boundary.
 
 ## Derive
 

@@ -8,10 +8,10 @@ Build the repository packages first with `bun run build`, then use
 The official local workerd runner uses `Placement.byKey(() => "conformance")`,
 placing all suite streams in one Durable Object while retaining distinct stream
 IDs. It exercises same-object chain semantics, including source retention and
-cascade collection. Cross-object copy behavior is verified separately by the
-accepted real-workerd host tests. Default `Placement.byStream()` copies have no
-source retention edge and do not satisfy the official suite's nine
-chain-lifecycle assertions.
+cascade collection. Forks now require the source and child to share an object.
+Default `Placement.byStream()` no longer supports forks and answers 404 for a
+source in another object; deployments using forks must co-locate their families
+with `byKey`. See [fork placement](../../docs/hosting.md#forks).
 
 The workerd fixture is local Miniflare with Durable Object SQLite, compatibility
 date `2026-07-30`, `nodejs_compat`, loopback networking, and a 1,500 ms test

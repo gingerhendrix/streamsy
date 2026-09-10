@@ -31,10 +31,10 @@ unmeasured. Local conformance is not hosted evidence.
 The official local workerd runner uses `Placement.byKey(() => "conformance")`,
 placing all suite streams in one Durable Object while retaining distinct stream
 IDs. It exercises same-object chain semantics, including source retention and
-cascade collection. Cross-object copy behavior is verified separately by the
-accepted real-workerd host tests. Default `Placement.byStream()` copies have no
-source retention edge and do not satisfy the official suite's nine
-chain-lifecycle assertions. The fixture uses a 1,500 ms test long-poll override.
+cascade collection. Forks now require the source and child to share an object.
+Default `Placement.byStream()` no longer supports forks and answers 404 for a
+source in another object; deployments using forks must co-locate their families
+with `byKey`. See [fork placement](hosting.md#forks). The fixture uses a 1,500 ms test long-poll override.
 Its single-object artifact does not represent distinct first-object activations;
 the first-object p95 remains unmeasured. Fake measurement tests preserve the
 historical all-first-then-warm ordering and report `firstMinusWarm`; their PUT
@@ -45,7 +45,7 @@ hosted comparison.
 
 The public host contract is consolidated in [docs/hosting.md](hosting.md).
 It records Bun ownership, the Cloudflare Durable Object scope and alarm model,
-routing and authorization boundaries, copy-fork limits, cancellation, local
+routing and authorization boundaries, fork placement requirements, cancellation, local
 workerd evidence, and the still-pending hosted boundary. The local Cloudflare
 entry is implemented and exercised by workerd; this does not establish a
 deployed Worker, upload metadata, startup CPU, hosted latency, hosted alarm or

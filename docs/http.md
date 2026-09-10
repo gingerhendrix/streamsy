@@ -122,8 +122,8 @@ background expiry sweeper or expiry fiber in this host.
 memory, retained-file Bun SQLite, and the local workerd Durable Object entry
 with the approved Vitest-under-Bun runner. Each accepted profile passes 332 tests
 with six declared skips. Every authored test uses `bun:test`. The workerd profile
-uses one `byKey` object for same-object chain semantics; cross-object copy tests
-remain separate. Frozen response fixtures preserve status, status text, every
+uses one `byKey` object for same-object chain semantics; forks require the source
+and child to share an object. Frozen response fixtures preserve status, status text, every
 header and body byte after removal of the comparison implementation. Cloudflare
 host code is implemented locally, while hosted execution, release support,
 browser Effect transport, and hosted measurements remain pending; see the

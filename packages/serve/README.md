@@ -101,5 +101,6 @@ expiry, cancellation, authorization, and evidence boundaries.
 
 Local workerd, memory, and Bun SQLite each have an accepted 332-pass/6-skip
 official profile. The workerd profile deliberately uses one `byKey` object for
-same-object chain semantics; cross-object copies are tested separately. Hosted
+same-object chain semantics. Forks require the source and child to share an object;
+see [fork placement](../../docs/hosting.md#forks). Hosted
 Cloudflare execution and release acceptance remain pending.

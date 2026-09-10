@@ -22,10 +22,10 @@ capabilities against the reconciled run plan.
 The official local workerd runner uses `Placement.byKey(() => "conformance")`,
 placing all suite streams in one Durable Object while retaining distinct stream
 IDs. It exercises same-object chain semantics, including source retention and
-cascade collection. Cross-object copy behavior is verified separately by the
-accepted real-workerd host tests. Default `Placement.byStream()` copies have no
-source retention edge and do not satisfy the official suite's nine
-chain-lifecycle assertions. The worker uses a 1,500 ms test long-poll override;
+cascade collection. Forks now require the source and child to share an object.
+Default `Placement.byStream()` no longer supports forks and answers 404 for a
+source in another object; deployments using forks must co-locate their families
+with `byKey`. See [fork placement](../docs/hosting.md#forks). The worker uses a 1,500 ms test long-poll override;
 its single-object artifact cannot establish distinct first-object activations.
 Fake measurement tests use the historical all-first-then-warm ordering and
 report `firstMinusWarm` (the candidate PUT body is `"x"`; Step 0 used an empty

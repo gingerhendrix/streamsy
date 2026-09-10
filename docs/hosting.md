@@ -55,7 +55,8 @@ at the protocol deadlines. Hosted disconnect propagation is unmeasured.
 
 ## Routing, placement, and authorization
 
-The router and object use the same literal `{ pathPrefix, placement }` pair.
+The router takes `{ pathPrefix, placement, namespace }`; the object takes
+`{ pathPrefix }` through its HTTP options.
 The default placement is `byStream()`. `byKey()` is a pure function of the
 path after its prefix is stripped. Keep this mapping stable for stored data. An
 empty or non-string placement key returns `400 Invalid placement key`; a
@@ -67,47 +68,32 @@ forwarding to the router, derive tenant and path mapping from the authenticated
 identity, and enforce it there. A caller-chosen prefix or object id is not an
 isolation boundary; possession of a namespace binding reaches its objects.
 
-The internal `streamsy.internal/fork-source` authority grants no privilege. A
-non-root effective prefix such as `/streams` keeps it off public routes; the
-root `/` prefix normalizes like an empty prefix and does not exclude that
-authority. Private expiry authority is an in-process Context value, never a
-request marker or header.
+Private expiry authority is an in-process Context value, never a request marker
+or header.
 
-## Forks and copy limits
+## Forks
 
-Same-object chain forks are atomic in one database. Cross-object forks own a
-bounded copied prefix, retain provenance for retry identity, and do not retain
-the parent. The default `copyOnForkMaxBytes` is 8,388,608 encoded frame bytes,
-including 45 bytes of per-message overhead. Snapshot source incarnation/count
-checks and a destination atomic commit protect the copy; this is not a
-distributed transaction. The source may change after a valid snapshot. The
-accepted same-millisecond `createdAt` identity residual remains a known limit.
+Forks require the source and child to share a Durable Object. The default
+`Placement.byStream()` places each stream in a separate object, so it does not
+support forks from another stream: the request returns
+`404 Source stream not found: <source>`. Use `Placement.byKey(family)` with a
+stable family key to co-locate each fork family. Cross-family forks also return
+404 because the source is absent from the child's local storage.
 
-An over-budget copy returns `409 Fork copy exceeds copyOnForkMaxBytes`. For an
-otherwise valid sufficiently long source, a cross-object JSON sub-offset above
-10,000 returns `400 Stream-Fork-Sub-Offset exceeds source message count`; Bun
-can return 201 for the corresponding case, and text/binary large-sub-offset
-parity is accepted. A detected changed or vanished snapshot returns
-`500 Internal server error`, after which the caller may retry following object
-recreation. This does not add a 503/Retry-After promise, and a missing initial
-source is not universally a 500. Same-object forks are not subject to the
-cross-object copy cap.
-
-The accepted estimate is about three times the encoded copy budget per request
-on each side. It is not a strict process-memory maximum, and there is no global
-concurrency or memory cap. The retained per-request memory, hosted
-`idFromName` length, and same-millisecond identity limits are open observations,
-not new scope.
+Same-object forks chain atomically in one database and follow the core fork
+rules, including source retention and cascade collection. The object uses the
+ordinary protocol writer; it does not fetch or copy a remote source. The core
+storage capability for copy forks remains available to other storage Layers.
 
 ## Local evidence and hosted boundary
 
 The local official suite has three registrations: memory, Bun SQLite, and
 workerd. Each accepted profile reports 332 passed and 6 skipped. The workerd
 profile deliberately uses `byKey(() => "conformance")` so all suite streams
-exercise one object and same-object chain semantics. Accepted cross-object copy
-tests run separately in the real local workerd host tests. The default
-`byStream()` profile retains nine chain-lifecycle divergences; those failures
-are a topology distinction, not a changed assertion or a hosted result.
+exercise one object and same-object chain semantics. Under the default
+`byStream()` placement, the suite's forks cannot find their sources locally and
+answer 404. This is a placement choice; the single-object profile is the fork
+conformance profile, and local results do not establish hosted behavior.
 
 The Worker artifact is local-only and has one output module. The accepted C
 artifact report records raw 534,562 B, minified 252,866 B, deterministic stdin
@@ -131,9 +117,8 @@ actual uploaded compressed bytes, and startup CPU are separate availability
 records; a missing value is unavailable, never zero or a substitute metric.
 
 Accepted implementation limits remain limits: the swallowed-fault logging seam,
-same-millisecond incarnation hardening, the proposed fail-closed `503` policy,
-migrations outside the yield override, per-request copy memory, hosted
-`idFromName` length, platform alarm behavior, and the workerd abort diagnostic.
+the proposed fail-closed `503` policy, migrations outside the yield override,
+hosted `idFromName` length, platform alarm behavior, and the workerd abort diagnostic.
 This documentation does not reopen those items or enlarge the local scope.
 
 ## Local ledger
