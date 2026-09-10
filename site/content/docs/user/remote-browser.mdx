@@ -53,15 +53,20 @@ or `decode` failures. Interruption stays interruption. The shared service tags e
 `StorageFault | TransportFault`; direct storage implementations still raise only
 `StorageFault`. Fetch does not retry ambiguous writes.
 
-The fetch Layer requires the Step 4 Streamsy HTTP host's opt-in lossless response
-representation. It sends `Accept: application/vnd.streamsy.outcome+json;version=1`.
-The default Durable Streams response format is unchanged. That default format merges
-text/binary messages and omits individual offsets and timestamps, so it cannot
-supply exact `StoredMessage` parity. In the opt-in format, reads carry a JSON outcome
-with byte arrays, and other operations carry URI-encoded JSON in `Streamsy-Outcome`.
-Responses retain protocol HTTP classifications; missing long-poll results preserve
-the direct empty-offset result. Opt-in responses are uncached. Unsupported or malformed
-representations fail explicitly instead of inventing message metadata.
+The fetch Layer speaks the standard Durable Streams HTTP protocol, so it reaches any
+conformant host. Decoding reads the status code, the documented response headers, and
+the body framed by the stream content type. Six details of the direct Layer do not
+survive that wire. Read results carry batch metadata and message payloads, so
+per-message offsets and timestamps stay in storage. A text or binary read body arrives
+as one concatenated payload, so those batches carry a single message. JSON messages
+return by value, which re-serializes them instead of reproducing the stored bytes. An
+empty long poll answers `204` whether it expired or woke without data, so the fetch
+Layer reports `timeout` for both. A producer close-only append and a duplicate
+acknowledgement also share `204`, so that append reports `duplicate` while the
+`stream-closed` header still carries the close. The append conflict sub-reasons for
+content type and sequence come from the fixed `409` body text this host writes, and a
+`409` body from another host fails as a `response` fault. Malformed or missing
+headers fail explicitly instead of inventing message metadata.
 
 ## Remote concurrency boundary
 
