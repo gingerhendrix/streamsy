@@ -83,6 +83,23 @@
         "typescript": "catalog:",
       },
     },
+    "packages/derive": {
+      "name": "@streamsy/derive",
+      "version": "0.4.0",
+      "dependencies": {
+        "@streamsy/core": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "effect": "4.0.0-rc.112",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "4.20251228.0",
+        "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+        "@effect/sql-sqlite-do": "4.0.0-rc.112",
+        "@types/bun": "^1.2.0",
+        "miniflare": "4.20260730.0",
+        "typescript": "catalog:",
+      },
+    },
     "packages/serve": {
       "name": "@streamsy/serve",
       "version": "0.4.0",
@@ -504,6 +521,8 @@
     "@streamsy/conformance-tests": ["@streamsy/conformance-tests@workspace:packages/conformance-tests"],
 
     "@streamsy/core": ["@streamsy/core@workspace:packages/core"],
+
+    "@streamsy/derive": ["@streamsy/derive@workspace:packages/derive"],
 
     "@streamsy/serve": ["@streamsy/serve@workspace:packages/serve"],
 
