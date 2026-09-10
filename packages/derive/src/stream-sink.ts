@@ -9,6 +9,15 @@ import type { Sink } from "./sink.ts";
 export const make = Effect.fn("Derive.StreamSink.make")(function* <A>(ref: StreamRef.StreamRef<A>) {
   const owner = yield* Commit;
   const writer = yield* StreamsWriter;
+  const conflict = (error: {
+    readonly _tag: string;
+    readonly id: string;
+    readonly message?: string;
+  }) =>
+    new DeriveFault({
+      reason: "sink-conflict",
+      message: `Sink ${error.id}: ${error.message || error._tag}`,
+    });
   return {
     identity: encodeKey([ref.id, ref.contentType]),
     initialPosition: ZERO_OFFSET,
@@ -17,15 +26,30 @@ export const make = Effect.fn("Derive.StreamSink.make")(function* <A>(ref: Strea
       if (outputs.length === 0) return previousPosition;
       const result = yield* Streams.append(ref, outputs, { expectedOffset: previousPosition }).pipe(
         Effect.provideService(StreamsWriter, writer),
-        Effect.mapError(
-          () => new DeriveFault({ reason: "storage-failure", message: `Cannot append ${ref.id}` }),
-        ),
+        Effect.catchTags({
+          OffsetMismatch: (error) =>
+            new DeriveFault({
+              reason: "sink-conflict",
+              message: `Sink ${error.id}: expected ${error.expected}, actual ${error.actual}`,
+            }),
+          StreamNotFound: conflict,
+          StreamGone: conflict,
+          StreamClosed: conflict,
+          AppendConflict: conflict,
+          StreamBusy: conflict,
+          StaleEpoch: conflict,
+          ProducerGap: conflict,
+          InvalidEpochSeq: conflict,
+          InvalidAppendRequest: conflict,
+          NotSupported: conflict,
+          EncodeFault: () =>
+            new DeriveFault({ reason: "storage-failure", message: `Cannot append ${ref.id}` }),
+          StorageFault: () =>
+            new DeriveFault({ reason: "storage-failure", message: `Cannot append ${ref.id}` }),
+          TransportFault: () =>
+            new DeriveFault({ reason: "storage-failure", message: `Cannot append ${ref.id}` }),
+        }),
       );
-      if (result.status !== "appended")
-        return yield* new DeriveFault({
-          reason: "sink-conflict",
-          message: `Sink ${ref.id}: ${result.status}`,
-        });
       return result.offset;
     }),
   } satisfies Sink<A>;

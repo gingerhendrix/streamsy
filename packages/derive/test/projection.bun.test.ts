@@ -213,7 +213,7 @@ test("follow repairs a missed wake and closes; cancellation releases parked wait
         initialPosition: "0",
         pull: () =>
           Effect.succeed({
-            status: "boundary",
+            _tag: "Boundary",
             items: [],
             endPosition: "0",
             upToDate: true,
@@ -290,7 +290,7 @@ test("nonadvancing source is rejected without a commit", () =>
         ...projection.source,
         pull: () =>
           Effect.succeed({
-            status: "boundary",
+            _tag: "Boundary",
             items: [1],
             endPosition: ZERO_OFFSET,
             upToDate: false,
@@ -316,9 +316,9 @@ test("follow paces an oversized boundary even when source wait would return imme
             pulls += 1;
             yield* Deferred.succeed(pulled, undefined);
             return pulls === 1
-              ? ({ status: "limit-reached" } as const)
+              ? ({ _tag: "LimitReached" } as const)
               : ({
-                  status: "boundary",
+                  _tag: "Boundary",
                   items: [],
                   endPosition: ZERO_OFFSET,
                   upToDate: true,

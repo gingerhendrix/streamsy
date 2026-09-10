@@ -10,6 +10,11 @@ export const make = Effect.fn("Derive.StreamSource.make")(function* <A>(
   ref: StreamRef.StreamRef<A>,
 ) {
   const reader = yield* StreamsReader;
+  const historyUnavailable = () =>
+    new DeriveFault({
+      reason: "history-unavailable",
+      message: `Required source history unavailable for ${ref.id}`,
+    });
   const storageFault = () =>
     new DeriveFault({ reason: "storage-failure", message: `Cannot read ${ref.id}` });
   return {
@@ -21,19 +26,25 @@ export const make = Effect.fn("Derive.StreamSource.make")(function* <A>(
           reason: "invalid-state",
           message: "Stored source offset is invalid",
         });
-      const result = yield* reader
-        .read(ref.id, { offset: after, limit: limits.items })
-        .pipe(Effect.mapError(storageFault));
+      const result = yield* reader.read(ref.id, { offset: after, limit: limits.items }).pipe(
+        Effect.catchTags({
+          StreamNotFound: () => historyUnavailable(),
+          StreamGone: () => historyUnavailable(),
+        }),
+        Effect.catchTags({
+          StorageFault: () => storageFault(),
+          TransportFault: () => storageFault(),
+        }),
+      );
       if (
-        result.status !== "ok" ||
         result.nextOffset < after ||
         (result.messages.length === 0 && result.nextOffset !== after)
       )
-        return { status: "history-unavailable" } as const;
+        return yield* historyUnavailable();
       const bytes = result.messages.reduce((sum, message) => sum + message.data.byteLength, 0);
       // Never split an accepted source boundary or claim bytes that were not accepted.
       if (limits.bytes !== undefined && bytes > limits.bytes)
-        return { status: "limit-reached" } as const;
+        return { _tag: "LimitReached" } as const;
       const items = yield* Effect.forEach(result.messages, (message, index) =>
         Schema.decodeEffect(ref.codec)(
           ref._tag === "Json" ? new TextDecoder().decode(message.data) : message.data,
@@ -48,7 +59,7 @@ export const make = Effect.fn("Derive.StreamSource.make")(function* <A>(
         ),
       );
       return {
-        status: "boundary",
+        _tag: "Boundary",
         items,
         endPosition: result.nextOffset,
         bytes,
@@ -57,7 +68,20 @@ export const make = Effect.fn("Derive.StreamSource.make")(function* <A>(
       } satisfies Boundary<A>;
     }),
     wait: Effect.fn("Derive.StreamSource.wait")((after) =>
-      reader.readNext(ref.id, { offset: after }).pipe(Effect.asVoid, Effect.mapError(storageFault)),
+      reader.readNext(ref.id, { offset: after }).pipe(
+        Effect.asVoid,
+        Effect.catchTags({
+          StreamNotFound: () => historyUnavailable(),
+          StreamGone: () => historyUnavailable(),
+          NotSupported: (error) =>
+            new DeriveFault({
+              reason: "unsupported-composition",
+              message: error.message ?? `Read not supported: ${error.feature}`,
+            }),
+          StorageFault: () => storageFault(),
+          TransportFault: () => storageFault(),
+        }),
+      ),
     ),
   } satisfies Source<A>;
 });

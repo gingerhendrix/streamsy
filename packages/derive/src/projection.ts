@@ -117,12 +117,7 @@ export const pass = Effect.fn("Derive.Projection.pass")(function* <I, O, S>(
     items: limits.items ?? 1000,
     bytes: limits.bytes,
   });
-  if (boundary.status === "history-unavailable")
-    return yield* new DeriveFault({
-      reason: "history-unavailable",
-      message: `Required source history unavailable for ${projection.id}`,
-    });
-  if (boundary.status === "limit-reached") return { ...empty, status: "limit-reached" };
+  if (boundary._tag === "LimitReached") return { ...empty, status: "limit-reached" };
   if (
     boundary.items.length > (limits.items ?? 1000) ||
     (limits.bytes !== undefined && (boundary.bytes ?? 0) > limits.bytes)
