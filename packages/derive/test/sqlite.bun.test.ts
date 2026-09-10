@@ -2,12 +2,12 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { Config, Effect, Layer, ManagedRuntime } from "effect";
+import { Config, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { Protocol } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as Sqlite from "../src/sqlite.ts";
 import { Projection } from "../src/index.ts";
-import { composition, definition, initialize, inspect } from "./scenarios.ts";
+import { composition, definition, initialize } from "./scenarios.ts";
 
 const host = (filename: string) =>
   Layer.merge(Protocol.layer(), Sqlite.layer).pipe(
@@ -32,7 +32,7 @@ test("Bun SQLite fuses output, state and checkpoint, including after-sink rollba
   }
 });
 
-test("file-backed Bun reopen resumes without repeated output", async () => {
+test("a new Bun process reopens the file and resumes without repeated output", async () => {
   const filename = join(mkdtempSync(join(scratch, "derive-reopen-")), "derive.sqlite");
   const first = ManagedRuntime.make(host(filename));
   try {
@@ -43,15 +43,47 @@ test("file-backed Bun reopen resumes without repeated output", async () => {
   } finally {
     await first.dispose();
   }
-  const second = ManagedRuntime.make(host(filename));
-  try {
-    const resumed = await second.runPromise(definition.pipe(Effect.flatMap(Projection.catchUp)));
-    expect(resumed.items).toBe(2);
-    const stored = await second.runPromise(inspect);
-    expect(stored.output).toEqual([1, 3]);
-    expect(stored.state.encoded).toBe("3");
-    expect(stored.state.revision).toBe(stored.checkpoint.revision);
-  } finally {
-    await second.dispose();
-  }
+  const child = Bun.spawnSync(
+    [
+      process.execPath,
+      "-e",
+      `
+      import { Effect, Layer, ManagedRuntime } from "effect";
+      import { Protocol } from "@streamsy/core";
+      import * as BunStorage from "@streamsy/storage/bun";
+      import * as Sqlite from "./src/sqlite.ts";
+      import { Projection } from "./src/index.ts";
+      import { definition, inspect } from "./test/scenarios.ts";
+      const host = Layer.merge(Protocol.layer(), Sqlite.layer).pipe(
+        Layer.provideMerge(BunStorage.layer({ client: { filename: Bun.argv.at(-1) } })),
+      );
+      const runtime = ManagedRuntime.make(host);
+      try {
+        const resumed = await runtime.runPromise(definition.pipe(Effect.flatMap(Projection.catchUp)));
+        const stored = await runtime.runPromise(inspect);
+        console.log(JSON.stringify({ items: resumed.items, output: stored.output,
+          encoded: stored.state.encoded, revision: stored.state.revision,
+          checkpointRevision: stored.checkpoint.revision }));
+      } finally { await runtime.dispose(); }
+    `,
+      filename,
+    ],
+    { cwd: join(import.meta.dir, "..") },
+  );
+  expect(child.exitCode).toBe(0);
+  const result = Schema.decodeSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        items: Schema.Finite,
+        output: Schema.Array(Schema.Finite),
+        encoded: Schema.String,
+        revision: Schema.Finite,
+        checkpointRevision: Schema.Finite,
+      }),
+    ),
+  )(child.stdout.toString());
+  expect(result.items).toBe(2);
+  expect(result.output).toEqual([1, 3]);
+  expect(result.encoded).toBe("3");
+  expect(result.revision).toBe(result.checkpointRevision);
 });
