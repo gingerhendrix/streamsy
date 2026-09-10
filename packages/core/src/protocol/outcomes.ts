@@ -17,8 +17,7 @@ export type CreateConflictReason =
   | "config-mismatch"
   | "soft-deleted"
   | "fork-content-type"
-  | "fork-source-soft-deleted"
-  | "fork-copy-limit";
+  | "fork-source-soft-deleted";
 
 type CreateFailureResult =
   | {
