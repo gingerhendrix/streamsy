@@ -6,9 +6,7 @@ import { makeEdge } from "@streamsy/core/http";
 import { Alarm, alarmLayer } from "./alarm.ts";
 import { HostCommand } from "./host-command.ts";
 import { hostProgram } from "./host-program.ts";
-import { Placement } from "./placement.ts";
-import type { ForkHost } from "./fork-writer.ts";
-import { type ObjectOptions, validateCopyOnForkMaxBytes } from "./object-options.ts";
+import type { ObjectOptions } from "./object-options.ts";
 
 const unavailable = (): Response =>
   new Response("Storage unavailable", {
@@ -27,23 +25,17 @@ export abstract class StreamsyObject<Env = unknown> extends DurableObject<Env> {
 
   abstract layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault>;
 
-  options(): ObjectOptions<Env> {
+  options(): ObjectOptions {
     return {};
   }
 
   #getEdge(): Edge {
     return (this.#edge ??= (() => {
       const options = this.options();
-      const copyOnForkMaxBytes = validateCopyOnForkMaxBytes(options.copyOnForkMaxBytes);
-      const host: ForkHost = {
-        namespace: options.namespace?.(this.env),
-        placement: options.placement ?? Placement.byStream(),
-        copyOnForkMaxBytes,
-      };
       return makeEdge<StorageFault, Storage | Alarm>(
         options,
         this.layer().pipe(Layer.provideMerge(alarmLayer(this.ctx.storage))),
-        hostProgram(options, host),
+        hostProgram(options),
       );
     })());
   }

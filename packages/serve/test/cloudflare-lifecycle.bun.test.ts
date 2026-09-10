@@ -15,7 +15,6 @@ import { Layer } from "effect";
 import { Memory, Protocol } from "@streamsy/core";
 import { serve as serveBun } from "../src/bun.ts";
 import { Miniflare } from "miniflare";
-import { decodeFrames } from "../src/cloudflare/fork-frames.ts";
 
 const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
 
@@ -127,7 +126,6 @@ interface ProbeResult {
   }>;
   readonly alarm: number | null;
   readonly alarmAfterMutation: number | null;
-  readonly exportRequests: number;
   readonly rows: ReadonlyArray<ReadonlyArray<unknown>>;
   readonly messages: ReadonlyArray<ReadonlyArray<unknown>>;
 }
@@ -573,11 +571,6 @@ const direct = (harness: Harness, name: string, path: string, init?: RequestInit
     .get(harness.namespace.idFromName(name))
     .fetch(new Request(`https://object.test${path}`, init));
 
-const directInternal = (harness: Harness, name: string, path: string, init?: RequestInit) =>
-  harness.namespace
-    .get(harness.namespace.idFromName(name))
-    .fetch(new Request(`https://streamsy.internal${path}`, init));
-
 const probe = async (harness: Harness, name: string) =>
   // SAFETY: the fixture's /__probe branch always returns this fixed JSON shape.
   (await direct(harness, name, "/__probe")).json() as unknown as ProbeResult;
@@ -623,43 +616,12 @@ const messageRowsFor = (observation: ProbeResult, streamId: string) =>
   observation.messages.filter((row) => row[0] === streamId);
 
 const zeroOffset = "0000000000000000_0000000000000000";
-const oneOffset = "0000000000000000_0000000000000001";
 const twoOffset = "0000000000000000_0000000000000002";
 const largeJson = (prefix: string) =>
   JSON.stringify(Array.from({ length: 3_000 }, (_, index) => `${prefix}-${index}`));
 
-test("B1 byStream copy preserves bodies, offsets, timestamps, and provenance", async () => {
-  const harness = await makeHarness();
-  expect((await put(harness, "/streams/src", "one")).status).toBe(201);
-  expect((await append(harness, "/streams/src", "two")).status).toBe(204);
-  expect((await append(harness, "/streams/src", "three")).status).toBe(204);
-  const sourceHead = await head(harness, "/streams/src");
-  const sourceTail = sourceHead.headers.get("stream-next-offset");
-  if (sourceTail === null) throw new Error("B1 source tail missing");
-
-  const fork = await put(harness, "/streams/child", "", "text/plain", {
-    "stream-forked-from": "/streams/src",
-  });
-  expect(fork.status).toBe(201);
-  expect(fork.headers.get("stream-next-offset")).toBe(sourceTail);
-  expect(await dispatch(harness, "/streams/child").then((response) => response.text())).toBe(
-    "onetwothree",
-  );
-  const sourceRead = await dispatch(harness, `/streams/src?offset=${oneOffset}`);
-  const childRead = await dispatch(harness, `/streams/child?offset=${oneOffset}`);
-  expect(await childRead.text()).toBe(await sourceRead.text());
-
-  const source = await probe(harness, "src");
-  const child = await probe(harness, "child");
-  expect(messageRowsFor(child, "child")).toEqual(
-    messageRowsFor(source, "src").map((row) => ["child", row[1], row[2], row[3]]),
-  );
-  expect(rowFor(child, "child")?.[2]).toBe("src");
-  expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(2);
-});
-
 test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => {
-  const harness = await makeHarness();
+  const harness = await makeHarness("worker-by-key.ts");
   const bun = await serveBun({
     pathPrefix: "/streams",
     layer: Protocol.layer().pipe(Layer.provide(Memory.layer())),
@@ -696,27 +658,27 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
     forkPath: string,
     headers: Record<string, string>,
   ) => {
-    expect((await put(harness, `/streams/${source}`, body, contentType)).status).toBe(201);
+    expect((await put(harness, `/streams/p/${source}`, body, contentType)).status).toBe(201);
     expect(
       (
-        await bunRequest(`/streams/${source}`, {
+        await bunRequest(`/streams/p/${source}`, {
           method: "PUT",
           body,
           headers: { "content-type": contentType },
         })
       ).status,
     ).toBe(201);
-    await compare(`/streams/${forkPath}`, {
+    await compare(`/streams/p/${forkPath}`, {
       method: "PUT",
       headers,
     });
   };
 
-  expect((await put(harness, "/streams/offset", "a")).status).toBe(201);
-  expect((await append(harness, "/streams/offset", "b")).status).toBe(204);
+  expect((await put(harness, "/streams/p/offset", "a")).status).toBe(201);
+  expect((await append(harness, "/streams/p/offset", "b")).status).toBe(204);
   expect(
     (
-      await bunRequest("/streams/offset", {
+      await bunRequest("/streams/p/offset", {
         method: "PUT",
         body: "a",
         headers: { "content-type": "text/plain" },
@@ -725,33 +687,33 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
   ).toBe(201);
   expect(
     (
-      await bunRequest("/streams/offset", {
+      await bunRequest("/streams/p/offset", {
         method: "POST",
         body: "b",
         headers: { "content-type": "text/plain" },
       })
     ).status,
   ).toBe(204);
-  const offsetTail = (await head(harness, "/streams/offset")).headers.get("stream-next-offset");
+  const offsetTail = (await head(harness, "/streams/p/offset")).headers.get("stream-next-offset");
   if (offsetTail === null) throw new Error("B2 offset tail missing");
-  await compare("/streams/explicit-offset", {
+  await compare("/streams/p/explicit-offset", {
     method: "PUT",
-    headers: { "stream-forked-from": "/streams/offset", "stream-fork-offset": offsetTail },
+    headers: { "stream-forked-from": "/streams/p/offset", "stream-fork-offset": offsetTail },
   });
 
   await pairedSource("json", "[1,2]", "application/json", "json-child", {
-    "stream-forked-from": "/streams/json",
+    "stream-forked-from": "/streams/p/json",
     "stream-fork-offset": zeroOffset,
     "stream-fork-sub-offset": "1",
   });
   await pairedSource("text", "hello", "text/plain", "text-child", {
-    "stream-forked-from": "/streams/text",
+    "stream-forked-from": "/streams/p/text",
     "stream-fork-offset": zeroOffset,
     "stream-fork-sub-offset": "3",
   });
   const largeSubOffset = "x".repeat(10_001);
   await pairedSource("large-text", largeSubOffset, "text/plain", "large-text-child", {
-    "stream-forked-from": "/streams/large-text",
+    "stream-forked-from": "/streams/p/large-text",
     "stream-fork-offset": zeroOffset,
     "stream-fork-sub-offset": "10001",
   });
@@ -761,54 +723,65 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
     "application/octet-stream",
     "large-binary-child",
     {
-      "stream-forked-from": "/streams/large-binary",
+      "stream-forked-from": "/streams/p/large-binary",
+      "stream-fork-offset": zeroOffset,
+      "stream-fork-sub-offset": "10001",
+    },
+  );
+  await pairedSource(
+    "large-json",
+    JSON.stringify(Array.from({ length: 10_001 }, (_, index) => index)),
+    "application/json",
+    "large-json-child",
+    {
+      "stream-forked-from": "/streams/p/large-json",
       "stream-fork-offset": zeroOffset,
       "stream-fork-sub-offset": "10001",
     },
   );
   await pairedSource("invalid", "body", "text/plain", "invalid-child", {
-    "stream-forked-from": "/streams/invalid",
+    "stream-forked-from": "/streams/p/invalid",
     "stream-fork-offset": "bad",
   });
   await pairedSource("beyond", "body", "text/plain", "beyond-child", {
-    "stream-forked-from": "/streams/beyond",
+    "stream-forked-from": "/streams/p/beyond",
     "stream-fork-offset": twoOffset,
   });
   await pairedSource("mismatch", "body", "text/plain", "mismatch-child", {
-    "stream-forked-from": "/streams/mismatch",
+    "stream-forked-from": "/streams/p/mismatch",
     "content-type": "application/json",
   });
   await pairedSource("overshoot", "hi", "text/plain", "overshoot-child", {
-    "stream-forked-from": "/streams/overshoot",
+    "stream-forked-from": "/streams/p/overshoot",
     "stream-fork-offset": zeroOffset,
     "stream-fork-sub-offset": "3",
   });
   await pairedSource("sub-without-offset", "hello", "text/plain", "sub-without-offset-child", {
-    "stream-forked-from": "/streams/sub-without-offset",
+    "stream-forked-from": "/streams/p/sub-without-offset",
     "stream-fork-sub-offset": "1",
   });
-  await compare("/streams/absolute-child", {
+  await compare("/streams/p/absolute-child", {
     method: "PUT",
-    headers: { "stream-forked-from": "https://streams.test/streams/offset" },
+    headers: { "stream-forked-from": "https://streams.test/streams/p/offset" },
   });
 
-  expect((await put(harness, "/streams/retry-source", "body")).status).toBe(201);
+  expect((await put(harness, "/streams/p/retry-source", "body")).status).toBe(201);
   expect(
     (
-      await bunRequest("/streams/retry-source", {
+      await bunRequest("/streams/p/retry-source", {
         method: "PUT",
         body: "body",
         headers: { "content-type": "text/plain" },
       })
     ).status,
   ).toBe(201);
-  await compare("/streams/retry-child", {
+  await compare("/streams/p/retry-child", {
     method: "PUT",
-    headers: { "stream-forked-from": "/streams/retry-source" },
+    headers: { "stream-forked-from": "/streams/p/retry-source" },
   });
-  await compare("/streams/retry-child", {
+  await compare("/streams/p/retry-child", {
     method: "PUT",
-    headers: { "stream-forked-from": "/streams/retry-source" },
+    headers: { "stream-forked-from": "/streams/p/retry-source" },
   });
 });
 
@@ -822,162 +795,10 @@ test("B3 byKey same-object forks chain and retain a soft-deleted source", async 
   const observation = await probe(harness, "t1");
   expect(messageRowsFor(observation, "t1/y")).toHaveLength(0);
   expect(rowFor(observation, "t1/y")?.[2]).toBe("t1/x");
-  expect(observation.exportRequests).toBe(0);
   expect((await dispatch(harness, "/streams/t1/x", { method: "DELETE" })).status).toBe(204);
   expect((await head(harness, "/streams/t1/x")).status).toBe(410);
   expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(1);
 });
-
-test("B4 copied children are independent of source deletion and recreation", async () => {
-  const harness = await makeHarness();
-  expect((await put(harness, "/streams/src", "old")).status).toBe(201);
-  expect(
-    (
-      await put(harness, "/streams/child", "", "text/plain", {
-        "stream-forked-from": "/streams/src",
-      })
-    ).status,
-  ).toBe(201);
-  expect((await dispatch(harness, "/streams/src", { method: "DELETE" })).status).toBe(204);
-  expect((await head(harness, "/streams/src")).status).toBe(404);
-  expect(await dispatch(harness, "/streams/child").then((response) => response.text())).toBe("old");
-  expect((await put(harness, "/streams/src", "new")).status).toBe(201);
-  expect((await append(harness, "/streams/src", "-again")).status).toBe(204);
-  expect(await dispatch(harness, "/streams/child").then((response) => response.text())).toBe("old");
-  expect((await dispatch(harness, "/streams/child", { method: "DELETE" })).status).toBe(204);
-  expect(messageRowsFor(await probe(harness, "child"), "child")).toHaveLength(0);
-});
-
-test("B5 retries avoid source traffic and concurrent copies commit once", async () => {
-  const harness = await makeHarness();
-  expect((await put(harness, "/streams/src", "a")).status).toBe(201);
-  const first = await put(harness, "/streams/retry", "", "text/plain", {
-    "stream-forked-from": "/streams/src",
-  });
-  expect(first.status).toBe(201);
-  const sourceAfterFirst = await probe(harness, "src");
-  const second = await put(harness, "/streams/retry", "", "text/plain", {
-    "stream-forked-from": "/streams/src",
-  });
-  expect(second.status).toBe(200);
-  expect(second.headers.get("stream-next-offset")).toBe(first.headers.get("stream-next-offset"));
-  expect((await probe(harness, "src")).exportRequests).toBe(sourceAfterFirst.exportRequests);
-
-  expect((await append(harness, "/streams/src", "b")).status).toBe(204);
-  const different = await put(harness, "/streams/retry", "", "text/plain", {
-    "stream-forked-from": "/streams/src",
-    "stream-fork-offset": oneOffset,
-  });
-  expect(different.status).toBe(409);
-
-  const concurrent = await Promise.all(
-    Array.from({ length: 4 }, () =>
-      put(harness, "/streams/concurrent", "", "text/plain", {
-        "stream-forked-from": "/streams/src",
-      }),
-    ),
-  );
-  expect(concurrent.filter((response) => response.status === 201)).toHaveLength(1);
-  expect(concurrent.filter((response) => response.status === 200)).toHaveLength(3);
-  expect(messageRowsFor(await probe(harness, "concurrent"), "concurrent")).toHaveLength(2);
-
-  const sourceBefore = (await probe(harness, "src")).messages;
-  const six = await Promise.all(
-    Array.from({ length: 6 }, (_, index) =>
-      put(harness, `/streams/copy-${index}`, "", "text/plain", {
-        "stream-forked-from": "/streams/src",
-      }),
-    ),
-  );
-  expect(six.every((response) => response.status === 201)).toBe(true);
-  expect((await probe(harness, "src")).messages).toEqual(sourceBefore);
-});
-
-test("B6 enforces exact encoded-frame bounds and copies seven 1 MiB messages", async () => {
-  const harness = await makeHarness();
-  const exactBody = "x".repeat(4_051);
-  await setProbe(harness, "exact", "copy-limit=4096");
-  await setProbe(harness, "exact-child", "copy-limit=4096");
-  expect((await put(harness, "/streams/exact", exactBody)).status).toBe(201);
-  expect(
-    (
-      await put(harness, "/streams/exact-child", "", "text/plain", {
-        "stream-forked-from": "/streams/exact",
-      })
-    ).status,
-  ).toBe(201);
-
-  await setProbe(harness, "source-capped", "copy-limit=45");
-  expect((await put(harness, "/streams/source-capped", "x")).status).toBe(201);
-  const sourceCap = await put(harness, "/streams/source-capped-child", "", "text/plain", {
-    "stream-forked-from": "/streams/source-capped",
-  });
-  expect(sourceCap.status).toBe(409);
-  expect(await sourceCap.text()).toBe("Fork copy exceeds copyOnForkMaxBytes");
-
-  await setProbe(harness, "over", "copy-limit=4096");
-  await setProbe(harness, "over-child", "copy-limit=4096");
-  expect((await put(harness, "/streams/over", "x".repeat(4_052))).status).toBe(201);
-  const over = await put(harness, "/streams/over-child", "", "text/plain", {
-    "stream-forked-from": "/streams/over",
-  });
-  expect(over.status).toBe(409);
-  expect(await over.text()).toBe("Fork copy exceeds copyOnForkMaxBytes");
-
-  await setProbe(harness, "prefix", "copy-limit=4096");
-  await setProbe(harness, "prefix-child", "copy-limit=4096");
-  expect((await put(harness, "/streams/prefix", exactBody)).status).toBe(201);
-  const firstOffset = (await head(harness, "/streams/prefix")).headers.get("stream-next-offset");
-  if (firstOffset === null) throw new Error("B6 prefix offset missing");
-  expect((await append(harness, "/streams/prefix", "y")).status).toBe(204);
-  expect(
-    (
-      await put(harness, "/streams/prefix-child", "", "text/plain", {
-        "stream-forked-from": "/streams/prefix",
-        "stream-fork-offset": firstOffset,
-      })
-    ).status,
-  ).toBe(201);
-
-  const megabyte = "m".repeat(1_048_576);
-  expect((await put(harness, "/streams/seven", megabyte)).status).toBe(201);
-  for (let index = 0; index < 6; index += 1)
-    expect((await append(harness, "/streams/seven", megabyte)).status).toBe(204);
-  const started = Date.now();
-  const seven = await put(harness, "/streams/seven-child", "", "text/plain", {
-    "stream-forked-from": "/streams/seven",
-  });
-  const elapsed = Date.now() - started;
-  console.info(`B6 seven-megabyte-copy-ms=${elapsed}`);
-  expect(seven.status).toBe(201);
-  expect(messageRowsFor(await probe(harness, "seven-child"), "seven-child")).toHaveLength(7);
-  expect((await append(harness, "/streams/seven", megabyte)).status).toBe(204);
-  const eighth = await put(harness, "/streams/eight-child", "", "text/plain", {
-    "stream-forked-from": "/streams/seven",
-  });
-  expect(eighth.status).toBe(409);
-  expect(await eighth.text()).toBe("Fork copy exceeds copyOnForkMaxBytes");
-});
-
-test.skipIf(Bun.env.STREAMSY_FORK_TIMING !== "1")(
-  "B6 timing observation (opt-in because 20,000 small messages is host-duration sensitive)",
-  async () => {
-    const harness = await makeHarness();
-    expect((await put(harness, "/streams/timing", "0123456789")).status).toBe(201);
-    for (let index = 1; index < 20_000; index += 1)
-      expect((await append(harness, "/streams/timing", "0123456789")).status).toBe(204);
-    const started = Date.now();
-    expect(
-      (
-        await put(harness, "/streams/timing-child", "", "text/plain", {
-          "stream-forked-from": "/streams/timing",
-        })
-      ).status,
-    ).toBe(201);
-    console.info(`B6 twenty-thousand-small-copy-ms=${Date.now() - started}`);
-  },
-  { timeout: 60_000 },
-);
 
 test("B7 missing, soft-deleted, and expired source classifications are exact", async () => {
   const missing = await makeHarness();
@@ -998,143 +819,110 @@ test("B7 missing, soft-deleted, and expired source classifications are exact", a
     ).status,
   ).toBe(201);
   expect((await dispatch(deleted, "/streams/t1/x", { method: "DELETE" })).status).toBe(204);
-  const deletedResponse = await put(deleted, "/streams/t2/z", "", "text/plain", {
+  const deletedResponse = await put(deleted, "/streams/t1/z", "", "text/plain", {
     "stream-forked-from": "/streams/t1/x",
   });
   expect(deletedResponse.status).toBe(409);
   expect(await deletedResponse.text()).toBe("Source stream is soft-deleted: t1/x");
 
-  const expired = await makeHarness();
+  const expired = await makeHarness("worker-by-key.ts");
   expect(
-    (await put(expired, "/streams/expired", "x", "text/plain", { "stream-ttl": "1" })).status,
+    (await put(expired, "/streams/e/expired", "x", "text/plain", { "stream-ttl": "1" })).status,
   ).toBe(201);
   await Bun.sleep(2_000);
-  const expiredResponse = await put(expired, "/streams/expired-child", "", "text/plain", {
-    "stream-forked-from": "/streams/expired",
+  const expiredResponse = await put(expired, "/streams/e/expired-child", "", "text/plain", {
+    "stream-forked-from": "/streams/e/expired",
   });
   expect(expiredResponse.status).toBe(404);
-  expect(await expiredResponse.text()).toBe("Source stream not found: expired");
+  expect(await expiredResponse.text()).toBe("Source stream not found: e/expired");
 });
 
-test("B8 public routes ignore markers while direct frames export is bounded and alarm-free", async () => {
-  const harness = await makeHarness();
-  expect((await put(harness, "/streams/src", "body")).status).toBe(201);
-  const before = await probe(harness, "src");
-  const publicRead = await dispatch(harness, "/streams/src", {
-    headers: { "streamsy-fork-source": "1", "streamsy-frames-truncated": "1" },
-  });
-  expect(publicRead.status).toBe(200);
-  expect(await publicRead.text()).toBe("body");
-  const routedInternal = await dispatchFetch(
-    harness.miniflare,
-    "https://streamsy.internal/fork-source?stream=src",
-  );
-  expect(routedInternal.status).toBe(400);
-  expect(await routedInternal.text()).toBe("Stream path required: /streams/{path}");
-  const exported = await directInternal(
-    harness,
-    "src",
-    "/fork-source?stream=src&budget=1048576&tail=0",
-  );
-  expect(exported.status).toBe(200);
-  expect(exported.headers.get("content-type")).toBe("application/vnd.streamsy.frames");
-  expect(decodeFrames(new Uint8Array(await exported.arrayBuffer()))).toHaveLength(1);
-  expect((await probe(harness, "src")).alarmInvocations).toBe(before.alarmInvocations);
-});
-
-test("B9 byKey placement isolates copied families", async () => {
+test("B9 byKey rejects cross-family forks without changing the source", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   expect((await put(harness, "/streams/t1/x", "x")).status).toBe(201);
-  expect((await put(harness, "/streams/t2/y", "y")).status).toBe(201);
   const before = await probe(harness, "t1");
-  expect(
-    (
-      await put(harness, "/streams/t2/z", "", "text/plain", {
-        "stream-forked-from": "/streams/t1/x",
-      })
-    ).status,
-  ).toBe(201);
-  expect(await (await direct(harness, "t2", "/streams/t2/z")).text()).toBe("x");
-  expect((await direct(harness, "t1", "/streams/t2/z")).status).toBe(404);
-  expect((await probe(harness, "t1")).rows).toEqual(before.rows);
+  const fork = await put(harness, "/streams/t2/z", "", "text/plain", {
+    "stream-forked-from": "/streams/t1/x",
+  });
+  expect(fork.status).toBe(404);
+  expect(await fork.text()).toBe("Source stream not found: t1/x");
+  expect((await probe(harness, "t2")).rows).toHaveLength(0);
+  const after = await probe(harness, "t1");
+  expect(after.rows).toEqual(before.rows);
+  expect(after.messages).toEqual(before.messages);
   expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(2);
 });
 
-test("B10 no namespace and mismatched placement fail safely", async () => {
-  const noNamespace = await makeHarness("worker-no-namespace.ts");
-  expect((await put(noNamespace, "/streams/src", "x")).status).toBe(201);
-  const unsupported = await put(noNamespace, "/streams/child", "", "text/plain", {
-    "stream-forked-from": "/streams/src",
+test("byStream returns 404 for a fork even when its source exists", async () => {
+  const harness = await makeHarness();
+  expect((await put(harness, "/streams/source", "source")).status).toBe(201);
+  const fork = await put(harness, "/streams/child", "", "text/plain", {
+    "stream-forked-from": "/streams/source",
   });
-  expect(unsupported.status).toBe(400);
-  expect(unsupported.headers.get("stream-not-supported")).toBe("fork");
-  expect(await unsupported.text()).toBe("Feature not supported: fork");
-
-  const mismatch = await makeHarness("worker-mismatch.ts");
-  const notFound = await put(mismatch, "/streams/t1/y", "", "text/plain", {
-    "stream-forked-from": "/streams/t1/x",
-  });
-  expect(notFound.status).toBe(404);
-  expect(await notFound.text()).toBe("Source stream not found: t1/x");
-  expect((await probe(mismatch, "t1")).rows).toHaveLength(0);
+  expect(fork.status).toBe(404);
+  expect(await fork.text()).toBe("Source stream not found: source");
+  expect((await head(harness, "/streams/source")).status).toBe(200);
+  expect((await probe(harness, "child")).rows).toHaveLength(0);
+  expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(2);
 });
 
-test("B11 copied TTL and absolute expiry inherit into the child alarm", async () => {
-  const harness = await makeHarness();
+test("B11 chain-fork TTL and absolute expiry inherit into the child alarm", async () => {
+  const harness = await makeHarness("worker-by-key.ts");
   expect(
-    (await put(harness, "/streams/ttl-source", "x", "text/plain", { "stream-ttl": "2" })).status,
+    (await put(harness, "/streams/t1/ttl-source", "x", "text/plain", { "stream-ttl": "2" })).status,
   ).toBe(201);
   const now = Date.now();
   expect(
     (
-      await put(harness, "/streams/ttl-child", "", "text/plain", {
-        "stream-forked-from": "/streams/ttl-source",
+      await put(harness, "/streams/t1/ttl-child", "", "text/plain", {
+        "stream-forked-from": "/streams/t1/ttl-source",
       })
     ).status,
   ).toBe(201);
-  const child = await probe(harness, "ttl-child");
-  const expiry = child.rows[0]?.[1];
+  const child = await probe(harness, "t1");
+  const expiry = rowFor(child, "t1/ttl-child")?.[1];
   if (!isFiniteNumber(expiry)) throw new Error("B11 inherited TTL was not persisted");
   expect(expiry - now).toBeGreaterThan(500);
   expect(expiry - now).toBeLessThan(2_500);
-  await waitUntil(async () => (await probe(harness, "ttl-child")).rows.length === 0, 4_000);
-  const expired = await probe(harness, "ttl-child");
+  await waitUntil(async () => (await probe(harness, "t1")).rows.length === 0, 4_000);
+  const expired = await probe(harness, "t1");
   expect(expired.alarm).toBeNull();
   expect(expired.alarmInvocations).toBeGreaterThanOrEqual(1);
 
   expect(
-    (await put(harness, "/streams/ttl-override", "x", "text/plain", { "stream-ttl": "2" })).status,
+    (await put(harness, "/streams/t1/ttl-override", "x", "text/plain", { "stream-ttl": "2" }))
+      .status,
   ).toBe(201);
   expect(
     (
-      await put(harness, "/streams/override-child", "", "text/plain", {
-        "stream-forked-from": "/streams/ttl-override",
+      await put(harness, "/streams/t1/override-child", "", "text/plain", {
+        "stream-forked-from": "/streams/t1/ttl-override",
         "stream-ttl": "60",
       })
     ).status,
   ).toBe(201);
-  const override = await probe(harness, "override-child");
-  const overrideExpiry = override.rows[0]?.[1];
+  const override = await probe(harness, "t1");
+  const overrideExpiry = rowFor(override, "t1/override-child")?.[1];
   if (!isFiniteNumber(overrideExpiry)) throw new Error("B11 override expiry was not persisted");
   expect(overrideExpiry - Date.now()).toBeGreaterThan(58_000);
 
   const absolute = new Date(Date.now() + 2_000).toISOString();
   expect(
     (
-      await put(harness, "/streams/date-source", "x", "text/plain", {
+      await put(harness, "/streams/t1/date-source", "x", "text/plain", {
         "stream-expires-at": absolute,
       })
     ).status,
   ).toBe(201);
   expect(
     (
-      await put(harness, "/streams/date-child", "", "text/plain", {
-        "stream-forked-from": "/streams/date-source",
+      await put(harness, "/streams/t1/date-child", "", "text/plain", {
+        "stream-forked-from": "/streams/t1/date-source",
       })
     ).status,
   ).toBe(201);
-  const dateChild = await probe(harness, "date-child");
-  const dateExpiry = dateChild.rows[0]?.[1];
+  const dateChild = await probe(harness, "t1");
+  const dateExpiry = rowFor(dateChild, "t1/date-child")?.[1];
   if (!isFiniteNumber(dateExpiry))
     throw new Error("B11 inherited absolute expiry was not persisted");
   expect(dateExpiry).toBe(new Date(absolute).getTime());
@@ -1251,7 +1039,7 @@ test("B15 recreation under load restores and purges alarms in both object layout
   expect(
     (
       await put(byStream, "/streams/child", "", "text/plain", {
-        "stream-forked-from": "/streams/source",
+        "stream-ttl": "2",
       })
     ).status,
   ).toBe(201);
@@ -1308,60 +1096,31 @@ test("B15 second reacquisition failure retains and reclaims both roots", async (
   await runB15ReacquisitionFailure(2);
 });
 
-test("B16 copied creates reconcile an inherited alarm before the PUT returns", async () => {
-  const harness = await makeHarness();
+test("B16 chain forks reconcile an inherited alarm before the PUT returns", async () => {
+  const harness = await makeHarness("worker-by-key.ts");
+  expect((await direct(harness, "t1", "/streams/t1/alarm-child", { method: "HEAD" })).status).toBe(
+    404,
+  );
+  expect((await probe(harness, "t1")).alarm).toBeNull();
   expect(
-    (await put(harness, "/streams/alarm-source", "x", "text/plain", { "stream-ttl": "2" })).status,
+    (await put(harness, "/streams/t1/alarm-source", "x", "text/plain", { "stream-ttl": "2" }))
+      .status,
   ).toBe(201);
   expect(
-    (await direct(harness, "alarm-child", "/streams/alarm-child", { method: "HEAD" })).status,
-  ).toBe(404);
-  const before = await probe(harness, "alarm-child");
-  expect(before.alarm).toBeNull();
-  expect(
     (
-      await put(harness, "/streams/alarm-child", "", "text/plain", {
-        "stream-forked-from": "/streams/alarm-source",
+      await put(harness, "/streams/t1/alarm-child", "", "text/plain", {
+        "stream-forked-from": "/streams/t1/alarm-source",
       })
     ).status,
   ).toBe(201);
-  const after = await probe(harness, "alarm-child");
+  const after = await probe(harness, "t1");
   expect(after.alarm).not.toBeNull();
-  expect(after.rows[0]?.[1]).toBeGreaterThan(Date.now());
+  expect(after.alarmAfterMutation).not.toBeNull();
+  expect(rowFor(after, "t1/alarm-child")?.[1]).toBeGreaterThan(Date.now());
 });
 
 test(
-  "Batch B F1 fails closed when a low-yield export meets source deletion and reincarnation",
-  async () => {
-    const harness = await makeHarness("worker-low-yield.ts");
-    const original = largeJson("old");
-    const replacement = largeJson("new");
-    expect((await put(harness, "/streams/src", original, "application/json")).status).toBe(201);
-
-    const forkPromise = put(harness, "/streams/child", "", "application/json", {
-      "stream-forked-from": "/streams/src",
-    });
-    await Bun.sleep(2);
-    expect((await dispatch(harness, "/streams/src", { method: "DELETE" })).status).toBe(204);
-    expect((await put(harness, "/streams/src", replacement, "application/json")).status).toBe(201);
-
-    const fork = await forkPromise;
-    if (fork.status === 201) {
-      expect(fork.headers.get("stream-next-offset")).toBe("0000000000003000_0000000000000000");
-      expect(messageRowsFor(await probe(harness, "child"), "child")).toHaveLength(3_000);
-      const childBody = await dispatch(harness, "/streams/child").then((response) =>
-        response.text(),
-      );
-      expect([original, replacement]).toContain(childBody);
-    } else {
-      expect(fork.status).not.toBe(201);
-    }
-  },
-  { timeout: 20_000 },
-);
-
-test(
-  "Batch B F2 keeps large same-object creates and source reincarnation bounded",
+  "Batch B F2 keeps concurrent large same-object creates bounded",
   async () => {
     const harness = await makeHarness("worker-by-key.ts");
     const first = largeJson("first");
@@ -1375,29 +1134,6 @@ test(
     expect(messageRowsFor(family, "t1/x")).toHaveLength(3_000);
     expect(messageRowsFor(family, "t1/y")).toHaveLength(3_000);
     expect(family.layerAcquisitions).toBe(1);
-
-    const source = largeJson("source");
-    const recreated = largeJson("recreated");
-    expect((await put(harness, "/streams/t2/source", source, "application/json")).status).toBe(201);
-    const started = Date.now();
-    const forkPromise = put(harness, "/streams/t3/child", "", "application/json", {
-      "stream-forked-from": "/streams/t2/source",
-    });
-    await Bun.sleep(2);
-    expect((await dispatch(harness, "/streams/t2/source", { method: "DELETE" })).status).toBe(204);
-    expect((await put(harness, "/streams/t2/source", recreated, "application/json")).status).toBe(
-      201,
-    );
-    const fork = await forkPromise;
-    const elapsed = Date.now() - started;
-    expect(elapsed).toBeLessThan(10_000);
-    expect([201, 404, 500]).toContain(fork.status);
-    if (fork.status === 201) {
-      expect(messageRowsFor(await probe(harness, "t3"), "t3/child")).toHaveLength(3_000);
-    }
-    const sourceAfter = await probe(harness, "t2");
-    expect(messageRowsFor(sourceAfter, "t2/source")).toHaveLength(3_000);
-    expect(sourceAfter.layerAcquisitions).toBe(1);
   },
   { timeout: 35_000 },
 );

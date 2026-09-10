@@ -8,16 +8,20 @@ interface Env {
   readonly STREAMS: DurableObjectNamespace;
 }
 
-const host = { pathPrefix: "/streams", placement: Placement.byStream() } as const;
+const host = { pathPrefix: "/streams" } as const;
 
 export class StreamsObject extends StreamsyObject<Env> {
   override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
     return layerProtocol({ client: { storage: this.ctx.storage } });
   }
 
-  override options(): ObjectOptions<Env> {
-    return { ...host, namespace: (env) => env.STREAMS };
+  override options(): ObjectOptions {
+    return host;
   }
 }
 
-export default router<Env>({ ...host, namespace: (env) => env.STREAMS });
+export default router<Env>({
+  ...host,
+  placement: Placement.byStream(),
+  namespace: (env) => env.STREAMS,
+});

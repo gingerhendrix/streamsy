@@ -4,7 +4,7 @@ import { Context, Effect, Layer } from "effect";
 import { Storage, StorageFault, StreamsReader, StreamsWriter, type StreamId } from "@streamsy/core";
 import { StreamsyObject, router, type ObjectOptions } from "@streamsy/serve/cloudflare";
 import { layerProtocol } from "@streamsy/storage/durable-object";
-import { byKeyOptions, byStreamOptions } from "./fixture-options.ts";
+import { byStreamOptions } from "./fixture-options.ts";
 
 interface Env {
   readonly STREAMS: DurableObjectNamespace;
@@ -25,22 +25,11 @@ class ProbeObject extends StreamsyObject<Env> {
   #failLayerOnce = false;
   #failNextExpiry = false;
   #failExpiryWhile = false;
-  #copyLimit: number | undefined;
   #longPollTimeoutMs = 1_000;
   #alarmAfterMutation: number | null = null;
 
-  override options(): ObjectOptions<Env> {
-    const options: ObjectOptions<Env> = {
-      ...byStreamOptions,
-      namespace: (env: Env) => env.STREAMS,
-    };
-    return this.#copyLimit === undefined
-      ? options
-      : { ...options, copyOnForkMaxBytes: this.#copyLimit };
-  }
-
-  protected copyLimit(): number | undefined {
-    return this.#copyLimit;
+  override options(): ObjectOptions {
+    return { pathPrefix: "/streams" };
   }
 
   override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
@@ -115,8 +104,6 @@ class ProbeObject extends StreamsyObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.host === "streamsy.internal" && url.pathname === "/fork-source")
-      this.#exportRequests += 1;
     if (url.pathname === "/__probe") {
       if (url.searchParams.has("fail-layer-once")) {
         this.#failLayerOnce = true;
@@ -132,12 +119,6 @@ class ProbeObject extends StreamsyObject<Env> {
       }
       if (url.searchParams.has("clear-fail-expiry")) {
         this.#failExpiryWhile = false;
-        return Response.json({ ok: true });
-      }
-      const copyLimit = url.searchParams.get("copy-limit");
-      if (copyLimit !== null) {
-        const parsed = Number(copyLimit);
-        if (Number.isSafeInteger(parsed) && parsed > 0) this.#copyLimit = parsed;
         return Response.json({ ok: true });
       }
       const longPollTimeoutMs = url.searchParams.get("long-poll-timeout");
@@ -189,27 +170,15 @@ class ProbeObject extends StreamsyObject<Env> {
       alarmInvocations: this.#alarmInvocations,
       activeReads: this.#activeReads,
       alarmInfo: this.#alarmInfo,
-      exportRequests: this.#exportRequests,
       alarmAfterMutation: this.#alarmAfterMutation,
       alarm: await this.ctx.storage.getAlarm(),
       rows,
       messages,
     });
   }
-
-  #exportRequests = 0;
 }
 
-export class ProbeByKeyObject extends ProbeObject {
-  override options(): ObjectOptions<Env> {
-    const options: ObjectOptions<Env> = {
-      ...byKeyOptions,
-      namespace: (env: Env) => env.STREAMS,
-    };
-    const copyLimit = this.copyLimit();
-    return copyLimit === undefined ? options : { ...options, copyOnForkMaxBytes: copyLimit };
-  }
-}
+export class ProbeByKeyObject extends ProbeObject {}
 
 const app = router<Env>({ namespace: (env) => env.STREAMS, ...byStreamOptions });
 

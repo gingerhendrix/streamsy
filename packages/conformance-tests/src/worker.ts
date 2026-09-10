@@ -10,7 +10,6 @@ interface Env {
 
 const host = {
   pathPrefix: "/",
-  placement: Placement.byKey(() => "conformance"),
 } as const;
 
 export class StreamsObject extends StreamsyObject<Env> {
@@ -18,9 +17,13 @@ export class StreamsObject extends StreamsyObject<Env> {
     return layerProtocol({ client: { storage: this.ctx.storage }, longPollTimeoutMs: 1_500 });
   }
 
-  override options(): ObjectOptions<Env> {
-    return { ...host, namespace: (env) => env.STREAMS };
+  override options(): ObjectOptions {
+    return host;
   }
 }
 
-export default router<Env>({ ...host, namespace: (env) => env.STREAMS });
+export default router<Env>({
+  ...host,
+  placement: Placement.byKey(() => "conformance"),
+  namespace: (env) => env.STREAMS,
+});

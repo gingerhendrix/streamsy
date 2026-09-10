@@ -568,7 +568,7 @@ test("byStream isolates objects and reuses the same object identity", async () =
   expect((await probe(harness, "a")).layerAcquisitions).toBe(1);
 });
 
-test("byKey co-locates same-family forks and copies cross-family forks", async () => {
+test("byKey co-locates same-family forks and returns 404 for cross-family forks", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   expect((await create(harness, "/streams/t1/x")).status).toBe(201);
   const same = await dispatch(harness, "/streams/t1/y", {
@@ -582,11 +582,9 @@ test("byKey co-locates same-family forks and copies cross-family forks", async (
     method: "PUT",
     headers: { "stream-forked-from": "/streams/t1/x" },
   });
-  expect(cross.status).toBe(201);
-  expect(await cross.text()).toBe("");
-  expect(await dispatch(harness, "/streams/t2/z").then((response) => response.text())).toContain(
-    "source",
-  );
+  expect(cross.status).toBe(404);
+  expect(await cross.text()).toBe("Source stream not found: t1/x");
+  expect((await dispatch(harness, "/streams/t2/z")).status).toBe(404);
   expect(await harness.miniflare.listDurableObjectIds("STREAMS")).toHaveLength(2);
 });
 
