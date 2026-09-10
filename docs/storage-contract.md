@@ -14,19 +14,31 @@ bytes must be independent of caller inputs and stored state.
 
 `mutate({ operations })` takes a nonempty ordered set of `Create`, `Append` or
 `Delete` operations. Internal values use PascalCase `_tag` discriminants.
-`Applied` supplies ordered operation results; `Rejected` carries the failing
-operation index, a reason and an optional current record. Reasons include offset,
-closed, producer, exists, missing/gone, fork-source-gone and expiry-mismatch.
-Expected rejection is a value; I/O failure is `StorageFault`, with `retryable`
-indicating policy eligibility rather than proof that an opaque write is safe to retry.
+`MutationOutcome` is the success-only `{ _tag: "Applied", results }` schema and
+supplies ordered operation results. Expected rejection fails with the schema-backed
+`MutationRejected` error, carrying the failing operation index, a reason and an
+`Option<StreamRecord>` current record. Reasons remain `offset`, `closed`, `producer`,
+`exists`, `not-found`, `gone`, `fork-source-gone` and `expiry-mismatch`.
+I/O failure remains `StorageFault`, with `retryable` indicating policy eligibility
+rather than proof that an opaque write is safe to retry. `MutationRejected` never
+qualifies for SQL-fault retry. Protocol append instead rereads and replans up to
+eight times; duplicate producer acknowledgement still wins.
 
 Validate every precondition against pre-mutation state before writing. Rejection
 must change nothing, including producer state, lineage and expiry metadata.
 Duplicate operations for one stream and unsupported multi-stream atomicity are
-programmer defects. `RecordPatch` is trusted protocol input: arbitrary lifecycle
-or lineage patches are not a safe public command language. Operation results can
-describe intermediate state (a soft-deleted parent can be purged by a later
-operation in the same mutation); inspect the final record for final existence.
+programmer defects.
+
+A rejection escaping `MemoryCommitBoundary.withTransaction` or the SQL
+`CommitBoundary.withTransaction` rolls back earlier application writes and pending
+invalidations too. Catch `MutationRejected` outside the boundary to recover after
+rollback. Catching it inside the outer body deliberately allows that body’s other
+writes to commit; nested calls join the owner and do not create savepoints.
+
+`RecordPatch` is trusted protocol input: arbitrary lifecycle or lineage patches
+are not a safe public command language. Operation results can describe intermediate
+state (a soft-deleted parent can be purged by a later operation in the same mutation);
+inspect the final record for final existence.
 
 The protocol masks storage mutation calls against interruption. Memory also masks
 its bounded synchronous mutation region and semaphore acquisition. The existing
@@ -81,7 +93,9 @@ StorageContract.run({
 Run with Bun. The kit builds a fresh scoped Layer for every case and supplies
 `TestClock`; options accept a Layer value, not a factory. Named capability skips
 remain visible across the two configurations. The additional `faultyStorage`
-decorator fails before or after a selected mutate call for ambiguity tests.
+decorator fails before a selected mutate call or after its successful application
+for ambiguity tests. A rejection propagates unchanged through an after-fault
+injection; it consumes the selected attempted call without injecting an I/O fault.
 `layerTest` provides real protocol tags plus subscriber/snapshot observations.
 
 ## Retired backend evidence

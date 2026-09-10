@@ -36,11 +36,16 @@ A boundary or storage mutation inside a foreign raw `SqlClient.withTransaction`
 defects before its body/storage SQL executes; raw transactions receive no
 commit notification guarantee.
 
-`withTransaction` is deliberately low-level: a `Rejected` mutation outcome is a
-successful Effect value and does not roll back application SQL by itself. To make
-rejection atomic, raise a private typed error inside the boundary and recover it
-only outside `withTransaction`; the site SQL storage guide contains the complete
-pattern.
+`Storage.mutate` succeeds only with `Applied` operation results. An expected
+rejection fails with `MutationRejected` and rolls back application SQL when it
+escapes `withTransaction`. Recover with `Effect.catchTag("MutationRejected", ...)`
+outside the boundary, after rollback. Catching it inside the outer body permits
+that body’s other writes to commit; nested calls do not create savepoints. The
+site SQL storage guide contains the complete pattern.
+
+A standalone rejected mutation publishes no invalidations and is never retried
+as a SQL fault. Only retryable `StorageFault` or driver `SqlError` failures use
+the existing bounded transaction retry policy.
 
 `CommitBoundary.withTransaction` belongs to its caller and is not automatically
 retried. A storage mutation nested inside it does not add its own retry loop.

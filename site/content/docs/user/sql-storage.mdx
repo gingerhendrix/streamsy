@@ -61,19 +61,15 @@ mutation inside a foreign raw `SqlClient.withTransaction` defects before its
 body or storage SQL executes. Raw ambient transactions receive no commit-wake
 guarantee.
 
-A returned `Rejected` value is still a successful Effect value. The low-level
-boundary therefore commits unless the caller turns that rejection into a private
-failure and recovers it only after leaving the boundary:
+`Storage.mutate` succeeds with `Applied` and fails with `MutationRejected` when a
+precondition fails. Let that failure escape the boundary so application SQL rolls
+back, then recover outside it:
 
 ```ts
-import { Data, Effect, Predicate } from "effect";
-import { Storage, type Mutation, type MutationOutcome } from "@streamsy/core";
+import { Effect } from "effect";
+import { Storage, type Mutation } from "@streamsy/core";
 import { CommitBoundary } from "@streamsy/storage";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-
-class Rejected extends Data.TaggedError("Rejected")<{
-  readonly outcome: Extract<MutationOutcome, { _tag: "Rejected" }>;
-}> {}
 
 declare const mutation: Mutation;
 
@@ -85,19 +81,18 @@ const program = Effect.gen(function* () {
     .withTransaction(
       Effect.gen(function* () {
         yield* sql.unsafe("INSERT INTO application_rows(id) VALUES (?)", ["example"]);
-        const result = yield* storage.mutate(mutation);
-        if (Predicate.isTagged(result, "Rejected")) return yield* new Rejected({ outcome: result });
-        return result;
+        return yield* storage.mutate(mutation);
       }),
     )
-    .pipe(Effect.catchTag("Rejected", ({ outcome }) => Effect.succeed(outcome)));
+    .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
 });
 ```
 
 The `catchTag` is outside `withTransaction`, so rejection first rolls back both
-application and protocol writes. The future fused Commit Layer will own this
-policy; it is not part of this low-level boundary. The caller also owns any retry
-of this fused transaction. Nested storage mutation never retries independently.
+application and protocol writes. Catching it inside the outer body instead allows
+that body’s other writes to commit; nested calls do not create savepoints. Rejection
+publishes no invalidation keys and is never retried as a SQL fault. The caller owns
+any retry of a fused transaction. Nested storage mutation never retries independently.
 Commit or rollback failure remains a defect and is never automatically replayed,
 because commit acknowledgement failure is an uncertain outcome.
 
@@ -114,21 +109,11 @@ rolls back the application row:
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Context, Data, Effect, Exit, Layer, Predicate, Scope } from "effect";
-import {
-  Storage,
-  StreamId,
-  ZERO_OFFSET,
-  type Mutation,
-  type MutationOutcome,
-} from "@streamsy/core";
+import { Context, Effect, Exit, Layer, Scope } from "effect";
+import { Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { CommitBoundary } from "@streamsy/storage";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-
-class Rejected extends Data.TaggedError("Rejected")<{
-  readonly outcome: Extract<MutationOutcome, { readonly _tag: "Rejected" }>;
-}> {}
 
 const id = StreamId.make("compiled-shared-transaction");
 const create: Mutation = {
@@ -166,18 +151,15 @@ try {
         .withTransaction(
           Effect.gen(function* () {
             yield* sql.unsafe("INSERT INTO application_rows VALUES ('rolled-back')");
-            const mutation = yield* storage.mutate(create);
-            if (Predicate.isTagged(mutation, "Rejected"))
-              return yield* new Rejected({ outcome: mutation });
-            return mutation;
+            return yield* storage.mutate(create);
           }),
         )
-        .pipe(Effect.catchTag("Rejected", ({ outcome: rejection }) => Effect.succeed(rejection)));
+        .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
       const rows = yield* sql.unsafe<{ readonly id: string }>("SELECT id FROM application_rows");
       return { outcome, rows };
     }).pipe(Effect.provide(context)),
   );
-  if (result.outcome._tag !== "Rejected" || result.rows.length !== 0)
+  if (result.outcome._tag !== "MutationRejected" || result.rows.length !== 0)
     throw new Error("shared transaction did not roll back rejection");
 } finally {
   await Effect.runPromise(Scope.close(scope, Exit.void));
