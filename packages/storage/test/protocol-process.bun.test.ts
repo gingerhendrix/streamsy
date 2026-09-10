@@ -9,7 +9,6 @@ const scratch = Effect.runSync(
 const worker = new URL("./protocol-process-worker.ts", import.meta.url).pathname;
 
 const WorkerResult = Schema.Struct({
-  status: Schema.optional(Schema.String),
   upToDate: Schema.optional(Schema.Boolean),
   nextOffset: Schema.optional(Schema.String),
   producerEpoch: Schema.optional(Schema.Finite),
@@ -76,15 +75,15 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   ]);
   expect(
     concurrentCreates
-      .map(({ status }) => status)
+      .map(({ _tag }) => _tag)
       .toSorted((left, right) => String(left).localeCompare(String(right))),
-  ).toEqual(["created", "exists"]);
+  ).toEqual(["Created", "Exists"]);
   expect(await run(["multi-fail", filename, "must-not-exist", "create-race"])).toMatchObject({
     result: { _tag: "Rejected", index: 1, reason: "exists" },
     freshAbsent: true,
   });
   const created = await run(["create", filename, "race", "-", "-", "-"]);
-  expect(created.status).toBe("created");
+  expect(created._tag).toBe("Created");
   const waitUntil = Effect.runSync(Clock.currentTimeMillis) + 250;
   const race = await Promise.all([
     run(
@@ -108,40 +107,40 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   ]);
   expect(
     race
-      .map(({ status }) => status)
+      .map(({ _tag }) => _tag)
       .toSorted((left, right) => String(left).localeCompare(String(right))),
-  ).toEqual(["appended", "conflict"]);
+  ).toEqual(["Appended", "OffsetMismatch"]);
   const raceRead = await run(["read", filename, "race"]);
   expect(raceRead.messages).toHaveLength(1);
 
   expect(await run(["create", filename, "producer", "-", "-", "-"])).toMatchObject({
-    status: "created",
+    _tag: "Created",
   });
   const tuple = { filename, id: "producer", data: "exact", producerId: "p", epoch: 0 };
   expect(await run(appendArgs({ ...tuple, sequence: 0 }))).toMatchObject({
-    status: "appended",
+    _tag: "Appended",
     producerEpoch: 0,
     producerSeq: 0,
   });
   expect(await run(appendArgs({ ...tuple, sequence: 0 }))).toMatchObject({
-    status: "duplicate",
+    _tag: "Duplicate",
     producerEpoch: 0,
     producerSeq: 0,
   });
   expect(await run(appendArgs({ ...tuple, sequence: 2 }))).toEqual({
-    status: "producer-gap",
+    _tag: "ProducerGap",
     expectedSeq: 1,
     receivedSeq: 2,
   });
   expect(await run(appendArgs({ ...tuple, data: "next", sequence: 1 }))).toMatchObject({
-    status: "appended",
+    _tag: "Appended",
     producerSeq: 1,
   });
   expect(
     await run(appendArgs({ ...tuple, data: "takeover", epoch: 1, sequence: 0 })),
-  ).toMatchObject({ status: "appended", producerEpoch: 1, producerSeq: 0 });
+  ).toMatchObject({ _tag: "Appended", producerEpoch: 1, producerSeq: 0 });
   expect(await run(appendArgs({ ...tuple, sequence: 2 }))).toEqual({
-    status: "stale-epoch",
+    _tag: "StaleEpoch",
     currentEpoch: 1,
   });
   expect(await run(["producer", filename, "producer", "p"])).toMatchObject({
@@ -150,21 +149,21 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
   });
 
   const source = await run(["create", filename, "source", "abc", "60", "-"]);
-  expect(source.status).toBe("created");
+  expect(source._tag).toBe("Created");
   expect(await run(["fork", filename, "child", "source", ZERO_OFFSET, "2"])).toMatchObject({
-    status: "created",
+    _tag: "Created",
   });
   expect(await run(appendArgs({ filename, id: "child", data: "d" }))).toMatchObject({
-    status: "appended",
+    _tag: "Appended",
   });
   const child = await run(["read", filename, "child"]);
-  expect(child).toMatchObject({ status: "ok", upToDate: true });
+  expect(child).toMatchObject({ upToDate: true });
   const childMessages = child.messages ?? [];
   expect(childMessages.map(({ text }) => text)).toEqual(["ab", "d"]);
-  expect(await run(["head", filename, "child"])).toMatchObject({ status: "ok", ttlSeconds: 60 });
+  expect(await run(["head", filename, "child"])).toMatchObject({ ttlSeconds: 60 });
 
   expect(
     await run(["create", filename, "expired", "old", "-", "2000-01-01T00:00:00Z"]),
-  ).toMatchObject({ status: "created" });
-  expect(await run(["head", filename, "expired"])).toEqual({ status: "not-found" });
+  ).toMatchObject({ _tag: "Created" });
+  expect(await run(["head", filename, "expired"])).toMatchObject({ _tag: "StreamNotFound" });
 });

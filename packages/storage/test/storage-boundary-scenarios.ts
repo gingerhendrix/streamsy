@@ -96,21 +96,18 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
           "SELECT id,value FROM application_state WHERE id IN ('state','checkpoint') ORDER BY id",
         );
         return {
-          output:
-            output.status === "ok"
-              ? output.messages.map((message) => new TextDecoder().decode(message.data))
-              : [],
+          output: output.messages.map((message) => new TextDecoder().decode(message.data)),
           records: rows.map((row) => [row.id, row.value]),
         };
       });
       const write = (value: string) =>
         boundary.withTransaction(
           Effect.gen(function* () {
-            const appended = yield* writer.append(id, {
+            yield* writer.append(id, {
               contentType: "text/plain",
               data: new TextEncoder().encode(value),
             });
-            if (appended.status !== "appended") return yield* Effect.die("unexpected sink outcome");
+
             yield* sql.unsafe("UPDATE application_state SET value=? WHERE id='state'", [value]);
             yield* sql.unsafe("UPDATE application_state SET value=? WHERE id='checkpoint'", [
               value,

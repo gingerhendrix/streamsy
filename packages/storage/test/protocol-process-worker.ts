@@ -8,6 +8,7 @@ import {
   StreamsReader,
   StreamsWriter,
   ZERO_OFFSET,
+  type ProtocolError,
 } from "@streamsy/core";
 import { layer } from "../src/bun.ts";
 
@@ -86,14 +87,12 @@ const operation = Effect.gen(function* () {
     }
     case "read": {
       const result = yield* reader.read(StreamId.make(argument(2, "id")));
-      return result.status !== "ok"
-        ? result
-        : {
-            ...result,
-            messages: result.messages.map(({ data }) => ({
-              text: new TextDecoder().decode(data),
-            })),
-          };
+      return {
+        ...result,
+        messages: result.messages.map(({ data }) => ({
+          text: new TextDecoder().decode(data),
+        })),
+      };
     }
     case "head":
       return yield* reader.head(StreamId.make(argument(2, "id")));
@@ -120,7 +119,30 @@ const operation = Effect.gen(function* () {
 });
 
 try {
-  console.log(JSON.stringify(await runtime.runPromise(operation)));
+  console.log(
+    JSON.stringify(
+      await runtime.runPromise(
+        operation.pipe(
+          Effect.catchTags({
+            StreamNotFound: (error: ProtocolError) => Effect.succeed(error),
+            StreamGone: (error: ProtocolError) => Effect.succeed(error),
+            StreamBusy: (error: ProtocolError) => Effect.succeed(error),
+            StreamClosed: (error: ProtocolError) => Effect.succeed(error),
+            OffsetMismatch: (error: ProtocolError) => Effect.succeed(error),
+            AppendConflict: (error: ProtocolError) => Effect.succeed(error),
+            StaleEpoch: (error: ProtocolError) => Effect.succeed(error),
+            ProducerGap: (error: ProtocolError) => Effect.succeed(error),
+            InvalidEpochSeq: (error: ProtocolError) => Effect.succeed(error),
+            InvalidAppendRequest: (error: ProtocolError) => Effect.succeed(error),
+            CreateConflict: (error: ProtocolError) => Effect.succeed(error),
+            ForkSourceNotFound: (error: ProtocolError) => Effect.succeed(error),
+            InvalidForkRequest: (error: ProtocolError) => Effect.succeed(error),
+            NotSupported: (error: ProtocolError) => Effect.succeed(error),
+          }),
+        ),
+      ),
+    ),
+  );
 } finally {
   await runtime.dispose();
 }
