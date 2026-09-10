@@ -134,8 +134,14 @@ browser Effect transport, and hosted measurements remain pending; see the
 `@streamsy/core/fetch` provides the existing service tags through Effect HttpClient.
 The [remote/browser guide](../site/content/docs/user/remote-browser.mdx) specifies
 configuration, interruption, fault classification and explicit D4 capability assertions.
-The default Durable Streams HTTP representation is unchanged. Exact service parity
-uses an opt-in Accept media type; read outcomes preserve byte boundaries and stored
-metadata, while other outcomes use the URI-encoded `Streamsy-Outcome` response header.
-This extension is required by the fetch Layer and is not a general capability
-negotiation protocol. Official browser clients continue using the standard wire format.
+The fetch Layer speaks the standard Durable Streams HTTP protocol, so it reaches any
+conformant host and it shares the same HTTP path as every other client. Decoding uses
+the status code, the documented headers and the content-type-framed body.
+
+The read contract carries message payloads and batch metadata. Per-message offsets
+and timestamps stay in storage, because no reader consumes them and no public response
+can express them. Two wire limits follow. A text or binary read body is one
+concatenated payload, so that batch carries a single message. JSON messages return by
+value, which re-serializes them rather than reproducing the stored bytes. The append
+conflict sub-reasons for content type and sequence come from the fixed 409 body text
+that this host writes.

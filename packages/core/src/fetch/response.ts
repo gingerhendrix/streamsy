@@ -1,164 +1,297 @@
-import { DateTime, Effect, Option, Schema, Stream } from "effect";
-import type { HttpClientResponse } from "effect/unstable/http";
-import { TransportFault } from "../fault.ts";
+/**
+ * Decode one standard Durable Streams HTTP response into its protocol outcome.
+ *
+ * Status and documented headers are the source of truth. The direct Layer
+ * supplies more than the public wire can carry, so the transport reports what
+ * the wire expresses: batch-level read metadata, message payloads, and the
+ * conflict classifications the host's fixed 409 bodies name.
+ */
+import { DateTime, Effect, Option } from "effect";
+import type {
+  AppendOutcome,
+  CreateOutcome,
+  HeadOutcome,
+  ReadMessage,
+  ReadNextOutcome,
+  ReadOutcome,
+  RemoveOutcome,
+} from "../protocol/outcomes.ts";
+import type { TransportFault } from "../fault.ts";
 import * as Wire from "./wire.ts";
 
-type Outcome =
-  | typeof Wire.head.Type
-  | typeof Wire.read.Type
-  | typeof Wire.readNext.Type
-  | typeof Wire.create.Type
-  | typeof Wire.append.Type
-  | typeof Wire.remove.Type;
+export type Operation = "head" | "read" | "readNext" | "create" | "append" | "remove";
 
-export function validate(
-  operation: string,
-  response: HttpClientResponse.HttpClientResponse,
-  result: Outcome,
-) {
-  const status = result.status;
-  const statuses = {
-    created: [201],
-    exists: [200],
-    appended: [200, 204],
-    duplicate: [204],
-    "not-found": [404],
-    gone: [410],
-    conflict: [409],
-    "producer-gap": [409],
-    busy: [503],
-    "stale-epoch": [403],
-    "not-supported": [400],
-    "bad-request": [400],
-    "invalid-epoch-seq": [400],
-    timeout: [200],
-    ok: operation === "remove" ? [204] : [200],
-  } satisfies Record<Outcome["status"], ReadonlyArray<number>>;
-  const expected = statuses[status];
-  const invalid = (message: string) =>
-    Effect.fail(new TransportFault({ operation, reason: "response", message }));
-  if (!expected.includes(response.status))
-    return invalid(`Outcome ${status} contradicts HTTP ${response.status}`);
-  if ((operation === "head" && status === "ok") || status === "created" || status === "exists") {
-    if (!("nextOffset" in result) || response.headers["stream-next-offset"] !== result.nextOffset)
-      return invalid("Missing or inconsistent stream-next-offset");
-    if (!("contentType" in result) || response.headers["content-type"] !== result.contentType)
-      return invalid("Missing or inconsistent content-type");
-  }
-  if (
-    status === "appended" ||
-    status === "duplicate" ||
-    (status === "conflict" && "offset" in result)
-  ) {
-    if (!("offset" in result) || response.headers["stream-next-offset"] !== result.offset)
-      return invalid("Missing or inconsistent append offset");
-  }
-  if (status === "appended" || status === "duplicate") {
-    if ((result.producerEpoch === undefined) !== (result.producerSeq === undefined))
-      return invalid("Incomplete producer acknowledgement");
-    if (
-      result.producerEpoch !== undefined &&
-      (response.headers["producer-epoch"] !== String(result.producerEpoch) ||
-        response.headers["producer-seq"] !== String(result.producerSeq))
-    )
-      return invalid("Missing or inconsistent producer acknowledgement");
-  }
-  if ("closed" in result && !("messages" in result)) {
-    const expectedClosed = result.closed ? "true" : undefined;
-    if (response.headers["stream-closed"] !== expectedClosed)
-      return invalid("Inconsistent closed header");
-  }
-  if (
-    "contentType" in result &&
-    (status === "ok" || status === "created" || status === "exists") &&
-    !/^[^\s/;]+\/[^\s;]+(?:;.*)?$/.test(result.contentType)
-  )
-    return invalid("Invalid content type");
-  if (operation === "head" && status === "ok" && "contentType" in result) {
-    if (
-      "ttlSeconds" in result &&
-      result.ttlSeconds !== undefined &&
-      response.headers["stream-ttl"] !== (result.ttlSeconds ? String(result.ttlSeconds) : undefined)
-    )
-      return invalid("Inconsistent TTL header");
-    if (
-      "expiresAt" in result &&
-      result.expiresAt !== undefined &&
-      (response.headers["stream-expires-at"] !== result.expiresAt ||
-        Option.isNone(DateTime.make(result.expiresAt)))
-    )
-      return invalid("Invalid expiry header");
-  }
-  if (
-    status === "stale-epoch" &&
-    response.headers["producer-epoch"] !== String(result.currentEpoch)
-  )
-    return invalid("Inconsistent current epoch");
-  if (
-    status === "producer-gap" &&
-    (response.headers["producer-expected-seq"] !== String(result.expectedSeq) ||
-      response.headers["producer-received-seq"] !== String(result.receivedSeq))
-  )
-    return invalid("Inconsistent producer gap");
-  if ("messages" in result && result.messages.length > 0) {
-    if (result.messages.at(-1)?.offset !== result.nextOffset)
-      return invalid("Last message does not match the read cursor");
-    for (let index = 1; index < result.messages.length; index++) {
-      if (result.messages[index - 1]!.offset >= result.messages[index]!.offset)
-        return invalid("Message offsets are not increasing");
-    }
-  }
-  return Effect.void;
+export type Outcome =
+  | AppendOutcome
+  | CreateOutcome
+  | HeadOutcome
+  | ReadOutcome
+  | ReadNextOutcome
+  | RemoveOutcome;
+
+export interface DecodeContext {
+  /** The request carried producer headers: 200 acknowledges a write, 204 a duplicate. */
+  readonly producer?: boolean;
 }
-export type { Outcome };
 
-export const decode = <S extends Schema.Constraint & { readonly Type: Outcome }>(
-  operation: string,
-  response: HttpClientResponse.HttpClientResponse,
-  schema: S,
-) =>
+const emptyToUndefined = (value: string): string | undefined => {
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+};
+
+export const head = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<HeadOutcome, TransportFault> =>
   Effect.gen(function* () {
-    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Errors from HTTP, UTF-8 and schema decoding are retained as diagnostic causes.
-    const fault = (cause: unknown) =>
-      new TransportFault({ operation, reason: "decode", message: "Cannot decode response", cause });
-    const raw = response.headers[Wire.resultHeader];
-    const json = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
-    const value = yield* Effect.gen(function* () {
-      if (raw !== undefined)
-        return yield* Effect.try({ try: () => decodeURIComponent(raw), catch: fault }).pipe(
-          Effect.flatMap(json),
-          Effect.mapError(fault),
-        );
-      if (response.headers["content-type"] === Wire.format) {
-        const chunks = yield* response.stream.pipe(Stream.runCollect, Effect.mapError(fault));
-        const text = yield* Effect.try({
-          try: () => {
-            const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
-            let offset = 0;
-            for (const chunk of chunks) {
-              bytes.set(chunk, offset);
-              offset += chunk.length;
-            }
-            return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-          },
-          catch: fault,
-        });
-        return yield* json(text).pipe(Effect.mapError(fault));
-      }
-      if (operation === "remove" && response.status === 204) return { status: "ok" };
-      if (
-        (operation === "remove" || operation === "head" || operation === "append") &&
-        (response.status === 404 || response.status === 410)
-      )
-        return { status: response.status === 404 ? "not-found" : "gone" };
-      if (operation === "remove" && response.status === 503) return { status: "busy" };
-      return yield* new TransportFault({
+    if (response.status === 404) return { status: "not-found" as const };
+    if (response.status === 410) return { status: "gone" as const };
+    if (response.status !== 200) return yield* Wire.unexpected(operation, response);
+    const contentType = yield* Wire.contentType(operation, response);
+    const nextOffset = yield* Wire.offset(operation, response);
+    const ttlSeconds = yield* Wire.integer(
+      operation,
+      "stream-ttl",
+      Wire.header(response, "stream-ttl"),
+    );
+    const expiresAt = Wire.header(response, "stream-expires-at");
+    if (expiresAt !== undefined && Option.isNone(DateTime.make(expiresAt)))
+      return yield* Effect.fail(
+        Wire.failure(operation, "response", `Invalid stream-expires-at header: ${expiresAt}`),
+      );
+    const closed = yield* Wire.closedHeader(operation, response);
+    return { status: "ok" as const, contentType, nextOffset, ttlSeconds, expiresAt, closed };
+  });
+
+export const create = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<CreateOutcome, TransportFault> =>
+  Effect.gen(function* () {
+    if (response.status === 200 || response.status === 201) {
+      const contentType = yield* Wire.contentType(operation, response);
+      const nextOffset = yield* Wire.offset(operation, response);
+      const closed = yield* Wire.closedHeader(operation, response);
+      return {
+        status: response.status === 201 ? ("created" as const) : ("exists" as const),
+        nextOffset,
+        contentType,
+        closed,
+      };
+    }
+    if (response.status === 400) {
+      const feature = Wire.header(response, "stream-not-supported");
+      const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
+      if (feature !== undefined) return { status: "not-supported" as const, feature, message };
+      return {
+        status: "bad-request" as const,
+        nextOffset: "",
+        contentType: "",
+        errorMessage: message,
+      };
+    }
+    if (response.status === 404)
+      return {
+        status: "not-found" as const,
+        nextOffset: "",
+        contentType: "",
+        errorMessage: emptyToUndefined(yield* Wire.bodyText(operation, response)),
+      };
+    if (response.status === 409)
+      return {
+        status: "conflict" as const,
+        nextOffset: "",
+        contentType: "",
+        errorMessage: emptyToUndefined(yield* Wire.bodyText(operation, response)),
+      };
+    return yield* Wire.unexpected(operation, response);
+  });
+
+export const append = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+  context: DecodeContext,
+): Effect.Effect<AppendOutcome, TransportFault> =>
+  Effect.gen(function* () {
+    if (response.status === 200 || response.status === 204) {
+      const offset = yield* Wire.offset(operation, response);
+      const producerEpoch = yield* Wire.integer(
         operation,
-        reason: "response",
-        message: `Missing Streamsy outcome representation (HTTP ${response.status})`,
-      });
-    });
-    const result = yield* Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(fault));
-    yield* validate(operation, response, result);
-    return result;
+        "producer-epoch",
+        Wire.header(response, "producer-epoch"),
+      );
+      const producerSeq = yield* Wire.integer(
+        operation,
+        "producer-seq",
+        Wire.header(response, "producer-seq"),
+      );
+      const closed = yield* Wire.closedHeader(operation, response);
+      if (response.status === 200)
+        return { status: "appended" as const, offset, producerEpoch, producerSeq, closed };
+      // The public wire acknowledges a producer write and a duplicate with 204.
+      if (context.producer !== true) return { status: "appended" as const, offset, closed };
+      if (producerEpoch === undefined || producerSeq === undefined)
+        return yield* Effect.fail(
+          Wire.failure(
+            operation,
+            "response",
+            "Duplicate acknowledgement is missing producer state",
+          ),
+        );
+      return { status: "duplicate" as const, offset, producerEpoch, producerSeq, closed };
+    }
+    if (response.status === 404) return { status: "not-found" as const };
+    if (response.status === 410) return { status: "gone" as const };
+    if (response.status === 503) return { status: "busy" as const };
+    if (response.status === 403) {
+      const currentEpoch = yield* Wire.integer(
+        operation,
+        "producer-epoch",
+        Wire.header(response, "producer-epoch"),
+      );
+      if (currentEpoch === undefined)
+        return yield* Effect.fail(
+          Wire.failure(operation, "response", "Stale epoch response is missing producer-epoch"),
+        );
+      return { status: "stale-epoch" as const, currentEpoch };
+    }
+    if (response.status === 400) {
+      const feature = Wire.header(response, "stream-not-supported");
+      if (feature !== undefined) {
+        const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
+        return { status: "not-supported" as const, feature, message };
+      }
+      const detail = yield* Wire.bodyText(operation, response);
+      // The public classification for a new-epoch sequence error is a plain 400 body.
+      if (detail.includes("New epoch must start at seq=0"))
+        return { status: "invalid-epoch-seq" as const };
+      return yield* Effect.fail(Wire.unexpectedWith(operation, response.status, detail));
+    }
+    if (response.status === 409) return yield* appendConflict(operation, response);
+    return yield* Wire.unexpected(operation, response);
+  });
+
+const appendConflict = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<AppendOutcome, TransportFault> =>
+  Effect.gen(function* () {
+    const expectedSeq = yield* Wire.integer(
+      operation,
+      "producer-expected-seq",
+      Wire.header(response, "producer-expected-seq"),
+    );
+    const receivedSeq = yield* Wire.integer(
+      operation,
+      "producer-received-seq",
+      Wire.header(response, "producer-received-seq"),
+    );
+    if (expectedSeq !== undefined && receivedSeq !== undefined)
+      return { status: "producer-gap" as const, expectedSeq, receivedSeq };
+    const closed = yield* Wire.closedHeader(operation, response);
+    const offset = yield* Wire.optionalOffset(operation, response);
+    if (closed && offset !== undefined)
+      return {
+        status: "conflict" as const,
+        conflictReason: "closed" as const,
+        offset,
+        closed: true as const,
+      };
+    if (!closed && offset !== undefined)
+      return { status: "conflict" as const, conflictReason: "expected-offset" as const, offset };
+    // A public Durable Streams host names these two failures in the 409 body only.
+    const detail = yield* Wire.bodyText(operation, response);
+    if (detail.includes("Content-Type mismatch"))
+      return { status: "conflict" as const, conflictReason: "content-type" as const };
+    if (detail.includes("Sequence conflict"))
+      return { status: "conflict" as const, conflictReason: "sequence" as const };
+    return yield* Effect.fail(
+      Wire.failure(operation, "response", `Unclassified 409 conflict: ${detail.trim()}`),
+    );
+  });
+
+export const read = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<ReadOutcome, TransportFault> =>
+  Effect.gen(function* () {
+    if (response.status === 404) return { status: "not-found" as const };
+    if (response.status === 410) return { status: "gone" as const };
+    if (response.status !== 200) return yield* Wire.unexpected(operation, response);
+    const nextOffset = yield* Wire.offset(operation, response);
+    const messages = yield* readBatch(operation, response);
+    const closed = yield* Wire.closedHeader(operation, response);
+    return {
+      status: "ok" as const,
+      messages,
+      nextOffset,
+      upToDate: Wire.upToDate(response),
+      closed,
+    };
+  });
+
+export const readNext = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<ReadNextOutcome, TransportFault> =>
+  Effect.gen(function* () {
+    if (response.status === 404) return missing("not-found");
+    if (response.status === 410) return missing("gone");
+    if (response.status === 400) {
+      const feature = Wire.header(response, "stream-not-supported");
+      if (feature === undefined) return yield* Wire.unexpected(operation, response);
+      const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
+      return { status: "not-supported" as const, feature, message };
+    }
+    if (response.status !== 200 && response.status !== 204)
+      return yield* Wire.unexpected(operation, response);
+    const nextOffset = yield* Wire.offset(operation, response);
+    const closed = yield* Wire.closedHeader(operation, response);
+    // An empty long poll is 204 whether it timed out or woke without data.
+    if (response.status === 204)
+      return {
+        status: "timeout" as const,
+        messages: [],
+        nextOffset,
+        upToDate: Wire.upToDate(response),
+        cursor: Wire.cursor(response),
+        closed,
+      };
+    const messages = yield* readBatch(operation, response);
+    return {
+      status: "ok" as const,
+      messages,
+      nextOffset,
+      upToDate: Wire.upToDate(response),
+      cursor: Wire.cursor(response),
+      closed,
+    };
+  });
+
+const missing = (status: "not-found" | "gone"): ReadNextOutcome => ({
+  status,
+  messages: [],
+  nextOffset: "",
+  upToDate: false,
+  cursor: "",
+});
+
+const readBatch = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<ReadMessage[], TransportFault> =>
+  Wire.body(operation, response).pipe(
+    Effect.flatMap((bytes) => Wire.readMessages(operation, response, bytes)),
+  );
+
+export const remove = (
+  operation: Operation,
+  response: Wire.HttpResponse,
+): Effect.Effect<RemoveOutcome, TransportFault> =>
+  Effect.gen(function* () {
+    if (response.status === 204) return { status: "ok" as const };
+    if (response.status === 404) return { status: "not-found" as const };
+    if (response.status === 410) return { status: "gone" as const };
+    if (response.status === 503) return { status: "busy" as const };
+    return yield* Wire.unexpected(operation, response);
   });

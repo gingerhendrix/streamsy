@@ -1,5 +1,3 @@
-import { format } from "../protocol/remote-format.ts";
-import { outcomeResponse } from "./outcome-response.ts";
 import { Effect } from "effect";
 import { HttpServerResponse } from "effect/unstable/http";
 import type { Reader } from "../protocol/tags.ts";
@@ -26,21 +24,6 @@ export const read = Effect.fn("Http.read")(function* (
 ): Effect.fn.Return<Response | HttpServerResponse.HttpServerResponse, StreamsFault> {
   const query = queryParser.parse(url);
   if (!query.ok) return query.response;
-  if (requestHeaders.get("accept") === format) {
-    const result =
-      query.live === "long-poll" && query.offset !== undefined
-        ? yield* reader.readNext(id, { offset: query.offset, cursor: query.cursor })
-        : yield* reader.read(id, { offset: query.offset, limit: query.batchSize });
-    const status =
-      result.status === "not-found"
-        ? 404
-        : result.status === "gone"
-          ? 410
-          : result.status === "not-supported"
-            ? 400
-            : 200;
-    return outcomeResponse(result, responses.empty(status));
-  }
   let offset = query.offset;
   if (offset === "now") {
     const meta = yield* reader.head(id);

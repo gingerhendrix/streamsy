@@ -34,7 +34,7 @@ export const make = Effect.fn("Derive.StreamSource.make")(function* <A>(
       // Never split an accepted source boundary or claim bytes that were not accepted.
       if (limits.bytes !== undefined && bytes > limits.bytes)
         return { status: "limit-reached" } as const;
-      const items = yield* Effect.forEach(result.messages, (message) =>
+      const items = yield* Effect.forEach(result.messages, (message, index) =>
         Schema.decodeEffect(ref.codec)(
           ref._tag === "Json" ? new TextDecoder().decode(message.data) : message.data,
         ).pipe(
@@ -42,7 +42,7 @@ export const make = Effect.fn("Derive.StreamSource.make")(function* <A>(
             () =>
               new DeriveFault({
                 reason: "invalid-source",
-                message: `Cannot decode ${ref.id} at ${message.offset}`,
+                message: `Cannot decode ${ref.id} at read message ${index}`,
               }),
           ),
         ),

@@ -1,12 +1,17 @@
-import { decode, type Outcome } from "./response.ts";
-import { Context, Effect, Fiber, Layer, Schema, Scope } from "effect";
+import { Context, Effect, Fiber, Layer, Scope } from "effect";
 import { HttpClient, type HttpClientRequest } from "effect/unstable/http";
 import { TransportFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
 import { requests, type Options } from "./request.ts";
-import * as Wire from "./wire.ts";
+import * as Response from "./response.ts";
+import type { HttpResponse } from "./wire.ts";
 export type { Options } from "./request.ts";
 export { TransportFault } from "../fault.ts";
+
+type Decoder<A> = (
+  operation: Response.Operation,
+  response: HttpResponse,
+) => Effect.Effect<A, TransportFault>;
 
 /** Supplies the existing services. HttpClient and the calling fiber own request lifetimes. */
 export const layer = (options: Options) =>
@@ -24,10 +29,10 @@ export const layer = (options: Options) =>
             cause,
           }),
       });
-      const execute = <S extends Schema.Constraint & { readonly Type: Outcome }>(
-        operation: string,
+      const execute = <A>(
+        operation: Response.Operation,
         make: () => HttpClientRequest.HttpClientRequest,
-        schema: S,
+        decode: Decoder<A>,
       ) =>
         Effect.gen(function* () {
           const input = yield* Effect.try({
@@ -51,7 +56,7 @@ export const layer = (options: Options) =>
                 }),
             ),
           );
-          return yield* decode(operation, response, schema);
+          return yield* decode(operation, response);
         }).pipe(
           Effect.scoped,
           Effect.forkIn(owner),
@@ -60,52 +65,32 @@ export const layer = (options: Options) =>
           ),
         );
       const reader: Reader<TransportFault> = {
-        head: (id) => execute("head", () => request.head(id), Wire.head),
-        read: (id, input) =>
-          execute("read", () => request.read(id, input), Wire.read).pipe(
-            Effect.map((result) =>
-              result.status === "ok"
-                ? {
-                    ...result,
-                    messages: result.messages.map((message) => ({
-                      ...message,
-                      data: Uint8Array.from(message.data),
-                    })),
-                  }
-                : result,
-            ),
-          ),
+        head: (id) => execute("head", () => request.head(id), Response.head),
+        read: (id, input) => execute("read", () => request.read(id, input), Response.read),
         readNext: (id, input) =>
-          execute("readNext", () => request.readNext(id, input), Wire.readNext).pipe(
-            Effect.map((result) =>
-              result.status === "not-supported"
-                ? result
-                : {
-                    ...result,
-                    messages: result.messages.map((message) => ({
-                      ...message,
-                      data: Uint8Array.from(message.data),
-                    })),
-                  },
-            ),
-          ),
+          execute("readNext", () => request.readNext(id, input), Response.readNext),
       };
       const writer: Writer<TransportFault> = {
-        create: (id, input) => execute("create", () => request.create(id, input), Wire.create),
+        create: (id, input) => execute("create", () => request.create(id, input), Response.create),
         fork: (id, source, input) =>
           execute(
             "create",
             () => request.create(id, { ...input, forkedFrom: source }),
-            Wire.create,
+            Response.create,
           ),
         append: (id, input) => {
           if (input.expectedOffset !== undefined && options.capabilities?.expectedOffset !== true)
             return Effect.succeed({ status: "not-supported", feature: "expected-offset" });
           if (input.producer !== undefined && options.capabilities?.producer !== true)
             return Effect.succeed({ status: "not-supported", feature: "producer" });
-          return execute("append", () => request.append(id, input), Wire.append);
+          return execute(
+            "append",
+            () => request.append(id, input),
+            (operation, response) =>
+              Response.append(operation, response, { producer: input.producer !== undefined }),
+          );
         },
-        remove: (id) => execute("remove", () => request.remove(id), Wire.remove),
+        remove: (id) => execute("remove", () => request.remove(id), Response.remove),
       };
       return Context.make(StreamsReader, reader).pipe(Context.add(StreamsWriter, writer));
     }),

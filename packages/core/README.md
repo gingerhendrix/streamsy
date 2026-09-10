@@ -48,9 +48,11 @@ Licensed under MIT; see LICENSE in this package.
 
 Import `@streamsy/core/fetch` as `Fetch` and provide `Fetch.layer({ baseUrl })`
 with Effect's `FetchHttpClient.layer` (or another `HttpClient`). It supplies the
-existing reader and writer services, including finite reads and one-shot long polls.
-The transport requires this version's opt-in Streamsy outcome representation for
-exact message metadata. Protocol classifications remain values; remote failures use
+existing reader and writer services, including finite reads and one-shot long polls,
+over the standard Durable Streams HTTP protocol, so it works against any conformant
+host. Read results carry message payloads and batch metadata; per-message offsets and
+timestamps stay in storage. Text and binary bodies merge into one payload, and JSON
+messages return by value. Protocol classifications remain values; remote failures use
 `TransportFault`, and interruption cancels requests. Dispose the owning runtime at
 shutdown. CAS and producer appends require explicit deployment capability assertions;
 unknown support returns `not-supported` before sending.

@@ -74,13 +74,16 @@ const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
     return yield* new DecodeFault({
       message: result.message ?? `Read not supported: ${result.feature}`,
     });
-  const items = yield* Effect.forEach(result.messages, (message) =>
+  const items = yield* Effect.forEach(result.messages, (message, index) =>
     Schema.decodeEffect(ref.codec)(
       Predicate.isTagged(ref, "Json") ? new TextDecoder().decode(message.data) : message.data,
     ).pipe(
       Effect.mapError(
         (cause) =>
-          new DecodeFault({ message: `Cannot decode ${ref.id} at ${message.offset}`, cause }),
+          new DecodeFault({
+            message: `Cannot decode ${ref.id} at read message ${index}`,
+            cause,
+          }),
       ),
     ),
   );

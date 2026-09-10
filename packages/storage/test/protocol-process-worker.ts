@@ -90,8 +90,7 @@ const operation = Effect.gen(function* () {
         ? result
         : {
             ...result,
-            messages: result.messages.map(({ data, offset }) => ({
-              offset,
+            messages: result.messages.map(({ data }) => ({
               text: new TextDecoder().decode(data),
             })),
           };

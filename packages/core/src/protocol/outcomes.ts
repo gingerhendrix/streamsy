@@ -1,8 +1,17 @@
-import type { StoredMessage } from "../schema/index.ts";
 export interface NotSupportedResult {
   status: "not-supported";
   feature: string;
   message?: string;
+}
+/**
+ * One read message as the protocol exposes it.
+ *
+ * The read contract carries message payloads and batch-level metadata only.
+ * Per-message offsets and timestamps stay in storage: no reader consumes them,
+ * and a pure Durable Streams HTTP response cannot express them.
+ */
+export interface ReadMessage {
+  readonly data: Uint8Array;
 }
 export type CreateConflictReason =
   | "config-mismatch"
@@ -86,7 +95,7 @@ export type AppendOutcome =
 export type ReadOutcome =
   | {
       status: "ok";
-      messages: StoredMessage[];
+      messages: ReadMessage[];
       nextOffset: string;
       upToDate: boolean;
       closed?: boolean;
@@ -97,7 +106,7 @@ export type ReadOutcome =
 export type ReadNextOutcome =
   | {
       status: "ok" | "timeout" | "not-found" | "gone";
-      messages: StoredMessage[];
+      messages: ReadMessage[];
       nextOffset: string;
       upToDate: boolean;
       cursor: string;

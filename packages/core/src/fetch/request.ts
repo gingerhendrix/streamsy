@@ -5,7 +5,6 @@ import type {
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
-import { format } from "./wire.ts";
 
 export interface Options {
   readonly baseUrl: string;
@@ -54,7 +53,7 @@ export function requests(options: Options) {
     headers: Record<string, string> = {},
   ) =>
     HttpClientRequest.make(method)(url(id), {
-      headers: { ...options.headers, ...headers, accept: format, "cache-control": "no-cache" },
+      headers: { ...options.headers, ...headers, "cache-control": "no-cache" },
     });
   return {
     head: (id: string) => make("HEAD", id),

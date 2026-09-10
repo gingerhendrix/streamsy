@@ -1,5 +1,3 @@
-import { format } from "../protocol/remote-format.ts";
-import { outcomeResponse } from "./outcome-response.ts";
 import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
@@ -40,10 +38,6 @@ export function program(options: HttpOptions = {}) {
       return responses.badRequest(`Stream path required: ${path.requiredPathPattern()}`);
     const id = StreamId.make(stripped);
     const headers = new Headers(request.headers);
-    const represent =
-      headers.get("accept") === format
-        ? outcomeResponse
-        : (_result: Parameters<typeof outcomeResponse>[0], response: Response) => response;
     if (request.method === "PUT") {
       const parsed = Create.parseHeaders({ headers }, path);
       if (!parsed.ok) return parsed.response;
@@ -61,12 +55,9 @@ export function program(options: HttpOptions = {}) {
         forkOffset: parsed.forkOffset,
         forkSubOffset: parsed.forkSubOffset,
       });
-      return represent(
-        result,
-        result.status === "not-supported"
-          ? notSupported(result)
-          : Create.toResponse(result, url.href),
-      );
+      return result.status === "not-supported"
+        ? notSupported(result)
+        : Create.toResponse(result, url.href);
     }
     if (request.method === "OPTIONS")
       return responses.empty(204, {
@@ -78,8 +69,6 @@ export function program(options: HttpOptions = {}) {
       });
     if (!["POST", "GET", "HEAD", "DELETE"].includes(request.method))
       return responses.methodNotAllowed();
-    if (request.method === "GET" && headers.get("accept") === format)
-      return yield* read(reader, id, url, headers, cacheControl);
     const meta = yield* reader.head(id);
     if (meta.status === "not-found")
       return request.method === "HEAD"
@@ -109,12 +98,9 @@ export function program(options: HttpOptions = {}) {
           close: parsed.wantClose,
           expectedOffset: parsed.expectedOffset,
         });
-        return represent(
-          result,
-          result.status === "not-supported"
-            ? notSupported(result)
-            : Append.toResponse(result, parsed.producerHeaders, isEmpty),
-        );
+        return result.status === "not-supported"
+          ? notSupported(result)
+          : Append.toResponse(result, parsed.producerHeaders, isEmpty);
       }
       case "GET":
         return yield* read(reader, id, url, headers, cacheControl);
@@ -127,7 +113,7 @@ export function program(options: HttpOptions = {}) {
         if (meta.ttlSeconds) output.set("stream-ttl", String(meta.ttlSeconds));
         if (meta.expiresAt) output.set("stream-expires-at", meta.expiresAt);
         if (meta.closed) output.set("stream-closed", "true");
-        return represent(meta, responses.empty(200, output));
+        return responses.empty(200, output);
       }
       case "DELETE": {
         const result = yield* writer.remove(id);

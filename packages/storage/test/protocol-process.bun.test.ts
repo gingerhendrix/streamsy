@@ -18,9 +18,7 @@ const WorkerResult = Schema.Struct({
   receivedSeq: Schema.optional(Schema.Finite),
   currentEpoch: Schema.optional(Schema.Finite),
   ttlSeconds: Schema.optional(Schema.Finite),
-  messages: Schema.optional(
-    Schema.Array(Schema.Struct({ offset: Schema.String, text: Schema.String })),
-  ),
+  messages: Schema.optional(Schema.Array(Schema.Struct({ text: Schema.String }))),
   result: Schema.optional(
     Schema.Struct({
       _tag: Schema.String,

@@ -30,6 +30,7 @@ export type {
 } from "./protocol/options.ts";
 export type {
   NotSupportedResult,
+  ReadMessage,
   CreateConflictReason,
   CreateOutcome,
   AppendConflictReason,
