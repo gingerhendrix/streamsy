@@ -18,6 +18,7 @@ const repoRoot = join(import.meta.dirname, "..");
 const effectAreas = [
   "packages/core",
   "packages/storage",
+  "packages/derive",
   "packages/serve",
   "packages/views",
   "packages/sql-boundary-tests",

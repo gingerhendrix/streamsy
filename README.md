@@ -3,8 +3,8 @@
 Streamsy provides an Effect-first [Durable Streams](https://durablestreams.com) protocol,
 a typed toolkit, a storage contract, an in-process memory Layer and Effect SQL storage.
 
-The `0.4.0` package surface is `@streamsy/core`, `@streamsy/storage`, `@streamsy/views`
-and `@streamsy/serve`. Use `@streamsy/storage/bun` for file-backed SQLite and
+The `0.4.0` package surface is `@streamsy/core`, `@streamsy/storage`, `@streamsy/views`,
+`@streamsy/serve` and `@streamsy/derive`. Use `@streamsy/storage/bun` for file-backed SQLite and
 `@streamsy/storage/durable-object` inside a SQLite Durable Object. See [the API](docs/api.md), [hosting reference](docs/hosting.md),
 [storage contract](docs/storage-contract.md), [SQLite migration policy](docs/migration-0.4.md)
 and [HTTP behavior](docs/http.md).
@@ -18,6 +18,10 @@ and a Durable Object protocol host with local workerd evidence. The official
 workerd profile uses one `byKey` object for chain semantics; cross-object copies
 are tested separately. Hosted execution, release acceptance, and the budget
 decision remain pending; see the [hosting reference](docs/hosting.md).
+
+Derive commits stream output, current state and source progress in one host-local
+transaction. See [the Derive guide](packages/derive/README.md) for memory, Bun SQLite
+and same-object Durable Object SQLite composition.
 
 ## Development
 

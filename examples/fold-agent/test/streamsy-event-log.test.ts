@@ -371,7 +371,7 @@ describe("Fold journal fault recovery and ownership", () => {
   const refs = sessionRefs(streamId);
   const withContext = <E>(
     program: (store: StreamsyStore) => Effect.Effect<void, E, import("effect").Scope.Scope>,
-    layer = Streams.layerMemory(),
+    layer: Layer.Layer<StreamsReader | StreamsWriter> = Streams.layerMemory(),
   ) =>
     Effect.runPromise(
       Effect.scoped(

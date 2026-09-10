@@ -5,6 +5,7 @@
     "remote-browser",
     "concepts",
     "sql-storage",
+    "derive",
     "cloudflare-hosting",
     "fold-agent"
   ]

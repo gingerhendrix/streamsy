@@ -107,3 +107,11 @@ on the next request. Alarm retries are finite and platform-owned; lazy expiry
 and later mutations repair missed or exhausted alarms. See the complete
 [hosting reference](hosting.md) for the public host contract, local evidence,
 copy errors, cancellation, and the still-pending hosted boundary.
+
+## Derive
+
+`@streamsy/derive` provides `Source`, `Sink`, `Projection.make`, `Projection.pass`,
+`Projection.catchUp`, `Projection.follow`, and the fused `Commit` service with
+`CheckpointStore` and `StateStore` contracts. Host adapters live at
+`@streamsy/derive/memory` and `@streamsy/derive/sqlite`. See the
+[Derive package guide](../packages/derive/README.md) for the contract and compiled example.
