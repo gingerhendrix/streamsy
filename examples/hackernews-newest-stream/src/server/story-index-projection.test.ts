@@ -173,7 +173,7 @@ describe("private bridge recovery and bounds", () => {
     ).toMatchObject({ status: "boundary-too-large", limit: "bytes", maximum: 1 });
     expect(await h.read(hackerNewsTarget.streamId)).toHaveLength(0);
   });
-  test("a concurrent target write returns output-conflict instead of advancing recovery", async () => {
+  test("a concurrent target write fails with OffsetMismatch instead of advancing recovery", async () => {
     const h = await harness();
     await h.append(hackerNewsSource.streamId, [sourceUpsert(story(101, 1, "First"))]);
     const context = await h.runtime.runPromise(Effect.context<StreamsReader | StreamsWriter>());
@@ -189,7 +189,7 @@ describe("private bridge recovery and bounds", () => {
             if (id === hackerNewsTarget.ref.id && !raced) {
               raced = true;
               const winner = yield* writer.append(id, options);
-              expect(winner.status).toBe("appended");
+              expect(winner._tag).toBe("Appended");
             }
             return yield* writer.append(id, options);
           }),
@@ -197,12 +197,14 @@ describe("private bridge recovery and bounds", () => {
     );
     expect(
       await Effect.runPromise(
-        StateProjection.catchUp(h.projection, { limits }).pipe(Effect.provide(competing)),
+        StateProjection.catchUp(h.projection, { limits }).pipe(
+          Effect.flip,
+          Effect.provide(competing),
+        ),
       ),
     ).toMatchObject({
-      status: "output-conflict",
-      reason: "expected-offset",
-      progress: { batches: 0, items: 0 },
+      _tag: "OffsetMismatch",
+      id: hackerNewsTarget.ref.id,
     });
     expect(await h.read(hackerNewsTarget.streamId)).toHaveLength(1);
     expect(await Effect.runPromise(catchUp(h.projection, h.clientLayer))).toMatchObject({
@@ -210,14 +212,16 @@ describe("private bridge recovery and bounds", () => {
       progress: { batches: 0 },
     });
   });
-  test("missing source or target stays an explicit outcome", async () => {
+  test("missing source or target fails with its stream id", async () => {
     for (const stream of ["source", "target"] as const) {
       const h = await harness();
       const ref = stream === "source" ? hackerNewsSource.ref : hackerNewsTarget.ref;
       await h.runtime.runPromise(Streams.remove(ref));
-      expect(await Effect.runPromise(catchUp(h.projection, h.clientLayer))).toMatchObject({
-        status: "missing",
-        stream,
+      expect(
+        await Effect.runPromise(catchUp(h.projection, h.clientLayer).pipe(Effect.flip)),
+      ).toMatchObject({
+        _tag: "StreamNotFound",
+        id: ref.id,
       });
     }
   });

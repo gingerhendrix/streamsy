@@ -93,21 +93,6 @@ export type CatchUpOutcome =
       readonly actual: number;
       readonly maximum: number;
       readonly progress: CatchUpProgress;
-    }
-  | {
-      readonly status: "missing" | "gone";
-      readonly stream: "source" | "target";
-      readonly progress?: CatchUpProgress;
-    }
-  | {
-      readonly status: "output-conflict";
-      readonly reason: string;
-      readonly offset?: string;
-      readonly progress: CatchUpProgress;
-    }
-  | {
-      readonly status: "stale-epoch" | "producer-gap" | "invalid-epoch-seq";
-      readonly progress: CatchUpProgress;
     };
 
 export const make = <Input>(options: Definition<Input>): Definition<Input> =>
@@ -146,16 +131,14 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(function* <Input>(
   | import("@streamsy/core").StreamsFault
   | import("@streamsy/core").EncodeFault
   | import("@streamsy/core").DecodeFault
-  | import("@streamsy/core").StreamUnavailable
+  | import("@streamsy/core").ProtocolError
   | Schema.SchemaError
   | BridgeFault,
   ProjectionServices
 > {
   const limits = yield* Schema.decodeEffect(LimitsSchema)(options.limits);
   const reader = yield* StreamsReader;
-  const target = yield* reader.head(projection.target.ref.id);
-  if (target.status !== "ok")
-    return { status: target.status === "not-found" ? "missing" : "gone", stream: "target" };
+  yield* reader.head(projection.target.ref.id);
   const recovery = yield* Stream.runCollect(Streams.read(projection.target.ref));
   let targetOffset: string = ZERO_OFFSET;
   let sourceThrough: string | undefined;
@@ -178,12 +161,6 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(function* <Input>(
   };
   for (;;) {
     const read = yield* reader.read(projection.source.ref.id, { offset: progress.sourceThrough });
-    if (read.status !== "ok")
-      return {
-        status: read.status === "not-found" ? "missing" : "gone",
-        stream: "source",
-        progress,
-      };
     if (read.messages.length === 0) return { status: "caught-up", progress };
     for (const limit of ["pages", "batches"] as const)
       if (progress[limit] >= limits[limit]) return { status: "limit-reached", limit, progress };
@@ -241,20 +218,6 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(function* <Input>(
     const appended = yield* Streams.append(projection.target.ref, facts, {
       expectedOffset: progress.targetOffset,
     });
-    if (appended.status === "not-found" || appended.status === "gone")
-      return {
-        status: appended.status === "not-found" ? "missing" : "gone",
-        stream: "target",
-        progress,
-      };
-    if (appended.status !== "appended") {
-      const conflict = {
-        status: "output-conflict" as const,
-        reason: appended.status === "conflict" ? appended.conflictReason : appended.status,
-        progress,
-      };
-      return "offset" in appended ? { ...conflict, offset: appended.offset } : conflict;
-    }
     progress = {
       targetOffset: appended.offset,
       sourceThrough: source.position,

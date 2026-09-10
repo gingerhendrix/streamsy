@@ -13,8 +13,6 @@ const appendSourceBatch = Effect.fn("DemoStreams.appendSourceBatch")(function* (
   const result = yield* Streams.append(hackerNewsSource.ref, items).pipe(
     Effect.mapError(pollFailure("appendSourceBatch")),
   );
-  if (result.status !== "appended")
-    return yield* pollFailure("appendSourceBatch")(`Unexpected append: ${result.status}`);
   return result.offset;
 });
 export class DemoStreams extends Context.Service<
@@ -33,11 +31,7 @@ export const demoStreamsLayer = Layer.effect(
   Effect.gen(function* () {
     const context = yield* Effect.context<StreamsReader | StreamsWriter>();
     for (const resource of hackerNewsResources) {
-      const result = yield* Streams.create(resource.ref);
-      if (result.status !== "created" && result.status !== "exists")
-        return yield* Effect.die(
-          new Error(`Unable to create ${resource.streamId}: ${result.status}`),
-        );
+      yield* Streams.create(resource.ref).pipe(Effect.orDie);
     }
     const edge = yield* Effect.acquireRelease(
       Effect.sync(() => Http.makeEdge({ pathPrefix: streamPrefix }, Layer.succeedContext(context))),
