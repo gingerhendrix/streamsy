@@ -18,6 +18,11 @@ export interface ExcerptPair {
 }
 
 export const pairs: ReadonlyArray<ExcerptPair> = [
+  {
+    doc: "site/content/docs/user/remote-browser.mdx",
+    source: "packages/core/test/remote.ts",
+    execute: false,
+  },
   { doc: "packages/core/README.md", source: "packages/core/test/readme.ts", execute: true },
   {
     doc: "site/content/docs/user/basic-usage.mdx",
@@ -252,8 +257,10 @@ export const runExcerpt = (
   options?: ProcessRunOptions,
 ): Promise<void> => runOwnedProcess([source], label, options);
 
-const repositorySourcePrefix =
-  "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/";
+const repositorySourcePrefixes = [
+  "https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/",
+  "https://github.com/gingerhendrix/streamsy/blob/step-4-fetch-transport/",
+];
 
 const isExactCitationParagraph = (node: Root["children"][number], source: string): boolean => {
   if (node.type !== "paragraph" || node.position?.start.column !== 1 || node.children.length !== 3)
@@ -265,7 +272,10 @@ const isExactCitationParagraph = (node: Root["children"][number], source: string
   const visible = link.children[0];
   if (visible?.type !== "text" || visible.value !== source) return false;
   const destination = link.url;
-  if (!destination.startsWith(repositorySourcePrefix)) return false;
+  const repositorySourcePrefix = repositorySourcePrefixes.find((prefix) =>
+    destination.startsWith(prefix),
+  );
+  if (repositorySourcePrefix === undefined) return false;
   const remainder = destination.slice(repositorySourcePrefix.length);
   const suffixPath = remainder.slice(source.length);
   return (

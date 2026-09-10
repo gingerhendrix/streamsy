@@ -53,7 +53,9 @@
       "name": "@streamsy/conformance-tests",
       "version": "0.4.0",
       "dependencies": {
+        "@durable-streams/client": "0.2.6",
         "@durable-streams/server-conformance-tests": "^0.3.5",
+        "@durable-streams/state": "0.3.1",
         "@streamsy/core": "workspace:*",
         "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",

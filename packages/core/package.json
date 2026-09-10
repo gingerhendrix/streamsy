@@ -35,13 +35,18 @@
       "types": "./dist/http/index.d.ts",
       "import": "./dist/http/index.js",
       "default": "./dist/http/index.js"
+    },
+    "./fetch": {
+      "types": "./dist/fetch/index.d.ts",
+      "import": "./dist/fetch/index.js",
+      "default": "./dist/fetch/index.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/storage/index.ts src/testing/index.ts src/http/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
+    "build": "tsdown src/index.ts src/storage/index.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test src"
   },

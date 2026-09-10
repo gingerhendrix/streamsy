@@ -123,6 +123,7 @@ const checks = [
       "*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       "!parked/**",
       "!packages/conformance-tests/src/memory.conformance.test.ts",
+      "!packages/conformance-tests/src/fetch.conformance.test.ts",
       "!packages/conformance-tests/src/sqlite.conformance.test.ts",
       "!packages/conformance-tests/src/workerd.conformance.test.ts",
     ],

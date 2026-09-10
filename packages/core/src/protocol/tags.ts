@@ -1,5 +1,5 @@
 import { Context, type Effect } from "effect";
-import type { StorageFault } from "../fault.ts";
+import type { StorageFault, StreamsFault } from "../fault.ts";
 import type { StreamId } from "../schema/index.ts";
 import type { AppendOptions, CreateOptions, ReadOptions, ReadNextOptions } from "./options.ts";
 import type {
@@ -26,9 +26,9 @@ export interface Writer<E = StorageFault> {
   readonly append: (id: StreamId, options: AppendOptions) => Effect.Effect<AppendOutcome, E>;
   readonly remove: (id: StreamId) => Effect.Effect<RemoveOutcome, E>;
 }
-export class StreamsReader extends Context.Service<StreamsReader, Reader>()(
+export class StreamsReader extends Context.Service<StreamsReader, Reader<StreamsFault>>()(
   "@streamsy/core/StreamsReader",
 ) {}
-export class StreamsWriter extends Context.Service<StreamsWriter, Writer>()(
+export class StreamsWriter extends Context.Service<StreamsWriter, Writer<StreamsFault>>()(
   "@streamsy/core/StreamsWriter",
 ) {}

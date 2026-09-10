@@ -517,7 +517,7 @@ it("readNext sees a commit in the read-to-subscribe window", () =>
             Effect.gen(function* () {
               yield* writer.append(id, appendOptions);
               return control.storage.changes(target);
-            }),
+            }).pipe(Effect.catchTag("TransportFault", Effect.die)),
           ),
       });
       const result = yield* Effect.gen(function* () {
@@ -704,7 +704,7 @@ it("purge/recreate with a lower tail is a change, including when its wake was co
               yield* writer.remove(id);
               yield* writer.create(id, { contentType: "text/plain" });
               return control.storage.changes(target);
-            }),
+            }).pipe(Effect.catchTag("TransportFault", Effect.die)),
           ),
       });
       const result = yield* Effect.gen(function* () {

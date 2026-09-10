@@ -1,8 +1,10 @@
+import { format } from "../protocol/remote-format.ts";
+import { outcomeResponse } from "./outcome-response.ts";
 import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { StreamId } from "../schema/index.ts";
-import type { StorageFault } from "../fault.ts";
+import type { StreamsFault } from "../fault.ts";
 import { HttpResponseFactory, cacheControlForVisibility } from "./responses.ts";
 import { StreamPathService } from "./stream-path-service.ts";
 import { RequestBodyReader } from "./request-body-reader.ts";
@@ -25,7 +27,7 @@ export function program(options: HttpOptions = {}) {
   const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");
   return Effect.gen(function* (): Effect.fn.Return<
     Response | HttpServerResponse.HttpServerResponse,
-    StorageFault,
+    StreamsFault,
     HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter
   > {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -38,6 +40,10 @@ export function program(options: HttpOptions = {}) {
       return responses.badRequest(`Stream path required: ${path.requiredPathPattern()}`);
     const id = StreamId.make(stripped);
     const headers = new Headers(request.headers);
+    const represent =
+      headers.get("accept") === format
+        ? outcomeResponse
+        : (_result: Parameters<typeof outcomeResponse>[0], response: Response) => response;
     if (request.method === "PUT") {
       const parsed = Create.parseHeaders({ headers }, path);
       if (!parsed.ok) return parsed.response;
@@ -55,9 +61,12 @@ export function program(options: HttpOptions = {}) {
         forkOffset: parsed.forkOffset,
         forkSubOffset: parsed.forkSubOffset,
       });
-      return result.status === "not-supported"
-        ? notSupported(result)
-        : Create.toResponse(result, url.href);
+      return represent(
+        result,
+        result.status === "not-supported"
+          ? notSupported(result)
+          : Create.toResponse(result, url.href),
+      );
     }
     if (request.method === "OPTIONS")
       return responses.empty(204, {
@@ -69,6 +78,8 @@ export function program(options: HttpOptions = {}) {
       });
     if (!["POST", "GET", "HEAD", "DELETE"].includes(request.method))
       return responses.methodNotAllowed();
+    if (request.method === "GET" && headers.get("accept") === format)
+      return yield* read(reader, id, url, headers, cacheControl);
     const meta = yield* reader.head(id);
     if (meta.status === "not-found")
       return request.method === "HEAD"
@@ -98,9 +109,12 @@ export function program(options: HttpOptions = {}) {
           close: parsed.wantClose,
           expectedOffset: parsed.expectedOffset,
         });
-        return result.status === "not-supported"
-          ? notSupported(result)
-          : Append.toResponse(result, parsed.producerHeaders, isEmpty);
+        return represent(
+          result,
+          result.status === "not-supported"
+            ? notSupported(result)
+            : Append.toResponse(result, parsed.producerHeaders, isEmpty),
+        );
       }
       case "GET":
         return yield* read(reader, id, url, headers, cacheControl);
@@ -113,7 +127,7 @@ export function program(options: HttpOptions = {}) {
         if (meta.ttlSeconds) output.set("stream-ttl", String(meta.ttlSeconds));
         if (meta.expiresAt) output.set("stream-expires-at", meta.expiresAt);
         if (meta.closed) output.set("stream-closed", "true");
-        return responses.empty(200, output);
+        return represent(meta, responses.empty(200, output));
       }
       case "DELETE": {
         const result = yield* writer.remove(id);
@@ -126,7 +140,10 @@ export function program(options: HttpOptions = {}) {
         return responses.methodNotAllowed();
     }
   }).pipe(
-    Effect.catchTag("StorageFault", () => Effect.succeed(responses.internalError())),
+    Effect.catchTags({
+      StorageFault: () => Effect.succeed(responses.internalError()),
+      TransportFault: () => Effect.succeed(responses.internalError()),
+    }),
     Effect.map((response) => {
       // Raw preserves the legacy Web response's byte and content-type conventions.
       const result =

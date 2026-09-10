@@ -1,6 +1,6 @@
 import { Deferred, Effect, type Layer } from "effect";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import type { StorageFault } from "../fault.ts";
+import type { StreamsFault } from "../fault.ts";
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { program, type HttpOptions } from "./program.ts";
 
@@ -10,7 +10,7 @@ export const makeEdge = <E, R = never>(
   layer: Layer.Layer<StreamsReader | StreamsWriter | R, E>,
   application?: Effect.Effect<
     Response | HttpServerResponse.HttpServerResponse,
-    StorageFault,
+    StreamsFault,
     HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter | R
   >,
 ) => {

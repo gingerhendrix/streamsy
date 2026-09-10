@@ -4,6 +4,7 @@ import {
   Protocol,
   Storage,
   StorageFault,
+  type StreamsFault,
   StreamId,
   StreamRecord,
   StreamsWriter,
@@ -271,7 +272,7 @@ export const makeForkWriter = (host: ForkHost) =>
     const create = Effect.fn("Cloudflare.forkWriter.create")(function* (
       id: StreamId,
       options: CreateOptions = {},
-    ): Effect.fn.Return<CreateOutcome, StorageFault> {
+    ): Effect.fn.Return<CreateOutcome, StreamsFault> {
       if (options.forkedFrom === undefined) return yield* real.create(id, options);
       const sourceId = StreamId.make(options.forkedFrom);
       if (Option.isSome(yield* storage.record(sourceId))) return yield* real.create(id, options);

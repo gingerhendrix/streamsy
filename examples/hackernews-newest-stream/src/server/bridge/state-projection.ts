@@ -143,7 +143,7 @@ export const catchUp = Effect.fn("StateProjection.catchUp")(function* <Input>(
   options: CatchUpOptions,
 ): Effect.fn.Return<
   CatchUpOutcome,
-  | import("@streamsy/core").StorageFault
+  | import("@streamsy/core").StreamsFault
   | import("@streamsy/core").EncodeFault
   | import("@streamsy/core").DecodeFault
   | import("@streamsy/core").StreamUnavailable

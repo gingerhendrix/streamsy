@@ -1,4 +1,11 @@
 {
   "title": "User docs",
-  "pages": ["basic-usage", "concepts", "sql-storage", "cloudflare-hosting", "fold-agent"]
+  "pages": [
+    "basic-usage",
+    "remote-browser",
+    "concepts",
+    "sql-storage",
+    "cloudflare-hosting",
+    "fold-agent"
+  ]
 }

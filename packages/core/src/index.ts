@@ -11,7 +11,13 @@ export {
   ChangeSnapshot,
   RecordPatch,
 } from "./schema/index.ts";
-export { StorageFault, EncodeFault, DecodeFault } from "./fault.ts";
+export {
+  StorageFault,
+  TransportFault,
+  type StreamsFault,
+  EncodeFault,
+  DecodeFault,
+} from "./fault.ts";
 export { ZERO_OFFSET } from "./offset/index.ts";
 export * from "./storage/index.ts";
 export { StreamsReader, StreamsWriter, type Reader, type Writer } from "./protocol/tags.ts";

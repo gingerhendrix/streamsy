@@ -1,0 +1,92 @@
+---
+title: Remote access and browsers
+description: Use an Effect HttpClient Layer remotely and official Durable Streams packages in browsers.
+---
+
+## Effect remote access
+
+`@streamsy/core/fetch` provides the existing `StreamsReader` and `StreamsWriter`
+services. `StreamRef` and `Streams` work with the same operation outcomes as direct
+access. Supply an Effect `HttpClient`; the example uses Effect 4.0.0-rc.112's
+`FetchHttpClient.layer`.
+
+Compiled source: [packages/core/test/remote.ts](https://github.com/gingerhendrix/streamsy/blob/step-4-fetch-transport/packages/core/test/remote.ts).
+
+```ts
+import { Effect, Layer, Schema } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import { StreamRef, Streams } from "@streamsy/core";
+import * as Fetch from "@streamsy/core/fetch";
+
+const orders = StreamRef.json("orders", { schema: Schema.Struct({ id: Schema.String }) });
+export const remote = Fetch.layer({
+  baseUrl: "https://streams.example.com/streams",
+}).pipe(Layer.provide(FetchHttpClient.layer));
+
+export const program = Effect.gen(function* () {
+  const created = yield* Streams.create(orders);
+  if (created.status !== "created" && created.status !== "exists") return created;
+  return yield* Streams.append(orders, [{ id: "order-1" }]);
+}).pipe(Effect.provide(remote));
+```
+
+The example exports an Effect for the application's runtime to run. Keep one runtime
+for the application and dispose it at shutdown. Every operation has a request scope;
+interrupting the calling fiber cancels the request and body reader. Disposing the
+fetch Layer interrupts its active operations. The Layer does not create a second
+public client, Promise session, or background polling loop. `readNext` performs one
+long poll; `Streams.follow` owns repetition.
+
+`baseUrl` is the absolute HTTP(S) stream prefix, with or without its final slash.
+It cannot contain credentials, a query, or a fragment. IDs are canonical relative
+URL-safe paths; nested paths are supported. Empty segments, dot segments, percent
+escapes, query delimiters and fragments are rejected before sending. `headers`
+accepts static application headers such as authorization; operation headers take
+precedence. Compose a custom `HttpClient` for dynamic authentication.
+
+## Outcomes and faults
+
+Protocol classifications such as `conflict`, `duplicate`, `gone`, `busy`, `timeout`
+and `not-supported` remain successful Effect values. Inspect them before treating
+a write as accepted. `TransportFault` reports `configuration`, `request`, `response`
+or `decode` failures. Interruption stays interruption. The shared service tags expose
+`StorageFault | TransportFault`; direct storage implementations still raise only
+`StorageFault`. Fetch does not retry ambiguous writes.
+
+The fetch Layer requires the Step 4 Streamsy HTTP host's opt-in lossless response
+representation. It sends `Accept: application/vnd.streamsy.outcome+json;version=1`.
+The default Durable Streams response format is unchanged. That default format merges
+text/binary messages and omits individual offsets and timestamps, so it cannot
+supply exact `StoredMessage` parity. In the opt-in format, reads carry a JSON outcome
+with byte arrays, and other operations carry URI-encoded JSON in `Streamsy-Outcome`.
+Responses retain protocol HTTP classifications; missing long-poll results preserve
+the direct empty-offset result. Opt-in responses are uncached. Unsupported or malformed
+representations fail explicitly instead of inventing message metadata.
+
+## Remote concurrency boundary
+
+Expected-offset CAS and producer semantics require an explicit deployment contract.
+Set `capabilities: { expectedOffset: true, producer: true }` only for a server whose
+implementation supplies those semantics, such as this Streamsy host. These options
+are assertions about the deployment, not automatic capability discovery. Without the
+corresponding assertion, append returns `not-supported` before sending the request.
+A successful ordinary append is never treated as evidence of CAS or producer support.
+A downstream host may still return its own `not-supported` result.
+
+This boundary makes no remote replay-safe derive guarantee. No browser-facing CAS API
+is introduced here.
+
+## Default browser route
+
+Use `@durable-streams/client` for protocol reads and appends, `@durable-streams/state`
+for State schemas and events, and `@durable-streams/state/db` for TanStack DB setup.
+Choose a Standard Schema validator that does not import Effect. There is no Streamsy
+browser package.
+
+The compiled [browser fixture](https://github.com/gingerhendrix/streamsy/blob/step-4-fetch-transport/packages/conformance-tests/src/browser/default.ts)
+defines a validated order collection, opens a State DB with `createStreamDB`, and
+appends an official State insert event with `DurableStream`. The caller owns the DB's
+lifecycle. `bun run check:browser` bundles this path for the browser and rejects any
+loaded Effect or core module before tree shaking. This proof covers the documented
+default route; the existing Hacker News application still imports Effect and is not
+claimed to be Effect-free.

@@ -232,3 +232,16 @@ test("resistant descendants are hard-killed at the outer deadline", async () => 
     await rm(probeRoot, { recursive: true, force: true });
   }
 });
+
+test("excerpt citations accept the Step 4 source branch and reject unrelated refs", () => {
+  expect(() =>
+    assertExcerpt(
+      pair,
+      citedDocument.replace("effect-first-live-perimeter", "step-4-fetch-transport"),
+      code,
+    ),
+  ).not.toThrow();
+  expect(() =>
+    assertExcerpt(pair, citedDocument.replace("effect-first-live-perimeter", "unrelated"), code),
+  ).toThrow("citation");
+});

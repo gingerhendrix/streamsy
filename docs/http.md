@@ -128,3 +128,14 @@ header and body byte after removal of the comparison implementation. Cloudflare
 host code is implemented locally, while hosted execution, release support,
 browser Effect transport, and hosted measurements remain pending; see the
 [hosting reference](hosting.md).
+
+## Step 4 Effect fetch boundary
+
+`@streamsy/core/fetch` provides the existing service tags through Effect HttpClient.
+The [remote/browser guide](../site/content/docs/user/remote-browser.mdx) specifies
+configuration, interruption, fault classification and explicit D4 capability assertions.
+The default Durable Streams HTTP representation is unchanged. Exact service parity
+uses an opt-in Accept media type; read outcomes preserve byte boundaries and stored
+metadata, while other outcomes use the URI-encoded `Streamsy-Outcome` response header.
+This extension is required by the fetch Layer and is not a general capability
+negotiation protocol. Official browser clients continue using the standard wire format.

@@ -1,3 +1,4 @@
+import type { StreamsFault } from "../fault.ts";
 import { Clock, Effect, Random, Stream } from "effect";
 import { HttpServerResponse } from "effect/unstable/http";
 import type { Reader } from "../protocol/tags.ts";
@@ -10,7 +11,7 @@ const events = new SseEventEncoder(new MessageBodyCodec());
 
 /** Pull-based batches are unbounded in message count, like readNext and toolkit follow. */
 export function sse(
-  reader: Reader,
+  reader: Reader<StreamsFault>,
   id: StreamId,
   contentType: string,
   offset: string,

@@ -43,3 +43,19 @@ See `docs/api.md` and `docs/storage-contract.md` in the corresponding source
 checkout for this version. Source: https://github.com/gingerhendrix/streamsy.
 
 Licensed under MIT; see LICENSE in this package.
+
+## Remote access and browsers
+
+Import `@streamsy/core/fetch` as `Fetch` and provide `Fetch.layer({ baseUrl })`
+with Effect's `FetchHttpClient.layer` (or another `HttpClient`). It supplies the
+existing reader and writer services, including finite reads and one-shot long polls.
+The transport requires this version's opt-in Streamsy outcome representation for
+exact message metadata. Protocol classifications remain values; remote failures use
+`TransportFault`, and interruption cancels requests. Dispose the owning runtime at
+shutdown. CAS and producer appends require explicit deployment capability assertions;
+unknown support returns `not-supported` before sending.
+
+Browsers use the official `@durable-streams/client`, `@durable-streams/state`, and
+`@durable-streams/state/db` packages directly with an Effect-free validator.
+See the [remote and browser guide](../../site/content/docs/user/remote-browser.mdx)
+and the compiled [remote example](test/remote.ts).
