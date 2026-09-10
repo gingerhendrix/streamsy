@@ -25,7 +25,11 @@ export const expireIfNeeded = Effect.fn("Protocol.expireIfNeeded")(function* (
           },
         ],
       })
-      .pipe(Effect.uninterruptible);
+      .pipe(
+        Effect.uninterruptible,
+        // A concurrent renewal or deletion wins; reread the record below.
+        Effect.catchTag("MutationRejected", () => Effect.void),
+      );
     return yield* storage.record(id);
   }
   return record;
@@ -49,7 +53,11 @@ export const touch = Effect.fn("Protocol.touch")(function* (
         },
       ],
     })
-    .pipe(Effect.uninterruptible);
+    .pipe(
+      Effect.uninterruptible,
+      // A concurrent append or deletion wins over this best-effort TTL touch.
+      Effect.catchTag("MutationRejected", () => Effect.void),
+    );
 });
 
 /** One host-triggered sweep; the host owns scheduling and cancellation. */
@@ -70,6 +78,10 @@ export const expireDue = Effect.fn("Protocol.expireDue")(function* () {
           },
         ],
       })
-      .pipe(Effect.uninterruptible);
+      .pipe(
+        Effect.uninterruptible,
+        // A stale deadline loses; the next indexed observation must advance.
+        Effect.catchTag("MutationRejected", () => Effect.void),
+      );
   }
 });

@@ -47,9 +47,11 @@ for (const when of ["before", "after"] as const) {
       expect((yield* storage.messages(id, {})).length).toBe(when === "after" ? 1 : 0);
       // Replay the identical mutation: storage CAS owns at-most-once persistence.
       // The later protocol batch will turn the persisted tuple into a duplicate acknowledgement.
-      const retry = yield* storage.mutate({ operations: [operation] });
+      const retry = yield* when === "after"
+        ? Effect.flip(storage.mutate({ operations: [operation] }))
+        : storage.mutate({ operations: [operation] });
       expect(retry).toMatchObject(
-        when === "after" ? { _tag: "Rejected", reason: "producer" } : { _tag: "Applied" },
+        when === "after" ? { _tag: "MutationRejected", reason: "producer" } : { _tag: "Applied" },
       );
       const persisted = Option.getOrThrow(yield* storage.producer(id, producerId));
       expect(persisted).toEqual(tuple);
@@ -66,3 +68,41 @@ for (const when of ["before", "after"] as const) {
         expect(Exit.isSuccess(exit)).toBe(true);
       }));
 }
+
+it("after-fault injection preserves a rejection and consumes that selected attempt", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const context = yield* Layer.build(faultyStorage(layer(), { failOn: 1, when: "after" }));
+      const storage = Context.get(context, Storage);
+      const id = StreamId.make("missing");
+      expect(
+        yield* Effect.flip(
+          storage.mutate({
+            operations: [
+              {
+                _tag: "Delete",
+                streamId: id,
+                reason: "delete",
+              },
+            ],
+          }),
+        ),
+      ).toMatchObject({ _tag: "MutationRejected", reason: "not-found" });
+      expect(
+        yield* storage.mutate({
+          operations: [
+            {
+              _tag: "Create",
+              record: {
+                id,
+                config: { contentType: "text/plain", createdAt: 0 },
+                lifecycle: { closed: false, softDeleted: false },
+                currentOffset: ZERO_OFFSET,
+              },
+              initialMessages: [],
+            },
+          ],
+        }),
+      ).toMatchObject({ _tag: "Applied" });
+    }).pipe(Effect.scoped),
+  ));

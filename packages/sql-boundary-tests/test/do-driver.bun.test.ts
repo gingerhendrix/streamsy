@@ -55,7 +55,7 @@ test("official Durable Object driver proves the SQL commit and bounded wake boun
   expect(await response.json()).toEqual({
     sharedGraphReads: 2,
     ambientJoined: true,
-    rejected: "Rejected",
+    rejected: "MutationRejected",
     rejectionRolledBackApplicationRow: true,
     rawAmbientBoundaryRejectedBeforeBody: true,
     rawAmbientMutationDefected: true,

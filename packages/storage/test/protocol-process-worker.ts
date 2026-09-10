@@ -105,12 +105,14 @@ const operation = Effect.gen(function* () {
       const storage = yield* Storage;
       const fresh = StreamId.make(argument(2, "freshId"));
       const existing = StreamId.make(argument(3, "existingId"));
-      const result = yield* storage.mutate({
-        operations: [
-          { _tag: "Create", record: storageRecord(fresh), initialMessages: [] },
-          { _tag: "Create", record: storageRecord(existing), initialMessages: [] },
-        ],
-      });
+      const result = yield* Effect.flip(
+        storage.mutate({
+          operations: [
+            { _tag: "Create", record: storageRecord(fresh), initialMessages: [] },
+            { _tag: "Create", record: storageRecord(existing), initialMessages: [] },
+          ],
+        }),
+      );
       return { result, freshAbsent: Option.isNone(yield* storage.record(fresh)) };
     }
     default:

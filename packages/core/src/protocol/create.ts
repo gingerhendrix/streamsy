@@ -112,21 +112,27 @@ export const create = Effect.fn("Protocol.create")(function* (
       initialMessages,
     };
   }
-  const result = yield* storage.mutate({ operations: [plan] }).pipe(Effect.uninterruptible);
-  if (Predicate.isTagged(result, "Applied")) {
-    const record = result.results[0].record;
-    return {
-      _tag: "Created",
-      nextOffset: record.currentOffset,
-      contentType: record.config.contentType,
-      closed: record.lifecycle.closed,
-    };
-  }
-  if (result.reason === "exists" && Option.isSome(result.record))
-    return yield* existingResult(result.record.value, options);
-  return yield* new ForkSourceNotFound({
-    id,
-    source: StreamId.make(options.forkedFrom ?? id),
-    message: "Source stream disappeared during fork",
-  });
+  return yield* storage.mutate({ operations: [plan] }).pipe(
+    Effect.uninterruptible,
+    Effect.map((result): CreateResult => {
+      const record = result.results[0].record;
+      return {
+        _tag: "Created",
+        nextOffset: record.currentOffset,
+        contentType: record.config.contentType,
+        closed: record.lifecycle.closed,
+      };
+    }),
+    Effect.catchTag("MutationRejected", (rejection): Effect.Effect<CreateResult, CreateError> => {
+      if (rejection.reason === "exists" && Option.isSome(rejection.record))
+        return existingResult(rejection.record.value, options);
+      return Effect.fail(
+        new ForkSourceNotFound({
+          id,
+          source: StreamId.make(options.forkedFrom ?? id),
+          message: "Source stream disappeared during fork",
+        }),
+      );
+    }),
+  );
 });

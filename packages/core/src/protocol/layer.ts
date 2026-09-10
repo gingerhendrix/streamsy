@@ -1,4 +1,4 @@
-import { Context, Effect, Predicate, Layer } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { Storage } from "../storage/storage.ts";
 import { StreamsReader, StreamsWriter } from "./tags.ts";
 import { create } from "./create.ts";
@@ -36,13 +36,20 @@ export const layer = (
           RemoveError | import("../fault.ts").StorageFault
         > {
           yield* expireIfNeeded(storage, id);
-          const outcome = yield* storage
+          yield* storage
             .mutate({ operations: [{ _tag: "Delete", streamId: id, reason: "delete" }] })
-            .pipe(Effect.uninterruptible);
-          if (Predicate.isTagged(outcome, "Applied")) return;
-          if (outcome.reason === "not-found") return yield* new StreamNotFound({ id });
-          if (outcome.reason === "gone") return yield* new StreamGone({ id });
-          return yield* Effect.die(new Error(`Unexpected delete rejection: ${outcome.reason}`));
+            .pipe(
+              Effect.uninterruptible,
+              Effect.catchTag(
+                "MutationRejected",
+                (rejection): Effect.Effect<never, RemoveError> => {
+                  if (rejection.reason === "not-found")
+                    return Effect.fail(new StreamNotFound({ id }));
+                  if (rejection.reason === "gone") return Effect.fail(new StreamGone({ id }));
+                  return Effect.die(new Error(`Unexpected delete rejection: ${rejection.reason}`));
+                },
+              ),
+            );
         }),
       });
       return Context.make(StreamsReader, reader).pipe(Context.add(StreamsWriter, writer));

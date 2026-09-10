@@ -44,23 +44,25 @@ export const OperationResult = Schema.Union([
   Schema.TaggedStruct("SoftDeleted", { record: StreamRecord }),
 ]);
 
-export const MutationOutcome = Schema.Union([
-  Schema.TaggedStruct("Applied", { results: Schema.NonEmptyArray(OperationResult) }),
-  Schema.TaggedStruct("Rejected", {
-    index: Schema.Finite,
-    reason: Schema.Literals([
-      "offset",
-      "closed",
-      "producer",
-      "exists",
-      "not-found",
-      "gone",
-      "fork-source-gone",
-      "expiry-mismatch",
-    ]),
-    record: Schema.Option(StreamRecord),
-  }),
-]);
+/** The success channel of a storage mutation contains only applied operation results. */
+export const MutationOutcome = Schema.TaggedStruct("Applied", {
+  results: Schema.NonEmptyArray(OperationResult),
+});
+
+export class MutationRejected extends Schema.TaggedError<MutationRejected>()("MutationRejected", {
+  index: Schema.Finite,
+  reason: Schema.Literals([
+    "offset",
+    "closed",
+    "producer",
+    "exists",
+    "not-found",
+    "gone",
+    "fork-source-gone",
+    "expiry-mismatch",
+  ]),
+  record: Schema.Option(StreamRecord),
+}) {}
 
 export type ProducerPrecondition = typeof ProducerPrecondition.Type;
 

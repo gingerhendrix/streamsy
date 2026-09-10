@@ -79,7 +79,7 @@ test("separate protocol processes preserve CAS, producer fencing, restart, linea
       .toSorted((left, right) => String(left).localeCompare(String(right))),
   ).toEqual(["Created", "Exists"]);
   expect(await run(["multi-fail", filename, "must-not-exist", "create-race"])).toMatchObject({
-    result: { _tag: "Rejected", index: 1, reason: "exists" },
+    result: { _tag: "MutationRejected", index: 1, reason: "exists" },
     freshAbsent: true,
   });
   const created = await run(["create", filename, "race", "-", "-", "-"]);

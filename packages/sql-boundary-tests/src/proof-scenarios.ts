@@ -1,5 +1,5 @@
 /* oxlint-disable eslint/no-underscore-dangle -- Proof outcomes follow the accepted Effect-owned `_tag` convention. */
-import { Cause, Data, Deferred, Effect, Exit, Fiber, Option, Scope, Stream } from "effect";
+import { Cause, Schema, Deferred, Effect, Exit, Fiber, Option, Scope, Stream } from "effect";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { CommitBoundary } from "./commit-boundary.ts";
@@ -9,13 +9,11 @@ interface Snapshot {
   readonly expiresAtMs: number;
 }
 
-type MutationOutcome =
-  | { readonly _tag: "Applied"; readonly ambient: boolean }
-  | { readonly _tag: "Rejected"; readonly revision: number };
+type MutationOutcome = { readonly _tag: "Applied"; readonly ambient: boolean };
 
-class RollbackSignal extends Data.TaggedError("RollbackSignal")<{
-  readonly outcome: Extract<MutationOutcome, { readonly _tag: "Rejected" }>;
-}> {}
+class MutationRejected extends Schema.TaggedError<MutationRejected>()("MutationRejected", {
+  revision: Schema.Finite,
+}) {}
 
 export interface BoundaryProofResult {
   readonly sharedGraphReads: number;
@@ -95,15 +93,15 @@ const mutate = (
   boundary: CommitBoundary,
   expectedRevision: number,
   next: Snapshot,
-): Effect.Effect<MutationOutcome, SqlError> =>
+): Effect.Effect<MutationOutcome, MutationRejected | SqlError> =>
   boundary.mutation({
     keys: ["stream:stream"],
-    committed: (outcome) => outcome._tag === "Applied",
+    committed: () => true,
     effect: Effect.gen(function* () {
       const ambient = yield* Effect.serviceOption(boundary.sql.transactionService);
       const current = yield* snapshot(boundary.sql);
       if (current.revision !== expectedRevision) {
-        return { _tag: "Rejected" as const, revision: current.revision };
+        return yield* new MutationRejected({ revision: current.revision });
       }
       yield* boundary.sql.unsafe(
         "UPDATE protocol_state SET revision = ?, expires_at_ms = ? WHERE id = ?",
@@ -198,14 +196,10 @@ export const runBoundaryProof = (boundary: CommitBoundary, externalWrite: Effect
             "application",
             "before-rejection",
           ]);
-          const outcome = yield* mutate(boundary, 99, { revision: 1, expiresAtMs: 20 });
-          if (outcome._tag === "Rejected") {
-            return yield* new RollbackSignal({ outcome });
-          }
-          return outcome;
+          return yield* mutate(boundary, 99, { revision: 1, expiresAtMs: 20 });
         }),
       )
-      .pipe(Effect.catchTag("RollbackSignal", (signal) => Effect.succeed(signal.outcome)));
+      .pipe(Effect.flip);
     const rejectionRolledBackApplicationRow = !(yield* applicationRowExists(sql));
 
     const nestedApplied = yield* Deferred.make<void>();

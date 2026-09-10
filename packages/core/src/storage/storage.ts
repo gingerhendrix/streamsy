@@ -12,7 +12,7 @@ import type {
   ChangeSnapshot,
 } from "../schema/index.ts";
 import type { StorageCapabilities } from "./capabilities.ts";
-import type { Mutation, MutationOutcome } from "./mutation.ts";
+import type { Mutation, MutationOutcome, MutationRejected } from "./mutation.ts";
 export interface StorageShape {
   readonly capabilities: StorageCapabilities;
   readonly record: (id: StreamId) => Effect.Effect<Option.Option<StreamRecord>, StorageFault>;
@@ -24,7 +24,9 @@ export interface StorageShape {
     id: StreamId,
     producerId: ProducerId,
   ) => Effect.Effect<Option.Option<ProducerState>, StorageFault>;
-  readonly mutate: (mutation: Mutation) => Effect.Effect<MutationOutcome, StorageFault>;
+  readonly mutate: (
+    mutation: Mutation,
+  ) => Effect.Effect<MutationOutcome, MutationRejected | StorageFault>;
   readonly changes: (id: StreamId) => Stream.Stream<ChangeSnapshot, StorageFault>;
   readonly nextExpiry: Effect.Effect<
     Option.Option<{ readonly at: number; readonly streamId: StreamId }>,

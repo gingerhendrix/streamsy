@@ -1,18 +1,6 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- The proof composes protocol services over the supplied SQL host. */
 /* oxlint-disable eslint/no-underscore-dangle -- Test results use the public tagged-outcome `_tag`. */
-import {
-  Cause,
-  Data,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Option,
-  Predicate,
-  Queue,
-  Scope,
-  Stream,
-} from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Queue, Scope, Stream } from "effect";
 import {
   Offset,
   Protocol,
@@ -22,15 +10,10 @@ import {
   StreamId,
   ZERO_OFFSET,
   type Mutation,
-  type MutationOutcome,
   type StreamRecord,
 } from "@streamsy/core";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { CommitBoundary, type BoundaryTestProbe } from "../src/boundary.ts";
-
-class RollbackSignal extends Data.TaggedError("RollbackSignal")<{
-  readonly outcome: Extract<MutationOutcome, { readonly _tag: "Rejected" }>;
-}> {}
 
 const one = Offset.make("0000000000000001_0000000000000000");
 
@@ -177,18 +160,25 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
       .withTransaction(
         Effect.gen(function* () {
           yield* sql.unsafe("INSERT INTO application_state VALUES ('rejected','before-reject')");
-          const outcome = yield* storage.mutate(create("base"));
-          if (Predicate.isTagged(outcome, "Rejected"))
-            return yield* new RollbackSignal({ outcome });
-          return yield* Effect.die(new Error("expected rejection"));
+          return yield* storage.mutate(create("base"));
         }),
       )
-      .pipe(Effect.catchTag("RollbackSignal", ({ outcome }) => Effect.succeed(outcome)));
+      .pipe(Effect.flip);
 
-    const unraised = yield* boundary.withTransaction(
+    // Standalone rejection is a typed failure, incurs one attempt and publishes no keys.
+    const beforeRejectionAttempts = probe.transactionAttempts;
+    const beforeRejectionInvalidations = probe.invalidations;
+    const standaloneRejection = yield* storage.mutate(create("base")).pipe(Effect.flip);
+    const rejectionAttempts = probe.transactionAttempts - beforeRejectionAttempts;
+    const rejectionInvalidations = probe.invalidations - beforeRejectionInvalidations;
+
+    // Recovery inside the outer owner deliberately allows unrelated application SQL to commit.
+    const recovered = yield* boundary.withTransaction(
       Effect.gen(function* () {
-        yield* sql.unsafe("INSERT INTO application_state VALUES ('unraised','commits')");
-        return yield* storage.mutate(create("base"));
+        yield* sql.unsafe("INSERT INTO application_state VALUES ('recovered','commits')");
+        return yield* storage
+          .mutate(create("base"))
+          .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
       }),
     );
 
@@ -350,8 +340,11 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
       rawAmbientWakes,
       rejection: rejection._tag,
       rejectionApplicationRolledBack: !(yield* exists(sql, "application_state", "rejected")),
-      unraisedRejection: unraised._tag,
-      unraisedApplicationCommitted: yield* exists(sql, "application_state", "unraised"),
+      standaloneRejection: standaloneRejection._tag,
+      rejectionAttempts,
+      rejectionInvalidations,
+      recoveredRejection: recovered._tag,
+      recoveredApplicationCommitted: yield* exists(sql, "application_state", "recovered"),
       nestedRollbackWakesBeforeRelease,
       nestedRollbackWakesAfterFailure,
       nestedRollbackRestored,

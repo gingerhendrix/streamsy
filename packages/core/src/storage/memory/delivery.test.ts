@@ -159,10 +159,12 @@ it("a rejected mutation emits no wake while a subsequent commit does", () =>
       const id = StreamId.make("rejected");
       const pull = yield* Stream.toPull(storage.changes(id));
       expect((yield* pull)[0]).toMatchObject({ present: false });
-      const rejected = yield* storage.mutate({
-        operations: [{ _tag: "Delete", streamId: id, reason: "delete" }],
-      });
-      expect(rejected).toMatchObject({ _tag: "Rejected", reason: "not-found" });
+      const rejected = yield* Effect.flip(
+        storage.mutate({
+          operations: [{ _tag: "Delete", streamId: id, reason: "delete" }],
+        }),
+      );
+      expect(rejected).toMatchObject({ _tag: "MutationRejected", reason: "not-found" });
       const pending = yield* pull.pipe(Effect.forkScoped);
       for (let turns = 0; turns < 100; turns++) yield* Effect.yieldNow;
       expect(pending.pollUnsafe()).toBeUndefined();

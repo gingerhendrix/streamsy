@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { Option, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { ZERO_OFFSET } from "../offset/index.ts";
-import { MutationOutcome, Operation } from "../storage/mutation.ts";
+import { MutationRejected, Operation } from "../storage/mutation.ts";
 import {
   MessageWindow,
   ProducerState,
@@ -119,17 +119,16 @@ const cases: ReadonlyArray<FiniteFieldCase> = [
     makeOmitted: () => Operation.make({ _tag: "Delete", streamId: id, reason: "delete" }),
   },
   {
-    name: "Rejected.index",
+    name: "MutationRejected.index",
     decode: (index) =>
-      Schema.decodeSync(MutationOutcome)({
-        _tag: "Rejected",
+      Schema.decodeSync(MutationRejected)({
+        _tag: "MutationRejected",
         index,
         reason: "not-found",
         record: Option.none(),
       }),
     make: (index) =>
-      MutationOutcome.make({
-        _tag: "Rejected",
+      new MutationRejected({
         index,
         reason: "not-found",
         record: Option.none(),
@@ -144,15 +143,23 @@ for (const finiteCase of cases) {
   describe(finiteCase.name, () => {
     it("rejects NaN and both infinities during decoding and checked construction", () => {
       for (const value of nonFiniteValues) {
-        expect(() => finiteCase.decode(value)).toThrow();
-        expect(() => finiteCase.make(value)).toThrow();
+        expect(() => {
+          finiteCase.decode(value);
+        }).toThrow();
+        expect(() => {
+          finiteCase.make(value);
+        }).toThrow();
       }
     });
 
     it("accepts finite values without adding sign, integer, or range restrictions", () => {
       for (const value of finiteValues) {
-        expect(() => finiteCase.decode(value)).not.toThrow();
-        expect(() => finiteCase.make(value)).not.toThrow();
+        expect(() => {
+          finiteCase.decode(value);
+        }).not.toThrow();
+        expect(() => {
+          finiteCase.make(value);
+        }).not.toThrow();
       }
     });
 
@@ -162,5 +169,32 @@ for (const finiteCase of cases) {
         expect(finiteCase.makeOmitted).not.toThrow();
       });
     }
+  });
+}
+
+for (const record of [
+  Option.none(),
+  Option.some({
+    id,
+    config: { contentType: "text/plain", createdAt: 0 },
+    lifecycle: { closed: false, softDeleted: false },
+    currentOffset: ZERO_OFFSET,
+  }),
+]) {
+  it(`MutationRejected round-trips ${record._tag} record and recovers by tag`, async () => {
+    const error = new MutationRejected({ index: 1, reason: "offset", record });
+    const encoded = Schema.encodeSync(MutationRejected)(error);
+    // Schema.Option preserves an Effect Option in its encoded type at rc.112.
+    expect(encoded.record).toEqual(record);
+    const decoded = Schema.decodeSync(MutationRejected)(encoded);
+    expect(decoded).toBeInstanceOf(MutationRejected);
+    expect(decoded.record).toEqual(record);
+    expect(
+      await Effect.runPromise(
+        Effect.fail(decoded).pipe(
+          Effect.catchTag("MutationRejected", (rejection) => Effect.succeed(rejection.index)),
+        ),
+      ),
+    ).toBe(1);
   });
 }

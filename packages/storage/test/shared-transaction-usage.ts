@@ -2,21 +2,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Context, Data, Effect, Exit, Layer, Predicate, Scope } from "effect";
-import {
-  Storage,
-  StreamId,
-  ZERO_OFFSET,
-  type Mutation,
-  type MutationOutcome,
-} from "@streamsy/core";
+import { Context, Effect, Exit, Layer, Scope } from "effect";
+import { Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
 import { CommitBoundary } from "@streamsy/storage";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-
-class Rejected extends Data.TaggedError("Rejected")<{
-  readonly outcome: Extract<MutationOutcome, { readonly _tag: "Rejected" }>;
-}> {}
 
 const id = StreamId.make("compiled-shared-transaction");
 const create: Mutation = {
@@ -54,18 +44,15 @@ try {
         .withTransaction(
           Effect.gen(function* () {
             yield* sql.unsafe("INSERT INTO application_rows VALUES ('rolled-back')");
-            const mutation = yield* storage.mutate(create);
-            if (Predicate.isTagged(mutation, "Rejected"))
-              return yield* new Rejected({ outcome: mutation });
-            return mutation;
+            return yield* storage.mutate(create);
           }),
         )
-        .pipe(Effect.catchTag("Rejected", ({ outcome: rejection }) => Effect.succeed(rejection)));
+        .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
       const rows = yield* sql.unsafe<{ readonly id: string }>("SELECT id FROM application_rows");
       return { outcome, rows };
     }).pipe(Effect.provide(context)),
   );
-  if (result.outcome._tag !== "Rejected" || result.rows.length !== 0)
+  if (result.outcome._tag !== "MutationRejected" || result.rows.length !== 0)
     throw new Error("shared transaction did not roll back rejection");
 } finally {
   await Effect.runPromise(Scope.close(scope, Exit.void));

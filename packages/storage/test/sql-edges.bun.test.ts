@@ -185,7 +185,12 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
               },
             ],
           });
-        const outcomes = yield* Effect.all([write(1), write(2)], { concurrency: 2 });
+        const outcomes = yield* Effect.all(
+          [write(1), write(2)].map((effect) =>
+            effect.pipe(Effect.catchTag("MutationRejected", Effect.succeed)),
+          ),
+          { concurrency: 2 },
+        );
         yield* sql.unsafe("DROP TABLE streamsy_streams");
         const fault = yield* storage.record(StreamId.make("race")).pipe(Effect.exit);
         return {
@@ -201,5 +206,5 @@ test("operational SQL failures map to StorageFault while concurrent producer CAS
       }),
     ),
   );
-  expect(result).toEqual({ tags: ["Applied", "Rejected"], typedFault: true });
+  expect(result).toEqual({ tags: ["Applied", "MutationRejected"], typedFault: true });
 });

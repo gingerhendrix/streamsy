@@ -1,6 +1,12 @@
 import { Context, Predicate, Effect, Layer, Option } from "effect";
 import { Storage } from "../storage.ts";
-import type { Mutation, MutationOutcome, Operation, OperationResult } from "../mutation.ts";
+import {
+  MutationRejected,
+  type Mutation,
+  type MutationOutcome,
+  type Operation,
+  type OperationResult,
+} from "../mutation.ts";
 import type { StreamId } from "../../schema/index.ts";
 import { copyMessage, copyRecord, indexDeadlines, patchRecord, type State } from "./state.ts";
 import { addEdge, composeMessages, hasDependents, purge } from "./lineage.ts";
@@ -18,18 +24,16 @@ export interface MemoryOptions {
   readonly pollIntervalMs?: number;
 }
 
-function reject(state: State, operation: Operation, index: number): MutationOutcome | undefined {
+function reject(state: State, operation: Operation, index: number): MutationRejected | undefined {
   const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
   const entry = state.entries.get(id);
   const record = entry?.record;
-  const rejected = (
-    reason: Extract<MutationOutcome, { _tag: "Rejected" }>["reason"],
-  ): MutationOutcome => ({
-    _tag: "Rejected",
-    index,
-    reason,
-    record: record ? Option.some(copyRecord(record)) : Option.none(),
-  });
+  const rejected = (reason: MutationRejected["reason"]): MutationRejected =>
+    new MutationRejected({
+      index,
+      reason,
+      record: record ? Option.some(copyRecord(record)) : Option.none(),
+    });
   if (Predicate.isTagged(operation, "Create")) {
     if (record) return rejected("exists");
     if (operation.forkSource) {
@@ -80,11 +84,11 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
       const committed: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const bus = yield* createNotifier;
       const boundary = yield* makeBoundary(committed, bus.publish);
-      const commit = (state: State, mutation: Mutation): CommitResult => {
+      const commit = (state: State, mutation: Mutation): CommitResult | MutationRejected => {
         const changed = new Set<StreamId>();
         for (const [index, operation] of mutation.operations.entries()) {
           const rejection = reject(state, operation, index);
-          if (rejection) return { outcome: rejection, changed };
+          if (rejection) return rejection;
         }
         const results: OperationResult[] = [];
         // Create edges before deleting sources, independent of operation order.
@@ -176,7 +180,9 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
               new Error("Mutation requires distinct streams within atomicScope"),
             );
           return yield* Effect.gen(function* () {
-            const { outcome, changed } = yield* boundary.access((state) => commit(state, mutation));
+            const result = yield* boundary.access((state) => commit(state, mutation));
+            if (result instanceof MutationRejected) return yield* result;
+            const { outcome, changed } = result;
             if (changed.size > 0) yield* boundary.changed;
             return outcome;
           }).pipe(boundary.api.withTransaction, Effect.uninterruptible);

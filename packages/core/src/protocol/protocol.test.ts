@@ -1,8 +1,10 @@
+import { MutationRejected } from "../storage/mutation.ts";
 import { expect, it } from "bun:test";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { StreamsReader, StreamsWriter } from "./tags.ts";
 import * as Protocol from "./layer.ts";
+import { touch } from "./expiry.ts";
 import { StreamId, ProducerId } from "../schema/index.ts";
 import { ZERO_OFFSET, next } from "../offset/index.ts";
 import { Storage } from "../storage/storage.ts";
@@ -467,12 +469,11 @@ for (const rejects of [7, 8]) {
           mutate: Effect.fn("Test.reject")(function* (mutation) {
             calls++;
             if (calls <= rejects)
-              return {
-                _tag: "Rejected" as const,
+              return yield* new MutationRejected({
                 index: 0,
-                reason: "offset" as const,
+                reason: "offset",
                 record: yield* control.storage.record(id),
-              };
+              });
             return yield* control.storage.mutate(mutation);
           }),
         });
@@ -798,3 +799,109 @@ it("readNext holds its cursor behind a reported tail until messages become visib
       );
     }).pipe(Effect.scoped),
   ));
+
+it("append replans a rejected CAS into a duplicate acknowledgement", () =>
+  check(
+    Effect.gen(function* () {
+      const control = yield* StreamsTest;
+      yield* (yield* StreamsWriter).create(id, { contentType: "text/plain" });
+      let calls = 0;
+      const storage = Storage.of({
+        ...control.storage,
+        mutate: Effect.fn("Test.concurrentAppend")(function* (mutation) {
+          calls++;
+          // Another writer wins this exact tuple between planning and preflight.
+          yield* control.storage.mutate(mutation);
+          return yield* control.storage.mutate(mutation);
+        }),
+      });
+      const appended = yield* Effect.gen(function* () {
+        return yield* (yield* StreamsWriter).append(id, {
+          ...appendOptions,
+          producer: producer(0, 0),
+        });
+      }).pipe(provideTest(Protocol.layer().pipe(Layer.provide(Layer.succeed(Storage, storage)))));
+      expect(appended).toMatchObject({ _tag: "Duplicate", producerEpoch: 0, producerSeq: 0 });
+      expect(calls).toBe(1);
+      expect((yield* control.storage.messages(id, {})).length).toBe(1);
+    }),
+  ));
+
+for (const race of ["matching-create", "conflicting-create", "source-gone"] as const) {
+  it(`create maps mutation rejection after ${race}`, () =>
+    check(
+      Effect.gen(function* () {
+        const control = yield* StreamsTest;
+        const source = StreamId.make("source");
+        if (race === "source-gone") yield* Protocol.create(control.storage, source);
+        const storage = Storage.of({
+          ...control.storage,
+          mutate: Effect.fn("Test.concurrentCreate")(function* (mutation) {
+            if (race === "source-gone")
+              yield* control.storage.mutate({
+                operations: [{ _tag: "Delete", streamId: source, reason: "delete" }],
+              });
+            else
+              yield* Protocol.create(control.storage, id, {
+                contentType: race === "matching-create" ? "text/plain" : "application/json",
+              }).pipe(Effect.orDie);
+            return yield* control.storage.mutate(mutation);
+          }),
+        });
+        const attempt = Protocol.create(
+          storage,
+          id,
+          race === "source-gone" ? { forkedFrom: source } : { contentType: "text/plain" },
+        );
+        if (race === "matching-create") expect((yield* attempt)._tag).toBe("Exists");
+        else
+          expect(yield* Effect.flip(attempt)).toMatchObject(
+            race === "source-gone"
+              ? {
+                  _tag: "ForkSourceNotFound",
+                  source,
+                  message: "Source stream disappeared during fork",
+                }
+              : { _tag: "CreateConflict", reason: "config-mismatch" },
+          );
+      }),
+    ));
+}
+
+for (const operation of ["touch", "sweep"] as const) {
+  it(`${operation} tolerates a rejected mutation and preserves concurrent renewal`, () =>
+    check(
+      Effect.gen(function* () {
+        const control = yield* StreamsTest;
+        yield* (yield* StreamsWriter).create(id, { ttlSeconds: 1 });
+        const before = Option.getOrThrow(yield* control.storage.record(id));
+        if (operation === "sweep") yield* TestClock.adjust(1000);
+        let calls = 0;
+        const storage = Storage.of({
+          ...control.storage,
+          mutate: Effect.fn("Test.concurrentRenewal")(function* (mutation) {
+            calls++;
+            yield* control.storage.mutate({
+              operations: [
+                {
+                  _tag: "Append",
+                  streamId: id,
+                  messages: [],
+                  patch: { currentOffset: next(ZERO_OFFSET), lifecycle: { expiresAtMs: 3000 } },
+                },
+              ],
+            });
+            return yield* control.storage.mutate(mutation);
+          }),
+        });
+        if (operation === "touch") yield* touch(storage, before);
+        else yield* Protocol.expireDue().pipe(Effect.provideService(Storage, storage));
+        expect(calls).toBe(1);
+        expect(Option.getOrThrow(yield* control.storage.record(id))).toMatchObject({
+          currentOffset: next(ZERO_OFFSET),
+          lifecycle: { expiresAtMs: 3000 },
+        });
+        expect(yield* control.storage.nextExpiry).toEqual(Option.some({ at: 3000, streamId: id }));
+      }),
+    ));
+}

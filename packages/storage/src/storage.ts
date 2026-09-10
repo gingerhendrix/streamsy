@@ -12,6 +12,7 @@ import {
   ZERO_OFFSET,
   type Mutation,
   type MutationOutcome,
+  MutationRejected,
   type OperationResult,
   type RecordPatch,
 } from "@streamsy/core";
@@ -239,22 +240,17 @@ const updateRecord = (sql: SqlClient.SqlClient, record: StreamRecord) =>
     ],
   );
 
-const rejection = (
-  index: number,
-  reason: Extract<MutationOutcome, { readonly _tag: "Rejected" }>["reason"],
-  record: Option.Option<StreamRecord>,
-): MutationOutcome => ({ _tag: "Rejected", index, reason, record });
-
 const preflight = (
   sql: SqlClient.SqlClient,
   mutation: Mutation,
-): Effect.Effect<MutationOutcome | undefined, StorageFault> =>
+): Effect.Effect<void, MutationRejected | StorageFault> =>
   Effect.gen(function* () {
     for (const [index, operation] of mutation.operations.entries()) {
       const id = Predicate.isTagged(operation, "Create") ? operation.record.id : operation.streamId;
       const current = yield* readRecord(sql, id);
       if (Predicate.isTagged(operation, "Create")) {
-        if (Option.isSome(current)) return rejection(index, "exists", current);
+        if (Option.isSome(current))
+          return yield* new MutationRejected({ index, reason: "exists", record: current });
         if (operation.forkSource !== undefined) {
           const source = yield* readRecord(sql, operation.forkSource.id);
           if (
@@ -262,32 +258,38 @@ const preflight = (
             source.value.lifecycle.softDeleted ||
             source.value.currentOffset < operation.forkSource.liveAtOffset
           )
-            return rejection(index, "fork-source-gone", Option.none());
+            return yield* new MutationRejected({
+              index,
+              reason: "fork-source-gone",
+              record: Option.none(),
+            });
         }
         continue;
       }
-      if (Option.isNone(current)) return rejection(index, "not-found", Option.none());
+      if (Option.isNone(current))
+        return yield* new MutationRejected({ index, reason: "not-found", record: Option.none() });
       const record = current.value;
-      if (record.lifecycle.softDeleted) return rejection(index, "gone", current);
+      if (record.lifecycle.softDeleted)
+        return yield* new MutationRejected({ index, reason: "gone", record: current });
       if (Predicate.isTagged(operation, "Delete")) {
         if (
           operation.reason === "expiry" &&
           (operation.expectedExpiresAtMs === undefined ||
             operation.expectedExpiresAtMs !== record.lifecycle.expiresAtMs)
         )
-          return rejection(index, "expiry-mismatch", current);
+          return yield* new MutationRejected({ index, reason: "expiry-mismatch", record: current });
         continue;
       }
       if (
         operation.expectedOffset !== undefined &&
         operation.expectedOffset !== record.currentOffset
       )
-        return rejection(index, "offset", current);
+        return yield* new MutationRejected({ index, reason: "offset", record: current });
       if (
         operation.expectedClosed !== undefined &&
         operation.expectedClosed !== record.lifecycle.closed
       )
-        return rejection(index, "closed", current);
+        return yield* new MutationRejected({ index, reason: "closed", record: current });
       if (operation.producer !== undefined) {
         const rows = yield* query<ProducerDatabaseRow>(
           sql,
@@ -311,7 +313,7 @@ const preflight = (
             (actual.value.epoch !== expected.value.epoch ||
               actual.value.lastSeq !== expected.value.lastSeq))
         )
-          return rejection(index, "producer", current);
+          return yield* new MutationRejected({ index, reason: "producer", record: current });
       }
     }
     return undefined;
@@ -361,10 +363,9 @@ const purge = (sql: SqlClient.SqlClient, start: StreamRecord) =>
 const applyMutation = (
   sql: SqlClient.SqlClient,
   mutation: Mutation,
-): Effect.Effect<MutationOutcome, StorageFault> =>
+): Effect.Effect<MutationOutcome, MutationRejected | StorageFault> =>
   Effect.gen(function* () {
-    const rejected = yield* preflight(sql, mutation);
-    if (rejected !== undefined) return rejected;
+    yield* preflight(sql, mutation);
     const records = new Map<StreamId, StreamRecord>();
     const results: Array<OperationResult> = [];
 
@@ -555,8 +556,8 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
         .mutation({
           keys: [STORAGE_KEY],
           effect: applyMutation(sql, mutation),
-          committed: Predicate.isTagged("Applied"),
-          retryable: (error) => error.retryable,
+          committed: () => true,
+          retryable: (error) => error._tag === "StorageFault" && error.retryable,
         })
         .pipe(
           Effect.catchIf(isSqlError, (error) => Effect.fail(sqlFault("mutate.transaction", error))),

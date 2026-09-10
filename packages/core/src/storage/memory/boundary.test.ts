@@ -1,15 +1,16 @@
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own their host Layers, including the deliberate foreign-owner case. */
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
 import * as Streams from "../../toolkit/streams.ts";
 import * as StreamRef from "../../toolkit/ref.ts";
+import { StreamId } from "../../schema/index.ts";
 import { Storage } from "../storage.ts";
 import { MemoryCommitBoundary } from "./boundary.ts";
 
 const sink = StreamRef.json("fused-sink", { schema: Schema.String });
 const turns = Effect.forEach([1, 2, 3, 4, 5], () => Effect.yieldNow, { discard: true });
 
-for (const outcome of ["commit", "failure", "defect", "interrupt"]) {
+for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rejection"]) {
   test(`memory fused boundary: ${outcome}`, () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -46,6 +47,12 @@ for (const outcome of ["commit", "failure", "defect", "interrupt"]) {
               expect(yield* read).toEqual(after);
               yield* Deferred.succeed(written, undefined);
               yield* Deferred.await(release);
+              if (outcome === "mutation-rejection")
+                return yield* storage.mutate({
+                  operations: [
+                    { _tag: "Delete", streamId: StreamId.make("missing"), reason: "delete" },
+                  ],
+                });
               if (outcome === "failure") return yield* Effect.fail("after-sink");
               if (outcome === "defect") return yield* Effect.die("after-sink");
               return undefined;
@@ -60,6 +67,12 @@ for (const outcome of ["commit", "failure", "defect", "interrupt"]) {
         else yield* Deferred.succeed(release, undefined);
         const exit = yield* Fiber.await(transaction);
         expect(Exit.isSuccess(exit)).toBe(outcome === "commit");
+        if (outcome === "mutation-rejection") {
+          expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
+          expect(
+            Exit.isFailure(exit) && Option.getOrThrow(Cause.findErrorOption(exit.cause)),
+          ).toMatchObject({ _tag: "MutationRejected", reason: "not-found" });
+        }
         expect(yield* read).toEqual(outcome === "commit" ? after : before);
         if (outcome === "commit") {
           const snapshots = yield* Fiber.join(wake);

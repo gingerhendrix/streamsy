@@ -8,6 +8,7 @@ export {
   Mutation,
   OperationResult,
   MutationOutcome,
+  MutationRejected,
 } from "./mutation.ts";
 export * as Memory from "./memory/layer.ts";
 /** Host-local fused memory composition; not a cross-resource transaction API. */

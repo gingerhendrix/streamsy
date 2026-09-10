@@ -105,10 +105,12 @@ export const append = Effect.fn("Protocol.append")(function* (
             },
           }
         : operation;
-    const outcome = yield* storage
-      .mutate({ operations: [withProducer] })
-      .pipe(Effect.uninterruptible);
-    if (Predicate.isTagged(outcome, "Applied"))
+    const applied = yield* storage.mutate({ operations: [withProducer] }).pipe(
+      Effect.uninterruptible,
+      Effect.as(true),
+      Effect.catchTag("MutationRejected", () => Effect.succeed(false)),
+    );
+    if (applied)
       return {
         _tag: "Appended",
         offset,

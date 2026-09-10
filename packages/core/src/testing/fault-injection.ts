@@ -2,7 +2,7 @@ import { Effect, Layer } from "effect";
 import { StorageFault } from "../fault.ts";
 import { Storage } from "../storage/storage.ts";
 
-/** One failure per acquired decorator, counting attempted mutations. */
+/** One selected attempt per decorator; "after" injects only if that mutation applies. */
 export function faultyStorage(
   source: Layer.Layer<Storage>,
   options: { readonly failOn: number; readonly when: "before" | "after" },

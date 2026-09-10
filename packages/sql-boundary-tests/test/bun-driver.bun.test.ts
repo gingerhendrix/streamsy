@@ -47,7 +47,7 @@ test("official Bun driver proves the SQL commit and bounded wake boundary", asyn
   expect(result).toEqual({
     sharedGraphReads: 2,
     ambientJoined: true,
-    rejected: "Rejected",
+    rejected: "MutationRejected",
     rejectionRolledBackApplicationRow: true,
     rawAmbientBoundaryRejectedBeforeBody: true,
     rawAmbientMutationDefected: true,
