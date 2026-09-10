@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/strict-effect-provide -- The proof composes protocol services over the supplied SQL host. */
 /* oxlint-disable eslint/no-underscore-dangle -- Test results use the public tagged-outcome `_tag`. */
 import {
   Cause,
@@ -14,6 +15,9 @@ import {
 } from "effect";
 import {
   Offset,
+  Protocol,
+  StreamsReader,
+  StreamsWriter,
   Storage,
   StreamId,
   ZERO_OFFSET,
@@ -78,6 +82,63 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
       "CREATE TABLE IF NOT EXISTS application_state(id TEXT PRIMARY KEY,value TEXT)",
     );
     yield* sql.unsafe("DELETE FROM application_state");
+
+    // Representative records only: this is a host proof, not a Derive store schema.
+    const fused = yield* Effect.gen(function* () {
+      const reader = yield* StreamsReader;
+      const writer = yield* StreamsWriter;
+      const id = StreamId.make("fused-sink");
+      yield* writer.create(id, { contentType: "text/plain" });
+      yield* sql.unsafe("INSERT INTO application_state VALUES ('state','0'),('checkpoint','0')");
+      const read = Effect.gen(function* () {
+        const output = yield* reader.read(id);
+        const rows = yield* sql.unsafe<{ readonly id: string; readonly value: string }>(
+          "SELECT id,value FROM application_state WHERE id IN ('state','checkpoint') ORDER BY id",
+        );
+        return {
+          output:
+            output.status === "ok"
+              ? output.messages.map((message) => new TextDecoder().decode(message.data))
+              : [],
+          records: rows.map((row) => [row.id, row.value]),
+        };
+      });
+      const write = (value: string) =>
+        boundary.withTransaction(
+          Effect.gen(function* () {
+            const appended = yield* writer.append(id, {
+              contentType: "text/plain",
+              data: new TextEncoder().encode(value),
+            });
+            if (appended.status !== "appended") return yield* Effect.die("unexpected sink outcome");
+            yield* sql.unsafe("UPDATE application_state SET value=? WHERE id='state'", [value]);
+            yield* sql.unsafe("UPDATE application_state SET value=? WHERE id='checkpoint'", [
+              value,
+            ]);
+            return undefined;
+          }),
+        );
+      const beforeWakes = probe.invalidations;
+      const insideWakes = yield* boundary.withTransaction(
+        Effect.gen(function* () {
+          yield* write("1");
+          return probe.invalidations - beforeWakes;
+        }),
+      );
+      const committed = yield* read;
+      const commitWakes = probe.invalidations - beforeWakes;
+      const failure = yield* boundary
+        .withTransaction(write("2").pipe(Effect.andThen(Effect.fail("after-sink"))))
+        .pipe(Effect.exit);
+      return {
+        committed,
+        restored: yield* read,
+        failed: Exit.isFailure(failure),
+        insideWakes,
+        commitWakes,
+        rollbackWakes: probe.invalidations - beforeWakes - commitWakes,
+      };
+    }).pipe(Effect.provide(Protocol.layer()));
 
     let rawBodyRan = false;
     const rawBoundary = yield* sql
@@ -284,6 +345,7 @@ export const runBoundaryScenarios = (probe: BoundaryTestProbe) =>
     const initialRaceSnapshots = yield* Fiber.join(racing).pipe(Effect.timeout("5 seconds"));
 
     return {
+      fused,
       rawBoundaryRejectedBeforeBody: Exit.isFailure(rawBoundary) && !rawBodyRan,
       rawMutationDefectedBeforeStorageSql: rawRejectedByOwnership,
       rawApplicationRolledBack: !(yield* exists(sql, "application_state", "raw")),

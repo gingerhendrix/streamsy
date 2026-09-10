@@ -1,10 +1,12 @@
-import { Predicate, Effect, Layer, Option, Semaphore } from "effect";
+import { Context, Predicate, Effect, Layer, Option } from "effect";
 import { Storage } from "../storage.ts";
 import type { Mutation, MutationOutcome, Operation, OperationResult } from "../mutation.ts";
 import type { StreamId } from "../../schema/index.ts";
 import { copyMessage, copyRecord, indexDeadlines, patchRecord, type State } from "./state.ts";
 import { addEdge, composeMessages, hasDependents, purge } from "./lineage.ts";
 import { createNotifier } from "./notifier.ts";
+// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This Layer owns the boundary and its exact stream state.
+import { makeBoundary, MemoryCommitBoundary } from "./boundary.ts";
 import { changes } from "./changes.ts";
 
 interface CommitResult {
@@ -68,18 +70,17 @@ function reject(state: State, operation: Operation, index: number): MutationOutc
   return undefined;
 }
 
-export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
-  Layer.effect(
-    Storage,
+export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | MemoryCommitBoundary> =>
+  Layer.effectContext(
     Effect.gen(function* () {
       const chain = !options.constrained;
       const interval = options.pollIntervalMs ?? 25;
       if (!Number.isFinite(interval) || interval <= 0)
         return yield* Effect.die(new RangeError("pollIntervalMs must be positive"));
-      const state: State = { entries: new Map(), children: new Map(), deadlines: [] };
-      const lock = yield* Semaphore.make(1);
+      const committed: State = { entries: new Map(), children: new Map(), deadlines: [] };
       const bus = yield* createNotifier;
-      const commit = (mutation: Mutation): CommitResult => {
+      const boundary = yield* makeBoundary(committed, bus.publish);
+      const commit = (state: State, mutation: Mutation): CommitResult => {
         const changed = new Set<StreamId>();
         for (const [index, operation] of mutation.operations.entries()) {
           const rejection = reject(state, operation, index);
@@ -135,7 +136,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
         if (!first) throw new Error("Empty mutation");
         return { outcome: { _tag: "Applied", results: [first, ...rest] }, changed };
       };
-      return Storage.of({
+      const storage = Storage.of({
         capabilities: {
           fork: chain ? "chain" : "copy",
           atomicScope: chain ? "store" : "stream",
@@ -143,12 +144,12 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
           expiryIndex: chain ? "indexed" : "lazy",
         },
         record: Effect.fn("Memory.record")((id) =>
-          Effect.sync(() =>
+          boundary.access((state) =>
             Option.fromUndefinedOr(state.entries.get(id)?.record).pipe(Option.map(copyRecord)),
           ),
         ),
         messages: Effect.fn("Memory.messages")((id, window) =>
-          Effect.sync(() =>
+          boundary.access((state) =>
             composeMessages(state, id, chain)
               .filter(
                 (message) =>
@@ -160,7 +161,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
           ),
         ),
         producer: Effect.fn("Memory.producer")((id, producerId) =>
-          Effect.sync(() =>
+          boundary.access((state) =>
             Option.fromUndefinedOr(state.entries.get(id)?.producers.get(producerId)).pipe(
               Option.map((value) => ({ epoch: value.epoch, lastSeq: value.lastSeq })),
             ),
@@ -175,17 +176,18 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage> =>
               new Error("Mutation requires distinct streams within atomicScope"),
             );
           return yield* Effect.gen(function* () {
-            const { outcome, changed } = yield* Effect.sync(() => commit(mutation));
-            if (changed.size > 0) yield* bus.publish;
+            const { outcome, changed } = yield* boundary.access((state) => commit(state, mutation));
+            if (changed.size > 0) yield* boundary.changed;
             return outcome;
-          }).pipe(Semaphore.withPermit(lock), Effect.uninterruptible);
+          }).pipe(boundary.api.withTransaction, Effect.uninterruptible);
         }),
-        changes: (id) => changes(state, bus, id, chain, interval),
-        nextExpiry: Effect.sync(() =>
+        changes: (id) => changes(committed, bus, id, chain, interval),
+        nextExpiry: boundary.access((state) =>
           Option.fromUndefinedOr(state.deadlines[0]).pipe(
             Option.map((deadline) => ({ ...deadline })),
           ),
         ),
       });
+      return Context.make(Storage, storage).pipe(Context.add(MemoryCommitBoundary, boundary.api));
     }),
   );

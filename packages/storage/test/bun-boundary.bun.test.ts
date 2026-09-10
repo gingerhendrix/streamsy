@@ -37,6 +37,26 @@ test("full Bun Storage preserves boundary ownership and the bounded missed-wake 
   await runtime.dispose();
   const ownerCleanup = await Effect.runPromise(finishOwnerCleanupProof(probe, pendingCleanup));
   expect(result).toEqual({
+    fused: {
+      committed: {
+        output: ["1"],
+        records: [
+          ["checkpoint", "1"],
+          ["state", "1"],
+        ],
+      },
+      restored: {
+        output: ["1"],
+        records: [
+          ["checkpoint", "1"],
+          ["state", "1"],
+        ],
+      },
+      failed: true,
+      insideWakes: 0,
+      commitWakes: 1,
+      rollbackWakes: 0,
+    },
     rawBoundaryRejectedBeforeBody: true,
     rawMutationDefectedBeforeStorageSql: true,
     rawApplicationRolledBack: true,

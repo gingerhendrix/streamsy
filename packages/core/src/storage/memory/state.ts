@@ -63,3 +63,24 @@ export function indexDeadlines(state: State): void {
     )
     .toSorted((a, b) => a.at - b.at || a.streamId.localeCompare(b.streamId));
 }
+
+/** A private transaction draft; no mutable stream data aliases the committed state. */
+export const copyState = (state: State): State => ({
+  entries: new Map(
+    [...state.entries].map(([id, entry]) => [
+      id,
+      {
+        record: copyRecord(entry.record),
+        messages: entry.messages.map(copyMessage),
+        producers: new Map(
+          [...entry.producers].map(([producerId, producer]) => [
+            producerId,
+            { epoch: producer.epoch, lastSeq: producer.lastSeq },
+          ]),
+        ),
+      },
+    ]),
+  ),
+  children: new Map([...state.children].map(([id, children]) => [id, new Set(children)])),
+  deadlines: state.deadlines.map((deadline) => ({ ...deadline })),
+});

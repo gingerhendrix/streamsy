@@ -44,6 +44,26 @@ test("full Storage boundary schedules pass on the official DO driver in real loc
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({
     boundary: {
+      fused: {
+        committed: {
+          output: ["1"],
+          records: [
+            ["checkpoint", "1"],
+            ["state", "1"],
+          ],
+        },
+        restored: {
+          output: ["1"],
+          records: [
+            ["checkpoint", "1"],
+            ["state", "1"],
+          ],
+        },
+        failed: true,
+        insideWakes: 0,
+        commitWakes: 1,
+        rollbackWakes: 0,
+      },
       rawBoundaryRejectedBeforeBody: true,
       rawMutationDefectedBeforeStorageSql: true,
       rawApplicationRolledBack: true,
