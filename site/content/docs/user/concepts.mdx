@@ -22,8 +22,8 @@ the same bytes, epoch and sequence across a retry.
 
 Encoding and decoding failures use `EncodeFault` and `DecodeFault`. A decode
 failure stops that consumer; choosing a new offset or skipping bad input is the
-application's policy. Storage mutation rejection is still a value in the separate
-storage contract.
+application's policy. The separate storage contract reports an expected mutation
+rejection as `MutationRejected`, and it rolls the transaction back.
 
 ## Batches and offsets
 

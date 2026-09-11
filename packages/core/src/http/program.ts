@@ -11,7 +11,7 @@ import * as Append from "./append.ts";
 import { read } from "./read.ts";
 import { requestUrl } from "./route.ts";
 import { protocolErrorResponse } from "./protocol-error-response.ts";
-import type { ProtocolError } from "../protocol/errors.ts";
+import { isProtocolError, type ProtocolError } from "../protocol/errors.ts";
 
 export interface HttpOptions {
   readonly pathPrefix?: string;
@@ -82,10 +82,10 @@ export function program(options: HttpOptions = {}) {
         const isEmpty = body.byteLength === 0;
         if (isEmpty && !parsed.wantClose) return responses.badRequest("Empty body not allowed");
         if (!parsed.contentType && !isEmpty) return responses.badRequest("Content-Type required");
+        // Malformed JSON is a request fault the edge must reject before framing.
+        // An empty message set is a protocol rejection, so the rule lives in one place.
         const normalized = Create.normalizeInitialData(body.data, parsed.contentType ?? undefined);
         if (!normalized.ok) return normalized.response;
-        if (!isEmpty && !normalized.initialData)
-          return responses.badRequest("Empty arrays not allowed");
         const result = yield* writer.append(id, {
           data: body.data,
           contentType: parsed.contentType ?? "application/octet-stream",
@@ -118,22 +118,7 @@ export function program(options: HttpOptions = {}) {
         return responses.methodNotAllowed();
     }
   }).pipe(
-    Effect.catchTags({
-      StreamNotFound: failure,
-      StreamGone: failure,
-      ForkSourceNotFound: failure,
-      CreateConflict: failure,
-      AppendConflict: failure,
-      InvalidForkRequest: failure,
-      InvalidAppendRequest: failure,
-      StreamClosed: failure,
-      OffsetMismatch: failure,
-      StreamBusy: failure,
-      StaleEpoch: failure,
-      ProducerGap: failure,
-      InvalidEpochSeq: failure,
-      NotSupported: failure,
-    }),
+    Effect.catchIf(isProtocolError, failure),
     Effect.catchTags({
       StorageFault: () => Effect.succeed(responses.internalError()),
       TransportFault: () => Effect.succeed(responses.internalError()),

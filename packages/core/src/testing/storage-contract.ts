@@ -19,7 +19,7 @@ import { ZERO_OFFSET, next } from "../offset/index.ts";
 import { Storage } from "../storage/storage.ts";
 import type { StorageFault } from "../fault.ts";
 import type { StorageCapabilities } from "../storage/capabilities.ts";
-import { MutationRejected, type MutationOutcome, type Operation } from "../storage/mutation.ts";
+import { MutationRejected, type MutationApplied, type Operation } from "../storage/mutation.ts";
 
 export interface StorageContractOptions {
   readonly name: string;
@@ -56,7 +56,7 @@ const mutate = Effect.fn("Contract.mutate")(function* (operation: Operation) {
   const storage = yield* Storage;
   return yield* storage.mutate({ operations: [operation] });
 });
-function applied(out: MutationOutcome, tag: string) {
+function applied(out: MutationApplied, tag: string) {
   expect(out).toMatchObject({ _tag: "Applied" });
   expect(out.results[0]).toMatchObject({ _tag: tag });
 }
@@ -126,7 +126,7 @@ export const StorageContract = {
         name: string,
         body: Effect.Effect<
           unknown,
-          MutationRejected | StorageFault | MutationOutcome,
+          MutationRejected | StorageFault | MutationApplied,
           Storage | TestClock.TestClock | import("effect").Scope.Scope
         >,
         enabled = true,

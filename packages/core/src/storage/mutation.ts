@@ -45,7 +45,7 @@ export const OperationResult = Schema.Union([
 ]);
 
 /** The success channel of a storage mutation contains only applied operation results. */
-export const MutationOutcome = Schema.TaggedStruct("Applied", {
+export const MutationApplied = Schema.TaggedStruct("Applied", {
   results: Schema.NonEmptyArray(OperationResult),
 });
 
@@ -72,4 +72,4 @@ export type Mutation = typeof Mutation.Type;
 
 export type OperationResult = typeof OperationResult.Type;
 
-export type MutationOutcome = typeof MutationOutcome.Type;
+export type MutationApplied = typeof MutationApplied.Type;

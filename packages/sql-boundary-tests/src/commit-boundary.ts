@@ -35,7 +35,6 @@ export interface CommitBoundary {
   readonly mutation: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
     readonly effect: Effect.Effect<A, E, R>;
-    readonly committed: (value: A) => boolean;
   }) => Effect.Effect<A, E | import("effect/unstable/sql/SqlError").SqlError, R>;
   readonly changes: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
@@ -129,16 +128,16 @@ export const makeCommitBoundary = (
         });
       });
 
-    const mutation: CommitBoundary["mutation"] = ({ keys, effect, committed }) =>
+    const mutation: CommitBoundary["mutation"] = ({ keys, effect }) =>
       Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) => {
-        const run = Effect.tap(effect, (value) =>
+        const run = Effect.tap(effect, () =>
           Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pending) => {
             if (Option.isNone(pending)) {
               return Effect.die(
                 new Error("Ambient SQL transaction is not owned by the commit boundary"),
               );
             }
-            if (committed(value)) for (const key of keys) pending.value.add(key);
+            for (const key of keys) pending.value.add(key);
             return Effect.void;
           }),
         );

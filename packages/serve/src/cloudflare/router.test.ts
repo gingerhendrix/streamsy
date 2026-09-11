@@ -50,7 +50,7 @@ test("router uses the raw stripped stream path and forwards the unchanged reques
   expect(namespace.requests[0]).toBe(request);
 });
 
-test("byKey forwards forks to the child object without resolving the source key", async () => {
+test("byKey routes a fork request to the child object without consulting the source key", async () => {
   const namespace = makeNamespace();
   const handler = router({
     namespace: () => namespace,

@@ -53,6 +53,12 @@ remove succeeds with `void`, and `readNext` adds `cursor` and `timedOut: boolean
 Every success that carries `closed` supplies a boolean. Read messages retain only
 `data`; per-message offsets and timestamps belong to storage.
 
+An append carries at least one message or it closes the stream. A body that frames
+no message, including the JSON empty array `[]`, fails with `InvalidAppendRequest`.
+A close-only append is an empty body with `close: true`, which `Streams.append`
+encodes for an empty item list. The direct Layer and every HTTP transport apply
+this one rule.
+
 Protocol rejections are `Schema.TaggedError` classes in the Effect error channel.
 Every error carries the stream `id`. Use `Effect.catchTag` / `Effect.catchTags` to
 handle `StreamNotFound`, `StreamGone`, `StreamClosed`, `OffsetMismatch`,
@@ -61,14 +67,17 @@ handle `StreamNotFound`, `StreamGone`, `StreamClosed`, `OffsetMismatch`,
 or `NotSupported`. The per-operation `HeadError`, `ReadError`, `ReadNextError`,
 `CreateError`, `AppendError`, and `RemoveError` unions describe each service method.
 Infrastructure errors remain `StorageFault` (direct) or `TransportFault` (fetch).
-Storage mutation rejection remains a value at the separate storage boundary.
+The separate storage boundary reports an expected rejection as `MutationRejected`
+in the error channel and rolls the transaction back; [the storage
+contract](storage-contract.md) states the recovery rule.
 
 Content-type and stream-sequence conflicts use one `AppendConflict` with a message.
 `CreateConflict.reason` has four direct reasons: `config-mismatch`, `soft-deleted`,
 `fork-content-type`, and `fork-source-soft-deleted`. Fetch omits the reason because
 standard HTTP does not encode it. A bare append 400 becomes `InvalidAppendRequest`
 with its body as the message; fetch does not infer `InvalidEpochSeq` from wording.
-`ForkSourceNotFound` retains the requested source and its error message.
+`ForkSourceNotFound` retains the requested source, and HTTP answers it as
+`404 Source stream not found: <source>`.
 
 A duplicate proves an accepted tuple, not equality of retry payloads: owners must
 retain exact bytes. Fold's journal enforces that ownership and equality on memory

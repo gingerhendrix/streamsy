@@ -36,7 +36,9 @@ export const append = Effect.fn("Streams.append")(function* <A, RD, RE>(
   );
   const data =
     items.length === 0 && options.close
-      ? new Uint8Array()
+      ? // A close-only append is the protocol's empty body. An empty JSON array is
+        // a malformed append on every transport, so it must not carry the close.
+        new Uint8Array()
       : Predicate.isTagged(ref, "Json")
         ? new TextEncoder().encode(`[${encoded.join(",")}]`)
         : concatBytes(encoded);

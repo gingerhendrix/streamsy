@@ -50,7 +50,7 @@ export class CreateConflict extends Schema.TaggedError<CreateConflict>()("Create
 }) {}
 export class ForkSourceNotFound extends Schema.TaggedError<ForkSourceNotFound>()(
   "ForkSourceNotFound",
-  { id: StreamId, source: StreamId, message: Schema.String },
+  { id: StreamId, source: StreamId },
 ) {}
 export class InvalidForkRequest extends Schema.TaggedError<InvalidForkRequest>()(
   "InvalidForkRequest",
@@ -59,7 +59,6 @@ export class InvalidForkRequest extends Schema.TaggedError<InvalidForkRequest>()
 export class NotSupported extends Schema.TaggedError<NotSupported>()("NotSupported", {
   id: StreamId,
   feature: Schema.String,
-  message: Schema.optionalKey(Schema.String),
 }) {}
 export type CreateConflictReason = NonNullable<CreateConflict["reason"]>;
 export type HeadError = StreamNotFound | StreamGone;
@@ -80,3 +79,25 @@ export type AppendError =
   | NotSupported;
 export type RemoveError = StreamNotFound | StreamGone | StreamBusy;
 export type ProtocolError = HeadError | ReadNextError | CreateError | AppendError | RemoveError;
+
+/** Exhaustive record of every protocol tag, checked against the union it must cover. */
+const protocolErrorTags = {
+  StreamNotFound: true,
+  StreamGone: true,
+  StreamClosed: true,
+  OffsetMismatch: true,
+  AppendConflict: true,
+  StreamBusy: true,
+  StaleEpoch: true,
+  ProducerGap: true,
+  InvalidEpochSeq: true,
+  InvalidAppendRequest: true,
+  CreateConflict: true,
+  ForkSourceNotFound: true,
+  InvalidForkRequest: true,
+  NotSupported: true,
+} satisfies Record<ProtocolError["_tag"], true>;
+
+/** The HTTP edge answers every protocol rejection through one mapper, so it needs one guard. */
+export const isProtocolError = (error: { readonly _tag: string }): error is ProtocolError =>
+  Object.hasOwn(protocolErrorTags, error._tag);

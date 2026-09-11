@@ -221,3 +221,16 @@ it("JSON empty close can be retried without a closed conflict", () =>
       expect((yield* Streams.append(ref, [], { close: true }))._tag).toBe("Appended");
     }),
   ));
+
+it("an append without items fails the same way as an empty body on the wire", () =>
+  check(
+    Effect.gen(function* () {
+      yield* Streams.create(ref);
+      expect(yield* Effect.flip(Streams.append(ref, []))).toMatchObject({
+        _tag: "InvalidAppendRequest",
+        id: ref.id,
+        message: "Empty append",
+      });
+      expect(yield* Streams.head(ref)).toMatchObject({ nextOffset: ZERO_OFFSET, closed: false });
+    }),
+  ));

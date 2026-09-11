@@ -145,6 +145,33 @@ for (const constrained of [false, true]) {
       constrained,
     ));
 
+  it(`${mode}: an append carries a message or it closes the stream`, () =>
+    check(
+      Effect.gen(function* () {
+        const writer = yield* StreamsWriter;
+        const reader = yield* StreamsReader;
+        const json = { contentType: "application/json" };
+        const emptyArray = new TextEncoder().encode("[]");
+        yield* writer.create(id, json);
+        for (const options of [
+          { data: emptyArray, ...json },
+          { data: emptyArray, ...json, close: true },
+          { data: new Uint8Array(), ...json },
+        ]) {
+          expect(yield* Effect.flip(writer.append(id, options))).toMatchObject({
+            _tag: "InvalidAppendRequest",
+            id,
+          });
+        }
+        expect(yield* reader.read(id)).toMatchObject({ nextOffset: ZERO_OFFSET, closed: false });
+        expect(
+          yield* writer.append(id, { data: new Uint8Array(), ...json, close: true }),
+        ).toMatchObject({ _tag: "Appended", closed: true });
+        expect(yield* reader.read(id)).toMatchObject({ nextOffset: ZERO_OFFSET, closed: true });
+      }),
+      constrained,
+    ));
+
   it(`${mode}: producer epochs, gaps and duplicate validation precede malformed CAS`, () =>
     check(
       Effect.gen(function* () {
@@ -857,16 +884,32 @@ for (const race of ["matching-create", "conflicting-create", "source-gone"] as c
         else
           expect(yield* Effect.flip(attempt)).toMatchObject(
             race === "source-gone"
-              ? {
-                  _tag: "ForkSourceNotFound",
-                  source,
-                  message: "Source stream disappeared during fork",
-                }
+              ? { _tag: "ForkSourceNotFound", source }
               : { _tag: "CreateConflict", reason: "config-mismatch" },
           );
       }),
     ));
 }
+
+it("a plain create treats an impossible rejection as a defect, not a fork answer", () =>
+  check(
+    Effect.gen(function* () {
+      const control = yield* StreamsTest;
+      const storage = Storage.of({
+        ...control.storage,
+        mutate: () =>
+          Effect.fail(
+            new MutationRejected({ index: 0, reason: "fork-source-gone", record: Option.none() }),
+          ),
+      });
+      const exit = yield* Protocol.create(storage, id, { contentType: "text/plain" }).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      if (Exit.isFailure(exit))
+        expect(String(Cause.squash(exit.cause))).toContain("Unexpected create rejection");
+    }),
+  ));
 
 for (const operation of ["touch", "sweep"] as const) {
   it(`${operation} tolerates a rejected mutation and preserves concurrent renewal`, () =>

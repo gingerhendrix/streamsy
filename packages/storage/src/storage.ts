@@ -11,7 +11,7 @@ import {
   StreamRecord,
   ZERO_OFFSET,
   type Mutation,
-  type MutationOutcome,
+  type MutationApplied,
   MutationRejected,
   type OperationResult,
   type RecordPatch,
@@ -363,7 +363,7 @@ const purge = (sql: SqlClient.SqlClient, start: StreamRecord) =>
 const applyMutation = (
   sql: SqlClient.SqlClient,
   mutation: Mutation,
-): Effect.Effect<MutationOutcome, MutationRejected | StorageFault> =>
+): Effect.Effect<MutationApplied, MutationRejected | StorageFault> =>
   Effect.gen(function* () {
     yield* preflight(sql, mutation);
     const records = new Map<StreamId, StreamRecord>();
@@ -556,7 +556,6 @@ const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
         .mutation({
           keys: [STORAGE_KEY],
           effect: applyMutation(sql, mutation),
-          committed: () => true,
           retryable: (error) => error._tag === "StorageFault" && error.retryable,
         })
         .pipe(

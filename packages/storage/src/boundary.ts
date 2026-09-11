@@ -70,7 +70,6 @@ export interface BoundaryRuntime extends CommitBoundaryApi {
   readonly mutation: <A, E, R>(options: {
     readonly keys: ReadonlyArray<string>;
     readonly effect: Effect.Effect<A, E, R>;
-    readonly committed: (value: A) => boolean;
     readonly retryable: (error: E) => boolean;
   }) => Effect.Effect<A, E | SqlError, R>;
   readonly changes: <A, E, R>(options: {
@@ -165,19 +164,21 @@ const makeBoundary = (
         });
       });
 
-    const mutation: BoundaryRuntime["mutation"] = ({ keys, effect, committed, retryable }) =>
+    const mutation: BoundaryRuntime["mutation"] = ({ keys, effect, retryable }) =>
       Effect.flatMap(Effect.serviceOption(sql.transactionService), (ambient) =>
         Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pendingBefore) => {
           // This check is deliberately before `effect`: a foreign raw ambient
           // transaction cannot execute an unnotified storage statement.
           if (Option.isSome(ambient) && Option.isNone(pendingBefore))
             return Effect.die(new Error("Ambient SQL transaction is not owned by CommitBoundary"));
-          const run = Effect.tap(effect, (value) =>
+          const run = Effect.tap(effect, () =>
             Effect.flatMap(Effect.serviceOption(PendingInvalidations), (pending) => {
               if (Option.isNone(pending))
                 return Effect.die(new Error("CommitBoundary owner context disappeared"));
               return Effect.sync(() => {
-                if (committed(value)) for (const key of keys) pending.value.add(key);
+                // A mutation that succeeds is applied: a rejection travels on the error
+                // channel and rolls the transaction back.
+                for (const key of keys) pending.value.add(key);
               });
             }),
           );

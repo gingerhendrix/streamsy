@@ -14,7 +14,7 @@ bytes must be independent of caller inputs and stored state.
 
 `mutate({ operations })` takes a nonempty ordered set of `Create`, `Append` or
 `Delete` operations. Internal values use PascalCase `_tag` discriminants.
-`MutationOutcome` is the success-only `{ _tag: "Applied", results }` schema and
+`MutationApplied` is the success-only `{ _tag: "Applied", results }` schema and
 supplies ordered operation results. Expected rejection fails with the schema-backed
 `MutationRejected` error, carrying the failing operation index, a reason and an
 `Option<StreamRecord>` current record. Reasons remain `offset`, `closed`, `producer`,

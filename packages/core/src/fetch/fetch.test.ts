@@ -96,6 +96,7 @@ const fixture = Effect.gen(function* () {
     yield* Effect.flip(writer.append(ref.id, { data: bytes, contentType: "text/plain" })),
   );
   results.push(yield* Streams.append(ref, [], { close: true }));
+  results.push(yield* Effect.flip(Streams.append(ref, [])));
   results.push(yield* Effect.flip(Streams.append(ref, [{ id: 6 }])));
   results.push(yield* batches(Streams.follow(ref)));
   results.push(yield* Streams.remove(ref));

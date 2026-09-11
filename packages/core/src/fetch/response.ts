@@ -92,22 +92,18 @@ export const create = (
     }
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
+      if (feature !== undefined) return yield* new NotSupported({ id: context.id, feature });
       const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
-      if (feature !== undefined)
-        return yield* new NotSupported({ id: context.id, feature, message });
       return yield* new InvalidForkRequest({
         id: context.id,
         message: message ?? "Invalid fork parameters",
       });
     }
-    if (response.status === 404) {
-      const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
+    if (response.status === 404)
       return yield* new ForkSourceNotFound({
         id: context.id,
         source: context.source ?? context.id,
-        message: message ?? "Source stream not found",
       });
-    }
     if (response.status === 409)
       return yield* new CreateConflict({
         id: context.id,
@@ -168,10 +164,7 @@ export const append = (
     }
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
-      if (feature !== undefined) {
-        const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
-        return yield* new NotSupported({ id: context.id, feature, message });
-      }
+      if (feature !== undefined) return yield* new NotSupported({ id: context.id, feature });
       const detail = yield* Wire.bodyText(operation, response);
       // A bare 400 cannot distinguish invalid epoch/sequence from other request errors.
       return yield* new InvalidAppendRequest({ id: context.id, message: detail });
@@ -244,8 +237,7 @@ export const readNext = (
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
       if (feature === undefined) return yield* Wire.unexpected(operation, response);
-      const message = emptyToUndefined(yield* Wire.bodyText(operation, response));
-      return yield* new NotSupported({ id: context.id, feature, message });
+      return yield* new NotSupported({ id: context.id, feature });
     }
     if (response.status !== 200 && response.status !== 204)
       return yield* Wire.unexpected(operation, response);

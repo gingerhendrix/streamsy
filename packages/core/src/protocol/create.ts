@@ -126,13 +126,13 @@ export const create = Effect.fn("Protocol.create")(function* (
     Effect.catchTag("MutationRejected", (rejection): Effect.Effect<CreateResult, CreateError> => {
       if (rejection.reason === "exists" && Option.isSome(rejection.record))
         return existingResult(rejection.record.value, options);
-      return Effect.fail(
-        new ForkSourceNotFound({
-          id,
-          source: StreamId.make(options.forkedFrom ?? id),
-          message: "Source stream disappeared during fork",
-        }),
-      );
+      // A race that removes the source between planning and the mutation is the
+      // one other rejection a fork can meet. A plain create cannot meet any.
+      if (options.forkedFrom !== undefined && rejection.reason === "fork-source-gone")
+        return Effect.fail(
+          new ForkSourceNotFound({ id, source: StreamId.make(options.forkedFrom) }),
+        );
+      return Effect.die(new Error(`Unexpected create rejection: ${rejection.reason}`));
     }),
   );
 });

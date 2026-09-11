@@ -9,7 +9,7 @@ interface Snapshot {
   readonly expiresAtMs: number;
 }
 
-type MutationOutcome = { readonly _tag: "Applied"; readonly ambient: boolean };
+type MutationApplied = { readonly _tag: "Applied"; readonly ambient: boolean };
 
 class MutationRejected extends Schema.TaggedError<MutationRejected>()("MutationRejected", {
   revision: Schema.Finite,
@@ -93,10 +93,9 @@ const mutate = (
   boundary: CommitBoundary,
   expectedRevision: number,
   next: Snapshot,
-): Effect.Effect<MutationOutcome, MutationRejected | SqlError> =>
+): Effect.Effect<MutationApplied, MutationRejected | SqlError> =>
   boundary.mutation({
     keys: ["stream:stream"],
-    committed: () => true,
     effect: Effect.gen(function* () {
       const ambient = yield* Effect.serviceOption(boundary.sql.transactionService);
       const current = yield* snapshot(boundary.sql);

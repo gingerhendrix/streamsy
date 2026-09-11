@@ -3,7 +3,7 @@ import { Storage } from "../storage.ts";
 import {
   MutationRejected,
   type Mutation,
-  type MutationOutcome,
+  type MutationApplied,
   type Operation,
   type OperationResult,
 } from "../mutation.ts";
@@ -16,7 +16,7 @@ import { makeBoundary, MemoryCommitBoundary } from "./boundary.ts";
 import { changes } from "./changes.ts";
 
 interface CommitResult {
-  outcome: MutationOutcome;
+  outcome: MutationApplied;
   changed: Set<StreamId>;
 }
 export interface MemoryOptions {
@@ -181,7 +181,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
             );
           return yield* Effect.gen(function* () {
             const result = yield* boundary.access((state) => commit(state, mutation));
-            if (result instanceof MutationRejected) return yield* result;
+            if (Predicate.isTagged(result, "MutationRejected")) return yield* result;
             const { outcome, changed } = result;
             if (changed.size > 0) yield* boundary.changed;
             return outcome;

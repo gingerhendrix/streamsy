@@ -74,11 +74,7 @@ export class ForkPlanBuilder {
     if (!source)
       return {
         _tag: "Rejected",
-        error: new ForkSourceNotFound({
-          id: targetId,
-          source: sourcePath,
-          message: `Source stream not found: ${sourcePath}`,
-        }),
+        error: new ForkSourceNotFound({ id: targetId, source: sourcePath }),
       };
     if (source.lifecycle.softDeleted) {
       return {

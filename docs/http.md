@@ -79,6 +79,13 @@ burst can occupy a large response and framing buffer. Backpressure does not boun
 that batch's size. Byte toolkit append joins supplied items into one stored
 message; reads return one item per stored message.
 
+A POST body must carry at least one message, or the request must close the stream.
+An empty body without `Stream-Closed` receives `400 Empty body not allowed`, and a
+JSON `[]` body receives `400 Empty append` in either case. A close-only append is
+an empty body with `Stream-Closed: true`. The direct protocol raises
+`InvalidAppendRequest` for the same shapes, so a toolkit append with no items fails
+identically on every transport.
+
 Cursors at HTTP ingress must be canonical nonnegative decimal safe integers,
 with room for the generator's maximum jitter (180). Malformed or overflowing
 values receive `400 Invalid cursor`. This deliberately tightens the old HTTP
@@ -146,6 +153,7 @@ value, which re-serializes them rather than reproducing the stored bytes. Append
 content-type and sequence conflicts become `AppendConflict` errors carrying the
 409 body message, without matching its wording. A bare append 400 becomes
 `InvalidAppendRequest`, and create conflict reasons are absent from standard HTTP.
-Protocol failures use the Effect error channel; this changes no HTTP status, header
-or body. A producer close-only append and duplicate both answer 204, decoded as
+Protocol failures use the Effect error channel; apart from the empty-append body
+above, this changes no HTTP status, header or body. A producer close-only append
+and duplicate both answer 204, decoded as
 `Duplicate` with `closed: true`; empty long polls decode with `timedOut: true`.

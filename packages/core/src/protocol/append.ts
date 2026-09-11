@@ -17,6 +17,7 @@ import {
   OffsetMismatch,
   AppendConflict,
   StreamBusy,
+  InvalidAppendRequest,
   type AppendError,
 } from "./errors.ts";
 import type { AppendResult } from "./results.ts";
@@ -52,6 +53,10 @@ export const append = Effect.fn("Protocol.append")(function* (
       return yield* rejectionToAppendError(validation, id);
     const wantClose = options.close === true;
     const closeOnly = wantClose && options.data.byteLength === 0;
+    // One append rule for every transport: a write carries at least one message, or
+    // it closes the stream with no body. The HTTP edge answers these shapes with 400.
+    if (options.data.byteLength === 0 && !closeOnly)
+      return yield* new InvalidAppendRequest({ id, message: "Empty append" });
     if (closeOnly && record.lifecycle.closed)
       return { _tag: "Appended", offset: record.currentOffset, closed: true };
     if (record.lifecycle.closed)
@@ -76,6 +81,9 @@ export const append = Effect.fn("Protocol.append")(function* (
     const messages = (closeOnly ? [] : frameMessages(options.data, record.config.contentType)).map(
       (data) => ({ data, offset: (offset = next(offset)), timestamp: now }),
     );
+    // A JSON body can carry no message without being empty: `[]` is not an append.
+    if (messages.length === 0 && !closeOnly)
+      return yield* new InvalidAppendRequest({ id, message: "Empty append" });
     const lifecycle: { -readonly [K in keyof StreamLifecycle]?: StreamLifecycle[K] } = {};
     if (options.seq) lifecycle.lastSeq = options.seq;
     if (wantClose) {

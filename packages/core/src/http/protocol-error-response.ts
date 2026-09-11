@@ -15,7 +15,9 @@ export function protocolErrorResponse(
     case "StreamGone":
       return context.method === "HEAD" ? responses.noStore(responses.gone()) : responses.gone();
     case "ForkSourceNotFound":
-      return responses.notFound(error.message);
+      // The body names the source, which is the observable symptom of a fork that
+      // landed on an owner that does not hold its source stream.
+      return responses.notFound(`Source stream not found: ${error.source}`);
     case "CreateConflict":
     case "AppendConflict":
       return responses.conflict(error.message);
@@ -40,7 +42,7 @@ export function protocolErrorResponse(
     case "InvalidEpochSeq":
       return responses.badRequest("New epoch must start at seq=0");
     case "NotSupported":
-      return new Response(error.message ?? `Feature not supported: ${error.feature}`, {
+      return new Response(`Feature not supported: ${error.feature}`, {
         status: 400,
         headers: { "stream-not-supported": error.feature },
       });

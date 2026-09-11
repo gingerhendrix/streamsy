@@ -7,7 +7,7 @@ export {
   Operation,
   Mutation,
   OperationResult,
-  MutationOutcome,
+  MutationApplied,
   MutationRejected,
 } from "./mutation.ts";
 export * as Memory from "./memory/layer.ts";
