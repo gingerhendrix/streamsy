@@ -9,7 +9,7 @@ import type {
 } from "../protocol/options.ts";
 import type { ReadResult, ReadNextResult } from "../protocol/results.ts";
 import type { StreamRef } from "./ref.ts";
-export { layerMemory } from "./layers.ts";
+export { layerMemory, layerRouted } from "./layers.ts";
 
 export interface Batch<A> {
   readonly items: ReadonlyArray<A>;

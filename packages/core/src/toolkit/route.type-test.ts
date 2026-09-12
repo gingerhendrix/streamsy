@@ -36,32 +36,29 @@ void both;
 // A matching template and codec record is accepted.
 StreamRoute.json("journal/:user", { params: { user: Schema.String }, schema: Entry });
 
+const renamed = { account: Schema.String };
 // @ts-expect-error the template names a parameter that the codec record omits
-StreamRoute.json("journal/:user", { params: { account: Schema.String }, schema: Entry });
+StreamRoute.json("journal/:user", { params: renamed, schema: Entry });
 
+const extra = { user: Schema.String, extra: Schema.String };
 // @ts-expect-error the codec record carries a parameter that the template omits
-StreamRoute.json("journal/:user", {
-  params: { user: Schema.String, extra: Schema.String },
-  schema: Entry,
-});
+StreamRoute.json("journal/:user", { params: extra, schema: Entry });
 
+const one = { user: Schema.String };
 // @ts-expect-error a two-parameter template needs both codecs
-StreamRoute.json("journal/:user/:kind", { params: { user: Schema.String }, schema: Entry });
+StreamRoute.json("journal/:user/:kind", { params: one, schema: Entry });
 
 StreamRoute.bytes("uploads/:name", { params: { name: Schema.String }, contentType: "image/png" });
 
 // @ts-expect-error the bytes template names a parameter that the codec record omits
-StreamRoute.bytes("uploads/:name", { params: { account: Schema.String } });
+StreamRoute.bytes("uploads/:name", { params: renamed });
 
 // A widened string template cannot be checked, so the declaration is accepted.
 const widened: string = "journal/:user";
-StreamRoute.json(widened, { params: { user: Schema.String }, schema: Entry });
+StreamRoute.json(widened, { params: one, schema: Entry });
 
 // The decoded parameter type flows into `ref`, so a route builds its own ref shape.
-const journal = StreamRoute.json("journal/:user", {
-  params: { user: Schema.String },
-  schema: Entry,
-});
+const journal = StreamRoute.json("journal/:user", { params: one, schema: Entry });
 const built = journal.ref({ user: "ann" });
 void built;
 // @ts-expect-error the ref constructor takes the decoded parameter set
