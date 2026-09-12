@@ -1,7 +1,9 @@
 /* oxlint-disable effecttsgo/async-function, anti-slop/no-chained-type-assertions -- The fake namespace and Bun Fetch boundary intentionally narrow Cloudflare test doubles. */
 import { expect, test } from "bun:test";
 import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
-import { Placement } from "./placement.ts";
+import { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core";
+import { Placement, rule } from "./placement.ts";
 import { router } from "./router.ts";
 
 type FakeNamespace = DurableObjectNamespace & {
@@ -123,4 +125,105 @@ test("placement defects are 500 and empty or non-string keys are 400", async () 
   const number = await invoke(nonString, new Request("https://streams.test/a"));
   expect(number?.status).toBe(400);
   expect(await number?.text()).toBe("Invalid placement key");
+});
+
+const Note = Schema.Struct({ text: Schema.String });
+const journal = StreamRoute.json("journal/:user", {
+  params: { user: Schema.String },
+  schema: Note,
+});
+const totals = StreamRoute.json("totals/:user", {
+  params: { user: Schema.String },
+  schema: Note,
+});
+const orders = StreamRoute.json("orders/:orderId", {
+  params: { orderId: Schema.NumberFromString.pipe(Schema.check(Schema.isGreaterThan(0))) },
+  schema: Note,
+});
+
+test("byRoute names the object from the route parameters", async () => {
+  const namespace = makeNamespace();
+  const handler = router({
+    namespace: () => namespace,
+    placement: Placement.byRoute([
+      rule({ route: journal, owner: ({ user }) => `user/${user}` }),
+      rule({ route: totals, owner: ({ user }) => `user/${user}` }),
+    ]),
+  });
+
+  const read = await invoke(handler, new Request("https://streams.test/journal/ann"));
+  expect(read?.status).toBe(200);
+  expect(namespace.names).toEqual(["user/ann"]);
+
+  const totalsRead = await invoke(handler, new Request("https://streams.test/totals/ann/x"));
+  expect(totalsRead?.status).toBe(400);
+  expect(namespace.names).toEqual(["user/ann"]);
+
+  const other = await invoke(handler, new Request("https://streams.test/totals/ann"));
+  expect(other?.status).toBe(200);
+  expect(namespace.names).toEqual(["user/ann", "user/ann"]);
+});
+
+test("a constrained codec reaches the owner as its decoded type", async () => {
+  const namespace = makeNamespace();
+  const handler = router({
+    namespace: () => namespace,
+    placement: Placement.byRoute([
+      rule({ route: orders, owner: ({ orderId }) => `order/${orderId}` }),
+    ]),
+  });
+
+  expect((await invoke(handler, new Request("https://streams.test/orders/7")))?.status).toBe(200);
+  expect(namespace.names).toEqual(["order/7"]);
+
+  // A parameter its codec rejects falls through, so no rule owns the path.
+  const invalid = await invoke(handler, new Request("https://streams.test/orders/0"));
+  expect(invalid?.status).toBe(400);
+  expect(await invalid?.text()).toBe("Invalid placement key");
+  expect(namespace.names).toEqual(["order/7"]);
+});
+
+test("an unmatched path is 400 and a throwing owner is 500", async () => {
+  const namespace = makeNamespace();
+  const unmatched = router({
+    namespace: () => namespace,
+    placement: Placement.byRoute([rule({ route: journal, owner: ({ user }) => user })]),
+  });
+  const missing = await invoke(unmatched, new Request("https://streams.test/drafts/ann"));
+  expect(missing?.status).toBe(400);
+  expect(await missing?.text()).toBe("Invalid placement key");
+  expect(namespace.names).toEqual([]);
+
+  const throwing = router({
+    namespace: () => namespace,
+    placement: Placement.byRoute([
+      rule({
+        route: journal,
+        owner: () => {
+          throw new Error("defect");
+        },
+      }),
+    ]),
+  });
+  const defect = await invoke(throwing, new Request("https://streams.test/journal/ann"));
+  expect(defect?.status).toBe(500);
+});
+
+test("byRoute routes a fork to the child's family object", async () => {
+  const namespace = makeNamespace();
+  const handler = router({
+    namespace: () => namespace,
+    placement: Placement.byRoute([rule({ route: journal, owner: ({ user }) => `user/${user}` })]),
+  });
+
+  const response = await invoke(
+    handler,
+    new Request("https://streams.test/journal/bo", {
+      method: "PUT",
+      headers: { "stream-forked-from": "/journal/ann" },
+    }),
+  );
+  expect(response?.status).toBe(200);
+  expect(await response?.text()).toBe("user/bo");
+  expect(namespace.names).toEqual(["user/bo"]);
 });
