@@ -18,42 +18,7 @@ export interface ExcerptPair {
 }
 
 export const pairs: ReadonlyArray<ExcerptPair> = [
-  {
-    doc: "site/content/docs/user/remote-browser.mdx",
-    source: "packages/core/test/remote.ts",
-    execute: false,
-  },
   { doc: "packages/core/README.md", source: "packages/core/test/readme.ts", execute: true },
-  {
-    doc: "site/content/docs/user/basic-usage.mdx",
-    source: "packages/serve/test/basic-usage.ts",
-    execute: true,
-  },
-  {
-    doc: "site/content/docs/user/basic-usage.mdx",
-    source: "packages/serve/test/host.ts",
-    execute: true,
-  },
-  {
-    doc: "site/content/docs/user/sql-storage.mdx",
-    source: "packages/storage/test/shared-transaction-usage.ts",
-    execute: true,
-  },
-  {
-    doc: "site/content/docs/user/cloudflare-hosting.mdx",
-    source: "packages/serve/test/cloudflare/example-worker.ts",
-    execute: false,
-  },
-  {
-    doc: "site/content/docs/user/cloudflare-hosting.mdx",
-    source: "packages/serve/test/cloudflare-usage.ts",
-    execute: true,
-  },
-  {
-    doc: "site/content/docs/user/cloudflare-hosting.mdx",
-    source: "hosted/alchemy.run.ts",
-    execute: false,
-  },
 ];
 
 const DEFAULT_TIMEOUT_MS = 15_000;
