@@ -1,0 +1,65 @@
+---
+title: Introduction
+description: What a projection is, the two kinds of stream it connects, and the pages that cover each part.
+---
+
+A projection turns one stream into another with a pure step. It reads a source, runs the step, and writes the outputs to a sink, and it commits the checkpoint beside the output so a restart resumes where it stopped.
+
+The kernel is one pass, repeated: restore the checkpoint, pull a batch from the `Source`, run the pure step, commit the outputs to the `Sink` with the new checkpoint.
+
+## Fact streams and state streams
+
+A fact stream records what happened. Each message is a domain event, appended once and never rewritten. It is the source of truth, and every other stream can be rebuilt from it. Declare it with `StreamRef.json` and an event schema.
+
+A state stream carries the current value of keyed rows. Its items are Durable State change events, and a browser reads it with `@durable-streams/state`. Declare it with `StreamRef.state` and the row schema of each collection.
+
+```json
+{
+  "type": "order",
+  "key": "o-17",
+  "value": { "orderId": "o-17", "sku": "A1", "status": "shipped" },
+  "headers": { "operation": "upsert" }
+}
+```
+
+A state stream is derived. A rebuild from the facts writes a new generation of it. See [Durable State](https://durablestreams.com/durable-state).
+
+## Two meanings of sink
+
+The word sink appears twice on these pages. A derive `Sink` is where a projection writes; see [Projections](/docs/projections/projections). A serve sink is an HTTP contract that publishes a relation, its changes, a document, or an external effect; see [Sinks](/docs/projections/sinks).
+
+## A minimal projection
+
+```ts
+import { Effect, Schema } from "effect";
+import { StreamRef, Streams } from "@streamsy/core";
+import { Projection, StreamSink, StreamSource } from "@streamsy/derive";
+
+const input = StreamRef.json("numbers", { schema: Schema.Finite });
+const output = StreamRef.json("running-totals", { schema: Schema.Finite });
+
+export const minimal = Effect.gen(function* () {
+  yield* Streams.create(input);
+  yield* Streams.create(output);
+  yield* Streams.append(input, [1, 2, 3]);
+  const projection = Projection.make({
+    id: "running-total",
+    version: 1,
+    source: yield* StreamSource.make(input),
+    sink: yield* StreamSink.make(output),
+    initial: 0,
+    stateSchema: Schema.fromJsonString(Schema.Finite),
+    step: (state, item) => ({ state: state + item, outputs: [state + item] }),
+  });
+  return yield* Projection.catchUp(projection, { boundaries: 10, items: 100 });
+});
+```
+
+Compiled source: `packages/derive/src/examples/minimal.ts`.
+
+## Pages
+
+- [Projections](/docs/projections/projections): define, run, commit, and recover a projection.
+- [Views](/docs/projections/views): declare a keyed relation and maintain its rows.
+- [Sinks](/docs/projections/sinks): publish a relation over HTTP.
+- [Action sink](/docs/projections/action-sink): deliver an external effect at least once.

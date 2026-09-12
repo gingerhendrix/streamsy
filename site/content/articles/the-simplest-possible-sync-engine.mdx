@@ -36,8 +36,8 @@ preloads it and closes it with the React lifecycle. The compiled
 [server entry](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/hackernews-newest-stream/src/server/index.ts)
 owns the shared memory services, polling and HTTP edge.
 
-[Basic usage](/docs/user/basic-usage) contains compiled examples of the public
-Streamsy toolkit and Bun host. The first release packages are `@streamsy/core`,
+The [Introduction](/docs/introduction) walks through the public Streamsy
+toolkit and Bun host. The first release packages are `@streamsy/core`,
 `@streamsy/storage`, `@streamsy/serve` and `@streamsy/views`. Effect is the server and toolkit boundary;
 official Durable Streams packages supply the browser path.
 
@@ -53,4 +53,4 @@ This demo deliberately uses one acquired memory store. The separate SQL package
 ships Bun and Durable Object SQLite storage, but it is not yet composed into this
 example. The local Cloudflare Durable Object host is implemented with workerd
 evidence; hosted execution and release acceptance remain pending. See the
-[Cloudflare hosting guide](/docs/user/cloudflare-hosting).
+[Cloudflare guide](/docs/runtime/cloudflare).

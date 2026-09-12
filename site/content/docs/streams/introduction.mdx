@@ -1,0 +1,99 @@
+---
+title: Introduction
+description: What a stream is, how a ref names one, and how the Streams functions report results and errors.
+---
+
+A stream is an ordered, append-only sequence of messages under one id. A `StreamRef` names one stream and carries its codec, so the `Streams` functions can encode what you append and decode what you read.
+
+Streamsy implements the [Durable Streams](https://durablestreams.com/) protocol. The protocol model, its six operations, and its live read modes are described at [durablestreams.com/concepts](https://durablestreams.com/concepts). This page does not restate them.
+
+## Offsets
+
+Every message has an offset. An offset is an opaque string that sorts within one stream. `ZERO_OFFSET` is the position before the first message. Never compare an offset from one stream with an offset from another. See [PROTOCOL.md section 8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#8-offsets).
+
+## Refs
+
+```ts
+import { Schema } from "effect";
+import { StreamRef } from "@streamsy/core";
+
+const Note = Schema.Struct({ id: Schema.String, text: Schema.String });
+const NoteRow = Schema.Struct({ id: Schema.String, text: Schema.String, updatedAt: Schema.String });
+
+export const notes = StreamRef.json("notes", { schema: Note });
+export const blobs = StreamRef.bytes("blobs", { contentType: "image/png" });
+export const noteIndex = StreamRef.state("note-index", { collections: { note: NoteRow } });
+```
+
+A ref holds no resource and opens no connection. Two refs with the same id name the same stream.
+
+| Constructor | Items | Upstream mode |
+| --- | --- | --- |
+| `StreamRef.json(id, { schema })` | one message per item | [JSON mode](https://durablestreams.com/json-mode) |
+| `StreamRef.bytes(id, { contentType? })` | items joined into one message | [byte stream](https://durablestreams.com/concepts) |
+| `StreamRef.state(id, { collections })` | Durable State change events, typed by collection | [Durable State](https://durablestreams.com/durable-state) |
+
+The id is a path. Segments are separated by `/`. A segment cannot be empty, `.`, or `..`, and the id cannot contain `%`, `?`, `#`, or `\`. Over HTTP the id is the stream path under the host prefix, so `notes` is served at `/notes`.
+
+## Families
+
+A `StreamRoute` names a family of streams with one id template. It builds the ref for a member and parses an id back into its parameters.
+
+```ts
+import { Option, Schema } from "effect";
+import { StreamRoute } from "@streamsy/core";
+
+const OrderEvent = Schema.Struct({ type: Schema.String, orderId: Schema.String });
+
+export const orderEvents = StreamRoute.json("orders/:orderId/events", {
+  params: { orderId: Schema.String },
+  schema: OrderEvent,
+});
+
+const ref = orderEvents.ref({ orderId: "o-17" }); // ref.id === "orders/o-17/events"
+const params = orderEvents.parse("orders/o-17/events"); // Option.some({ orderId: "o-17" })
+const owns = orderEvents.match("notes"); // false
+```
+
+A template is relative. Each `:name` is exactly one segment, and there are no wildcards. The set of `:name` parameters and the keys of `params` must agree, and the compiler checks that. A parameter that does not decode makes `parse` return `None`.
+
+The same route value is read again in two places. `Streams.layerRouted` uses it to pick a storage backend for an id, and `Placement.byRoute` uses it to name the Durable Object that owns the stream. Both are on the [Runtime](/docs/runtime/introduction) pages.
+
+A plain function is enough when nothing else needs the family:
+
+```ts
+const orderEvents = (orderId: string) =>
+  StreamRef.json(`orders/${orderId}/events`, { schema: OrderEvent });
+```
+
+## What you can do with a stream
+
+- `Streams.create(ref)` makes the stream, or forks one from a source. See [Creating](/docs/streams/creating).
+- `Streams.append(ref, items)` writes items as one atomic append. See [Writing](/docs/streams/writing).
+- `Streams.read(ref)` returns stored batches after an offset. See [Reading](/docs/streams/reading).
+- `Streams.follow(ref)` reads, then waits for more. See [Reading](/docs/streams/reading).
+- `Streams.head(ref)` returns the tail and the configuration without messages.
+- `Streams.remove(ref)` deletes the stream. See [Creating](/docs/streams/creating).
+
+## Results and errors
+
+`create` succeeds with `Created` or `Exists`. `append` succeeds with `Appended` or `Duplicate`. Every other outcome is a typed error in the Effect error channel. Each error carries the stream `id` and a `_tag`, so you match on the tag.
+
+```ts
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const tolerant = Streams.append(notes, [{ id: "n2", text: "again" }]).pipe(
+  Effect.catchTags({
+    StreamNotFound: () => Effect.succeed(undefined),
+    StreamClosed: (error) => Effect.logWarning(`closed at ${error.offset}`),
+  }),
+);
+```
+
+Each page names the errors you meet on that page. Infrastructure failures keep a `Fault` suffix: `StorageFault` from a local store, `TransportFault` from the fetch Layer, and `EncodeFault` or `DecodeFault` from the ref codec. The full set is in the reference.
+
+## Layers
+
+The `Streams` functions need two services, `StreamsReader` and `StreamsWriter`. A Layer supplies them, and the Layer decides where the data lives. The program does not change between Layers. See [Runtime](/docs/runtime/introduction).

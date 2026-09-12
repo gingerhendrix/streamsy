@@ -1,0 +1,86 @@
+---
+title: Writing
+description: Append items as one atomic write, retry safely with a producer position, and guard a write with the expected offset.
+---
+
+`Streams.append` encodes items with the ref codec and writes them as one atomic append. Options close the stream, fence a producer, or make the write conditional.
+
+```ts
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const write = Effect.gen(function* () {
+  const result = yield* Streams.append(notes, [{ id: "n1", text: "hello" }]);
+  return result.offset;
+});
+```
+
+`Appended` carries the new tail `offset`. Because reads are after-exclusive, that offset is also the next read position. `Duplicate` means this producer position was already accepted.
+
+A JSON ref stores one message per item. A bytes ref joins the items into one stored message.
+
+## Close
+
+`append(ref, items, { close: true })` writes the items and closes the stream. `append(ref, [], { close: true })` closes it with no items. Later appends fail with `StreamClosed`.
+
+## Idempotent retries and producer fencing
+
+A producer position is `{ producerId, epoch, seq }`. `Producer.append` sends it with the write, and `Producer.next` advances it.
+
+```ts
+import { Effect } from "effect";
+import { Producer } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const importOne = (position: Producer.Position) =>
+  Effect.gen(function* () {
+    const result = yield* Producer.append(notes, [{ id: "n3", text: "retried" }], position);
+    // Appended and Duplicate both acknowledge this position.
+    return { result, next: Producer.next(position) };
+  });
+```
+
+Advance the position only after `Appended` or `Duplicate`. Keep the bytes identical across a retry, because a duplicate acknowledges the position and does not compare payloads.
+
+`seq` starts at 0 for a new epoch and increases by one. A repeat of an accepted `seq` is `Duplicate`. A skip is `ProducerGap`. A higher epoch fences older writers, and their appends then fail with `StaleEpoch`. See [PROTOCOL.md section 5.2.1](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#521-idempotent-producers).
+
+## Conditional writes
+
+`expectedOffset` writes only if the tail still equals it. `ZERO_OFFSET` means only if the stream is still empty. A miss writes nothing and fails with `OffsetMismatch`, which carries `expected` and the `actual` tail.
+
+```ts
+import { Effect, Stream } from "effect";
+import { Streams, ZERO_OFFSET } from "@streamsy/core";
+import { orders, apply, initial } from "./orders.ts";
+
+const reserve = (sku: string) =>
+  Effect.gen(function* () {
+    const folded = yield* Streams.read(orders).pipe(
+      Stream.runFold(
+        () => ({ state: initial, tail: ZERO_OFFSET }),
+        (acc, batch) => ({
+          state: batch.items.reduce(apply, acc.state),
+          tail: batch.nextOffset,
+        }),
+      ),
+    );
+    if (folded.state.reserved.has(sku)) return { _tag: "Rejected" as const };
+    const appended = yield* Streams.append(orders, [{ type: "reserved", sku }], {
+      expectedOffset: folded.tail,
+    });
+    return { _tag: "Committed" as const, offset: appended.offset };
+  }).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
+```
+
+The loop reads the stream, decides, and appends against the tail it read. A competing writer moves the tail, the append fails, and the retry reads again. This detects a competing write. It does not give one writer ownership of the stream; use a producer epoch for that.
+
+`expectedOffset` is a Streamsy extension to the protocol. See the extensions note on the [HTTP](/docs/runtime/http) page.
+
+## Errors
+
+An append fails with `StreamClosed`, `OffsetMismatch`, `StaleEpoch`, `ProducerGap`, or `AppendConflict`, and with `EncodeFault` when an item does not match the codec. `AppendConflict` covers a content type that does not match the stream and a `Stream-Seq` that does not advance.
+
+## Over HTTP
+
+`POST` on the stream path appends. The producer position travels in the `Producer-Id`, `Producer-Epoch`, and `Producer-Seq` headers, and the condition in `Stream-Expected-Offset`. The fetch Layer sends those headers only when its `capabilities` assert them. See [HTTP](/docs/runtime/http).

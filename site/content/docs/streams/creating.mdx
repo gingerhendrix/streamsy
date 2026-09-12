@@ -1,0 +1,60 @@
+---
+title: Creating
+description: Create a stream with its content type and lifecycle, fork a child from a source, or remove a stream.
+---
+
+`Streams.create(ref)` makes a stream with the ref content type and an optional lifecycle. The same call forks a child from a source stream.
+
+```ts
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const ensure = Effect.gen(function* () {
+  const result = yield* Streams.create(notes, { ttlSeconds: 3600 });
+  return result.nextOffset;
+});
+```
+
+`Created` means the stream is new. `Exists` means a stream with the same id and the same configuration was already there. Both carry `nextOffset`, `contentType`, and `closed`, so you can continue from either one. A different configuration on the same id fails with `CreateConflict`.
+
+`closed: true` creates a closed stream. `initialData` seeds the first messages in the same write.
+
+## Expiry
+
+`ttlSeconds` sets a time to live. The clock restarts on every append and every read. `expiresAt` sets a fixed date that never moves. Set one or the other.
+
+An expired stream answers `StreamNotFound` on the next access. The check runs when the stream is touched. A store with an expiry index also sweeps. On Cloudflare the object runs that sweep from an alarm. The Bun host has no sweeper, so an untouched stream expires on its next access. See [Cloudflare](/docs/runtime/cloudflare).
+
+A projection that reads its source continuously keeps the source alive. A paused projection can lose it. That shows up as `history-unavailable` on the [Projections](/docs/projections/projections) page.
+
+## Fork
+
+A fork is a child stream that starts with a prefix of a source stream. The child has the source content type. New appends go to the child only, and the source is not changed.
+
+```ts
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { notes, draft } from "./refs.ts";
+
+const branch = Effect.gen(function* () {
+  const head = yield* Streams.head(notes);
+  return yield* Streams.create(draft, { forkedFrom: notes.id, forkOffset: head.nextOffset });
+});
+```
+
+The child inherits every source message up to and including `forkOffset`. Without `forkOffset` the child starts empty and records where it came from. The result is `Created`, or `Exists` when the same fork was already made.
+
+Where a fork works depends on the backend. The memory Layer and SQLite share the prefix with the source by lineage. A constrained memory store copies it. A backend without fork support fails with `NotSupported`. On Cloudflare the source and the child must be placed on the same object. Under `Streams.layerRouted` a fork across two backends fails with `NotSupported`. See [Cloudflare](/docs/runtime/cloudflare) and [Runtime](/docs/runtime/introduction).
+
+Errors you meet here: `ForkSourceNotFound` when the source is missing, `CreateConflict` when the child id is taken with a different configuration, and `NotSupported`.
+
+The upstream [fork page](https://durablestreams.com/fork) describes the protocol side, including what a child inherits from the source expiry.
+
+## Remove
+
+`Streams.remove(ref)` deletes the stream. Later calls on that id answer `StreamGone`. A source with live forks is soft-deleted, and the storage is released when the last child goes.
+
+## Over HTTP
+
+`PUT` on the stream path creates a stream. `PUT` with `Stream-Forked-From` forks one. `DELETE` removes it. See [HTTP](/docs/runtime/http).

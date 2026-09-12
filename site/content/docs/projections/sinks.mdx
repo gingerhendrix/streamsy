@@ -1,0 +1,119 @@
+---
+title: Sinks
+description: Publish a relation, its changes, or a derived document over HTTP through a checked sink contract.
+---
+
+`@streamsy/serve` declares checked contracts that publish a relation over HTTP. Each declaration is inert data with a route and a fingerprint, and a handler turns a `Request` into an `Effect<Response>`.
+
+| Family | Publishes | Resume | Subpath |
+| --- | --- | --- | --- |
+| state | a keyed collection as Durable State | by offset | `@streamsy/serve` |
+| stream | what happened to a relation | by offset | `@streamsy/serve/stream` |
+| document | one derived value per route | none, refetch | `@streamsy/serve/document` |
+| action | an external effect, at least once | outbox | `@streamsy/serve/action` |
+
+## Routes
+
+A sink route is absolute. Each `:name` is one segment, and the route names and the `params` keys must agree, which the compiler checks. `compileSinkRoute(template, codecs)` is what a declaration calls for you.
+
+```ts
+import { compileSinkRoute } from "@streamsy/serve/route";
+
+const route = compileSinkRoute("/state/:customerId/open-orders", {
+  customerId: { decode: (value: string) => value },
+});
+```
+
+A declaration carries a `fingerprint` over the facts a consumer can observe. A changed contract has a different fingerprint, and a consumer that sends the old one is refused.
+
+The handlers do not authorize. Wrap the handler with your own check.
+
+## State sink
+
+A state sink publishes a keyed relation as a Durable State collection. A client reads the snapshot, then follows the suffix from the snapshot offset.
+
+```ts
+import { Schema } from "effect";
+import { defineStateSink } from "@streamsy/serve";
+import { OrderRow, openOrders } from "./views.ts";
+
+export const openOrdersSink = defineStateSink({
+  name: "shop.open-orders",
+  from: openOrders,
+  row: { decode: (value: unknown) => Schema.decodeUnknownSync(OrderRow)(value) },
+  route: "/state/:customerId/open-orders",
+  params: { customerId: { decode: (value: string) => value } },
+  collection: { name: "open-orders", type: "order" },
+  protocol: {
+    sessionVersion: 1,
+    durableStateVersion: 1,
+    transport: "durable-state",
+    resume: true,
+    fallback: "snapshot-then-live",
+  },
+});
+```
+
+The collection's primary key is the relation key, so the sink and its relation cannot disagree about what identifies a row.
+
+`handleStateSink(sink, request, { snapshot, suffix })` serves it. `snapshot(params)` returns the current rows and their offset. `suffix(request, params)` serves the live tail after that offset. The snapshot response is the Durable State control sequence: `snapshot-start`, the rows, `snapshot-end`. See [Durable State](https://durablestreams.com/durable-state) and the [state protocol](https://github.com/durable-streams/durable-streams/blob/main/packages/state/STATE-PROTOCOL.md).
+
+Errors you meet here: `InvalidSinkParams` when a route parameter does not decode, `ResumeRejected` when the offset a client resumes from is no longer valid, and `SnapshotUnavailable` when the snapshot cannot be built. A refused resume tells the client to fall back to a fresh snapshot.
+
+## Stream sink
+
+A stream sink publishes the changes of a relation as a feed. Arrival order is the only order.
+
+```ts
+import { Schema } from "effect";
+import { defineStreamSink } from "@streamsy/serve/stream";
+import { changes } from "@streamsy/views";
+import { OrderChange, openOrders } from "./views.ts";
+
+export const openOrdersFeed = defineStreamSink({
+  name: "shop.open-orders.feed",
+  from: changes(openOrders),
+  event: { decode: (value: unknown) => Schema.decodeUnknownSync(OrderChange)(value) },
+  route: "/feed/:customerId/open-orders",
+  params: { customerId: { decode: (value: string) => value } },
+  feed: { name: "open-orders", type: "order-change" },
+  protocol: {
+    sessionVersion: 1,
+    transport: "durable-stream",
+    resume: true,
+    order: "arrival",
+    fallback: "replay-from-start",
+  },
+});
+```
+
+`handleStreamSink(sink, request, { read })` serves it. `read(params, offset)` returns one page of events with `nextOffset` and `upToDate`, and the client passes `nextOffset` back to continue.
+
+## Document sink
+
+A document sink publishes one derived value per route with a cache policy.
+
+```ts
+import { Schema } from "effect";
+import { defineDocumentSink } from "@streamsy/serve/document";
+import { CustomerSummary, openOrders } from "./views.ts";
+
+export const customerSummary = defineDocumentSink({
+  name: "shop.customer-summary",
+  from: [{ name: openOrders.name }],
+  document: { decode: (value: unknown) => Schema.decodeUnknownSync(CustomerSummary)(value) },
+  route: "/documents/:customerId/summary",
+  params: { customerId: { decode: (value: string) => value } },
+  cache: { visibility: "private", maxAgeSeconds: 0, mustRevalidate: true },
+});
+```
+
+`handleDocumentSink(sink, request, { document })` serves it. `document(params)` builds the current value. The response carries a strong ETag and the declared `cache-control`, and a request with a matching `If-None-Match` answers `304`.
+
+## Action sink
+
+An action sink declares an external effect, such as a mail or a webhook, keyed by a relation row. A durable outbox delivers it at least once. It has no route. See [Action sink](/docs/projections/action-sink).
+
+## In a host
+
+Each handler takes a `Request` and returns `Effect<Response>`. Wiring the handlers beside the stream protocol on Bun or in a Worker is on the [HTTP](/docs/runtime/http) page.

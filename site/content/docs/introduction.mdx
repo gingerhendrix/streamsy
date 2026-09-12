@@ -1,0 +1,158 @@
+---
+title: Introduction
+description: A small Streamsy application from a typed ref to a served projection, one step at a time.
+---
+
+This page walks through one small application. Each step shows the call and links the guide that explains it. The program is the same on every host; only the Layer at the end changes.
+
+## 1. Declare refs
+
+A `StreamRef` names a stream and its codec. A `StreamRoute` names a family of streams with one id template. Both are plain values.
+
+```ts
+import { Schema } from "effect";
+import { StreamRef, StreamRoute } from "@streamsy/core";
+
+export const OrderEvent = Schema.Struct({ orderId: Schema.String, amount: Schema.Finite });
+export const OrderRow = Schema.Struct({ orderId: Schema.String, total: Schema.Finite });
+
+export const orders = StreamRef.json("orders", { schema: OrderEvent });
+export const orderIndex = StreamRef.state("order-index", { collections: { order: OrderRow } });
+export const orderEvents = StreamRoute.json("orders/:orderId/events", {
+  params: { orderId: Schema.String },
+  schema: OrderEvent,
+});
+```
+
+See [Streams](/docs/streams/introduction).
+
+## 2. Create and append
+
+```ts
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { orders } from "./refs.ts";
+
+const write = Effect.gen(function* () {
+  yield* Streams.create(orders);
+  const appended = yield* Streams.append(orders, [{ orderId: "o-17", amount: 40 }]);
+  return appended.offset;
+});
+```
+
+See [Creating](/docs/streams/creating) and [Writing](/docs/streams/writing).
+
+## 3. Read and follow
+
+```ts
+import { Effect, Stream } from "effect";
+import { Streams } from "@streamsy/core";
+import { orders } from "./refs.ts";
+
+const watch = Streams.follow(orders).pipe(
+  Streams.items,
+  Stream.runForEach((event) => Effect.log(`${event.orderId}: ${event.amount}`)),
+);
+```
+
+See [Reading](/docs/streams/reading).
+
+## 4. Project one stream into another
+
+```ts
+import { Effect, Schema } from "effect";
+import { Projection, StreamSink, StreamSource } from "@streamsy/derive";
+import { orders, totals } from "./refs.ts";
+
+const runningTotal = Effect.gen(function* () {
+  const projection = Projection.make({
+    id: "running-total",
+    version: 1,
+    source: yield* StreamSource.make(orders),
+    sink: yield* StreamSink.make(totals),
+    initial: 0,
+    stateSchema: Schema.fromJsonString(Schema.Finite),
+    step: (state, event) => ({ state: state + event.amount, outputs: [state + event.amount] }),
+  });
+  return yield* Projection.catchUp(projection);
+});
+```
+
+See [Projections](/docs/projections/introduction).
+
+## 5. Provide a Layer and run
+
+Start with the memory Layer. Swap it for SQLite when the data has to survive a restart.
+
+```ts
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { write } from "./write.ts";
+
+await Effect.runPromise(write.pipe(Effect.provide(Streams.layerMemory())));
+```
+
+```ts
+import * as BunStorage from "@streamsy/storage/bun";
+
+const storage = BunStorage.layerProtocol({ client: { filename: "./streams.sqlite" } });
+```
+
+See [Runtime](/docs/runtime/introduction).
+
+## 6. Serve on Bun
+
+```ts
+import { Layer } from "effect";
+import { HttpServer } from "effect/unstable/http";
+import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { Http } from "@streamsy/core";
+import { storage } from "./storage.ts";
+
+const server = HttpServer.serve(Http.app({ pathPrefix: "/streams" })).pipe(
+  Layer.provide(storage),
+  Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
+);
+
+BunRuntime.runMain(Layer.launch(server));
+```
+
+See [HTTP](/docs/runtime/http).
+
+## 7. Deploy to Cloudflare
+
+The same `Http.app` runs inside a Durable Object. An Alchemy stack declares the object and the Worker in front of it, and `alchemy dev` runs both on your machine.
+
+```bash
+alchemy dev
+alchemy deploy
+```
+
+See [Alchemy](/docs/runtime/alchemy).
+
+## 8. Read it back from anywhere
+
+```ts
+import { Layer } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as Fetch from "@streamsy/core/fetch";
+
+export const remote = Fetch.layer({
+  baseUrl: "https://streamsy-app.example.workers.dev/streams",
+  capabilities: { expectedOffset: true, producer: true },
+}).pipe(Layer.provide(FetchHttpClient.layer));
+```
+
+See [HTTP](/docs/runtime/http).
+
+## Choosing a Layer
+
+| Layer | Persists | Use |
+| --- | --- | --- |
+| `Streams.layerMemory()` | no | one process, tests |
+| `BunStorage.layerProtocol(...)` | SQLite file | Bun host |
+| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare |
+| `Streams.layerRouted(bindings)` | per backend | several backends behind one Layer |
+| `Fetch.layer({ baseUrl })` | remote | any conformant host |
+
+The program does not change between Layers. For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).

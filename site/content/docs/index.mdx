@@ -1,37 +1,37 @@
 ---
 title: Streamsy
-description: An Effect server and toolkit for Durable Streams, with memory and SQLite storage.
+description: An Effect implementation of the Durable Streams protocol, with typed refs, projections, and hosts for Bun and Cloudflare.
 ---
 
-Streamsy implements the Durable Streams protocol and provides an Effect toolkit
-for typed, addressable event streams. This first release contains four packages:
+Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol. It gives you typed refs over streams, projections from one stream into another, and hosts for Bun and Cloudflare.
 
-| Package             | Purpose                                                             |
-| ------------------- | ------------------------------------------------------------------- |
-| `@streamsy/core`    | Protocol services, typed streams, storage contract and memory Layer |
-| `@streamsy/storage` | Effect SQL storage plus Bun and Durable Object SQLite Layers        |
-| `@streamsy/serve`   | Checked serving contracts and the Bun HTTP host                     |
-| `@streamsy/views`   | Incremental views and view-store contracts                          |
+```ts
+import { Effect, Schema, Stream } from "effect";
+import { StreamRef, Streams } from "@streamsy/core";
 
-Effect is the server and toolkit boundary. Browser applications use the official
-Durable Streams client and State packages; the [Hacker News demo](/docs/demos/hackernews-newest-stream)
-uses `@durable-streams/state` with TanStack DB.
+const notes = StreamRef.json("notes", { schema: Schema.Struct({ text: Schema.String }) });
 
-## Storage and hosting
+const program = Effect.gen(function* () {
+  yield* Streams.create(notes);
+  yield* Streams.append(notes, [{ text: "hello" }]);
+  return yield* Streams.read(notes).pipe(Streams.items, Stream.runCollect);
+});
 
-The memory Layer lasts for one acquired scope. `@streamsy/storage` persists the
-same Storage contract through Effect SQL, with official Bun SQLite and local
-Durable Object SQLite entries. Package version 0.4.0 pins Effect 4.0.0-rc.112.
-The local Cloudflare Durable Object host is implemented and exercised with
-workerd. Hosted execution and release acceptance remain pending; see the
-[Cloudflare hosting guide](/docs/user/cloudflare-hosting) and the repository's
-[full hosting reference](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/docs/hosting.md).
+await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
+```
 
-## Start here
+## Packages
 
-- [Basic usage](/docs/user/basic-usage): compiled create, append, read, follow and Bun hosting examples.
-- [Concepts](/docs/user/concepts): outcomes, faults, offsets, capabilities and resource ownership.
-- [SQL storage](/docs/user/sql-storage): file-backed setup, commit ownership, repair and fresh-format rules.
-- [Cloudflare hosting](/docs/user/cloudflare-hosting): the local Durable Object entry, Miniflare example, and hosted evidence boundary.
-- [Fold agent](/docs/user/fold-agent): journaled recovery across retained-file process restarts.
-- [Demos](/docs/demos): a browser view of the newest Hacker News stories.
+- `@streamsy/core`: refs, routes, the `Streams` functions, the protocol, the HTTP program, and the memory Layer.
+- `@streamsy/storage`: SQLite storage for Bun and for Durable Objects.
+- `@streamsy/serve`: the Bun and Cloudflare hosts, and the sink contracts that publish over HTTP.
+- `@streamsy/derive`: projections with checkpoints.
+- `@streamsy/views`: keyed relations maintained incrementally.
+
+## Where to go
+
+- [Introduction](/docs/introduction): one small application from a ref to a served projection.
+- [Streams](/docs/streams/introduction): create, read, write, and fork.
+- [Runtime](/docs/runtime/introduction): Layers, storage, and hosts.
+
+Effect runs at the server and in the toolkit. In the browser, use the official Durable Streams packages, starting with the [TypeScript client](https://durablestreams.com/typescript-client).

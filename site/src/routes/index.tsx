@@ -50,7 +50,7 @@ function Home() {
         <div className="mt-8 flex flex-wrap gap-4">
           <a
             className="rounded-lg bg-fd-primary px-5 py-3 text-fd-primary-foreground"
-            href={withBasePath("/docs/user/basic-usage")}
+            href={withBasePath("/docs/introduction")}
           >
             Start with typed streams
           </a>
@@ -86,14 +86,14 @@ function Home() {
           </p>
           <p className="mt-4 leading-7">
             Read the{" "}
-            <a className="underline" href={withBasePath("/docs/user/concepts")}>
-              concepts
+            <a className="underline" href={withBasePath("/docs/streams/introduction")}>
+              Streams guide
             </a>{" "}
-            or explore{" "}
-            <a className="underline" href={withBasePath("/docs/user/fold-agent")}>
-              Fold session recovery
-            </a>{" "}
-            within one memory store.
+            or the{" "}
+            <a className="underline" href={withBasePath("/docs/runtime/introduction")}>
+              Runtime guide
+            </a>
+            .
           </p>
         </section>
       </main>

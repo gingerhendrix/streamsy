@@ -1,0 +1,69 @@
+---
+title: Introduction
+description: Every Streamsy program is an Effect that needs a Layer. Build it once, run the program, and dispose the runtime at shutdown.
+---
+
+Every Streamsy program is an Effect that needs a Layer. The application builds that Layer once, runs the program, and disposes the runtime at shutdown.
+
+```ts
+import { Effect, ManagedRuntime } from "effect";
+import { Streams } from "@streamsy/core";
+import { write } from "./write.ts";
+
+const runtime = ManagedRuntime.make(Streams.layerMemory());
+try {
+  await runtime.runPromise(write);
+} finally {
+  await runtime.dispose();
+}
+```
+
+## Two shapes
+
+A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch` under `BunRuntime.runMain`, where the listener, a projection, and an outbox drain are Layers in one graph. The launched scope owns every fiber and every subscription, and closing it is the shutdown. See [HTTP](/docs/runtime/http).
+
+## How the services fit
+
+`Storage` is the backend. `Protocol.layer` sits over it and supplies `StreamsReader` and `StreamsWriter`, which every `Streams` function needs. `Streams.layerMemory` and each `layerProtocol` entry compose both in one call. `Http.app` is the HTTP program over those two services, and the fetch Layer supplies the same two services from a remote host.
+
+| Layer | Persists | Use | Page |
+| --- | --- | --- | --- |
+| `Streams.layerMemory()` | no | one process, tests | [Storage](/docs/runtime/storage) |
+| `BunStorage.layerProtocol(...)` | SQLite file | Bun host | [Storage](/docs/runtime/storage) |
+| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare | [Cloudflare](/docs/runtime/cloudflare) |
+| `Streams.layerRouted(bindings)` | per backend | several backends behind one Layer | this page |
+| `Fetch.layer({ baseUrl })` | remote | any conformant host | [HTTP](/docs/runtime/http) |
+
+## Testing
+
+`@streamsy/core/testing` gives `layerTest` and `StreamsTest` for a program under test. They supply real protocol services over a fresh memory store and a `TestClock`. `StorageContract.run` exercises a storage adapter against the contract; see [Writing a storage adapter](/docs/advanced/storage-adapter).
+
+## Several backends
+
+`Streams.layerRouted` provides one `StreamsReader` and one `StreamsWriter` that forward each call to a backend chosen by the stream id. `Backend.make(name)` names a backend. `backend.serves(...routes)` binds `StreamRoute` values to it. The routed Layer requires each named backend, so a missing `Layer.provide` is a type error at the edge.
+
+```ts
+import { Layer } from "effect";
+import { Backend, Streams } from "@streamsy/core";
+import * as BunStorage from "@streamsy/storage/bun";
+import { drafts, journal } from "./routes.ts";
+
+const memory = Backend.make("memory");
+const sqlite = Backend.make("sqlite");
+
+export const layer = Streams.layerRouted([memory.serves(drafts), sqlite.serves(journal)]).pipe(
+  Layer.provide(memory.layer(Streams.layerMemory())),
+  Layer.provide(
+    sqlite.layer(BunStorage.layerProtocol({ client: { filename: "./journal.sqlite" } })),
+  ),
+);
+```
+
+Ids on different backends must differ by their segments, which the route templates make explicit. Two templates that can match the same id fail when the Layer is built. An id that no route matches is a defect unless the options name a `fallback` backend. A fork across two backends fails with `NotSupported`. A fetch backend keeps its own `capabilities` rule per id, so set the flags on that backend's Layer.
+
+## Pages
+
+- [Storage](/docs/runtime/storage): memory, Bun SQLite, and Durable Object SQLite.
+- [HTTP](/docs/runtime/http): `Http.app`, the Bun server, and the fetch Layer.
+- [Alchemy](/docs/runtime/alchemy): the Cloudflare stack in TypeScript.
+- [Cloudflare](/docs/runtime/cloudflare): the Worker, placement, and the Durable Object.

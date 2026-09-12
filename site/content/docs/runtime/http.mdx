@@ -1,0 +1,130 @@
+---
+title: HTTP
+description: Serve the protocol on Bun with Http.app, and talk to any conformant host with the fetch Layer.
+---
+
+`Http.app` turns the protocol services into an Effect HTTP application. `HttpServer.serve` runs it on Bun, and `@streamsy/core/fetch` is the client Layer that talks to any conformant host.
+
+## The application
+
+```ts
+import { Http } from "@streamsy/core";
+
+const app = Http.app({ pathPrefix: "/streams", maxMessageSize: 1024 * 1024, cacheVisibility: "private" });
+```
+
+`Http.app` returns an `HttpEffect` that needs `StreamsReader` and `StreamsWriter`. Its error channel is closed, so every protocol error is already an HTTP response. `pathPrefix` defaults to `/`, `maxMessageSize` to 1 MiB, and `cacheVisibility` to `private`.
+
+## Bun
+
+```ts
+import { Layer } from "effect";
+import { HttpServer } from "effect/unstable/http";
+import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { Http } from "@streamsy/core";
+import * as BunStorage from "@streamsy/storage/bun";
+
+const storage = BunStorage.layerProtocol({ client: { filename: "./streams.sqlite" } });
+
+const server = HttpServer.serve(Http.app({ pathPrefix: "/streams" })).pipe(
+  Layer.provide(storage),
+  Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
+);
+
+BunRuntime.runMain(Layer.launch(server));
+```
+
+`idleTimeout: 0` is required. Without it Bun closes a parked long poll after 10 s. The storage Layer builds before the port binds, and closing the launched scope stops the listener and disposes the storage.
+
+A projection or an outbox drain runs beside the listener as one more Layer in the same graph. Provide the storage Layer value once to the merged graph so both share it.
+
+```ts
+import { Effect, Layer } from "effect";
+import { Projection } from "@streamsy/derive";
+import * as DeriveSqlite from "@streamsy/derive/sqlite";
+import { runningTotal } from "./running-total.ts";
+
+const projection = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const definition = yield* runningTotal;
+    yield* Projection.follow(definition);
+  }),
+).pipe(Layer.provide(DeriveSqlite.layer));
+
+const host = Layer.merge(server, projection).pipe(Layer.provide(storage));
+
+BunRuntime.runMain(Layer.launch(host));
+```
+
+`@effect/platform-bun` is an optional peer of `@streamsy/serve`.
+
+## A raw Request handler
+
+`makeEdge(options, layer)` from `@streamsy/core/http` returns `handler`, `dispose`, and `awaitIdle`. Use it for a custom `Bun.serve` or a test that wants a Web `Request` in and a Web `Response` out. Dispose it at shutdown.
+
+## Serving sinks
+
+A sink handler takes a `Request` and returns `Effect<Response>`. Route it beside `Http.app` in one `HttpRouter`, and convert between the Web types and the Effect request at the edge.
+
+```ts
+import { Effect, Layer } from "effect";
+import { HttpRouter } from "effect/unstable/http";
+import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { Http } from "@streamsy/core";
+import { handleStateSink } from "@streamsy/serve/server/state";
+import { openOrdersSink, openOrdersCapabilities } from "./sinks.ts";
+import { fromWebResponse, toWebRequest } from "./web.ts";
+import { storage } from "./storage.ts";
+
+const routes = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    yield* router.add("*", "/streams/*", Http.app({ pathPrefix: "/streams" }));
+    yield* router.add("GET", "/state/*", (request) =>
+      handleStateSink(openOrdersSink, toWebRequest(request), openOrdersCapabilities).pipe(
+        Effect.map(fromWebResponse),
+      ),
+    );
+  }),
+);
+
+const server = HttpRouter.serve(routes).pipe(
+  Layer.provide(storage),
+  Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
+);
+
+BunRuntime.runMain(Layer.launch(server));
+```
+
+In a Worker, the same handlers sit beside `router` in the application's `fetch`. See [Alchemy](/docs/runtime/alchemy).
+
+## Over the wire
+
+`PUT` creates or forks a stream. `POST` appends. `GET` reads a batch after `offset`. `HEAD` returns the tail without a body. `DELETE` removes the stream. `OPTIONS` answers the CORS preflight.
+
+A follow is a `GET` with `live=long-poll` or `live=sse`. A long poll answers `204` with a cursor when nothing arrived before the timeout, and the client sends the cursor back. An SSE connection ends after 60 s, and the client reconnects from its last offset. A body over `maxMessageSize` answers `413`.
+
+The protocol model is at [concepts](https://durablestreams.com/concepts), and the retry rules a client follows are at [building a client](https://durablestreams.com/building-a-client). The full header and status tables are in the wire reference.
+
+Three things on this wire are Streamsy's own and not part of the protocol, which is version 1.0 of [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md). `Stream-Expected-Offset` makes an append conditional, and a miss answers `409` with `stream-next-offset` set to the actual tail. `batch_size` bounds a catch-up read to between 1 and 10,000 messages. A `400` with the `stream-not-supported` header reports a feature the backend does not have.
+
+## Fetch Layer
+
+`Fetch.layer` supplies `StreamsReader` and `StreamsWriter` over HTTP, so the same program runs against a remote host.
+
+```ts
+import { Layer } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as Fetch from "@streamsy/core/fetch";
+
+export const remote = Fetch.layer({
+  baseUrl: "https://streams.example.com/streams",
+  headers: { authorization: "Bearer ..." },
+  capabilities: { expectedOffset: true, producer: true },
+}).pipe(Layer.provide(FetchHttpClient.layer));
+```
+
+`baseUrl` is the absolute stream prefix. `headers` are sent with every request. `capabilities` are assertions about the host, and not discovery. Assert `expectedOffset` and `producer` when the host supports them, as a Streamsy host does. Without the assertion a conditional or producer append fails with `NotSupported` before any request is sent.
+
+A transport failure is `TransportFault`. Protocol errors arrive as the same typed errors the direct Layer gives, with two differences: `CreateConflict` arrives without a `reason`, and a content type or sequence conflict arrives as `AppendConflict` with the response body as its message.
+
+In the browser, use the official `@durable-streams/client` for reads and appends and `@durable-streams/state` for state streams. See the [TypeScript client](https://durablestreams.com/typescript-client).

@@ -1,0 +1,108 @@
+---
+title: Writing a storage adapter
+description: Implement the Storage service once, pass the contract tests, and become a backend for every Streamsy program.
+---
+
+`Storage` is one Effect service with a small contract. An adapter implements it once and passes the contract tests, and then every Streamsy program runs over it.
+
+The protocol, the HTTP program, forks, expiry, producer fencing, and the derive `Commit` all sit above `Storage`. An adapter stores records and messages and applies one kind of mutation. It does not build a protocol error, decide a fork rule, or run a sweep.
+
+## The contract
+
+```ts
+import { Context, Effect, Option, Stream } from "effect";
+import { Storage, type StorageShape } from "@streamsy/core/storage";
+
+const adapter: StorageShape = {
+  capabilities: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+  record: (id) => Effect.succeed(Option.none()),
+  messages: (id, window) => Effect.succeed([]),
+  producer: (id, producerId) => Effect.succeed(Option.none()),
+  mutate: (mutation) => Effect.die("not implemented"),
+  changes: (id) => Stream.empty,
+  nextExpiry: Effect.succeed(Option.none()),
+};
+
+export const layer = Layer.succeed(Storage, adapter);
+```
+
+`record(id)` returns the stream record, or `None`. `messages(id, window)` returns the stored messages in a window with an exclusive `after`, an inclusive `until`, and an optional limit. `producer(id, producerId)` returns the last accepted producer state. `mutate(mutation)` applies one ordered set of operations in one transaction. `changes(id)` is a level-triggered stream of change snapshots. `nextExpiry` returns the earliest indexed deadline. `capabilities` tells the protocol what the adapter can do.
+
+Every read must return values that are independent of the caller's inputs and of the stored state, so a caller cannot mutate the store through a returned object.
+
+## Capabilities
+
+An adapter declares what it has. The protocol layer handles the rest.
+
+| Capability | Values | What changes |
+| --- | --- | --- |
+| `fork` | `none`, `copy`, `chain` | `none` refuses a fork with `NotSupported`. `copy` copies the prefix into the child. `chain` shares the prefix by lineage, and reads stitch across the boundary. |
+| `atomicScope` | `stream`, `store` | `store` allows one mutation to touch several streams. A multi-stream mutation on a `stream` adapter is a programmer defect. |
+| `wake` | `poll`, `push` | `push` signals subscribers on commit. `poll` relies on the repair pass. |
+| `expiryIndex` | `lazy`, `indexed` | `indexed` answers `nextExpiry`, so a host can sweep. `lazy` always answers `None`, and expiry happens on access. |
+
+## Mutations
+
+A mutation is a non-empty ordered list of `Create`, `Append`, and `Delete` operations. Each one carries preconditions: `expectedOffset` and `expectedClosed` on an append, a `producer` precondition with the expected and next producer state, and `expectedExpiresAtMs` on an expiry delete.
+
+The adapter checks every precondition against the state before the mutation, inside its own transaction, and writes nothing on a failure. The first failure answers `MutationRejected { index, reason, record }`.
+
+| Reason | When |
+| --- | --- |
+| `offset` | the tail is not `expectedOffset` |
+| `closed` | the stream is closed, or `expectedClosed` does not match |
+| `producer` | the stored producer state is not the expected one |
+| `exists` | a create hit an existing stream |
+| `not-found` | an append or delete named a missing stream |
+| `gone` | the stream was removed |
+| `fork-source-gone` | a create named a removed fork source |
+| `expiry-mismatch` | an expiry delete met a renewed deadline |
+
+The protocol maps each reason to a typed error, so an adapter never builds one. A rejection changes nothing, including producer state, lineage, and expiry metadata. I/O failure is `StorageFault`, with `retryable` marking whether a retry policy may apply.
+
+## Wakes
+
+`changes(id)` is level-triggered. Each wake carries a `ChangeSnapshot` with `present`, `currentOffset`, `closed`, and `softDeleted`, and a subscriber compares state instead of reading a message. A wake that reports no change is valid. Register the subscriber before the first snapshot so a commit cannot fall between the snapshot and the registration.
+
+A `push` adapter signals on commit. One retained wake per subscriber is enough, because the subscriber rereads the authoritative state. A `poll` adapter is read again every repair interval. Interrupting the subscriber, or closing the owner, must release the subscription.
+
+## Forks and expiry
+
+A `chain` adapter stores the source id and the offset the child was forked at, so a read of the child can stitch the source prefix before the child's own messages. A removed source with live children is soft-deleted, and the adapter purges it when the last child goes.
+
+An `indexed` adapter stores each deadline so `nextExpiry` can answer. An expiry delete carries the deadline it saw. When a renewal has moved the deadline, the delete is rejected with `expiry-mismatch`, and the next `nextExpiry` must advance past it so a sweep cannot spin.
+
+## The commit boundary
+
+The SQL adapter exposes `CommitBoundary.withTransaction`, which lets an application commit its own rows with a stream mutation. Nested calls join the outer transaction, wakes publish after the outermost commit, and a `MutationRejected` that escapes rolls everything back. An adapter that offers the same needs one transaction owner, a way for `mutate` to join it, and a rule that defers wake publication to the outer commit.
+
+## Contract tests
+
+`StorageContract.run` from `@streamsy/core/testing` builds a fresh scoped Layer for every case and supplies a `TestClock`. Run it under Bun.
+
+```ts
+import { Memory } from "@streamsy/core/storage";
+import { StorageContract } from "@streamsy/core/testing";
+
+StorageContract.run({
+  name: "memory chain",
+  layer: Memory.layer(),
+  expected: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
+});
+StorageContract.run({
+  name: "memory copy",
+  layer: Memory.layer({ constrained: true }),
+  expected: { fork: "copy", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+});
+```
+
+`expected` states the capabilities, and the kit skips the cases an adapter declares it cannot do. Then run the upstream [server conformance suite](https://durablestreams.com/building-a-server) through `Http.app` over the new adapter.
+
+## The shipped adapters
+
+| Capability | Memory | Constrained memory | Bun SQLite | Durable Object SQLite |
+| --- | --- | --- | --- | --- |
+| `fork` | `chain` | `copy` | `chain` | `chain` |
+| `atomicScope` | `store` | `stream` | `store` | `store` |
+| `wake` | `push` | `poll` | `push` with repair | `push` with repair |
+| `expiryIndex` | `indexed` | `lazy` | `indexed` | `indexed`, swept by the alarm |

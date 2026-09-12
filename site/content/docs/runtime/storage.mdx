@@ -1,0 +1,81 @@
+---
+title: Storage
+description: Choose between the memory Layer, SQLite on Bun, and SQLite inside a Durable Object, and know how each one behaves.
+---
+
+Three Layers give a program its streams: memory for one process and tests, SQLite on Bun for a server, and SQLite inside a Durable Object on Cloudflare.
+
+| Layer | Persists | Processes | Where |
+| --- | --- | --- | --- |
+| `Streams.layerMemory()` | no | one | `@streamsy/core` |
+| `BunStorage.layerProtocol(...)` | one file | one, or several sharing the file | `@streamsy/storage/bun` |
+| `DurableObjectStorage.layerProtocol(...)` | the object's SQLite | one object | `@streamsy/storage/durable-object` |
+
+## Memory
+
+`Streams.layerMemory(options)` holds every stream in the process. Two processes hold two unrelated stores, and disposing the Layer loses the data.
+
+`constrained: true` mimics a store that copies a fork prefix instead of sharing it, polls for wakes, and has no expiry index. Use it in tests to check that a program does not depend on the richer defaults.
+
+## Bun SQLite
+
+```ts
+import * as BunStorage from "@streamsy/storage/bun";
+
+export const storage = BunStorage.layerProtocol({ client: { filename: "./streams.sqlite" } });
+```
+
+The file is opened in WAL mode with the driver busy timeout at zero. Streamsy retries a busy transaction itself with a bounded yielding delay, so the event loop is not blocked while it waits.
+
+`layerProtocol` keeps the SQL client private. `BunStorage.layer` exposes the `SqlClient` and the `CommitBoundary` beside `Storage`, for an application that commits its own tables with a stream mutation. Put `Protocol.layer()` over it yourself in that case.
+
+The common shape is one process. The listener, a projection, and a drain run as Layers in one `Layer.launch` graph over one storage Layer value. See [HTTP](/docs/runtime/http).
+
+Several processes can share one file. Creates, conditional writes, and epoch fences hold across them, because the checks run inside the SQLite transaction. Three things do not cross a process boundary: one host owns one port, one runner owns a projection id, and a `CommitBoundary` transaction belongs to the process that opened it. A commit in one process wakes followers in another on the next repair pass, every `repairIntervalMs`, which defaults to 1000 ms.
+
+## Commit with your own tables
+
+`CommitBoundary.withTransaction` runs application SQL and a stream mutation in one transaction. A `MutationRejected` that escapes the boundary rolls both back. Recover outside the boundary.
+
+```ts
+import { Effect } from "effect";
+import { Storage, type Mutation } from "@streamsy/core";
+import { CommitBoundary } from "@streamsy/storage";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+declare const mutation: Mutation;
+
+const program = Effect.gen(function* () {
+  const boundary = yield* CommitBoundary;
+  const storage = yield* Storage;
+  const sql = yield* SqlClient.SqlClient;
+  return yield* boundary
+    .withTransaction(
+      Effect.gen(function* () {
+        yield* sql.unsafe("INSERT INTO application_rows(id) VALUES (?)", ["example"]);
+        return yield* storage.mutate(mutation);
+      }),
+    )
+    .pipe(Effect.catchTag("MutationRejected", Effect.succeed));
+});
+```
+
+Catching inside the body would let the other writes commit, because nested calls join the outer transaction and do not create savepoints.
+
+## Durable Object SQLite
+
+```ts
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+
+const storage = DurableObjectStorage.layerProtocol({ client: { storage: ctx.storage } });
+```
+
+Pass the full `ctx.storage` handle, because the driver needs the transaction API and not only `ctx.storage.sql`. The long-poll timeout defaults to 25 s here. See [Cloudflare](/docs/runtime/cloudflare).
+
+## File format
+
+A fresh file is written in the 0.4 format, and the schema version is stored in the file. A file in another format is refused without change.
+
+## Adding a backend
+
+`Storage` is one Effect service with a small contract. See [Writing a storage adapter](/docs/advanced/storage-adapter).

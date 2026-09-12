@@ -1,0 +1,89 @@
+---
+title: Projections
+description: Build a projection from a source, a sink, and a pure step, then run it with checkpoints committed beside the output.
+---
+
+`Projection.make` builds an inert definition from a source, a sink, and a pure step. `catchUp` or `follow` runs it, and every accepted batch commits the output, the state, and the checkpoint in one transaction.
+
+```ts
+import { Schema } from "effect";
+import { Projection, type Sink, type Source } from "@streamsy/derive";
+
+const runningTotal = (source: Source<number>, sink: Sink<number>) =>
+  Projection.make({
+    id: "running-total",
+    version: 1,
+    source,
+    sink,
+    initial: 0,
+    stateSchema: Schema.fromJsonString(Schema.Finite),
+    step: (state, item) => ({ state: state + item, outputs: [state + item] }),
+  });
+```
+
+`step(state, input, context)` returns the next state and zero or more outputs. It is pure: no services, no clock, no mutation of its inputs. `initial` and `stateSchema` describe the state that is stored between passes.
+
+## Sources and sinks
+
+`StreamSource.make(ref)` reads a stream. `StreamSink.make(ref)` writes one. Both positions are stream offsets.
+
+The sink appends with `expectedOffset`, so two runners cannot both write to it. Create the sink stream first, keep it empty, and dedicate it to one projection.
+
+A custom source or sink implements the same `Source` and `Sink` interfaces, and a sink must join the same `Commit` owner as the projection. The interface shapes are in the reference.
+
+## Running
+
+`Projection.catchUp` repeats passes until the source is caught up, the source closes, or a limit is reached. `Projection.follow` catches up and then keeps running. `Projection.pass` runs one bounded pass.
+
+```ts
+import { Effect, Fiber } from "effect";
+import { Projection } from "@streamsy/derive";
+
+const serve = (projection: Projection.Projection<number, number, number>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fiber = yield* Projection.follow(projection);
+      return yield* Fiber.join(fiber);
+    }),
+  );
+```
+
+`follow` returns a scoped fiber. Join it to observe a source close or a typed failure. Closing the scope releases the wait and the fiber.
+
+Limits bound one pass. They default to 100 boundaries and 1000 items, and `bytes` is optional. Set them when memory matters. A batch that does not fit returns `limit-reached` without committing; resume with a larger budget.
+
+## Commit
+
+The `Commit` service holds the checkpoints and the state, and it owns the transaction. `@streamsy/derive/memory` supplies it for one process over `Streams.layerMemory()`. `@streamsy/derive/sqlite` supplies it over the same storage Layer value as the protocol, so a checkpoint and its output commit together.
+
+```ts
+import { Effect, Layer } from "effect";
+import { Protocol } from "@streamsy/core";
+import * as BunStorage from "@streamsy/storage/bun";
+import * as DeriveSqlite from "@streamsy/derive/sqlite";
+import { runningTotal } from "./running-total.ts";
+
+const host = Layer.merge(Protocol.layer(), DeriveSqlite.layer).pipe(
+  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } })),
+);
+
+await Effect.runPromise(runningTotal.pipe(Effect.provide(host)));
+```
+
+Build the Layer once per host lifetime. A memory restart is a new projection. A SQLite restart resumes from the stored checkpoint.
+
+## Identity and recovery
+
+A projection identity is its `id`, its `version`, and the identities of its source and sink. A changed codec needs a new version. Stores key by `id`, so a changed version, source, or sink stops the projection with `identity-mismatch`. Start a new `id` and a new sink stream for a fresh lane.
+
+One runner per `id` is supported. An overlapping pass is detected inside the commit and stops with `sink-conflict`.
+
+## Faults
+
+Failures are `DeriveFault` with a `reason`. The three you meet are `history-unavailable`, `identity-mismatch`, and `sink-conflict`. No retry or reset is implicit.
+
+The source must retain its history from the checkpoint onward. When that history has expired, the projection stops with `history-unavailable`, and repair is an application procedure. See the expiry rules on [Creating](/docs/streams/creating).
+
+## Several backends
+
+A projection whose source is on one backend of `Streams.layerRouted` and whose sink and `Commit` share another backend commits correctly. See [Runtime](/docs/runtime/introduction).

@@ -1,0 +1,161 @@
+---
+title: Views
+description: Declare a keyed relation over sources as data, compile it to a plan, and maintain its rows incrementally.
+---
+
+`@streamsy/views` declares a keyed relation over sources as data. It compiles the declaration to a plan, maintains the rows incrementally as source changes arrive, and stores them in a durable view store.
+
+## Declare a source
+
+```ts
+import { Schema } from "effect";
+import { selectors, source } from "@streamsy/views";
+
+export const OrderRow = Schema.Struct({
+  orderId: Schema.String,
+  customerId: Schema.String,
+  total: Schema.Finite,
+  status: Schema.Literals(["placed", "shipped"]),
+});
+export type OrderRow = typeof OrderRow.Type;
+
+const x = selectors<OrderRow>();
+
+export const orders = source("shop.orders", {
+  schema: OrderRow,
+  schemaRef: { name: "shop.OrderRow", version: 1 },
+  key: "orderId",
+  mode: "state",
+  partitionBy: x.row.customerId,
+});
+```
+
+`mode` is `facts` or `state`. A fact source feeds `reduceByKey`, which folds events into one row per key. A state source is already keyed rows. `partitionBy` names the field that keeps rows together, so a `top` or a join stays inside one partition. `schemaRef` names the row schema and its version, and the plan carries it.
+
+## Build a relation
+
+```ts
+import { aggregate, from, selectors, view } from "@streamsy/views";
+import { OrderRow, orders } from "./orders.ts";
+
+const x = selectors<OrderRow>();
+
+export const openOrders = view(
+  "shop.open-orders",
+  { schema: OrderRow, schemaRef: { name: "shop.OrderRow", version: 1 }, key: "orderId" },
+  from(orders)
+    .where(x.row.status.eq("placed"))
+    .top({ by: [x.row.total.desc(), x.row.orderId.asc()], limit: 50 }),
+);
+```
+
+`from(source)` starts a relation. `where`, `select`, `join`, `leftJoin`, `groupBy().aggregate()`, and `top` build it. Expressions come from `selectors<Row>()`. `top` is bounded, and its last sort term must be a stable key.
+
+`reduceByKey({ key, reducer })` folds a fact source into per-key state with a declared reducer. It is available directly on a fact source.
+
+## Define a view
+
+`view(name, { schema, schemaRef, key }, relation)` names the result and declares its output key. `defineView` adds parameters.
+
+```ts
+import { Schema } from "effect";
+import { defineView, from, parameter, selectors } from "@streamsy/views";
+import { OrderRow, orders } from "./orders.ts";
+
+const x = selectors<OrderRow>();
+
+export const ordersForCustomer = defineView({
+  name: "shop.orders-for-customer",
+  params: {
+    customerId: parameter("customerId", Schema.String),
+    limit: parameter("limit", Schema.Int, { maximum: 100 }),
+  },
+  schema: OrderRow,
+  schemaRef: { name: "shop.OrderRow", version: 1 },
+  key: "orderId",
+  query: (params) =>
+    from(orders)
+      .where(x.row.customerId.eq(params.customerId))
+      .top({ by: [x.row.total.desc(), x.row.orderId.asc()], limit: params.limit }),
+});
+```
+
+`changes(relation)` names the change stream of a keyed relation. It publishes what happened to the rows, in arrival order, without publishing the rows. The [stream sink](/docs/projections/sinks) consumes it.
+
+## Check the plan
+
+A declaration carries its `plan`. `checkPlan` reports every issue it can detect before anything runs. `planHash` is the canonical identity of the plan and serves as the view version.
+
+```ts
+import { Effect } from "effect";
+import { checkPlan, planHash } from "@streamsy/views";
+import { openOrders } from "./views.ts";
+
+const checked = Effect.gen(function* () {
+  const { plan, hash } = yield* checkPlan(openOrders);
+  return { plan, hash, sameHash: hash === planHash(openOrders.plan) };
+});
+```
+
+## Maintain the view
+
+`maintainGraph` is a pure step. It takes the plan, the prior operator state, and one batch of source changes, and returns the new state, the row `changes`, and the current `rows`.
+
+```ts
+import { maintainGraph } from "@streamsy/views/engine";
+import { openOrders, orders } from "./views.ts";
+
+const result = maintainGraph({
+  plan: openOrders.plan,
+  state: previousState,
+  inputs: [{ sourceId: orders.name, changes: incoming }],
+});
+// result.state, result.changes, result.rows
+```
+
+A maintained view is a projection whose step is the engine. The source is the stream the view reads. The sink is the state stream that holds the view rows. The projection state is the operator state, and the version is the plan hash, so a plan change is a new version and rebuilds into a new generation.
+
+```ts
+import { Projection } from "@streamsy/derive";
+import { planHash } from "@streamsy/views";
+import { emptyOperatorState, maintainGraph } from "@streamsy/views/engine";
+import { OperatorState, openOrders, orders } from "./views.ts";
+
+const maintained = Projection.make({
+  id: "shop.open-orders",
+  version: planHash(openOrders.plan),
+  source: ordersSource,
+  sink: openOrdersSink,
+  initial: emptyOperatorState(openOrders.plan.name),
+  stateSchema: OperatorState,
+  step: (state, change) => {
+    const result = maintainGraph({
+      plan: openOrders.plan,
+      state,
+      inputs: [{ sourceId: orders.name, changes: [change] }],
+    });
+    return { state: result.state, outputs: result.changes };
+  },
+});
+```
+
+## Persist the view
+
+`ViewStore` is the durable store for rows, operator values, and the history of changes. `memoryLayer()` from `@streamsy/views/store` serves one process. `sqliteLayer` from `@streamsy/views/store/sqlite` runs over an Effect `SqlClient`.
+
+```ts
+import { Effect } from "effect";
+import { ViewStore } from "@streamsy/views/store";
+
+const persist = (commit: MaintenanceCommit) =>
+  Effect.gen(function* () {
+    const store = yield* ViewStore;
+    return yield* store.commit(commit, { keepLastBatches: 100 });
+  });
+```
+
+`commit` writes the rows and the cursor together and refuses a cursor that does not match the stored one. `recover` rebuilds from a checkpoint plus the suffix after it on restart. Retention keeps `keepLastBatches` or `keepForMilliseconds` of history. The full store surface is in the reference.
+
+## Serving a view
+
+A view reaches a client through a serve sink. A state sink publishes its rows, a stream sink publishes its changes, and a document sink publishes one derived value. See [Sinks](/docs/projections/sinks).

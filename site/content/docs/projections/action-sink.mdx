@@ -1,0 +1,112 @@
+---
+title: Action sink
+description: Declare an external effect keyed by a relation row, and deliver it at least once through a durable outbox.
+---
+
+`defineActionSink` declares an external effect keyed by a relation row. The outbox runtime delivers it at least once, in partition order, with backoff and a dead letter.
+
+```ts
+import { Schema } from "effect";
+import { defineActionSink } from "@streamsy/serve/action";
+
+export const AssignmentNotification = Schema.Struct({
+  workspaceId: Schema.String,
+  issueId: Schema.String,
+  assigneeId: Schema.String,
+  eventId: Schema.String,
+});
+export type AssignmentNotification = typeof AssignmentNotification.Type;
+
+export const assignmentNotifications = defineActionSink<
+  AssignmentNotification,
+  { readonly key: "issueId" }
+>({
+  name: "issue-tracker.assignment-notifications",
+  from: { key: "issueId" },
+  handler: { name: "issue-tracker.notify-assignee", version: 1 },
+  payload: {
+    encode: (value) => JSON.stringify(value),
+    decode: (value) => Schema.decodeUnknownSync(AssignmentNotification)(value),
+  },
+  idempotencyKey: (value) => `${value.workspaceId}/${value.eventId}`,
+  partitionBy: (value) => value.workspaceId,
+  delivery: { maxAttempts: 3, initialBackoffMs: 250, backoffFactor: 4, maxBackoffMs: 30_000 },
+});
+```
+
+`from` is the relation the sink observes, named by its key. `handler` names the code that performs the effect. `idempotencyKey` is the delivery's durable identity, so make it a pure function of durable facts. `partitionBy` picks the lane a delivery belongs to. `delivery` is the retry policy, and `maxAttempts` counts total attempts.
+
+## The outbox
+
+The process that decides to deliver can die before delivering. So the decision is written first, in the same transaction as the fact that caused it, and delivery is a separate pass over what was written.
+
+`draftsFor(sink, payloads, enqueuedAtMs)` lowers payloads to outbox drafts. It is pure, so a command path can write the drafts inside its own transaction.
+
+```ts
+import { Clock, Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { CommitBoundary } from "@streamsy/storage";
+import { OutboxStore } from "@streamsy/serve/action/outbox";
+import { draftsFor } from "@streamsy/serve/action/runtime";
+import { assignmentNotifications, type AssignmentNotification } from "./notifications.ts";
+import { issueEvents, type IssueEvent } from "./refs.ts";
+
+const acceptAssignment = (event: IssueEvent, notification: AssignmentNotification) =>
+  Effect.gen(function* () {
+    const boundary = yield* CommitBoundary;
+    const outbox = yield* OutboxStore;
+    const enqueuedAtMs = yield* Clock.currentTimeMillis;
+    return yield* boundary.withTransaction(
+      Effect.gen(function* () {
+        const enqueued = yield* outbox.enqueue(
+          draftsFor(assignmentNotifications, [notification], enqueuedAtMs),
+        );
+        const appended = yield* Streams.append(issueEvents, [event]);
+        return { offset: appended.offset, enqueued };
+      }),
+    );
+  });
+```
+
+`enqueue` reports what was `enqueued` and what was `absorbed` because an entry with the same idempotency key already existed. An entry is `pending`, `delivered`, or `dead`.
+
+## Delivery
+
+`actionSinkHandler(sink, handler)` binds your handler to the declared handler reference. `drain(sink, handler)` claims the due entries and delivers them.
+
+```ts
+import { Effect } from "effect";
+import { actionSinkHandler, drain } from "@streamsy/serve/action/runtime";
+import { NotificationTarget } from "./target.ts";
+import { assignmentNotifications } from "./notifications.ts";
+
+const assignmentHandler = actionSinkHandler(assignmentNotifications, (delivery, refuse) =>
+  Effect.gen(function* () {
+    const target = yield* NotificationTarget;
+    return yield* target.accept(delivery.idempotencyKey, delivery.payload).pipe(
+      Effect.mapError((refusal) =>
+        refusal.permanent ? refuse.permanent(refusal.detail) : refuse.retryable(refusal.detail),
+      ),
+      Effect.asVoid,
+    );
+  }),
+);
+
+const drainAll = drain(assignmentNotifications, assignmentHandler);
+```
+
+A drain runs one lane per partition, in enqueue order. A failing entry is rescheduled with backoff and the pass moves on to the next one, so a broken target in one partition does not hold the others. `refuse.retryable(detail)` spends an attempt. `refuse.permanent(detail)` dead-letters at once. An entry goes dead after `maxAttempts`, on a permanent refusal, or when the stored payload no longer decodes.
+
+The handler sees the same idempotency key on a redelivery. A process can die between a successful handler call and the outbox write that records it, so the handler is where a repeat is absorbed.
+
+## Backings
+
+`makeMemoryOutboxBacking()` serves one process and enforces the same key uniqueness and lane order. `createSqliteOutboxBacking(sql)` writes through the same `SqlClient` as the storage Layer, so an enqueue joins `CommitBoundary.withTransaction` and rolls back with a rejected append. Provide either one with `outboxStoreLayer(backing)`. The SQLite backing creates its tables on first use, and `@streamsy/serve/action/sqlite` also exports a helper that creates them ahead of the first enqueue.
+
+## Running the drain
+
+On Bun, run `drain` on a schedule as a forked scoped effect beside the listener, in the same `Layer.launch` graph. On Cloudflare, run it from the object's `alarm` effect. Run one drain per lane at a time. See [HTTP](/docs/runtime/http) and [Cloudflare](/docs/runtime/cloudflare).
+
+## What is not provided
+
+There is no scheduler; the host decides when a drain runs. There is no external queue. There is no lease across drains, so two concurrent drains over one file can both deliver the same entry, and the idempotency key is what keeps that safe. Delivery is at least once and nothing stronger.

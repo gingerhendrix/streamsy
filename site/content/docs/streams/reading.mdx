@@ -1,0 +1,93 @@
+---
+title: Reading
+description: Read stored batches after an offset, follow a stream for new messages, and fold it into a value.
+---
+
+A read starts after an offset and returns batches of decoded items. `follow` keeps reading after catch-up until the stream closes.
+
+```ts
+interface Batch<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly nextOffset: string;
+  readonly upToDate: boolean;
+  readonly closed: boolean;
+}
+```
+
+Reads are after-exclusive. The message at the given offset is not included. Omit the offset to read from the start. Store `nextOffset` when you have to resume later.
+
+`Streams.head(ref)` returns the tail and the configuration without messages. It does not renew a TTL.
+
+## Read
+
+`Streams.read(ref, { offset?, limit? })` is an Effect `Stream` of batches. Nothing runs until a sink such as `Stream.runCollect` runs it. It ends when a batch reports `upToDate`.
+
+```ts
+import { Stream } from "effect";
+import { Streams } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const everything = Streams.read(notes).pipe(Streams.items, Stream.runCollect);
+
+const tail = Streams.read(notes).pipe(
+  Stream.map((batch) => batch.nextOffset),
+  Stream.runLast,
+);
+```
+
+`Streams.items` flattens batches into items. Keep the batches when `nextOffset` or `closed` matter. `limit` bounds one batch to that many stored messages.
+
+## Follow
+
+`Streams.follow` catches up, then waits for more. One wait ends on a new message, on a close, or on the long-poll timeout. A timed-out wait yields an empty batch and the follow waits again. The stream ends when a batch reports `closed`.
+
+```ts
+import { Effect, Stream } from "effect";
+import { Streams } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const live = Streams.follow(notes).pipe(
+  Streams.items,
+  Stream.runForEach((note) => Effect.log(note.text)),
+);
+
+const consumer = Effect.gen(function* () {
+  const fiber = yield* live.pipe(Effect.forkScoped);
+  return fiber;
+});
+```
+
+The scope owns the wait. Interrupting the fiber releases a parked wait, so run a live consumer inside a scope with an explicit shutdown. `Stream.take` bounds a follow so a program terminates.
+
+## Session
+
+`Streams.session(ref, { offset, cursor? })` is one raw long-poll wait for an application that owns its own polling loop. It returns the protocol result, with raw `messages`, `nextOffset`, `cursor`, `upToDate`, `closed`, and `timedOut`. The messages are not decoded.
+
+```ts
+import { Streams } from "@streamsy/core";
+import { notes } from "./refs.ts";
+
+const once = (offset: string) => Streams.session(notes, { offset });
+```
+
+## Fold
+
+`Fold.run(ref, { initial, step, from? })` follows a stream and folds each item into a value. It completes when the stream closes.
+
+```ts
+import { Fold } from "@streamsy/core";
+import { notes, type Note } from "./refs.ts";
+
+const count = Fold.run(notes, {
+  initial: 0,
+  step: (total, _note: Note) => total + 1,
+});
+```
+
+## Errors
+
+A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the ref codec. A decode failure stops that read. The application picks the offset to restart from.
+
+## Over HTTP
+
+`GET` on the stream path with `offset` reads a batch. Add `live=long-poll` or `live=sse` to follow. See [HTTP](/docs/runtime/http) and [PROTOCOL.md sections 5.6 to 5.8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#56-read-stream---catch-up).
