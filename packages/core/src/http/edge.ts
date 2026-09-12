@@ -2,7 +2,7 @@ import { Deferred, Effect, type Layer } from "effect";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { StreamsFault } from "../fault.ts";
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
-import { program, type HttpOptions } from "./program.ts";
+import { app, type HttpOptions } from "./program.ts";
 
 /** Framework conversion boundary; the caller owns disposal for the edge lifetime. */
 export const makeEdge = <E, R = never>(
@@ -18,7 +18,7 @@ export const makeEdge = <E, R = never>(
   const effect = Effect.suspend(() => {
     const completed = Deferred.makeUnsafe<void>();
     active.add(completed);
-    return Effect.interruptible(application ?? program(options)).pipe(
+    return Effect.interruptible(application ?? app(options)).pipe(
       Effect.map((response) =>
         response instanceof Response
           ? HttpServerResponse.raw(response, {

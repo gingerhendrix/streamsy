@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Protocol } from "@streamsy/core";
 import type { ObjectOptions } from "./object-options.ts";
-import { program } from "@streamsy/core/http";
+import { app } from "@streamsy/core/http";
 import { reconcileAlarm } from "./alarm.ts";
 import { HostCommand } from "./host-command.ts";
 
@@ -44,7 +44,7 @@ export const hostProgram = (options: ObjectOptions) =>
 
     const request = yield* HttpServerRequest.HttpServerRequest;
     const ordinary = mutates(request.method)
-      ? withMutationReconciliation(program(options), reconcileAlarm())
-      : program(options);
+      ? withMutationReconciliation(app(options), reconcileAlarm())
+      : app(options);
     return yield* ordinary.pipe(Effect.catchDefect(() => Effect.succeed(internalError())));
   });

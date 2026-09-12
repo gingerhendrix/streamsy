@@ -20,7 +20,15 @@ export interface HttpOptions {
 }
 
 const responses = new HttpResponseFactory();
-export function program(options: HttpOptions = {}) {
+/**
+ * The public HTTP program. It is the whole application an Effect host serves.
+ *
+ * Its success type is `HttpServerResponse` alone, its error channel is closed,
+ * and it requires exactly `HttpServerRequest | StreamsReader | StreamsWriter`.
+ * Those three facts are what let a host type it as an Alchemy `HttpEffect` and
+ * what let one composition serve several backends.
+ */
+export function app(options: HttpOptions = {}) {
   const path = new StreamPathService(options.pathPrefix ?? "/");
   const bodyReader = new RequestBodyReader(options.maxMessageSize ?? 1024 * 1024, responses);
   const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");

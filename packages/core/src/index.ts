@@ -42,4 +42,5 @@ export * as StreamRef from "./toolkit/ref.ts";
 export * as Streams from "./toolkit/streams.ts";
 export * as Fold from "./toolkit/fold.ts";
 export * as Producer from "./toolkit/producer.ts";
+export * as Http from "./http/index.ts";
 export type { Batch } from "./toolkit/streams.ts";
