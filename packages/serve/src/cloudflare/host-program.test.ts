@@ -1,11 +1,9 @@
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect";
-import { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Stream } from "effect";
+import { Storage, StorageFault } from "@streamsy/core";
 import { Alarm } from "./alarm.ts";
-import { HostCommand } from "./host-command.ts";
 import { withMutationReconciliation } from "./host-program.ts";
-import { hostProgram } from "./host-program.ts";
+import { alarm } from "./host-program.ts";
 
 const failingStorage = Storage.of({
   capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
@@ -58,29 +56,12 @@ test("a reconciliation defect cannot replace a committed mutation result", async
   expect(response).toBe("committed");
 });
 
-test("an alarm StorageFault keeps the standard response security headers", async () => {
-  const response = await Effect.runPromise(
-    hostProgram({}).pipe(
+test("an alarm exposes StorageFault for platform retry without an HTTP request", async () => {
+  const result = await Effect.runPromiseExit(
+    alarm.pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(Storage, failingStorage),
-          Layer.succeed(StreamsReader, {
-            head: () => Effect.die("unused"),
-            read: () => Effect.die("unused"),
-            readNext: () => Effect.die("unused"),
-          }),
-          Layer.succeed(StreamsWriter, {
-            create: () => Effect.die("unused"),
-            fork: () => Effect.die("unused"),
-            append: () => Effect.die("unused"),
-            remove: () => Effect.die("unused"),
-          }),
-          // SAFETY: HostCommand is present, so the ordinary request branch is unreachable.
-          Layer.succeed(
-            HttpServerRequest.HttpServerRequest,
-            {} as HttpServerRequest.HttpServerRequest,
-          ),
-          Layer.succeed(HostCommand, { _tag: "ExpireDue" }),
           Layer.succeed(Alarm, {
             current: Effect.succeed(Option.none()),
             arm: () => Effect.void,
@@ -90,9 +71,37 @@ test("an alarm StorageFault keeps the standard response security headers", async
       ),
     ),
   );
-  const web = response instanceof Response ? response : HttpServerResponse.toWeb(response);
+  expect(Exit.isFailure(result)).toBe(true);
+  if (Exit.isFailure(result))
+    expect(result.cause.reasons).toMatchObject([
+      { _tag: "Fail", error: { _tag: "StorageFault", operation: "test.nextExpiry" } },
+    ]);
+});
 
-  expect(web.status).toBe(500);
-  expect(web.headers.get("x-content-type-options")).toBe("nosniff");
-  expect(web.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+test("an alarm sweeps before reconciling without reader, writer, or request services", async () => {
+  const actions: Array<string> = [];
+  const storage = Storage.of({
+    ...failingStorage,
+    nextExpiry: Effect.sync(() => {
+      actions.push("next expiry");
+      return Option.none();
+    }),
+  });
+  await Effect.runPromise(
+    alarm.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(Storage, storage),
+          Layer.succeed(Alarm, {
+            current: Effect.succeed(Option.none()),
+            arm: () => Effect.void,
+            clear: Effect.sync(() => {
+              actions.push("clear");
+            }),
+          }),
+        ),
+      ),
+    ),
+  );
+  expect(actions).toEqual(["next expiry", "next expiry", "clear"]);
 });

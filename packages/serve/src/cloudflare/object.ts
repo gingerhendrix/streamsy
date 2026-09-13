@@ -1,12 +1,12 @@
-import type { AlarmInvocationInfo } from "@cloudflare/workers-types";
+import type { AlarmInvocationInfo, DurableObjectState } from "@cloudflare/workers-types";
 import { DurableObject } from "cloudflare:workers";
-import { Context, Layer } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
+import { HttpEffect } from "effect/unstable/http";
 import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { makeEdge } from "@streamsy/core/http";
+import type { HttpOptions } from "@streamsy/core/http";
 import { Alarm, alarmLayer } from "./alarm.ts";
-import { HostCommand } from "./host-command.ts";
-import { hostProgram } from "./host-program.ts";
-import type { ObjectOptions } from "./object-options.ts";
+import { fetch, alarm } from "./host-program.ts";
+import { ObjectOptions } from "./object-options.ts";
 
 const unavailable = (): Response =>
   new Response("Storage unavailable", {
@@ -18,63 +18,78 @@ const unavailable = (): Response =>
     },
   });
 
-type Edge = ReturnType<typeof makeEdge<StorageFault, Storage | Alarm>>;
+type Runtime = ManagedRuntime.ManagedRuntime<
+  StreamsReader | StreamsWriter | Storage | Alarm | ObjectOptions,
+  StorageFault
+>;
 
-export abstract class StreamsyObject<Env = unknown> extends DurableObject<Env> {
-  #edge: Edge | undefined;
+interface Configuration<Env> {
+  readonly options: HttpOptions;
+  readonly layer: (
+    state: DurableObjectState,
+    env: Env,
+  ) => Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault>;
+}
 
-  abstract layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault>;
+class ObjectHost<Env> extends DurableObject<Env> {
+  readonly #configuration: Configuration<Env>;
+  constructor(state: DurableObjectState, env: Env, configuration: Configuration<Env>) {
+    super(state, env);
+    this.#configuration = configuration;
+  }
+  #runtime: Runtime | undefined;
 
-  options(): ObjectOptions {
-    return {};
+  #getRuntime(): Runtime {
+    return (this.#runtime ??= ManagedRuntime.make(
+      Layer.mergeAll(
+        this.#configuration.layer(this.ctx, this.env),
+        alarmLayer(this.ctx.storage),
+        Layer.succeed(ObjectOptions, this.#configuration.options),
+      ),
+    ));
   }
 
-  #getEdge(): Edge {
-    return (this.#edge ??= (() => {
-      const options = this.options();
-      return makeEdge<StorageFault, Storage | Alarm>(
-        options,
-        this.layer().pipe(Layer.provideMerge(alarmLayer(this.ctx.storage))),
-        hostProgram(options),
-      );
-    })());
-  }
-
-  #recover(edge: Edge): Promise<Response> {
-    if (this.#edge !== edge) return Promise.resolve(unavailable());
-    this.#edge = undefined;
-    return edge
-      .dispose()
-      .catch(() => undefined)
-      .then(() => unavailable());
+  #recover(runtime: Runtime): Promise<void> {
+    if (this.#runtime !== runtime) return Promise.resolve();
+    this.#runtime = undefined;
+    return runtime.dispose().catch(() => undefined);
   }
 
   override fetch(request: Request): Promise<Response> {
-    let edge: Edge;
+    let runtime: Runtime;
     try {
-      edge = this.#getEdge();
+      runtime = this.#getRuntime();
     } catch {
       return Promise.resolve(unavailable());
     }
-    return edge.handler(request).catch(() => this.#recover(edge));
+    return runtime.context().then(
+      (context) =>
+        HttpEffect.toWebHandler(fetch.pipe(Effect.provide(context), Effect.interruptible))(request),
+      () => this.#recover(runtime).then(unavailable),
+    );
   }
 
-  override alarm(info?: AlarmInvocationInfo): Promise<void> {
-    const edge = this.#getEdge();
-    return edge
-      .handler(
-        new Request("https://streamsy.internal/alarm", { method: "POST" }),
-        Context.make(HostCommand, { _tag: "ExpireDue" }),
-      )
-      .catch((error) =>
-        this.#recover(edge).then(() => {
+  override alarm(_info?: AlarmInvocationInfo): Promise<void> {
+    const runtime = this.#getRuntime();
+    // Acquisition failures discard the cached runtime; sweep failures keep it.
+    return runtime.context().then(
+      () => runtime.runPromise(alarm),
+      (error) =>
+        this.#recover(runtime).then(() => {
           throw error;
         }),
-      )
-      .then((response) => {
-        if (response.status < 200 || response.status >= 300)
-          throw new Error(`Streamsy expiry alarm failed: ${response.status}`);
-        void info;
-      });
+    );
   }
 }
+
+/** The wrangler/Miniflare boundary. Each instance owns one lazy runtime. */
+const make = <Env = unknown>(
+  configuration: Configuration<Env>,
+): new (state: DurableObjectState, env: Env) => ObjectHost<Env> =>
+  class extends ObjectHost<Env> {
+    constructor(state: DurableObjectState, env: Env) {
+      super(state, env, configuration);
+    }
+  };
+
+export const StreamsyObject = { make };

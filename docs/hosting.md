@@ -22,16 +22,18 @@ acquisition error occurs at the first lazy request that needs it and does not
 imply that the process terminates.
 
 `@streamsy/serve/cloudflare` exposes `router`, `Placement`, and
-`StreamsyObject`. Each in-memory object owns one edge/Layer scope shared by
+`StreamsyObject`. Each in-memory object owns one runtime/Layer scope shared by
 `fetch` and `alarm`. The object supplies its reader, writer, and storage Layer
-from `layer()`. Durable Object SQLite persists beyond the in-memory lifetime;
+through `StreamsyObject.make({ options, layer })`; the layer callback receives
+the instance state and environment, and options become the `ObjectOptions`
+service. Durable Object SQLite persists beyond the in-memory lifetime;
 the host claims no platform disposal hook. If acquisition fails, fetch returns
-`503 Storage unavailable` with `retry-after: 1`, discards the failed edge, and
+`503 Storage unavailable` with `retry-after: 1`, discards the failed runtime, and
 tries acquisition on the next call.
 
 The storage runtime uses Reactivity push and its existing 1,000 ms repair tick.
 Expiry is lazy on Bun access, with optional caller-driven expiry. In a Durable
-Object, an alarm invokes a private in-process command; reconciliation follows
+Object, the alarm effect runs the sweep directly; reconciliation follows
 PUT, POST, DELETE, and alarm turns. Lazy access and later mutations repair a
 missed or exhausted alarm. The minimum arm time is now +1 ms. Platform retries
 are finite and owned by the platform, not by an application retry loop.
@@ -70,8 +72,8 @@ forwarding to the router, derive tenant and path mapping from the authenticated
 identity, and enforce it there. A caller-chosen prefix or object id is not an
 isolation boundary; possession of a namespace binding reaches its objects.
 
-Private expiry authority is an in-process Context value, never a request marker
-or header.
+The exported `alarm` effect is not a reachable HTTP route. Request markers and
+headers cannot select the expiry sweep.
 
 ## Forks
 

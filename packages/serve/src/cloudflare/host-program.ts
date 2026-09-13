@@ -1,10 +1,9 @@
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Protocol } from "@streamsy/core";
-import type { ObjectOptions } from "./object-options.ts";
+import { ObjectOptions } from "./object-options.ts";
 import { app } from "@streamsy/core/http";
 import { reconcileAlarm } from "./alarm.ts";
-import { HostCommand } from "./host-command.ts";
 
 const mutates = (method: string): boolean =>
   method === "PUT" || method === "POST" || method === "DELETE";
@@ -31,20 +30,15 @@ export const withMutationReconciliation = <A, E, R, E2, R2>(
 ): Effect.Effect<A, E, R | R2> =>
   effect.pipe(Effect.ensuring(reconcile.pipe(Effect.uninterruptible, Effect.ignoreCause)));
 
-export const hostProgram = (options: ObjectOptions) =>
-  Effect.gen(function* () {
-    const command = yield* Effect.serviceOption(HostCommand);
-    if (Option.isSome(command)) {
-      return yield* Effect.gen(function* () {
-        yield* Protocol.expireDue();
-        yield* reconcileAlarm();
-        return HttpServerResponse.empty({ status: 204 });
-      }).pipe(Effect.catchTag("StorageFault", () => Effect.succeed(internalError())));
-    }
+/** The request effect; expiry is never selected by request content. */
+export const fetch = Effect.gen(function* () {
+  const options = yield* ObjectOptions;
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const ordinary = mutates(request.method)
+    ? withMutationReconciliation(app(options), reconcileAlarm())
+    : app(options);
+  return yield* ordinary.pipe(Effect.catchDefect(() => Effect.succeed(internalError())));
+});
 
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const ordinary = mutates(request.method)
-      ? withMutationReconciliation(app(options), reconcileAlarm())
-      : app(options);
-    return yield* ordinary.pipe(Effect.catchDefect(() => Effect.succeed(internalError())));
-  });
+/** A platform alarm runs the sweep directly and leaves failures to platform retry. */
+export const alarm = Protocol.expireDue().pipe(Effect.andThen(reconcileAlarm()), Effect.asVoid);

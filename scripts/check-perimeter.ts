@@ -94,7 +94,12 @@ const checks = [
   scan(
     "runtime conversion only at the host and test edges",
     String.raw`runPromise|runSync|runFork|runCallback|ManagedRuntime\.make`,
-    [...authored, "!packages/serve/src/bun.ts", ...testKits.map((path) => `!${path}`)],
+    [
+      ...authored,
+      "!packages/serve/src/bun.ts",
+      "!packages/serve/src/cloudflare/object.ts",
+      ...testKits.map((path) => `!${path}`),
+    ],
   ),
   scan(
     "core has no Promise, async, abort, timer or cloning plumbing",

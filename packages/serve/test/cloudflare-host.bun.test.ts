@@ -602,7 +602,7 @@ test("the configured prefix keeps raw encoded and slash paths distinct", async (
   expect((await dispatch(harness, "/streams/a/b", { method: "HEAD" })).status).toBe(200);
 });
 
-test("the private Context command is unreachable through routes, stubs, and forged headers", async () => {
+test("the alarm effect is unreachable through routes, stubs, and forged headers", async () => {
   const harness = await makeHarness();
   const routed = await dispatch(harness, "/streams/alarm", {
     method: "POST",

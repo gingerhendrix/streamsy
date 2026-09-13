@@ -1,8 +1,12 @@
 /* oxlint-disable effecttsgo/async-function -- This fixture owns the real workerd boundary. */
-import type { AlarmInvocationInfo, DurableObjectNamespace } from "@cloudflare/workers-types";
+import type {
+  AlarmInvocationInfo,
+  DurableObjectNamespace,
+  DurableObjectState,
+} from "@cloudflare/workers-types";
 import { Context, Effect, Layer } from "effect";
 import { Storage, StorageFault, StreamsReader, StreamsWriter, type StreamId } from "@streamsy/core";
-import { StreamsyObject, router, type ObjectOptions } from "@streamsy/serve/cloudflare";
+import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
 import { layerProtocol } from "@streamsy/storage/durable-object";
 import { byStreamOptions } from "./fixture-options.ts";
 
@@ -16,128 +20,153 @@ interface AlarmObservation {
   readonly retryCount: number;
 }
 
-class ProbeObject extends StreamsyObject<Env> {
-  #layerAcquisitions = 0;
-  #migrationAttempts = 0;
-  #alarmInvocations = 0;
-  #activeReads = 0;
-  #alarmInfo: Array<AlarmObservation> = [];
-  #failLayerOnce = false;
-  #failNextExpiry = false;
-  #failExpiryWhile = false;
-  #longPollTimeoutMs = 1_000;
-  #alarmAfterMutation: number | null = null;
-
-  override options(): ObjectOptions {
-    return { pathPrefix: "/streams" };
+interface ProbeState {
+  layerAcquisitions: number;
+  migrationAttempts: number;
+  alarmInvocations: number;
+  activeReads: number;
+  alarmInfo: Array<AlarmObservation>;
+  failLayerOnce: boolean;
+  failNextExpiry: boolean;
+  failExpiryWhile: boolean;
+  longPollTimeoutMs: number;
+  alarmAfterMutation: number | null;
+}
+const probes = new WeakMap<DurableObjectState, ProbeState>();
+const probeFor = (state: DurableObjectState): ProbeState => {
+  let probe = probes.get(state);
+  if (probe === undefined) {
+    probe = {
+      layerAcquisitions: 0,
+      migrationAttempts: 0,
+      alarmInvocations: 0,
+      activeReads: 0,
+      alarmInfo: [],
+      failLayerOnce: false,
+      failNextExpiry: false,
+      failExpiryWhile: false,
+      longPollTimeoutMs: 1_000,
+      alarmAfterMutation: null,
+    };
+    probes.set(state, probe);
   }
-
-  override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
-    this.#layerAcquisitions += 1;
-    this.#migrationAttempts += 1;
-    if (this.#failLayerOnce) {
-      this.#failLayerOnce = false;
-      return Layer.effectContext(
-        Effect.fail(
-          new StorageFault({
-            operation: "fixture.layer",
-            message: "fixture layer failure",
-            retryable: true,
-          }),
-        ),
-      );
-    }
-
-    const protocol = layerProtocol({
-      client: { storage: this.ctx.storage },
-      longPollTimeoutMs: this.#longPollTimeoutMs,
-    });
-    const failNextExpiry = () => {
-      if (!this.#failNextExpiry) return false;
-      this.#failNextExpiry = false;
-      return true;
-    };
-    const failExpiryWhile = () => this.#failExpiryWhile;
-    const incrementActiveReads = () => {
-      this.#activeReads += 1;
-    };
-    const decrementActiveReads = () => {
-      this.#activeReads -= 1;
-    };
-    const observed = Layer.effectContext(
-      Effect.gen(function* () {
-        const storage = yield* Storage;
-        const reader = yield* StreamsReader;
-        const writer = yield* StreamsWriter;
-        const observedStorage = Storage.of({
-          ...storage,
-          nextExpiry: Effect.suspend(() => {
-            if (failExpiryWhile() || failNextExpiry()) {
-              return Effect.fail(
-                new StorageFault({
-                  operation: "fixture.nextExpiry",
-                  message: "fixture expiry failure",
-                  retryable: true,
-                }),
-              );
-            }
-            return storage.nextExpiry;
-          }),
-        });
-        const observedReader = StreamsReader.of({
-          head: reader.head,
-          read: reader.read,
-          readNext: (id: StreamId, options) =>
-            Effect.sync(incrementActiveReads).pipe(
-              Effect.andThen(reader.readNext(id, options)),
-              Effect.ensuring(Effect.sync(decrementActiveReads)),
-            ),
-        });
-        return Context.make(StreamsReader, observedReader).pipe(
-          Context.add(StreamsWriter, writer),
-          Context.add(Storage, observedStorage),
-        );
-      }),
+  return probe;
+};
+const probeLayer = (
+  state: DurableObjectState,
+): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> => {
+  const probe = probeFor(state);
+  probe.layerAcquisitions += 1;
+  probe.migrationAttempts += 1;
+  if (probe.failLayerOnce) {
+    probe.failLayerOnce = false;
+    return Layer.effectContext(
+      Effect.fail(
+        new StorageFault({
+          operation: "fixture.layer",
+          message: "fixture layer failure",
+          retryable: true,
+        }),
+      ),
     );
-    return observed.pipe(Layer.provideMerge(protocol));
   }
+
+  const protocol = layerProtocol({
+    client: { storage: state.storage },
+    longPollTimeoutMs: probe.longPollTimeoutMs,
+  });
+  const failNextExpiry = () => {
+    if (!probe.failNextExpiry) return false;
+    probe.failNextExpiry = false;
+    return true;
+  };
+  const failExpiryWhile = () => probe.failExpiryWhile;
+  const incrementActiveReads = () => {
+    probe.activeReads += 1;
+  };
+  const decrementActiveReads = () => {
+    probe.activeReads -= 1;
+  };
+  const observed = Layer.effectContext(
+    Effect.gen(function* () {
+      const storage = yield* Storage;
+      const reader = yield* StreamsReader;
+      const writer = yield* StreamsWriter;
+      const observedStorage = Storage.of({
+        ...storage,
+        nextExpiry: Effect.suspend(() => {
+          if (failExpiryWhile() || failNextExpiry()) {
+            return Effect.fail(
+              new StorageFault({
+                operation: "fixture.nextExpiry",
+                message: "fixture expiry failure",
+                retryable: true,
+              }),
+            );
+          }
+          return storage.nextExpiry;
+        }),
+      });
+      const observedReader = StreamsReader.of({
+        head: reader.head,
+        read: reader.read,
+        readNext: (id: StreamId, options) =>
+          Effect.sync(incrementActiveReads).pipe(
+            Effect.andThen(reader.readNext(id, options)),
+            Effect.ensuring(Effect.sync(decrementActiveReads)),
+          ),
+      });
+      return Context.make(StreamsReader, observedReader).pipe(
+        Context.add(StreamsWriter, writer),
+        Context.add(Storage, observedStorage),
+      );
+    }),
+  );
+  return observed.pipe(Layer.provideMerge(protocol));
+};
+
+class ProbeObject extends StreamsyObject.make<Env>({
+  options: { pathPrefix: "/streams" },
+  layer: probeLayer,
+}) {
+  readonly #state = probeFor(this.ctx);
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/__probe") {
       if (url.searchParams.has("fail-layer-once")) {
-        this.#failLayerOnce = true;
+        this.#state.failLayerOnce = true;
         return Response.json({ ok: true });
       }
       if (url.searchParams.has("fail-next-expiry")) {
-        this.#failNextExpiry = true;
+        this.#state.failNextExpiry = true;
         return Response.json({ ok: true });
       }
       if (url.searchParams.has("fail-expiry-while")) {
-        this.#failExpiryWhile = true;
+        this.#state.failExpiryWhile = true;
         return Response.json({ ok: true });
       }
       if (url.searchParams.has("clear-fail-expiry")) {
-        this.#failExpiryWhile = false;
+        this.#state.failExpiryWhile = false;
         return Response.json({ ok: true });
       }
       const longPollTimeoutMs = url.searchParams.get("long-poll-timeout");
       if (longPollTimeoutMs !== null) {
         const parsed = Number(longPollTimeoutMs);
-        if (Number.isFinite(parsed) && parsed > 0) this.#longPollTimeoutMs = parsed;
+        if (Number.isFinite(parsed) && parsed > 0) this.#state.longPollTimeoutMs = parsed;
         return Response.json({ ok: true });
       }
       return this.#probe();
     }
     const response = await super.fetch(request);
     if (request.method === "PUT" || request.method === "POST" || request.method === "DELETE")
-      this.#alarmAfterMutation = await this.ctx.storage.getAlarm();
+      this.#state.alarmAfterMutation = await this.ctx.storage.getAlarm();
     return response;
   }
 
   override alarm(info?: AlarmInvocationInfo): Promise<void> {
-    this.#alarmInvocations += 1;
-    if (info !== undefined) this.#alarmInfo.push({ ...info, observedAt: Date.now() });
+    this.#state.alarmInvocations += 1;
+    if (info !== undefined) this.#state.alarmInfo.push({ ...info, observedAt: Date.now() });
     return super.alarm(info);
   }
 
@@ -165,12 +194,12 @@ class ProbeObject extends StreamsyObject<Env> {
         .raw(),
     );
     return Response.json({
-      layerAcquisitions: this.#layerAcquisitions,
-      migrationAttempts: this.#migrationAttempts,
-      alarmInvocations: this.#alarmInvocations,
-      activeReads: this.#activeReads,
-      alarmInfo: this.#alarmInfo,
-      alarmAfterMutation: this.#alarmAfterMutation,
+      layerAcquisitions: this.#state.layerAcquisitions,
+      migrationAttempts: this.#state.migrationAttempts,
+      alarmInvocations: this.#state.alarmInvocations,
+      activeReads: this.#state.activeReads,
+      alarmInfo: this.#state.alarmInfo,
+      alarmAfterMutation: this.#state.alarmAfterMutation,
       alarm: await this.ctx.storage.getAlarm(),
       rows,
       messages,

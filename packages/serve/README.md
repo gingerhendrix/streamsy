@@ -98,9 +98,11 @@ unbounded by default, so a request that never finishes holds `stop` open; set
 `@effect/platform-bun@4.0.0-rc.112`, which is an optional peer.
 
 The Cloudflare entry keeps one scoped Layer per in-memory Durable Object and
-shares it across `fetch` and `alarm`. `StreamsyObject.layer()` supplies the
-reader, writer, and Durable Object SQLite storage Layer. A failed acquisition
-returns `503 Storage unavailable` with `retry-after: 1`; the failed edge is
+shares it across `fetch` and `alarm`. `StreamsyObject.make({ options, layer })` takes HTTP options and a callback
+from instance state and environment to the reader, writer, and storage Layer.
+The factory provides the `ObjectOptions` service used by the exported `fetch`
+effect; the exported `alarm` effect sweeps directly, without an HTTP request. A failed acquisition
+returns `503 Storage unavailable` with `retry-after: 1`; the failed runtime is
 discarded and the next request retries acquisition. See the complete
 [hosting reference](../../docs/hosting.md) for placement, routing, forks,
 expiry, cancellation, authorization, and evidence boundaries.
