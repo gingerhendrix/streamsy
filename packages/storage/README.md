@@ -12,14 +12,17 @@ Objects and defaults long-poll reads to 25 seconds; the Bun entry keeps its exis
 30-second default.
 
 ```ts
+import { Effect } from "effect";
 import { layerProtocol } from "@streamsy/storage/bun";
-import * as BunHost from "@streamsy/serve/bun";
+import { serveScoped } from "@streamsy/serve/bun";
 
-const host = await BunHost.serve({
-  layer: layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
-  port: 3000,
-});
-await host.stop();
+const host = await Effect.runPromise(
+  serveScoped({
+    layer: layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
+    port: 3000,
+  }),
+);
+await Effect.runPromise(host.stop);
 ```
 
 The Bun entry defaults the synchronous driver `busyTimeout` to zero. Standalone

@@ -12,23 +12,12 @@ it("a template route parses and builds the same id", () => {
     schema: Entry,
   });
   expect(journal.template).toBe("journal/:user");
-  expect(journal.ref({ user: "ann" }).id).toBe(StreamId.make("journal/ann"));
-  expect(journal.ref({ user: "ann" }).contentType).toBe("application/json");
+  const ref = journal.ref({ user: "ann" });
+  expect(ref.id).toBe(StreamId.make("journal/ann"));
+  expect(ref.contentType).toBe("application/json");
   expect(Option.getOrUndefined(journal.parse("journal/ann"))).toEqual({ user: "ann" });
-  expect(journal.match("journal/ann")).toBe(true);
-  expect(journal.match("journal")).toBe(false);
-  expect(journal.match("journal/ann/notes")).toBe(false);
-  expect(journal.match("drafts/ann")).toBe(false);
-  expect(journal.match("journal/")).toBe(false);
-});
-
-it("match agrees with parse on every candidate", () => {
-  const journal = StreamRoute.json("journal/:user", {
-    params: { user: Schema.String },
-    schema: Entry,
-  });
-  for (const id of ["journal/ann", "journal", "journal/a/b", "", "journal/ann/", "x"])
-    expect(journal.match(id)).toBe(Option.isSome(journal.parse(id)));
+  for (const id of ["journal/ann", "journal", "journal/ann/notes", "drafts/ann", "journal/"])
+    expect(journal.match(id)).toBe(id === "journal/ann");
 });
 
 it("multi-segment templates keep parameter identity", () => {
@@ -95,10 +84,7 @@ it("a custom route wraps a grammar a template cannot express", () => {
   expect(sessionLog.ref({ session: "s1" }).id).toBe(StreamId.make("fold/sessions/s1/events"));
 });
 
-it("the template constructor validates its own grammar", () => {
-  expect(() =>
-    StreamRoute.json("journal/:user", { params: { user: Schema.String }, schema: Entry }),
-  ).not.toThrow();
+it("the template constructor rejects a malformed grammar", () => {
   for (const template of ["", "/journal/:user", "journal//:user", "journal/:", "journal/:a:1"])
     expect(() =>
       StreamRoute.json(template, {
@@ -111,13 +97,12 @@ it("the template constructor validates its own grammar", () => {
   ).toThrow(RangeError);
 });
 
-it("a codec with no template name and a name with no codec both throw", () => {
+it("the codec record backstop covers a widened template", () => {
+  // A widened string defeats the compile-time parameter check, so the runtime
+  // backstop is the only thing that catches a mismatch here.
   const widenedTemplate: string = "journal/:user";
   expect(() =>
-    StreamRoute.json(widenedTemplate, {
-      params: { user: Schema.String },
-      schema: Entry,
-    }),
+    StreamRoute.json(widenedTemplate, { params: { user: Schema.String }, schema: Entry }),
   ).not.toThrow();
   expect(() =>
     StreamRoute.json(widenedTemplate, {

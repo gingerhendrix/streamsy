@@ -16,14 +16,31 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { Offset, Protocol, Storage, StreamId, ZERO_OFFSET, type Mutation } from "@streamsy/core";
-import * as BunHost from "@streamsy/serve/bun";
+import {
+  Offset,
+  Protocol,
+  Storage,
+  StreamId,
+  ZERO_OFFSET,
+  type Mutation,
+  type StorageFault,
+} from "@streamsy/core";
+import { serveScoped, type RunningHost, type ServeOptions } from "@streamsy/serve/bun";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError } from "effect/unstable/sql/SqlError";
 import { layer as bunStorageLayer } from "../src/bun.ts";
 import { CommitBoundary } from "../src/index.ts";
 import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts";
 import { layerWithTestProbe } from "../src/storage.ts";
+
+/**
+ * Start one Bun host for this suite. `serveScoped` owns the host scope, so the
+ * listener stays up until the returned `stop` closes it.
+ */
+const startHost = (options: ServeOptions<StorageFault>): Promise<RunningHost> =>
+  Effect.runPromise(Effect.orDie(serveScoped(options)));
+
+const stopHost = (host: RunningHost): Promise<void> => Effect.runPromise(host.stop);
 
 const scratch = Effect.runSync(
   Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
@@ -442,7 +459,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   const application = Protocol.layer({ longPollTimeoutMs: 30_000 }).pipe(
     Layer.provide(storageLayer),
   );
-  const host = await BunHost.serve({ layer: application, port: 0 });
+  const host = await startHost({ layer: application, port: 0 });
   const streamUrl = new URL("host", host.url);
   const created = await fetch(streamUrl, {
     method: "PUT",
@@ -512,7 +529,7 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
   }).catch(() => undefined);
   await waitFor(() => probe.transactionAttempts > beforeShutdownRetry);
   const stopStarted = performance.now();
-  await host.stop();
+  await stopHost(host);
   const stopElapsedMs = performance.now() - stopStarted;
   expect(stopElapsedMs).toBeLessThanOrEqual(1_000);
   expect(probe.completedMutations).toBe(beforeShutdownCompletions + 1);
@@ -553,12 +570,12 @@ test("SQL host keeps unrelated HTTP responsive and cleans retries, SSE, long-pol
     ),
   );
 
-  const rebound = await BunHost.serve({ layer: application, port: host.port });
+  const rebound = await startHost({ layer: application, port: host.port });
   try {
     expect(rebound.port).toBe(host.port);
     expect((await fetch(new URL("rebound", rebound.url), { method: "PUT" })).status).toBe(201);
   } finally {
-    await rebound.stop();
+    await stopHost(rebound);
   }
 });
 
@@ -584,12 +601,12 @@ test("a host-scoped held transaction is interrupted and rolled back on stop", as
     Protocol.layer({ longPollTimeoutMs: 30_000 }),
     transactionHolder,
   ).pipe(Layer.provide(storageLayer));
-  const host = await BunHost.serve({ layer: application, port: 0 });
+  const host = await startHost({ layer: application, port: 0 });
   expect((await fetch(new URL("held", host.url), { method: "PUT" })).status).toBe(201);
   await Effect.runPromise(Deferred.succeed(trigger, undefined));
   await Effect.runPromise(Deferred.await(acquired).pipe(Effect.timeout(1_000)));
   const stopStarted = performance.now();
-  await host.stop();
+  await stopHost(host);
   const stopElapsedMs = performance.now() - stopStarted;
   expect(stopElapsedMs).toBeLessThanOrEqual(1_000);
   expect(probe.closed).toBe(true);
@@ -600,7 +617,7 @@ test("a host-scoped held transaction is interrupted and rolled back on stop", as
   database.run("ROLLBACK");
   database.close(false);
   const reboundStorage = makeTestLayer(filename).storage;
-  const rebound = await BunHost.serve({
+  const rebound = await startHost({
     layer: Protocol.layer().pipe(Layer.provide(reboundStorage)),
     port: host.port,
   });
@@ -608,7 +625,7 @@ test("a host-scoped held transaction is interrupted and rolled back on stop", as
     expect(rebound.port).toBe(host.port);
     expect((await fetch(new URL("rebound", rebound.url), { method: "PUT" })).status).toBe(201);
   } finally {
-    await rebound.stop();
+    await stopHost(rebound);
   }
   await Bun.write(
     `${scratch}/contention-held-shutdown-metrics-${process.pid}.json`,

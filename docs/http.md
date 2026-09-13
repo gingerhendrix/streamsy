@@ -6,33 +6,39 @@ supplies `StreamsReader` and `StreamsWriter`. The executable owner must dispose
 that edge. `@streamsy/serve/bun` provides the Bun listener and owns both resources:
 
 ```ts
+import { Effect } from "effect";
 import { Streams } from "@streamsy/core";
-import * as BunHost from "@streamsy/serve/bun";
+import { serveScoped } from "@streamsy/serve/bun";
 
-const host = await BunHost.serve({
-  layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }),
-  port: 3000,
-  pathPrefix: "/v1/stream",
-  maxMessageSize: 1024 * 1024,
-  cacheVisibility: "private",
-});
-// host.url is a URL; host.port is the actual bound port (port: 0 selects one).
+const host = await Effect.runPromise(
+  serveScoped({
+    layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }),
+    port: 3000,
+    pathPrefix: "/v1/stream",
+    maxMessageSize: 1024 * 1024,
+    cacheVisibility: "private",
+  }),
+);
+// host.url is an absolute string; host.port is the bound port (port: 0 selects one).
 // On shutdown:
-await host.stop();
+await Effect.runPromise(host.stop);
 ```
 
 For durable Bun storage, compose the complete protocol Layer at the storage host
 entry:
 
 ```ts
+import { Effect } from "effect";
 import * as SqlStorage from "@streamsy/storage/bun";
-import * as BunHost from "@streamsy/serve/bun";
+import { serveScoped } from "@streamsy/serve/bun";
 
-const host = await BunHost.serve({
-  layer: SqlStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
-  port: 3000,
-});
-await host.stop();
+const host = await Effect.runPromise(
+  serveScoped({
+    layer: SqlStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
+    port: 3000,
+  }),
+);
+await Effect.runPromise(host.stop);
 ```
 
 That scope owns the listener, protocol services, SQL client, active changes

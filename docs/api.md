@@ -108,12 +108,13 @@ batch limits and cancellation are documented in [HTTP behavior](http.md).
 ## Host and storage lifetime
 
 ```ts
+import { Effect } from "effect";
 import { Streams } from "@streamsy/core";
-import * as BunHost from "@streamsy/serve/bun";
+import { serveScoped } from "@streamsy/serve/bun";
 
-const host = await BunHost.serve({ layer: Streams.layerMemory(), port: 3000 });
+const host = await Effect.runPromise(serveScoped({ layer: Streams.layerMemory(), port: 3000 }));
 // On shutdown:
-await host.stop();
+await Effect.runPromise(host.stop);
 ```
 
 Replace the memory Layer with

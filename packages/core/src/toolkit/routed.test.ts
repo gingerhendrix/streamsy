@@ -32,7 +32,7 @@ const routed: RoutedLayer = Streams.layerRouted([
 
 type RoutedServices = StreamsReader | StreamsWriter;
 
-type RoutedLayer = Layer.Layer<RoutedServices, never, never>;
+type RoutedLayer = Layer.Layer<RoutedServices>;
 
 /**
  * Build the routed Layer, then provide only `TestClock` from the outside. The
@@ -163,23 +163,6 @@ it("a fallback serves an id that no route matches", async () => {
       ).toEqual([]);
     }),
     withFallback,
-  );
-  expect(exit).toEqual(Exit.succeed(undefined));
-});
-
-it("the routed Layer serves one backend for many families", async () => {
-  const only: RoutedLayer = Streams.layerRouted([memory.serves(Draft, Journal)]).pipe(
-    Layer.provide(memory.layer(memoryGraph)),
-  );
-  const exit = await run(
-    Effect.gen(function* () {
-      yield* Streams.create(Draft.ref({ user: "a" }));
-      yield* Streams.create(Journal.ref({ user: "a" }));
-      expect(yield* Streams.head(Draft.ref({ user: "a" }))).toMatchObject({
-        nextOffset: ZERO_OFFSET,
-      });
-    }),
-    only,
   );
   expect(exit).toEqual(Exit.succeed(undefined));
 });

@@ -11,9 +11,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { Memory, Protocol } from "@streamsy/core";
-import { serve as serveBun } from "../src/bun.ts";
+import { serveScoped, type RunningHost } from "../src/bun.ts";
 import { Miniflare } from "miniflare";
 
 const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
@@ -133,6 +133,10 @@ interface ProbeResult {
 const open: Array<Harness> = [];
 const pending = new Set<OwnedHarness>();
 const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
+
+/** Start one Bun host for this suite and expose a Promise-shaped stop. */
+const startBun = (options: Parameters<typeof serveScoped>[0]): Promise<RunningHost> =>
+  Effect.runPromise(serveScoped(options));
 const ownedRoots = new Set<string>();
 const ownedBundles = new Set<string>();
 
@@ -622,12 +626,12 @@ const largeJson = (prefix: string) =>
 
 test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => {
   const harness = await makeHarness("worker-by-key.ts");
-  const bun = await serveBun({
+  const bun = await startBun({
     pathPrefix: "/streams",
     layer: Protocol.layer().pipe(Layer.provide(Memory.layer())),
     port: 0,
   });
-  openBun.push(bun);
+  openBun.push({ stop: () => Effect.runPromise(bun.stop) });
   const bunRequest = (path: string, init?: RequestInit) => fetch(new URL(path, bun.url), init);
   const observe = async (response: Response) => {
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? null;

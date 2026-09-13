@@ -2,7 +2,7 @@
 import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Effect, Exit, Layer, Stream } from "effect";
 import { Memory, Protocol, Storage, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { serve } from "./bun.ts";
+import { serveScoped } from "./bun.ts";
 
 for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
   it(`${shutdown} releases the live producing read and changes subscription; stop permits same-port rebind`, async () => {
@@ -78,7 +78,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
     const warnings = spyOn(console, "warn");
     const logs = spyOn(console, "log");
     const stderr = spyOn(process.stderr, "write");
-    const host = await serve({ layer: observedProtocol, port: 0 });
+    const host = await Effect.runPromise(serveScoped({ layer: observedProtocol, port: 0 }));
     const abort = new AbortController();
     try {
       const url = new URL("s", host.url);
@@ -125,7 +125,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       );
       expect(subscribers).toBe(1);
       expect(activeReads).toBe(1);
-      if (shutdown === "stop") await host.stop();
+      if (shutdown === "stop") await Effect.runPromise(host.stop);
       else abort.abort();
       const completed = await pending;
       if (shutdown === "long-poll-abort") expect(completed).toMatchObject({ name: "AbortError" });
@@ -167,20 +167,21 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       expect(activeReads).toBe(0);
       expect(interrupted).toBe(true);
       expect(ownerClosed).toBe(shutdown === "stop");
-      await host.stop();
+      await Effect.runPromise(host.stop);
       expect(ownerClosed).toBe(true);
-      const rebound = await serve({ layer: Streams.layerMemory(), port: host.port });
+      const rebound = await Effect.runPromise(
+        serveScoped({ layer: Streams.layerMemory(), port: host.port }),
+      );
       try {
         expect(rebound.port).toBe(host.port);
         expect((await fetch(new URL("s", rebound.url), { method: "PUT" })).status).toBe(201);
       } finally {
-        await rebound.stop();
+        await Effect.runPromise(rebound.stop);
       }
-      await host.stop();
     } finally {
       abort.abort();
       try {
-        await host.stop();
+        await Effect.runPromise(host.stop);
         expect(errors).not.toHaveBeenCalled();
         expect(warnings).not.toHaveBeenCalled();
         expect(logs).not.toHaveBeenCalled();

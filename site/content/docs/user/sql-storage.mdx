@@ -10,17 +10,20 @@ shared SqlClient/Reactivity graph and expose both `Storage` and `CommitBoundary`
 ## Bun SQLite
 
 ```ts
+import { Effect } from "effect";
 import * as SqlStorage from "@streamsy/storage/bun";
-import * as BunHost from "@streamsy/serve/bun";
+import { serveScoped } from "@streamsy/serve/bun";
 
-const host = await BunHost.serve({
-  layer: SqlStorage.layerProtocol({
-    client: { filename: "./streamsy.sqlite" },
+const host = await Effect.runPromise(
+  serveScoped({
+    layer: SqlStorage.layerProtocol({
+      client: { filename: "./streamsy.sqlite" },
+    }),
+    port: 3000,
   }),
-  port: 3000,
-});
+);
 
-await host.stop();
+await Effect.runPromise(host.stop);
 ```
 
 The Bun entry sets the synchronous driver busy timeout to zero unless you
