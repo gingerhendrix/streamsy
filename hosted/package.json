@@ -9,10 +9,10 @@
     "evidence": "bun run src/main.ts"
   },
   "devDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.115",
     "@types/bun": "1.4.0",
     "alchemy": "2.0.0-beta.76",
-    "effect": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.115",
     "typescript": "5.9.3"
   }
 }

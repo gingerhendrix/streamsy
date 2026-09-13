@@ -8,9 +8,9 @@
     "test": "bun test test/*.bun.test.ts"
   },
   "dependencies": {
-    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
-    "@effect/sql-sqlite-do": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112"
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "@effect/sql-sqlite-do": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",

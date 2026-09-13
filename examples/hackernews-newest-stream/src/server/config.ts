@@ -1,24 +1,24 @@
 import { Config, Effect, Option } from "effect";
 
-const configuredNewestLimit = Config.int("HN_NEWEST_LIMIT").pipe(Config.withDefault(50));
+const configuredNewestLimit = Config.Int("HN_NEWEST_LIMIT").pipe(Config.withDefault(50));
 
 export const demoConfig = Config.all({
-  port: Config.port("PORT").pipe(Config.withDefault(1339)),
-  streamPrefix: Config.string("STREAM_PREFIX").pipe(Config.withDefault("/streams")),
-  targetStreamId: Config.string("HN_TARGET_STREAM_ID").pipe(Config.withDefault("session/main")),
-  sourceStreamId: Config.string("HN_SOURCE_STREAM_ID").pipe(
+  port: Config.Port("PORT").pipe(Config.withDefault(1339)),
+  streamPrefix: Config.String("STREAM_PREFIX").pipe(Config.withDefault("/streams")),
+  targetStreamId: Config.String("HN_TARGET_STREAM_ID").pipe(Config.withDefault("session/main")),
+  sourceStreamId: Config.String("HN_SOURCE_STREAM_ID").pipe(
     Config.withDefault("session/main/source"),
   ),
-  streamContentType: Config.string("STREAM_CONTENT_TYPE").pipe(
+  streamContentType: Config.String("STREAM_CONTENT_TYPE").pipe(
     Config.withDefault("application/json"),
   ),
-  pollIntervalMs: Config.int("HN_POLL_INTERVAL_MS").pipe(Config.withDefault(60_000)),
+  pollIntervalMs: Config.Int("HN_POLL_INTERVAL_MS").pipe(Config.withDefault(60_000)),
   newestLimit: configuredNewestLimit,
-  projectionMaxPages: Config.int("HN_PROJECTION_MAX_PAGES").pipe(Config.withDefault(10)),
-  projectionMaxBatches: Config.int("HN_PROJECTION_MAX_BATCHES").pipe(Config.withDefault(10)),
-  projectionMaxItems: Config.option(Config.int("HN_PROJECTION_MAX_ITEMS")),
-  projectionMaxBytes: Config.int("HN_PROJECTION_MAX_BYTES").pipe(Config.withDefault(1_000_000)),
-  hnApiBase: Config.string("HN_API_BASE").pipe(
+  projectionMaxPages: Config.Int("HN_PROJECTION_MAX_PAGES").pipe(Config.withDefault(10)),
+  projectionMaxBatches: Config.Int("HN_PROJECTION_MAX_BATCHES").pipe(Config.withDefault(10)),
+  projectionMaxItems: Config.option(Config.Int("HN_PROJECTION_MAX_ITEMS")),
+  projectionMaxBytes: Config.Int("HN_PROJECTION_MAX_BYTES").pipe(Config.withDefault(1_000_000)),
+  hnApiBase: Config.String("HN_API_BASE").pipe(
     Config.withDefault("https://hacker-news.firebaseio.com/v0"),
   ),
 }).pipe(

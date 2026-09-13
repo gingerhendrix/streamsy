@@ -6,7 +6,7 @@ import { Config, Effect } from "effect";
 import { Miniflare } from "miniflare";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 const open: Array<{ readonly miniflare: Miniflare; readonly root: string }> = [];
 

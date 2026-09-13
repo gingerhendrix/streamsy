@@ -43,7 +43,7 @@ const startHost = (options: ServeOptions<StorageFault>): Promise<Host> =>
 const stopHost = (host: Host): Promise<void> => Effect.runPromise(host.stop);
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 const holderWorker = new URL("./contention-process-worker.ts", import.meta.url).pathname;
 const one = Offset.make("0000000000000001_0000000000000000");

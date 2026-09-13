@@ -100,19 +100,19 @@
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",
-    "effect": "4.0.0-rc.112"
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20251228.0",
-    "@effect/platform-bun": "4.0.0-rc.112",
-    "@effect/sql-sqlite-do": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.2.0",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.112"
+    "@effect/platform-bun": "4.0.0-rc.115"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {

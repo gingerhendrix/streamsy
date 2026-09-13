@@ -4,7 +4,7 @@ import { Clock, Config, Effect, Schema } from "effect";
 import { ZERO_OFFSET } from "@streamsy/core";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 const worker = new URL("./protocol-process-worker.ts", import.meta.url).pathname;
 

@@ -15,7 +15,7 @@ import {
 } from "../src/schema.ts";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 const filename = (label: string) =>
   `${scratch}/${label}-${process.pid}-${crypto.randomUUID()}.sqlite`;

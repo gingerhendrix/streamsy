@@ -6,7 +6,7 @@ import { Config, Effect, Schema } from "effect";
 import { Miniflare } from "miniflare";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_DERIVE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_DERIVE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 
 test("same-object Durable Object SQLite runs the fused Derive composition", async () => {

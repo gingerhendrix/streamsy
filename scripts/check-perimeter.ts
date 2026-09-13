@@ -148,6 +148,8 @@ const dependencySections = [
   "resolutions",
 ] as const;
 const effectVitest = ["@effect", "vitest"].join("/");
+/** The one accepted `effect` pin. Every manifest section that declares `effect` must match it. */
+const effectPin = "4.0.0-rc.115";
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This checker receives parsed JSON values and recursively validates every dependency-bearing manifest section.
 const inspectDependencyTree = (
   path: string,
@@ -165,7 +167,7 @@ const inspectDependencyTree = (
       console.log(`FAIL Effect Vitest declaration: ${path} (${section}.${key})`);
     }
     if (key === "effect") {
-      const pinned = targetText === "4.0.0-rc.112";
+      const pinned = targetText === effectPin;
       checks.push(pinned);
       console.log(`${pinned ? "ok  " : "FAIL"} Effect pin: ${path} (${section})`);
     }

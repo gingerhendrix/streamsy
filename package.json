@@ -56,7 +56,7 @@
     "test:conformance:fetch": "bun run --cwd packages/conformance-tests test:fetch"
   },
   "devDependencies": {
-    "@effect/sql-sqlite-bun": "4.0.0-rc.112",
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@effect/tsgo": "0.36.5",
     "@oxlint/plugins": "1.78.0",
     "oxfmt": "^0.48.0",
@@ -66,10 +66,11 @@
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",
-    "@effect/platform-node": "4.0.0-rc.112",
-    "@effect/platform-node-shared": "4.0.0-rc.112",
+    "@effect/ai-anthropic": "4.0.0-rc.115",
+    "@effect/ai-openai": "4.0.0-rc.115",
+    "@effect/platform-node": "4.0.0-rc.115",
     "@tanstack/db": "0.6.8",
     "@tanstack/react-db": "0.1.83",
-    "effect": "4.0.0-rc.112"
+    "effect": "4.0.0-rc.115"
   }
 }

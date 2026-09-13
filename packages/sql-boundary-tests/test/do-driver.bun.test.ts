@@ -7,7 +7,7 @@ import { Config, Effect } from "effect";
 import { Miniflare } from "miniflare";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_SQL_BOUNDARY_SCRATCH").pipe(Config.withDefault(tmpdir())),
+  Config.String("STREAMSY_SQL_BOUNDARY_SCRATCH").pipe(Config.withDefault(tmpdir())),
 );
 mkdirSync(scratch, { recursive: true });
 const open: Array<{ readonly miniflare: Miniflare; readonly root: string }> = [];

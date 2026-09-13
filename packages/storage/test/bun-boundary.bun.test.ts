@@ -13,7 +13,7 @@ import {
 } from "./storage-boundary-scenarios.ts";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 
 const makeLayer = (filename: string, repairIntervalMs: number) => {

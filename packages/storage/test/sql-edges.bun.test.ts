@@ -15,7 +15,7 @@ import { sharedSqlClientLayer } from "../src/boundary.ts";
 import { layer as sqlLayer } from "../src/storage.ts";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 let nextFixture = 0;
 const died = <A, E>(exit: Exit.Exit<A, E>): boolean =>

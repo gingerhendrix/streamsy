@@ -15,7 +15,7 @@ const host = (filename: string) =>
   );
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_DERIVE_SCRATCH").pipe(Config.withDefault("/tmp")),
+  Config.String("STREAMSY_DERIVE_SCRATCH").pipe(Config.withDefault("/tmp")),
 );
 
 test("Bun SQLite fuses output, state and checkpoint, including after-sink rollback", async () => {

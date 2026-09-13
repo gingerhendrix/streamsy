@@ -11,12 +11,12 @@
     "test:unit": "bun test test"
   },
   "dependencies": {
-    "@effect/ai-anthropic": "4.0.0-rc.109",
-    "@effect/ai-openai": "4.0.0-rc.109",
+    "@effect/ai-anthropic": "4.0.0-rc.115",
+    "@effect/ai-openai": "4.0.0-rc.115",
     "@humanlayer/fold-core": "0.1.4",
     "@streamsy/core": "workspace:*",
     "@streamsy/storage": "workspace:*",
-    "effect": "4.0.0-rc.112"
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

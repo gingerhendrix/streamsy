@@ -16,7 +16,7 @@ import {
 } from "../src/proof-scenarios.ts";
 
 const scratch = Effect.runSync(
-  Config.string("STREAMSY_SQL_BOUNDARY_SCRATCH").pipe(Config.withDefault(tmpdir())),
+  Config.String("STREAMSY_SQL_BOUNDARY_SCRATCH").pipe(Config.withDefault(tmpdir())),
 );
 mkdirSync(scratch, { recursive: true });
 

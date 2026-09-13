@@ -1,6 +1,7 @@
-import { Context, Effect, Exit, Fiber, Layer, Predicate, Scope } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, Scope } from "effect";
 import type { Duration } from "effect";
 import { HttpServer } from "effect/unstable/http";
+import { NetAddress } from "effect/unstable/net";
 import { BunHttpServer } from "@effect/platform-bun";
 import type { StreamsReader, StreamsWriter } from "@streamsy/core";
 import { app, type HttpOptions } from "@streamsy/core/http";
@@ -47,7 +48,13 @@ const listenerOptions = (options: ListenerOptions) => ({
 });
 
 /** The Bun listener that keeps a parked long poll alive. */
-export const listener = (options: ListenerOptions) => BunHttpServer.layer(listenerOptions(options));
+export const listener = (options: ListenerOptions) =>
+  // `BunHttpServer.layer` gained an `Error.ServeError` channel in rc.115; at
+  // rc.112 a `Bun.serve` bind failure was a defect. `Layer.orDie` restores that
+  // shape so the host keeps one caller-visible error channel, storage's `E`,
+  // and a bind failure stays a defect. `@effect/platform-bun`'s own `layerTest`
+  // absorbs the same channel the same way.
+  BunHttpServer.layer(listenerOptions(options)).pipe(Layer.orDie);
 
 /**
  * The whole Streamsy application on Bun, as one Layer.
@@ -106,7 +113,10 @@ export const start = <E>(options: ServeOptions<E>): Effect.Effect<Host, E> =>
     );
     const server = yield* Fiber.join(boot);
     return {
-      port: Predicate.isTagged(server.address, "TcpAddress") ? server.address.port : 0,
+      // rc.115 widens `HttpServer.address` to `NetAddress.SocketAddress`, whose
+      // inet tags are `InetAddressV4` and `InetAddressV6`; rc.112 used the single
+      // `TcpAddress` tag. Only an inet address reports a TCP port.
+      port: NetAddress.isInetAddress(server.address) ? server.address.port : 0,
       url: HttpServer.formatAddress(server.address),
       stop: Effect.catchCause(Scope.close(scope, Exit.void), () => Effect.void),
     };

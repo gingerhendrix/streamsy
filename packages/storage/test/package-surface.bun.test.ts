@@ -26,10 +26,10 @@ test("host entries and optional peers keep the package graph exact", async () =>
   expect(root).not.toContain("@effect/sql-sqlite-do");
   const manifest: unknown = await Bun.file(new URL("../package.json", import.meta.url)).json();
   expect(manifest).toMatchObject({
-    dependencies: { "@streamsy/core": "workspace:*", effect: "4.0.0-rc.112" },
+    dependencies: { "@streamsy/core": "workspace:*", effect: "4.0.0-rc.115" },
     peerDependencies: {
-      "@effect/sql-sqlite-bun": "4.0.0-rc.112",
-      "@effect/sql-sqlite-do": "4.0.0-rc.112",
+      "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+      "@effect/sql-sqlite-do": "4.0.0-rc.115",
     },
     peerDependenciesMeta: {
       "@effect/sql-sqlite-bun": { optional: true },
