@@ -12,6 +12,10 @@
     "src/cloudflare/**/*",
     "test/cloudflare-host.bun.test.ts",
     "test/cloudflare-usage.ts",
-    "test/cloudflare/**/*"
+    "test/cloudflare/**/*",
+    "test/alchemy/**/*",
+    "src/alchemy.ts",
+    "src/alchemy.test.ts",
+    "src/alchemy-runtime.test.ts"
   ]
 }

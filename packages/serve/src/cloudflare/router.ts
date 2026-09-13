@@ -21,7 +21,7 @@ const internalError = (): Response =>
 
 const invalidPlacement = (): Response => badRequest("Invalid placement key");
 
-const resolvePlacement = (
+export const resolvePlacement = (
   placement: PlacementType,
   streamPath: string,
 ):

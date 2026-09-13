@@ -88,13 +88,18 @@
       "types": "./dist/cloudflare.d.ts",
       "import": "./dist/cloudflare.js",
       "default": "./dist/cloudflare.js"
+    },
+    "./alchemy": {
+      "types": "./dist/alchemy.d.ts",
+      "import": "./dist/alchemy.js",
+      "default": "./dist/alchemy.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts src/cloudflare.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external cloudflare:workers",
+    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external cloudflare:workers",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit && tsc -p tsconfig.cloudflare-tests.json --noEmit",
     "test:unit": "bun test src test/*.bun.test.ts"
   },
@@ -108,14 +113,19 @@
     "@effect/sql-sqlite-do": "4.0.0-rc.115",
     "@streamsy/storage": "workspace:*",
     "@types/bun": "^1.2.0",
+    "alchemy": "2.0.0-beta.76",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "4.0.0-rc.115"
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "alchemy": "2.0.0-beta.76"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
+      "optional": true
+    },
+    "alchemy": {
       "optional": true
     }
   }

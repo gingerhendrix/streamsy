@@ -9,6 +9,12 @@
     },
     "skipLibCheck": true
   },
-  "include": ["src/cloudflare/**/*.test.ts", "test/*.bun.test.ts", "test/cloudflare-usage.ts"],
+  "include": [
+    "src/cloudflare/**/*.test.ts",
+    "test/*.bun.test.ts",
+    "test/cloudflare-usage.ts",
+    "src/alchemy.test.ts",
+    "src/alchemy-runtime.test.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

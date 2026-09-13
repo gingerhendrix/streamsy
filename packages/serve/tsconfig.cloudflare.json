@@ -8,7 +8,9 @@
     "src/cloudflare.ts",
     "src/cloudflare/**/*",
     "test/cloudflare-host.bun.test.ts",
-    "test/cloudflare/**/*"
+    "test/cloudflare/**/*",
+    "src/alchemy.ts",
+    "test/alchemy/**/*"
   ],
   "exclude": [
     "node_modules",

@@ -135,6 +135,8 @@ const checks = [
   ),
   scan("no Effect Vitest integration", ["@effect", "vitest"].join("[/]"), [
     "!parked/**",
+    // Alchemy declares this transitively; authored imports and manifests stay forbidden.
+    "!bun.lock",
     "!hosted/bun.lock",
   ]),
 ];

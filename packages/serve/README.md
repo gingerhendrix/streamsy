@@ -61,6 +61,7 @@ order within the file.
 | `./action/runtime`  | the serialized delivery runtime and drain loop                |
 | `./action/sqlite`   | the SQLite outbox backing and its migration                   |
 | `./cloudflare`      | placement routing and the scoped Durable Object protocol host |
+| `./alchemy`         | Effect object handlers and the Alchemy HttpEffect router      |
 
 There is no barrel. A subpath points at the module that owns the symbols, so an
 import names where a symbol lives.
@@ -112,3 +113,25 @@ official profile. The workerd profile deliberately uses one `byKey` object for
 same-object chain semantics. Forks require the source and child to share an object;
 see [fork placement](../../docs/hosting.md#forks). Hosted
 Cloudflare execution and release acceptance remain pending.
+
+## Alchemy
+
+`@streamsy/serve/alchemy` exports exactly `fetch`, `alarm`, `alarmLayer`,
+`router`, `Placement`, and `ObjectOptions`, and has an optional peer on
+`alchemy@2.0.0-beta.76`. The request effect reads the `ObjectOptions` service.
+This sixth export lets Alchemy construction import the service under Bun
+without loading the class entry’s `cloudflare:workers` dependency. The
+Cloudflare entry continues to export the same service for class-form users.
+In the runtime construction phase, supply that service beside storage and
+`alarmLayer(state.raw.storage)` in one Layer. Cache the lazy build in the
+object's scope, answer acquisition failures with 503 and retry on the next
+call. The [typed construction fixture](test/alchemy/usage.ts) and its
+[construction helper](test/alchemy/runtime.ts) show the complete composition.
+Alchemy's alarm callback closes the typed error channel with `Effect.orDie`,
+so a failed sweep reaches platform retry.
+
+The router accepts `{ objects, pathPrefix, placement }`, strips the prefix for
+placement, and forwards the original Effect HTTP request through
+`objects.getByName(name).fetch(request)`. Its typed error is `HttpServerError`.
+Authenticate before evaluating it. The class factory and the `ExportedHandler`
+router remain the wrangler/Miniflare path; this subpath does not deploy resources.
