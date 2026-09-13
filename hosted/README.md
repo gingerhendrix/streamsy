@@ -5,6 +5,15 @@ the small Effect workflow with explicit fake Layers. `bun run typecheck` checks
 the stack declarations; `bun test test` exercises validation, polling,
 measurement protocol, cleanup, reports, and the disabled executable.
 
+Two stack entries preserve separate evidence paths. `alchemy.run.ts` keeps the
+prebuilt conformance artifact with `bundle: false`, and
+`alchemy.source.run.ts` typechecks the Effect-native Worker and Durable Object
+source form in `src/source-worker.ts`. The source form uses
+`@streamsy/serve/alchemy` with Durable Object SQLite and the same fixed
+single-object placement as the prebuilt conformance Worker. Neither stack is
+executed by `hosted:check`; source-form runtime and deployment readiness remain
+unverified.
+
 Alchemy deployment for Step 3 is authorized. Hosted execution remains disabled
 in this local package pending independently reviewed live adapters and a
 reconciled run plan, including destroy/cleanup and required query scope. Hosted

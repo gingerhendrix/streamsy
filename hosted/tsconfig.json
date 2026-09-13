@@ -2,8 +2,12 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "types": ["bun"],
+    "paths": {
+      "@streamsy/serve/alchemy": ["../packages/serve/dist/alchemy.d.ts"],
+      "@streamsy/storage/durable-object": ["../packages/storage/dist/durable-object.d.ts"]
+    },
     "noEmit": true
   },
-  "include": ["alchemy.run.ts", "src/**/*.ts", "test/**/*.ts"],
+  "include": ["alchemy.run.ts", "alchemy.source.run.ts", "src/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
