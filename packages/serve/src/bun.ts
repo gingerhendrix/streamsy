@@ -1,4 +1,5 @@
 import { Context, Effect, Exit, Fiber, Layer, Predicate, Scope } from "effect";
+import type { Duration } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { BunHttpServer } from "@effect/platform-bun";
 import type { StreamsReader, StreamsWriter } from "@streamsy/core";
@@ -13,6 +14,11 @@ export interface ServeOptions<E = never> extends HttpOptions {
    * long poll needs: the default 10 second close would cut it short.
    */
   readonly idleTimeout?: number;
+  /**
+   * Bounds how long a stop waits for in-flight requests. When the option is
+   * absent the drain is unbounded, which is the default shape.
+   */
+  readonly gracefulShutdownTimeout?: Duration.Input;
 }
 
 export const DEFAULT_PORT = 3000;
@@ -22,6 +28,7 @@ interface ListenerOptions {
   readonly port?: number;
   readonly hostname?: string;
   readonly idleTimeout?: number;
+  readonly gracefulShutdownTimeout?: Duration.Input;
 }
 
 const listenerOptions = (options: ListenerOptions) => ({
@@ -32,13 +39,15 @@ const listenerOptions = (options: ListenerOptions) => ({
   idleTimeout: options.idleTimeout ?? 0,
   // The listener stops from its own scope finalizer, which drains in-flight
   // requests. The serve finalizer would otherwise call the same stop again
-  // behind a 20 second bound and make every shutdown wait for that bound.
-  disablePreemptiveShutdown: true,
+  // behind a bound the caller did not ask for and make every shutdown wait for
+  // it. The preemptive wrapper comes back only when the caller sets a bound.
+  ...(options.gracefulShutdownTimeout === undefined
+    ? { disablePreemptiveShutdown: true }
+    : { gracefulShutdownTimeout: options.gracefulShutdownTimeout }),
 });
 
 /** The Bun listener that keeps a parked long poll alive. */
-export const listenerLayer = (options: ListenerOptions) =>
-  BunHttpServer.layer(listenerOptions(options));
+export const listener = (options: ListenerOptions) => BunHttpServer.layer(listenerOptions(options));
 
 /**
  * The whole Streamsy application on Bun, as one Layer.
@@ -56,24 +65,24 @@ export const listenerLayer = (options: ListenerOptions) =>
  * Launch it with `Layer.launch`, or merge a projection or an outbox drain
  * beside it and provide the same storage Layer value once.
  */
-export const serveLayer = <E>(options: ServeOptions<E>) =>
+export const layer = <E>(options: ServeOptions<E>) =>
   HttpServer.serve(Effect.interruptible(app(options))).pipe(
     Layer.provide(options.layer),
-    Layer.provideMerge(listenerLayer(options)),
+    Layer.provideMerge(listener(options)),
   );
 
 /** A started host that reports its bound address and stops on request. */
-export interface RunningHost {
+export interface Host {
   readonly port: number;
   readonly url: string;
   /** Closes the host's scope, which drains and stops the listener. */
   readonly stop: Effect.Effect<void>;
 }
 
-/** The scoped fiber that builds one host. Kept so `serveScoped` can interrupt it. */
-const start = <E>(options: ServeOptions<E>) =>
+/** Build the composition inside one given scope and return the bound server. */
+const buildHost = <E>(options: ServeOptions<E>) =>
   Effect.gen(function* () {
-    const context = yield* serveLayer(options).pipe(
+    const context = yield* layer(options).pipe(
       Layer.build,
       Effect.provideService(Scope.Scope, yield* Effect.scope),
     );
@@ -86,19 +95,19 @@ const start = <E>(options: ServeOptions<E>) =>
  * The host owns one scope, so the caller may stop it early and the returned
  * `stop` stays idempotent. Wrap the call in `Effect.acquireRelease` to tie
  * `stop` to an outer scope. A long-running process uses
- * `Layer.launch(serveLayer(options))` and never needs this shape.
+ * `Layer.launch(layer(options))` and never needs this shape.
  */
-export const serveScoped = <E>(options: ServeOptions<E>): Effect.Effect<RunningHost, E> =>
+export const start = <E>(options: ServeOptions<E>): Effect.Effect<Host, E> =>
   Effect.gen(function* () {
     const scope = Scope.makeUnsafe();
     const boot = yield* Effect.forkIn(
-      start(options).pipe(Effect.provideService(Scope.Scope, scope)),
+      buildHost(options).pipe(Effect.provideService(Scope.Scope, scope)),
       scope,
     );
-    const listener = yield* Fiber.join(boot);
+    const server = yield* Fiber.join(boot);
     return {
-      port: Predicate.isTagged(listener.address, "TcpAddress") ? listener.address.port : 0,
-      url: HttpServer.formatAddress(listener.address),
+      port: Predicate.isTagged(server.address, "TcpAddress") ? server.address.port : 0,
+      url: HttpServer.formatAddress(server.address),
       stop: Effect.catchCause(Scope.close(scope, Exit.void), () => Effect.void),
     };
   });

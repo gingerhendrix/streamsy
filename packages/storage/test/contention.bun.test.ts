@@ -25,7 +25,7 @@ import {
   type Mutation,
   type StorageFault,
 } from "@streamsy/core";
-import { serveScoped, type RunningHost, type ServeOptions } from "@streamsy/serve/bun";
+import { start, type Host, type ServeOptions } from "@streamsy/serve/bun";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError } from "effect/unstable/sql/SqlError";
 import { layer as bunStorageLayer } from "../src/bun.ts";
@@ -34,13 +34,13 @@ import { makeBoundaryTestProbe, sharedSqlClientLayer } from "../src/boundary.ts"
 import { layerWithTestProbe } from "../src/storage.ts";
 
 /**
- * Start one Bun host for this suite. `serveScoped` owns the host scope, so the
+ * Start one Bun host for this suite. `start` owns the host scope, so the
  * listener stays up until the returned `stop` closes it.
  */
-const startHost = (options: ServeOptions<StorageFault>): Promise<RunningHost> =>
-  Effect.runPromise(Effect.orDie(serveScoped(options)));
+const startHost = (options: ServeOptions<StorageFault>): Promise<Host> =>
+  Effect.runPromise(Effect.orDie(start(options)));
 
-const stopHost = (host: RunningHost): Promise<void> => Effect.runPromise(host.stop);
+const stopHost = (host: Host): Promise<void> => Effect.runPromise(host.stop);
 
 const scratch = Effect.runSync(
   Config.string("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),

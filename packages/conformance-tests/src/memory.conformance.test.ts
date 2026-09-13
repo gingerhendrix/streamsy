@@ -3,14 +3,14 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect } from "effect";
 import { Streams } from "@streamsy/core";
-import { serveScoped, type RunningHost } from "@streamsy/serve/bun";
+import { start, type Host } from "@streamsy/serve/bun";
 
-let host: RunningHost | undefined;
+let host: Host | undefined;
 describe("Effect memory Bun host", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {
     host = await Effect.runPromise(
-      serveScoped({ layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }), port: 0 }),
+      start({ layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }), port: 0 }),
     );
     config.baseUrl = new URL(host.url).origin;
   });

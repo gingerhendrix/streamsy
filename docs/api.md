@@ -110,9 +110,9 @@ batch limits and cancellation are documented in [HTTP behavior](http.md).
 ```ts
 import { Effect } from "effect";
 import { Streams } from "@streamsy/core";
-import { serveScoped } from "@streamsy/serve/bun";
+import { start } from "@streamsy/serve/bun";
 
-const host = await Effect.runPromise(serveScoped({ layer: Streams.layerMemory(), port: 3000 }));
+const host = await Effect.runPromise(start({ layer: Streams.layerMemory(), port: 3000 }));
 // On shutdown:
 await Effect.runPromise(host.stop);
 ```

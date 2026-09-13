@@ -14,10 +14,10 @@ Objects and defaults long-poll reads to 25 seconds; the Bun entry keeps its exis
 ```ts
 import { Effect } from "effect";
 import { layerProtocol } from "@streamsy/storage/bun";
-import { serveScoped } from "@streamsy/serve/bun";
+import { start } from "@streamsy/serve/bun";
 
 const host = await Effect.runPromise(
-  serveScoped({
+  start({
     layer: layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
     port: 3000,
   }),

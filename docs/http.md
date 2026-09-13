@@ -8,10 +8,10 @@ that edge. `@streamsy/serve/bun` provides the Bun listener and owns both resourc
 ```ts
 import { Effect } from "effect";
 import { Streams } from "@streamsy/core";
-import { serveScoped } from "@streamsy/serve/bun";
+import { start } from "@streamsy/serve/bun";
 
 const host = await Effect.runPromise(
-  serveScoped({
+  start({
     layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }),
     port: 3000,
     pathPrefix: "/v1/stream",
@@ -30,10 +30,10 @@ entry:
 ```ts
 import { Effect } from "effect";
 import * as SqlStorage from "@streamsy/storage/bun";
-import { serveScoped } from "@streamsy/serve/bun";
+import { start } from "@streamsy/serve/bun";
 
 const host = await Effect.runPromise(
-  serveScoped({
+  start({
     layer: SqlStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
     port: 3000,
   }),
@@ -51,9 +51,12 @@ bounded yielding policy during scoped Layer acquisition.
 
 The host defaults to `127.0.0.1:3000`; set `hostname` explicitly for another bind
 address. The default prefix is `/`. Bun's idle timeout is disabled so the
-protocol owns long-poll and SSE deadlines. `stop()` force-closes connections,
-then disposes the Effect layer, and is idempotent. The layer is acquired lazily
-on the first request by Effect's Web edge. No platform-bun package is needed.
+protocol owns long-poll and SSE deadlines. `start` returns the bound `port` and
+`url`, and `host.stop` drains in-flight requests, then disposes the Effect layer,
+and is idempotent. The drain is unbounded by default; set
+`gracefulShutdownTimeout` to bound it, and `idleTimeout` to change the Bun idle
+close. The layer is acquired lazily on the first request by Effect's Web edge.
+The subpath needs `@effect/platform-bun@4.0.0-rc.112` as an optional peer.
 
 The conversion edge explicitly makes application work interruptible: rc.112's
 `HttpEffect.toHandled` masks interruption around the handled request. Bun supplies

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, Layer } from "effect";
 import { Memory, Protocol } from "@streamsy/core";
-import { serveScoped, type RunningHost } from "../src/bun.ts";
+import { start, type Host } from "../src/bun.ts";
 import { Miniflare } from "miniflare";
 
 const retentionRoot = Bun.env.STREAMSY_STORAGE_SCRATCH;
@@ -135,8 +135,8 @@ const pending = new Set<OwnedHarness>();
 const openBun: Array<{ readonly stop: () => Promise<void> }> = [];
 
 /** Start one Bun host for this suite and expose a Promise-shaped stop. */
-const startBun = (options: Parameters<typeof serveScoped>[0]): Promise<RunningHost> =>
-  Effect.runPromise(serveScoped(options));
+const startBun = (options: Parameters<typeof start>[0]): Promise<Host> =>
+  Effect.runPromise(start(options));
 const ownedRoots = new Set<string>();
 const ownedBundles = new Set<string>();
 

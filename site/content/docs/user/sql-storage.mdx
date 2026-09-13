@@ -12,10 +12,10 @@ shared SqlClient/Reactivity graph and expose both `Storage` and `CommitBoundary`
 ```ts
 import { Effect } from "effect";
 import * as SqlStorage from "@streamsy/storage/bun";
-import { serveScoped } from "@streamsy/serve/bun";
+import { start } from "@streamsy/serve/bun";
 
 const host = await Effect.runPromise(
-  serveScoped({
+  start({
     layer: SqlStorage.layerProtocol({
       client: { filename: "./streamsy.sqlite" },
     }),

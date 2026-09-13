@@ -87,12 +87,14 @@ Requires `effect@4.0.0-rc.112` on the `/server` and `/action` subpaths.
 
 ## Hosts
 
-The Bun host owns one listener and one HTTP edge. `serveScoped()` builds
+The Bun host owns one listener and one HTTP edge. `start()` builds
 `HttpServer.serve(Http.app(options))` over `BunHttpServer`, reports the bound
-address, and returns a `stop` Effect that closes the host scope. `serveLayer()`
+address, and returns a `stop` Effect that closes the host scope. `layer()`
 is the same composition as a Layer, for `Layer.launch`. The caller's reader and
 writer Layer is provided at build time; `stop` drains in-flight requests and
-disposes the scope. Bun has no automatic Layer rebuild policy. The subpath needs
+disposes the scope. Bun has no automatic Layer rebuild policy. The drain is
+unbounded by default, so a request that never finishes holds `stop` open; set
+`gracefulShutdownTimeout` to bound it. The subpath needs
 `@effect/platform-bun@4.0.0-rc.112`, which is an optional peer.
 
 The Cloudflare entry keeps one scoped Layer per in-memory Durable Object and

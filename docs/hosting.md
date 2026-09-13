@@ -12,12 +12,14 @@ The current release status is:
 
 ## Host ownership
 
-`@streamsy/serve/bun` exposes `serve()`. It owns one listener and one HTTP
-edge. `stop()` closes connections, waits for active handlers and reads, and
-disposes the acquired scope. The caller supplies the reader/writer Layer;
-there is no automatic Layer rebuild policy for Bun. A Layer acquisition error
-occurs at the first lazy request that needs it and does not imply that the
-process terminates.
+`@streamsy/serve/bun` exposes `layer()`, `listener()`, and `start()`. Together
+they own one listener and one HTTP edge. `layer()` is the whole composition for
+`Layer.launch`; `listener()` is the Bun listener alone; `start()` returns a
+running host whose `stop` Effect closes connections, waits for active handlers
+and reads, and disposes the acquired scope. The caller supplies the
+reader/writer Layer; there is no automatic Layer rebuild policy for Bun. A Layer
+acquisition error occurs at the first lazy request that needs it and does not
+imply that the process terminates.
 
 `@streamsy/serve/cloudflare` exposes `router`, `Placement`, and
 `StreamsyObject`. Each in-memory object owns one edge/Layer scope shared by

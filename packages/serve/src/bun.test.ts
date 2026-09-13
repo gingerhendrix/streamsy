@@ -1,8 +1,75 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web executable edge lifecycle test.
 import { expect, it, spyOn } from "bun:test";
-import { Cause, Context, Deferred, Effect, Exit, Layer, Stream } from "effect";
+import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Stream } from "effect";
 import { Memory, Protocol, Storage, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { serveScoped } from "./bun.ts";
+import { start, type ServeOptions } from "./bun.ts";
+
+/**
+ * A protocol Layer over memory storage that records a parked long-poll read and
+ * holds it open until `hold` completes. The drain cases use it so the parked
+ * read is signalled, rather than racing a client request that may not have
+ * reached the server yet.
+ */
+const parkableLayer = (readStarted: Deferred.Deferred<void>, hold: Deferred.Deferred<void>) =>
+  Layer.effectContext(
+    Effect.gen(function* () {
+      const reader = yield* StreamsReader;
+      const writer = yield* StreamsWriter;
+      return Context.make(StreamsWriter, writer).pipe(
+        Context.add(
+          StreamsReader,
+          StreamsReader.of({
+            ...reader,
+            readNext: (id, readOptions) =>
+              Effect.suspend(() => {
+                Deferred.doneUnsafe(readStarted, Exit.void);
+                return Deferred.await(hold).pipe(Effect.andThen(reader.readNext(id, readOptions)));
+              }),
+          }),
+        ),
+      );
+    }),
+  ).pipe(
+    Layer.provide(
+      Protocol.layer({ longPollTimeoutMs: 30_000 }).pipe(Layer.provide(Memory.layer())),
+    ),
+  );
+
+/**
+ * Start one host, seed one stream, and park a long poll on it. The probe reports
+ * whether the poll is still open and can wait a bounded time for it to settle.
+ * The caller closes the host.
+ */
+const parkLongPoll = async (layer: ServeOptions["layer"], options: Omit<ServeOptions, "layer">) => {
+  const host = await Effect.runPromise(start({ ...options, layer, port: 0 }));
+  const created = await fetch(new URL("s", host.url), {
+    method: "PUT",
+    headers: { "content-type": "text/plain" },
+    body: "seed",
+  });
+  const tail = created.headers.get("stream-next-offset");
+  if (!tail) throw new Error("Expected current tail");
+  const url = new URL("s", host.url);
+  url.search = `offset=${tail}&live=long-poll`;
+  let settled = false;
+  const pending = fetch(url).then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  return {
+    host,
+    parked: () => !settled,
+    settle: async (deadlineMs: number) => {
+      await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, deadlineMs))]);
+    },
+  };
+};
+
+const memoryLayer = () => Streams.layerMemory({ longPollTimeoutMs: 30_000 });
 
 for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
   it(`${shutdown} releases the live producing read and changes subscription; stop permits same-port rebind`, async () => {
@@ -78,7 +145,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
     const warnings = spyOn(console, "warn");
     const logs = spyOn(console, "log");
     const stderr = spyOn(process.stderr, "write");
-    const host = await Effect.runPromise(serveScoped({ layer: observedProtocol, port: 0 }));
+    const host = await Effect.runPromise(start({ layer: observedProtocol, port: 0 }));
     const abort = new AbortController();
     try {
       const url = new URL("s", host.url);
@@ -170,7 +237,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       await Effect.runPromise(host.stop);
       expect(ownerClosed).toBe(true);
       const rebound = await Effect.runPromise(
-        serveScoped({ layer: Streams.layerMemory(), port: host.port }),
+        start({ layer: Streams.layerMemory(), port: host.port }),
       );
       try {
         expect(rebound.port).toBe(host.port);
@@ -195,3 +262,62 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
     }
   });
 }
+it("a set graceful shutdown timeout bounds the drain of a parked long poll", async () => {
+  const readStarted = Deferred.makeUnsafe<void>();
+  const hold = Deferred.makeUnsafe<void>();
+  const probe = await parkLongPoll(parkableLayer(readStarted, hold), {
+    gracefulShutdownTimeout: Duration.millis(400),
+  });
+  try {
+    await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
+    await Effect.runPromise(Effect.sleep("150 millis"));
+    const startedAt = performance.now();
+    await Effect.runPromise(probe.host.stop);
+    const elapsed = performance.now() - startedAt;
+    // The bound fires because the read never finishes. Without the bound the
+    // same shape returns in single-digit milliseconds.
+    expect(elapsed).toBeGreaterThanOrEqual(350);
+    expect(elapsed).toBeLessThan(2000);
+  } finally {
+    Deferred.doneUnsafe(hold, Exit.void);
+    await Effect.runPromise(probe.host.stop);
+    await probe.settle(1500);
+  }
+});
+
+it("an unset graceful shutdown timeout does not wait for a parked long poll", async () => {
+  const readStarted = Deferred.makeUnsafe<void>();
+  const hold = Deferred.makeUnsafe<void>();
+  const probe = await parkLongPoll(parkableLayer(readStarted, hold), {});
+  try {
+    await Effect.runPromise(Deferred.await(readStarted).pipe(Effect.timeout(2000)));
+    await Effect.runPromise(Effect.sleep("150 millis"));
+    const startedAt = performance.now();
+    await Effect.runPromise(probe.host.stop);
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+  } finally {
+    Deferred.doneUnsafe(hold, Exit.void);
+    await Effect.runPromise(probe.host.stop);
+    await probe.settle(1500);
+  }
+});
+
+it("a set drain bound does not delay a drain with no parked read", async () => {
+  const probe = await parkLongPoll(memoryLayer(), {
+    gracefulShutdownTimeout: Duration.seconds(10),
+  });
+  const startedAt = performance.now();
+  await Effect.runPromise(probe.host.stop);
+  expect(performance.now() - startedAt).toBeLessThan(1000);
+});
+
+it("a parked long poll survives past 10 seconds under the default idle timeout", async () => {
+  const probe = await parkLongPoll(memoryLayer(), {});
+  try {
+    await probe.settle(10_500);
+    expect(probe.parked()).toBe(true);
+  } finally {
+    await Effect.runPromise(probe.host.stop);
+    await probe.settle(1500);
+  }
+}, 20_000);
