@@ -62,10 +62,12 @@ at the protocol deadlines. Hosted disconnect propagation is unmeasured.
 The router takes `{ pathPrefix, placement, namespace }`; the object takes
 `{ pathPrefix }` through its HTTP options.
 The default placement is `byStream()`. `byKey()` is a pure function of the
-path after its prefix is stripped. Keep this mapping stable for stored data. An
-empty or non-string placement key returns `400 Invalid placement key`; a
-placement callback that throws returns `500 Internal server error`. There is no
-magic placement header. A prefix is a routing boundary, not authentication.
+path after its prefix is stripped. `byRoute()` matches `StreamRoute` values and
+lets their decoded parameters select the owner. Keep this mapping stable for
+stored data. An empty or non-string placement key returns
+`400 Invalid placement key`; a placement callback that throws returns
+`500 Internal server error`. There is no magic placement header. A prefix is a
+routing boundary, not authentication.
 
 Neither host implements authorization. Authenticate and authorize before
 forwarding to the router, derive tenant and path mapping from the authenticated
@@ -99,16 +101,20 @@ exercise one object and same-object chain semantics. Under the default
 answer 404. This is a placement choice; the single-object profile is the fork
 conformance profile, and local results do not establish hosted behavior.
 
-The Worker artifact is local-only and has one output module. The accepted C
-artifact report records raw 534,562 B, minified 252,866 B, deterministic stdin
-gzip 81,486 B, 116 input modules, and the worker SHA-256
-`2b32a617c8129a4f805754c398e67da963935d5c9cbb58d3f7849ef760c5e898`. These
+The Worker artifact is local-only and has one output module. The clean S9
+measurement at `cd0f915` records raw 554,771 B, minified 260,584 B,
+deterministic stdin gzip 84,270 B, 127 input modules, and the worker SHA-256
+`4a993b429846169a74d85b9e70f9cad9157d984bb01fcf0dac178ed5a2105678`. These
 figures are labeled local and do not establish uploaded compressed bytes,
 startup CPU, or a budget pass.
 
-The isolated `hosted/` package typechecks the pinned Alchemy v2 stack and tests
-a fake-only Effect workflow. Its executable remains disabled for evidence:
-`--help` prints the purpose and current status with exit 0, while evidence
+The isolated `hosted/` package typechecks two pinned Alchemy v2 stack entries:
+the unchanged prebuilt conformance artifact with `bundle: false`, and a separate
+source-form Effect Worker and Durable Object using `@streamsy/serve/alchemy`.
+Neither stack is executed by the check, and source-form runtime readiness is not
+established. The package also tests a fake-only Effect workflow. Its executable
+remains disabled for evidence: `--help` prints the purpose and current status
+with exit 0, while evidence
 invocation prints the status and “Live hosted adapters are not enabled in this
 local range” with exit 2, even when fake credentials or permission values are
 supplied. No live deploy, destroy, metadata query, remote conformance, hosted

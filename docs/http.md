@@ -1,9 +1,11 @@
 # Effect HTTP and the Bun host (0.4.0)
 
-The `@streamsy/core/http` export provides `makeEdge(options, layer)`.
-It returns Effect's `{ handler, dispose }` Web conversion edge over a layer that
-supplies `StreamsReader` and `StreamsWriter`. The executable owner must dispose
-that edge. `@streamsy/serve/bun` provides the Bun listener and owns both resources:
+The `@streamsy/core/http` export provides `app(options)` and
+`makeEdge(options, layer)`. `app` is the Effect HTTP program requiring the
+current request plus `StreamsReader` and `StreamsWriter`. `makeEdge` returns
+Effect's `{ handler, dispose }` Web conversion edge over a layer that supplies
+those services. The executable owner must dispose that edge.
+`@streamsy/serve/bun` provides the Bun listener and owns both resources:
 
 ```ts
 import { Effect } from "effect";
@@ -56,9 +58,9 @@ protocol owns long-poll and SSE deadlines. `start` returns the bound `port` and
 and is idempotent. The drain is unbounded by default; set
 `gracefulShutdownTimeout` to bound it, and `idleTimeout` to change the Bun idle
 close. The layer is acquired lazily on the first request by Effect's Web edge.
-The subpath needs `@effect/platform-bun@4.0.0-rc.112` as an optional peer.
+The subpath needs `@effect/platform-bun@4.0.0-rc.115` as an optional peer.
 
-The conversion edge explicitly makes application work interruptible: rc.112's
+The conversion edge explicitly makes application work interruptible: rc.115's
 `HttpEffect.toHandled` masks interruption around the handled request. Bun supplies
 the request abort event and HttpEffect interrupts its fiber; the explicit inner
 `Effect.interruptible` lets parked long-poll work observe it. HttpEffect still owns
@@ -72,7 +74,7 @@ use `HttpServerResponse.raw` to preserve Web body defaults; SSE uses an Effect
 byte stream. The original Web request URL supplies the create `Location` header.
 HEAD has no body at the framework edge, including errors, as on the old Bun wire.
 
-`Stream-Expires-At` uses Effect rc.112 `DateTime.make` for validation and retains
+`Stream-Expires-At` uses Effect rc.115 `DateTime.make` for validation and retains
 the original accepted string for storage and HEAD. Uppercase ISO UTC
 (`2028-01-01T00:00:00Z`), ISO offsets and no-zone ISO remain accepted. Lowercase ISO
 (`2028-01-01t00:00:00z`) and RFC UTC (`Sat, 01 Jan 2028 00:00:00 UTC`) intentionally

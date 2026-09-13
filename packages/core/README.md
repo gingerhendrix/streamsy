@@ -1,7 +1,7 @@
 # @streamsy/core
 
 Effect-first Durable Streams protocol, typed toolkit, storage contract and
-in-process memory Layer. Version 0.4.0 requires `effect@4.0.0-rc.112`.
+in-process memory Layer. Version 0.4.0 requires `effect@4.0.0-rc.115`.
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
@@ -35,12 +35,18 @@ storage. The Effect fetch Layer is available; hosted Durable Object execution
 and release acceptance remain unverified. A successful memory run proves neither cross-process persistence nor hosted
 support.
 
-| Entry                    | Surface                                                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `@streamsy/core`         | Schema values, protocol tags, results and errors, Streams, StreamRef, Fold, Producer, Memory and Storage |
-| `@streamsy/core/storage` | Storage contract, capabilities and mutation model                                                        |
-| `@streamsy/core/http`    | `makeEdge` Web conversion; owner must dispose the edge                                                   |
-| `@streamsy/core/testing` | Bun contract registration, fault injection and test Layers                                               |
+`StreamRoute` declares an id family and constructs its typed refs.
+`Backend.make(name)` re-tags one complete protocol graph, and
+`Streams.layerRouted(bindings)` supplies one reader/writer pair that selects a
+backend per id. Route templates in one binding table must not overlap, and a
+fork must remain within one backend.
+
+| Entry                    | Surface                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `@streamsy/core`         | Schema values, protocol tags, results and errors, Streams, StreamRef, StreamRoute, Backend, Fold, Producer, Memory and Storage |
+| `@streamsy/core/storage` | Storage contract, capabilities and mutation model                                                                              |
+| `@streamsy/core/http`    | `app` plus `makeEdge` Web conversion; owner must dispose the edge                                                              |
+| `@streamsy/core/testing` | Bun contract registration, fault injection and test Layers                                                                     |
 
 `@streamsy/serve/bun` owns a Bun listener and HTTP edge together. The ordinary
 core, HTTP and storage entries do not load the Bun test runner. Internal offset

@@ -84,7 +84,7 @@ protocol: route matching, version and contract negotiation, resume, the declared
 decode, entity tags, and conditional requests. Reading a feed and building a
 document are capabilities a host supplies.
 
-Requires `effect@4.0.0-rc.112` on the `/server` and `/action` subpaths.
+Effect-bearing subpaths require `effect@4.0.0-rc.115`.
 
 ## Hosts
 
@@ -96,7 +96,7 @@ writer Layer is provided at build time; `stop` drains in-flight requests and
 disposes the scope. Bun has no automatic Layer rebuild policy. The drain is
 unbounded by default, so a request that never finishes holds `stop` open; set
 `gracefulShutdownTimeout` to bound it. The subpath needs
-`@effect/platform-bun@4.0.0-rc.112`, which is an optional peer.
+`@effect/platform-bun@4.0.0-rc.115`, which is an optional peer.
 
 The Cloudflare entry keeps one scoped Layer per in-memory Durable Object and
 shares it across `fetch` and `alarm`. `StreamsyObject.make({ options, layer })` takes HTTP options and a callback

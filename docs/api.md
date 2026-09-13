@@ -6,20 +6,21 @@ there are no lifetime-bearing stream handles.
 
 ## Entry points
 
-| Entry                              | Intended surface                                                                                                                                                                       |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@streamsy/core`                   | Schema values and faults, protocol reader/writer tags, results and errors, `Protocol`, `Streams`, `StreamRef`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
-| `@streamsy/core/storage`           | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                                 |
-| `@streamsy/core/http`              | `makeEdge(options, layer)` and `HttpOptions`                                                                                                                                           |
-| `@streamsy/core/testing`           | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`, `expectFailureTag`                                                                                             |
-| `@streamsy/serve/bun`              | Bun `serve` host and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                              |
-| `@streamsy/storage`                | Driver-package-free SQLite-family `Storage` Layer, `CommitBoundary` and bounded transaction defaults                                                                                   |
-| `@streamsy/storage/bun`            | Official Bun SQLite storage Layer and complete persistent `layerProtocol` composition                                                                                                  |
-| `@streamsy/storage/durable-object` | Official Durable Object SQLite storage Layer and `layerProtocol`; its long-poll default is 25 seconds                                                                                  |
-| `@streamsy/serve/cloudflare`       | Cloudflare Durable Object router and one-scope protocol host                                                                                                                           |
+| Entry                              | Intended surface                                                                                                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`                   | Schema values and faults, protocol reader/writer tags, results and errors, `Protocol`, `Streams`, `StreamRef`, `StreamRoute`, `Backend`, `Fold`, `Producer`, `Memory`, `Storage`, mutation values, `ZERO_OFFSET` |
+| `@streamsy/core/storage`           | `Storage` / `StorageShape`, capabilities, mutation values and `Memory`                                                                                                                                           |
+| `@streamsy/core/http`              | `app(options)`, `makeEdge(options, layer)`, and `HttpOptions`                                                                                                                                                    |
+| `@streamsy/core/testing`           | Bun `StorageContract.run`, `faultyStorage`, `StreamsTest`, `layerTest`, `expectFailureTag`                                                                                                                       |
+| `@streamsy/serve/bun`              | Bun `layer`, `listener`, `start`, `Host`, and `ServeOptions`; owns listener and HTTP edge disposal                                                                                                               |
+| `@streamsy/storage`                | Driver-package-free SQLite-family `Storage` Layer, `CommitBoundary` and bounded transaction defaults                                                                                                             |
+| `@streamsy/storage/bun`            | Official Bun SQLite storage Layer and complete persistent `layerProtocol` composition                                                                                                                            |
+| `@streamsy/storage/durable-object` | Official Durable Object SQLite storage Layer and `layerProtocol`; its long-poll default is 25 seconds                                                                                                            |
+| `@streamsy/serve/cloudflare`       | Cloudflare Durable Object router and one-scope protocol host                                                                                                                                                     |
+| `@streamsy/serve/alchemy`          | Effect request/alarm handlers, the Alchemy `HttpEffect` router, placement, and object options                                                                                                                    |
 
 Internal offset generation, policy helpers and HTTP implementation modules have no
-public subpaths. Core depends only on `effect@4.0.0-rc.112` at runtime. Its testing
+public subpaths. Core depends only on `effect@4.0.0-rc.115` at runtime. Its testing
 entry is a Bun test registration boundary; importing the ordinary root does not
 load `bun:test`. Views and serve retain their existing curated subpaths.
 
@@ -46,6 +47,13 @@ explicit offset is the caller's policy, with no automatic bad-item skip.
 `Streams.session(ref, { offset })` returns a long-poll batch or fails with a protocol error. `Fold.run` reduces a
 stream. `Producer.append` takes a producer id, epoch and sequence; `Producer.next`
 advances a tuple only after an acknowledged append or duplicate.
+
+`StreamRoute` declares an inert stream-family grammar with typed `parse` and
+`ref` operations. `Backend.make(name)` gives one complete reader/writer graph a
+distinct Context key, and `Streams.layerRouted(bindings)` forwards each id to
+the matching graph. A binding table with overlapping templates is a composition
+defect; without an explicit fallback, an unmatched id is also a defect.
+Cross-backend forks fail with `NotSupported { feature: "cross-backend-fork" }`.
 
 Create succeeds with `_tag: "Created" | "Exists"`; append succeeds with
 `_tag: "Appended" | "Duplicate"`. Head and read return metadata or batches directly,

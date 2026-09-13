@@ -2,7 +2,7 @@
 
 Effect SQL storage for `@streamsy/core`. The root entry is driver-package-free and
 requires a SQLite-family `SqlClient` (SQLite 3.42 or newer) plus its shared `Reactivity` service. The
-`/bun` and `/durable-object` entries construct the official rc.112 SQLite
+`/bun` and `/durable-object` entries construct the official rc.115 SQLite
 drivers and provide both the existing core `Storage` tag and `CommitBoundary`.
 The Bun `layer` also exposes that exact `SqlClient` and `Reactivity` graph so
 application SQL can participate in `CommitBoundary.withTransaction` without a
