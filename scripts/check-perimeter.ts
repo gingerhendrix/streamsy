@@ -62,7 +62,7 @@ const checks = [
   ),
   scan(
     "no retired package imports",
-    String.raw`@streamsy/(?:http-client|state|streams|tanstack-db|sinks|core/json)\b`,
+    String.raw`@streamsy/(?:http-client|state|streams|tanstack-db|sinks|core/json|derive)\b`,
     historical,
   ),
   scan(
