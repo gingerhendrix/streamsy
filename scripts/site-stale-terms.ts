@@ -1,6 +1,6 @@
 /** Release language inventory. Kept outside the site so the scanner scans its own scope honestly. */
 export const staleTerms = [
-  ...["http-client", "state", "streams", "projection", "tanstack-db", "sinks", "core/json"].map(
+  ...["http-client", "state", "streams", "tanstack-db", "sinks", "core/json"].map(
     (name) => `@streamsy/${name}`,
   ),
   "StateProjection",
