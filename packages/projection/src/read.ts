@@ -1,7 +1,14 @@
 import { Effect, Option, Predicate, Schema } from "effect";
-import { Offset, StreamsReader, type StreamRef } from "@streamsy/core";
+import {
+  Offset,
+  StreamsReader,
+  type ReadMessage,
+  type ReadResult,
+  type StreamRef,
+} from "@streamsy/core";
 import { emptySlice, type InputMap, type Slice, type Slices } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
+import type { PinnedRange } from "./unit.ts";
 
 export interface Budget {
   /** Passes per run. */
@@ -83,7 +90,29 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A>(
       input,
       message: `Read of ${ref.id} did not advance past ${from}`,
     });
-  const items = yield* Effect.forEach(result.messages, (message, index) =>
+  const items = yield* decodeMessages(input, ref, result.messages);
+  return {
+    slice: {
+      from,
+      items,
+      nextOffset: result.nextOffset,
+      upToDate: result.upToDate,
+      closed: result.closed,
+    },
+    bytes: byteLength(result.messages),
+  };
+});
+
+const byteLength = (messages: ReadonlyArray<ReadMessage>): number =>
+  messages.reduce((sum, message) => sum + message.data.byteLength, 0);
+
+/** Decode failure is an input fault: the stored bytes do not match the declared codec. */
+const decodeMessages = <A>(
+  input: string,
+  ref: StreamRef.StreamRef<A>,
+  messages: ReadonlyArray<ReadMessage>,
+) =>
+  Effect.forEach(messages, (message, index) =>
     Schema.decodeEffect(ref.codec)(
       Predicate.isTagged(ref, "Json") ? new TextDecoder().decode(message.data) : message.data,
     ).pipe(
@@ -98,15 +127,69 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A>(
       ),
     ),
   );
+
+/**
+ * Reproduces a pinned range exactly: `count` messages after `from`, ending at
+ * `nextOffset`. Pages are looped because a backend may answer short and the HTTP
+ * edge caps a page. Byte budgets do not apply; the range was already accepted.
+ */
+export const reproduce = Effect.fn("Projection.reproduce")(function* <A>(
+  input: string,
+  ref: StreamRef.StreamRef<A>,
+  range: PinnedRange,
+): Effect.fn.Return<Read<A>, ProjectionFault, StreamsReader> {
+  const reader = yield* StreamsReader;
+  const unreproducible = (detail: string) =>
+    new ProjectionFault({
+      phase: "pin",
+      reason: "range-unreproducible",
+      input,
+      message: `Pinned range of ${ref.id} after ${range.from} cannot be reproduced: ${detail}`,
+    });
+  const messages: Array<ReadMessage> = [];
+  let cursor = range.from;
+  let last: ReadResult | undefined;
+  while (messages.length < range.count) {
+    const page = yield* reader
+      .read(ref.id, { offset: cursor, limit: range.count - messages.length })
+      .pipe(
+        Effect.catchTags({
+          StreamNotFound: () => unreproducible("the input is missing"),
+          StreamGone: () => unreproducible("the input is gone"),
+          StorageFault: () =>
+            new ProjectionFault({
+              phase: "pin",
+              reason: "storage-failure",
+              input,
+              message: `Cannot read ${ref.id}`,
+            }),
+          TransportFault: () =>
+            new ProjectionFault({
+              phase: "pin",
+              reason: "storage-failure",
+              input,
+              message: `Cannot read ${ref.id}`,
+            }),
+        }),
+      );
+    if (page.messages.length === 0) return yield* unreproducible("the input ended early");
+    if (page.messages.length > range.count - messages.length)
+      return yield* unreproducible("the input answered past the pinned count");
+    messages.push(...page.messages);
+    cursor = page.nextOffset;
+    last = page;
+  }
+  if (last === undefined || cursor !== range.nextOffset)
+    return yield* unreproducible(`the range ends at ${cursor}, not ${range.nextOffset}`);
   return {
     slice: {
-      from,
-      items,
-      nextOffset: result.nextOffset,
-      upToDate: result.upToDate,
-      closed: result.closed,
+      from: range.from,
+      items: yield* decodeMessages(input, ref, messages),
+      nextOffset: range.nextOffset,
+      upToDate: last.upToDate,
+      closed: last.closed,
     },
-    bytes: result.messages.reduce((sum, message) => sum + message.data.byteLength, 0),
+    bytes: byteLength(messages),
   };
 });
 

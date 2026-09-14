@@ -8,12 +8,17 @@ export const Counter = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanO
 export const Range = Schema.Struct({ from: Schema.String, nextOffset: Schema.String });
 export interface Range extends Schema.Schema.Type<typeof Range> {}
 
+/** A range with the item count a retry must reproduce exactly. */
+export const PinnedRange = Schema.Struct({
+  from: Schema.String,
+  nextOffset: Schema.String,
+  count: Counter,
+});
+export interface PinnedRange extends Schema.Schema.Type<typeof PinnedRange> {}
+
 /** A stream-output unit that was pinned before its append; settled by the next pass. */
 export const PendingUnit = Schema.Struct({
-  ranges: Schema.Record(
-    Schema.String,
-    Schema.Struct({ from: Schema.String, nextOffset: Schema.String, count: Counter }),
-  ),
+  ranges: Schema.Record(Schema.String, PinnedRange),
   seq: Counter,
 });
 export interface PendingUnit extends Schema.Schema.Type<typeof PendingUnit> {}

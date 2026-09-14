@@ -1,11 +1,12 @@
-import { Effect, Option } from "effect";
-import { ZERO_OFFSET, type StreamsReader } from "@streamsy/core";
+import { Effect } from "effect";
+import type { StreamsReader, StreamsWriter } from "@streamsy/core";
 import type { InputMap, Slice } from "./batch.ts";
-import { Checkpoints, type CheckpointRecord, type CheckpointsApi } from "./checkpoint.ts";
+import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Identity, Projection } from "./projection.ts";
+import type { Fused, Projection, Stream } from "./projection.ts";
 import { DEFAULT_ITEMS, DEFAULT_UNITS, readInputs, validateBudget, type Budget } from "./read.ts";
-import { encodeKey, unitOf, type Range } from "./unit.ts";
+import { passStream } from "./stream-output.ts";
+import { unitOf } from "./unit.ts";
 
 export interface Progress {
   readonly status: "progress" | "caught-up" | "source-closed" | "limit-reached";
@@ -15,65 +16,16 @@ export interface Progress {
   readonly record: CheckpointRecord;
 }
 
-const identityOf = (inputs: InputMap): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(inputs).map(([name, ref]) => [name, encodeKey([ref.id, ref.contentType])]),
-  );
-const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boolean => {
-  const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k]);
-};
+/** The host services every strategy is given; a protocol Layer always carries both stream services. */
+export type Host = Checkpoints | StreamsReader | StreamsWriter;
 
-/** The stored record, or the unstored initial record for a fresh key. */
-const restore = Effect.fn("Projection.restore")(function* (
-  projection: Identity,
-  owner: CheckpointsApi,
-) {
-  const loaded = yield* owner.load(projection);
-  const identity = { inputs: identityOf(projection.inputs) };
-  if (Option.isNone(loaded.record)) {
-    const record: CheckpointRecord = {
-      identity,
-      inputs: Object.fromEntries(Object.keys(projection.inputs).map((name) => [name, ZERO_OFFSET])),
-      adapters: {},
-    };
-    return { record, token: loaded.token };
-  }
-  if (!sameIdentity(loaded.record.value.identity.inputs, identity.inputs))
-    return yield* new ProjectionFault({
-      phase: "load",
-      reason: "identity-mismatch",
-      message: `Stored inputs differ from the declaration of ${projection.id}`,
-    });
-  for (const name of Object.keys(projection.inputs)) {
-    if (loaded.record.value.inputs[name] === undefined)
-      return yield* new ProjectionFault({
-        phase: "load",
-        reason: "invalid-record",
-        input: name,
-        message: `Stored record of ${projection.id} has no offset for ${name}`,
-      });
-  }
-  return { record: loaded.record.value, token: loaded.token };
-});
-
-const advance = (
-  inputs: Record<string, string>,
-  slices: Record<string, Slice<unknown>>,
-): Record<string, string> =>
-  Object.fromEntries(
-    Object.entries(inputs).map(([name, offset]) => [name, slices[name]?.nextOffset ?? offset]),
-  );
-const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string, Range> =>
-  Object.fromEntries(
-    Object.entries(slices)
-      .filter(([, slice]) => slice.items.length > 0)
-      .map(([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }]),
-  );
-
-/** One unit: restore, read every input, then process and checkpoint in the owner transaction. */
-export const pass = Effect.fn("Projection.pass")(function* <Inputs extends InputMap, E, R>(
-  projection: Projection<Inputs, E, R>,
+/** One fused unit: restore, read every input, then process and checkpoint in the owner transaction. */
+export const passFused = Effect.fn("Projection.passFused")(function* <
+  Inputs extends InputMap,
+  E,
+  R,
+>(
+  projection: Fused<Inputs, E, R>,
   budget: Budget = {},
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | Checkpoints | StreamsReader> {
   yield* validateBudget(budget);
@@ -124,14 +76,21 @@ export const pass = Effect.fn("Projection.pass")(function* <Inputs extends Input
   };
 });
 
+/** One unit under the strategy the declaration carries. */
+export const pass = <Inputs extends InputMap, O, E, R>(
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R>,
+  budget: Budget = {},
+): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
+  projection._tag === "Fused" ? passFused(projection, budget) : passStream(projection, budget);
+
 /**
  * Repeats `pass` until an empty pass reports caught-up, every input is closed, or
  * the budget is spent. The trailing empty pass adds nothing to the totals.
  */
-export const run = Effect.fn("Projection.run")(function* <Inputs extends InputMap, E, R>(
-  projection: Projection<Inputs, E, R>,
+export const run = Effect.fn("Projection.run")(function* <Inputs extends InputMap, O, E, R>(
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R>,
   budget: Budget = {},
-): Effect.fn.Return<Progress, E | ProjectionFault, R | Checkpoints | StreamsReader> {
+): Effect.fn.Return<Progress, E | ProjectionFault, R | Host> {
   yield* validateBudget(budget);
   const maxUnits = budget.units ?? DEFAULT_UNITS;
   const maxItems = budget.items ?? DEFAULT_ITEMS;
@@ -155,3 +114,4 @@ export const run = Effect.fn("Projection.run")(function* <Inputs extends InputMa
   );
   return { ...result, status: "limit-reached", units, items, bytes };
 });
+export type { Projection };

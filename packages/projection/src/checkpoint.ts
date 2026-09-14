@@ -1,6 +1,8 @@
 import { Context, Effect, Option, Schema } from "effect";
+import { ZERO_OFFSET } from "@streamsy/core";
+import type { InputMap, Slice } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import { Counter, PendingUnit, canonicalParams, encodeKey } from "./unit.ts";
+import { Counter, PendingUnit, canonicalParams, encodeKey, type Range } from "./unit.ts";
 
 export const CheckpointRecord = Schema.Struct({
   identity: Schema.Struct({ inputs: Schema.Record(Schema.String, Schema.String) }),
@@ -117,3 +119,68 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
   });
   return { load, save, withTransaction: store.withTransaction };
 };
+
+/** What the kernel needs to locate a record; every projection value satisfies it. */
+export interface Identity {
+  readonly id: string;
+  readonly generation: number;
+  readonly params: Record<string, string>;
+  readonly inputs: InputMap;
+}
+const identityOf = (inputs: InputMap): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(inputs).map(([name, ref]) => [name, encodeKey([ref.id, ref.contentType])]),
+  );
+const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boolean => {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => a[k] === b[k]);
+};
+
+/** The stored record, or the unstored initial record for a fresh key. */
+export const restore = Effect.fn("Projection.restore")(function* (
+  projection: Identity,
+  owner: CheckpointsApi,
+) {
+  const loaded = yield* owner.load(projection);
+  const identity = { inputs: identityOf(projection.inputs) };
+  if (Option.isNone(loaded.record)) {
+    const record: CheckpointRecord = {
+      identity,
+      inputs: Object.fromEntries(Object.keys(projection.inputs).map((name) => [name, ZERO_OFFSET])),
+      adapters: {},
+    };
+    return { record, token: loaded.token };
+  }
+  if (!sameIdentity(loaded.record.value.identity.inputs, identity.inputs))
+    return yield* new ProjectionFault({
+      phase: "load",
+      reason: "identity-mismatch",
+      message: `Stored inputs differ from the declaration of ${projection.id}`,
+    });
+  for (const name of Object.keys(projection.inputs)) {
+    if (loaded.record.value.inputs[name] === undefined)
+      return yield* new ProjectionFault({
+        phase: "load",
+        reason: "invalid-record",
+        input: name,
+        message: `Stored record of ${projection.id} has no offset for ${name}`,
+      });
+  }
+  return { record: loaded.record.value, token: loaded.token };
+});
+
+/** Accepted offsets after a unit: every read input moves to its `nextOffset`. */
+export const advance = (
+  inputs: Record<string, string>,
+  ranges: Record<string, { readonly nextOffset: string }>,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(inputs).map(([name, offset]) => [name, ranges[name]?.nextOffset ?? offset]),
+  );
+/** Only the inputs that contributed items; the unit key and any pin come from these. */
+export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string, Range> =>
+  Object.fromEntries(
+    Object.entries(slices)
+      .filter(([, slice]) => slice.items.length > 0)
+      .map(([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }]),
+  );
