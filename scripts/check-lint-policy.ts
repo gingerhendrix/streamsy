@@ -19,6 +19,7 @@ const effectAreas = [
   "packages/core",
   "packages/storage",
   "packages/derive",
+  "packages/projection",
   "packages/serve",
   "packages/views",
   "packages/sql-boundary-tests",
