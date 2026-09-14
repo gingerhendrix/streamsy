@@ -1,2 +1,2 @@
-/** SQLite Checkpoints Layer. Implemented in a later commit; the entry exists so the build surface is complete. */
-export {};
+/** SQLite Checkpoints Layer. The Layer lands in a later commit; the entry already exposes the tag it provides. */
+export { Checkpoints } from "./checkpoint.ts";
