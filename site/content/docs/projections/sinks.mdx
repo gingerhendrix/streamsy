@@ -5,12 +5,12 @@ description: Publish a relation, its changes, or a derived document over HTTP th
 
 `@streamsy/serve` declares checked contracts that publish a relation over HTTP. Each declaration is inert data with a route and a fingerprint, and a handler turns a `Request` into an `Effect<Response>`.
 
-| Family | Publishes | Resume | Subpath |
-| --- | --- | --- | --- |
-| state | a keyed collection as Durable State | by offset | `@streamsy/serve` |
-| stream | what happened to a relation | by offset | `@streamsy/serve/stream` |
-| document | one derived value per route | none, refetch | `@streamsy/serve/document` |
-| action | an external effect, at least once | outbox | `@streamsy/serve/action` |
+| Family   | Publishes                           | Resume        | Subpath                    |
+| -------- | ----------------------------------- | ------------- | -------------------------- |
+| state    | a keyed collection as Durable State | by offset     | `@streamsy/serve`          |
+| stream   | what happened to a relation         | by offset     | `@streamsy/serve/stream`   |
+| document | one derived value per route         | none, refetch | `@streamsy/serve/document` |
+| action   | an external effect, at least once   | outbox        | `@streamsy/serve/action`   |
 
 ## Routes
 

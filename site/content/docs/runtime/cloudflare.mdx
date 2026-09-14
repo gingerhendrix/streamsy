@@ -98,9 +98,9 @@ A fused handler's `Streams.append` and SQL through the object's client commit wi
 
 ## Which form
 
-| Form | Entry | Use |
-| --- | --- | --- |
-| Alchemy | `@streamsy/serve/alchemy` | an Alchemy stack; the object and the Worker are Effect values |
+| Form     | Entry                        | Use                                                           |
+| -------- | ---------------------------- | ------------------------------------------------------------- |
+| Alchemy  | `@streamsy/serve/alchemy`    | an Alchemy stack; the object and the Worker are Effect values |
 | wrangler | `@streamsy/serve/cloudflare` | `StreamsyObject` as a class plus the `ExportedHandler` router |
 
 The upstream [`server-cloudflare`](https://github.com/durable-streams/durable-streams/tree/main/packages/server-cloudflare) package hosts the same protocol on Durable Objects without Effect.

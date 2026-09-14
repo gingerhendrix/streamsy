@@ -1,3 +1,12 @@
 {
-  "pages": ["index", "introduction", "streams", "projections", "runtime", "advanced", "demos", "..."]
+  "pages": [
+    "index",
+    "introduction",
+    "streams",
+    "projections",
+    "runtime",
+    "advanced",
+    "demos",
+    "..."
+  ]
 }

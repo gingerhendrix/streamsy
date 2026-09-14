@@ -26,13 +26,13 @@ A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch`
 
 `Storage` is the backend. `Protocol.layer` sits over it and supplies `StreamsReader` and `StreamsWriter`, which every `Streams` function needs. `Streams.layerMemory` and each `layerProtocol` entry compose both in one call. `Http.app` is the HTTP program over those two services, and the fetch Layer supplies the same two services from a remote host.
 
-| Layer | Persists | Use | Page |
-| --- | --- | --- | --- |
-| `Streams.layerMemory()` | no | one process, tests | [Storage](/docs/runtime/storage) |
-| `BunStorage.layerProtocol(...)` | SQLite file | Bun host | [Storage](/docs/runtime/storage) |
-| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare | [Cloudflare](/docs/runtime/cloudflare) |
-| `Streams.layerRouted(bindings)` | per backend | several backends behind one Layer | this page |
-| `Fetch.layer({ baseUrl })` | remote | any conformant host | [HTTP](/docs/runtime/http) |
+| Layer                                     | Persists              | Use                               | Page                                   |
+| ----------------------------------------- | --------------------- | --------------------------------- | -------------------------------------- |
+| `Streams.layerMemory()`                   | no                    | one process, tests                | [Storage](/docs/runtime/storage)       |
+| `BunStorage.layerProtocol(...)`           | SQLite file           | Bun host                          | [Storage](/docs/runtime/storage)       |
+| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare                        | [Cloudflare](/docs/runtime/cloudflare) |
+| `Streams.layerRouted(bindings)`           | per backend           | several backends behind one Layer | this page                              |
+| `Fetch.layer({ baseUrl })`                | remote                | any conformant host               | [HTTP](/docs/runtime/http)             |
 
 ## Testing
 

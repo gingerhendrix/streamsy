@@ -34,12 +34,12 @@ Every read must return values that are independent of the caller's inputs and of
 
 An adapter declares what it has. The protocol layer handles the rest.
 
-| Capability | Values | What changes |
-| --- | --- | --- |
-| `fork` | `none`, `copy`, `chain` | `none` refuses a fork with `NotSupported`. `copy` copies the prefix into the child. `chain` shares the prefix by lineage, and reads stitch across the boundary. |
-| `atomicScope` | `stream`, `store` | `store` allows one mutation to touch several streams. A multi-stream mutation on a `stream` adapter is a programmer defect. |
-| `wake` | `poll`, `push` | `push` signals subscribers on commit. `poll` relies on the repair pass. |
-| `expiryIndex` | `lazy`, `indexed` | `indexed` answers `nextExpiry`, so a host can sweep. `lazy` always answers `None`, and expiry happens on access. |
+| Capability    | Values                  | What changes                                                                                                                                                    |
+| ------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fork`        | `none`, `copy`, `chain` | `none` refuses a fork with `NotSupported`. `copy` copies the prefix into the child. `chain` shares the prefix by lineage, and reads stitch across the boundary. |
+| `atomicScope` | `stream`, `store`       | `store` allows one mutation to touch several streams. A multi-stream mutation on a `stream` adapter is a programmer defect.                                     |
+| `wake`        | `poll`, `push`          | `push` signals subscribers on commit. `poll` relies on the repair pass.                                                                                         |
+| `expiryIndex` | `lazy`, `indexed`       | `indexed` answers `nextExpiry`, so a host can sweep. `lazy` always answers `None`, and expiry happens on access.                                                |
 
 ## Mutations
 
@@ -47,16 +47,16 @@ A mutation is a non-empty ordered list of `Create`, `Append`, and `Delete` opera
 
 The adapter checks every precondition against the state before the mutation, inside its own transaction, and writes nothing on a failure. The first failure answers `MutationRejected { index, reason, record }`.
 
-| Reason | When |
-| --- | --- |
-| `offset` | the tail is not `expectedOffset` |
-| `closed` | the stream is closed, or `expectedClosed` does not match |
-| `producer` | the stored producer state is not the expected one |
-| `exists` | a create hit an existing stream |
-| `not-found` | an append or delete named a missing stream |
-| `gone` | the stream was removed |
-| `fork-source-gone` | a create named a removed fork source |
-| `expiry-mismatch` | an expiry delete met a renewed deadline |
+| Reason             | When                                                     |
+| ------------------ | -------------------------------------------------------- |
+| `offset`           | the tail is not `expectedOffset`                         |
+| `closed`           | the stream is closed, or `expectedClosed` does not match |
+| `producer`         | the stored producer state is not the expected one        |
+| `exists`           | a create hit an existing stream                          |
+| `not-found`        | an append or delete named a missing stream               |
+| `gone`             | the stream was removed                                   |
+| `fork-source-gone` | a create named a removed fork source                     |
+| `expiry-mismatch`  | an expiry delete met a renewed deadline                  |
 
 The protocol maps each reason to a typed error, so an adapter never builds one. A rejection changes nothing, including producer state, lineage, and expiry metadata. I/O failure is `StorageFault`, with `retryable` marking whether a retry policy may apply.
 
@@ -100,9 +100,9 @@ StorageContract.run({
 
 ## The shipped adapters
 
-| Capability | Memory | Constrained memory | Bun SQLite | Durable Object SQLite |
-| --- | --- | --- | --- | --- |
-| `fork` | `chain` | `copy` | `chain` | `chain` |
-| `atomicScope` | `store` | `stream` | `store` | `store` |
-| `wake` | `push` | `poll` | `push` with repair | `push` with repair |
-| `expiryIndex` | `indexed` | `lazy` | `indexed` | `indexed`, swept by the alarm |
+| Capability    | Memory    | Constrained memory | Bun SQLite         | Durable Object SQLite         |
+| ------------- | --------- | ------------------ | ------------------ | ----------------------------- |
+| `fork`        | `chain`   | `copy`             | `chain`            | `chain`                       |
+| `atomicScope` | `store`   | `stream`           | `store`            | `store`                       |
+| `wake`        | `push`    | `poll`             | `push` with repair | `push` with repair            |
+| `expiryIndex` | `indexed` | `lazy`             | `indexed`          | `indexed`, swept by the alarm |

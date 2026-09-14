@@ -5,11 +5,11 @@ description: Choose between the memory Layer, SQLite on Bun, and SQLite inside a
 
 Three Layers give a program its streams: memory for one process and tests, SQLite on Bun for a server, and SQLite inside a Durable Object on Cloudflare.
 
-| Layer | Persists | Processes | Where |
-| --- | --- | --- | --- |
-| `Streams.layerMemory()` | no | one | `@streamsy/core` |
-| `BunStorage.layerProtocol(...)` | one file | one, or several sharing the file | `@streamsy/storage/bun` |
-| `DurableObjectStorage.layerProtocol(...)` | the object's SQLite | one object | `@streamsy/storage/durable-object` |
+| Layer                                     | Persists            | Processes                        | Where                              |
+| ----------------------------------------- | ------------------- | -------------------------------- | ---------------------------------- |
+| `Streams.layerMemory()`                   | no                  | one                              | `@streamsy/core`                   |
+| `BunStorage.layerProtocol(...)`           | one file            | one, or several sharing the file | `@streamsy/storage/bun`            |
+| `DurableObjectStorage.layerProtocol(...)` | the object's SQLite | one object                       | `@streamsy/storage/durable-object` |
 
 ## Memory
 

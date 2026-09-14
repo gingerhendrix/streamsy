@@ -10,7 +10,11 @@ description: Serve the protocol on Bun with Http.app, and talk to any conformant
 ```ts
 import { Http } from "@streamsy/core";
 
-const app = Http.app({ pathPrefix: "/streams", maxMessageSize: 1024 * 1024, cacheVisibility: "private" });
+const app = Http.app({
+  pathPrefix: "/streams",
+  maxMessageSize: 1024 * 1024,
+  cacheVisibility: "private",
+});
 ```
 
 `Http.app` returns an `HttpEffect` that needs `StreamsReader` and `StreamsWriter`. Its error channel is closed, so every protocol error is already an HTTP response. `pathPrefix` defaults to `/`, `maxMessageSize` to 1 MiB, and `cacheVisibility` to `private`.

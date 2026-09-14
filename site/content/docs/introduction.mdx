@@ -148,12 +148,12 @@ See [HTTP](/docs/runtime/http).
 
 ## Choosing a Layer
 
-| Layer | Persists | Use |
-| --- | --- | --- |
-| `Streams.layerMemory()` | no | one process, tests |
-| `BunStorage.layerProtocol(...)` | SQLite file | Bun host |
-| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare |
-| `Streams.layerRouted(bindings)` | per backend | several backends behind one Layer |
-| `Fetch.layer({ baseUrl })` | remote | any conformant host |
+| Layer                                     | Persists              | Use                               |
+| ----------------------------------------- | --------------------- | --------------------------------- |
+| `Streams.layerMemory()`                   | no                    | one process, tests                |
+| `BunStorage.layerProtocol(...)`           | SQLite file           | Bun host                          |
+| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare                        |
+| `Streams.layerRouted(bindings)`           | per backend           | several backends behind one Layer |
+| `Fetch.layer({ baseUrl })`                | remote                | any conformant host               |
 
 The program does not change between Layers. For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).

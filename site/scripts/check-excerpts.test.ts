@@ -22,6 +22,17 @@ const waitForFile = async (path: string, timeoutMs = 1_000): Promise<void> => {
   }
 };
 
+/** Resolves with the rejection error; the declared `rejects` matcher is not a Promise. */
+const rejection = async (execution: Promise<void>): Promise<Error> => {
+  try {
+    await execution;
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw new Error("The excerpt run rejected with a non-Error value", { cause: error });
+  }
+  throw new Error("Expected the excerpt run to reject");
+};
+
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -171,7 +182,7 @@ test("hung excerpt descendants and owned state are reaped before root removal", 
       },
     });
     await waitForFile(pidFile);
-    await expect(execution).rejects.toThrow("exceeded 300 ms");
+    expect((await rejection(execution)).message).toContain("exceeded 300 ms");
     const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
     expect(isAlive(pid)).toBe(false);
     expect(await exists(ownedRoot)).toBe(false);
@@ -223,7 +234,7 @@ test("resistant descendants are hard-killed at the outer deadline", async () => 
     const beforeDeadline = Math.max(0, timeoutMs - (Date.now() - startedAt) - 30);
     await delay(beforeDeadline);
     expect(isAlive(pid)).toBe(true);
-    await expect(execution).rejects.toThrow("exceeded 300 ms");
+    expect((await rejection(execution)).message).toContain("exceeded 300 ms");
     expect(Date.now() - startedAt).toBeLessThan(timeoutMs + 700);
     expect(isAlive(pid)).toBe(false);
     expect(await exists(ownedRoot)).toBe(false);
