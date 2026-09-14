@@ -172,10 +172,11 @@ persistent.
 
 A record is keyed by `id`, `generation` and canonical `params`. Its identity
 stores the stream id and content type of every declared input by name, so a
-codec or input change is detected at `load` as `identity-mismatch`. There is
-no reset and no active-generation pointer: declare the change under a new
-generation, which starts from zero offsets and, for the stream form, a new
-producer epoch. A stream-form runner of an older generation fails
+change of input name, stream id or content type is detected at `load` as
+`identity-mismatch`. A codec change that keeps the same content type is not
+detected. There is no reset and no active-generation pointer: declare any such
+change under a new generation, which starts from zero offsets and, for the
+stream form, a new producer epoch. A stream-form runner of an older generation fails
 `stale-epoch` once a newer one has appended. The producer id is `id` alone, or
 `id/{canonical params JSON}` when parameterised.
 
