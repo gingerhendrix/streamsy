@@ -7,6 +7,7 @@ export type {
   StreamDefinition,
   SingleStreamDefinition,
 } from "./projection.ts";
+export type { FollowOptions } from "./follow.ts";
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 export type { Budget } from "./read.ts";
 export type { Host, Progress } from "./run.ts";

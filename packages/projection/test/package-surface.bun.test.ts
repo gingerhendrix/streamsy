@@ -10,6 +10,8 @@ test("built public entries and declared files exist", () => {
   expect(Projection.make).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
+  expect(Projection.stream).toBeFunction();
+  expect(Projection.follow).toBeFunction();
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
   expect(Checkpoints.key).toBe("@streamsy/projection/Checkpoints");
