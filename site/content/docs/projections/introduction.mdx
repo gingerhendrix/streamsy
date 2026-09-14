@@ -3,15 +3,22 @@ title: Introduction
 description: What a projection is, the two kinds of stream it connects, and the pages that cover each part.
 ---
 
-A projection turns one stream into another with a pure step. It reads a source, runs the step, and writes the outputs to a sink, and it commits the checkpoint beside the output so a restart resumes where it stopped.
+A projection is a named, typed, checkpointed consumer of one or more input streams. It reads a slice of each input, runs an Effect handler over that unit, and commits a checkpoint so a restart resumes where it stopped. State is optional: it belongs to the services the handler uses, not to the projection.
 
-The kernel is one pass, repeated: restore the checkpoint, pull a batch from the `Source`, run the pure step, commit the outputs to the `Sink` with the new checkpoint.
+The kernel is one pass, repeated: restore the checkpoint, read every input in declaration order, run the handler over one unit, commit the checkpoint. `@streamsy/projection` ships two forms of that pass.
+
+- `Projection.make` is the fused form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint.
+- `Projection.stream` is the stream-output form. The handler returns items, the kernel pins the unit's input ranges in the checkpoint, then appends the items to an output stream under a producer tuple. A retry reproduces the pinned ranges and sends the same tuple, so the output sees each unit once even when the output lives on another backend.
+
+## Inputs, unit, checkpoint
+
+Inputs are a map of names to `StreamRef` values. `input: ref` is sugar for `inputs: { input: ref }`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for the stream form the pending pin and producer sequence.
 
 ## Fact streams and state streams
 
 A fact stream records what happened. Each message is a domain event, appended once and never rewritten. It is the source of truth, and every other stream can be rebuilt from it. Declare it with `StreamRef.json` and an event schema.
 
-A state stream carries the current value of keyed rows. Its items are Durable State change events, and a browser reads it with `@durable-streams/state`. Declare it with `StreamRef.state` and the row schema of each collection.
+A state stream carries the current value of keyed rows. Its items are Durable State change events, and a browser reads it with `@durable-streams/state`. Declare its ref with the row schema of the events the projection writes.
 
 ```json
 {
@@ -22,44 +29,44 @@ A state stream carries the current value of keyed rows. Its items are Durable St
 }
 ```
 
-A state stream is derived. A rebuild from the facts writes a new generation of it. See [Durable State](https://durablestreams.com/durable-state).
+A state stream is a projection of the facts. A rebuild from the facts writes a new generation of it. See [Durable State](https://durablestreams.com/durable-state).
 
-## Two meanings of sink
+## Serve sinks
 
-The word sink appears twice on these pages. A derive `Sink` is where a projection writes; see [Projections](/docs/projections/projections). A serve sink is an HTTP contract that publishes a relation, its changes, a document, or an external effect; see [Sinks](/docs/projections/sinks).
+A serve sink is an HTTP contract that publishes a relation, its changes, a document, or an external effect; see [Sinks](/docs/projections/sinks). A projection writes to streams and services, and a serve sink publishes what those hold.
 
 ## A minimal projection
 
 ```ts
 import { Effect, Schema } from "effect";
 import { StreamRef, Streams } from "@streamsy/core";
-import { Projection, StreamSink, StreamSource } from "@streamsy/derive";
+import { Projection } from "@streamsy/projection";
 
-const input = StreamRef.json("numbers", { schema: Schema.Finite });
-const output = StreamRef.json("running-totals", { schema: Schema.Finite });
+const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
+const doubled = StreamRef.json("doubled", { schema: Schema.Finite });
 
 export const minimal = Effect.gen(function* () {
-  yield* Streams.create(input);
-  yield* Streams.create(output);
-  yield* Streams.append(input, [1, 2, 3]);
+  yield* Streams.create(numbers);
+  yield* Streams.create(doubled);
+  yield* Streams.append(numbers, [1, 2, 3]);
   const projection = Projection.make({
-    id: "running-total",
-    version: 1,
-    source: yield* StreamSource.make(input),
-    sink: yield* StreamSink.make(output),
-    initial: 0,
-    stateSchema: Schema.fromJsonString(Schema.Finite),
-    step: (state, item) => ({ state: state + item, outputs: [state + item] }),
+    id: "doubled",
+    input: numbers,
+    process: (batch) =>
+      Streams.append(
+        doubled,
+        batch.input.items.map((n) => n * 2),
+      ),
   });
-  return yield* Projection.catchUp(projection, { boundaries: 10, items: 100 });
+  return yield* Projection.run(projection, { units: 10, items: 100 });
 });
 ```
 
-Compiled source: `packages/derive/src/examples/minimal.ts`.
+One run over `layerMemory()` from `@streamsy/projection/memory` yields `[2, 4, 6]` on `doubled`. Compiled source: `packages/projection/src/examples/minimal.ts`.
 
 ## Pages
 
-- [Projections](/docs/projections/projections): define, run, commit, and recover a projection.
+- [Projections](/docs/projections/projections): define, run, follow, and recover a projection.
 - [Views](/docs/projections/views): declare a keyed relation and maintain its rows.
 - [Sinks](/docs/projections/sinks): publish a relation over HTTP.
 - [Action sink](/docs/projections/action-sink): deliver an external effect at least once.

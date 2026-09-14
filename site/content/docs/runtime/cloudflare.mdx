@@ -74,21 +74,23 @@ A source and its child must share an object. Use `byKey` or `byRoute` so a fork 
 
 ## Projections in the object
 
-Compose the derive SQLite Layer over the same storage Layer, and keep one runtime for the object lifetime. Run a pass from the `alarm` effect.
+Compose the projection SQLite Layer over the same storage Layer, and keep one runtime for the object lifetime. Run a pass from the `alarm` effect.
 
 ```ts
 import { Layer } from "effect";
 import { Protocol } from "@streamsy/core";
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
-import * as DeriveSqlite from "@streamsy/derive/sqlite";
+import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 
 const objectLayer = (
   storage: DurableObjectStorage.DurableObjectStorageOptions["client"]["storage"],
 ) =>
-  Layer.merge(Protocol.layer(), DeriveSqlite.layer).pipe(
+  Layer.merge(Protocol.layer(), ProjectionSqlite.layer).pipe(
     Layer.provideMerge(DurableObjectStorage.layer({ client: { storage } })),
   );
 ```
+
+A fused handler's `Streams.append` and SQL through the object's client commit with the checkpoint, because all three go through the one `CommitBoundary` the storage Layer owns.
 
 ## Local run
 

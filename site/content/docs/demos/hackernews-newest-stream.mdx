@@ -3,11 +3,11 @@ title: Hacker News newest
 description: Follow newest stories through an Effect server and an official Durable Streams browser client.
 ---
 
-The server polls Hacker News, writes changes to a JSON source stream and uses a
-private, example-local projection bridge to append State facts to a target stream.
-The browser consumes the target with `@durable-streams/state/db` and renders
-TanStack DB live queries. It shows the newest stories, score and comment changes,
-new arrivals and stories leaving the configured set.
+The server polls Hacker News, writes changes to a JSON source stream, and runs a
+fused `@streamsy/projection` that appends State facts to a target stream. The
+browser consumes the target with `@durable-streams/state/db` and renders TanStack
+DB live queries. It shows the newest stories, score and comment changes, new
+arrivals and stories leaving the configured set.
 
 ## Run locally
 
@@ -19,7 +19,8 @@ bun run --cwd examples/hackernews-newest-stream dev
 ```
 
 Open http://localhost:1339. `PORT` selects another port. The status view reports
-poll counts, projection progress and failures. To run the offline HTTP proof:
+poll counts, the last run's status and source offset, and failures. To run the
+offline HTTP proof:
 
 ```bash
 bun run smoke:hackernews
@@ -28,21 +29,30 @@ bun run smoke:hackernews
 The smoke supplies local HN fixtures and checks inserts, updates, deletes and
 unchanged-poll suppression through the public target.
 
-## Incubating bridge and bounds
+## The projection
 
-One acquired memory store belongs to one server process. Restarting loses it.
-Recovery scans the entire target history and takes progress from fact headers.
-Target-tail CAS detects competing output writes.
+The story index is `Projection.make` over the source ref with a `Projection.each`
+handler. Each source command becomes one Durable State fact appended to the target
+inside the checkpoint transaction, so a unit's facts and its checkpoint commit
+together. Fact headers keep the source position: `offset` is the unit's accepted
+source offset and `txid` is that offset joined with the fact's index in the unit.
 
-The bridge treats a whole source read page as one boundary. A backlog above the
-item or byte bound can repeatedly reject with `boundary-too-large`; another poll
-does not guarantee progress. Raising the relevant bound is necessary for that
-page to fit. Recovery scanning itself is outside the catch-up bounds.
+Source, target and the checkpoint share one memory Layer from
+`@streamsy/projection/memory`, held by the runtime that also serves the HTTP
+edge. The server runs one bounded `Projection.run` after each poll.
+`HN_PROJECTION_MAX_UNITS`, `HN_PROJECTION_MAX_ITEMS` and `HN_PROJECTION_MAX_BYTES`
+set the budget.
 
-This bridge provides no general replay-safe pending writes, owner fencing or
-generation activation. It requires at least one output fact per source boundary.
-General projection and recovery work is deferred to a later release. The bridge is
-incubating and is not a public package API. This demo has not yet adopted the
-shipped SQLite Storage Layer; the local Cloudflare Durable Object host is
-implemented with workerd evidence, while hosted execution and release
-acceptance remain pending. See the [Cloudflare guide](/docs/runtime/cloudflare).
+## Limits
+
+The store is memory only. One acquired memory Layer belongs to one server process,
+and restarting the process starts the streams and the checkpoint from empty.
+
+The run is bounded. A `limit-reached` status means later polls continue the
+work. A source slice larger than the byte budget is refused whole and the run
+reports `limit-reached` with nothing written; raise `HN_PROJECTION_MAX_BYTES` to
+accept it.
+
+The demo makes no hosted claim. It runs on the Bun memory host and has not
+adopted the SQLite storage Layer or a Cloudflare deployment. See the
+[Cloudflare guide](/docs/runtime/cloudflare) for the hosted path.

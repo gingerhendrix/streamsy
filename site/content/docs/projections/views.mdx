@@ -113,31 +113,39 @@ const result = maintainGraph({
 // result.state, result.changes, result.rows
 ```
 
-A maintained view is a projection whose step is the engine. The source is the stream the view reads. The sink is the state stream that holds the view rows. The projection state is the operator state, and the version is the plan hash, so a plan change is a new version and rebuilds into a new generation.
+A maintained view is a projection whose handler runs the engine. The input is the stream the view reads. The handler loads the operator state from a store it owns, runs `maintainGraph` over the batch, saves the new state, and appends the row changes to the state stream that holds the view. The plan hash goes into the projection `params`, so a plan change is a new checkpoint key and rebuilds into a new generation of the rows.
 
 ```ts
-import { Projection } from "@streamsy/derive";
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
 import { planHash } from "@streamsy/views";
-import { emptyOperatorState, maintainGraph } from "@streamsy/views/engine";
-import { OperatorState, openOrders, orders } from "./views.ts";
+import { maintainGraph } from "@streamsy/views/engine";
+import { openOrders, orders } from "./views.ts";
+import { OperatorStore, openOrderRows, orderChanges } from "./maintenance.ts";
 
 const maintained = Projection.make({
   id: "shop.open-orders",
-  version: planHash(openOrders.plan),
-  source: ordersSource,
-  sink: openOrdersSink,
-  initial: emptyOperatorState(openOrders.plan.name),
-  stateSchema: OperatorState,
-  step: (state, change) => {
-    const result = maintainGraph({
-      plan: openOrders.plan,
-      state,
-      inputs: [{ sourceId: orders.name, changes: [change] }],
-    });
-    return { state: result.state, outputs: result.changes };
-  },
+  params: { plan: planHash(openOrders.plan) },
+  inputs: { orders: orderChanges },
+  process: (batch, unit) =>
+    Effect.gen(function* () {
+      const store = yield* OperatorStore;
+      const state = yield* store.load(unit.projectionId);
+      const result = maintainGraph({
+        plan: openOrders.plan,
+        state,
+        inputs: [
+          { sourceId: orders.name, changes: Projection.items(batch).map((entry) => entry.item) },
+        ],
+      });
+      yield* store.save(unit.projectionId, result.state);
+      yield* Streams.append(openOrderRows, result.changes);
+    }),
 });
 ```
+
+`OperatorStore` is the application's own service. When it writes through the same owner as the checkpoint, for example SQL through the shared `SqlClient`, the operator state, the row changes, and the checkpoint commit together. This is a sketch: the store contract, the ref for the row stream, and the change encoding are the application's to define.
 
 ## Persist the view
 

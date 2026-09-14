@@ -191,8 +191,13 @@ operations and remain permission-gated.
 
 Inventory published versions and consumers before proposing deprecation wording.
 The retired graph includes `@streamsy/http-client`, `@streamsy/streams`,
-`@streamsy/projection` and `@streamsy/state`; earlier names
+`@streamsy/projection` (through `0.3.0`) and `@streamsy/state`; earlier names
 include `@streamsy/client`, `@streamsy/experimental`, and `@streamsy/storage-memory`.
+The `@streamsy/projection` name is in use again from `0.4.0` by the new
+checkpointed projection package in `packages/projection`; the `0.3.0` line is
+unrelated to it, is not a compatible earlier version, and is not in the release
+package table above. `@streamsy/derive` was never published and its retirement is
+not a registry operation.
 Do not imply that the four prepared packages replace every retired capability.
 Local persistent Bun protocol storage is available through `@streamsy/storage`,
 but hosted Durable Object protocol and the Effect fetch transport remain later

@@ -18,15 +18,19 @@ separate Bun processes without provider credentials or network calls.
 
 ## Hacker News
 
-`examples/hackernews-newest-stream` runs the memory Bun host, an example-local
-projection bridge and the official browser State binding. Root units include its
-12 tests; `bun run smoke:hackernews` checks the offline HTTP path.
+`examples/hackernews-newest-stream` runs the memory Bun host, a fused
+`@streamsy/projection` over the poller's source stream, and the official browser
+State binding. Root units include its 9 tests; `bun run smoke:hackernews` checks
+the offline HTTP path.
 
-The bridge commits one whole source read page as one output boundary. A backlog
-above the item/byte limit can repeatedly return `boundary-too-large`; it does not
-split that page. This accepted bounded-demo limitation remains through Step 1.
-Recovery scans target fact headers and uses target-tail CAS. Owner fencing,
-generation activation and replay-safe pending writes remain later derive work.
+The story index is `Projection.make` with a `Projection.each` handler that appends
+one Durable State fact per source command to the target inside the checkpoint
+transaction. Source, target and the checkpoint share one memory Layer from
+`@streamsy/projection/memory`, so each unit's facts and its checkpoint commit
+together and a restart of the run never repeats output. The run is bounded by
+units, items and bytes; a slice above the byte budget is refused whole and the run
+reports `limit-reached`. The store is memory only, so a process restart starts
+from empty, and the demo makes no hosted claim.
 
 ## Historical portfolio and working cycle
 

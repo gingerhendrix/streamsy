@@ -36,25 +36,32 @@ BunRuntime.runMain(Layer.launch(server));
 
 `idleTimeout: 0` is required. Without it Bun closes a parked long poll after 10 s. The storage Layer builds before the port binds, and closing the launched scope stops the listener and disposes the storage.
 
-A projection or an outbox drain runs beside the listener as one more Layer in the same graph. Provide the storage Layer value once to the merged graph so both share it.
+A projection or an outbox drain runs beside the listener as one more Layer in the same graph. Build `BunStorage.layer` rather than `layerProtocol` so the graph exposes the `CommitBoundary` and `SqlClient` the projection checkpoints need, and provide that one value to both.
 
 ```ts
-import { Effect, Layer } from "effect";
-import { Projection } from "@streamsy/derive";
-import * as DeriveSqlite from "@streamsy/derive/sqlite";
-import { runningTotal } from "./running-total.ts";
+import { Layer } from "effect";
+import { HttpServer } from "effect/unstable/http";
+import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
+import { Http, Protocol } from "@streamsy/core";
+import * as BunStorage from "@streamsy/storage/bun";
+import { Projection } from "@streamsy/projection";
+import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import { orderTotalsProjection } from "./order-totals.ts";
 
-const projection = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const definition = yield* runningTotal;
-    yield* Projection.follow(definition);
-  }),
-).pipe(Layer.provide(DeriveSqlite.layer));
+const services = Layer.merge(Protocol.layer(), ProjectionSqlite.layer).pipe(
+  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } })),
+);
 
-const host = Layer.merge(server, projection).pipe(Layer.provide(storage));
+const listener = HttpServer.serve(Http.app({ pathPrefix: "/streams" })).pipe(
+  Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
+);
 
-BunRuntime.runMain(Layer.launch(host));
+const projection = Layer.effectDiscard(Projection.follow(orderTotalsProjection));
+
+BunRuntime.runMain(Layer.launch(Layer.merge(listener, projection).pipe(Layer.provide(services))));
 ```
+
+`Projection.follow` returns a fiber owned by the Layer scope, so stopping the host interrupts the follower with the listener. The fused handler's appends and the checkpoint commit in the same SQLite transaction because both go through the one `CommitBoundary` the storage value owns.
 
 `@effect/platform-bun` is an optional peer of `@streamsy/serve`.
 

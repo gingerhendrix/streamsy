@@ -1,89 +1,118 @@
 ---
 title: Projections
-description: Build a projection from a source, a sink, and a pure step, then run it with checkpoints committed beside the output.
+description: Define a projection over one or more inputs, run it with checkpoints, and recover it by generation.
 ---
 
-`Projection.make` builds an inert definition from a source, a sink, and a pure step. `catchUp` or `follow` runs it, and every accepted batch commits the output, the state, and the checkpoint in one transaction.
+`Projection.make` and `Projection.stream` build inert definitions. Neither acquires a service. `run`, `pass`, or `follow` executes one, and every accepted unit commits its checkpoint through the `Checkpoints` service.
 
 ```ts
-import { Schema } from "effect";
-import { Projection, type Sink, type Source } from "@streamsy/derive";
+import { Streams } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { orders, orderTotals } from "./refs.ts";
 
-const runningTotal = (source: Source<number>, sink: Sink<number>) =>
-  Projection.make({
-    id: "running-total",
-    version: 1,
-    source,
-    sink,
-    initial: 0,
-    stateSchema: Schema.fromJsonString(Schema.Finite),
-    step: (state, item) => ({ state: state + item, outputs: [state + item] }),
-  });
+export const orderTotalsProjection = Projection.make({
+  id: "order-totals",
+  input: orders,
+  process: Projection.each(({ item }) =>
+    Streams.append(orderTotals, [{ orderId: item.orderId, total: item.amount }]),
+  ),
+});
 ```
 
-`step(state, input, context)` returns the next state and zero or more outputs. It is pure: no services, no clock, no mutation of its inputs. `initial` and `stateSchema` describe the state that is stored between passes.
+A definition has an `id`, a `generation` (default 1), optional `params`, its inputs, and a `process` handler. `input: ref` is sugar for `inputs: { input: ref }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders, refunds }` and read one slice per name.
 
-## Sources and sinks
+`process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection, the non-empty `ranges` keyed by input, and a `key` that is stable across retries of the same unit; use `unit.key` as the idempotency key for a target outside the transaction.
 
-`StreamSource.make(ref)` reads a stream. `StreamSink.make(ref)` writes one. Both positions are stream offsets.
+`Projection.items(batch)` flattens a batch into `{ input, item, index }` entries in declaration order, then stream order. `Projection.each(handle)` builds a handler that runs `handle(entry, unit)` once per entry, one at a time.
 
-The sink appends with `expectedOffset`, so two runners cannot both write to it. Create the sink stream first, keep it empty, and dedicate it to one projection.
+## The two forms
 
-A custom source or sink implements the same `Source` and `Sink` interfaces, and a sink must join the same `Commit` owner as the projection. The interface shapes are in the reference.
+The fused form, `Projection.make`, runs the handler inside the checkpoint owner's transaction. `Streams.append` to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back. A write to anything outside that owner is at-least-once.
+
+The stream form, `Projection.stream`, is for an output the checkpoint transaction cannot reach: a stream on another backend or behind a Fetch client. The handler returns the items to append.
+
+```ts
+import { Effect, Schema } from "effect";
+import { StreamRef } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { orders } from "./refs.ts";
+
+export const amounts = Projection.stream({
+  id: "amounts",
+  input: orders,
+  output: StreamRef.json("amounts", { schema: Schema.Finite }),
+  process: (batch) => Effect.succeed(batch.input.items.map((event) => event.amount)),
+});
+```
+
+Before the append, the kernel pins the unit's non-empty ranges and the producer sequence in the checkpoint. It then appends under a producer tuple whose id is the projection id (joined with the canonical `params` when there are any), whose epoch is the generation, and whose sequence is the pinned one. A retry reproduces exactly the pinned ranges from the inputs and sends the same tuple; `Appended` and `Duplicate` both settle the unit. The protocol compares tuples, not payloads, so the handler must be deterministic on its inputs for a byte-identical retry. An empty output advances the checkpoint without a pin or a sequence.
 
 ## Running
 
-`Projection.catchUp` repeats passes until the source is caught up, the source closes, or a limit is reached. `Projection.follow` catches up and then keeps running. `Projection.pass` runs one bounded pass.
+`Projection.run` repeats passes until an empty pass reports `caught-up`, every input is closed and drained (`source-closed`), or a budget is spent (`limit-reached`). `Projection.pass` runs one unit. Both return a `Progress` with `status`, `units`, `items`, `bytes`, and the checkpoint `record`; a non-empty pass reports `progress`.
+
+```ts
+import { Effect } from "effect";
+import { Projection } from "@streamsy/projection";
+import { layerMemory } from "@streamsy/projection/memory";
+import { orderTotalsProjection } from "./order-totals.ts";
+
+const program = Projection.run(orderTotalsProjection, { units: 10, items: 100 });
+
+await Effect.runPromise(program.pipe(Effect.provide(layerMemory())));
+```
+
+The budget bounds a run: `units` per run (default 100), `items` per pass across inputs (default 1000), and optional `bytes` of payload per pass. Inputs are read in declaration order with the item budget carried forward. A slice that exceeds the remaining bytes is refused whole; when nothing else was read the pass returns `limit-reached` without a write. Resume with a larger budget.
+
+`Projection.follow` runs to `caught-up`, then waits for the first input to hint at a change and runs again.
 
 ```ts
 import { Effect, Fiber } from "effect";
-import { Projection } from "@streamsy/derive";
+import { Projection } from "@streamsy/projection";
+import { orderTotalsProjection } from "./order-totals.ts";
 
-const serve = (projection: Projection.Projection<number, number, number>) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fiber = yield* Projection.follow(projection);
-      return yield* Fiber.join(fiber);
-    }),
-  );
+const serve = Effect.scoped(
+  Effect.gen(function* () {
+    const fiber = yield* Projection.follow(orderTotalsProjection, { repairIntervalMs: 1000 });
+    return yield* Fiber.join(fiber);
+  }),
+);
 ```
 
-`follow` returns a scoped fiber. Join it to observe a source close or a typed failure. Closing the scope releases the wait and the fiber.
+`follow` returns a caller-scoped fiber. Join it to observe a close or a typed failure; closing the scope releases the parked waits and the fiber. Each wait is one bounded `readNext` per input, so a missed wake delays progress by at most `repairIntervalMs` without losing it. On HTTP backends each hint is one long poll per input.
 
-Limits bound one pass. They default to 100 boundaries and 1000 items, and `bytes` is optional. Set them when memory matters. A batch that does not fit returns `limit-reached` without committing; resume with a larger budget.
+## Checkpoints and generations
 
-## Commit
-
-The `Commit` service holds the checkpoints and the state, and it owns the transaction. `@streamsy/derive/memory` supplies it for one process over `Streams.layerMemory()`. `@streamsy/derive/sqlite` supplies it over the same storage Layer value as the protocol, so a checkpoint and its output commit together.
+The `Checkpoints` service holds the records and owns the transaction. `@streamsy/projection/memory` exports `layer` over the memory owner that `Streams.layerMemory()` retains, and `layerMemory(options)`, which provides both in one graph. `@streamsy/projection/sqlite` exports `layer` over the `CommitBoundary` and `SqlClient` of a storage Layer, so a checkpoint and a fused handler's writes commit together. The package root imports no SQL driver.
 
 ```ts
 import { Effect, Layer } from "effect";
 import { Protocol } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import * as DeriveSqlite from "@streamsy/derive/sqlite";
-import { runningTotal } from "./running-total.ts";
+import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import { program } from "./run.ts";
 
-const host = Layer.merge(Protocol.layer(), DeriveSqlite.layer).pipe(
+const host = Layer.merge(Protocol.layer(), ProjectionSqlite.layer).pipe(
   Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } })),
 );
 
-await Effect.runPromise(runningTotal.pipe(Effect.provide(host)));
+await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
-Build the Layer once per host lifetime. A memory restart is a new projection. A SQLite restart resumes from the stored checkpoint.
+Build the Layer once per host lifetime. Memory is not persistent, so a memory restart starts from zero offsets. A SQLite restart resumes from the stored record.
 
-## Identity and recovery
+A record is keyed by `id`, `generation`, and canonical `params`. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for the stream form, a new producer epoch. A stream-form runner of an older generation fails with `stale-epoch` once a newer one has appended.
 
-A projection identity is its `id`, its `version`, and the identities of its source and sink. A changed codec needs a new version. Stores key by `id`, so a changed version, source, or sink stops the projection with `identity-mismatch`. Start a new `id` and a new sink stream for a fresh lane.
-
-One runner per `id` is supported. An overlapping pass is detected inside the commit and stops with `sink-conflict`.
+One runner per key is the supported shape. The record is compare-and-set, so an overlapping runner with stale progress stops with `token-conflict` and writes nothing.
 
 ## Faults
 
-Failures are `DeriveFault` with a `reason`. The three you meet are `history-unavailable`, `identity-mismatch`, and `sink-conflict`. No retry or reset is implicit.
+Failures are `ProjectionFault` values with a `phase` and a `reason`. The phase says where the run stopped: `load` (record, identity, budget), `read` (inputs), `pin` (the pinned save, range reproduction, and the producer append), `process` (output encoding and adapter failures while the handler ran), and `checkpoint` (the save after processing completed). Reasons are `history-unavailable`, `identity-mismatch`, `invalid-record`, `invalid-source`, `invalid-budget`, `invalid-output`, `token-conflict`, `range-unreproducible`, `stale-epoch`, `storage-failure`, and `unsupported-composition`. Faults about an input name it.
 
-The source must retain its history from the checkpoint onward. When that history has expired, the projection stops with `history-unavailable`, and repair is an application procedure. See the expiry rules on [Creating](/docs/streams/creating).
+Handler errors are not wrapped: `run` fails with the handler's error or a `ProjectionFault`. No retry or reset is implicit.
+
+Every input must retain its history after the accepted offset, and the stream form also needs every pending pinned range. When that history is gone the projection stops with `history-unavailable` or `range-unreproducible`, and recovery is a new generation. See the expiry rules on [Creating](/docs/streams/creating).
 
 ## Several backends
 
-A projection whose source is on one backend of `Streams.layerRouted` and whose sink and `Commit` share another backend commits correctly. See [Runtime](/docs/runtime/introduction).
+A projection whose input is on one backend of `Streams.layerRouted` and whose `Checkpoints` and fused output share another backend commits correctly. When the output cannot join the checkpoint's backend, use `Projection.stream`. See [Runtime](/docs/runtime/introduction).

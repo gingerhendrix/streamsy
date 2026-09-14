@@ -17,6 +17,7 @@ export const OrderEvent = Schema.Struct({ orderId: Schema.String, amount: Schema
 export const OrderRow = Schema.Struct({ orderId: Schema.String, total: Schema.Finite });
 
 export const orders = StreamRef.json("orders", { schema: OrderEvent });
+export const orderTotals = StreamRef.json("order-totals", { schema: OrderRow });
 export const orderIndex = StreamRef.state("order-index", { collections: { order: OrderRow } });
 export const orderEvents = StreamRoute.json("orders/:orderId/events", {
   params: { orderId: Schema.String },
@@ -60,23 +61,23 @@ See [Reading](/docs/streams/reading).
 ## 4. Project one stream into another
 
 ```ts
-import { Effect, Schema } from "effect";
-import { Projection, StreamSink, StreamSource } from "@streamsy/derive";
-import { orders, totals } from "./refs.ts";
+import { Effect } from "effect";
+import { Streams } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+import { orders, orderTotals } from "./refs.ts";
 
-const runningTotal = Effect.gen(function* () {
-  const projection = Projection.make({
-    id: "running-total",
-    version: 1,
-    source: yield* StreamSource.make(orders),
-    sink: yield* StreamSink.make(totals),
-    initial: 0,
-    stateSchema: Schema.fromJsonString(Schema.Finite),
-    step: (state, event) => ({ state: state + event.amount, outputs: [state + event.amount] }),
-  });
-  return yield* Projection.catchUp(projection);
+const projection = Projection.make({
+  id: "order-totals",
+  input: orders,
+  process: Projection.each(({ item }) =>
+    Streams.append(orderTotals, [{ orderId: item.orderId, total: item.amount }]),
+  ),
 });
+
+const catchUp = Projection.run(projection);
 ```
+
+The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or a budget is spent. The `Checkpoints` service comes from `@streamsy/projection/memory` or `@streamsy/projection/sqlite`, beside the Layer of step 5.
 
 See [Projections](/docs/projections/introduction).
 

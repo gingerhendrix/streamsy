@@ -154,10 +154,21 @@ and later mutations repair missed or exhausted alarms. See the complete
 [hosting reference](hosting.md) for the public host contract, local evidence,
 fork placement, cancellation, and the still-pending hosted boundary.
 
-## Derive
+## Projection
 
-`@streamsy/derive` provides `Source`, `Sink`, `Projection.make`, `Projection.pass`,
-`Projection.catchUp`, `Projection.follow`, and the fused `Commit` service with
-`CheckpointStore` and `StateStore` contracts. Host adapters live at
-`@streamsy/derive/memory` and `@streamsy/derive/sqlite`. See the
-[Derive package guide](../packages/derive/README.md) for the contract and compiled example.
+`@streamsy/projection` exports the `Projection` namespace: `make` (fused form, the
+handler runs inside the checkpoint transaction), `stream` (the handler returns items
+appended to an output stream under a pinned producer tuple), `items` and `each`
+(tagged-item helpers), `pass`, `run`, `follow`, and `key`. Progress, checkpoint
+progress and pending ranges are maps keyed by input name; `input: ref` stores the
+single key `input`. The root also exports the `Checkpoints` service with its
+`CheckpointRecord` schema, `fromStore` and `recordKey`, the `ProjectionFault` error
+(phases `load`, `read`, `pin`, `process`, `checkpoint`), `PendingUnit`, `PinnedRange`,
+`encodeKey`, `producerId`, and the `Budget`, `Progress`, `Slice`, `Slices`, `Unit`
+and definition types. `@streamsy/projection/memory` exports `layer` over the memory
+owner and `layerMemory(options)`; `@streamsy/projection/sqlite` exports `layer` over
+`CommitBoundary` and `SqlClient`. The root entry imports no SQL driver. See the
+[projection guide](../packages/projection/README.md) and
+[contract](../packages/projection/CONTRACT.md) for the compiled example and the
+retry rules. `@streamsy/derive` is retired; its package directory is gone and the
+release gates reject the name.

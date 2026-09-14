@@ -41,7 +41,7 @@ export default class Streams extends Cloudflare.DurableObject<Streams>()(
 
 The Layer is the same `layerProtocol` the [Storage](/docs/runtime/storage) page shows. `alarm` is the expiry sweep, called as an effect. `Effect.orDie` is there because a `StorageFault` in a sweep is a defect for the platform to retry.
 
-A projection inside the object merges `DeriveSqlite.layer` over the same storage value and runs from the same `alarm` effect, before or after the sweep. See [Cloudflare](/docs/runtime/cloudflare).
+A projection inside the object merges `ProjectionSqlite.layer` from `@streamsy/projection/sqlite` over the same storage value and runs a pass from the same `alarm` effect, before or after the sweep. See [Cloudflare](/docs/runtime/cloudflare).
 
 ## The Worker
 
