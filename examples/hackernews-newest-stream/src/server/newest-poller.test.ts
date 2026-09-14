@@ -1,4 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- This Bun scenario exercises the demo's Promise compatibility edges through one explicit ManagedRuntime. */
+import { ZERO_OFFSET } from "@streamsy/core";
 import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 import type { HnStory } from "../state-schema.ts";
@@ -13,12 +14,7 @@ describe("NewestStoriesPoller", () => {
     const h = await demoHarness();
     const runtime = h.runtime;
     const projection = await runtime.runPromise(
-      makeStoryProjection({
-        pages: 10,
-        batches: 10,
-        items: 10,
-        bytes: 100_000,
-      }),
+      makeStoryProjection({ units: 10, items: 10, bytes: 100_000 }),
     );
     const stories = new Map<number, HnStory>([
       [101, story(101, 1_700_000_030, "First")],
@@ -48,12 +44,15 @@ describe("NewestStoriesPoller", () => {
 
     try {
       await runtime.runPromise(poller.pollNow);
-      const sourceAfterFirst = await h.read(hackerNewsSource.streamId);
-      const targetAfterFirst = await h.read(hackerNewsTarget.streamId);
+      const sourceAfterFirst = await h.read(hackerNewsSource.id);
+      const targetAfterFirst = await h.read(hackerNewsTarget.id);
+      const firstOutcome = (await runtime.runPromise(projection.status)).lastOutcome;
+      expect(firstOutcome).toMatchObject({ status: "caught-up" });
+      expect(firstOutcome?.progress.sourceThrough).not.toBe(ZERO_OFFSET);
 
       await runtime.runPromise(poller.pollNow);
-      expect(await h.read(hackerNewsSource.streamId)).toEqual(sourceAfterFirst);
-      expect(await h.read(hackerNewsTarget.streamId)).toEqual(targetAfterFirst);
+      expect(await h.read(hackerNewsSource.id)).toEqual(sourceAfterFirst);
+      expect(await h.read(hackerNewsTarget.id)).toEqual(targetAfterFirst);
       expect(await runtime.runPromise(poller.stats)).toMatchObject({
         lastStoryCount: 2,
         lastFetchedNewStories: 0,
@@ -64,7 +63,7 @@ describe("NewestStoriesPoller", () => {
         sourceChanges: 2,
       });
       expect(await runtime.runPromise(projection.status)).toMatchObject({
-        lastOutcome: { status: "caught-up", progress: { batches: 0, items: 0 } },
+        lastOutcome: { status: "caught-up", progress: firstOutcome?.progress },
       });
     } finally {
       await runtime.runPromise(poller.stop);

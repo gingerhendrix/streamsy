@@ -1,19 +1,30 @@
-import * as StateProjection from "./bridge/state-projection.ts";
-import type { CatchUpOutcome, Limits as StateProjectionLimits } from "./bridge/state-projection.ts";
+import { Projection, type Host, type Progress } from "@streamsy/projection";
 import { Cause, Context, Effect, Layer, Ref } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
-import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 import { errorMessage, nowIso } from "./util.ts";
+
+/** One bounded run: passes, items per pass and payload bytes per pass. */
+export type ProjectionLimits = {
+  readonly units: number;
+  readonly items: number;
+  readonly bytes: number;
+};
+
+/** The last run's status and the source offset the checkpoint accepted. */
+export type ProjectionOutcome = {
+  readonly status: Progress["status"];
+  readonly progress: { readonly sourceThrough: string };
+};
 
 export type ProjectionStatus = {
   readonly running: boolean;
   readonly lastAttemptStartedAt?: string;
   readonly lastAttemptCompletedAt?: string;
   readonly lastError?: string;
-  readonly lastOutcome?: CatchUpOutcome;
+  readonly lastOutcome?: ProjectionOutcome;
 };
 
-type ProjectionServices = Effect.Services<ReturnType<typeof StateProjection.catchUp>>;
+export type ProjectionServices = Host;
 
 export interface StoryProjectionService {
   readonly catchUp: Effect.Effect<void, never, ProjectionServices>;
@@ -26,30 +37,15 @@ export class StoryProjection extends Context.Service<StoryProjection, StoryProje
 
 const initialStatus: ProjectionStatus = { running: false };
 
-export function makeStoryProjectionInstance() {
-  return StateProjection.instance(hackerNewsStoryIndex, {
-    source: hackerNewsSource,
-    target: hackerNewsTarget,
-    generation: "v1",
-    producerEpoch: 0,
-  });
-}
-
-export class StoryProjectionInstance extends Context.Service<
-  StoryProjectionInstance,
-  ReturnType<typeof makeStoryProjectionInstance>
->()("HackerNews/StoryProjectionInstance") {}
-
-export const storyProjectionInstanceLayer = Layer.succeed(
-  StoryProjectionInstance,
-  makeStoryProjectionInstance(),
-);
+const outcomeOf = (progress: Progress): ProjectionOutcome => ({
+  status: progress.status,
+  progress: { sourceThrough: progress.record.inputs.input },
+});
 
 export function makeStoryProjection(
-  limits: StateProjectionLimits,
+  limits: ProjectionLimits,
 ): Effect.Effect<StoryProjectionService> {
   return Effect.gen(function* () {
-    const projection = makeStoryProjectionInstance();
     const statusRef = yield* Ref.make(initialStatus);
     const patchStatus = (patch: Partial<ProjectionStatus>) =>
       Ref.update(statusRef, (status) => ({ ...status, ...patch }));
@@ -61,8 +57,8 @@ export function makeStoryProjection(
         lastError: undefined,
       });
 
-      yield* StateProjection.catchUp(projection, { limits }).pipe(
-        Effect.tap((outcome) => patchStatus({ lastOutcome: outcome })),
+      yield* Projection.run(hackerNewsStoryIndex, limits).pipe(
+        Effect.tap((progress) => patchStatus({ lastOutcome: outcomeOf(progress) })),
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterrupts(cause),
           (cause) =>
@@ -88,5 +84,5 @@ export function makeStoryProjection(
   });
 }
 
-export const storyProjectionLayer = (limits: StateProjectionLimits) =>
+export const storyProjectionLayer = (limits: ProjectionLimits) =>
   Layer.effect(StoryProjection, makeStoryProjection(limits));

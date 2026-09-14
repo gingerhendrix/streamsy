@@ -1,7 +1,6 @@
-import type { Limits as StateProjectionLimits } from "./bridge/state-projection.ts";
 import { streamContentType } from "./config.ts";
 import type { PollStats } from "./poller/contract.ts";
-import type { ProjectionStatus } from "./projection.ts";
+import type { ProjectionLimits, ProjectionStatus } from "./projection.ts";
 
 type CurrentStats = PollStats & { readonly projection: ProjectionStatus };
 
@@ -10,7 +9,7 @@ type StatusResponse = CurrentStats & {
   readonly sourceStreamPath: string;
   readonly newestLimit: number;
   readonly pollIntervalMs: number;
-  readonly projectionLimits: StateProjectionLimits;
+  readonly projectionLimits: ProjectionLimits;
 };
 
 type PollResponse = CurrentStats & { readonly ok: true };

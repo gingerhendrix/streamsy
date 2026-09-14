@@ -1,10 +1,6 @@
 import type { HnStory } from "../../state-schema.ts";
 import { newestStorySort } from "../../state-schema.ts";
-import {
-  sourceDelete,
-  sourceUpsert,
-  type HackerNewsSourceChange,
-} from "../story-index-projection.ts";
+import { sourceDelete, sourceUpsert, type HackerNewsSourceChange } from "../source-change.ts";
 
 export type Reconciliation = {
   readonly nextStories: ReadonlyMap<number, HnStory>;

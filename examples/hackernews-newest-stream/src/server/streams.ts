@@ -1,16 +1,17 @@
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
+import * as ProjectionMemory from "@streamsy/projection/memory";
 import { Context, Effect, Layer } from "effect";
 import { streamPrefix } from "./config.ts";
 import { pollFailure } from "./poller/contract.ts";
 import { hackerNewsResources, hackerNewsSource } from "./stream-resources.ts";
-import type { HackerNewsSourceChange } from "./story-index-projection.ts";
+import type { HackerNewsSourceChange } from "./source-change.ts";
 
 export { hackerNewsResources, hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
 const appendSourceBatch = Effect.fn("DemoStreams.appendSourceBatch")(function* (
   items: readonly HackerNewsSourceChange[],
 ) {
-  const result = yield* Streams.append(hackerNewsSource.ref, items).pipe(
+  const result = yield* Streams.append(hackerNewsSource, items).pipe(
     Effect.mapError(pollFailure("appendSourceBatch")),
   );
   return result.offset;
@@ -30,8 +31,8 @@ export const demoStreamsLayer = Layer.effect(
   DemoStreams,
   Effect.gen(function* () {
     const context = yield* Effect.context<StreamsReader | StreamsWriter>();
-    for (const resource of hackerNewsResources) {
-      yield* Streams.create(resource.ref).pipe(Effect.orDie);
+    for (const ref of hackerNewsResources) {
+      yield* Streams.create(ref).pipe(Effect.orDie);
     }
     const edge = yield* Effect.acquireRelease(
       Effect.sync(() => Http.makeEdge({ pathPrefix: streamPrefix }, Layer.succeedContext(context))),
@@ -43,4 +44,11 @@ export const demoStreamsLayer = Layer.effect(
     });
   }),
 );
-export const demoMemoryLayer = demoStreamsLayer.pipe(Layer.provideMerge(Streams.layerMemory()));
+/**
+ * One memory owner for the process lifetime. The projection checkpoint store,
+ * the source and target streams, the HTTP edge and the poller all share it, so
+ * the fused projection commits its target appends with its checkpoint.
+ */
+export const demoMemoryLayer = demoStreamsLayer.pipe(
+  Layer.provideMerge(ProjectionMemory.layerMemory()),
+);

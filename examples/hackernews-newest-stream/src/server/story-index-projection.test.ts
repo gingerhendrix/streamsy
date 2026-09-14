@@ -1,17 +1,16 @@
-import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
-/* oxlint-disable effecttsgo/async-function -- This Bun integration suite drives Promise protocol adapters and executes Effect descriptions at the test boundary. */
-import * as StateProjection from "./bridge/state-projection.ts";
-import type { Instance as StateProjectionInstance } from "./bridge/state-projection.ts";
+import { Streams, StreamsReader, type StreamsWriter, ZERO_OFFSET } from "@streamsy/core";
+import { Checkpoints, Projection, ProjectionFault, type Budget } from "@streamsy/projection";
 import { Context, Effect, Schema } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
-import { makeStoryProjectionInstance } from "./projection.ts";
+import { sourceDelete, sourceUpsert } from "./source-change.ts";
 import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
-import { sourceDelete, sourceUpsert } from "./story-index-projection.ts";
+import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 import { demoHarness, story } from "./test-support.ts";
 import { HackerNewsStateChange, type HnStory } from "../state-schema.ts";
 
-const clients = new Set<Awaited<ReturnType<typeof demoHarness>>>();
-const limits = { pages: 10, batches: 10, items: 50, bytes: 100_000 };
+type Harness = Awaited<ReturnType<typeof demoHarness>>;
+const clients = new Set<Harness>();
+const limits: Budget = { units: 10, items: 50, bytes: 100_000 };
 
 afterEach(async () => {
   await Promise.all(Array.from(clients, (client) => client.close()));
@@ -24,35 +23,34 @@ async function harness() {
   return h;
 }
 
-function catchUp<Input>(
-  projection: StateProjectionInstance<Input>,
-  clientLayer: Awaited<ReturnType<typeof demoHarness>>["clientLayer"],
-  limitOverrides: Partial<typeof limits> = {},
-) {
-  const program = StateProjection.catchUp(projection, {
-    limits: { ...limits, ...limitOverrides },
-  });
-  // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This helper is the Bun execution boundary for the fixed-client projection layer.
-  return program.pipe(Effect.provide(clientLayer));
+function run(h: Harness, budget: Budget = {}) {
+  return Effect.runPromise(
+    Projection.run(hackerNewsStoryIndex, { ...limits, ...budget }).pipe(
+      Effect.provide(h.clientLayer),
+    ),
+  );
 }
 
-describe("Hacker News StateProjection story index", () => {
+function loadRecord(h: Harness) {
+  return h.runtime.runPromise(
+    Effect.flatMap(Checkpoints, (owner) => owner.load(Projection.key(hackerNewsStoryIndex))),
+  );
+}
+
+describe("Hacker News story index projection", () => {
   test("emits client-readable upserts, updates, and deletes", async () => {
     const h = await harness();
     const first = story(101, 1_700_000_030, "First title");
     const second = story(102, 1_700_000_020, "Second title");
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(first), sourceUpsert(second)]);
+    await h.append(hackerNewsSource.id, [sourceUpsert(first), sourceUpsert(second)]);
 
-    expect(await Effect.runPromise(catchUp(h.projection, h.clientLayer))).toMatchObject({
-      status: "caught-up",
-      progress: { batches: 1, items: 2 },
-    });
+    expect(await run(h)).toMatchObject({ status: "caught-up", units: 1, items: 2 });
 
     const updated = story(101, 1_700_000_030, "Updated title");
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(updated), sourceDelete(second)]);
-    await Effect.runPromise(catchUp(h.projection, h.clientLayer));
+    await h.append(hackerNewsSource.id, [sourceUpsert(updated), sourceDelete(second)]);
+    await run(h);
 
-    const facts = (await h.read(hackerNewsTarget.streamId)).filter(isStoryFact);
+    const facts = (await h.read(hackerNewsTarget.id)).filter(isStoryFact);
     expect(facts.map((fact) => [fact.key, fact.headers.operation])).toEqual([
       ["101", "upsert"],
       ["102", "upsert"],
@@ -67,57 +65,148 @@ describe("Hacker News StateProjection story index", () => {
     );
   });
 
-  test("resumes bounded catch-up at the next durable source boundary", async () => {
+  test("fact headers carry the unit's source offset and the index within the unit", async () => {
     const h = await harness();
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
-    await Effect.runPromise(catchUp(h.projection, h.clientLayer, { batches: 1, items: 1 }));
+    await h.append(hackerNewsSource.id, [
+      sourceUpsert(story(101, 1_700_000_030, "First")),
+      sourceUpsert(story(102, 1_700_000_020, "Second")),
+    ]);
+    const progress = await run(h);
+    const sourceThrough = progress.record.inputs.input;
+    expect(sourceThrough).not.toBe(ZERO_OFFSET);
 
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(story(102, 1_700_000_020, "Second"))]);
+    const facts = (await h.read(hackerNewsTarget.id)).filter(isStoryFact);
+    expect(facts.map((fact) => fact.headers)).toEqual([
+      { operation: "upsert", offset: sourceThrough, txid: `${sourceThrough}:0` },
+      { operation: "upsert", offset: sourceThrough, txid: `${sourceThrough}:1` },
+    ]);
+  });
 
-    const resumed = await Effect.runPromise(
-      catchUp(h.projection, h.clientLayer, { batches: 1, items: 1 }),
-    );
-    expect(resumed).toMatchObject({
-      status: "caught-up",
-      progress: { batches: 1, items: 1 },
+  test("resumes a bounded run at the next durable source boundary", async () => {
+    const h = await harness();
+    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+    expect(await run(h, { units: 1, items: 1 })).toMatchObject({
+      status: "limit-reached",
+      units: 1,
+      items: 1,
     });
-    const facts = (await h.read(hackerNewsTarget.streamId)).filter(isStoryFact);
+
+    await h.append(hackerNewsSource.id, [sourceUpsert(story(102, 1_700_000_020, "Second"))]);
+
+    expect(await run(h, { units: 1, items: 1 })).toMatchObject({
+      status: "limit-reached",
+      units: 1,
+      items: 1,
+    });
+    expect(await run(h)).toMatchObject({ status: "caught-up", units: 0, items: 0 });
+    const facts = (await h.read(hackerNewsTarget.id)).filter(isStoryFact);
     expect(facts.map((fact) => fact.key)).toEqual(["101", "102"]);
   });
 
   test("does not duplicate output when projection orchestration restarts", async () => {
     const h = await harness();
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
-    await Effect.runPromise(catchUp(h.projection, h.clientLayer));
-    const before = await h.read(hackerNewsTarget.streamId);
+    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+    await run(h);
+    const before = await h.read(hackerNewsTarget.id);
 
-    const restarted = makeStoryProjectionInstance();
-    const result = await Effect.runPromise(catchUp(restarted, h.clientLayer));
-    const after = await h.read(hackerNewsTarget.streamId);
-
-    expect(result).toMatchObject({
-      status: "caught-up",
-      progress: { batches: 0, items: 0 },
+    // A fresh declaration with the same identity restores the stored checkpoint.
+    const restarted = Projection.make({
+      id: hackerNewsStoryIndex.id,
+      generation: hackerNewsStoryIndex.generation,
+      input: hackerNewsSource,
+      process: hackerNewsStoryIndex.process,
     });
+    const result = await Effect.runPromise(
+      Projection.run(restarted, limits).pipe(Effect.provide(h.clientLayer)),
+    );
+    const after = await h.read(hackerNewsTarget.id);
+
+    expect(result).toMatchObject({ status: "caught-up", units: 0, items: 0 });
     expect(after).toEqual(before);
   });
 
-  test("refuses a source boundary larger than the configured item bound", async () => {
+  test("limit-reached at one item per pass, then resumes to caught-up", async () => {
     const h = await harness();
-    await h.append(hackerNewsSource.streamId, [
+    await h.append(hackerNewsSource.id, [
       sourceUpsert(story(101, 1_700_000_030, "First")),
       sourceUpsert(story(102, 1_700_000_020, "Second")),
-      sourceUpsert(story(103, 1_700_000_010, "Third")),
     ]);
 
-    const outcome = await Effect.runPromise(catchUp(h.projection, h.clientLayer, { items: 2 }));
-    expect(outcome).toMatchObject({
-      status: "boundary-too-large",
-      limit: "items",
-      actual: 3,
-      maximum: 2,
+    expect(await run(h, { items: 1 })).toMatchObject({
+      status: "limit-reached",
+      units: 1,
+      items: 1,
     });
-    expect(await h.read(hackerNewsTarget.streamId)).toHaveLength(0);
+    expect((await h.read(hackerNewsTarget.id)).filter(isStoryFact).map((f) => f.key)).toEqual([
+      "101",
+    ]);
+
+    expect(await run(h)).toMatchObject({ status: "caught-up", units: 1, items: 1 });
+    expect((await h.read(hackerNewsTarget.id)).filter(isStoryFact).map((f) => f.key)).toEqual([
+      "101",
+      "102",
+    ]);
+  });
+
+  test("a byte budget that refuses the slice writes nothing", async () => {
+    const h = await harness();
+    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+
+    expect(await run(h, { bytes: 1 })).toMatchObject({
+      status: "limit-reached",
+      units: 0,
+      items: 0,
+      bytes: 0,
+    });
+    expect(await h.read(hackerNewsTarget.id)).toHaveLength(0);
+    expect((await loadRecord(h)).token).toBe("0");
+  });
+
+  test("a competing checkpoint save fails token-conflict without advancing", async () => {
+    const h = await harness();
+    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+    const context = await h.runtime.runPromise(
+      Effect.context<StreamsReader | StreamsWriter | Checkpoints>(),
+    );
+    const reader = Context.get(context, StreamsReader);
+    // A competing runner completes inside this runner's read window.
+    const raced = Context.add(
+      context,
+      StreamsReader,
+      StreamsReader.of({
+        ...reader,
+        read: (id, options) =>
+          Projection.run(hackerNewsStoryIndex, limits).pipe(
+            Effect.provide(h.clientLayer),
+            Effect.orDie,
+            Effect.andThen(reader.read(id, options)),
+          ),
+      }),
+    );
+
+    const failed = await Effect.runPromise(
+      Projection.run(hackerNewsStoryIndex, limits).pipe(Effect.flip, Effect.provide(raced)),
+    );
+    expect(failed).toBeInstanceOf(ProjectionFault);
+    expect(failed).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
+
+    expect(await h.read(hackerNewsTarget.id)).toHaveLength(1);
+    expect((await loadRecord(h)).token).toBe("1");
+    expect(await run(h)).toMatchObject({ status: "caught-up", units: 0, items: 0 });
+    expect(await h.read(hackerNewsTarget.id)).toHaveLength(1);
+  });
+
+  test("a missing source fails the read naming the input", async () => {
+    const h = await harness();
+    await h.runtime.runPromise(Streams.remove(hackerNewsSource));
+    const failed = await Effect.runPromise(
+      Projection.run(hackerNewsStoryIndex, limits).pipe(Effect.flip, Effect.provide(h.clientLayer)),
+    );
+    expect(failed).toMatchObject({
+      phase: "read",
+      reason: "history-unavailable",
+      input: "input",
+    });
   });
 });
 
@@ -126,103 +215,3 @@ const isStoryFact = Schema.is(HackerNewsStateChange);
 function storyTitle(value: HnStory | undefined): string | undefined {
   return value?.title;
 }
-
-describe("private bridge recovery and bounds", () => {
-  for (const limit of ["pages", "batches", "items", "bytes"] as const) {
-    test(`preserves ${limit} limit-reached progress across read pages`, async () => {
-      const h = await harness();
-      const values = [sourceUpsert(story(101, 1, "First")), sourceUpsert(story(102, 2, "Second"))];
-      await h.append(hackerNewsSource.streamId, values);
-      const context = await h.runtime.runPromise(Effect.context<StreamsReader | StreamsWriter>());
-      const reader = Context.get(context, StreamsReader);
-      const paged = Context.add(
-        context,
-        StreamsReader,
-        StreamsReader.of({
-          ...reader,
-          read: (id, options) =>
-            reader.read(id, id === hackerNewsSource.ref.id ? { ...options, limit: 1 } : options),
-        }),
-      );
-      const bytes = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)))([
-        values[0],
-      ]).length;
-      const outcome = await Effect.runPromise(
-        StateProjection.catchUp(h.projection, {
-          limits: { ...limits, [limit]: limit === "bytes" ? bytes + 10 : 1 },
-        }).pipe(Effect.provide(paged)),
-      );
-      expect(outcome).toMatchObject({
-        status: "limit-reached",
-        limit,
-        progress: { batches: 1, items: 1, pages: 1 },
-      });
-      expect(await h.read(hackerNewsTarget.streamId)).toHaveLength(1);
-      const resumed = await Effect.runPromise(catchUp(h.projection, h.clientLayer));
-      expect(resumed).toMatchObject({ status: "caught-up", progress: { batches: 1, items: 1 } });
-      expect(
-        (await h.read(hackerNewsTarget.streamId)).filter(isStoryFact).map((fact) => fact.key),
-      ).toEqual(["101", "102"]);
-    });
-  }
-  test("rejects a byte-oversized boundary without writing output", async () => {
-    const h = await harness();
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(story(101, 1, "First"))]);
-    expect(
-      await Effect.runPromise(catchUp(h.projection, h.clientLayer, { bytes: 1 })),
-    ).toMatchObject({ status: "boundary-too-large", limit: "bytes", maximum: 1 });
-    expect(await h.read(hackerNewsTarget.streamId)).toHaveLength(0);
-  });
-  test("a concurrent target write fails with OffsetMismatch instead of advancing recovery", async () => {
-    const h = await harness();
-    await h.append(hackerNewsSource.streamId, [sourceUpsert(story(101, 1, "First"))]);
-    const context = await h.runtime.runPromise(Effect.context<StreamsReader | StreamsWriter>());
-    const writer = Context.get(context, StreamsWriter);
-    let raced = false;
-    const competing = Context.add(
-      context,
-      StreamsWriter,
-      StreamsWriter.of({
-        ...writer,
-        append: (id, options) =>
-          Effect.gen(function* () {
-            if (id === hackerNewsTarget.ref.id && !raced) {
-              raced = true;
-              const winner = yield* writer.append(id, options);
-              expect(winner._tag).toBe("Appended");
-            }
-            return yield* writer.append(id, options);
-          }),
-      }),
-    );
-    expect(
-      await Effect.runPromise(
-        StateProjection.catchUp(h.projection, { limits }).pipe(
-          Effect.flip,
-          Effect.provide(competing),
-        ),
-      ),
-    ).toMatchObject({
-      _tag: "OffsetMismatch",
-      id: hackerNewsTarget.ref.id,
-    });
-    expect(await h.read(hackerNewsTarget.streamId)).toHaveLength(1);
-    expect(await Effect.runPromise(catchUp(h.projection, h.clientLayer))).toMatchObject({
-      status: "caught-up",
-      progress: { batches: 0 },
-    });
-  });
-  test("missing source or target fails with its stream id", async () => {
-    for (const stream of ["source", "target"] as const) {
-      const h = await harness();
-      const ref = stream === "source" ? hackerNewsSource.ref : hackerNewsTarget.ref;
-      await h.runtime.runPromise(Streams.remove(ref));
-      expect(
-        await Effect.runPromise(catchUp(h.projection, h.clientLayer).pipe(Effect.flip)),
-      ).toMatchObject({
-        _tag: "StreamNotFound",
-        id: ref.id,
-      });
-    }
-  });
-});

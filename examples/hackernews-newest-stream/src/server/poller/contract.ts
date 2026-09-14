@@ -1,7 +1,7 @@
 import { Context, Effect, Schema } from "effect";
-import type * as StateProjection from "../bridge/state-projection.ts";
 import type { HnStory } from "../../state-schema.ts";
-import type { HackerNewsSourceChange } from "../story-index-projection.ts";
+import type { ProjectionServices } from "../projection.ts";
+import type { HackerNewsSourceChange } from "../source-change.ts";
 import { errorMessage } from "../util.ts";
 
 /** Expected operational failure from one poll pass boundary. */
@@ -13,7 +13,7 @@ export class PollFailure extends Schema.TaggedError<PollFailure>()(
 export const pollFailure = (operation: string) => (cause: unknown) =>
   new PollFailure({ operation, reason: errorMessage(cause) });
 
-export type ProjectionServices = Effect.Services<ReturnType<typeof StateProjection.catchUp>>;
+export type { ProjectionServices };
 
 export type PollCounters = {
   readonly lastPollStartedAt?: string;

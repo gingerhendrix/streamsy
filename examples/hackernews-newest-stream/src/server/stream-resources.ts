@@ -1,12 +1,15 @@
-import * as StateProjection from "./bridge/state-projection.ts";
+import { StreamRef } from "@streamsy/core";
 import { sourceStreamId, targetStreamId } from "./config.ts";
+import { HackerNewsSourceChange } from "./source-change.ts";
+import { HackerNewsStateChange } from "../state-schema.ts";
 
-export const hackerNewsSource = StateProjection.resource({
-  streamId: sourceStreamId,
-});
+/** The projection input: reconciliation commands from the poller. */
+export const hackerNewsSource = StreamRef.json(sourceStreamId, { schema: HackerNewsSourceChange });
 
-export const hackerNewsTarget = StateProjection.resource({
-  streamId: targetStreamId,
-});
+/** The public Durable State target consumed by createStreamDB in the browser. */
+export const hackerNewsTarget = StreamRef.json(targetStreamId, { schema: HackerNewsStateChange });
 
-export const hackerNewsResources = [hackerNewsSource, hackerNewsTarget] as const;
+export const hackerNewsResources: ReadonlyArray<StreamRef.StreamRef<unknown>> = [
+  hackerNewsSource,
+  hackerNewsTarget,
+];
