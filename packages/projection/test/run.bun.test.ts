@@ -65,6 +65,39 @@ test("fresh ordered run, fused rollback and restart without repeated output", ()
     }),
   ));
 
+test("a non-empty pass is progress even when its read is up to date", () =>
+  run(
+    Effect.gen(function* () {
+      yield* initialize;
+      const full = yield* Projection.pass(positives);
+      expect(full.items).toBe(3);
+      expect(full.status).toBe("progress");
+      const empty = yield* Projection.pass(positives);
+      expect(empty.status).toBe("caught-up");
+      expect(empty.units).toBe(0);
+      expect(empty.items).toBe(0);
+      expect(empty.record).toEqual(full.record);
+    }),
+  ));
+
+test("run reaches caught-up through a trailing empty pass without losing totals", () =>
+  run(
+    Effect.gen(function* () {
+      let reads = 0;
+      yield* initialize;
+      const result = yield* withRead(Projection.run(positives), (reader) => (id, options) => {
+        reads += 1;
+        return reader.read(id, options);
+      });
+      expect(result.status).toBe("caught-up");
+      expect(result.units).toBe(1);
+      expect(result.items).toBe(3);
+      expect(result.bytes).toBe(4);
+      expect(reads).toBe(2);
+      expect((yield* inspect).loaded.token).toBe("1");
+    }),
+  ));
+
 test("zero-output unit advances the checkpoint without output progress", () =>
   run(
     Effect.gen(function* () {

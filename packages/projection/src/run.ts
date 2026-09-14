@@ -86,7 +86,6 @@ export const pass = Effect.fn("Projection.pass")(function* <Inputs extends Input
   });
   if (read.refused) return { ...empty, status: "limit-reached" };
   const slices = Object.values<Slice<unknown>>(read.slices);
-  const upToDate = slices.every((slice) => slice.upToDate);
   const closed = slices.every((slice) => slice.closed);
   if (read.items === 0) return { ...empty, status: closed ? "source-closed" : "caught-up" };
   const unit = unitOf(
@@ -115,8 +114,9 @@ export const pass = Effect.fn("Projection.pass")(function* <Inputs extends Input
       return next;
     }),
   );
+  // A non-empty pass is progress; only an empty pass is authoritative for caught-up.
   return {
-    status: closed ? "source-closed" : upToDate ? "caught-up" : "progress",
+    status: closed ? "source-closed" : "progress",
     units: 1,
     items: read.items,
     bytes: read.bytes,
@@ -124,7 +124,10 @@ export const pass = Effect.fn("Projection.pass")(function* <Inputs extends Input
   };
 });
 
-/** Repeats `pass` until the inputs are drained or the budget is spent; totals are preserved. */
+/**
+ * Repeats `pass` until an empty pass reports caught-up, every input is closed, or
+ * the budget is spent. The trailing empty pass adds nothing to the totals.
+ */
 export const run = Effect.fn("Projection.run")(function* <Inputs extends InputMap, E, R>(
   projection: Projection<Inputs, E, R>,
   budget: Budget = {},

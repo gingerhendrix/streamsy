@@ -64,7 +64,8 @@ test("budget carry-forward drains the first input first", () =>
       expect(seen[0]?.unit.ranges.b).toBeUndefined();
       const second = yield* Projection.pass(projection, { items: 2 });
       expect(second.items).toBe(2);
-      expect(second.status).toBe("caught-up");
+      expect(second.status).toBe("progress");
+      expect((yield* Projection.pass(projection)).status).toBe("caught-up");
       expect(tags(seen).slice(2)).toEqual(["a:3#0", "b:x#1"]);
       expect(Object.keys(seen[2]?.unit.ranges ?? {})).toEqual(["a", "b"]);
     }),
