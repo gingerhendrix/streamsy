@@ -115,12 +115,13 @@ function HnApp({ db }: { db: HnDb }) {
   return (
     <Shell status={status}>
       <section className="panel intro">
-        <p className="eyebrow">Streamsy StateProjection demo</p>
+        <p className="eyebrow">Streamsy projection demo</p>
         <h1>Hacker News newest stories</h1>
         <p>
           A Bun server reconciles HN polls into a durable JSON source stream, then a bounded
-          <code> StateProjection </code> emits Durable State upserts and deletes with lineage. The
-          browser mirrors that target stream into TanStack DB via <code>createStreamDB</code>.
+          <code> @streamsy/projection </code> run emits Durable State upserts and deletes with
+          source-position headers. The browser mirrors that target stream into TanStack DB via{" "}
+          <code>createStreamDB</code>.
         </p>
       </section>
 

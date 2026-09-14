@@ -5,7 +5,7 @@ import { Option, Schema } from "effect";
 import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.ts";
 
 // Offline vertical smoke: local HN fixture -> deterministic source batch ->
-// bounded StateProjection -> public target stream consumed by the browser.
+// bounded @streamsy/projection run -> public target stream consumed by the browser.
 
 const packageDir = resolve(import.meta.dir, "..");
 const demoPort = 20_000 + Math.floor(Math.random() * 20_000);
