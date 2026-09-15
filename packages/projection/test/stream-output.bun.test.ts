@@ -208,6 +208,44 @@ test("crash after append and before the checkpoint settles by Duplicate without 
     }),
   ));
 
+test("a competing save between the append and the settle fails in phase checkpoint, then settles by Duplicate", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("settle-conflict");
+      yield* s.initialize;
+      let saves = 0;
+      let pinned: CheckpointRecord | undefined;
+      // The competing writer re-saves the pinned record under the pin token, so the
+      // kernel's settle save meets a real token conflict from the store.
+      const crashed = yield* withCheckpoints(Projection.run(s.doubled), (owner) => ({
+        save: (key, record, token) => {
+          saves += 1;
+          if (saves === 1) pinned = record;
+          return saves === 2 && pinned !== undefined
+            ? owner.save(key, pinned, token).pipe(Effect.andThen(owner.save(key, record, token)))
+            : owner.save(key, record, token);
+        },
+      })).pipe(Effect.result);
+      const failure = fault(crashed);
+      expect(failure.phase).toBe("checkpoint");
+      expect(failure.reason).toBe("token-conflict");
+      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+      const before = yield* stored(s.doubled);
+      expect(before.token).toBe("2");
+      expect(pinnedRecord(before.record).pending.seq).toBe(0);
+
+      const appends = failingAppends(0);
+      const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
+      expect(appends.outcomes).toEqual(["Duplicate"]);
+      expect(settled.items).toBe(3);
+      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+      const after = yield* stored(s.doubled);
+      expect(after.token).toBe("3");
+      expect(after.record?.pending).toBeUndefined();
+      expect(after.record?.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
+    }),
+  ));
+
 test("the first pin stores the stream epoch before the append; a crash there settles by Appended", () =>
   run(
     Effect.gen(function* () {

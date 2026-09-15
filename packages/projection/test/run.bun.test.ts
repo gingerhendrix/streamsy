@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Fiber, Option, Schema } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import {
   StreamRef,
   Streams,
@@ -355,6 +355,38 @@ test("two runners on one memory host: the second conflicts and output is not dou
       const stored = yield* inspect;
       expect(stored.output).toEqual([1, 3]);
       expect(stored.loaded.token).toBe("1");
+    }),
+  ));
+
+test("interruption inside the transaction rolls back the output append and the checkpoint", () =>
+  run(
+    Effect.gen(function* () {
+      yield* initialize;
+      const appended = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const blocking = Projection.make({
+        id: positives.id,
+        input,
+        process: (batch, unit) =>
+          positives
+            .process(batch, unit)
+            .pipe(
+              Effect.andThen(Deferred.succeed(appended, undefined)),
+              Effect.andThen(Deferred.await(release)),
+            ),
+      });
+      const fiber = yield* Effect.forkChild(Projection.run(blocking));
+      yield* Deferred.await(appended);
+      yield* Fiber.interrupt(fiber);
+      const [exit] = yield* Fiber.awaitAll([fiber]);
+      expect(exit !== undefined && Exit.hasInterrupts(exit)).toBe(true);
+      const stored = yield* inspect;
+      expect(stored.output).toEqual([]);
+      expect(Option.isNone(stored.loaded.record)).toBe(true);
+      expect(stored.loaded.token).toBe("0");
+      const result = yield* Projection.run(positives);
+      expect(result.items).toBe(3);
+      expect((yield* inspect).output).toEqual([1, 3]);
     }),
   ));
 

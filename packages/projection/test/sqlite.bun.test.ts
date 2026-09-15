@@ -1,13 +1,23 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
-import { Config, Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
+import {
+  Config,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Schema,
+} from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Protocol, Streams } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as Sqlite from "../src/sqlite.ts";
 import { Checkpoints, Projection, ProjectionFault } from "../src/index.ts";
-import { composition, initialize, input, positives } from "./scenarios.ts";
+import { composition, initialize, input, inspect, positives } from "./scenarios.ts";
 
 const host = (filename: string) =>
   Layer.merge(Protocol.layer(), Sqlite.layer).pipe(
@@ -78,6 +88,51 @@ test("a handler's SQL through the shared client commits and rolls back with the 
         expect(result.items).toBe(3);
         expect(yield* count).toBe(3);
         expect((yield* owner.load(Projection.key(projection))).token).toBe("1");
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("interruption inside the Bun SQLite transaction rolls back the handler's SQL, the append and the checkpoint", async () => {
+  const runtime = ManagedRuntime.make(host(":memory:"));
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.unsafe("CREATE TABLE seen (item INTEGER NOT NULL)");
+        yield* initialize;
+        const written = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const blocking = Projection.make({
+          id: positives.id,
+          input,
+          process: (batch, unit) =>
+            Effect.gen(function* () {
+              yield* Effect.forEach(batch.input.items, (item) =>
+                sql.unsafe("INSERT INTO seen (item) VALUES (?)", [item]),
+              );
+              yield* positives.process(batch, unit);
+              yield* Deferred.succeed(written, undefined);
+              yield* Deferred.await(release);
+            }),
+        });
+        const count = sql
+          .unsafe<{ readonly n: number }>("SELECT COUNT(*) AS n FROM seen")
+          .pipe(Effect.map((rows) => rows[0]?.n));
+        const fiber = yield* Effect.forkChild(Projection.run(blocking));
+        yield* Deferred.await(written);
+        yield* Fiber.interrupt(fiber);
+        const [exit] = yield* Fiber.awaitAll([fiber]);
+        expect(exit !== undefined && Exit.hasInterrupts(exit)).toBe(true);
+        expect(yield* count).toBe(0);
+        const owner = yield* Checkpoints;
+        expect((yield* owner.load(Projection.key(positives))).token).toBe("0");
+        const result = yield* Projection.run(positives);
+        expect(result.status).toBe("caught-up");
+        expect(result.items).toBe(3);
+        expect((yield* inspect).output).toEqual([1, 3]);
       }),
     );
   } finally {
