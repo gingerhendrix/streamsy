@@ -170,6 +170,74 @@ test("a write to the second input wakes a two-input follower", () =>
     }),
   ));
 
+test("a closed and drained input beside an open one does not wake every cycle", () =>
+  run(
+    Effect.gen(function* () {
+      const a = StreamRef.json("closed-a", { schema: Schema.Finite });
+      const b = StreamRef.json("open-b", { schema: Schema.Finite });
+      const target = StreamRef.json("closed-out", { schema: Schema.String });
+      yield* Streams.create(a);
+      yield* Streams.create(b);
+      yield* Streams.create(target);
+      yield* Streams.append(a, [1], { close: true });
+      yield* Streams.append(b, [2]);
+      const projection = Projection.make({
+        id: "closed-open",
+        inputs: { a, b },
+        process: (batch) =>
+          Streams.append(
+            target,
+            Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
+          ),
+      });
+      let reads = 0;
+      let hints = 0;
+      const fiber = yield* withReader(
+        Projection.follow(projection, { repairIntervalMs: 100 }),
+        (reader) => ({
+          read: (id, options) =>
+            Effect.suspend(() => {
+              reads += 1;
+              return reader.read(id, options);
+            }),
+          readNext: (id, options) =>
+            Effect.suspend(() => {
+              hints += 1;
+              return reader.readNext(id, options);
+            }),
+        }),
+      );
+      // The first run is one non-empty pass and one empty pass, then one hint per input.
+      const settle = (expectedHints: number) =>
+        Effect.gen(function* () {
+          for (let spins = 0; spins < 1000; spins += 1) {
+            if (hints >= expectedHints) break;
+            yield* Effect.yieldNow;
+          }
+          for (let spins = 0; spins < 50; spins += 1) yield* Effect.yieldNow;
+        });
+      yield* settle(2);
+      expect(yield* readAll(target)).toEqual(["a:1", "b:2"]);
+      expect(reads).toBe(4);
+      expect(hints).toBe(2);
+      // The closed input answered at once; without the clock moving nothing else runs.
+      yield* TestClock.adjust(100);
+      yield* settle(4);
+      expect(reads).toBe(6);
+      expect(hints).toBe(4);
+      yield* TestClock.adjust(100);
+      yield* settle(6);
+      expect(reads).toBe(8);
+      expect(hints).toBe(6);
+      // A write to the open input still wakes the follower before the interval.
+      yield* Streams.append(b, [3]);
+      yield* settle(8);
+      expect(yield* readAll(target)).toEqual(["a:1", "b:2", "b:3"]);
+      expect(reads).toBe(12);
+      yield* Fiber.interrupt(fiber);
+    }),
+  ));
+
 test("follow rejects a non-positive repair interval before reading", () =>
   run(
     Effect.gen(function* () {

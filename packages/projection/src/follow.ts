@@ -11,7 +11,12 @@ export interface FollowOptions extends Budget {
   readonly repairIntervalMs?: number;
 }
 
-/** One wake hint per input; the response is discarded because the next run is authoritative. */
+/**
+ * One wake hint per input; the response is discarded because the next run is
+ * authoritative. A closed input answers `readNext` at once, so a closed and
+ * drained input parks for the interval instead of waking every cycle; the
+ * open inputs, and the interval itself, decide when the next run happens.
+ */
 const hint = Effect.fn("Projection.wake")(function* (
   input: string,
   ref: StreamRef.StreamRef<unknown>,
@@ -34,7 +39,9 @@ const hint = Effect.fn("Projection.wake")(function* (
       message: `Cannot wait on ${ref.id}`,
     });
   return yield* reader.readNext(ref.id, { offset }).pipe(
-    Effect.asVoid,
+    Effect.flatMap((result) =>
+      result.closed && result.messages.length === 0 ? Effect.never : Effect.void,
+    ),
     Effect.catchTags({
       StreamNotFound: () => historyUnavailable(),
       StreamGone: () => historyUnavailable(),
