@@ -197,15 +197,16 @@ export interface Pass<Inputs extends InputMap> {
   readonly slices: Slices<Inputs>;
   readonly items: number;
   readonly bytes: number;
-  /** A slice was refused whole because it exceeded the byte budget. */
+  /** The pass was refused: a slice exceeded the byte budget before any input contributed. */
   readonly refused: boolean;
 }
 
 /**
  * Reads every input in declaration order with the item budget carried forward.
- * A later slice that exceeds the remaining bytes is skipped when earlier inputs
- * already contributed items, so the pass still commits their progress; when
- * nothing else was read the pass is refused and reports `limit-reached`.
+ * A slice that exceeds the remaining bytes before any input contributed refuses
+ * the whole pass: later inputs are not read and the pass reports `limit-reached`,
+ * so declaration order keeps its priority. Once an earlier input contributed, an
+ * oversized later slice is skipped and the pass still commits that progress.
  */
 export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs extends InputMap>(
   inputs: Inputs,
@@ -215,18 +216,18 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
   const slices: Record<string, Slice<unknown>> = {};
   let items = 0;
   let bytes = 0;
-  let skipped = false;
+  let refused = false;
   for (const [name, ref] of Object.entries(inputs)) {
     const from = offsets[name] ?? "";
     const remaining = budget.items - items;
-    if (remaining <= 0) {
+    if (refused || remaining <= 0) {
       slices[name] = emptySlice(from);
       continue;
     }
     const read = yield* readSlice(name, ref, from, remaining);
     if (budget.bytes !== undefined && read.bytes > budget.bytes - bytes) {
       slices[name] = emptySlice(from);
-      skipped = true;
+      if (items === 0) refused = true;
       continue;
     }
     slices[name] = read.slice;
@@ -235,7 +236,7 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
   }
   // SAFETY: `slices` has exactly the keys of `inputs`, each read through that input's codec.
   const typed = slices as Slices<Inputs>;
-  return { slices: typed, items, bytes, refused: skipped && items === 0 };
+  return { slices: typed, items, bytes, refused };
 });
 
 /** Tagged items in declaration order, then stream order within each input. */

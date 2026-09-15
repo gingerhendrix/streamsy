@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { StreamRef, Streams, ZERO_OFFSET } from "@streamsy/core";
+import { StreamRef, Streams, StreamsReader, ZERO_OFFSET } from "@streamsy/core";
 import { Checkpoints, Projection, ProjectionFault, type Entry, type Unit } from "../src/index.ts";
 import { layerMemory } from "../src/memory.ts";
 import { positives, initialize, type Services } from "./scenarios.ts";
@@ -100,6 +100,55 @@ test("one closed input stays in the batch while the other continues", () =>
       yield* Streams.append(b, [], { close: true });
       expect((yield* Projection.run(projection)).status).toBe("source-closed");
       expect(batches).toHaveLength(2);
+    }),
+  ));
+
+test("an oversized first input refuses the pass before the later input is read", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(a);
+      yield* Streams.create(b);
+      yield* Streams.append(a, [1000000]);
+      yield* Streams.append(b, ["x"]);
+      const { projection, seen } = recorder({ a, b });
+      const reads: Array<string> = [];
+      const counted = <A, E, R>(body: Effect.Effect<A, E, R | StreamsReader>) =>
+        Effect.gen(function* () {
+          const reader = yield* StreamsReader;
+          return yield* body.pipe(
+            Effect.provideService(
+              StreamsReader,
+              StreamsReader.of({
+                ...reader,
+                read: (id, options) =>
+                  Effect.suspend(() => {
+                    reads.push(id);
+                    return reader.read(id, options);
+                  }),
+              }),
+            ),
+          );
+        });
+      // `a` holds 7 payload bytes and `b` holds 3; a 3-byte budget refuses `a` first.
+      const refused = yield* counted(Projection.pass(projection, { bytes: 3 }));
+      expect(refused.status).toBe("limit-reached");
+      expect(refused.units).toBe(0);
+      expect(reads).toEqual([a.id]);
+      expect(seen).toHaveLength(0);
+      expect(refused.record.inputs).toEqual({ a: ZERO_OFFSET, b: ZERO_OFFSET });
+      expect(
+        Option.isNone((yield* (yield* Checkpoints).load(Projection.key(projection))).record),
+      ).toBe(true);
+      // Once `a` fits, an oversized `b` is skipped and `a` commits on its own.
+      const partial = yield* counted(Projection.pass(projection, { bytes: 8 }));
+      expect(partial.status).toBe("progress");
+      expect(partial.items).toBe(1);
+      expect(reads).toEqual([a.id, a.id, b.id]);
+      expect(partial.record.inputs.b).toBe(ZERO_OFFSET);
+      expect(tags(seen)).toEqual(["a:1000000#0"]);
+      const rest = yield* Projection.pass(projection, { bytes: 8 });
+      expect(rest.items).toBe(1);
+      expect(tags(seen)).toEqual(["a:1000000#0", "b:x#0"]);
     }),
   ));
 

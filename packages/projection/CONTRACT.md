@@ -16,11 +16,12 @@ budget forward. Every declared input has a slice in the batch; an empty slice
 has `from === nextOffset`. A unit contains only the non-empty ranges, and its
 `key` comes from those ranges, so it is stable across retries. Reads stay
 within `units` (per run), `items` and optional `bytes` (per pass). A slice that
-exceeds the remaining bytes is refused whole: when nothing else was read the
-pass reports `limit-reached` without a write; when an earlier input already
-contributed, the pass commits that input and leaves the refused one at its
-offset. A non-empty pass reports `progress`; only an empty pass reports
-`caught-up`, or `source-closed` when every input is closed and drained.
+exceeds the remaining bytes is refused whole: before any input contributed the
+pass reports `limit-reached` without a write and reads no later input; when an
+earlier input already contributed, the pass commits that input and leaves the
+refused one at its offset. A non-empty pass reports `progress`; only an empty
+pass reports `caught-up`, or `source-closed` when every input is closed and
+drained.
 
 ## Fused form
 
@@ -87,4 +88,5 @@ supported shape; a second runner is detected by token conflict, not fenced.
 `follow` returns a caller-scoped fiber. Each cycle runs to completion, then
 races one bounded `readNext` hint per input, repairs missed wakes by timeout,
 paces a unit the budget cannot fit, and stops when every input closes and
-drains. Defaults: 100 units, 1000 items, repair every 1000 ms.
+drains. A closed and drained input never wins that race; the open inputs and
+the timeout do. Defaults: 100 units, 1000 items, repair every 1000 ms.

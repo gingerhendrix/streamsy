@@ -140,10 +140,11 @@ write inside it, including the checkpoint.
 `run` repeats passes with positive safe-integer budgets. Defaults are 100
 units per run and 1000 items per pass; an optional `bytes` budget counts stored
 payload bytes per pass. A slice that exceeds the remaining bytes is refused
-whole: when nothing else was read the pass returns `limit-reached` without a
-write, and when an earlier input already contributed the pass commits that
-input and leaves the refused one at its offset. Resume with a sufficient
-budget. Counters describe accepted work, not all I/O used to read a unit.
+whole: before any input contributed the pass returns `limit-reached` without a
+write and reads no later input, and when an earlier input already contributed
+the pass commits that input and leaves the refused one at its offset. Resume
+with a sufficient budget. Counters describe accepted work, not all I/O used to
+read a unit.
 
 Results expose `status`, `units`, `items`, `bytes` and `record`. A non-empty
 pass reports `progress`; only an empty pass reports `caught-up`, or

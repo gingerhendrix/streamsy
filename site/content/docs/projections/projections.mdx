@@ -62,7 +62,7 @@ const program = Projection.run(orderTotalsProjection, { units: 10, items: 100 })
 await Effect.runPromise(program.pipe(Effect.provide(layerMemory())));
 ```
 
-The budget bounds a run: `units` per run (default 100), `items` per pass across inputs (default 1000), and optional `bytes` of payload per pass. Inputs are read in declaration order with the item budget carried forward. A slice that exceeds the remaining bytes is refused whole; when nothing else was read the pass returns `limit-reached` without a write. Resume with a larger budget.
+The budget bounds a run: `units` per run (default 100), `items` per pass across inputs (default 1000), and optional `bytes` of payload per pass. Inputs are read in declaration order with the item budget carried forward. A slice that exceeds the remaining bytes is refused whole: before any input contributed the pass returns `limit-reached` without a write and reads no later input; once an earlier input contributed, the pass commits that input and leaves the refused one at its offset. Resume with a larger budget.
 
 `Projection.follow` runs to `caught-up`, then waits for the first input to hint at a change and runs again.
 
