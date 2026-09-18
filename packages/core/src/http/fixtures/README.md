@@ -1,25 +1,11 @@
 # Frozen HTTP wire expectations
 
-Captured at repository base `9c86871a631fdcdeffb95dec1aed1d94380d8856`, before the
-package swap, by running the existing side-by-side HTTP tests successfully.
-`wire.json` stores every status, status text, complete header map and exact byte
-array. It is test data and is excluded from package build entries.
+`wire.json` holds the recorded HTTP responses (status, headers, and exact
+body bytes) that the HTTP tests compare against. It is test data and is not
+part of the package build.
 
-The private/public sequences contain 57 responses each. Fifteen expiry cases add
-PUT and HEAD pairs; two open SSE cases include data, initial control and actual
-timeout control frames. Fixed wall time is 1780000000000; timers remain live.
-HEAD expectations use bodyless wire semantics. Lowercase ISO and RFC UTC expiry
-rejection rows are frozen from the new Effect edge, the explicitly accepted
-behavioral difference; other expected rows come from the comparison implementation.
-
-The recorder and successful comparison log are retained in the stream's registered
-`2026-09-06-streamsy-batch-6` scratch directory. Tests have no regeneration mode:
-a changed expectation must be reviewed as a wire-contract change. New ingress,
-StorageFault, interruption, subscription cleanup, host shutdown and rebind tests
-remain separate and unchanged by fixture capture.
-
-Historical reconstruction requires checking out that exact base commit in an
-isolated checkout and using the retained recorder script and successful capture
-log as evidence. The recorder imports the comparison implementation that was
-removed by the swap; it cannot be rerun against the current tree. Preserve the
-recorded clock, request ordering and explicitly accepted expiry differences.
+There is no regeneration script. A changed expectation is a wire-contract
+change and must be reviewed as one. The file was captured at commit `9c86871`
+from the pre-Effect implementation, with a fixed wall time of
+`1780000000000`; the lowercase ISO and RFC UTC expiry rejection rows are the
+one accepted difference and come from the Effect edge.

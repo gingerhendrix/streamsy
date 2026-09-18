@@ -1,10 +1,10 @@
 # Hacker News newest stream demo
 
-This example is a complete local Streamsy projection path. A Bun server polls Hacker News,
-reconciles the configured newest set, appends only deterministic changes to a JSON source stream,
-and runs a bounded `Projection.run` over `@streamsy/projection`. The target is a Durable State
-stream with source-position headers. The browser replays that target into its own TanStack DB with
-`createStreamDB` and renders it through React `useLiveQuery`.
+A complete local Streamsy path. A Bun server polls Hacker News, appends
+changes to the newest set to a source stream, and runs a projection that
+publishes those changes as a Durable State stream. The browser replays that
+stream into TanStack DB with the official `@durable-streams/state/db` binding
+and renders it with React.
 
 ```mermaid
 flowchart LR
@@ -16,41 +16,7 @@ flowchart LR
   ClientDB --> React[React useLiveQuery]
 ```
 
-TanStack DB is browser-only in this demo. One Effect `ManagedRuntime` owns a memory Layer from
-`@streamsy/projection/memory` shared by the poller, the projection, its checkpoint store and the
-HTTP edge. Because source, target and checkpoint live on one memory owner, the projection uses the
-fused form: each unit's target appends commit together with its checkpoint.
-
-## Data flow
-
-1. `src/server/poller/poller.ts` describes polling with Effect primitives: `Ref`-held state, a
-   coalesced poll pass, and an interval loop built from `Effect.repeat` with `Schedule.spaced`.
-   `src/server/poller/contract.ts` owns the contracts and `src/server/poller/reconcile.ts` owns
-   pure newest-set reconciliation.
-   Each pass fetches new ids first and refreshes known ids so mutable fields such as score and
-   descendants stay current. It compares complete story values, suppresses unchanged writes, and
-   sorts changes deterministically. Stories that leave the bounded newest set become source
-   deletes.
-2. `src/server/streams.ts` owns distinct `session/main/source` and `session/main` JSON streams
-   through the acquired memory services. `src/server/stream-resources.ts` declares both as typed
-   `StreamRef.json` values. The public target remains `/streams/session/main`.
-3. `src/server/story-index-projection.ts` is a `Projection.make` over the source ref. Its
-   `Projection.each` handler maps every decoded upsert/delete command to the public Durable State
-   event vocabulary and appends it to the target inside the checkpoint transaction. Each fact keeps
-   the source position: `headers.offset` is the unit's accepted source offset and `headers.txid` is
-   `${offset}:${index}` within the unit. Story id is the stable row key. `time`, then `id`, is the
-   browser ordering rule.
-4. `src/server/projection.ts` describes one bounded `Projection.run` as an Effect. The server entry
-   runs it through the edge-owned runtime after each poll. The checkpoint record stores the accepted
-   source offset; a restart resumes there and never repeats output. A competing runner fails with a
-   `token-conflict` fault instead of advancing.
-5. `src/client/main.tsx` consumes only the target stream's State facts.
-
-`/api/status` reports poll/source counters, the configured run budget, the last run's status and
-`sourceThrough` offset, and separate poll/projection failures. `POST /api/poll` waits for one poll
-and run attempt before returning the same status fields.
-
-## Run locally
+## Run it
 
 From the repository root:
 
@@ -59,38 +25,47 @@ bun install
 bun run --cwd examples/hackernews-newest-stream dev
 ```
 
-Open <http://localhost:1339>. Use `PORT` to select another port. For API-only work, run
-`bun run --cwd examples/hackernews-newest-stream dev:api`.
+Open <http://localhost:1339>. `dev:api` runs the server without the browser
+build.
 
-Useful environment variables:
+| Variable                  | Default                                 | Meaning                   |
+| ------------------------- | --------------------------------------- | ------------------------- |
+| `PORT`                    | `1339`                                  | HTTP port                 |
+| `HN_API_BASE`             | `https://hacker-news.firebaseio.com/v0` | Hacker News API           |
+| `HN_POLL_INTERVAL_MS`     | `60000`                                 | Poll interval             |
+| `HN_NEWEST_LIMIT`         | `50`                                    | Size of the newest set    |
+| `HN_PROJECTION_MAX_UNITS` | `10`                                    | Passes per projection run |
+| `HN_PROJECTION_MAX_ITEMS` | twice the newest limit                  | Items per pass            |
+| `HN_PROJECTION_MAX_BYTES` | `1000000`                               | Payload bytes per pass    |
 
-- `PORT` (default `1339`)
-- `HN_API_BASE` (default `https://hacker-news.firebaseio.com/v0`)
-- `HN_POLL_INTERVAL_MS` (default `60000`)
-- `HN_NEWEST_LIMIT` (default `50`)
-- `HN_PROJECTION_MAX_UNITS` (default `10`): passes per run
-- `HN_PROJECTION_MAX_ITEMS` (default twice the newest limit): items per pass
-- `HN_PROJECTION_MAX_BYTES` (default `1000000`): payload bytes per pass
+`GET /api/status` reports poll and projection counters. `POST /api/poll` runs
+one poll and one projection run, then returns the same status.
+
+## Where to look
+
+- `src/server/poller/`: the poll loop and pure newest-set reconciliation.
+- `src/server/story-index-projection.ts`: the `Projection.make` that maps
+  source changes to Durable State events, with the source offset in the
+  headers.
+- `src/server/projection.ts`: one bounded `Projection.run`, triggered after
+  each poll.
+- `src/client/main.tsx`: the browser side, reading only the target stream.
 
 ## Verify
 
 ```bash
 bun run --cwd examples/hackernews-newest-stream test
 bun run --cwd examples/hackernews-newest-stream typecheck
-bun run --cwd examples/hackernews-newest-stream build
 bun run --cwd examples/hackernews-newest-stream smoke:http
 ```
 
-The HTTP smoke is offline. It starts a local HN fixture, verifies initial upserts, then verifies an
-update, an entering story, a leaving-story delete, projection source progress, and unchanged-poll
-suppression through the public HTTP target.
+The HTTP smoke is offline: it runs against a local Hacker News fixture.
 
-## Current constraints
+## Limits
 
-- Source, target and the projection checkpoint share one memory Layer for one server run. The
-  streams are durable protocol logs for the process lifetime; a persistent adapter is required for
-  durability across server-process restarts.
-- The run is deliberately bounded. A `limit-reached` status means later poll/repair passes must
-  continue convergence. A source slice larger than the byte budget is refused whole and the run
-  reports `limit-reached` with nothing written; raise `HN_PROJECTION_MAX_BYTES` to accept it.
-- This example makes no live Cloudflare deployment claim.
+Source, target, and checkpoint share one memory Layer, so state lasts for one
+server process. Runs are bounded; a `limit-reached` status means the next poll
+continues. A source slice larger than `HN_PROJECTION_MAX_BYTES` is refused
+whole; raise the budget to accept it.
+
+Guide: [streamsy.dev/docs/demos/hackernews-newest-stream](https://streamsy.dev/docs/demos/hackernews-newest-stream).

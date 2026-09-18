@@ -1,7 +1,13 @@
 # @streamsy/core
 
-Effect-first Durable Streams protocol, typed toolkit, storage contract and
-in-process memory Layer. Version 0.4.0 requires `effect@4.0.0-rc.115`.
+An Effect implementation of the [Durable Streams](https://durablestreams.com)
+protocol. Typed stream refs, a `Streams` API, an in-process memory Layer, an
+HTTP app, and a fetch client for remote hosts. Version 0.4.0 requires
+`effect@4.0.0-rc.115`.
+
+```sh
+bun add @streamsy/core effect
+```
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
@@ -20,57 +26,47 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 
 Compiled source: [packages/core/test/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/test/readme.ts).
 
-The example is checked by `site:validate`.
+## What you get
 
-Create and append return only `Created` / `Exists` and `Appended` / `Duplicate`
-variants, discriminated by `_tag`. Reads and head return their successful data;
-remove returns `void`. Long polls add `timedOut`, and `closed` is always boolean.
-Protocol failures carry `id` and are handled with `Effect.catchTag`, including
-`StreamNotFound`, `StreamGone`, `OffsetMismatch`, and `AppendConflict`. Codec errors
-remain `EncodeFault` / `DecodeFault`; direct infrastructure failures use `StorageFault`.
+- `StreamRef` names a stream with its content type and schema. `StreamRoute`
+  names a family of streams from an id template.
+- `Streams` creates, appends, reads, follows, and removes streams. Create and
+  append return `_tag` variants such as `Created` / `Exists` and
+  `Appended` / `Duplicate`. Protocol failures are tagged errors
+  (`StreamNotFound`, `StreamGone`, `OffsetMismatch`, `AppendConflict`) for
+  `Effect.catchTag`.
+- `Producer` appends under a producer tuple so retries are safe.
+- `Fold` reduces a stream into a value.
+- `Backend` and `Streams.layerRouted` select a backend per stream id.
 
-Applications own the runtime and Layer lifetime. Memory is nonpersistent and
-process-local. `@streamsy/storage/bun` provides retained-file Bun SQLite protocol
-storage. The Effect fetch Layer is available; hosted Durable Object execution
-and release acceptance remain unverified. A successful memory run proves neither cross-process persistence nor hosted
-support.
+## Entries
 
-`StreamRoute` declares an id family and constructs its typed refs.
-`Backend.make(name)` re-tags one complete protocol graph, and
-`Streams.layerRouted(bindings)` supplies one reader/writer pair that selects a
-backend per id. Route templates in one binding table must not overlap, and a
-fork must remain within one backend.
+| Entry                    | Contents                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `@streamsy/core`         | Streams, StreamRef, StreamRoute, Backend, Fold, Producer, memory Layer, errors |
+| `@streamsy/core/fetch`   | `Fetch.layer({ baseUrl })`: the same reader and writer over HTTP               |
+| `@streamsy/core/http`    | `Http.app` and `makeEdge` to serve the protocol                                |
+| `@streamsy/core/storage` | The storage contract for writing a backend                                     |
+| `@streamsy/core/testing` | Contract tests and fault injection for backends                                |
 
-| Entry                    | Surface                                                                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `@streamsy/core`         | Schema values, protocol tags, results and errors, Streams, StreamRef, StreamRoute, Backend, Fold, Producer, Memory and Storage |
-| `@streamsy/core/storage` | Storage contract, capabilities and mutation model                                                                              |
-| `@streamsy/core/http`    | `app` plus `makeEdge` Web conversion; owner must dispose the edge                                                              |
-| `@streamsy/core/testing` | Bun contract registration, fault injection and test Layers                                                                     |
+## Storage and hosts
 
-`@streamsy/serve/bun` owns a Bun listener and HTTP edge together. The ordinary
-core, HTTP and storage entries do not load the Bun test runner. Internal offset
-helpers and implementation modules have no public subpaths.
+The memory Layer is process-local and not persistent. For SQLite on Bun or in
+a Durable Object, use [`@streamsy/storage`](https://www.npmjs.com/package/@streamsy/storage).
+To serve the protocol, use [`@streamsy/serve`](https://www.npmjs.com/package/@streamsy/serve).
 
-See `docs/api.md` and `docs/storage-contract.md` in the corresponding source
-checkout for this version. Source: https://github.com/gingerhendrix/streamsy.
+Browsers use the official `@durable-streams/client` and
+`@durable-streams/state` packages directly against any Streamsy host.
 
-Licensed under MIT; see LICENSE in this package.
+## Documentation
 
-## Remote access and browsers
+- [Streams](https://streamsy.dev/docs/streams)
+- [Runtime and storage](https://streamsy.dev/docs/runtime)
+- [HTTP and the fetch Layer](https://streamsy.dev/docs/runtime/http)
+- [Writing a storage adapter](https://streamsy.dev/docs/advanced/storage-adapter)
 
-Import `@streamsy/core/fetch` as `Fetch` and provide `Fetch.layer({ baseUrl })`
-with Effect's `FetchHttpClient.layer` (or another `HttpClient`). It supplies the
-existing reader and writer services, including finite reads and one-shot long polls,
-over the standard Durable Streams HTTP protocol, so it works against any conformant
-host. Read results carry message payloads and batch metadata; per-message offsets and
-timestamps stay in storage. Text and binary bodies merge into one payload, and JSON
-messages return by value. Protocol rejections use tagged errors; remote infrastructure failures use
-`TransportFault`, and interruption cancels requests. Dispose the owning runtime at
-shutdown. CAS and producer appends require explicit deployment capability assertions;
-unknown support fails with `NotSupported` before sending.
+Source: https://github.com/gingerhendrix/streamsy
 
-Browsers use the official `@durable-streams/client`, `@durable-streams/state`, and
-`@durable-streams/state/db` packages directly with an Effect-free validator.
-See the [remote and browser guide](../../site/content/docs/user/remote-browser.mdx)
-and the compiled [remote example](test/remote.ts).
+## License
+
+MIT

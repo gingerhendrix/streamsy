@@ -1,30 +1,54 @@
 # Streamsy
 
-Streamsy provides an Effect-first [Durable Streams](https://durablestreams.com) protocol,
-a typed toolkit, a storage contract, an in-process memory Layer and Effect SQL storage.
+An Effect implementation of the [Durable Streams](https://durablestreams.com)
+protocol: typed stream refs, checkpointed projections, SQLite storage, and
+hosts for Bun and Cloudflare.
 
-The `0.4.0` package surface is `@streamsy/core`, `@streamsy/storage`, `@streamsy/views`,
-`@streamsy/serve` and `@streamsy/projection`. Use `@streamsy/storage/bun` for file-backed SQLite and
-`@streamsy/storage/durable-object` inside a SQLite Durable Object. See [the API](docs/api.md), [hosting reference](docs/hosting.md),
-[storage contract](docs/storage-contract.md), [SQLite migration policy](docs/migration-0.4.md)
-and [HTTP behavior](docs/http.md).
+Documentation: [streamsy.dev](https://streamsy.dev)
 
-The active examples are [Fold agent](examples/fold-agent/README.md) and
-[Hacker News](examples/hackernews-newest-stream/README.md). The Bun protocol host
-supports retained-file SQLite through `@streamsy/storage/bun`; Fold uses that same
-Layer for retained-file restart and provider-free CLI recovery tests.
-The local Cloudflare entry `@streamsy/serve/cloudflare` provides placement routing
-and a Durable Object protocol host with local workerd evidence. The official
-workerd profile uses one `byKey` object for chain semantics. Forks require the
-source and child to share an object. Hosted execution, release acceptance, and the budget
-decision remain pending; see the [hosting reference](docs/hosting.md).
+## Packages
 
-`@streamsy/projection` runs checkpointed projections over one or more input streams.
-Its fused form commits a handler's local writes and the checkpoint in one host-local
-transaction; its stream form appends to a remote output under a pinned producer tuple.
-See [the projection guide](packages/projection/README.md) and
-[contract](packages/projection/CONTRACT.md) for memory, Bun SQLite and same-object
-Durable Object SQLite composition.
+| Package                                                 | What it gives you                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [`@streamsy/core`](packages/core/README.md)             | Protocol, typed refs, `Streams` API, memory Layer, HTTP app, fetch client |
+| [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                |
+| [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections over one or more streams                         |
+| [`@streamsy/serve`](packages/serve/README.md)           | Bun and Cloudflare hosts, sink contracts, action delivery                 |
+| [`@streamsy/views`](packages/views/README.md)           | Declarative keyed relations with incremental maintenance                  |
+
+All packages are version `0.4.0` and require `effect@4.0.0-rc.115`.
+
+## Quick start
+
+```sh
+bun add @streamsy/core effect
+```
+
+```ts
+import { Effect, Schema, Stream } from "effect";
+import { Streams, StreamRef } from "@streamsy/core";
+
+const events = StreamRef.json("events", { schema: Schema.String });
+const program = Effect.gen(function* () {
+  yield* Streams.create(events);
+
+  yield* Streams.append(events, ["hello"]);
+
+  return yield* Streams.read(events).pipe(Stream.runCollect);
+});
+await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
+```
+
+Read the [introduction](https://streamsy.dev/docs/introduction) for the path
+from a typed ref to a served projection.
+
+## Examples
+
+- [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
+  server, a projection, and a browser client on the official Durable Streams
+  client.
+- [Fold agent](examples/fold-agent/README.md): an agent loop whose log and
+  journal live in Streamsy.
 
 ## Development
 
@@ -32,12 +56,8 @@ Durable Object SQLite composition.
 bun install
 bun run typecheck
 bun run lint
-bun run lint:policy
-bun run format:check
 bun run test:unit
 bun run test:conformance
-bun run check:perimeter
-bun run pack:dry-run
 ```
 
 ## License
