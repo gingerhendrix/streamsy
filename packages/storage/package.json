@@ -36,7 +36,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external @streamsy/core --external @effect/sql-sqlite-bun --external @effect/sql-sqlite-do",
+    "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle @streamsy/core --deps.never-bundle @effect/sql-sqlite-bun --deps.never-bundle @effect/sql-sqlite-do",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },
@@ -64,5 +64,8 @@
     "@effect/sql-sqlite-do": {
       "optional": true
     }
+  },
+  "tsdown": {
+    "fixedExtension": false
   }
 }

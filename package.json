@@ -62,7 +62,7 @@
     "oxfmt": "^0.48.0",
     "oxlint": "1.78.0",
     "oxlint-tsgolint": "7.0.2001",
-    "tsdown": "^0.9.9"
+    "tsdown": "^0.23.0"
   },
   "overrides": {
     "@durable-streams/client": "^0.2.6",

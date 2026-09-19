@@ -41,7 +41,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/checkpoint.ts src/memory.ts src/sqlite.ts src/examples/minimal.ts --format esm --dts --out-dir dist --clean --external effect --external @streamsy/core --external @streamsy/storage",
+    "build": "tsdown src/index.ts src/checkpoint.ts src/memory.ts src/sqlite.ts src/examples/minimal.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle @streamsy/core --deps.never-bundle @streamsy/storage",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },
@@ -57,5 +57,8 @@
     "@types/bun": "^1.2.0",
     "miniflare": "4.20260730.0",
     "typescript": "catalog:"
+  },
+  "tsdown": {
+    "fixedExtension": false
   }
 }

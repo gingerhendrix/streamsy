@@ -46,7 +46,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/internal/memory.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
+    "build": "tsdown src/index.ts src/internal/memory.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:test",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },
@@ -56,5 +56,8 @@
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "typescript": "catalog:"
+  },
+  "tsdown": {
+    "fixedExtension": false
   }
 }
