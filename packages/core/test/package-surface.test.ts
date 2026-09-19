@@ -5,6 +5,7 @@ import * as InternalMemory from "@streamsy/core/internal/memory";
 import manifest from "../package.json";
 
 test("public roots omit internal composition and obsolete aliases", () => {
+  expect(Object.keys(Root.State)).toEqual(["changes", "delete", "upsert"]);
   expect(Object.keys(Root)).not.toContain("MemoryCommitBoundary");
   expect(Object.keys(Root.Protocol)).not.toContain("create");
   expect(Object.keys(Root.Protocol)).not.toContain("expireIfNeeded");

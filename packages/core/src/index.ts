@@ -39,6 +39,7 @@ export type {
 export * from "./protocol/errors.ts";
 export * as Protocol from "./protocol/layer.ts";
 export * as StreamRef from "./toolkit/ref.ts";
+export * as State from "./toolkit/state.ts";
 export * as Streams from "./toolkit/streams.ts";
 export * as Fold from "./toolkit/fold.ts";
 export * as Producer from "./toolkit/producer.ts";
