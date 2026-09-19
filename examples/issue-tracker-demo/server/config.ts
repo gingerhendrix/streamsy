@@ -1,6 +1,8 @@
 export const isDevelopment = process.env.NODE_ENV !== "production";
 export const port = Number.parseInt(process.env.PORT ?? "1338", 10);
 export const contentType = "application/json";
+export const streamPrefix = "/streams";
+export const databasePath = process.env.ISSUE_TRACKER_DB;
 
 /** The always-present, seeded demo workspace (default when no `?w=` is set). */
 export const mainWorkspaceId = "main";

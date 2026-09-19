@@ -1,9 +1,9 @@
 import type { ZodError } from "zod";
-import type { JsonValue } from "@streamsy/core";
 import {
   jsonObjectSchema,
   txIdSchema,
   type MutationBody,
+  type JsonValue,
   type TxId,
 } from "../shared/state-schema.ts";
 

@@ -1,108 +1,121 @@
+import { StreamRef, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import * as Http from "@streamsy/core/http";
+import * as BunStorage from "@streamsy/storage/bun";
+import { Context, Effect, Layer, Schema } from "effect";
 import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-  type AppendResult,
-} from "@streamsy/core";
-import { createJsonProtocol, type JsonStream } from "@streamsy/core/json";
-import { stateEventSchema, type StateEvent } from "../shared/state-schema.ts";
-import { contentType } from "./config.ts";
+  CommentCodec,
+  IssueCodec,
+  ProjectCodec,
+  type Comment,
+  type Issue,
+  type Project,
+  type StateEvent,
+} from "../shared/state-schema.ts";
+import { databasePath, streamPrefix, workspaceStreamId } from "./config.ts";
 
-const streamPrefix = "/streams";
-type JsonSourceValue = {} | null | undefined;
+const projectChange = StreamRef.stateChange({ schema: ProjectCodec, type: "project" });
+const issueChange = StreamRef.stateChange({ schema: IssueCodec, type: "issue" });
+const commentChange = StreamRef.stateChange({ schema: CommentCodec, type: "comment" });
 
-/**
- * Appends pass through unchanged; reads are validated, because the workspace
- * stream endpoint is public and can hold events this server did not write.
- * A payload that is not an issue tracker change event fails the read rather
- * than being folded into materialized state.
- */
-const eventCodec = {
-  encode: (value: StateEvent): JsonSourceValue => value,
-  decode: (value: JsonSourceValue): StateEvent => stateEventSchema.parse(value),
-};
-
-/**
- * Multi-stream access to the demo's Streamsy protocol: one durable stream per
- * workspace (`workspace/<id>`), resolved per request — no per-stream state is
- * cached here, keeping the server stateless. The protocol is the only source
- * of truth for which workspaces exist.
- */
-export class DemoStreams {
-  private readonly protocol = createStreamProtocol({
-    storage: { adapter: createMemoryStorageAdapter() },
-  });
-  private readonly json = createJsonProtocol<StateEvent>(this.protocol, eventCodec);
-  private readonly handler = createHttpHandler({
-    protocol: this.protocol,
-    pathPrefix: streamPrefix,
+/** One multi-type reader for the workspace stream. */
+export const workspaceEvents = (workspaceId: string) =>
+  StreamRef.json(workspaceStreamId(workspaceId), {
+    schema: Schema.Union([projectChange, issueChange, commentChange]),
   });
 
-  /** Create the stream if it does not exist yet; no-op when it already does. */
-  async ensureStream(streamId: string): Promise<void> {
-    const result = await this.protocol.create(streamId, { contentType });
-    if (result.status !== "created" && result.status !== "exists") {
-      throw new Error(`Unable to create Streamsy stream ${streamId}: ${result.status}`);
-    }
-  }
+/** Per-type refs write the same stream while retaining the entity codec. */
+export const projectEvents = (workspaceId: string) =>
+  StreamRef.state(workspaceStreamId(workspaceId), {
+    schema: ProjectCodec,
+    type: "project",
+    key: "id",
+  });
+export const issueEvents = (workspaceId: string) =>
+  StreamRef.state(workspaceStreamId(workspaceId), {
+    schema: IssueCodec,
+    type: "issue",
+    key: "id",
+  });
+export const commentEvents = (workspaceId: string) =>
+  StreamRef.state(workspaceStreamId(workspaceId), {
+    schema: CommentCodec,
+    type: "comment",
+    key: "id",
+  });
 
-  /** Resolve a typed JSON stream, or undefined when the stream does not exist. */
-  async getJsonStream(streamId: string): Promise<JsonStream<StateEvent> | undefined> {
-    const result = await this.json.get(streamId);
-    if (result.status === "not-found" || result.status === "gone") return undefined;
-    if (result.status !== "ok") {
-      throw new Error(`Unable to resolve Streamsy stream ${streamId}: ${result.status}`);
-    }
-    return result.stream;
-  }
-
-  /**
-   * Append one state event, optionally guarded by an `expectedOffset` CAS
-   * precondition. Returns the raw {@link AppendResult} so callers can drive
-   * retry loops on `expected-offset` conflicts.
-   */
-  async appendEvent(
-    streamId: string,
-    event: StateEvent,
-    expectedOffset?: string,
-  ): Promise<AppendResult> {
-    const stream = await this.getJsonStream(streamId);
-    if (!stream) {
-      throw new Error(`Streamsy stream not found: ${streamId}`);
-    }
-    return stream.append(event, expectedOffset === undefined ? {} : { expectedOffset });
-  }
-
-  /**
-   * Read a stream from the beginning to its current head. Returns the decoded
-   * events plus the head offset — the CAS token for appends conditioned on
-   * exactly this state — or undefined when the stream does not exist.
-   */
-  async readAll(
-    streamId: string,
-  ): Promise<{ events: StateEvent[]; headOffset: string } | undefined> {
-    const stream = await this.getJsonStream(streamId);
-    if (!stream) return undefined;
-
-    const events: StateEvent[] = [];
-    let offset: string | undefined;
-    for (;;) {
-      const result = await stream.read(offset === undefined ? {} : { offset });
-      if (result.status !== "ok") {
-        throw new Error(`Unable to read Streamsy stream ${streamId}: ${result.status}`);
-      }
-      for (const message of result.messages) {
-        events.push(message.value);
-      }
-      offset = result.nextOffset;
-      if (result.upToDate) {
-        return { events, headOffset: result.nextOffset };
-      }
-    }
-  }
-
-  async proxy(request: Request): Promise<Response> {
-    console.log(`Proxying stream request: ${request.method} ${request.url}`);
-    return this.handler.fetch(request);
+export function appendWorkspaceEvent(
+  workspaceId: string,
+  event: StateEvent,
+  expectedOffset?: string,
+) {
+  const options = expectedOffset === undefined ? {} : { expectedOffset };
+  // `stateChange` currently widens `type` to string, so the runtime
+  // discriminator needs these local casts to recover the entity type.
+  switch (event.type) {
+    case "project":
+      // SAFETY: this branch checked the public event discriminator; the cast
+      // restores the literal type that `stateChange` currently widens.
+      return Streams.append(
+        projectEvents(workspaceId),
+        [event as StreamRef.StateChange<Project>],
+        options,
+      );
+    case "issue":
+      // SAFETY: this branch checked the public event discriminator; the cast
+      // restores the literal type that `stateChange` currently widens.
+      return Streams.append(
+        issueEvents(workspaceId),
+        [event as StreamRef.StateChange<Issue>],
+        options,
+      );
+    case "comment":
+      // SAFETY: this branch checked the public event discriminator; the cast
+      // restores the literal type that `stateChange` currently widens.
+      return Streams.append(
+        commentEvents(workspaceId),
+        [event as StreamRef.StateChange<Comment>],
+        options,
+      );
+    default:
+      return Effect.die(new TypeError(`Unknown workspace event type: ${event.type}`));
   }
 }
+
+/** Minimal runtime surface used by the Promise-native Bun route handlers. */
+export interface DemoRuntime {
+  runPromise<A, E>(effect: Effect.Effect<A, E, StreamsReader | StreamsWriter>): Promise<A>;
+}
+
+/** The HTTP conversion shares the runtime's already-acquired protocol services. */
+export class DemoStreams extends Context.Service<
+  DemoStreams,
+  { readonly fetch: (request: Request) => Promise<Response> }
+>()("IssueTracker/DemoStreams") {}
+
+export const demoStreamsLayer = Layer.effect(
+  DemoStreams,
+  Effect.gen(function* () {
+    const context = yield* Effect.context<StreamsReader | StreamsWriter>();
+    const edge = yield* Effect.acquireRelease(
+      Effect.sync(() => Http.makeEdge({ pathPrefix: streamPrefix }, Layer.succeedContext(context))),
+      (acquired) => Effect.promise(() => acquired.dispose()),
+    );
+    return DemoStreams.of({ fetch: (request) => edge.handler(request) });
+  }),
+);
+
+const runtimeServices = Layer.effectContext(
+  Effect.context<DemoStreams | StreamsReader | StreamsWriter>(),
+);
+const memoryApplicationLayer = runtimeServices.pipe(
+  Layer.provide(demoStreamsLayer.pipe(Layer.provideMerge(Streams.layerMemory()))),
+);
+const sqliteApplicationLayer = (filename: string) =>
+  runtimeServices.pipe(
+    Layer.provide(
+      demoStreamsLayer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } }))),
+    ),
+  );
+
+export const applicationLayer =
+  databasePath === undefined ? memoryApplicationLayer : sqliteApplicationLayer(databasePath);

@@ -1,4 +1,5 @@
 import index from "../public/index.html";
+import { ManagedRuntime } from "effect";
 import {
   isDevelopment,
   mainWorkspaceId,
@@ -10,16 +11,17 @@ import { commentRoutes } from "./routes/comments.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { seedMainWorkspace } from "./state.ts";
-import { DemoStreams } from "./streams.ts";
+import { applicationLayer, DemoStreams } from "./streams.ts";
 import { json, notFound } from "./utils.ts";
 import { workspaceRoutes } from "./workspaces.ts";
 
-const streams = new DemoStreams();
+const runtime = ManagedRuntime.make(applicationLayer);
+const streams = await runtime.runPromise(DemoStreams);
 
 // Boot: ensure and seed the known demo workspace. Shared workspaces are
 // created on demand via POST /api/workspaces; their streams are the only
 // record that they exist.
-await seedMainWorkspace(streams);
+await runtime.runPromise(seedMainWorkspace());
 
 const server = Bun.serve({
   port,
@@ -27,15 +29,15 @@ const server = Bun.serve({
   routes: {
     // Streamsy durable stream endpoints, served by @streamsy/core's HTTP
     // handler. One stream per workspace: /streams/workspace/<id>.
-    "/streams/*": (request: Request) => streams.proxy(request),
+    "/streams/*": (request: Request) => streams.fetch(request),
 
     // API endpoints as Bun route objects: exact and parameterized routes with
     // per-HTTP-method handlers. Methods not defined on a route object fall
     // through to the "/api/*" JSON 404 below.
-    ...workspaceRoutes(streams),
-    ...projectRoutes(streams),
-    ...issueRoutes(streams),
-    ...commentRoutes(streams),
+    ...workspaceRoutes(runtime),
+    ...projectRoutes(runtime),
+    ...issueRoutes(runtime),
+    ...commentRoutes(runtime),
 
     // Unknown /api paths return JSON 404 instead of falling through to the SPA.
     "/api/*": () => notFound(),
@@ -64,4 +66,20 @@ console.log(
   `Known workspace stream: http://localhost:${server.port}/streams/${workspaceStreamId(mainWorkspaceId)}`,
 );
 
-export { server };
+let shuttingDown: Promise<void> | undefined;
+function shutdown(): Promise<void> {
+  if (shuttingDown) return shuttingDown;
+  shuttingDown = (async () => {
+    await server.stop(true);
+    await runtime.dispose();
+  })();
+  return shuttingDown;
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void shutdown().finally(() => process.exit(0));
+  });
+}
+
+export { server, shutdown };

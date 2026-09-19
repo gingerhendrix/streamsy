@@ -1,11 +1,11 @@
 import type { BunRequest } from "bun";
 import { issueInput } from "../../shared/state-schema.ts";
 import { isValidWorkspaceId } from "../config.ts";
-import { issueUpdate, issueUpsert, mutateWorkspace, newIssue, nextIssue } from "../state.ts";
-import type { DemoStreams } from "../streams.ts";
+import { issueUpsert, mutateWorkspace, newIssue, nextIssue } from "../state.ts";
+import type { DemoRuntime } from "../streams.ts";
 import { badRequest, invalidBody, json, notFound, readMutation } from "../utils.ts";
 
-export function issueRoutes(streams: DemoStreams) {
+export function issueRoutes(runtime: DemoRuntime) {
   return {
     "/api/w/:ws/issues": {
       async POST(request: BunRequest<"/api/w/:ws/issues">): Promise<Response> {
@@ -17,18 +17,20 @@ export function issueRoutes(streams: DemoStreams) {
         const input = issueInput.safeParse(mutation.body);
         if (!input.success) return invalidBody("issue", input.error);
 
-        return mutateWorkspace(streams, workspaceId, (state) => {
-          const issue = newIssue(input.data);
-          if (!state.getProject(issue.projectId)) {
-            return { response: badRequest("Unknown projectId") };
-          }
-          const event = issueUpsert(issue, mutation.txid);
-          return {
-            event,
-            respond: ({ offset }) =>
-              json({ issue, awaitOffset: offset, txid: event.headers.txid }, { status: 201 }),
-          };
-        });
+        return runtime.runPromise(
+          mutateWorkspace(workspaceId, (state) => {
+            const issue = newIssue(input.data);
+            if (!state.getProject(issue.projectId)) {
+              return { response: badRequest("Unknown projectId") };
+            }
+            const event = issueUpsert(issue, mutation.txid);
+            return {
+              event,
+              respond: ({ offset }) =>
+                json({ issue, awaitOffset: offset, txid: event.headers.txid }, { status: 201 }),
+            };
+          }),
+        );
       },
     },
 
@@ -43,17 +45,20 @@ export function issueRoutes(streams: DemoStreams) {
         const input = issueInput.safeParse(mutation.body);
         if (!input.success) return invalidBody("issue", input.error);
 
-        return mutateWorkspace(streams, workspaceId, (state) => {
-          const previous = state.getIssue(issueId);
-          if (!previous) return { response: notFound("Issue not found") };
+        return runtime.runPromise(
+          mutateWorkspace(workspaceId, (state) => {
+            const previous = state.getIssue(issueId);
+            if (!previous) return { response: notFound("Issue not found") };
 
-          const issue = nextIssue(previous, input.data);
-          const event = issueUpdate(issue, previous, mutation.txid);
-          return {
-            event,
-            respond: ({ offset }) => json({ issue, awaitOffset: offset, txid: event.headers.txid }),
-          };
-        });
+            const issue = nextIssue(previous, input.data);
+            const event = issueUpsert(issue, mutation.txid);
+            return {
+              event,
+              respond: ({ offset }) =>
+                json({ issue, awaitOffset: offset, txid: event.headers.txid }),
+            };
+          }),
+        );
       },
     },
   };

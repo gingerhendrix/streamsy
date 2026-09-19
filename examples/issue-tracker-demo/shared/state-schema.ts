@@ -1,5 +1,40 @@
 import { createStateSchema, type ChangeEvent } from "@durable-streams/state";
+import { Schema } from "effect";
 import { z } from "zod";
+
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<JsonValue>
+  | { readonly [key: string]: JsonValue | undefined };
+
+export const ProjectCodec = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.String,
+  createdAt: Schema.String,
+});
+
+export const IssueStatusCodec = Schema.Literals(["open", "in_progress", "done"]);
+
+export const IssueCodec = Schema.Struct({
+  id: Schema.String,
+  projectId: Schema.String,
+  title: Schema.String,
+  status: IssueStatusCodec,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+});
+
+export const CommentCodec = Schema.Struct({
+  id: Schema.String,
+  issueId: Schema.String,
+  author: Schema.String,
+  body: Schema.String,
+  createdAt: Schema.String,
+});
 
 export const projectSchema = z
   .object({
@@ -77,7 +112,7 @@ export type EntityByType = {
 export type StateEvent<T extends EntityType = EntityType> = ChangeEvent<EntityByType[T]>;
 
 /** Change operations `MaterializedState` understands. */
-const changeOperationSchema = z.enum(["insert", "update", "delete", "upsert"]);
+const changeOperationSchema = z.enum(["delete", "upsert"]);
 
 const changeHeadersSchema = z
   .object({

@@ -1,32 +1,34 @@
+import { Streams } from "@streamsy/core";
 import type { BunRequest } from "bun";
-import { generateWorkspaceId, workspaceStreamId } from "./config.ts";
+import { Effect } from "effect";
+import { generateWorkspaceId } from "./config.ts";
 import { seedStarterProject } from "./state.ts";
-import type { DemoStreams } from "./streams.ts";
+import { workspaceEvents, type DemoRuntime } from "./streams.ts";
 import { json } from "./utils.ts";
 
-/**
- * Create a fresh shared workspace: server-generated random id, new durable
- * stream, one starter project. Random ids cannot collide in practice, so
- * there is no duplicate-id path; creation never contends with anything.
- */
-export async function createWorkspace(streams: DemoStreams): Promise<string> {
+/** Create a fresh shared workspace and seed its first project. */
+export const createWorkspace = Effect.fn("Workspace.create")(function* () {
   const workspaceId = generateWorkspaceId();
-  await streams.ensureStream(workspaceStreamId(workspaceId));
-  await seedStarterProject(streams, workspaceId);
+  yield* Streams.create(workspaceEvents(workspaceId));
+  yield* seedStarterProject(workspaceId);
   return workspaceId;
-}
+});
 
-/** A workspace exists iff its stream exists — the protocol is the registry. */
-export async function workspaceExists(streams: DemoStreams, workspaceId: string): Promise<boolean> {
-  return (await streams.getJsonStream(workspaceStreamId(workspaceId))) !== undefined;
-}
+/** A workspace exists iff its stream exists. */
+export const workspaceExists = (workspaceId: string) =>
+  Streams.head(workspaceEvents(workspaceId)).pipe(
+    Effect.as(true),
+    Effect.catchTags({
+      StreamNotFound: () => Effect.succeed(false),
+      StreamGone: () => Effect.succeed(false),
+    }),
+  );
 
-export function workspaceRoutes(streams: DemoStreams) {
+export function workspaceRoutes(runtime: DemoRuntime) {
   return {
     "/api/workspaces": {
-      // Any request body is ignored: the server names everything.
       async POST(_request: BunRequest<"/api/workspaces">): Promise<Response> {
-        const workspaceId = await createWorkspace(streams);
+        const workspaceId = await runtime.runPromise(createWorkspace());
         return json({ id: workspaceId }, { status: 201 });
       },
     },

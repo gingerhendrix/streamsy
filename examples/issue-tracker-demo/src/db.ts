@@ -1,9 +1,9 @@
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
-import type { JsonValue } from "@streamsy/core";
 import {
   issueTrackerState,
   mutationResultSchema,
   type MutationResult,
+  type JsonValue,
 } from "../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../shared/types.ts";
 
