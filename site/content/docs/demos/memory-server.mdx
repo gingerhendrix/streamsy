@@ -1,0 +1,70 @@
+---
+title: Memory server
+description: Try the Durable Streams HTTP protocol against the smallest Streamsy host.
+---
+
+This demo serves the protocol from Bun with one process-local memory store. It
+is a compact way to inspect create, append, catch-up, conditional read,
+long-poll, and server-sent event responses with `curl`.
+
+## Run locally
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/memory-server start
+```
+
+`PORT` defaults to `1337`. The edge mounts streams below `/`; the commands here
+use `http://localhost:1337/walkthrough/demo`.
+
+## Curl walkthrough
+
+Create a JSON stream and append an item:
+
+```bash
+curl -i -X PUT http://localhost:1337/walkthrough/demo -H 'Content-Type: application/json'
+curl -i -X POST http://localhost:1337/walkthrough/demo -H 'Content-Type: application/json' --data '{"type":"hello","n":1}'
+```
+
+Catch up from the beginning, then copy the response's `ETag` into a conditional
+request:
+
+```bash
+curl -i 'http://localhost:1337/walkthrough/demo?offset=-1'
+curl -i 'http://localhost:1337/walkthrough/demo?offset=-1' -H 'If-None-Match: <etag>'
+```
+
+Wait for an append after the returned offset, or follow with SSE:
+
+```bash
+curl -i 'http://localhost:1337/walkthrough/demo?offset=<next-offset>&live=long-poll'
+curl -N 'http://localhost:1337/walkthrough/demo?offset=-1&live=sse'
+```
+
+The full [example README](https://github.com/gingerhendrix/streamsy/tree/effect-p2-memory-server/examples/memory-server)
+shows the expected status, headers, and body for every step. The
+[HTTP runtime guide](/docs/runtime/http) explains the wire contract.
+
+## How it works
+
+The server passes `Streams.layerMemory()` to `Http.makeEdge`, then gives the
+edge's web handler to `Bun.serve`. Bun's idle timeout is 60 seconds so a
+30-second protocol long poll is not cut short. On shutdown the server disposes
+the edge and releases its Effect runtime.
+
+Run the offline proof with:
+
+```bash
+bun run --cwd examples/memory-server smoke:http
+```
+
+It drives all six flows against a child process, restarts that process, and
+confirms the earlier stream is absent.
+
+## Limits
+
+The memory store is process-local. Restarting the server starts a fresh store;
+this demo does not provide persistent storage or make a hosted claim.
