@@ -16,6 +16,7 @@ export function sse(
   contentType: string,
   offset: string,
   cursor?: string,
+  deadlineMs = 60_000,
 ) {
   const encoding = {
     isJson: contentType.toLowerCase().startsWith("application/json"),
@@ -58,7 +59,9 @@ export function sse(
     ).pipe(
       Stream.takeUntil((batch) => batch.done),
       Stream.flatMap((batch) => Stream.fromIterable(batch.chunks)),
-      Stream.interruptWhen(Effect.sleep(60_000)),
+      Stream.merge(Stream.fromEffect(Effect.sleep(deadlineMs)).pipe(Stream.drain), {
+        haltStrategy: "either",
+      }),
     );
   });
   const headers = new Headers({

@@ -648,3 +648,36 @@ it("keeps arbitrary append bad-request bodies as typed request errors", async ()
     await appendFailure(() => new Response("Empty body not allowed", { status: 400 })),
   ).toMatchObject({ _tag: "InvalidAppendRequest", id, message: "Empty body not allowed" });
 });
+
+for (const retry of [false, true]) {
+  it(`decodes a close-only producer append${retry ? " retried after close" : " on an open stream"}`, async () => {
+    const edge = makeEdge({}, memory());
+    const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
+    try {
+      const remote = Fetch.layer({
+        baseUrl: server.url.href,
+        capabilities: { producer: true },
+      }).pipe(Layer.provide(FetchHttpClient.layer));
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* Streams.create(notes);
+          yield* Streams.append(notes, [new TextEncoder().encode("a")], { producer });
+          const close = { producer: { ...producer, producerSeq: 1 }, close: true };
+          if (retry) {
+            yield* Streams.append(notes, [], close);
+            expect((yield* Streams.append(notes, [], close))._tag).toBe("Duplicate");
+            close.producer.producerSeq = 2;
+            yield* Streams.append(notes, [], close);
+          }
+          const result = yield* Streams.append(notes, [], close);
+          expect(result).toMatchObject({ _tag: retry ? "Appended" : "Duplicate", closed: true });
+          expect(result.producerEpoch).toBe(retry ? undefined : 0);
+          expect(result.producerSeq).toBe(retry ? undefined : 1);
+        }).pipe(Effect.provide(remote)),
+      );
+    } finally {
+      await server.stop(true);
+      await edge.dispose();
+    }
+  });
+}

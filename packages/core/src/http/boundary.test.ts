@@ -244,3 +244,21 @@ it("the default catch-up page holds 1000 messages", () =>
       Effect.provide(Streams.layerMemory()),
     ),
   ));
+
+it("SSE closes its body normally at the configured deadline", async () => {
+  const edge = makeEdge({ sseDeadlineMs: 20 }, Streams.layerMemory());
+  try {
+    await edge.handler(new Request("http://example.test/deadline", { method: "PUT" }));
+    const response = await edge.handler(
+      new Request("http://example.test/deadline?offset=-1&live=sse"),
+    );
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    let chunks = 0;
+    while (!(await reader.read()).done) chunks++;
+    await expect(reader.closed).resolves.toBeUndefined();
+    expect(chunks).toBeGreaterThan(0);
+  } finally {
+    await edge.dispose();
+  }
+});

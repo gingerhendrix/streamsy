@@ -21,6 +21,7 @@ export const read = Effect.fn("Http.read")(function* (
   url: URL,
   requestHeaders: Headers,
   cacheControl: string,
+  sseDeadlineMs?: number,
 ): Effect.fn.Return<
   Response | HttpServerResponse.HttpServerResponse,
   StreamsFault | ReadNextError
@@ -49,7 +50,7 @@ export const read = Effect.fn("Http.read")(function* (
   if (query.live === "sse" && offset) {
     const meta = yield* reader.head(id);
 
-    return sse(reader, id, meta.contentType, offset, query.cursor);
+    return sse(reader, id, meta.contentType, offset, query.cursor, sseDeadlineMs);
   }
   const live = query.live === "long-poll" && offset !== undefined;
   const result =

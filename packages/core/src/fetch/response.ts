@@ -135,8 +135,9 @@ export const append = (
       const closed = yield* Wire.closedHeader(operation, response);
       if (response.status === 200)
         return { _tag: "Appended" as const, offset, producerEpoch, producerSeq, closed };
-      // The public wire acknowledges a producer write and a duplicate with 204.
-      if (context.producer !== true) return { _tag: "Appended" as const, offset, closed };
+      // Close-only writes use 204 too; an already closed stream carries no tuple.
+      if (context.producer !== true || (producerEpoch === undefined && producerSeq === undefined))
+        return { _tag: "Appended" as const, offset, closed };
       if (producerEpoch === undefined || producerSeq === undefined)
         return yield* Effect.fail(
           Wire.failure(

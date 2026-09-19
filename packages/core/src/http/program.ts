@@ -15,6 +15,8 @@ import { isProtocolError, type ProtocolError } from "../protocol/errors.ts";
 
 export interface HttpOptions {
   readonly pathPrefix?: string;
+  /** Lifetime of an SSE response. Default 60 seconds. */
+  readonly sseDeadlineMs?: number;
   readonly maxMessageSize?: number;
   readonly cacheVisibility?: "private" | "public";
 }
@@ -29,6 +31,11 @@ const responses = new HttpResponseFactory();
  * what let one composition serve several backends.
  */
 export function app(options: HttpOptions = {}) {
+  if (
+    options.sseDeadlineMs !== undefined &&
+    (!Number.isFinite(options.sseDeadlineMs) || options.sseDeadlineMs <= 0)
+  )
+    throw new RangeError("sseDeadlineMs must be positive");
   const path = new StreamPathService(options.pathPrefix ?? "/");
   const bodyReader = new RequestBodyReader(options.maxMessageSize ?? 1024 * 1024, responses);
   const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");
@@ -106,7 +113,7 @@ export function app(options: HttpOptions = {}) {
         return Append.toResponse(result, parsed.producerHeaders, isEmpty);
       }
       case "GET":
-        return yield* read(reader, id, url, headers, cacheControl);
+        return yield* read(reader, id, url, headers, cacheControl, options.sseDeadlineMs);
       case "HEAD": {
         const output = new Headers({
           "content-type": meta.contentType,
