@@ -1,11 +1,11 @@
 import { DateTime, Option } from "effect";
 import type { CreateResult } from "../protocol/results.ts";
-import { StreamPathService } from "./stream-path-service.ts";
-import { HttpResponseFactory } from "./responses.ts";
-const responses = new HttpResponseFactory();
+import { streamPath } from "./stream-path-service.ts";
+import * as Responses from "./responses.ts";
+const responses = Responses;
 export function parseHeaders(
   request: { readonly headers: Headers },
-  path: StreamPathService,
+  path: ReturnType<typeof streamPath>,
 ):
   | {
       ok: true;

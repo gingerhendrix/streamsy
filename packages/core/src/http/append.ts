@@ -1,9 +1,10 @@
 import type { AppendResult } from "../protocol/results.ts";
 import { isValid } from "../offset/index.ts";
-import { ProducerHeaderParser, type ProducerHeaderResult } from "./producer-header-parser.ts";
-const producerParser = new ProducerHeaderParser();
-import { HttpResponseFactory } from "./responses.ts";
-const responses = new HttpResponseFactory();
+import * as ProducerHeaders from "./producer-header-parser.ts";
+import type { ProducerHeaderResult } from "./producer-header-parser.ts";
+const producerParser = ProducerHeaders;
+import * as Responses from "./responses.ts";
+const responses = Responses;
 export function parseHeaders(request: { readonly headers: Headers }):
   | {
       ok: true;

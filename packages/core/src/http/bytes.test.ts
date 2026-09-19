@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { nodeBufferBase64, toArrayBuffer } from "./bytes.ts";
-import { MessageBodyCodec } from "./message-body-codec.ts";
+import * as MessageBody from "./message-body-codec.ts";
 
 describe("toArrayBuffer", () => {
   it("returns the backing buffer itself when the view spans all of it", () => {
@@ -123,7 +123,7 @@ describe("nodeBufferBase64", () => {
 
 describe("MessageBodyCodec base64 fallback", () => {
   it("encodes a partial view identically with and without the Buffer global", () => {
-    const codec = new MessageBodyCodec();
+    const codec = MessageBody;
     const backing = new Uint8Array([255, 1, 2, 3, 255]);
     const view = backing.subarray(1, 4);
 
@@ -143,7 +143,7 @@ describe("MessageBodyCodec base64 fallback", () => {
   });
 
   it("falls back to btoa when a foreign Buffer global returns an unusable value", () => {
-    const codec = new MessageBodyCodec();
+    const codec = MessageBody;
     const encoded = withBufferGlobal(
       foreignBuffer(() => null),
       () => codec.bytesToBase64(new Uint8Array([1, 2, 3])),

@@ -257,7 +257,7 @@ it("SSE closes its body normally at the configured deadline", async () => {
     const reader = response.body!.getReader();
     let chunks = 0;
     while (!(await reader.read()).done) chunks++;
-    await expect(reader.closed).resolves.toBeUndefined();
+    expect(await reader.closed).toBeUndefined();
     expect(chunks).toBeGreaterThan(0);
   } finally {
     await edge.dispose();

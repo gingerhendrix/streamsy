@@ -2,22 +2,22 @@
 import { Effect } from "effect";
 import { HttpServerRequest } from "effect/unstable/http";
 import { describe, expect, it } from "bun:test";
-import { EtagBuilder } from "../http/etag-builder.ts";
-import { MessageBodyCodec } from "../http/message-body-codec.ts";
-import { ProducerHeaderParser } from "../http/producer-header-parser.ts";
-import { ReadQueryParser } from "../http/read-query-parser.ts";
+import * as Etags from "../http/etag-builder.ts";
+import * as MessageBody from "../http/message-body-codec.ts";
+import * as ProducerHeaders from "../http/producer-header-parser.ts";
+import { readQueryParser } from "../http/read-query-parser.ts";
 import { isValid } from "../offset/index.ts";
-import { RequestBodyReader } from "../http/request-body-reader.ts";
-import { HttpResponseFactory } from "../http/responses.ts";
-import { SseEventEncoder } from "../http/sse-event-encoder.ts";
-import { StreamPathService } from "../http/stream-path-service.ts";
+import { requestBodyReader } from "../http/request-body-reader.ts";
+import * as Responses from "../http/responses.ts";
+import * as SseEvents from "../http/sse-event-encoder.ts";
+import { streamPath } from "../http/stream-path-service.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 describe("HTTP MessageBodyCodec", () => {
   it("preserves JSON message text inside an array wrapper", () => {
-    const codec = new MessageBodyCodec();
+    const codec = MessageBody;
     const body = codec.encodeHttpBody(
       [{ data: enc.encode('{"a":1}') }, { data: enc.encode('{"b":2}') }],
       "application/json",
@@ -26,7 +26,7 @@ describe("HTTP MessageBodyCodec", () => {
   });
 
   it("concatenates text and binary bodies", () => {
-    const codec = new MessageBodyCodec();
+    const codec = MessageBody;
     expect(
       codec.encodeHttpBody([{ data: enc.encode("a") }, { data: enc.encode("b") }], "text/plain"),
     ).toBe("ab");
@@ -42,7 +42,7 @@ describe("HTTP MessageBodyCodec", () => {
   });
 
   it("returns content-type-shaped empty bodies", () => {
-    const codec = new MessageBodyCodec();
+    const codec = MessageBody;
     expect(codec.emptyBodyForContentType("application/json")).toBe("[]");
     expect(codec.emptyBodyForContentType("text/plain")).toBe("");
     expect(codec.emptyBodyForContentType("application/octet-stream")).toBe("");
@@ -51,7 +51,7 @@ describe("HTTP MessageBodyCodec", () => {
 
 describe("HTTP ProducerHeaderParser", () => {
   it("distinguishes absent, valid, partial, and overflow producer headers", () => {
-    const parser = new ProducerHeaderParser();
+    const parser = ProducerHeaders;
     expect(parser.parse(new Request("http://x/s"))).toEqual({ kind: "absent" });
     expect(parser.parse(new Request("http://x/s", { headers: { "producer-id": "p" } }))).toEqual({
       kind: "invalid",
@@ -77,9 +77,9 @@ describe("HTTP ProducerHeaderParser", () => {
   });
 });
 
-describe("HTTP StreamPathService", () => {
+describe("HTTP streamPath", () => {
   it("strips configured prefixes and canonicalizes fork sources", () => {
-    const path = new StreamPathService("/api.v1");
+    const path = streamPath("/api.v1");
     expect(path.strip("/api.v1/foo/bar")).toBe("foo/bar");
     expect(path.strip("/other/foo")).toBe("/other/foo");
     expect(path.canonicalizeForkSource("/api.v1/source")).toBe("source");
@@ -88,8 +88,7 @@ describe("HTTP StreamPathService", () => {
 
 describe("HTTP SseEventEncoder", () => {
   it("splits text lines and base64-encodes binary events", () => {
-    const codec = new MessageBodyCodec();
-    const sse = new SseEventEncoder(codec);
+    const sse = SseEvents;
     const text = sse
       .dataEvent([{ data: enc.encode("a\nb") }], { isJson: false, isText: true, useBase64: false })
       .map((chunk) => dec.decode(chunk))
@@ -107,8 +106,7 @@ describe("HTTP SseEventEncoder", () => {
   });
 
   it("emits a JSON array data event spanning multiple data: lines", () => {
-    const codec = new MessageBodyCodec();
-    const sse = new SseEventEncoder(codec);
+    const sse = SseEvents;
     const text = sse
       .dataEvent([{ data: enc.encode('{"a":1}') }, { data: enc.encode('{"b":2}') }], {
         isJson: true,
@@ -121,8 +119,7 @@ describe("HTTP SseEventEncoder", () => {
   });
 
   it("formats control events as a single data: line of JSON", () => {
-    const codec = new MessageBodyCodec();
-    const sse = new SseEventEncoder(codec);
+    const sse = SseEvents;
     const text = dec.decode(sse.controlEvent({ streamNextOffset: "1_0", upToDate: true }));
     expect(text).toBe('event: control\ndata:{"streamNextOffset":"1_0","upToDate":true}\n\n');
   });
@@ -130,7 +127,7 @@ describe("HTTP SseEventEncoder", () => {
 
 describe("HTTP EtagBuilder", () => {
   it("varies the etag with start offset, next offset, and closure flag", () => {
-    const etags = new EtagBuilder();
+    const etags = Etags;
     expect(etags.forCatchUp("/s", "-1", "1_0", false)).toBe(`"${btoa("/s")}:-1:1_0"`);
     expect(etags.forCatchUp("/s", "-1", "1_0", true)).toBe(`"${btoa("/s")}:-1:1_0:c"`);
     expect(etags.forCatchUp("/s", "0_0", "1_0", false)).not.toEqual(
@@ -139,9 +136,9 @@ describe("HTTP EtagBuilder", () => {
   });
 });
 
-describe("HTTP ReadQueryParser", () => {
+describe("HTTP readQueryParser", () => {
   it("rejects malformed offsets and accepts the documented sentinels", () => {
-    const parser = new ReadQueryParser((offset) => isValid(offset));
+    const parser = readQueryParser((offset) => isValid(offset));
     const bad = parser.parse(new URL("http://x/s?offset=abc"));
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.response.status).toBe(400);
@@ -158,7 +155,7 @@ describe("HTTP ReadQueryParser", () => {
   });
 
   it("classifies live mode and surfaces cursor", () => {
-    const parser = new ReadQueryParser((offset) => isValid(offset));
+    const parser = readQueryParser((offset) => isValid(offset));
     expect(parser.parse(new URL("http://x/s?offset=-1&live=long-poll&cursor=1"))).toMatchObject({
       ok: true,
       live: "long-poll",
@@ -175,9 +172,9 @@ describe("HTTP ReadQueryParser", () => {
   });
 });
 
-describe("HTTP RequestBodyReader", () => {
+describe("HTTP requestBodyReader", () => {
   it("returns 413 for oversized bodies", async () => {
-    const reader = new RequestBodyReader(2, new HttpResponseFactory());
+    const reader = requestBodyReader(2);
     const result = await Effect.runPromise(
       reader.read(
         HttpServerRequest.fromWeb(new Request("http://x/s", { method: "POST", body: "abcd" })),
@@ -188,7 +185,7 @@ describe("HTTP RequestBodyReader", () => {
   });
 
   it("returns the parsed body bytes when within limit", async () => {
-    const reader = new RequestBodyReader(1024, new HttpResponseFactory());
+    const reader = requestBodyReader(1024);
     const result = await Effect.runPromise(
       reader.read(
         HttpServerRequest.fromWeb(new Request("http://x/s", { method: "POST", body: "hi" })),
@@ -200,20 +197,8 @@ describe("HTTP RequestBodyReader", () => {
 });
 
 describe("HTTP HttpResponseFactory", () => {
-  it("adds nosniff and CORP defaults without overwriting explicit headers", () => {
-    const factory = new HttpResponseFactory();
-    const wrapped = factory.withSecurityHeaders(new Response("hi"));
-    expect(wrapped.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(wrapped.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
-
-    const explicit = factory.withSecurityHeaders(
-      new Response("hi", { headers: { "x-content-type-options": "custom" } }),
-    );
-    expect(explicit.headers.get("x-content-type-options")).toBe("custom");
-  });
-
   it("returns canonical statuses for the common error helpers", () => {
-    const factory = new HttpResponseFactory();
+    const factory = Responses;
     expect(factory.notFound().status).toBe(404);
     expect(factory.gone().status).toBe(410);
     expect(factory.conflict("nope").status).toBe(409);

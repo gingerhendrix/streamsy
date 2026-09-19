@@ -1,6 +1,6 @@
 import type { ProtocolError } from "../protocol/errors.ts";
-import { HttpResponseFactory } from "./responses.ts";
-const responses = new HttpResponseFactory();
+import * as Responses from "./responses.ts";
+const responses = Responses;
 
 /** The sole protocol rejection mapping at the HTTP edge. */
 export function protocolErrorResponse(

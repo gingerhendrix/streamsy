@@ -8,7 +8,7 @@ test("public roots omit internal composition and obsolete aliases", () => {
   expect(Object.keys(Root)).not.toContain("MemoryCommitBoundary");
   expect(Object.keys(Root.Protocol)).not.toContain("create");
   expect(Object.keys(Root.Protocol)).not.toContain("expireIfNeeded");
-  expect(Object.keys(Http)).toEqual(["app", "makeEdge", "makeStreamPath"]);
+  expect(Object.keys(Http)).toEqual(["app", "makeEdge", "streamPath"]);
   expect(InternalMemory.MemoryCommitBoundary.key).toBe(
     "@streamsy/core/internal/MemoryCommitBoundary",
   );

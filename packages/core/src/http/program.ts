@@ -3,9 +3,9 @@ import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { StreamId } from "../schema/index.ts";
 import type { StreamsFault } from "../fault.ts";
-import { HttpResponseFactory, cacheControlForVisibility } from "./responses.ts";
-import { StreamPathService } from "./stream-path-service.ts";
-import { RequestBodyReader } from "./request-body-reader.ts";
+import * as Responses from "./responses.ts";
+import { streamPath } from "./stream-path-service.ts";
+import { requestBodyReader } from "./request-body-reader.ts";
 import * as Create from "./create.ts";
 import * as Append from "./append.ts";
 import { read } from "./read.ts";
@@ -21,7 +21,7 @@ export interface HttpOptions {
   readonly cacheVisibility?: "private" | "public";
 }
 
-const responses = new HttpResponseFactory();
+const responses = Responses;
 /**
  * The public HTTP program. It is the whole application an Effect host serves.
  *
@@ -36,9 +36,9 @@ export function app(options: HttpOptions = {}) {
     (!Number.isFinite(options.sseDeadlineMs) || options.sseDeadlineMs <= 0)
   )
     throw new RangeError("sseDeadlineMs must be positive");
-  const path = new StreamPathService(options.pathPrefix ?? "/");
-  const bodyReader = new RequestBodyReader(options.maxMessageSize ?? 1024 * 1024, responses);
-  const cacheControl = cacheControlForVisibility(options.cacheVisibility ?? "private");
+  const path = streamPath(options.pathPrefix ?? "/");
+  const bodyReader = requestBodyReader(options.maxMessageSize ?? 1024 * 1024);
+  const cacheControl = Responses.cacheControlForVisibility(options.cacheVisibility ?? "private");
   const failure = (error: ProtocolError) =>
     Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
       protocolErrorResponse(error, { method: request.method }),

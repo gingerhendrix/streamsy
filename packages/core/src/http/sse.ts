@@ -4,10 +4,10 @@ import { HttpServerResponse } from "effect/unstable/http";
 import type { Reader } from "../protocol/tags.ts";
 import type { StreamId } from "../schema/index.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";
-import { MessageBodyCodec } from "./message-body-codec.ts";
-import { SseEventEncoder, type SseControlData } from "./sse-event-encoder.ts";
+import * as SseEvents from "./sse-event-encoder.ts";
+import type { SseControlData } from "./sse-event-encoder.ts";
 
-const events = new SseEventEncoder(new MessageBodyCodec());
+const events = SseEvents;
 
 /** Pull-based batches are unbounded in message count, like readNext and toolkit follow. */
 export function sse(

@@ -4,17 +4,17 @@ import type { Reader } from "../protocol/tags.ts";
 import type { StreamsFault } from "../fault.ts";
 import type { StreamId } from "../schema/index.ts";
 import { isValid } from "../offset/index.ts";
-import { EtagBuilder } from "./etag-builder.ts";
-import { MessageBodyCodec } from "./message-body-codec.ts";
-import { ReadQueryParser } from "./read-query-parser.ts";
-import { HttpResponseFactory } from "./responses.ts";
+import * as Etags from "./etag-builder.ts";
+import * as MessageBody from "./message-body-codec.ts";
+import { readQueryParser } from "./read-query-parser.ts";
+import * as Responses from "./responses.ts";
 import { sse } from "./sse.ts";
 import type { ReadNextError } from "../protocol/errors.ts";
 
-const responses = new HttpResponseFactory();
-const bodyCodec = new MessageBodyCodec();
-const etags = new EtagBuilder();
-const queryParser = new ReadQueryParser(isValid);
+const responses = Responses;
+const bodyCodec = MessageBody;
+const etags = Etags;
+const queryParser = readQueryParser(isValid);
 export const read = Effect.fn("Http.read")(function* (
   reader: Reader<StreamsFault>,
   id: StreamId,

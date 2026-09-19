@@ -8,31 +8,29 @@ export type ProducerHeaderResult =
   | { kind: "ok"; producer: ProducerOptions }
   | { kind: "invalid" };
 
-export class ProducerHeaderParser {
-  parse(request: { readonly headers: Headers }): ProducerHeaderResult {
-    const id = request.headers.get("producer-id");
-    const epoch = request.headers.get("producer-epoch");
-    const seq = request.headers.get("producer-seq");
+export function parse(request: { readonly headers: Headers }): ProducerHeaderResult {
+  const id = request.headers.get("producer-id");
+  const epoch = request.headers.get("producer-epoch");
+  const seq = request.headers.get("producer-seq");
 
-    const present = [id, epoch, seq].filter((v) => v !== null).length;
-    if (present === 0) return { kind: "absent" };
-    if (present !== 3 || id === null || epoch === null || seq === null) return { kind: "invalid" };
-    if (id.length === 0) return { kind: "invalid" };
+  const present = [id, epoch, seq].filter((v) => v !== null).length;
+  if (present === 0) return { kind: "absent" };
+  if (present !== 3 || id === null || epoch === null || seq === null) return { kind: "invalid" };
+  if (id.length === 0) return { kind: "invalid" };
 
-    const parsedEpoch = this.parseInt(epoch);
-    const parsedSeq = this.parseInt(seq);
-    if (parsedEpoch === null || parsedSeq === null) return { kind: "invalid" };
+  const parsedEpoch = parseInt(epoch);
+  const parsedSeq = parseInt(seq);
+  if (parsedEpoch === null || parsedSeq === null) return { kind: "invalid" };
 
-    return {
-      kind: "ok",
-      producer: { producerId: id, producerEpoch: parsedEpoch, producerSeq: parsedSeq },
-    };
-  }
+  return {
+    kind: "ok",
+    producer: { producerId: id, producerEpoch: parsedEpoch, producerSeq: parsedSeq },
+  };
+}
 
-  private parseInt(raw: string): number | null {
-    if (!NON_NEGATIVE_INT_RE.test(raw)) return null;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n > MAX_SAFE_PRODUCER_INT) return null;
-    return n;
-  }
+function parseInt(raw: string): number | null {
+  if (!NON_NEGATIVE_INT_RE.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n > MAX_SAFE_PRODUCER_INT) return null;
+  return n;
 }

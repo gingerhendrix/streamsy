@@ -60,7 +60,23 @@ Browsers use the official `@durable-streams/client` and
 `Protocol.layer({ readLimit: 1000 })` sets the server catch-up page size.
 `Streams.layerMemory({ readLimit })` accepts the same option. The default is
 1000 messages; `readNext` returns the whole available tail. Fetch clients send
-only an offset and accept the remote server’s page size.
+only an offset and accept the remote server’s page size. Both direct read
+methods reject malformed offsets with `InvalidReadRequest`; accepted offsets
+are canonical tokens, `-1`, and `now` (or an omitted catch-up offset).
+
+Producer options and `Producer.Position` use
+`{ producerId, producerEpoch, producerSeq }`. Append results carry
+`producerEpoch` and `producerSeq` when the acknowledgement includes producer
+state. A close-only producer write uses HTTP 204 and decodes as `Duplicate`
+when that state is present. A close on an already closed stream with a fresh
+tuple returns `Appended` without producer state, including retries of that
+unpersisted tuple.
+
+`Http.app({ sseDeadlineMs })` and `Http.makeEdge` accept an SSE lifetime in
+milliseconds. It defaults to 60,000 and closes the body normally at the
+deadline. Host-forced interruption and client cancellation remain owned by
+the host. Read results include `contentType`; a fetch long poll returning 204
+without Content-Type resolves it with HEAD.
 
 ## Documentation
 
