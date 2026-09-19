@@ -5,14 +5,14 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
-    "test:memory": "bun ./node_modules/vitest/vitest.mjs --run src/memory.conformance.test.ts",
-    "test:sqlite": "bun ./node_modules/vitest/vitest.mjs --run src/sqlite.conformance.test.ts",
-    "test:workerd": "bun run build:worker && bun ./node_modules/vitest/vitest.mjs --run --retry=2 src/workerd.conformance.test.ts",
-    "test:workerd:ownership": "bun test src/workerd-harness-ownership.test.ts",
+    "test:memory": "bun ./node_modules/vitest/vitest.mjs --run test/memory.conformance.test.ts",
+    "test:sqlite": "bun ./node_modules/vitest/vitest.mjs --run test/sqlite.conformance.test.ts",
+    "test:workerd": "bun run build:worker && bun ./node_modules/vitest/vitest.mjs --run --retry=2 test/workerd.conformance.test.ts",
+    "test:workerd:ownership": "bun test test/workerd-harness-ownership.test.ts",
     "build:worker": "bun run scripts/build-worker.ts",
     "measure:bundle": "bun run build:worker && cat dist/bundle-report.json",
     "check:browser": "bun scripts/check-browser.ts",
-    "test:fetch": "bun ./node_modules/vitest/vitest.mjs --run src/fetch.conformance.test.ts"
+    "test:fetch": "bun ./node_modules/vitest/vitest.mjs --run test/fetch.conformance.test.ts"
   },
   "dependencies": {
     "@durable-streams/client": "0.2.6",

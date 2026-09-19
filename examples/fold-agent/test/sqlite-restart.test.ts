@@ -18,7 +18,7 @@ import { makeEventLog, readFoldLog, streamsyEventLog } from "../src/streamsy-eve
 import { scriptedModel, textTurn, toolCallTurn } from "./fixtures/scripted-model.ts";
 
 const cli = join(dirname(import.meta.dir), "src", "cli.ts");
-const worker = join(import.meta.dir, "sqlite-process-worker.ts");
+const worker = join(import.meta.dir, "support/sqlite-process-worker.ts");
 
 const runCli = async (args: ReadonlyArray<string>, env: Record<string, string>) => {
   const proc = Bun.spawn(["bun", "run", cli, ...args], {

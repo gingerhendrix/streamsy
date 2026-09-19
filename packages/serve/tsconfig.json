@@ -10,12 +10,16 @@
     "dist",
     "src/cloudflare.ts",
     "src/cloudflare/**/*",
-    "test/cloudflare-host.bun.test.ts",
-    "test/cloudflare-usage.ts",
-    "test/cloudflare/**/*",
-    "test/alchemy/**/*",
     "src/alchemy.ts",
-    "src/alchemy.test.ts",
-    "src/alchemy-runtime.test.ts"
+    "test/support/cloudflare/**/*",
+    "test/support/alchemy/**/*",
+    "test/alchemy/**/*",
+    "test/cloudflare/**/*",
+    "test/cloudflare-host.test.ts",
+    "test/cloudflare-lifecycle.test.ts",
+    "test/cloudflare-usage.test.ts",
+    "test/support/cloudflare-usage.ts",
+    "test/alchemy.test.ts",
+    "test/alchemy-runtime.test.ts"
   ]
 }

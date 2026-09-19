@@ -11,7 +11,7 @@
     "smoke:http": "bun run scripts/http-smoke.ts",
     "test": "bun run test:unit",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test src/server"
+    "test:unit": "bun test test"
   },
   "dependencies": {
     "@durable-streams/state": "^0.3.1",

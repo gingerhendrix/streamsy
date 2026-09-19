@@ -48,7 +48,7 @@
   "scripts": {
     "build": "tsdown src/index.ts src/internal/memory.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test src"
+    "test:unit": "bun test test"
   },
   "dependencies": {
     "effect": "4.0.0-rc.115"

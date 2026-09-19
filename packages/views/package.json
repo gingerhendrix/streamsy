@@ -62,7 +62,7 @@
   "scripts": {
     "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts src/store/memory.ts src/store/sqlite.ts src/store/conformance.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external bun:test",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test src"
+    "test:unit": "bun test test"
   },
   "dependencies": {
     "effect": "4.0.0-rc.115"

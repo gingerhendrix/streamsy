@@ -1,20 +1,18 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
-    "types": ["bun"],
-    "baseUrl": ".",
     "paths": {
-      "@cloudflare/workers-types": ["test/cloudflare/workers-types-test.d.ts"]
-    },
-    "skipLibCheck": true
+      "@cloudflare/workers-types": ["./test/support/cloudflare/workers-types-test.d.ts"]
+    }
   },
   "include": [
-    "src/cloudflare/**/*.test.ts",
-    "test/*.bun.test.ts",
-    "test/cloudflare-usage.ts",
-    "src/alchemy.test.ts",
-    "src/alchemy-runtime.test.ts"
+    "test/cloudflare/**/*.test.ts",
+    "test/cloudflare-host.test.ts",
+    "test/cloudflare-lifecycle.test.ts",
+    "test/cloudflare-usage.test.ts",
+    "test/support/cloudflare-usage.ts",
+    "test/alchemy.test.ts",
+    "test/alchemy-runtime.test.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

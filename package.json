@@ -52,7 +52,7 @@
     "site:validate": "env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:terms && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:excerpts && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site build && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:og && env CLOUDFLARE_CF_FETCH_ENABLED=false bun run --cwd site check:links",
     "check:perimeter": "bun scripts/check-perimeter.ts",
     "check:browser": "bun run --cwd packages/conformance-tests check:browser",
-    "test:client": "bun test packages/core/src/fetch",
+    "test:client": "bun test packages/core/test/fetch",
     "test:conformance:fetch": "bun run --cwd packages/conformance-tests test:fetch"
   },
   "devDependencies": {

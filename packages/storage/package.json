@@ -38,7 +38,7 @@
   "scripts": {
     "build": "tsdown src/index.ts src/bun.ts src/durable-object.ts --format esm --dts --out-dir dist --clean --external effect --external bun:sqlite --external @streamsy/core --external @effect/sql-sqlite-bun --external @effect/sql-sqlite-do",
     "typecheck": "tsc --noEmit",
-    "test:unit": "bun test test/*.bun.test.ts"
+    "test:unit": "bun test test"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*",

@@ -24,7 +24,7 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 ```
 
-Compiled source: [packages/core/test/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/test/readme.ts).
+Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/examples/readme.ts).
 
 ## What you get
 

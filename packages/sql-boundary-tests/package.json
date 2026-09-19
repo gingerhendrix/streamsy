@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test test/*.bun.test.ts"
+    "test": "bun test test"
   },
   "dependencies": {
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",

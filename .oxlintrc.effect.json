@@ -17,6 +17,14 @@
     "no-underscore-dangle": "off",
     "anti-slop-effect/no-service-constructor-imports": "error"
   },
+  "overrides": [
+    {
+      "files": ["packages/storage/test/support/do-worker.ts"],
+      "rules": {
+        "anti-slop-effect/no-service-constructor-imports": "off"
+      }
+    }
+  ],
   "env": {
     "builtin": true
   },

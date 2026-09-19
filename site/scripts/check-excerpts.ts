@@ -18,7 +18,7 @@ export interface ExcerptPair {
 }
 
 export const pairs: ReadonlyArray<ExcerptPair> = [
-  { doc: "packages/core/README.md", source: "packages/core/test/readme.ts", execute: true },
+  { doc: "packages/core/README.md", source: "packages/core/examples/readme.ts", execute: true },
 ];
 
 const DEFAULT_TIMEOUT_MS = 15_000;

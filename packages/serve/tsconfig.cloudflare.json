@@ -1,5 +1,5 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "../../tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext"],
     "types": ["@cloudflare/workers-types"]
@@ -7,15 +7,10 @@
   "include": [
     "src/cloudflare.ts",
     "src/cloudflare/**/*",
-    "test/cloudflare-host.bun.test.ts",
-    "test/cloudflare/**/*",
     "src/alchemy.ts",
+    "test/support/cloudflare/**/*",
+    "test/support/alchemy/**/*",
     "test/alchemy/**/*"
   ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "src/cloudflare/**/*.test.ts",
-    "test/cloudflare-host.bun.test.ts"
-  ]
+  "exclude": ["node_modules", "dist"]
 }
