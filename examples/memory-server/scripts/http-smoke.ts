@@ -1,5 +1,4 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP through their native Promise APIs. */
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun smoke resolves the demo child-process working directory with the Node-compatible path API.
+/* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random, effecttsgo/node-builtin-import -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP through their native Promise APIs. */
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
