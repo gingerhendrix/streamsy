@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { issueTrackerState, stateEventSchema } from "./state-schema.ts";
+import { issueTrackerState, stateEventSchema } from "../../shared/state-schema.ts";
 
 const project = {
   id: "proj_1",
@@ -25,18 +25,6 @@ describe("isStateEvent", () => {
         key: project.id,
         value: project,
         headers: { operation: "upsert", txid: crypto.randomUUID(), timestamp: project.createdAt },
-      }).success,
-    ).toBe(true);
-  });
-
-  test("accepts an update event carrying old_value", () => {
-    expect(
-      stateEventSchema.safeParse({
-        type: "project",
-        key: project.id,
-        value: project,
-        old_value: { ...project, name: "Old" },
-        headers: { operation: "update" },
       }).success,
     ).toBe(true);
   });

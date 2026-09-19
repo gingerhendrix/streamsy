@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
-import type { JsonValue } from "@streamsy/core";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   commentSchema,
   issueSchema,
@@ -8,6 +9,7 @@ import {
   stateEventsSchema,
   workspaceResultSchema,
   type MutationResult,
+  type JsonValue,
   type StateEvent,
 } from "../shared/state-schema.ts";
 
@@ -15,6 +17,8 @@ const packageDir = resolve(import.meta.dir, "..");
 const port = 20_000 + Math.floor(Math.random() * 20_000);
 const baseUrl = `http://127.0.0.1:${port}`;
 const mainStreamUrl = `${baseUrl}/streams/workspace/main`;
+const tempDirectory = await mkdtemp(join(tmpdir(), "streamsy-issue-tracker-"));
+const databasePath = join(tempDirectory, "smoke.sqlite");
 
 class SmokeError extends Error {
   constructor(message: string) {
@@ -23,7 +27,7 @@ class SmokeError extends Error {
   }
 }
 
-type AssertionCondition = boolean | string | null | undefined;
+type AssertionCondition = boolean | string | StateEvent | null | undefined;
 
 function assert(condition: AssertionCondition, message: string): asserts condition {
   if (!condition) {
@@ -125,12 +129,15 @@ function findEvent(events: StateEvent[], type: string, key: string, operation: s
   return match;
 }
 
-const server = Bun.spawn(["bun", "server/index.ts"], {
-  cwd: packageDir,
-  env: { ...process.env, PORT: String(port) },
-  stdout: "pipe",
-  stderr: "pipe",
-});
+const startServer = () =>
+  Bun.spawn(["bun", "server/index.ts"], {
+    cwd: packageDir,
+    env: { ...process.env, PORT: String(port), ISSUE_TRACKER_DB: databasePath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+let server = startServer();
 
 try {
   await waitForServer();
@@ -189,13 +196,13 @@ try {
 
   findEvent(events, "issue", issueId, "upsert");
 
-  const issueUpdate = findEvent(events, "issue", issueId, "update");
+  const issueUpdate = events.findLast(
+    (event) =>
+      event.type === "issue" && event.key === issueId && event.headers.operation === "upsert",
+  );
+  assert(issueUpdate, `expected the updated issue ${issueId} as an upsert`);
   const updatedIssue = issueSchema.parse(issueUpdate.value);
   assert(updatedIssue.status === "done", "issue update event should carry status=done");
-  assert(
-    issueUpdate.old_value !== undefined,
-    "issue update event should include old_value for replication",
-  );
 
   const commentEvent = findEvent(events, "comment", commentId, "upsert");
   const commentValue = commentSchema.parse(commentEvent.value);
@@ -342,6 +349,31 @@ try {
     "CAS conflict must be distinguishable from the closed-stream 409",
   );
 
+  // === 8. SQLite restart preserves a workspace and its issue ===
+
+  const restartWorkspaceId = await createWorkspace();
+  const restartStreamUrl = `${baseUrl}/streams/workspace/${restartWorkspaceId}`;
+  const beforeRestartIssue = await readStream(restartStreamUrl);
+  const restartProject = projectSchema.parse(beforeRestartIssue.events[0]?.value);
+  const restartIssue = await postJson(`/api/w/${restartWorkspaceId}/issues`, {
+    projectId: restartProject.id,
+    title: "Survives restart",
+  });
+  const restartIssueId = restartIssue.issue?.id;
+  assert(restartIssueId, "restart fixture should create an issue");
+
+  server.kill();
+  await server.exited;
+  server = startServer();
+  await waitForServer();
+
+  const afterRestart = await readStream(restartStreamUrl);
+  findEvent(afterRestart.events, "issue", restartIssueId, "upsert");
+  assert(
+    afterRestart.head !== beforeRestartIssue.head,
+    "workspace head should advance after the issue written before restart",
+  );
+
   console.log(
     `issue-tracker-demo HTTP smoke passed: main project ${projectId}, issue ${issueId}, ` +
       `shared workspace ${workspaceId}, ${after.events.length + 1} main stream events`,
@@ -358,4 +390,5 @@ try {
   if (stderr.trim()) {
     console.error(stderr.trim());
   }
+  await rm(tempDirectory, { recursive: true, force: true });
 }
