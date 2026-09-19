@@ -608,7 +608,8 @@ test("the alarm effect is unreachable through routes, stubs, and forged headers"
     method: "POST",
     headers: { "streamsy-host-command": "ExpireDue" },
   });
-  expect(routed.status).toBe(404);
+  // Empty POST validation precedes the missing-stream lookup.
+  expect(routed.status).toBe(400);
   const directResponse = await direct(harness, "alarm", "/alarm", {
     method: "POST",
     headers: { "streamsy-expire-due": "true" },
