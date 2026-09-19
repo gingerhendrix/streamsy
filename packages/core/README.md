@@ -58,6 +58,11 @@ To serve the protocol, use [`@streamsy/serve`](https://www.npmjs.com/package/@st
 Browsers use the official `@durable-streams/client` and
 `@durable-streams/state` packages directly against any Streamsy host.
 
+`Protocol.layer({ readLimit: 1000 })` sets the server catch-up page size.
+`Streams.layerMemory({ readLimit })` accepts the same option. The default is
+1000 messages; `readNext` returns the whole available tail. Fetch clients send
+only an offset and accept the remote server’s page size.
+
 ## Documentation
 
 - [Streams](https://streamsy.dev/docs/streams)

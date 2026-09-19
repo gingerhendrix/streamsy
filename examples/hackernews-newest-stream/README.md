@@ -28,15 +28,13 @@ bun run --cwd examples/hackernews-newest-stream dev
 Open <http://localhost:1339>. `dev:api` runs the server without the browser
 build.
 
-| Variable                  | Default                                 | Meaning                   |
-| ------------------------- | --------------------------------------- | ------------------------- |
-| `PORT`                    | `1339`                                  | HTTP port                 |
-| `HN_API_BASE`             | `https://hacker-news.firebaseio.com/v0` | Hacker News API           |
-| `HN_POLL_INTERVAL_MS`     | `60000`                                 | Poll interval             |
-| `HN_NEWEST_LIMIT`         | `50`                                    | Size of the newest set    |
-| `HN_PROJECTION_MAX_UNITS` | `10`                                    | Passes per projection run |
-| `HN_PROJECTION_MAX_ITEMS` | twice the newest limit                  | Items per pass            |
-| `HN_PROJECTION_MAX_BYTES` | `1000000`                               | Payload bytes per pass    |
+| Variable              | Default                                 | Meaning                         |
+| --------------------- | --------------------------------------- | ------------------------------- |
+| `PORT`                | `1339`                                  | HTTP port                       |
+| `HN_API_BASE`         | `https://hacker-news.firebaseio.com/v0` | Hacker News API                 |
+| `HN_POLL_INTERVAL_MS` | `60000`                                 | Poll interval                   |
+| `HN_NEWEST_LIMIT`     | `50`                                    | Size of the newest set          |
+| `HN_PROJECTION_LIMIT` | `10`                                    | Checkpoint transactions per run |
 
 `GET /api/status` reports poll and projection counters. `POST /api/poll` runs
 one poll and one projection run, then returns the same status.
@@ -65,7 +63,6 @@ The HTTP smoke is offline: it runs against a local Hacker News fixture.
 
 Source, target, and checkpoint share one memory Layer, so state lasts for one
 server process. Runs are bounded; a `limit-reached` status means the next poll
-continues. A source slice larger than `HN_PROJECTION_MAX_BYTES` is refused
-whole; raise the budget to accept it.
+continues from the last checkpoint.
 
 Guide: [streamsy.dev/docs/demos/hackernews-newest-stream](https://streamsy.dev/docs/demos/hackernews-newest-stream).

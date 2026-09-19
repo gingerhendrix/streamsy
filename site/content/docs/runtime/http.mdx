@@ -116,7 +116,7 @@ A follow is a `GET` with `live=long-poll` or `live=sse`. A long poll answers `20
 
 The protocol model is at [concepts](https://durablestreams.com/concepts), and the retry rules a client follows are at [building a client](https://durablestreams.com/building-a-client). The full header and status tables are in the wire reference.
 
-Three things on this wire are Streamsy's own and not part of the protocol, which is version 1.0 of [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md). `Stream-Expected-Offset` makes an append conditional, and a miss answers `409` with `stream-next-offset` set to the actual tail. `batch_size` bounds a catch-up read to between 1 and 10,000 messages. A `400` with the `stream-not-supported` header reports a feature the backend does not have.
+Two things on this wire are Streamsy's own and not part of the protocol, which is version 1.0 of [PROTOCOL.md](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md). `Stream-Expected-Offset` makes an append conditional, and a miss answers `409` with `stream-next-offset` set to the actual tail. A `400` with the `stream-not-supported` header reports a feature the backend does not have.
 
 ## Fetch Layer
 

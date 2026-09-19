@@ -40,8 +40,7 @@ source offset and `txid` is that offset joined with the fact's index in the unit
 Source, target and the checkpoint share one memory Layer from
 `@streamsy/projection/memory`, held by the runtime that also serves the HTTP
 edge. The server runs one bounded `Projection.run` after each poll.
-`HN_PROJECTION_MAX_UNITS`, `HN_PROJECTION_MAX_ITEMS` and `HN_PROJECTION_MAX_BYTES`
-set the budget.
+`HN_PROJECTION_LIMIT` caps checkpoint transactions per call.
 
 ## Limits
 
@@ -49,9 +48,7 @@ The store is memory only. One acquired memory Layer belongs to one server proces
 and restarting the process starts the streams and the checkpoint from empty.
 
 The run is bounded. A `limit-reached` status means later polls continue the
-work. A source slice larger than the byte budget is refused whole and the run
-reports `limit-reached` with nothing written; raise `HN_PROJECTION_MAX_BYTES` to
-accept it.
+work from the last checkpoint. The server decides the read page size.
 
 The demo makes no hosted claim. It runs on the Bun memory host and has not
 adopted the SQLite storage Layer or a Cloudflare deployment. See the

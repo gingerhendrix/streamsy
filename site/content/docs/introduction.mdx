@@ -77,7 +77,7 @@ const projection = Projection.make({
 const catchUp = Projection.run(projection);
 ```
 
-The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or a budget is spent. The `Checkpoints` service comes from `@streamsy/projection/memory` or `@streamsy/projection/sqlite`, beside the Layer of step 5.
+The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. The `Checkpoints` service comes from `@streamsy/projection/memory` or `@streamsy/projection/sqlite`, beside the Layer of step 5.
 
 See [Projections](/docs/projections/introduction).
 

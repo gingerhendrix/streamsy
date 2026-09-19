@@ -39,7 +39,7 @@ const projection = Projection.make({
     ),
 });
 
-const run = Projection.run(projection, { units: 10, items: 100 });
+const run = Projection.run(projection, { limit: 10 });
 ```
 
 `input: numbers` is one named input; the handler reads `batch.input.items`.
@@ -52,9 +52,11 @@ this example; the package tests execute it.
 
 ## Stream output
 
-Use `Projection.stream` when the output stream is not reachable from the
-checkpoint transaction, for example a stream on another backend or behind the
-fetch Layer. The handler must be deterministic on its inputs.
+Fused is for SQL and side effects; stream is the declared-output form.
+`Projection.stream` works across backends, including through the fetch Layer.
+The output stream is created when absent. Existing outputs are used as they
+are; gone or closed outputs fail with `pin / invalid-output`. The handler must
+be deterministic on its inputs.
 
 ```ts
 import { Effect } from "effect";
@@ -98,21 +100,35 @@ lifetime.
 A fused handler's writes are exactly-once only when they go through the same
 storage as the checkpoint: `Streams.append` on the same Layer, or SQL on the
 shared `SqlClient`. Writes anywhere else are at-least-once; use `unit.key` as
-an idempotency key for those.
+an idempotency key for those. The key is stable across pinned stream-form
+retries; a fused retry re-reads and may see a longer input range.
 
 ## Good to know
 
 - `run` returns `caught-up`, `source-closed`, or `limit-reached` with counts
-  of units, items, and bytes accepted. Budgets are per run (`units`) and per
-  pass (`items`, `bytes`).
+  of units and items accepted. `limit` counts checkpoint transactions per call;
+  the server decides the read page. Without `limit`, a run continues until
+  caught up or every input is closed and drained. Each pass reads one page
+  per input in declaration order.
 - Failures are `ProjectionFault` values with a `phase` and a `reason`. Handler
-  errors pass through untouched. Nothing retries or resets on its own.
-- A record is keyed by `id`, `generation`, and `params`. To change inputs or
-  start over, declare a new `generation`; it starts from offset zero.
+  errors pass through untouched. Underlying failures are available as `cause`.
+  Nothing retries or resets on its own.
+- A record is keyed by `id`, `version` (default 1), `generation`, and `params`.
+  Version 1 is omitted from the encoded key so existing records keep their key.
+  To change inputs or start over, declare a new `generation`; it starts from
+  offset zero.
 - Input history after the checkpoint must stay readable. Deleting or
   rewriting input streams behind a projection stops it with
   `history-unavailable`.
 - SQLite adds one table, `streamsy_projection_v1_records`.
+
+Layer authors use `@streamsy/projection/checkpoint` for the record and store
+contracts. A fused projection needs a real owner transaction. The memory
+checkpoint Layer must share the stream Layer graph. Input history, including
+pending pinned ranges, must remain readable.
+
+`follow` returns a caller-scoped fiber and repairs missed wake hints every
+1000 ms by default. It has no default unit cap.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
 

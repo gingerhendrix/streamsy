@@ -19,7 +19,7 @@ export const orderTotalsProjection = Projection.make({
 });
 ```
 
-A definition has an `id`, a `generation` (default 1), optional `params`, its inputs, and a `process` handler. `input: ref` is sugar for `inputs: { input: ref }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders, refunds }` and read one slice per name.
+A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. `input: ref` is sugar for `inputs: { input: ref }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders, refunds }` and read one slice per name.
 
 `process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection, the non-empty `ranges` keyed by input, and a `key` that is stable across retries of the same unit; use `unit.key` as the idempotency key for a target outside the transaction.
 
@@ -29,7 +29,7 @@ A definition has an `id`, a `generation` (default 1), optional `params`, its inp
 
 The fused form, `Projection.make`, runs the handler inside the checkpoint owner's transaction. `Streams.append` to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back. A write to anything outside that owner is at-least-once.
 
-The stream form, `Projection.stream`, is for an output the checkpoint transaction cannot reach: a stream on another backend or behind a Fetch client. The handler returns the items to append.
+Fused is for SQL and side effects; `Projection.stream` is the declared-output form, including outputs on another backend or behind a fetch Layer. The handler returns the items to append. The output is created when absent; gone or closed outputs fail with `pin / invalid-output`.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -45,11 +45,11 @@ export const amounts = Projection.stream({
 });
 ```
 
-Before the append, the kernel pins the unit's non-empty ranges and the producer sequence in the checkpoint. It then appends under a producer tuple whose id is the projection id (joined with the canonical `params` when there are any), whose epoch is the generation, and whose sequence is the pinned one. A retry reproduces exactly the pinned ranges from the inputs and sends the same tuple; `Appended` and `Duplicate` both settle the unit. The protocol compares tuples, not payloads, so the handler must be deterministic on its inputs for a byte-identical retry. An empty output advances the checkpoint without a pin or a sequence.
+Before the append, the kernel pins the unit's non-empty ranges and the producer sequence in the checkpoint. It then appends under a producer tuple whose id is the projection id (joined with the canonical `params` when there are any), whose epoch is the generation, and whose sequence is the pinned one. A retry reads server pages, keeps the pinned item count, verifies that the log reaches the pinned end and sends the same tuple; `Appended` and `Duplicate` both settle the unit. The protocol compares tuples, not payloads, so the handler must be deterministic on its inputs for a byte-identical retry. An empty output advances the checkpoint without a pin or a sequence.
 
 ## Running
 
-`Projection.run` repeats passes until an empty pass reports `caught-up`, every input is closed and drained (`source-closed`), or a budget is spent (`limit-reached`). `Projection.pass` runs one unit. Both return a `Progress` with `status`, `units`, `items`, `bytes`, and the checkpoint `record`; a non-empty pass reports `progress`.
+`Projection.run` repeats passes until an empty pass reports `caught-up`, every input is closed and drained (`source-closed`), or the unit limit is reached (`limit-reached`). `Projection.pass` runs one unit. Both return a `Progress` with `status`, `units`, `items`, and the checkpoint `record`; a non-empty pass reports `progress`.
 
 ```ts
 import { Effect } from "effect";
@@ -57,12 +57,12 @@ import { Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
 
-const program = Projection.run(orderTotalsProjection, { units: 10, items: 100 });
+const program = Projection.run(orderTotalsProjection, { limit: 10 });
 
 await Effect.runPromise(program.pipe(Effect.provide(layerMemory())));
 ```
 
-The budget bounds a run: `units` per run (default 100), `items` per pass across inputs (default 1000), and optional `bytes` of payload per pass. Inputs are read in declaration order with the item budget carried forward. A slice that exceeds the remaining bytes is refused whole: before any input contributed the pass returns `limit-reached` without a write and reads no later input; once an earlier input contributed, the pass commits that input and leaves the refused one at its offset. Resume with a larger budget.
+`limit` is the maximum number of checkpoint transactions per call. There is no default cap. The server decides the read page; each pass reads one page per input in declaration order. A bad `limit` or `repairIntervalMs` fails before any read with `load / invalid-options`.
 
 `Projection.follow` runs to `caught-up`, then waits for the first input to hint at a change and runs again.
 
@@ -101,13 +101,13 @@ await Effect.runPromise(program.pipe(Effect.provide(host)));
 
 Build the Layer once per host lifetime. Memory is not persistent, so a memory restart starts from zero offsets. A SQLite restart resumes from the stored record.
 
-A record is keyed by `id`, `generation`, and canonical `params`. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for the stream form, a new producer epoch. A stream-form runner of an older generation fails with `stale-epoch` once a newer one has appended.
+A record is keyed by `id`, `version`, `generation`, and canonical `params`. Version 1 is omitted from the encoded key to preserve existing records. Its identity stores the stream id and content type of every declared input by name, so a changed input name, stream id, or content type stops the projection at `load` with `identity-mismatch`. A codec change that keeps the same content type is not detected. There is no reset: declare the change under a new `generation`, which starts from zero offsets and, for the stream form, a new producer epoch. A stream-form runner of an older generation fails with `stale-epoch` once a newer one has appended.
 
 One runner per key is the supported shape. The record is compare-and-set, so an overlapping runner with stale progress stops with `token-conflict` and writes nothing.
 
 ## Faults
 
-Failures are `ProjectionFault` values with a `phase` and a `reason`. The phase says where the run stopped: `load` (record, identity, budget), `read` (inputs), `pin` (the pinned save, range reproduction, and the producer append), `process` (output encoding and adapter failures while the handler ran), and `checkpoint` (the save after processing completed). Reasons are `history-unavailable`, `identity-mismatch`, `invalid-record`, `invalid-source`, `invalid-budget`, `invalid-output`, `token-conflict`, `range-unreproducible`, `stale-epoch`, `storage-failure`, and `unsupported-composition`. Faults about an input name it.
+Failures are `ProjectionFault` values with a `phase` and a `reason`. The phase says where the run stopped: `load` (record, identity, options), `read` (inputs), `pin` (the pinned save, range reproduction, and the producer append), `process` (output encoding and adapter failures while the handler ran), and `checkpoint` (the save after processing completed). Reasons are `history-unavailable`, `identity-mismatch`, `invalid-record`, `invalid-source`, `invalid-options`, `invalid-output`, `token-conflict`, `range-unreproducible`, `stale-epoch`, `storage-failure`, and `unsupported-composition`. Faults about an input name it. Underlying storage, transport and SQL failures are kept in `cause`.
 
 Handler errors are not wrapped: `run` fails with the handler's error or a `ProjectionFault`. No retry or reset is implicit.
 
