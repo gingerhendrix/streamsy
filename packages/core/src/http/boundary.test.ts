@@ -172,7 +172,7 @@ it("preserves close-only sequence lowering and unpersisted fresh tuple on an alr
     ),
   ));
 
-it("keeps direct zero-limit semantics while live reads return the entire available burst", () =>
+it("caps catch-up pages while live reads return the entire available burst", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const writer = yield* StreamsWriter;
@@ -182,19 +182,41 @@ it("keeps direct zero-limit semantics while live reads return the entire availab
         contentType: "application/json",
         initialData: new TextEncoder().encode("[1,2,3]"),
       });
-      const head = yield* reader.head(id);
-
-      expect(yield* reader.read(id, { limit: 0 })).toMatchObject({
-        messages: [],
-        nextOffset: head.nextOffset,
-        upToDate: true,
-      });
+      const first = yield* reader.read(id);
+      expect(first.messages).toHaveLength(1);
+      expect(first.upToDate).toBe(false);
+      const second = yield* reader.read(id, { offset: first.nextOffset });
+      expect(second.messages).toHaveLength(1);
+      expect(second.nextOffset > first.nextOffset).toBe(true);
       const live = yield* reader.readNext(id, { offset: ZERO_OFFSET });
 
       expect(live.messages).toHaveLength(3);
       return undefined;
     }).pipe(
       // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test owns the memory runtime.
-      Effect.provide(Streams.layerMemory()),
+      Effect.provide(Streams.layerMemory({ readLimit: 1 })),
     ),
   ));
+
+it("HTTP catch-up omits up-to-date until the server page reaches the tail", async () => {
+  const edge = makeEdge({}, Streams.layerMemory({ readLimit: 1 }));
+  try {
+    await edge.handler(
+      new Request("http://example.test/pages", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: "[1,2]",
+      }),
+    );
+    const first = await edge.handler(new Request("http://example.test/pages?offset=-1"));
+    expect(await first.json()).toEqual([1]);
+    expect(first.headers.has("stream-up-to-date")).toBe(false);
+    const second = await edge.handler(
+      new Request(`http://example.test/pages?offset=${first.headers.get("stream-next-offset")}`),
+    );
+    expect(await second.json()).toEqual([2]);
+    expect(second.headers.get("stream-up-to-date")).toBe("true");
+  } finally {
+    await edge.dispose();
+  }
+});

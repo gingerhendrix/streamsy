@@ -11,6 +11,8 @@ export { create } from "./create.ts";
 export { expireIfNeeded } from "./expiry.ts";
 
 export interface ProtocolOptions {
+  /** Maximum messages per catch-up page; live reads return the whole tail. Default 1000. */
+  readonly readLimit?: number;
   readonly longPollTimeoutMs?: number;
 }
 export const layer = (
@@ -22,9 +24,12 @@ export const layer = (
       const timeout = options.longPollTimeoutMs ?? 30_000;
       if (!Number.isFinite(timeout) || timeout <= 0)
         return yield* Effect.die(new RangeError("longPollTimeoutMs must be positive"));
+      const readLimit = options.readLimit ?? 1000;
+      if (!Number.isSafeInteger(readLimit) || readLimit <= 0)
+        return yield* Effect.die(new RangeError("readLimit must be a positive safe integer"));
       const reader = StreamsReader.of({
         head: (id) => head(storage, id),
-        read: (id, opts) => read(storage, id, opts),
+        read: (id, opts) => read(storage, id, opts, readLimit),
         readNext: (id, opts) => readNext(storage, id, opts, timeout),
       });
       const writer = StreamsWriter.of({

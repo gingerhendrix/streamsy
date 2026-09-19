@@ -39,7 +39,7 @@ it("refs are inert and layerMemory supplies real tags", () =>
         expect(yield* Streams.append(ref, [{ n: 1 }, { n: 2 }])).toMatchObject({
           _tag: "Appended",
         });
-        const batches = yield* Streams.read(ref, { limit: 1 }).pipe(Stream.runCollect);
+        const batches = yield* Streams.read(ref).pipe(Stream.runCollect);
         expect(batches.map((batch) => batch.items)).toEqual([[{ n: 1 }], [{ n: 2 }]]);
         expect(yield* Streams.read(ref).pipe(Streams.items, Stream.runCollect)).toEqual([
           { n: 1 },
@@ -49,7 +49,7 @@ it("refs are inert and layerMemory supplies real tags", () =>
           contentType: "application/json",
         });
         expect(yield* Streams.remove(ref)).toBeUndefined();
-      }).pipe(provideTest(Streams.layerMemory())),
+      }).pipe(provideTest(Streams.layerMemory({ readLimit: 1 }))),
     ),
   ).resolves.toEqual(Exit.succeed(undefined)));
 

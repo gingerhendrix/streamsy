@@ -79,11 +79,8 @@ for (const visibility of ["private", "public"] as const) {
       const etag = catchUp.headers.get("etag");
       if (!etag) throw new Error("Expected catch-up ETag");
       await compare("/api.v1/s?offset=-1", { headers: { "if-none-match": etag } });
-      await compare("/api.v1/s?offset=-1&batch_size=1");
       await compare("/api.v1/s?offset=now");
       await compare("/api.v1/s?offset=bad");
-      for (const batch of ["0", "-1", "1.5", "10001", "NaN", "Infinity"])
-        await compare(`/api.v1/s?batch_size=${batch}`);
       for (const body of ["", "[]", "{", "x".repeat(65)])
         await compare("/api.v1/s", {
           method: "POST",
@@ -166,12 +163,7 @@ for (const visibility of ["private", "public"] as const) {
         expect(conflict.status).toBe(status);
         expect(Object.fromEntries(conflict.headers)).toMatchObject(expectedHeaders);
       }
-      for (const batch of ["1e0", "0x1", "01", " 1 "])
-        expect((await compare(`/api.v1/s?batch_size=${encodeURIComponent(batch)}`)).status).toBe(
-          200,
-        );
       await compare("/api.v1/s?offset=-1&live=long-poll");
-      await compare("/api.v1/s?offset=-1&live=long-poll&batch_size=1");
       // Fixed wall time makes timeout cursor bytes reproducible; timers remain live.
       await compare("/api.v1/s?offset=now&live=long-poll");
       await compare("/api.v1/s", { method: "POST", headers: { "stream-closed": "true" } });

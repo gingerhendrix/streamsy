@@ -15,7 +15,6 @@ export interface Options {
 
 interface ReadQuery {
   offset: string;
-  batch_size?: string;
 }
 interface NextQuery {
   offset: string;
@@ -60,7 +59,6 @@ export function requests(options: Options) {
     remove: (id: string) => make("DELETE", id),
     read: (id: string, input: ReadOptions = {}) => {
       const params: ReadQuery = { offset: input.offset ?? "-1" };
-      if (input.limit !== undefined) params.batch_size = String(input.limit);
       return HttpClientRequest.setUrlParams(make("GET", id), params);
     },
     readNext: (id: string, input: ReadNextOptions) => {

@@ -37,6 +37,7 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
   storage: typeof Storage.Service,
   record: StreamRecord,
   options: ReadOptions,
+  limit?: number,
 ) {
   const from = options.offset === "now" ? record.currentOffset : options.offset;
   const normalized = !from || from === "-1" ? undefined : from;
@@ -47,13 +48,13 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
   // handling of other strings without branding an invalid storage offset.
   const raw = yield* storage.messages(record.id, {
     after,
-    limit: normalized === undefined || canonical ? options.limit : undefined,
+    limit: normalized === undefined || canonical ? limit : undefined,
   });
   const messages =
     normalized !== undefined && !canonical
       ? raw
           .filter((message) => message.offset > normalized)
-          .slice(0, options.limit === undefined ? undefined : Math.max(0, options.limit))
+          .slice(0, limit === undefined ? undefined : Math.max(0, limit))
       : [...raw];
   const nextOffset = messages.at(-1)?.offset ?? record.currentOffset;
   const upToDate = nextOffset === record.currentOffset;
@@ -68,11 +69,12 @@ export const read = Effect.fn("Protocol.read")(function* (
   storage: typeof Storage.Service,
   id: StreamId,
   options: ReadOptions = {},
+  readLimit = 1000,
 ): Effect.fn.Return<ReadResult, ReadError | StorageFault> {
   const found = yield* expireIfNeeded(storage, id);
   if (Option.isNone(found)) return yield* new StreamNotFound({ id });
   if (found.value.lifecycle.softDeleted) return yield* new StreamGone({ id });
-  return yield* readRecord(storage, found.value, options);
+  return yield* readRecord(storage, found.value, options, readLimit);
 });
 
 function liveResult(result: ReadResult, record: StreamRecord, from: string) {

@@ -1,16 +1,16 @@
 export type { CreateOptions } from "../policy/options.ts";
 export interface ProducerOptions {
-  producerId: string;
-  producerEpoch: number;
-  producerSeq: number;
+  readonly producerId: string;
+  readonly producerEpoch: number;
+  readonly producerSeq: number;
 }
 
 export interface AppendOptions {
-  data: Uint8Array;
-  contentType: string;
-  seq?: string;
-  producer?: ProducerOptions;
-  close?: boolean;
+  readonly data: Uint8Array;
+  readonly contentType: string;
+  readonly seq?: string;
+  readonly producer?: ProducerOptions;
+  readonly close?: boolean;
   /**
    * Optimistic-concurrency precondition: append only if the stream's tail
    * offset still equals this offset. On mismatch the append fails with a
@@ -19,13 +19,11 @@ export interface AppendOptions {
    * means "append only if the stream is still empty". Streamsy extension to
    * the Durable Streams protocol.
    */
-  expectedOffset?: string;
+  readonly expectedOffset?: string;
 }
 
 export interface ReadOptions {
   offset?: string;
-  /** Bound a catch-up response to at most this many stored messages. */
-  limit?: number;
 }
 
 /**

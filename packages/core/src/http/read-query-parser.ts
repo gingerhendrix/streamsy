@@ -1,7 +1,7 @@
 export type HttpLiveMode = "long-poll" | "sse";
 
 export type ReadQueryResult =
-  | { ok: true; offset?: string; live?: HttpLiveMode; cursor?: string; batchSize?: number }
+  | { ok: true; offset?: string; live?: HttpLiveMode; cursor?: string }
   | { ok: false; response: Response };
 
 export class ReadQueryParser {
@@ -12,8 +12,6 @@ export class ReadQueryParser {
     const liveParam = url.searchParams.get("live");
     const cursor = url.searchParams.get("cursor") ?? undefined;
     const live = liveParam === "long-poll" || liveParam === "sse" ? liveParam : undefined;
-    const batchSizeParam = url.searchParams.get("batch_size");
-    const batchSize = batchSizeParam === null ? undefined : Number(batchSizeParam);
 
     if (
       offset !== undefined &&
@@ -22,12 +20,6 @@ export class ReadQueryParser {
       !this.isValidOffset(offset)
     ) {
       return { ok: false, response: new Response("Invalid offset format", { status: 400 }) };
-    }
-    if (
-      batchSize !== undefined &&
-      (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10_000)
-    ) {
-      return { ok: false, response: new Response("Invalid batch_size", { status: 400 }) };
     }
 
     if (
@@ -38,6 +30,6 @@ export class ReadQueryParser {
     ) {
       return { ok: false, response: new Response("Invalid cursor", { status: 400 }) };
     }
-    return { ok: true, offset, live, cursor, batchSize };
+    return { ok: true, offset, live, cursor };
   }
 }

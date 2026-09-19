@@ -56,7 +56,7 @@ export const read = Effect.fn("Http.read")(function* (
     live && offset !== undefined
       ? yield* reader.readNext(id, { offset, cursor: query.cursor })
       : yield* reader
-          .read(id, { offset, limit: query.batchSize })
+          .read(id, { offset })
           .pipe(Effect.map((batch) => ({ ...batch, cursor: undefined })));
 
   const headers = new Headers({ "stream-next-offset": result.nextOffset });

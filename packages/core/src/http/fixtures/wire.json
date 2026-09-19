@@ -142,20 +142,6 @@
       "bytes": []
     },
     {
-      "label": "GET /api.v1/s?offset=-1&batch_size=1",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "private, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
       "label": "GET /api.v1/s?offset=now",
       "status": 200,
       "statusText": "",
@@ -181,66 +167,6 @@
         73, 110, 118, 97, 108, 105, 100, 32, 111, 102, 102, 115, 101, 116, 32, 102, 111, 114, 109,
         97, 116
       ]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=0",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=-1",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=1.5",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=10001",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=NaN",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=Infinity",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
     },
     {
       "label": "POST /api.v1/s",
@@ -429,82 +355,7 @@
       ]
     },
     {
-      "label": "GET /api.v1/s?batch_size=1e0",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "private, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=0x1",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "private, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=01",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "private, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=%201%20",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "private, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
       "label": "GET /api.v1/s?offset=-1&live=long-poll",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "private, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000004_0000000000000000\"",
-        "stream-cursor": "2578400",
-        "stream-next-offset": "0000000000000004_0000000000000000",
-        "stream-up-to-date": "true",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [
-        91, 123, 34, 97, 34, 58, 49, 125, 44, 123, 34, 98, 34, 58, 50, 125, 44, 123, 34, 99, 34, 58,
-        51, 125, 44, 49, 93
-      ]
-    },
-    {
-      "label": "GET /api.v1/s?offset=-1&live=long-poll&batch_size=1",
       "status": 200,
       "statusText": "",
       "headers": {
@@ -899,20 +750,6 @@
       "bytes": []
     },
     {
-      "label": "GET /api.v1/s?offset=-1&batch_size=1",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "public, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
       "label": "GET /api.v1/s?offset=now",
       "status": 200,
       "statusText": "",
@@ -938,66 +775,6 @@
         73, 110, 118, 97, 108, 105, 100, 32, 111, 102, 102, 115, 101, 116, 32, 102, 111, 114, 109,
         97, 116
       ]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=0",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=-1",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=1.5",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=10001",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=NaN",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=Infinity",
-      "status": 400,
-      "statusText": "",
-      "headers": {
-        "cross-origin-resource-policy": "cross-origin",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [73, 110, 118, 97, 108, 105, 100, 32, 98, 97, 116, 99, 104, 95, 115, 105, 122, 101]
     },
     {
       "label": "POST /api.v1/s",
@@ -1186,82 +963,7 @@
       ]
     },
     {
-      "label": "GET /api.v1/s?batch_size=1e0",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "public, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=0x1",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "public, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=01",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "public, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
-      "label": "GET /api.v1/s?batch_size=%201%20",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "public, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000001_0000000000000000\"",
-        "stream-next-offset": "0000000000000001_0000000000000000",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [91, 123, 34, 97, 34, 58, 49, 125, 93]
-    },
-    {
       "label": "GET /api.v1/s?offset=-1&live=long-poll",
-      "status": 200,
-      "statusText": "",
-      "headers": {
-        "cache-control": "public, max-age=60, stale-while-revalidate=300",
-        "content-type": "application/json",
-        "cross-origin-resource-policy": "cross-origin",
-        "etag": "\"L2FwaS52MS9z:-1:0000000000000004_0000000000000000\"",
-        "stream-cursor": "2578400",
-        "stream-next-offset": "0000000000000004_0000000000000000",
-        "stream-up-to-date": "true",
-        "x-content-type-options": "nosniff"
-      },
-      "bytes": [
-        91, 123, 34, 97, 34, 58, 49, 125, 44, 123, 34, 98, 34, 58, 50, 125, 44, 123, 34, 99, 34, 58,
-        51, 125, 44, 49, 93
-      ]
-    },
-    {
-      "label": "GET /api.v1/s?offset=-1&live=long-poll&batch_size=1",
       "status": 200,
       "statusText": "",
       "headers": {
