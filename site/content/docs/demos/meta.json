@@ -1,4 +1,4 @@
 {
   "title": "Demos",
-  "pages": ["index", "hackernews-newest-stream"]
+  "pages": ["index", "hackernews-newest-stream", "issue-tracker-demo"]
 }

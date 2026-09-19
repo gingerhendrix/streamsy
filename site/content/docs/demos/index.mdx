@@ -1,9 +1,13 @@
 ---
 title: Demos
-description: A local Hacker News browser demo built on Streamsy's memory host.
+description: Complete browser demos built on Streamsy streams.
 ---
 
 [Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories, appends
 source changes, runs a fused `@streamsy/projection` over a memory store, and
 serves State facts to a live browser collection. Read the demo's limits before
 running it.
+
+[Issue tracker](/docs/demos/issue-tracker-demo) is a complete rung-zero
+application: Promise-native Bun routes transact against workspace streams, and
+the browser replays each workspace directly into StreamDB.

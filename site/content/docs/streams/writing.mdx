@@ -102,6 +102,26 @@ const reserve = (sku: string) =>
 
 The loop reads the stream, decides, and appends against the tail it read. A competing writer moves the tail, the append fails, and the retry reads again. This detects a competing write. It does not give one writer ownership of the stream; use a producer epoch for that.
 
+### Read, fold, append
+
+For application validation, make the conditional append a named transaction
+recipe. The issue tracker reads and folds the workspace, builds its response or
+event from that view, and retries only a moved tail:
+
+```ts
+const mutateWorkspace = (workspaceId, attempt) =>
+  Effect.gen(function* () {
+    const { state, headOffset } = yield* materializeWorkspace(workspaceId);
+    const outcome = attempt(state);
+    if ("response" in outcome) return outcome.response;
+    const ack = yield* appendWorkspaceEvent(workspaceId, outcome.event, headOffset);
+    return outcome.respond({ offset: ack.offset });
+  }).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }));
+```
+
+The attempt runs again after a conflict, so validation and event construction
+use the new state rather than values captured before the retry.
+
 `expectedOffset` is a Streamsy extension to the protocol. See the extensions note on the [HTTP](/docs/runtime/http) page.
 
 ## Errors

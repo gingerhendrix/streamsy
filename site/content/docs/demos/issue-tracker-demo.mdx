@@ -1,0 +1,61 @@
+---
+title: Issue tracker
+description: A complete rung-zero app with Effect transactions and StreamDB in the browser.
+---
+
+The issue tracker treats one workspace stream as its database. Bun API routes
+read and fold that stream for validation, then append one conditional Durable
+State change. The React client follows the public stream with
+`@durable-streams/state/db`, so projects, issues, comments, optimistic writes,
+and shared workspaces need no separate read API.
+
+## Run locally
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run --cwd examples/issue-tracker-demo dev
+```
+
+Open http://localhost:1338. `PORT` selects another port. The default memory
+store starts fresh with the seeded `main` workspace. Set `ISSUE_TRACKER_DB` to a
+SQLite filename to keep workspaces across restarts; its parent directory must
+already exist.
+
+Run the offline proof with:
+
+```bash
+bun run --cwd examples/issue-tracker-demo smoke:http
+```
+
+It drives project, issue, comment, sharing, isolation, validation and contention
+flows, probes a direct conditional-write conflict, and restarts the server over
+the same SQLite file.
+
+## The transaction recipe
+
+One managed Effect runtime owns the stream services and the `/streams` edge.
+Promise-native Bun routes call `runtime.runPromise` with `mutateWorkspace`.
+That named recipe reads the workspace through a union of three
+`StreamRef.stateChange` codecs, folds every batch into `MaterializedState`, and
+appends through the matching per-type `StreamRef.state` ref with the head as
+`expectedOffset`.
+
+Only `OffsetMismatch` is retried. The retry repeats the read, validation and
+event construction, so each accepted event was checked against the exact state
+at its append position. Issue edits are `upsert` changes, which StreamDB applies
+to the existing issue row.
+
+The browser creates a StreamDB directly over `/streams/workspace/<id>` and
+renders TanStack DB live queries. Client transaction ids are preserved in the
+change headers so optimistic actions can await their matching stream event.
+
+## Limits
+
+The server folds a whole workspace for every mutation. This keeps the rung-zero
+design explicit and compact, but it is not intended for unbounded workspace
+histories. A configured SQLite store is durable; the default memory store lasts
+for one server process.
+
+Workspace links are not access control. The demo makes no hosted claim.
