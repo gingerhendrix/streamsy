@@ -21,6 +21,7 @@ export function protocolErrorResponse(
     case "CreateConflict":
     case "AppendConflict":
       return responses.conflict(error.message);
+    case "InvalidReadRequest":
     case "InvalidForkRequest":
     case "InvalidAppendRequest":
       return responses.badRequest(error.message);

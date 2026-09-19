@@ -10,6 +10,7 @@ import type {
 } from "../protocol/results.ts";
 import { StreamId } from "../schema/index.ts";
 import {
+  InvalidReadRequest,
   StreamNotFound,
   StreamGone,
   StreamBusy,
@@ -215,6 +216,11 @@ export const read = (
   Effect.gen(function* () {
     if (response.status === 404) return yield* new StreamNotFound({ id: context.id });
     if (response.status === 410) return yield* new StreamGone({ id: context.id });
+    if (response.status === 400)
+      return yield* new InvalidReadRequest({
+        id: context.id,
+        message: yield* Wire.bodyText(operation, response),
+      });
     if (response.status !== 200) return yield* Wire.unexpected(operation, response);
     const nextOffset = yield* Wire.offset(operation, response);
     const messages = yield* readBatch(operation, response);
@@ -237,7 +243,11 @@ export const readNext = (
     if (response.status === 410) return yield* new StreamGone({ id: context.id });
     if (response.status === 400) {
       const feature = Wire.header(response, "stream-not-supported");
-      if (feature === undefined) return yield* Wire.unexpected(operation, response);
+      if (feature === undefined)
+        return yield* new InvalidReadRequest({
+          id: context.id,
+          message: yield* Wire.bodyText(operation, response),
+        });
       return yield* new NotSupported({ id: context.id, feature });
     }
     if (response.status !== 200 && response.status !== 204)

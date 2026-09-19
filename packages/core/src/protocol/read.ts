@@ -7,6 +7,7 @@ import type { Storage } from "../storage/storage.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";
 import { expireIfNeeded, touch } from "./expiry.ts";
 import {
+  InvalidReadRequest,
   StreamNotFound,
   StreamGone,
   type HeadError,
@@ -33,6 +34,11 @@ export const head = Effect.fn("Protocol.head")(function* (
   };
 });
 
+const validateOffset = (id: StreamId, offset: string | undefined) =>
+  offset === undefined || offset === "-1" || offset === "now" || isValid(offset)
+    ? Effect.void
+    : Effect.fail(new InvalidReadRequest({ id, message: "Invalid offset format" }));
+
 const readRecord = Effect.fn("Protocol.readRecord")(function* (
   storage: typeof Storage.Service,
   record: StreamRecord,
@@ -41,21 +47,9 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
 ) {
   const from = options.offset === "now" ? record.currentOffset : options.offset;
   const normalized = !from || from === "-1" ? undefined : from;
-  const canonical = normalized !== undefined && isValid(normalized);
-  const after = canonical ? Offset.make(normalized) : undefined;
+  const after = normalized === undefined ? undefined : Offset.make(normalized);
   yield* touch(storage, record);
-  // Storage windows use canonical tokens. Preserve the old protocol's lexical
-  // handling of other strings without branding an invalid storage offset.
-  const raw = yield* storage.messages(record.id, {
-    after,
-    limit: normalized === undefined || canonical ? limit : undefined,
-  });
-  const messages =
-    normalized !== undefined && !canonical
-      ? raw
-          .filter((message) => message.offset > normalized)
-          .slice(0, limit === undefined ? undefined : Math.max(0, limit))
-      : [...raw];
+  const messages = yield* storage.messages(record.id, { after, limit });
   const nextOffset = messages.at(-1)?.offset ?? record.currentOffset;
   const upToDate = nextOffset === record.currentOffset;
   return {
@@ -71,6 +65,7 @@ export const read = Effect.fn("Protocol.read")(function* (
   options: ReadOptions = {},
   readLimit = 1000,
 ): Effect.fn.Return<ReadResult, ReadError | StorageFault> {
+  yield* validateOffset(id, options.offset);
   const found = yield* expireIfNeeded(storage, id);
   if (Option.isNone(found)) return yield* new StreamNotFound({ id });
   if (found.value.lifecycle.softDeleted) return yield* new StreamGone({ id });
@@ -95,6 +90,7 @@ export const readNext = Effect.fn("Protocol.readNext")(function* (
   options: ReadNextOptions,
   timeoutMs: number,
 ): Effect.fn.Return<ReadNextResult, ReadNextError | StorageFault> {
+  yield* validateOffset(id, options.offset);
   const found = yield* expireIfNeeded(storage, id);
   if (Option.isNone(found)) return yield* new StreamNotFound({ id });
   const record = found.value;

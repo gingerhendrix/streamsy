@@ -62,7 +62,14 @@ export class NotSupported extends Schema.TaggedError<NotSupported>()("NotSupport
 }) {}
 export type CreateConflictReason = NonNullable<CreateConflict["reason"]>;
 export type HeadError = StreamNotFound | StreamGone;
-export type ReadError = StreamNotFound | StreamGone;
+export class InvalidReadRequest extends Schema.TaggedError<InvalidReadRequest>()(
+  "InvalidReadRequest",
+  {
+    id: StreamId,
+    message: Schema.String,
+  },
+) {}
+export type ReadError = StreamNotFound | StreamGone | InvalidReadRequest;
 export type ReadNextError = ReadError | NotSupported;
 export type CreateError = CreateConflict | ForkSourceNotFound | InvalidForkRequest | NotSupported;
 export type AppendError =
@@ -82,6 +89,7 @@ export type ProtocolError = HeadError | ReadNextError | CreateError | AppendErro
 
 /** Exhaustive record of every protocol tag, checked against the union it must cover. */
 const protocolErrorTags = {
+  InvalidReadRequest: true,
   StreamNotFound: true,
   StreamGone: true,
   StreamClosed: true,

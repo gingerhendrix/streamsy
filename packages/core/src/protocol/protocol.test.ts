@@ -352,7 +352,7 @@ for (const constrained of [false, true]) {
           const reader = yield* StreamsReader;
           const control = yield* StreamsTest;
           yield* writer.create(id, { contentType: "text/plain" });
-          const fiber = yield* reader.readNext(id, { offset: "0" }).pipe(Effect.forkScoped);
+          const fiber = yield* reader.readNext(id, { offset: ZERO_OFFSET }).pipe(Effect.forkScoped);
           expect((yield* control.snapshot).value.currentOffset).toBe(ZERO_OFFSET);
           expect(yield* control.subscribers).toBe(1);
           if (change === "remove") yield* writer.remove(id);
@@ -383,7 +383,7 @@ for (const constrained of [false, true]) {
         const reader = yield* StreamsReader;
         const control = yield* StreamsTest;
         yield* writer.create(id, { contentType: "text/plain" });
-        const fiber = yield* reader.readNext(id, { offset: "0" }).pipe(Effect.forkScoped);
+        const fiber = yield* reader.readNext(id, { offset: ZERO_OFFSET }).pipe(Effect.forkScoped);
         yield* control.snapshot;
         yield* control.storage.mutate({
           operations: [{ _tag: "Append", streamId: id, messages: [], patch: {} }],
@@ -777,17 +777,19 @@ it("purge/recreate with a lower tail is a change, including when its wake was co
     }),
   ));
 
-it("catch-up preserves lexical filtering of noncanonical offsets", () =>
+it("read and readNext reject noncanonical offsets without replaying history", () =>
   check(
     Effect.gen(function* () {
       yield* (yield* StreamsWriter).create(id, { contentType: "text/plain", initialData: data });
       const reader = yield* StreamsReader;
-      expect(yield* reader.read(id, { offset: "zz" })).toMatchObject({
-        messages: [],
-      });
-      const result = yield* reader.read(id, { offset: "0" });
-      expect(result).toMatchObject({ nextOffset: next(ZERO_OFFSET) });
-      expect(result.messages.length).toBe(1);
+      for (const offset of ["zz", "0", ""]) {
+        expect(yield* reader.read(id, { offset }).pipe(Effect.flip)).toMatchObject({
+          _tag: "InvalidReadRequest",
+        });
+        expect(yield* reader.readNext(id, { offset }).pipe(Effect.flip)).toMatchObject({
+          _tag: "InvalidReadRequest",
+        });
+      }
     }),
   ));
 

@@ -44,6 +44,14 @@ const hint = Effect.fn("Projection.wake")(function* (
       result.closed && result.messages.length === 0 ? Effect.never : Effect.void,
     ),
     Effect.catchTags({
+      InvalidReadRequest: (cause) =>
+        new ProjectionFault({
+          phase: "read",
+          reason: "invalid-source",
+          input,
+          message: cause.message,
+          cause,
+        }),
       StreamNotFound: () => historyUnavailable(),
       StreamGone: () => historyUnavailable(),
       NotSupported: (error) =>

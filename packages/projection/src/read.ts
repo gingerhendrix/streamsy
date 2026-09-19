@@ -63,6 +63,14 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A>(
     });
   const result = yield* reader.read(ref.id, { offset: from }).pipe(
     Effect.catchTags({
+      InvalidReadRequest: (cause) =>
+        new ProjectionFault({
+          phase: "read",
+          reason: "invalid-source",
+          input,
+          message: cause.message,
+          cause,
+        }),
       StreamNotFound: () => historyUnavailable(),
       StreamGone: () => historyUnavailable(),
       StorageFault: storageFailure,
@@ -132,6 +140,14 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A>(
   while (messages.length < range.count) {
     const page = yield* reader.read(ref.id, { offset: cursor }).pipe(
       Effect.catchTags({
+        InvalidReadRequest: (cause) =>
+          new ProjectionFault({
+            phase: "pin",
+            reason: "invalid-record",
+            input,
+            message: cause.message,
+            cause,
+          }),
         StreamNotFound: () => unreproducible("the input is missing"),
         StreamGone: () => unreproducible("the input is gone"),
         StorageFault: (cause) =>
