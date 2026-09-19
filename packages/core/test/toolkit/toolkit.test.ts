@@ -182,6 +182,23 @@ it("follow filters a timed-out long poll before yielding the next message", () =
     }).pipe(Effect.scoped),
   ));
 
+it("follow yields an empty close that arrives while its live read is parked", () =>
+  check(
+    Effect.gen(function* () {
+      yield* Streams.create(ref);
+      const control = yield* StreamsTest;
+      const fiber = yield* Streams.follow(ref).pipe(Stream.runCollect, Effect.forkScoped);
+
+      yield* control.snapshot;
+      yield* Streams.append(ref, [], { close: true });
+
+      const batches = yield* Fiber.join(fiber);
+      expect(batches).toHaveLength(1);
+      expect(batches[0]?.items).toEqual([]);
+      expect(batches[0]?.closed).toBe(true);
+    }).pipe(Effect.scoped),
+  ));
+
 it("Fold reduces existing items, waits for growth, and completes on close", () =>
   check(
     Effect.gen(function* () {

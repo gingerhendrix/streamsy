@@ -1,4 +1,4 @@
-import type { StateChange, StateRef } from "./ref.ts";
+import type { StateChange, StateKey, StateRef } from "./ref.ts";
 
 export interface Upsert<A> {
   readonly kind: "upsert";
@@ -20,17 +20,24 @@ const remove = <A>(oldValue: A): Delete<A> => ({ kind: "delete", oldValue });
 export { remove as delete };
 
 /** Stamp Durable State changes with their source offset and position in this append. */
-export function changes<A, RD, RE, Key extends keyof A>(
+export function changes<A, RD, RE, Key extends StateKey<A>>(
   ref: StateRef<A, RD, RE, Key>,
   options: { readonly offset: string },
   entries: ReadonlyArray<Change<A>>,
-): Array<StateChange<A>> {
+): ReadonlyArray<StateChange<A>> {
   return entries.map((entry, index) => {
     const value = entry.kind === "upsert" ? entry.value : entry.oldValue;
+    const rawKey = value[ref.state.key];
+    if (rawKey === null || rawKey === undefined || rawKey === "") {
+      throw new TypeError(
+        `Invalid state key for type "${ref.state.type}": field "${String(ref.state.key)}" must not be null, undefined, or empty`,
+      );
+    }
+    const key = String(rawKey);
     return entry.kind === "upsert"
       ? {
           type: ref.state.type,
-          key: String(value[ref.state.key]),
+          key,
           value,
           headers: {
             operation: "upsert",
@@ -40,7 +47,7 @@ export function changes<A, RD, RE, Key extends keyof A>(
         }
       : {
           type: ref.state.type,
-          key: String(value[ref.state.key]),
+          key,
           old_value: value,
           headers: {
             operation: "delete",

@@ -5,6 +5,8 @@ export interface StateHeaders {
   readonly operation: "upsert" | "delete";
   readonly offset?: string;
   readonly txid?: string;
+  readonly timestamp?: string;
+  readonly from?: string;
 }
 
 export interface StateUpsert<A> {
@@ -24,6 +26,10 @@ export interface StateDelete<A> {
 /** A change event consumed by `@durable-streams/state`. */
 export type StateChange<A> = StateUpsert<A> | StateDelete<A>;
 
+export type StateKey<A> = {
+  [K in keyof A]-?: A[K] extends string | number ? K : never;
+}[keyof A];
+
 /** Inert identity and codec. Constructing a ref acquires no service or resource. */
 export interface StreamRef<A, RD = never, RE = never> {
   readonly _tag: "Json" | "Bytes";
@@ -37,7 +43,7 @@ export interface StateRef<
   A,
   RD = never,
   RE = never,
-  Key extends keyof A = keyof A,
+  Key extends StateKey<A> = StateKey<A>,
 > extends StreamRef<StateChange<A>, RD, RE> {
   readonly state: {
     readonly type: string;
@@ -56,20 +62,21 @@ export function json<A, I, RD, RE>(
   };
 }
 
-/** A stream of Durable State upsert and delete change events. */
-export function state<A, I, RD, RE, Key extends keyof A>(
-  id: string,
-  options: {
-    readonly schema: Schema.Codec<A, I, RD, RE>;
-    readonly type: string;
-    readonly key: Key;
-  },
-): StateRef<A, RD, RE, Key> {
+/**
+ * A codec for one type of Durable State upsert and delete change events.
+ * Omit optional headers instead of setting them to `undefined`.
+ */
+export function stateChange<A, I, RD, RE>(options: {
+  readonly schema: Schema.Codec<A, I, RD, RE>;
+  readonly type: string;
+}): Schema.Codec<StateChange<A>, StateChange<I>, RD, RE> {
   const headers = {
     offset: Schema.optionalKey(Schema.String),
     txid: Schema.optionalKey(Schema.String),
+    timestamp: Schema.optionalKey(Schema.String),
+    from: Schema.optionalKey(Schema.String),
   };
-  const schema = Schema.Union([
+  return Schema.Union([
     Schema.Struct({
       type: Schema.Literal(options.type),
       key: Schema.String,
@@ -83,8 +90,19 @@ export function state<A, I, RD, RE, Key extends keyof A>(
       headers: Schema.Struct({ operation: Schema.Literal("delete"), ...headers }),
     }),
   ]);
+}
+
+/** A stream of Durable State upsert and delete change events. */
+export function state<A, I, RD, RE, Key extends StateKey<A>>(
+  id: string,
+  options: {
+    readonly schema: Schema.Codec<A, I, RD, RE>;
+    readonly type: string;
+    readonly key: Key;
+  },
+): StateRef<A, RD, RE, Key> {
   return {
-    ...json(id, { schema }),
+    ...json(id, { schema: stateChange(options) }),
     state: { type: options.type, key: options.key },
   };
 }

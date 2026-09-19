@@ -97,7 +97,7 @@ export function read<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOptions 
     }),
   );
 }
-/** Catch up, then wait one readNext at a time; the consumer's scope owns all waits. */
+/** Catch up, then wait one readNext at a time, filtering empty open batches. */
 export function follow<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOptions = {}) {
   return Stream.unwrap(
     Effect.gen(function* () {
