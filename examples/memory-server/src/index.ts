@@ -1,27 +1,28 @@
-/**
- * Memory-backed Durable Streams server (Bun)
- *
- * Demonstrates wiring createHttpHandler + createStreamProtocol + memory storage
- * on a Bun runtime. Used for running conformance tests.
- */
-
-import {
-  createHttpHandler,
-  createMemoryStorageAdapter,
-  createStreamProtocol,
-} from "@streamsy/core";
-
-const factory = createMemoryStorageAdapter();
-const protocol = createStreamProtocol({ storage: { adapter: factory } });
-const handler = createHttpHandler({ protocol, pathPrefix: "/" });
+/* oxlint-disable effecttsgo/global-console -- This Bun executable is the Promise-native HTTP/process edge. */
+import { Streams } from "@streamsy/core";
+import * as Http from "@streamsy/core/http";
 
 const port = parseInt(process.env.PORT ?? "1337", 10);
+const edge = Http.makeEdge({ pathPrefix: "/" }, Streams.layerMemory());
 
 const server = Bun.serve({
   port,
-  fetch: (req) => handler.fetch(req),
+  idleTimeout: 60,
+  fetch: (request) => edge.handler(request),
 });
 
 console.log(`Memory server listening on http://localhost:${server.port}`);
 
-export { server };
+let shuttingDown: Promise<void> | undefined;
+function shutdown(): Promise<void> {
+  if (shuttingDown) return shuttingDown;
+  const pending = edge.dispose().then(() => server.stop(true));
+  shuttingDown = pending;
+  return pending;
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => void shutdown().finally(() => process.exit(0)));
+}
+
+export { server, shutdown };
