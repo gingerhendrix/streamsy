@@ -7,8 +7,6 @@ import { head, read, readNext } from "./read.ts";
 import { StreamNotFound, StreamGone, type RemoveError } from "./errors.ts";
 import { expireIfNeeded } from "./expiry.ts";
 export { expireDue } from "./expiry.ts";
-export { create } from "./create.ts";
-export { expireIfNeeded } from "./expiry.ts";
 
 export interface ProtocolOptions {
   /** Maximum messages per catch-up page; live reads return the whole tail. Default 1000. */

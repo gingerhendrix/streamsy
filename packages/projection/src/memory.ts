@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 import { Streams } from "@streamsy/core";
-import { MemoryCommitBoundary } from "@streamsy/core/storage";
+import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
 import { Checkpoints, fromStore } from "./checkpoint.ts";
 
 /** Requires the exact memory owner retained by Streams.layerMemory(). */

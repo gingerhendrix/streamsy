@@ -2,7 +2,7 @@ import type { DurableObject } from "alchemy/Cloudflare";
 import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { HttpServerError } from "effect/unstable/http/HttpServerError";
-import { StreamPathService } from "@streamsy/core/http";
+import { makeStreamPath } from "@streamsy/core/http";
 import { Placement, type Placement as PlacementType } from "./cloudflare/placement.ts";
 import { resolvePlacement } from "./cloudflare/router.ts";
 
@@ -21,7 +21,7 @@ export const router = (options: {
   HttpServerError,
   HttpServerRequest.HttpServerRequest
 > => {
-  const path = new StreamPathService(options.pathPrefix ?? "/");
+  const path = makeStreamPath(options.pathPrefix);
   const placement = options.placement ?? Placement.byStream();
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;

@@ -1,3 +1,4 @@
+import { create } from "./create.ts";
 import { MutationRejected } from "../storage/mutation.ts";
 import { expect, it } from "bun:test";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Stream } from "effect";
@@ -867,7 +868,7 @@ for (const race of ["matching-create", "conflicting-create", "source-gone"] as c
       Effect.gen(function* () {
         const control = yield* StreamsTest;
         const source = StreamId.make("source");
-        if (race === "source-gone") yield* Protocol.create(control.storage, source);
+        if (race === "source-gone") yield* create(control.storage, source);
         const storage = Storage.of({
           ...control.storage,
           mutate: Effect.fn("Test.concurrentCreate")(function* (mutation) {
@@ -876,13 +877,13 @@ for (const race of ["matching-create", "conflicting-create", "source-gone"] as c
                 operations: [{ _tag: "Delete", streamId: source, reason: "delete" }],
               });
             else
-              yield* Protocol.create(control.storage, id, {
+              yield* create(control.storage, id, {
                 contentType: race === "matching-create" ? "text/plain" : "application/json",
               }).pipe(Effect.orDie);
             return yield* control.storage.mutate(mutation);
           }),
         });
-        const attempt = Protocol.create(
+        const attempt = create(
           storage,
           id,
           race === "source-gone" ? { forkedFrom: source } : { contentType: "text/plain" },
@@ -909,9 +910,7 @@ it("a plain create treats an impossible rejection as a defect, not a fork answer
             new MutationRejected({ index: 0, reason: "fork-source-gone", record: Option.none() }),
           ),
       });
-      const exit = yield* Protocol.create(storage, id, { contentType: "text/plain" }).pipe(
-        Effect.exit,
-      );
+      const exit = yield* create(storage, id, { contentType: "text/plain" }).pipe(Effect.exit);
       expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(Cause.squash(exit.cause))).toContain("Unexpected create rejection");

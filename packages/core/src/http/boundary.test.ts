@@ -99,6 +99,7 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
           Effect.sync(() => {
             observed = options;
             return {
+              contentType: "text/plain",
               timedOut: true,
               closed: false,
               messages: [],
@@ -258,6 +259,57 @@ it("SSE closes its body normally at the configured deadline", async () => {
     while (!(await reader.read()).done) chunks++;
     await expect(reader.closed).resolves.toBeUndefined();
     expect(chunks).toBeGreaterThan(0);
+  } finally {
+    await edge.dispose();
+  }
+});
+
+it("GET, POST and DELETE use their protocol call without extra HEAD requests", async () => {
+  let heads = 0;
+  const readers = Layer.effect(
+    StreamsReader,
+    Effect.gen(function* () {
+      const reader = yield* StreamsReader;
+      return StreamsReader.of({
+        ...reader,
+        head: (id) => {
+          heads++;
+          return reader.head(id);
+        },
+      });
+    }),
+  ).pipe(Layer.provideMerge(Streams.layerMemory()));
+  const edge = makeEdge({}, readers);
+  try {
+    await edge.handler(
+      new Request("http://example.test/round-trips", {
+        method: "PUT",
+        headers: { "content-type": "text/plain" },
+        body: "a",
+      }),
+    );
+    for (const suffix of ["?offset=-1", "?offset=now", "?offset=-1&live=long-poll"]) {
+      const response = await edge.handler(new Request(`http://example.test/round-trips${suffix}`));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("text/plain");
+      await response.text();
+    }
+    expect(
+      (
+        await edge.handler(
+          new Request("http://example.test/round-trips", {
+            method: "POST",
+            headers: { "content-type": "text/plain" },
+            body: "b",
+          }),
+        )
+      ).status,
+    ).toBe(204);
+    expect(
+      (await edge.handler(new Request("http://example.test/round-trips", { method: "DELETE" })))
+        .status,
+    ).toBe(204);
+    expect(heads).toBe(0);
   } finally {
     await edge.dispose();
   }

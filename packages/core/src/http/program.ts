@@ -87,7 +87,6 @@ export function app(options: HttpOptions = {}) {
       });
     if (!["POST", "GET", "HEAD", "DELETE"].includes(request.method))
       return responses.methodNotAllowed();
-    const meta = yield* reader.head(id);
     switch (request.method) {
       case "POST": {
         const parsed = Append.parseHeaders({ headers });
@@ -115,6 +114,7 @@ export function app(options: HttpOptions = {}) {
       case "GET":
         return yield* read(reader, id, url, headers, cacheControl, options.sseDeadlineMs);
       case "HEAD": {
+        const meta = yield* reader.head(id);
         const output = new Headers({
           "content-type": meta.contentType,
           "stream-next-offset": meta.nextOffset,

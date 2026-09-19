@@ -1,6 +1,5 @@
-import { Deferred, Effect, type Layer } from "effect";
-import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import type { StreamsFault } from "../fault.ts";
+import { Effect, type Layer } from "effect";
+import { HttpEffect, type HttpServerRequest, type HttpServerResponse } from "effect/unstable/http";
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { app, type HttpOptions } from "./program.ts";
 
@@ -9,40 +8,8 @@ export const makeEdge = <E, R = never>(
   options: HttpOptions,
   layer: Layer.Layer<StreamsReader | StreamsWriter | R, E>,
   application?: Effect.Effect<
-    Response | HttpServerResponse.HttpServerResponse,
-    StreamsFault,
+    HttpServerResponse.HttpServerResponse,
+    never,
     HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter | R
   >,
-) => {
-  const active = new Set<Deferred.Deferred<void>>();
-  const effect = Effect.suspend(() => {
-    const completed = Deferred.makeUnsafe<void>();
-    active.add(completed);
-    return Effect.interruptible(application ?? app(options)).pipe(
-      Effect.map((response) =>
-        response instanceof Response
-          ? HttpServerResponse.raw(response, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: Object.fromEntries(response.headers),
-            })
-          : response,
-      ),
-      Effect.ensuring(
-        Effect.sync(() => active.delete(completed)).pipe(
-          Effect.andThen(Deferred.succeed(completed, undefined)),
-          Effect.asVoid,
-        ),
-      ),
-    );
-  });
-  const edge = HttpEffect.toWebHandlerLayer(effect, layer);
-  const awaitIdle: Effect.Effect<void> = Effect.suspend(() =>
-    active.size === 0
-      ? Effect.void
-      : Effect.forEach([...active], Deferred.await, { discard: true }).pipe(
-          Effect.andThen(awaitIdle),
-        ),
-  );
-  return { ...edge, awaitIdle };
-};
+) => HttpEffect.toWebHandlerLayer(Effect.interruptible(application ?? app(options)), layer);

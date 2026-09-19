@@ -22,3 +22,6 @@ export class StreamPathService {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 }
+
+/** Host routing helpers using the protocol prefix grammar. */
+export const makeStreamPath = (pathPrefix = "/") => new StreamPathService(pathPrefix);

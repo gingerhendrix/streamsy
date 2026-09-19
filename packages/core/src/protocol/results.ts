@@ -31,6 +31,7 @@ export type AppendResult =
       readonly closed: boolean;
     };
 export interface ReadResult {
+  readonly contentType: string;
   readonly messages: ReadonlyArray<ReadMessage>;
   readonly nextOffset: string;
   readonly upToDate: boolean;

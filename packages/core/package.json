@@ -21,10 +21,10 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./storage": {
-      "types": "./dist/storage/index.d.ts",
-      "import": "./dist/storage/index.js",
-      "default": "./dist/storage/index.js"
+    "./internal/memory": {
+      "types": "./dist/internal/memory.d.ts",
+      "import": "./dist/internal/memory.js",
+      "default": "./dist/internal/memory.js"
     },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
@@ -46,7 +46,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/storage/index.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
+    "build": "tsdown src/index.ts src/internal/memory.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --external effect --external bun:test",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test src"
   },

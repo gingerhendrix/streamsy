@@ -53,6 +53,7 @@ const readRecord = Effect.fn("Protocol.readRecord")(function* (
   const nextOffset = messages.at(-1)?.offset ?? record.currentOffset;
   const upToDate = nextOffset === record.currentOffset;
   return {
+    contentType: record.config.contentType,
     messages: messages.map((message) => ({ data: message.data })),
     nextOffset,
     upToDate,

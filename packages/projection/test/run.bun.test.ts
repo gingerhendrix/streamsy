@@ -8,7 +8,7 @@ import {
   type Reader,
   type StreamsFault,
 } from "@streamsy/core";
-import { MemoryCommitBoundary } from "@streamsy/core/storage";
+import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
 import { Checkpoints, Projection, ProjectionFault } from "../src/index.ts";
 import { recordKey } from "../src/checkpoint.ts";
 import { layerMemory } from "../src/memory.ts";

@@ -344,10 +344,12 @@ it("reads an empty long poll as a timeout", async () => {
             "stream-next-offset": ZERO_OFFSET,
             "stream-up-to-date": "true",
             "stream-cursor": "7",
+            "content-type": "text/plain",
           },
         }),
     ),
   ).toEqual({
+    contentType: "text/plain",
     timedOut: true,
     messages: [],
     nextOffset: ZERO_OFFSET,

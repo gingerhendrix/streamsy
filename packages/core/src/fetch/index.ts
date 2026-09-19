@@ -6,7 +6,7 @@ import { TransportFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
 import { requests, type Options } from "./request.ts";
 import * as Response from "./response.ts";
-import type { HttpResponse } from "./wire.ts";
+import { header, type HttpResponse } from "./wire.ts";
 export type { Options } from "./request.ts";
 export { TransportFault } from "../fault.ts";
 
@@ -80,7 +80,14 @@ export const layer = (options: Options) =>
           execute(
             "readNext",
             () => request.readNext(id, input),
-            (operation, response) => Response.readNext(operation, response, { id }),
+            (operation, response) =>
+              Effect.gen(function* () {
+                const contentType =
+                  response.status === 204 && header(response, "content-type") === undefined
+                    ? (yield* reader.head(id)).contentType
+                    : undefined;
+                return yield* Response.readNext(operation, response, { id, contentType });
+              }),
           ),
       };
       const writer: Writer<TransportFault> = {

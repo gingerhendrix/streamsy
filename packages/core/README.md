@@ -41,13 +41,12 @@ Compiled source: [packages/core/test/readme.ts](https://github.com/gingerhendrix
 
 ## Entries
 
-| Entry                    | Contents                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| `@streamsy/core`         | Streams, StreamRef, StreamRoute, Backend, Fold, Producer, memory Layer, errors |
-| `@streamsy/core/fetch`   | `Fetch.layer({ baseUrl })`: the same reader and writer over HTTP               |
-| `@streamsy/core/http`    | `Http.app` and `makeEdge` to serve the protocol                                |
-| `@streamsy/core/storage` | The storage contract for writing a backend                                     |
-| `@streamsy/core/testing` | Contract tests and fault injection for backends                                |
+| Entry                    | Contents                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| `@streamsy/core`         | Streams, StreamRef, StreamRoute, Backend, Fold, Producer, storage contracts, errors |
+| `@streamsy/core/fetch`   | `Fetch.layer({ baseUrl })`: the same reader and writer over HTTP                    |
+| `@streamsy/core/http`    | `Http.app` and `makeEdge` to serve the protocol                                     |
+| `@streamsy/core/testing` | Contract tests and fault injection for backends                                     |
 
 ## Storage and hosts
 

@@ -11,7 +11,7 @@ The protocol, the HTTP program, forks, expiry, producer fencing, and the project
 
 ```ts
 import { Context, Effect, Option, Stream } from "effect";
-import { Storage, type StorageShape } from "@streamsy/core/storage";
+import { Storage, type StorageShape } from "@streamsy/core";
 
 const adapter: StorageShape = {
   capabilities: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
@@ -81,7 +81,7 @@ The SQL adapter exposes `CommitBoundary.withTransaction`, which lets an applicat
 `StorageContract.run` from `@streamsy/core/testing` builds a fresh scoped Layer for every case and supplies a `TestClock`. Run it under Bun.
 
 ```ts
-import { Memory } from "@streamsy/core/storage";
+import { Memory } from "@streamsy/core";
 import { StorageContract } from "@streamsy/core/testing";
 
 StorageContract.run({

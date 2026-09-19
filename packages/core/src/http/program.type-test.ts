@@ -10,19 +10,15 @@
 import { Effect } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
-import { app, program } from "./index.ts";
+import { app } from "./index.ts";
 
 type Actual = ReturnType<typeof app>;
-
-/** The deprecated alias is the same value under another name. */
-const alias: typeof app = program;
-void alias;
 
 type Success = Effect.Success<Actual>;
 type Failure = Effect.Error<Actual>;
 type Requirements = Effect.Services<Actual>;
 
-/** Success is narrowed to `HttpServerResponse`; raw Web responses are wrapped by `program`. */
+/** Success is narrowed to `HttpServerResponse`; raw Web responses are wrapped by `app`. */
 const response: Success = HttpServerResponse.empty({ status: 200 });
 void response;
 

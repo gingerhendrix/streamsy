@@ -39,6 +39,8 @@ export type Operation = "head" | "read" | "readNext" | "create" | "append" | "re
 export interface DecodeContext {
   readonly id: StreamId;
   readonly source?: StreamId;
+  /** Resolved by the fetch Layer for bodyless reads lacking Content-Type. */
+  readonly contentType?: string;
   readonly expectedOffset?: string;
   /** The request carried producer headers: 200 acknowledges a write, 204 a duplicate. */
   readonly producer?: boolean;
@@ -226,6 +228,7 @@ export const read = (
     const messages = yield* readBatch(operation, response);
     const closed = yield* Wire.closedHeader(operation, response);
     return {
+      contentType: yield* Wire.contentType(operation, response),
       messages,
       nextOffset,
       upToDate: Wire.upToDate(response),
@@ -257,6 +260,7 @@ export const readNext = (
     // An empty long poll is 204 whether it timed out or woke without data.
     if (response.status === 204)
       return {
+        contentType: context.contentType ?? (yield* Wire.contentType(operation, response)),
         timedOut: true,
         messages: [],
         nextOffset,
@@ -266,6 +270,7 @@ export const readNext = (
       };
     const messages = yield* readBatch(operation, response);
     return {
+      contentType: yield* Wire.contentType(operation, response),
       messages,
       timedOut: false,
       nextOffset,

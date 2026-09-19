@@ -71,7 +71,7 @@ BunRuntime.runMain(Layer.launch(Layer.merge(listener, projection).pipe(Layer.pro
 
 ## A raw Request handler
 
-`makeEdge(options, layer)` from `@streamsy/core/http` returns `handler`, `dispose`, and `awaitIdle`. Use it for a custom `Bun.serve` or a test that wants a Web `Request` in and a Web `Response` out. Dispose it at shutdown.
+`makeEdge(options, layer)` from `@streamsy/core/http` returns `handler` and `dispose`. Use it for a custom `Bun.serve` or a test that wants a Web `Request` in and a Web `Response` out. Dispose it at shutdown.
 
 ## Serving sinks
 

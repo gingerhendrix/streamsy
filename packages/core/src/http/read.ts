@@ -28,29 +28,30 @@ export const read = Effect.fn("Http.read")(function* (
 > {
   const query = queryParser.parse(url);
   if (!query.ok) return query.response;
-  let offset = query.offset;
-  if (offset === "now") {
-    const meta = yield* reader.head(id);
-
-    offset = meta.nextOffset;
-    if (!query.live) {
-      const result = yield* reader.read(id, { offset: "now" });
-
-      const headers = new Headers({
-        "content-type": meta.contentType,
-        "stream-next-offset": result.nextOffset,
-        "stream-up-to-date": "true",
-        "cache-control": "no-store",
-      });
-      if (result.closed) headers.set("stream-closed", "true");
-      return new Response(bodyCodec.emptyBodyForContentType(meta.contentType), { headers });
-    }
+  const offset = query.offset;
+  if (offset === "now" && !query.live) {
+    const result = yield* reader.read(id, { offset: "now" });
+    const headers = new Headers({
+      "content-type": result.contentType,
+      "stream-next-offset": result.nextOffset,
+      "stream-up-to-date": "true",
+      "cache-control": "no-store",
+    });
+    if (result.closed) headers.set("stream-closed", "true");
+    return new Response(bodyCodec.emptyBodyForContentType(result.contentType), { headers });
   }
   if (query.live && !offset) return responses.badRequest("offset required for live modes");
   if (query.live === "sse" && offset) {
     const meta = yield* reader.head(id);
 
-    return sse(reader, id, meta.contentType, offset, query.cursor, sseDeadlineMs);
+    return sse(
+      reader,
+      id,
+      meta.contentType,
+      offset === "now" ? meta.nextOffset : offset,
+      query.cursor,
+      sseDeadlineMs,
+    );
   }
   const live = query.live === "long-poll" && offset !== undefined;
   const result =
@@ -82,8 +83,6 @@ export const read = Effect.fn("Http.read")(function* (
       return responses.empty(304, { etag, "cache-control": cacheControl });
     headers.set("etag", etag);
   }
-  const meta = yield* reader.head(id);
-
-  headers.set("content-type", meta.contentType);
-  return new Response(bodyCodec.encodeHttpBody(result.messages, meta.contentType), { headers });
+  headers.set("content-type", result.contentType);
+  return new Response(bodyCodec.encodeHttpBody(result.messages, result.contentType), { headers });
 });

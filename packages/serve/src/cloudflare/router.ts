@@ -1,5 +1,5 @@
 import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
-import { StreamPathService } from "@streamsy/core/http";
+import { makeStreamPath } from "@streamsy/core/http";
 import { Placement, type Placement as PlacementType } from "./placement.ts";
 
 export interface RouterOptions<Env> {
@@ -39,8 +39,8 @@ export const resolvePlacement = (
 };
 
 export const router = <Env>(options: RouterOptions<Env>): ExportedHandler<Env> => {
+  const path = makeStreamPath(options.pathPrefix);
   const placement = options.placement ?? Placement.byStream();
-  const path = new StreamPathService(options.pathPrefix ?? "/");
 
   return {
     fetch(request, env) {
