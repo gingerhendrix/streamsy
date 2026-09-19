@@ -111,7 +111,7 @@ export function follow<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOption
               : yield* reader.read(ref.id, { ...options, offset: state.offset }),
           );
           return [
-            [batch],
+            batch.items.length > 0 || batch.closed ? [batch] : [],
             batch.closed
               ? Option.none()
               : Option.some({ offset: batch.nextOffset, live: batch.upToDate }),

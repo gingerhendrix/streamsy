@@ -160,6 +160,28 @@ it("follow's parked subscription and fiber are interrupted by scope close", () =
     }),
   ));
 
+it("follow filters a timed-out long poll before yielding the next message", () =>
+  check(
+    Effect.gen(function* () {
+      yield* Streams.create(ref);
+      const control = yield* StreamsTest;
+      const fiber = yield* Streams.follow(ref).pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* control.snapshot;
+      yield* TestClock.adjust(100);
+      yield* control.snapshot;
+      yield* Streams.append(ref, [{ n: 1 }]);
+
+      const batches = yield* Fiber.join(fiber);
+      expect(batches).toHaveLength(1);
+      expect(batches[0]?.items).toEqual([{ n: 1 }]);
+    }).pipe(Effect.scoped),
+  ));
+
 it("Fold reduces existing items, waits for growth, and completes on close", () =>
   check(
     Effect.gen(function* () {
