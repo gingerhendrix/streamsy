@@ -194,4 +194,4 @@ export const layer = (options: BunStorageOptions) => {
 
 /** Complete persistent protocol Layer for the scoped `@streamsy/serve/bun` host. */
 export const layerProtocol = (options: BunProtocolOptions) =>
-  Protocol.layer(options).pipe(Layer.provide(layer(options)));
+  Protocol.layer(options).pipe(Layer.provideMerge(layer(options)));

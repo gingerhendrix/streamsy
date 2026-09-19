@@ -13,15 +13,15 @@ import {
   Schema,
 } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { Protocol, Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as Sqlite from "../src/sqlite.ts";
 import { Checkpoints, Projection, ProjectionFault } from "../src/index.ts";
 import { composition, initialize, input, inspect, positives } from "./scenarios.ts";
 
 const host = (filename: string, readLimit = 1000) =>
-  Layer.merge(Protocol.layer({ readLimit }), Sqlite.layer).pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename } })),
+  Sqlite.layer.pipe(
+    Layer.provideMerge(BunStorage.layerProtocol({ client: { filename }, readLimit })),
   );
 
 const scratch = Effect.runSync(
@@ -155,13 +155,13 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       "-e",
       `
       import { Layer, ManagedRuntime, Option } from "effect";
-      import { Protocol, Streams } from "@streamsy/core";
+      import { Streams } from "@streamsy/core";
       import * as BunStorage from "@streamsy/storage/bun";
       import * as Sqlite from "./src/sqlite.ts";
       import { Projection } from "./src/index.ts";
       import { input, inspect, positives } from "./test/scenarios.ts";
-      const host = Layer.merge(Protocol.layer(), Sqlite.layer).pipe(
-        Layer.provideMerge(BunStorage.layer({ client: { filename: Bun.argv.at(-1) } })),
+      const host = Sqlite.layer.pipe(
+        Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: Bun.argv.at(-1) } })),
       );
       const runtime = ManagedRuntime.make(host);
       try {

@@ -32,10 +32,8 @@ export const openMemoryStore = (options: { longPollTimeoutMs?: number } = {}) =>
     const context = yield* Layer.buildWithScope(Streams.layerMemory(options), scope).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
     );
-    return {
-      context,
-      close: closeScope(scope),
-    } satisfies StreamsyStore;
+    const store: StreamsyStore = { context, close: closeScope(scope) };
+    return store;
   });
 
 const openSqliteStore = (filename: string, options: StreamsyStoreOptions) =>
@@ -59,10 +57,8 @@ const openSqliteStore = (filename: string, options: StreamsyStoreOptions) =>
     ).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
     );
-    return {
-      context,
-      close: closeScope(scope),
-    } satisfies StreamsyStore;
+    const store: StreamsyStore = { context, close: closeScope(scope) };
+    return store;
   });
 
 export const openStore = (options: StreamsyStoreOptions = {}) => {

@@ -31,7 +31,7 @@ const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
       StaleEpoch: (error) =>
         pin(
           "stale-epoch",
-          `Epoch ${position.epoch} of ${output.id} is behind ${error.currentEpoch}`,
+          `Epoch ${position.producerEpoch} of ${output.id} is behind ${error.currentEpoch}`,
         ),
       ProducerGap: (error) =>
         pin(
@@ -39,7 +39,10 @@ const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
           `Sequence ${error.receivedSeq} of ${output.id} does not follow ${error.expectedSeq}`,
         ),
       InvalidEpochSeq: () =>
-        pin("invalid-record", `Epoch ${position.epoch} of ${output.id} must start at seq 0`),
+        pin(
+          "invalid-record",
+          `Epoch ${position.producerEpoch} of ${output.id} must start at seq 0`,
+        ),
       NotSupported: (error) =>
         pin("unsupported-composition", `${output.id} does not support ${error.feature}`),
       StorageFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
@@ -92,8 +95,8 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     });
   const position = (seq: number): Producer.Position => ({
     producerId: producerId(projection.id, projection.params),
-    epoch: stream.epoch,
-    seq,
+    producerEpoch: stream.epoch,
+    producerSeq: seq,
   });
   const settled = (inputs: Record<string, string>, nextSeq: number): CheckpointRecord => ({
     identity,

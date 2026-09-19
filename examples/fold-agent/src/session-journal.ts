@@ -133,8 +133,8 @@ export const settle = Effect.fn("Fold.settlePending")(function* (
 ) {
   return yield* Producer.append(refs.log, [pending.entry], {
     producerId: refs.producerId,
-    epoch: pending.epoch,
-    seq: pending.producerSeq,
+    producerEpoch: pending.epoch,
+    producerSeq: pending.producerSeq,
   }).pipe(
     Effect.retry({ times: 4, while: (error) => error._tag === "StorageFault" && error.retryable }),
     Effect.catchTags({

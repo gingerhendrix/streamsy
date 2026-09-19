@@ -82,18 +82,17 @@ On Bun SQLite, share one storage Layer between the protocol and the projection:
 
 ```ts
 import { Layer } from "effect";
-import { Protocol } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 
-const host = Layer.merge(Protocol.layer(), ProjectionSqlite.layer).pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: "streams.sqlite" } })),
+const host = ProjectionSqlite.layer.pipe(
+  Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: "streams.sqlite" } })),
 );
 const program = run.pipe(Effect.provide(host));
 ```
 
-Inside a Durable Object, swap `BunStorage.layer(...)` for
-`DurableObjectStorage.layer({ client: { storage: ctx.storage } })` from
+Inside a Durable Object, swap `BunStorage.layerProtocol(...)` for
+`DurableObjectStorage.layerProtocol({ client: { storage: ctx.storage } })` from
 `@streamsy/storage/durable-object`, and keep one runtime for the object's
 lifetime.
 

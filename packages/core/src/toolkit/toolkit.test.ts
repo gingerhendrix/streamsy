@@ -183,13 +183,17 @@ it("Producer replay keeps one item and next advances only its inert tuple", () =
   check(
     Effect.gen(function* () {
       yield* Streams.create(ref);
-      const position = { producerId: "p", epoch: 0, seq: 0 };
+      const position = { producerId: "p", producerEpoch: 0, producerSeq: 0 };
       expect((yield* Producer.append(ref, [{ n: 1 }], position))._tag).toBe("Appended");
       expect(
         (yield* Producer.append(ref, [{ n: 1 }], position, { expectedOffset: "bad" }))._tag,
       ).toBe("Duplicate");
-      expect(Producer.next(position)).toEqual({ producerId: "p", epoch: 0, seq: 1 });
-      expect(position.seq).toBe(0);
+      expect(Producer.next(position)).toEqual({
+        producerId: "p",
+        producerEpoch: 0,
+        producerSeq: 1,
+      });
+      expect(position.producerSeq).toBe(0);
       expect(yield* Streams.read(ref).pipe(Streams.items, Stream.runCollect)).toEqual([{ n: 1 }]);
     }),
   ));

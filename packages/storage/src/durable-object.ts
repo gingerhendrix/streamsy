@@ -1,8 +1,6 @@
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { Layer } from "effect";
 import { Protocol } from "@streamsy/core";
-import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
-import type { CommitBoundary } from "./boundary.ts";
 import { sharedSqlClientLayer } from "./boundary.ts";
 import { layerWithDurableObjectTransactions, type SqlStorageOptions } from "./storage.ts";
 
@@ -25,9 +23,7 @@ export const layer = (options: DurableObjectStorageOptions) => {
 };
 
 /** Protocol over the official Durable Object SQLite layer. */
-export const layerProtocol = (
-  options: DurableObjectProtocolOptions,
-): Layer.Layer<StreamsReader | StreamsWriter | Storage | CommitBoundary, StorageFault> =>
+export const layerProtocol = (options: DurableObjectProtocolOptions) =>
   Protocol.layer({
     ...options,
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,

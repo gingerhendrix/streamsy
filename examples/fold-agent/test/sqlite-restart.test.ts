@@ -160,8 +160,8 @@ describe("Fold retained-file process recovery", () => {
           await Effect.runPromise(
             Producer.append(refs.log, [acknowledged.entry], {
               producerId: refs.producerId,
-              epoch: acknowledged.epoch,
-              seq: acknowledged.producerSeq,
+              producerEpoch: acknowledged.epoch,
+              producerSeq: acknowledged.producerSeq,
             }).pipe(Effect.provide(store.context)),
           ),
         ).toMatchObject({ _tag: "Duplicate" });

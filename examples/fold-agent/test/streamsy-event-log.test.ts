@@ -469,8 +469,8 @@ describe("Fold journal fault recovery and ownership", () => {
         expect(failure.message).toContain("Fenced: stale-epoch");
         const result = yield* Producer.append(refs.log, [pending.entry], {
           producerId: refs.producerId,
-          epoch: 0,
-          seq: 1,
+          producerEpoch: 0,
+          producerSeq: 1,
         }).pipe(Effect.flip, Effect.provide(store.context));
         expect(result._tag).toBe("StaleEpoch");
         const journal = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));

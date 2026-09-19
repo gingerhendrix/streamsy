@@ -26,7 +26,7 @@ A JSON ref stores one message per item. A bytes ref joins the items into one sto
 
 ## Idempotent retries and producer fencing
 
-A producer position is `{ producerId, epoch, seq }`. `Producer.append` sends it with the write, and `Producer.next` advances it.
+A producer position is `{ producerId, producerEpoch, producerSeq }`. `Producer.append` sends it with the write, and `Producer.next` advances it.
 
 ```ts
 import { Effect } from "effect";

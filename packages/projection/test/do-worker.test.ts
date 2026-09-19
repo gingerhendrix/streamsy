@@ -1,6 +1,5 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Layer, ManagedRuntime } from "effect";
-import { Protocol } from "@streamsy/core";
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
 import * as Sqlite from "../src/sqlite.ts";
 import { composition } from "./scenarios.ts";
@@ -21,8 +20,13 @@ export class ProjectionObject {
     this.#ctx = ctx;
   }
   async fetch(): Promise<Response> {
-    const host = Layer.merge(Protocol.layer({ readLimit: 1 }), Sqlite.layer).pipe(
-      Layer.provideMerge(DurableObjectStorage.layer({ client: { storage: this.#ctx.storage } })),
+    const host = Sqlite.layer.pipe(
+      Layer.provideMerge(
+        DurableObjectStorage.layerProtocol({
+          client: { storage: this.#ctx.storage },
+          readLimit: 1,
+        }),
+      ),
     );
     const runtime = ManagedRuntime.make(host);
     try {

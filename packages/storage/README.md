@@ -17,9 +17,10 @@ bun add @streamsy/storage @streamsy/core effect
 | `@streamsy/storage`                | Any SQLite-family `SqlClient` (SQLite 3.42 or newer) you provide    |
 
 The Bun and Durable Object entries export `layer` and `layerProtocol`.
-`layerProtocol` gives you the reader and writer services with the SQL
-connection kept private. `layer` also exposes the `SqlClient` so your own SQL
-can share the connection and commit with a stream mutation. The root entry
+`layerProtocol` exposes `StreamsReader`, `StreamsWriter`, `Storage`,
+`CommitBoundary`, `SqlClient`, and SQL reactivity on both hosts. Your own SQL
+can share the connection and commit with a stream mutation. `layer` exposes
+the same storage services without the protocol reader and writer. The root entry
 exports `layer` over a `SqlClient` you supply, plus `CommitBoundary`.
 
 ## Serve a SQLite-backed host on Bun
@@ -45,6 +46,21 @@ in one transaction. Nested calls join the outer boundary. A rejected mutation
 fails with `MutationRejected` and rolls the transaction back; catch it outside
 the boundary. The [storage guide](https://streamsy.dev/docs/runtime/storage)
 shows the complete pattern.
+
+For a projection on that same connection:
+
+```ts
+import { Layer } from "effect";
+import * as BunStorage from "@streamsy/storage/bun";
+import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+
+const host = ProjectionSqlite.layer.pipe(
+  Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: "./streamsy.sqlite" } })),
+);
+```
+
+In a Durable Object, use `DurableObjectStorage.layerProtocol` with
+`client: { storage: ctx.storage }` in the same composition.
 
 ## Good to know
 
