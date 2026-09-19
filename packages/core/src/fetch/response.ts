@@ -42,7 +42,7 @@ export interface DecodeContext {
   /** Resolved by the fetch Layer for bodyless reads lacking Content-Type. */
   readonly contentType?: string;
   readonly expectedOffset?: string;
-  /** The request carried producer headers: 200 acknowledges a write, 204 a duplicate. */
+  /** The request carried a producer tuple; 204 with state decodes as Duplicate. */
   readonly producer?: boolean;
 }
 
