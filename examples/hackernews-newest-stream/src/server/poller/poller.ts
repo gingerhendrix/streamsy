@@ -1,7 +1,6 @@
-import { Deferred, Effect, Fiber, Layer, Option, Ref, Schedule } from "effect";
+import { Deferred, Effect, Layer, Option, Ref, Schedule } from "effect";
 import type { HnStory } from "../../state-schema.ts";
 import { liveHackerNewsApi } from "../hnews.ts";
-import { StoryProjection } from "../projection.ts";
 import { nowIso } from "../util.ts";
 import {
   initialCounters,
@@ -9,9 +8,7 @@ import {
   type NewestStoriesPollerService,
   type PollCounters,
   type PollerConfig,
-  type PollerSink,
   type PollStats,
-  type ProjectionServices,
 } from "./contract.ts";
 import { reconcileNewest } from "./reconcile.ts";
 
@@ -28,8 +25,6 @@ export function makeNewestStoriesPoller(
     const storiesRef = yield* Ref.make<ReadonlyMap<number, HnStory>>(new Map());
     const countersRef = yield* Ref.make(initialCounters);
     const activeRef = yield* Ref.make(Option.none<Deferred.Deferred<void>>());
-    const stoppedRef = yield* Ref.make(false);
-    const loopFiberRef = yield* Ref.make(Option.none<Fiber.Fiber<number>>());
 
     const patchCounters = (patch: Partial<PollCounters>) =>
       Ref.update(countersRef, (counters) => ({ ...counters, ...patch }));
@@ -77,7 +72,6 @@ export function makeNewestStoriesPoller(
           }));
         }
 
-        yield* config.sink.catchUpProjection;
         yield* patchCounters({
           lastChangedStories: outcome.changed.length,
           lastRemovedStories: outcome.removed.length,
@@ -97,8 +91,7 @@ export function makeNewestStoriesPoller(
       );
     });
 
-    const pollNow: Effect.Effect<void, never, ProjectionServices> = Effect.gen(function* () {
-      if (yield* Ref.get(stoppedRef)) return;
+    const pollNow: Effect.Effect<void> = Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
       const claim = yield* Ref.modify(
         activeRef,
@@ -123,60 +116,36 @@ export function makeNewestStoriesPoller(
       );
     }).pipe(Effect.withSpan("NewestStoriesPoller.pollNow"));
 
-    const loop = pollNow.pipe(Effect.repeat(Schedule.spaced(config.intervalMs)));
-
-    const start: Effect.Effect<void, never, ProjectionServices> = Effect.gen(function* () {
-      const stopped = yield* Ref.get(stoppedRef);
-      const existing = yield* Ref.get(loopFiberRef);
-      if (stopped || Option.isSome(existing)) return;
-      const fiber = yield* Effect.forkDetach(loop, { startImmediately: true });
-      yield* Ref.set(loopFiberRef, Option.some(fiber));
-    }).pipe(Effect.withSpan("NewestStoriesPoller.start"));
-
-    const stop = Effect.gen(function* () {
-      yield* Ref.set(stoppedRef, true);
-      const fiber = yield* Ref.get(loopFiberRef);
-      yield* Ref.set(loopFiberRef, Option.none());
-      if (Option.isSome(fiber)) yield* Fiber.interrupt(fiber.value);
-      const active = yield* Ref.get(activeRef);
-      if (Option.isSome(active)) yield* Deferred.await(active.value);
-    }).pipe(Effect.withSpan("NewestStoriesPoller.stop"));
-
     const stats = Effect.gen(function* () {
-      const [counters, stories, active, stopped] = yield* Effect.all([
+      const [counters, stories, active] = yield* Effect.all([
         Ref.get(countersRef),
         Ref.get(storiesRef),
         Ref.get(activeRef),
-        Ref.get(stoppedRef),
       ]);
       const result: PollStats = {
         polling: Option.isSome(active),
-        stopped,
+        stopped: false,
         lastStoryCount: stories.size,
         ...counters,
       };
       return result;
     });
 
-    return NewestStoriesPoller.of({ pollNow, start, stop, stats });
+    return NewestStoriesPoller.of({ pollNow, stats });
   });
 }
 
-export type NewestStoriesPollerLayerConfig = Omit<PollerConfig, "sink"> & {
-  readonly sink: Omit<PollerSink, "catchUpProjection">;
-};
+export type NewestStoriesPollerLayerConfig = PollerConfig;
 
 export const newestStoriesPollerLayer = (config: NewestStoriesPollerLayerConfig) =>
   Layer.effect(
     NewestStoriesPoller,
     Effect.gen(function* () {
-      const projection = yield* StoryProjection;
-      return yield* makeNewestStoriesPoller({
-        ...config,
-        sink: {
-          ...config.sink,
-          catchUpProjection: projection.catchUp,
-        },
-      });
+      const poller = yield* makeNewestStoriesPoller(config);
+      yield* poller.pollNow.pipe(
+        Effect.repeat(Schedule.spaced(config.intervalMs)),
+        Effect.forkScoped,
+      );
+      return poller;
     }),
   );

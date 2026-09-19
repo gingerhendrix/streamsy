@@ -1,83 +1,69 @@
-import { Projection, type Host, type Progress } from "@streamsy/projection";
-import { Cause, Context, Effect, Layer, Ref } from "effect";
+import { Checkpoints, Projection, type Host } from "@streamsy/projection";
+import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
-import { errorMessage, nowIso } from "./util.ts";
+import { errorMessage } from "./util.ts";
 
 /** One bounded run: checkpoint transactions per call. */
 export type ProjectionLimits = {
   readonly limit: number;
 };
 
-/** The last run's status and the source offset the checkpoint accepted. */
-export type ProjectionOutcome = {
-  readonly status: Progress["status"];
-  readonly progress: { readonly sourceThrough: string };
-};
-
 export type ProjectionStatus = {
   readonly running: boolean;
-  readonly lastAttemptStartedAt?: string;
-  readonly lastAttemptCompletedAt?: string;
+  readonly sourceThrough?: string;
   readonly lastError?: string;
-  readonly lastOutcome?: ProjectionOutcome;
 };
 
 export type ProjectionServices = Host;
 
 export interface StoryProjectionService {
-  readonly catchUp: Effect.Effect<void, never, ProjectionServices>;
-  readonly status: Effect.Effect<ProjectionStatus>;
+  readonly status: Effect.Effect<ProjectionStatus, import("@streamsy/projection").ProjectionFault>;
 }
 
 export class StoryProjection extends Context.Service<StoryProjection, StoryProjectionService>()(
   "HackerNews/StoryProjection",
 ) {}
 
-const initialStatus: ProjectionStatus = { running: false };
-
-const outcomeOf = (progress: Progress): ProjectionOutcome => ({
-  status: progress.status,
-  progress: { sourceThrough: progress.record.inputs.input },
-});
-
 export function makeStoryProjection(
   limits: ProjectionLimits,
-): Effect.Effect<StoryProjectionService> {
+): Effect.Effect<
+  StoryProjectionService,
+  import("@streamsy/projection").ProjectionFault,
+  Host | Scope.Scope
+> {
   return Effect.gen(function* () {
-    const statusRef = yield* Ref.make(initialStatus);
-    const patchStatus = (patch: Partial<ProjectionStatus>) =>
-      Ref.update(statusRef, (status) => ({ ...status, ...patch }));
-
-    const catchUp = Effect.fn("StoryProjection.catchUp")(function* () {
-      yield* patchStatus({
-        running: true,
-        lastAttemptStartedAt: yield* nowIso,
-        lastError: undefined,
-      });
-
-      yield* Projection.run(hackerNewsStoryIndex, limits).pipe(
-        Effect.tap((progress) => patchStatus({ lastOutcome: outcomeOf(progress) })),
-        Effect.catchCauseIf(
-          (cause) => !Cause.hasInterrupts(cause),
-          (cause) =>
-            patchStatus({
-              lastError: errorMessage(Cause.squash(cause)),
-            }),
-        ),
-        Effect.ensuring(
-          Effect.gen(function* () {
-            yield* patchStatus({
-              running: false,
-              lastAttemptCompletedAt: yield* nowIso,
-            });
-          }),
-        ),
-      );
+    const owner = yield* Checkpoints;
+    const running = yield* Ref.make(true);
+    const lastError = yield* Ref.make<string | undefined>(undefined);
+    const follower = yield* Projection.follow(hackerNewsStoryIndex, {
+      ...limits,
+      repairIntervalMs: 1000,
     });
+    yield* Fiber.await(follower).pipe(
+      Effect.tap((exit) =>
+        Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+          ? Ref.set(lastError, errorMessage(Cause.squash(exit.cause)))
+          : Effect.void,
+      ),
+      Effect.ensuring(Ref.set(running, false)),
+      Effect.forkScoped,
+    );
 
     return StoryProjection.of({
-      catchUp: catchUp().pipe(Effect.orDie),
-      status: Ref.get(statusRef),
+      status: Effect.gen(function* () {
+        const [isRunning, error, loaded] = yield* Effect.all([
+          Ref.get(running),
+          Ref.get(lastError),
+          owner.load(Projection.key(hackerNewsStoryIndex)),
+        ]);
+        const sourceThrough = Option.map(loaded.record, (record) => record.inputs.input);
+        if (Option.isSome(sourceThrough) && error !== undefined)
+          return { running: isRunning, sourceThrough: sourceThrough.value, lastError: error };
+        if (Option.isSome(sourceThrough))
+          return { running: isRunning, sourceThrough: sourceThrough.value };
+        if (error !== undefined) return { running: isRunning, lastError: error };
+        return { running: isRunning };
+      }),
     });
   });
 }
