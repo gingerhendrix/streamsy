@@ -13,9 +13,7 @@ describe("NewestStoriesPoller", () => {
   test("an unchanged second poll appends no source or projection output", async () => {
     const h = await demoHarness();
     const runtime = h.runtime;
-    const projection = await runtime.runPromise(
-      makeStoryProjection({ units: 10, items: 10, bytes: 100_000 }),
-    );
+    const projection = await runtime.runPromise(makeStoryProjection({ limit: 10 }));
     const stories = new Map<number, HnStory>([
       [101, story(101, 1_700_000_030, "First")],
       [102, story(102, 1_700_000_020, "Second")],

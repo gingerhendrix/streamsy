@@ -33,12 +33,16 @@ function provideTest<R>(layer: Layer.Layer<R>) {
 function check<E>(
   program: Effect.Effect<void, E, StreamsReader | StreamsWriter | StreamsTest>,
   constrained = false,
+  readLimit = 1000,
 ) {
   return expect(
     Effect.runPromiseExit(
       program.pipe(
         provideTest(
-          Layer.mergeAll(layerTest({ constrained, longPollTimeoutMs: 100 }), TestClock.layer()),
+          Layer.mergeAll(
+            layerTest({ constrained, longPollTimeoutMs: 100, readLimit }),
+            TestClock.layer(),
+          ),
         ),
       ),
     ),
@@ -319,7 +323,7 @@ for (const constrained of [false, true]) {
           initialData: new TextEncoder().encode("[1,2,3]"),
           closed: true,
         });
-        const first = yield* reader.read(id, { offset: "-1", limit: 1 });
+        const first = yield* reader.read(id, { offset: "-1" });
         expect(first).toMatchObject({
           nextOffset: next(ZERO_OFFSET),
           upToDate: false,
@@ -337,6 +341,7 @@ for (const constrained of [false, true]) {
         );
       }),
       constrained,
+      1,
     ));
 
   for (const change of ["append", "close", "remove"] as const) {
@@ -780,7 +785,7 @@ it("catch-up preserves lexical filtering of noncanonical offsets", () =>
       expect(yield* reader.read(id, { offset: "zz" })).toMatchObject({
         messages: [],
       });
-      const result = yield* reader.read(id, { offset: "0", limit: 1 });
+      const result = yield* reader.read(id, { offset: "0" });
       expect(result).toMatchObject({ nextOffset: next(ZERO_OFFSET) });
       expect(result.messages.length).toBe(1);
     }),

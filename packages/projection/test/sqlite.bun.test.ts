@@ -19,8 +19,8 @@ import * as Sqlite from "../src/sqlite.ts";
 import { Checkpoints, Projection, ProjectionFault } from "../src/index.ts";
 import { composition, initialize, input, inspect, positives } from "./scenarios.ts";
 
-const host = (filename: string) =>
-  Layer.merge(Protocol.layer(), Sqlite.layer).pipe(
+const host = (filename: string, readLimit = 1000) =>
+  Layer.merge(Protocol.layer({ readLimit }), Sqlite.layer).pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } })),
   );
 
@@ -29,7 +29,7 @@ const scratch = Effect.runSync(
 );
 
 test("Bun SQLite fuses the handler's append and the checkpoint, including rollback at save", async () => {
-  const runtime = ManagedRuntime.make(host(":memory:"));
+  const runtime = ManagedRuntime.make(host(":memory:", 1));
   try {
     const result = await runtime.runPromise(composition);
     expect(result.first.status).toBe("limit-reached");
@@ -40,7 +40,7 @@ test("Bun SQLite fuses the handler's append and the checkpoint, including rollba
     expect(result.final.items).toBe(2);
     expect(result.restart.items).toBe(0);
     expect(result.stored.output).toEqual([1, 3]);
-    expect(result.stored.loaded.token).toBe("2");
+    expect(result.stored.loaded.token).toBe("3");
     expect(Option.map(result.stored.loaded.record, (record) => record.inputs)).toEqual(
       Option.some(result.final.record.inputs),
     );
@@ -142,10 +142,10 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
 
 test("a new Bun process reopens the file and resumes without repeated output", async () => {
   const filename = join(mkdtempSync(join(scratch, "projection-reopen-")), "projection.sqlite");
-  const first = ManagedRuntime.make(host(filename));
+  const first = ManagedRuntime.make(host(filename, 1));
   try {
     await first.runPromise(initialize);
-    await first.runPromise(Projection.run(positives, { items: 1 }));
+    await first.runPromise(Projection.run(positives, { limit: 1 }));
   } finally {
     await first.dispose();
   }
@@ -196,4 +196,25 @@ test("a new Bun process reopens the file and resumes without repeated output", a
   expect(result.output).toEqual([1, 3]);
   expect(result.token).toBe("2");
   expect(result.accepted).toBe(result.tail);
+});
+
+test("a checkpoint SQL failure retains its underlying cause", async () => {
+  const runtime = ManagedRuntime.make(host(":memory:"));
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql.unsafe("DROP TABLE streamsy_projection_v1_records");
+        const result = yield* (yield* Checkpoints).load(positives).pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure.phase).toBe("load");
+          expect(result.failure.reason).toBe("storage-failure");
+          expect(result.failure.cause).toMatchObject({ _tag: "SqlError" });
+        }
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
 });

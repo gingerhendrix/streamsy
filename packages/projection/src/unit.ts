@@ -50,7 +50,7 @@ export const canonicalRanges = (ranges: Record<string, Range>): string =>
     ),
   );
 
-/** The key is stable across retries because it comes from the pinned ranges. */
+/** The key is stable across stream-form retries; fused retries may read a longer tail. */
 export const unitOf = (
   projectionId: string,
   generation: number,

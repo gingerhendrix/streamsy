@@ -21,7 +21,7 @@ export class ProjectionObject {
     this.#ctx = ctx;
   }
   async fetch(): Promise<Response> {
-    const host = Layer.merge(Protocol.layer(), Sqlite.layer).pipe(
+    const host = Layer.merge(Protocol.layer({ readLimit: 1 }), Sqlite.layer).pipe(
       Layer.provideMerge(DurableObjectStorage.layer({ client: { storage: this.#ctx.storage } })),
     );
     const runtime = ManagedRuntime.make(host);

@@ -9,7 +9,8 @@ import {
   type StreamsFault,
 } from "@streamsy/core";
 import { MemoryCommitBoundary } from "@streamsy/core/storage";
-import { Checkpoints, Projection, ProjectionFault, recordKey } from "../src/index.ts";
+import { Checkpoints, Projection, ProjectionFault } from "../src/index.ts";
+import { recordKey } from "../src/checkpoint.ts";
 import { layerMemory } from "../src/memory.ts";
 import { minimal } from "../src/examples/minimal.ts";
 import {
@@ -23,8 +24,8 @@ import {
   type Services,
 } from "./scenarios.ts";
 
-const run = <A, E>(body: Effect.Effect<A, E, Services | MemoryCommitBoundary>) =>
-  Effect.runPromise(body.pipe(Effect.provide(layerMemory())));
+const run = <A, E>(body: Effect.Effect<A, E, Services | MemoryCommitBoundary>, readLimit = 1000) =>
+  Effect.runPromise(body.pipe(Effect.provide(layerMemory({ readLimit }))));
 const failure = <A, E>(body: Effect.Effect<A, E, Services | MemoryCommitBoundary>) =>
   Effect.gen(function* () {
     const result = yield* body.pipe(Effect.result);
@@ -61,8 +62,9 @@ test("fresh ordered run, fused rollback and restart without repeated output", ()
       expect(result.restart.items).toBe(0);
       expect(result.restart.status).toBe("caught-up");
       expect(result.stored.output).toEqual([1, 3]);
-      expect(result.stored.loaded.token).toBe("2");
+      expect(result.stored.loaded.token).toBe("3");
     }),
+    1,
   ));
 
 test("a non-empty pass is progress even when its read is up to date", () =>
@@ -92,7 +94,6 @@ test("run reaches caught-up through a trailing empty pass without losing totals"
       expect(result.status).toBe("caught-up");
       expect(result.units).toBe(1);
       expect(result.items).toBe(3);
-      expect(result.bytes).toBe(4);
       expect(reads).toBe(2);
       expect((yield* inspect).loaded.token).toBe("1");
     }),
@@ -102,8 +103,8 @@ test("zero-output unit advances the checkpoint without output progress", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
-      const first = yield* Projection.pass(positives, { items: 1 });
-      const second = yield* Projection.pass(positives, { items: 1 });
+      const first = yield* Projection.pass(positives);
+      const second = yield* Projection.pass(positives);
       expect(second.items).toBe(1);
       expect(second.record.inputs.input).not.toBe(first.record.inputs.input);
       const stored = yield* inspect;
@@ -111,6 +112,7 @@ test("zero-output unit advances the checkpoint without output progress", () =>
       expect(stored.loaded.token).toBe("2");
       expect(Option.getOrThrow(stored.loaded.record).inputs).toEqual(second.record.inputs);
     }),
+    1,
   ));
 
 test("first commit failure leaves no output and no record", () =>
@@ -130,39 +132,20 @@ test("first commit failure leaves no output and no record", () =>
     }),
   ));
 
-test("byte budget refuses an oversized slice whole and later resumes", () =>
+test("limit counts checkpoint transactions", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
-      const limited = yield* Projection.run(positives, { bytes: 1 });
+      const limited = yield* Projection.run(positives, { limit: 2 });
       expect(limited.status).toBe("limit-reached");
-      expect(limited.items).toBe(0);
-      expect(limited.units).toBe(0);
-      expect(limited.record.inputs.input).toBe(ZERO_OFFSET);
-      expect(Option.isNone((yield* inspect).loaded.record)).toBe(true);
-      const resumed = yield* Projection.run(positives, { bytes: 100 });
-      expect(resumed.items).toBe(3);
-      expect(resumed.bytes).toBe(4);
-      expect(resumed.status).toBe("caught-up");
+      expect(limited.units).toBe(2);
+      expect(limited.items).toBe(2);
+      const rest = yield* Projection.run(positives);
+      expect(rest.units).toBe(1);
+      expect(rest.items).toBe(1);
+      expect(rest.status).toBe("caught-up");
     }),
-  ));
-
-test("unit budget counts units", () =>
-  run(
-    withRead(
-      Effect.gen(function* () {
-        yield* initialize;
-        const limited = yield* Projection.run(positives, { units: 2 });
-        expect(limited.status).toBe("limit-reached");
-        expect(limited.units).toBe(2);
-        expect(limited.items).toBe(2);
-        const rest = yield* Projection.run(positives);
-        expect(rest.units).toBe(1);
-        expect(rest.items).toBe(1);
-        expect(rest.status).toBe("caught-up");
-      }),
-      (reader) => (id, options) => reader.read(id, { ...options, limit: 1 }),
-    ),
+    1,
   ));
 
 test("identity mismatch on inputs stops without reset", () =>
@@ -190,7 +173,7 @@ test("closed input drains before source-closed", () =>
     Effect.gen(function* () {
       yield* initialize;
       yield* Streams.append(input, [], { close: true });
-      const partial = yield* Projection.run(positives, { items: 2 });
+      const partial = yield* Projection.run(positives, { limit: 2 });
       expect(partial.status).toBe("limit-reached");
       expect(partial.items).toBe(2);
       const result = yield* Projection.run(positives);
@@ -199,13 +182,14 @@ test("closed input drains before source-closed", () =>
       expect((yield* inspect).output).toEqual([1, 3]);
       expect((yield* Projection.run(positives)).status).toBe("source-closed");
     }),
+    1,
   ));
 
 test("missing history preserves the accepted record", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
-      yield* Projection.pass(positives, { items: 1 });
+      yield* Projection.pass(positives);
       const before = yield* inspect;
       yield* Streams.remove(input);
       const failed = fault(yield* failure(Projection.run(positives)));
@@ -235,22 +219,22 @@ test("invalid stored record stops", () =>
     }),
   ));
 
-test("invalid budget fails before reading", () =>
+test("invalid options fails before reading", () =>
   run(
     Effect.gen(function* () {
       let reads = 0;
       yield* initialize;
-      for (const budget of [{ items: 0 }, { bytes: -1 }, { units: Infinity }, { units: 1.5 }]) {
+      for (const options of [{ limit: 0 }, { limit: -1 }, { limit: Infinity }, { limit: 1.5 }]) {
         const failed = fault(
           yield* failure(
-            withRead(Projection.run(positives, budget), (reader) => (id, options) => {
+            withRead(Projection.run(positives, options), (reader) => (id, readOptions) => {
               reads += 1;
-              return reader.read(id, options);
+              return reader.read(id, readOptions);
             }),
           ),
         );
         expect(failed.phase).toBe("load");
-        expect(failed.reason).toBe("invalid-budget");
+        expect(failed.reason).toBe("invalid-options");
       }
       expect(reads).toBe(0);
       expect(Option.isNone((yield* inspect).loaded.record)).toBe(true);
@@ -406,4 +390,33 @@ test("handler failure rolls back the output append and the checkpoint", () =>
       expect(stored.output).toEqual([]);
       expect(Option.isNone(stored.loaded.record)).toBe(true);
     }),
+  ));
+
+test("version one keeps existing record keys and version two starts a fresh key", () => {
+  const definition = { id: "versioned", input, process: () => Effect.void };
+  const original = Projection.make(definition);
+  const one = Projection.make({ ...definition, version: 1 });
+  const two = Projection.make({ ...definition, version: 2 });
+  expect(recordKey(Projection.key(original))).toBe(
+    '["streamsy.projection.v1","versioned","1","{}"]',
+  );
+  expect(recordKey(Projection.key(one))).toBe(recordKey(Projection.key(original)));
+  expect(recordKey(Projection.key(two))).not.toBe(recordKey(Projection.key(original)));
+});
+
+test("run without a limit drains more than one hundred server pages", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(
+        input,
+        Array.from({ length: 101 }, (_, n) => n),
+      );
+      const projection = Projection.make({ id: "uncapped", input, process: () => Effect.void });
+      const result = yield* Projection.run(projection);
+      expect(result.status).toBe("caught-up");
+      expect(result.units).toBe(101);
+      expect(result.items).toBe(101);
+    }),
+    1,
   ));

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { StreamRef, Streams, StreamsReader, ZERO_OFFSET } from "@streamsy/core";
+import { StreamRef, Streams, ZERO_OFFSET } from "@streamsy/core";
 import { Checkpoints, Projection, ProjectionFault, type Entry, type Unit } from "../src/index.ts";
 import { layerMemory } from "../src/memory.ts";
 import { positives, initialize, type Services } from "./scenarios.ts";
@@ -9,8 +9,8 @@ const a = StreamRef.json("multi-a", { schema: Schema.Finite });
 const b = StreamRef.json("multi-b", { schema: Schema.String });
 type Inputs = { readonly a: typeof a; readonly b: typeof b };
 
-const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
-  Effect.runPromise(body.pipe(Effect.provide(layerMemory())));
+const run = <A, E>(body: Effect.Effect<A, E, Services>, readLimit = 1000) =>
+  Effect.runPromise(body.pipe(Effect.provide(layerMemory({ readLimit }))));
 const setup = Effect.gen(function* () {
   yield* Streams.create(a);
   yield* Streams.create(b);
@@ -51,24 +51,22 @@ test("two inputs interleave in declaration order", () =>
     }),
   ));
 
-test("budget carry-forward drains the first input first", () =>
+test("each input contributes one server page per pass", () =>
   run(
     Effect.gen(function* () {
       yield* setup;
       const { projection, seen } = recorder({ a, b });
-      const first = yield* Projection.pass(projection, { items: 2 });
-      expect(first.items).toBe(2);
-      expect(first.status).toBe("progress");
-      expect(tags(seen)).toEqual(["a:1#0", "a:2#1"]);
-      expect(first.record.inputs.b).toBe(ZERO_OFFSET);
-      expect(seen[0]?.unit.ranges.b).toBeUndefined();
-      const second = yield* Projection.pass(projection, { items: 2 });
-      expect(second.items).toBe(2);
-      expect(second.status).toBe("progress");
+      const first = yield* Projection.pass(projection);
+      expect(first.items).toBe(3);
+      expect(tags(seen)).toEqual(["a:1#0", "a:2#1", "b:x#2"]);
+      expect(first.record.inputs.b).not.toBe(ZERO_OFFSET);
+      expect(Object.keys(seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
+      const second = yield* Projection.pass(projection);
+      expect(second.items).toBe(1);
+      expect(tags(seen).slice(3)).toEqual(["a:3#0"]);
       expect((yield* Projection.pass(projection)).status).toBe("caught-up");
-      expect(tags(seen).slice(2)).toEqual(["a:3#0", "b:x#1"]);
-      expect(Object.keys(seen[2]?.unit.ranges ?? {})).toEqual(["a", "b"]);
     }),
+    2,
   ));
 
 test("one closed input stays in the batch while the other continues", () =>
@@ -100,55 +98,6 @@ test("one closed input stays in the batch while the other continues", () =>
       yield* Streams.append(b, [], { close: true });
       expect((yield* Projection.run(projection)).status).toBe("source-closed");
       expect(batches).toHaveLength(2);
-    }),
-  ));
-
-test("an oversized first input refuses the pass before the later input is read", () =>
-  run(
-    Effect.gen(function* () {
-      yield* Streams.create(a);
-      yield* Streams.create(b);
-      yield* Streams.append(a, [1000000]);
-      yield* Streams.append(b, ["x"]);
-      const { projection, seen } = recorder({ a, b });
-      const reads: Array<string> = [];
-      const counted = <A, E, R>(body: Effect.Effect<A, E, R | StreamsReader>) =>
-        Effect.gen(function* () {
-          const reader = yield* StreamsReader;
-          return yield* body.pipe(
-            Effect.provideService(
-              StreamsReader,
-              StreamsReader.of({
-                ...reader,
-                read: (id, options) =>
-                  Effect.suspend(() => {
-                    reads.push(id);
-                    return reader.read(id, options);
-                  }),
-              }),
-            ),
-          );
-        });
-      // `a` holds 7 payload bytes and `b` holds 3; a 3-byte budget refuses `a` first.
-      const refused = yield* counted(Projection.pass(projection, { bytes: 3 }));
-      expect(refused.status).toBe("limit-reached");
-      expect(refused.units).toBe(0);
-      expect(reads).toEqual([a.id]);
-      expect(seen).toHaveLength(0);
-      expect(refused.record.inputs).toEqual({ a: ZERO_OFFSET, b: ZERO_OFFSET });
-      expect(
-        Option.isNone((yield* (yield* Checkpoints).load(Projection.key(projection))).record),
-      ).toBe(true);
-      // Once `a` fits, an oversized `b` is skipped and `a` commits on its own.
-      const partial = yield* counted(Projection.pass(projection, { bytes: 8 }));
-      expect(partial.status).toBe("progress");
-      expect(partial.items).toBe(1);
-      expect(reads).toEqual([a.id, a.id, b.id]);
-      expect(partial.record.inputs.b).toBe(ZERO_OFFSET);
-      expect(tags(seen)).toEqual(["a:1000000#0"]);
-      const rest = yield* Projection.pass(projection, { bytes: 8 });
-      expect(rest.items).toBe(1);
-      expect(tags(seen)).toEqual(["a:1000000#0", "b:x#0"]);
     }),
   ));
 

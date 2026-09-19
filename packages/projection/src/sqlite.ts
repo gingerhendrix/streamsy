@@ -6,8 +6,8 @@ import { ProjectionFault } from "./fault.ts";
 
 const TABLE = "streamsy_projection_v1_records";
 
-const storageFailure = (phase: ProjectionFault["phase"], message: string) => () =>
-  new ProjectionFault({ phase, reason: "storage-failure", message });
+const storageFailure = (phase: ProjectionFault["phase"], message: string) => (cause: unknown) =>
+  new ProjectionFault({ phase, reason: "storage-failure", message, cause });
 
 /**
  * Checkpoints over the host's `CommitBoundary` and shared `SqlClient`. The

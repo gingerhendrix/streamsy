@@ -220,3 +220,27 @@ it("HTTP catch-up omits up-to-date until the server page reaches the tail", asyn
     await edge.dispose();
   }
 });
+
+it("the default catch-up page holds 1000 messages", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const writer = yield* StreamsWriter;
+      const reader = yield* StreamsReader;
+      const id = StreamId.make("default-page");
+      yield* writer.create(id, {
+        contentType: "application/json",
+        initialData: new TextEncoder().encode(
+          JSON.stringify(Array.from({ length: 1001 }, (_, n) => n)),
+        ),
+      });
+      const first = yield* reader.read(id);
+      expect(first.messages).toHaveLength(1000);
+      expect(first.upToDate).toBe(false);
+      const last = yield* reader.read(id, { offset: first.nextOffset });
+      expect(last.messages).toHaveLength(1);
+      expect(last.upToDate).toBe(true);
+    }).pipe(
+      // oxlint-disable-next-line effecttsgo/strict-effect-provide -- This test owns the memory runtime.
+      Effect.provide(Streams.layerMemory()),
+    ),
+  ));

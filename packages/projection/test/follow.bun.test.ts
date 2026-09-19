@@ -80,43 +80,6 @@ test("follow cancellation releases parked waits", () =>
     }),
   ));
 
-test("follow paces an oversized unit", () =>
-  run(
-    Effect.gen(function* () {
-      yield* Streams.create(input);
-      yield* Streams.create(output);
-      yield* Streams.append(input, [], { close: true });
-      const read = yield* Deferred.make<void>();
-      let reads = 0;
-      const fiber = yield* withReader(
-        Projection.follow(positives, { repairIntervalMs: 100, bytes: 1 }),
-        (reader) => ({
-          read: (id, options) =>
-            Effect.gen(function* () {
-              reads += 1;
-              yield* Deferred.succeed(read, undefined);
-              // The first read answers an oversized message; later reads see the closed, empty stream.
-              return reads === 1
-                ? {
-                    messages: [{ data: new TextEncoder().encode("1000") }],
-                    nextOffset: `${"0".repeat(15)}1_${"0".repeat(16)}`,
-                    upToDate: true,
-                    closed: false,
-                  }
-                : yield* reader.read(id, options);
-            }),
-        }),
-      );
-      yield* Deferred.await(read);
-      yield* Effect.yieldNow;
-      expect(reads).toBe(1);
-      yield* TestClock.adjust(100);
-      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
-      expect(reads).toBe(2);
-      expect(yield* readAll(output)).toEqual([]);
-    }),
-  ));
-
 test("a write to the second input wakes a two-input follower", () =>
   run(
     Effect.gen(function* () {
@@ -238,16 +201,22 @@ test("a closed and drained input beside an open one does not wake every cycle", 
     }),
   ));
 
-test("follow rejects a non-positive repair interval before reading", () =>
+test("follow rejects invalid options before reading", () =>
   run(
     Effect.gen(function* () {
-      const result = yield* Projection.follow(positives, { repairIntervalMs: 0 }).pipe(
-        Effect.result,
-      );
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(result.failure.phase).toBe("load");
-        expect(result.failure.reason).toBe("invalid-budget");
+      for (const options of [
+        { repairIntervalMs: 0 },
+        { repairIntervalMs: -1 },
+        { repairIntervalMs: Infinity },
+        { repairIntervalMs: 1.5 },
+        { limit: 0 },
+      ]) {
+        const result = yield* Projection.follow(positives, options).pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure.phase).toBe("load");
+          expect(result.failure.reason).toBe("invalid-options");
+        }
       }
     }),
   ));

@@ -1,10 +1,10 @@
 import { Effect } from "effect";
-import { Producer, StreamsReader, StreamsWriter, type StreamRef } from "@streamsy/core";
+import { Producer, Streams, StreamsReader, StreamsWriter, type StreamRef } from "@streamsy/core";
 import { emptySlice, type InputMap, type Slice, type Slices } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Stream } from "./projection.ts";
-import { DEFAULT_ITEMS, readInputs, reproduce, validateBudget, type Budget } from "./read.ts";
+import type { Pinned } from "./projection.ts";
+import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import type { Progress } from "./run.ts";
 import { canonicalParams, unitOf, type PendingUnit } from "./unit.ts";
 
@@ -18,8 +18,8 @@ const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
   items: ReadonlyArray<O>,
   position: Producer.Position,
 ) {
-  const pin = (reason: ProjectionFault["reason"], message: string) =>
-    new ProjectionFault({ phase: "pin", reason, message });
+  const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
+    new ProjectionFault({ phase: "pin", reason, message, cause });
   return yield* Producer.append(output, items, position).pipe(
     Effect.catchTags({
       EncodeFault: () =>
@@ -42,8 +42,8 @@ const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
         pin("invalid-record", `Epoch ${position.epoch} of ${output.id} must start at seq 0`),
       NotSupported: (error) =>
         pin("unsupported-composition", `${output.id} does not support ${error.feature}`),
-      StorageFault: () => pin("storage-failure", `Cannot append to ${output.id}`),
-      TransportFault: () => pin("storage-failure", `Cannot append to ${output.id}`),
+      StorageFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
+      TransportFault: (cause) => pin("storage-failure", `Cannot append to ${output.id}`, cause),
       StreamNotFound: () => pin("invalid-output", `Output ${output.id} does not exist`),
       StreamGone: () => pin("invalid-output", `Output ${output.id} is gone`),
       StreamClosed: () => pin("invalid-output", `Output ${output.id} is closed`),
@@ -72,14 +72,14 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   E,
   R,
 >(
-  projection: Stream<Inputs, O, E, R>,
-  budget: Budget = {},
+  projection: Pinned<Inputs, O, E, R>,
+  options: RunOptions = {},
 ): Effect.fn.Return<
   Progress,
   E | ProjectionFault,
   R | Checkpoints | StreamsReader | StreamsWriter
 > {
-  yield* validateBudget(budget);
+  yield* validateOptions(options);
   const owner = yield* Checkpoints;
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
@@ -105,7 +105,6 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     const pending: PendingUnit = before.record.pending;
     const slices: Record<string, Slice<unknown>> = {};
     let items = 0;
-    let bytes = 0;
     for (const [name, ref] of Object.entries(projection.inputs)) {
       const range = pending.ranges[name];
       if (range === undefined) {
@@ -115,7 +114,6 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
       const read = yield* reproduce(name, ref, range);
       slices[name] = read.slice;
       items += read.slice.items.length;
-      bytes += read.bytes;
     }
     const unit = unitOf(projection.id, projection.generation, projection.params, pending.ranges);
     // SAFETY: `slices` has exactly the keys of `inputs`, each reproduced through that input's codec.
@@ -123,16 +121,11 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     yield* appendPinned(projection.output, outputs, position(pending.seq));
     const record = settled(advance(before.record.inputs, pending.ranges), pending.seq + 1);
     yield* owner.save(projection, record, before.token);
-    const closed = Object.values(slices).every((slice) => slice.closed);
-    return { status: closed ? "source-closed" : "progress", units: 1, items, bytes, record };
+    return { status: "progress", units: 1, items, record };
   }
 
-  const empty = { units: 0, items: 0, bytes: 0, record: before.record };
-  const read = yield* readInputs(projection.inputs, before.record.inputs, {
-    items: budget.items ?? DEFAULT_ITEMS,
-    bytes: budget.bytes,
-  });
-  if (read.refused) return { ...empty, status: "limit-reached" };
+  const empty = { units: 0, items: 0, record: before.record };
+  const read = yield* readInputs(projection.inputs, before.record.inputs);
   const slices = Object.values<Slice<unknown>>(read.slices);
   const closed = slices.every((slice) => slice.closed);
   if (read.items === 0) return { ...empty, status: closed ? "source-closed" : "caught-up" };
@@ -146,6 +139,30 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     record = { identity, inputs, adapters };
     yield* owner.save(projection, record, before.token);
   } else {
+    const reader = yield* StreamsReader;
+    const head = yield* reader.head(projection.output.id).pipe(
+      Effect.catchTag("StreamNotFound", () =>
+        Streams.create(projection.output).pipe(Effect.andThen(reader.head(projection.output.id))),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new ProjectionFault({
+            phase: "pin",
+            reason:
+              cause._tag === "StorageFault" || cause._tag === "TransportFault"
+                ? "storage-failure"
+                : "invalid-output",
+            message: `Cannot prepare output ${projection.output.id}`,
+            cause,
+          }),
+      ),
+    );
+    if (head.closed)
+      return yield* new ProjectionFault({
+        phase: "pin",
+        reason: "invalid-output",
+        message: `Output ${projection.output.id} is closed`,
+      });
     const pinned: CheckpointRecord = {
       identity,
       inputs: before.record.inputs,
@@ -173,10 +190,9 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   }
   // A non-empty pass is progress; only an empty pass is authoritative for caught-up.
   return {
-    status: closed ? "source-closed" : "progress",
+    status: "progress",
     units: 1,
     items: read.items,
-    bytes: read.bytes,
     record,
   };
 });

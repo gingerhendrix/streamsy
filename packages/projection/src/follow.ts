@@ -2,12 +2,12 @@ import { Effect, type Fiber, type Scope } from "effect";
 import { StreamsReader, ZERO_OFFSET, type StreamRef } from "@streamsy/core";
 import type { InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Stream } from "./projection.ts";
-import { validateBudget, type Budget } from "./read.ts";
+import type { Fused, Pinned } from "./projection.ts";
+import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Host, type Progress } from "./run.ts";
 
-export interface FollowOptions extends Budget {
-  /** Upper bound on one wake wait and the pace of an oversized unit; default 1000. */
+export interface FollowOptions extends RunOptions {
+  /** Upper bound on one wake wait; default 1000. */
   readonly repairIntervalMs?: number;
 }
 
@@ -31,12 +31,13 @@ const hint = Effect.fn("Projection.wake")(function* (
       input,
       message: `Required history of ${ref.id} after ${offset} is unavailable`,
     });
-  const storageFailure = () =>
+  const storageFailure = (cause: unknown) =>
     new ProjectionFault({
       phase: "read",
       reason: "storage-failure",
       input,
       message: `Cannot wait on ${ref.id}`,
+      cause,
     });
   return yield* reader.readNext(ref.id, { offset }).pipe(
     Effect.flatMap((result) =>
@@ -52,8 +53,8 @@ const hint = Effect.fn("Projection.wake")(function* (
           input,
           message: `${ref.id} does not support ${error.feature}`,
         }),
-      StorageFault: () => storageFailure(),
-      TransportFault: () => storageFailure(),
+      StorageFault: storageFailure,
+      TransportFault: storageFailure,
     }),
     Effect.timeoutOption(interval),
     Effect.asVoid,
@@ -66,20 +67,20 @@ const hint = Effect.fn("Projection.wake")(function* (
  * the terminal close or a typed failure. On HTTP backends each hint is one long poll.
  */
 export const follow = Effect.fn("Projection.follow")(function* <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R>,
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress, E | ProjectionFault>,
   ProjectionFault,
   R | Host | Scope.Scope
 > {
-  yield* validateBudget(options);
+  yield* validateOptions(options);
   const interval = options.repairIntervalMs ?? 1000;
-  if (!Number.isFinite(interval) || interval <= 0)
+  if (!Number.isSafeInteger(interval) || interval <= 0)
     return yield* new ProjectionFault({
       phase: "load",
-      reason: "invalid-budget",
-      message: "repairIntervalMs must be positive",
+      reason: "invalid-options",
+      message: "repairIntervalMs must be a positive safe integer",
     });
   const wake = (result: Progress) =>
     Effect.raceAllFirst(
@@ -88,13 +89,7 @@ export const follow = Effect.fn("Projection.follow")(function* <Inputs extends I
       ),
     );
   const cycle = run(projection, options).pipe(
-    Effect.tap((result) =>
-      result.status === "caught-up"
-        ? wake(result)
-        : result.status === "limit-reached" && result.units === 0
-          ? Effect.sleep(interval)
-          : Effect.yieldNow,
-    ),
+    Effect.tap((result) => (result.status === "caught-up" ? wake(result) : Effect.yieldNow)),
   );
   return yield* cycle.pipe(
     Effect.repeat({ while: (result) => result.status !== "source-closed" }),

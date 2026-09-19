@@ -8,7 +8,7 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
     "identity-mismatch",
     "invalid-record",
     "invalid-source",
-    "invalid-budget",
+    "invalid-options",
     "invalid-output",
     "token-conflict",
     "range-unreproducible",
@@ -18,4 +18,5 @@ export class ProjectionFault extends Schema.TaggedError<ProjectionFault>()("Proj
   ]),
   input: Schema.optionalKey(Schema.String),
   message: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect()),
 }) {}

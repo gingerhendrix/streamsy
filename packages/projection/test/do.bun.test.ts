@@ -55,7 +55,7 @@ test("same-object Durable Object SQLite runs the fused composition", async () =>
     expect(result.final.items).toBe(2);
     expect(result.restart.items).toBe(0);
     expect(result.stored.output).toEqual([1, 3]);
-    expect(result.stored.loaded.token).toBe("2");
+    expect(result.stored.loaded.token).toBe("3");
   } finally {
     await miniflare.dispose();
   }

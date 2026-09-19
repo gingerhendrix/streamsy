@@ -1,5 +1,5 @@
 import { Streams, StreamsReader, type StreamsWriter, ZERO_OFFSET } from "@streamsy/core";
-import { Checkpoints, Projection, ProjectionFault, type Budget } from "@streamsy/projection";
+import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { Context, Effect, Schema } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
 import { sourceDelete, sourceUpsert } from "./source-change.ts";
@@ -10,22 +10,22 @@ import { HackerNewsStateChange, type HnStory } from "../state-schema.ts";
 
 type Harness = Awaited<ReturnType<typeof demoHarness>>;
 const clients = new Set<Harness>();
-const limits: Budget = { units: 10, items: 50, bytes: 100_000 };
+const limits = { limit: 10 };
 
 afterEach(async () => {
   await Promise.all(Array.from(clients, (client) => client.close()));
   clients.clear();
 });
 
-async function harness() {
-  const h = await demoHarness();
+async function harness(readLimit = 1000) {
+  const h = await demoHarness(readLimit);
   clients.add(h);
   return h;
 }
 
-function run(h: Harness, budget: Budget = {}) {
+function run(h: Harness, options: { limit?: number } = {}) {
   return Effect.runPromise(
-    Projection.run(hackerNewsStoryIndex, { ...limits, ...budget }).pipe(
+    Projection.run(hackerNewsStoryIndex, { ...limits, ...options }).pipe(
       Effect.provide(h.clientLayer),
     ),
   );
@@ -83,9 +83,9 @@ describe("Hacker News story index projection", () => {
   });
 
   test("resumes a bounded run at the next durable source boundary", async () => {
-    const h = await harness();
+    const h = await harness(1);
     await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
-    expect(await run(h, { units: 1, items: 1 })).toMatchObject({
+    expect(await run(h, { limit: 1 })).toMatchObject({
       status: "limit-reached",
       units: 1,
       items: 1,
@@ -93,7 +93,7 @@ describe("Hacker News story index projection", () => {
 
     await h.append(hackerNewsSource.id, [sourceUpsert(story(102, 1_700_000_020, "Second"))]);
 
-    expect(await run(h, { units: 1, items: 1 })).toMatchObject({
+    expect(await run(h, { limit: 1 })).toMatchObject({
       status: "limit-reached",
       units: 1,
       items: 1,
@@ -126,13 +126,13 @@ describe("Hacker News story index projection", () => {
   });
 
   test("limit-reached at one item per pass, then resumes to caught-up", async () => {
-    const h = await harness();
+    const h = await harness(1);
     await h.append(hackerNewsSource.id, [
       sourceUpsert(story(101, 1_700_000_030, "First")),
       sourceUpsert(story(102, 1_700_000_020, "Second")),
     ]);
 
-    expect(await run(h, { items: 1 })).toMatchObject({
+    expect(await run(h, { limit: 1 })).toMatchObject({
       status: "limit-reached",
       units: 1,
       items: 1,
@@ -146,20 +146,6 @@ describe("Hacker News story index projection", () => {
       "101",
       "102",
     ]);
-  });
-
-  test("a byte budget that refuses the slice writes nothing", async () => {
-    const h = await harness();
-    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
-
-    expect(await run(h, { bytes: 1 })).toMatchObject({
-      status: "limit-reached",
-      units: 0,
-      items: 0,
-      bytes: 0,
-    });
-    expect(await h.read(hackerNewsTarget.id)).toHaveLength(0);
-    expect((await loadRecord(h)).token).toBe("0");
   });
 
   test("a competing checkpoint save fails token-conflict without advancing", async () => {

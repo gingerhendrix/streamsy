@@ -13,15 +13,17 @@ export type { FollowOptions } from "./follow.ts";
 export interface Fused<Inputs extends InputMap, E, R> {
   readonly _tag: "Fused";
   readonly id: string;
+  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
 }
 /** The handler returns the items to append; a pinned unit makes the append exactly-once. */
-export interface Stream<Inputs extends InputMap = InputMap, O = unknown, E = unknown, R = unknown> {
+export interface Pinned<Inputs extends InputMap = InputMap, O = unknown, E = unknown, R = unknown> {
   readonly _tag: "Stream";
   readonly id: string;
+  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
@@ -30,10 +32,11 @@ export interface Stream<Inputs extends InputMap = InputMap, O = unknown, E = unk
 }
 export type Projection<Inputs extends InputMap = InputMap, O = unknown, E = unknown, R = unknown> =
   | Fused<Inputs, E, R>
-  | Stream<Inputs, O, E, R>;
+  | Pinned<Inputs, O, E, R>;
 
 interface Common {
   readonly id: string;
+  readonly version?: number;
   readonly generation?: number;
   readonly params?: Record<string, string>;
 }
@@ -49,12 +52,12 @@ export interface SingleFusedDefinition<A, E, R> extends Common {
     unit: Unit,
   ) => Effect.Effect<void, E, R>;
 }
-export interface StreamDefinition<Inputs extends InputMap, O, E, R> extends Common {
+export interface PinnedDefinition<Inputs extends InputMap, O, E, R> extends Common {
   readonly inputs: Inputs;
   readonly output: StreamRef.StreamRef<O>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
-export interface SingleStreamDefinition<A, O, E, R> extends Common {
+export interface SinglePinnedDefinition<A, O, E, R> extends Common {
   readonly input: StreamRef.StreamRef<A>;
   readonly output: StreamRef.StreamRef<O>;
   readonly process: (
@@ -65,6 +68,7 @@ export interface SingleStreamDefinition<A, O, E, R> extends Common {
 
 const common = (definition: Common) => ({
   id: definition.id,
+  version: definition.version ?? 1,
   generation: definition.generation ?? 1,
   params: definition.params ?? {},
 });
@@ -87,14 +91,14 @@ export function make<Inputs extends InputMap, A, E, R>(
 
 /** Inert stream form for an output the checkpoint transaction cannot reach. */
 export function stream<A, O, E, R>(
-  definition: SingleStreamDefinition<A, O, E, R>,
-): Stream<{ readonly input: StreamRef.StreamRef<A> }, O, E, R>;
+  definition: SinglePinnedDefinition<A, O, E, R>,
+): Pinned<{ readonly input: StreamRef.StreamRef<A> }, O, E, R>;
 export function stream<Inputs extends InputMap, O, E, R>(
-  definition: StreamDefinition<Inputs, O, E, R>,
-): Stream<Inputs, O, E, R>;
+  definition: PinnedDefinition<Inputs, O, E, R>,
+): Pinned<Inputs, O, E, R>;
 export function stream<Inputs extends InputMap, A, O, E, R>(
-  definition: StreamDefinition<Inputs, O, E, R> | SingleStreamDefinition<A, O, E, R>,
-): Stream<Inputs, O, E, R> | Stream<{ readonly input: StreamRef.StreamRef<A> }, O, E, R> {
+  definition: PinnedDefinition<Inputs, O, E, R> | SinglePinnedDefinition<A, O, E, R>,
+): Pinned<Inputs, O, E, R> | Pinned<{ readonly input: StreamRef.StreamRef<A> }, O, E, R> {
   const base = { _tag: "Stream", ...common(definition), output: definition.output } as const;
   return "inputs" in definition
     ? { ...base, inputs: definition.inputs, process: definition.process }
@@ -104,6 +108,7 @@ export function stream<Inputs extends InputMap, A, O, E, R>(
 export type { Identity };
 export const key = (projection: Identity): ProjectionKey => ({
   id: projection.id,
+  version: projection.version,
   generation: projection.generation,
   params: projection.params,
 });

@@ -55,7 +55,7 @@ export const failAtSave = Effect.gen(function* () {
 /** Same composition scenario on memory, Bun SQLite and local Durable Object SQLite. */
 export const composition = Effect.gen(function* () {
   yield* initialize;
-  const first = yield* Projection.run(positives, { items: 1 });
+  const first = yield* Projection.run(positives, { limit: 1 });
   const before = yield* inspect;
   const failed = yield* failAtSave;
   const after = yield* inspect;

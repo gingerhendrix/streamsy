@@ -1,3 +1,5 @@
+import * as Root from "@streamsy/projection";
+import * as Checkpoint from "@streamsy/projection/checkpoint";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -8,6 +10,19 @@ import * as Sqlite from "@streamsy/projection/sqlite";
 import manifest from "../package.json";
 
 test("built public entries and declared files exist", () => {
+  expect(Checkpoint.recordKey).toBeFunction();
+  expect(Checkpoint.fromStore).toBeFunction();
+  expect(Checkpoint.CheckpointRecord).toBeDefined();
+  for (const name of [
+    "encodeKey",
+    "recordKey",
+    "fromStore",
+    "PendingUnit",
+    "PinnedRange",
+    "producerId",
+    "CheckpointRecord",
+  ])
+    expect(Object.keys(Root)).not.toContain(name);
   expect(Projection.make).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
@@ -17,13 +32,13 @@ test("built public entries and declared files exist", () => {
   expect(Projection.each).toBeFunction();
   expect(Projection.key).toBeFunction();
   expect(Checkpoints.key).toBe("@streamsy/projection/Checkpoints");
-  expect(new ProjectionFault({ phase: "load", reason: "invalid-budget", message: "" })._tag).toBe(
+  expect(new ProjectionFault({ phase: "load", reason: "invalid-options", message: "" })._tag).toBe(
     "ProjectionFault",
   );
   expect(Layer.isLayer(Memory.layer)).toBe(true);
   expect(Memory.layerMemory).toBeFunction();
   expect(Layer.isLayer(Sqlite.layer)).toBe(true);
-  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sqlite"]);
+  expect(Object.keys(manifest.exports)).toEqual([".", "./memory", "./sqlite", "./checkpoint"]);
   for (const entry of Object.values(manifest.exports)) {
     expect(existsSync(join(import.meta.dir, "..", entry.types))).toBe(true);
     expect(existsSync(join(import.meta.dir, "..", entry.import))).toBe(true);

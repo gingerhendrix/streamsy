@@ -1,4 +1,4 @@
-import { Config, Effect, Option } from "effect";
+import { Config, Effect } from "effect";
 
 const configuredNewestLimit = Config.Int("HN_NEWEST_LIMIT").pipe(Config.withDefault(50));
 
@@ -14,9 +14,7 @@ export const demoConfig = Config.all({
   ),
   pollIntervalMs: Config.Int("HN_POLL_INTERVAL_MS").pipe(Config.withDefault(60_000)),
   newestLimit: configuredNewestLimit,
-  projectionMaxUnits: Config.Int("HN_PROJECTION_MAX_UNITS").pipe(Config.withDefault(10)),
-  projectionMaxItems: Config.option(Config.Int("HN_PROJECTION_MAX_ITEMS")),
-  projectionMaxBytes: Config.Int("HN_PROJECTION_MAX_BYTES").pipe(Config.withDefault(1_000_000)),
+  projectionLimit: Config.Int("HN_PROJECTION_LIMIT").pipe(Config.withDefault(10)),
   hnApiBase: Config.String("HN_API_BASE").pipe(
     Config.withDefault("https://hacker-news.firebaseio.com/v0"),
   ),
@@ -36,9 +34,7 @@ export const demoConfig = Config.all({
       pollIntervalMs: config.pollIntervalMs,
       newestLimit: config.newestLimit,
       projectionLimits: {
-        units: config.projectionMaxUnits,
-        items: Option.getOrElse(config.projectionMaxItems, () => config.newestLimit * 2),
-        bytes: config.projectionMaxBytes,
+        limit: config.projectionLimit,
       },
       hnApiBase: config.hnApiBase.replace(/\/$/, ""),
     };

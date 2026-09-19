@@ -18,7 +18,7 @@ export {
   EncodeFault,
   DecodeFault,
 } from "./fault.ts";
-export { ZERO_OFFSET } from "./offset/index.ts";
+export { ZERO_OFFSET, compare } from "./offset/index.ts";
 export * from "./storage/index.ts";
 export { StreamsReader, StreamsWriter, type Reader, type Writer } from "./protocol/tags.ts";
 export type {

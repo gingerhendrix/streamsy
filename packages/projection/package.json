@@ -30,13 +30,18 @@
       "types": "./dist/sqlite.d.ts",
       "import": "./dist/sqlite.js",
       "default": "./dist/sqlite.js"
+    },
+    "./checkpoint": {
+      "types": "./dist/checkpoint.d.ts",
+      "import": "./dist/checkpoint.js",
+      "default": "./dist/checkpoint.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/memory.ts src/sqlite.ts src/examples/minimal.ts --format esm --dts --out-dir dist --clean --external effect --external @streamsy/core --external @streamsy/storage",
+    "build": "tsdown src/index.ts src/checkpoint.ts src/memory.ts src/sqlite.ts src/examples/minimal.ts --format esm --dts --out-dir dist --clean --external effect --external @streamsy/core --external @streamsy/storage",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test/*.bun.test.ts"
   },

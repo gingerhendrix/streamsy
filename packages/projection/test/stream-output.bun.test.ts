@@ -1,8 +1,10 @@
+import { producerId } from "../src/stream-output.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import {
   Backend,
+  Protocol,
   StorageFault,
   StreamRoute,
   StreamRef,
@@ -14,14 +16,8 @@ import {
   type StreamsFault,
   type Writer,
 } from "@streamsy/core";
-import {
-  Checkpoints,
-  Projection,
-  ProjectionFault,
-  producerId,
-  type CheckpointRecord,
-  type Unit,
-} from "../src/index.ts";
+import { Checkpoints, Projection, ProjectionFault, type Unit } from "../src/index.ts";
+import { type CheckpointRecord } from "../src/checkpoint.ts";
 import * as Memory from "../src/memory.ts";
 
 /**
@@ -36,14 +32,20 @@ const Out = StreamRoute.json("out/:name", {
 const inputs = Backend.make("projection-inputs");
 const outputs = Backend.make("projection-outputs");
 const inputGraph = Streams.layerMemory();
-const host = Layer.merge(
+class PagedReader extends Context.Service<PagedReader, Reader<StreamsFault>>()(
+  "test/PagedReader",
+) {}
+const host = Layer.mergeAll(
   Streams.layerRouted([inputs.serves(In), outputs.serves(Out)]).pipe(
     Layer.provide(inputs.layer(inputGraph)),
     Layer.provide(outputs.layer(Streams.layerMemory())),
   ),
   Memory.layer.pipe(Layer.provide(inputGraph)),
+  Layer.effect(PagedReader, StreamsReader).pipe(
+    Layer.provide(Protocol.layer({ readLimit: 1 }).pipe(Layer.provide(inputGraph))),
+  ),
 );
-type Services = Checkpoints | StreamsReader | StreamsWriter;
+type Services = PagedReader | Checkpoints | StreamsReader | StreamsWriter;
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(body.pipe(Effect.provide(host)));
 
@@ -319,20 +321,21 @@ test("a retry reproduces a pinned range across several pages", () =>
       yield* s.initialize;
       const failing = failingAppends(1);
       fault(yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result));
-      const limits: Array<number | undefined> = [];
+      const paged = yield* PagedReader;
+      let reads = 0;
       const settled = yield* withReader(
-        withWriter(Projection.run(s.doubled), failing.patch),
-        (reader) => ({
+        withWriter(Projection.pass(s.doubled), failing.patch),
+        () => ({
           read: (id, options) => {
-            limits.push(options?.limit);
-            return reader.read(id, { ...options, limit: Math.min(options?.limit ?? 1, 1) });
+            reads += 1;
+            return paged.read(id, options);
           },
         }),
       );
       expect(failing.outcomes).toEqual(["Appended"]);
       expect(settled.items).toBe(3);
-      // Three one-message pages reproduce the pin, then one empty read reports caught-up.
-      expect(limits.slice(0, 3)).toEqual([3, 2, 1]);
+      // Three one-message server pages reproduce the pin.
+      expect(reads).toBe(3);
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       expect(s.seen[1]?.items).toEqual([1, 2, 3]);
     }),
@@ -571,43 +574,120 @@ test("a two-input pending unit reproduces both ranges", () =>
     }),
   ));
 
-test("an accepted earlier-input prefix is pinned and appended while an oversized later input waits", () =>
-  run(
-    Effect.gen(function* () {
-      const a = In.ref({ name: "bytes-a" });
-      const b = In.ref({ name: "bytes-b" });
-      const output = Out.ref({ name: "bytes" });
-      const pair = Projection.stream({
-        id: "bytes",
-        inputs: { a, b },
-        output,
-        process: (batch) =>
-          Effect.succeed(Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`)),
-      });
-      yield* Streams.create(a);
-      yield* Streams.create(b);
-      yield* Streams.create(output);
-      yield* Streams.append(a, [1, 2]);
-      yield* Streams.append(b, [1000000]);
-      const recording = recordingAppends();
-      const first = yield* withWriter(Projection.pass(pair, { bytes: 3 }), recording.patch);
-      expect(first.status).toBe("progress");
-      expect(first.items).toBe(2);
-      expect(first.record.inputs.b).toBe(ZERO_OFFSET);
-      expect(first.record.inputs.a).not.toBe(ZERO_OFFSET);
-      expect(first.record.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
-      expect(yield* readAll(output)).toEqual(["a:1", "a:2"]);
-      const refused = yield* Projection.pass(pair, { bytes: 3 });
-      expect(refused.status).toBe("limit-reached");
-      expect(refused.units).toBe(0);
-      const rest = yield* withWriter(Projection.pass(pair), recording.patch);
-      expect(rest.items).toBe(1);
-      expect(recording.positions.map((p) => p.seq)).toEqual([0, 1]);
-      expect(yield* readAll(output)).toEqual(["a:1", "a:2", "b:1000000"]);
-    }),
-  ));
-
 test("producer ids join params to the id", () => {
   expect(producerId("x", {})).toBe("x");
   expect(producerId("x", { b: "2", a: "1" })).toBe(`x/${JSON.stringify({ a: "1", b: "2" })}`);
 });
+
+test("a missing output is created before the first pin", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("auto-created");
+      yield* Streams.create(s.input);
+      yield* Streams.append(s.input, [1, 2]);
+      const result = yield* Projection.run(s.doubled);
+      expect(result.status).toBe("caught-up");
+      expect(yield* readAll(s.output)).toEqual(["2", "4"]);
+    }),
+  ));
+
+test("a gone output still faults before pinning", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("gone-output");
+      yield* s.initialize;
+      yield* (yield* StreamsWriter).fork(Out.ref({ name: "retained-output" }).id, s.output.id);
+      yield* Streams.remove(s.output);
+      const error = fault(yield* Projection.run(s.doubled).pipe(Effect.result));
+      expect(error.phase).toBe("pin");
+      expect(error.reason).toBe("invalid-output");
+      expect((yield* stored(s.doubled)).token).toBe("0");
+    }),
+  ));
+
+test("an over-long retry page is truncated and settles by Duplicate", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("grown-retry");
+      yield* s.initialize;
+      let saves = 0;
+      fault(
+        yield* withCheckpoints(Projection.run(s.doubled), (owner) => ({
+          save: (key, record, token) =>
+            ++saves === 2
+              ? Effect.fail(
+                  new ProjectionFault({
+                    phase: "checkpoint",
+                    reason: "storage-failure",
+                    message: "crash",
+                  }),
+                )
+              : owner.save(key, record, token),
+        })).pipe(Effect.result),
+      );
+      yield* Streams.append(s.input, [4, 5], { close: true });
+      const appends = failingAppends(0);
+      const result = yield* withWriter(Projection.pass(s.doubled), appends.patch);
+      expect(appends.outcomes).toEqual(["Duplicate"]);
+      expect(result.items).toBe(3);
+      expect(result.status).toBe("progress");
+      expect(s.seen[1]?.items).toEqual([1, 2, 3]);
+      expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
+      expect((yield* Projection.run(s.doubled)).items).toBe(2);
+      expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "8", "10"]);
+    }),
+  ));
+
+test("an over-long page whose log ends before the pin is unreproducible", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("short-pin-boundary");
+      yield* s.initialize;
+      const failing = failingAppends(1);
+      const first = fault(
+        yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result),
+      );
+      expect(first.cause).toBe(appendFault);
+      const before = yield* stored(s.doubled);
+      const owner = yield* Checkpoints;
+      const record = before.record;
+      if (!record?.pending) throw new Error("Expected pin");
+      yield* owner.save(
+        s.doubled,
+        {
+          identity: record.identity,
+          inputs: record.inputs,
+          adapters: record.adapters,
+          pending: {
+            seq: record.pending.seq,
+            ranges: {
+              input: {
+                from: ZERO_OFFSET,
+                count: 1,
+                nextOffset: "9999999999999999_0000000000000000",
+              },
+            },
+          },
+        },
+        before.token,
+      );
+      const error = fault(yield* Projection.run(s.doubled).pipe(Effect.result));
+      expect(error.phase).toBe("pin");
+      expect(error.reason).toBe("range-unreproducible");
+      expect(error.message).toContain("shorter than the pin");
+      expect(yield* readAll(s.output)).toEqual([]);
+    }),
+  ));
+
+test("a closed output faults before pinning", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("closed-output");
+      yield* s.initialize;
+      yield* Streams.append(s.output, [], { close: true });
+      const error = fault(yield* Projection.run(s.doubled).pipe(Effect.result));
+      expect(error.phase).toBe("pin");
+      expect(error.reason).toBe("invalid-output");
+      expect((yield* stored(s.doubled)).token).toBe("0");
+    }),
+  ));

@@ -3,11 +3,9 @@ import { Cause, Context, Effect, Layer, Ref } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 import { errorMessage, nowIso } from "./util.ts";
 
-/** One bounded run: passes, items per pass and payload bytes per pass. */
+/** One bounded run: checkpoint transactions per call. */
 export type ProjectionLimits = {
-  readonly units: number;
-  readonly items: number;
-  readonly bytes: number;
+  readonly limit: number;
 };
 
 /** The last run's status and the source offset the checkpoint accepted. */

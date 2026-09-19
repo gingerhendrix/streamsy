@@ -22,6 +22,7 @@ export const EnvelopeJson = Schema.fromJsonString(Envelope);
 
 export interface ProjectionKey {
   readonly id: string;
+  readonly version?: number;
   readonly generation: number;
   readonly params: Record<string, string>;
 }
@@ -29,6 +30,7 @@ export const recordKey = (key: ProjectionKey): string =>
   encodeKey([
     "streamsy.projection.v1",
     key.id,
+    ...(key.version === undefined || key.version === 1 ? [] : [String(key.version)]),
     String(key.generation),
     canonicalParams(key.params),
   ]);
@@ -123,6 +125,7 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
 /** What the kernel needs to locate a record; every projection value satisfies it. */
 export interface Identity {
   readonly id: string;
+  readonly version?: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: InputMap;
@@ -184,3 +187,5 @@ export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string,
       .filter(([, slice]) => slice.items.length > 0)
       .map(([name, slice]) => [name, { from: slice.from, nextOffset: slice.nextOffset }]),
   );
+
+export { PendingUnit, PinnedRange, encodeKey } from "./unit.ts";

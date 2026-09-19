@@ -19,5 +19,5 @@ export const minimal = Effect.gen(function* () {
         batch.input.items.map((n) => n * 2),
       ),
   });
-  return yield* Projection.run(projection, { units: 10, items: 100 });
+  return yield* Projection.run(projection, { limit: 10 });
 });
