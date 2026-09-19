@@ -1,4 +1,4 @@
-/* oxlint-disable effecttsgo/global-console -- This Bun executable is the Promise-native HTTP/process edge. */
+/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This Bun executable is the Promise-native HTTP/process edge and reads its port at startup. */
 import { Streams } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
 
