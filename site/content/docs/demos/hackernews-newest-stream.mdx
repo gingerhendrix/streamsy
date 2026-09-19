@@ -3,11 +3,11 @@ title: Hacker News newest
 description: Follow newest stories through an Effect server and an official Durable Streams browser client.
 ---
 
-The server polls Hacker News, writes changes to a JSON source stream, and runs a
-fused `@streamsy/projection` that appends State facts to a target stream. The
-browser consumes the target with `@durable-streams/state/db` and renders TanStack
-DB live queries. It shows the newest stories, score and comment changes, new
-arrivals and stories leaving the configured set.
+The server polls Hacker News, writes changes to a JSON source stream, and keeps
+a declared-output `@streamsy/projection` following that source. The browser
+consumes the Durable State target with `@durable-streams/state/db` and renders
+TanStack DB live queries. It shows the newest stories, score and comment changes,
+new arrivals and stories leaving the configured set.
 
 ## Run locally
 
@@ -18,38 +18,46 @@ bun install --frozen-lockfile
 bun run --cwd examples/hackernews-newest-stream dev
 ```
 
-Open http://localhost:1339. `PORT` selects another port. The status view reports
-poll counts, the last run's status and source offset, and failures. To run the
-offline HTTP proof:
+Open http://localhost:1339. `PORT` selects another port. `HN_DB` selects the
+SQLite file and defaults to `.data/hackernews.sqlite`; the literal `memory`
+selects a process-local test host. `HN_PROJECTION_LIMIT` bounds the checkpoint
+transactions in one follower pass. The status view reports poll counts, follower
+health, and the source offset loaded from the checkpoint. To run the offline
+HTTP proof:
 
 ```bash
 bun run smoke:hackernews
 ```
 
 The smoke supplies local HN fixtures and checks inserts, updates, deletes and
-unchanged-poll suppression through the public target.
+unchanged-poll suppression through the public target. It then stops the server,
+restarts it on the same SQLite file, and proves that the checkpoint advances
+without repeating a fact with the same key and transaction id.
 
 ## The projection
 
-The story index is `Projection.make` over the source ref with a `Projection.each`
-handler. Each source command becomes one Durable State fact appended to the target
-inside the checkpoint transaction, so a unit's facts and its checkpoint commit
-together. Fact headers keep the source position: `offset` is the unit's accepted
-source offset and `txid` is that offset joined with the fact's index in the unit.
+The story index is `Projection.stream` over the source ref with the State target
+declared as its output. Each source command becomes one `State.upsert` or
+`State.delete`; `State.changes` stamps the unit's accepted source offset and the
+fact index as `${offset}:${index}`. The stream form pins a unit before appending,
+so a retry uses the same producer identity and does not repeat its output.
 
-Source, target and the checkpoint share one memory Layer from
-`@streamsy/projection/memory`, held by the runtime that also serves the HTTP
-edge. The server runs one bounded `Projection.run` after each poll.
-`HN_PROJECTION_LIMIT` caps checkpoint transactions per call.
+Source, target and checkpoint share a Bun SQLite storage Layer held by the
+runtime that also serves the HTTP edge. `Projection.follow` is forked in that
+Layer's scope. Appends wake it on memory; SQLite is covered by the one-second
+repair interval. The poller's interval fiber has the same scoped lifetime, so
+disposing the runtime stops both loops. `POST /api/poll` only polls.
 
 ## Limits
 
-The store is memory only. One acquired memory Layer belongs to one server process,
-and restarting the process starts the streams and the checkpoint from empty.
+The target grows without bound, and the browser replays all State facts. A later
+rung will fold the story set and serve rows so browser catch-up is bounded. The
+poller's newest-set cache is not stored, so the first poll after restart can
+emit fresh upserts for the current set.
 
-The run is bounded. A `limit-reached` status means later polls continue the
-work from the last checkpoint. The server decides the read page size.
+The projection id is `hn-story-index`; its record does not reuse data from the
+earlier declaration. `HN_DB=memory` intentionally starts fresh after restart.
 
-The demo makes no hosted claim. It runs on the Bun memory host and has not
-adopted the SQLite storage Layer or a Cloudflare deployment. See the
+The demo makes no hosted claim. It runs on the Bun SQLite host and has not
+adopted a Cloudflare deployment. See the
 [Cloudflare guide](/docs/runtime/cloudflare) for the hosted path.

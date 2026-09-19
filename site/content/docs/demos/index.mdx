@@ -1,9 +1,9 @@
 ---
 title: Demos
-description: A local Hacker News browser demo built on Streamsy's memory host.
+description: A local Hacker News browser demo with a durable SQLite host.
 ---
 
 [Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories, appends
-source changes, runs a fused `@streamsy/projection` over a memory store, and
-serves State facts to a live browser collection. Read the demo's limits before
-running it.
+source changes, follows them with a declared-output `@streamsy/projection` over
+SQLite, and serves State facts to a live browser collection. Its offline smoke
+proves checkpoint resume across a process restart.
