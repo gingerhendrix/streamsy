@@ -39,7 +39,7 @@ const tail = Streams.read(notes).pipe(
 
 ## Follow
 
-`Streams.follow` catches up, then waits for more. One wait ends on a new message, on a close, or on the long-poll timeout. Timed-out empty batches are filtered and the follow waits again; a closed batch still ends the stream. Use `Streams.session` (`readNext`) directly when an application needs to observe empty waits as liveness signals.
+`Streams.follow` catches up, then waits for more. One wait ends on a new message, on a close, or on the long-poll timeout. Empty batches that are not closed are filtered, whether from a timed-out wait or a catch-up read of an empty stream, and the follow waits again; a closed batch is always yielded and ends the stream. Use `Streams.session` (`readNext`) directly when an application needs to observe empty waits as liveness signals.
 
 ```ts
 import { Effect, Stream } from "effect";

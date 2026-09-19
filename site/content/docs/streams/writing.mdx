@@ -33,7 +33,7 @@ import { stories } from "./refs.ts";
 
 const updateIndex = (offset: string, story: { id: number; title: string }) =>
   Effect.gen(function* () {
-    const facts = State.changes(stories, { offset }, [State.upsert(story), State.delete(story)]);
+    const facts = State.changes(stories, { offset }, [State.upsert(story)]);
     yield* Streams.append(stories, facts);
   });
 ```

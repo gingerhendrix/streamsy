@@ -42,6 +42,18 @@ export const stories = StreamRef.state("session/main", {
 The ref reads and writes typed Durable State changes. Construct those changes
 with the `State` helpers described on the [Writing](/docs/streams/writing) page.
 
+A state ref covers one event type. To read several types from one stream, combine
+their codecs in a JSON ref:
+
+```ts
+const workspace = StreamRef.json("workspace/main", {
+  schema: Schema.Union([
+    StreamRef.stateChange({ schema: Project, type: "project" }),
+    StreamRef.stateChange({ schema: Issue, type: "issue" }),
+  ]),
+});
+```
+
 ## Expiry
 
 `ttlSeconds` sets a time to live. The clock restarts on every append and every read. `expiresAt` sets a fixed date that never moves. Set one or the other.

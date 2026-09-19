@@ -18,7 +18,11 @@ export const OrderRow = Schema.Struct({ orderId: Schema.String, total: Schema.Fi
 
 export const orders = StreamRef.json("orders", { schema: OrderEvent });
 export const orderTotals = StreamRef.json("order-totals", { schema: OrderRow });
-export const orderIndex = StreamRef.state("order-index", { collections: { order: OrderRow } });
+export const orderIndex = StreamRef.state("order-index", {
+  schema: OrderRow,
+  type: "order",
+  key: "orderId",
+});
 export const orderEvents = StreamRoute.json("orders/:orderId/events", {
   params: { orderId: Schema.String },
   schema: OrderEvent,
