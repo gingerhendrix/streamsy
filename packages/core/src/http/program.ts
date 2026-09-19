@@ -6,6 +6,7 @@ import type { StreamsFault } from "../fault.ts";
 import * as Responses from "./responses.ts";
 import { streamPath } from "./stream-path-service.ts";
 import { requestBodyReader } from "./request-body-reader.ts";
+import { discardRequestBody } from "./request-body-discard.ts";
 import * as Create from "./create.ts";
 import * as Append from "./append.ts";
 import { read } from "./read.ts";
@@ -90,7 +91,11 @@ export function app(options: HttpOptions = {}) {
     switch (request.method) {
       case "POST": {
         const parsed = Append.parseHeaders({ headers });
-        if (!parsed.ok) return parsed.response;
+        if (!parsed.ok) {
+          // The body is unread here. Consume it so the host can keep the connection.
+          yield* discardRequestBody(request);
+          return parsed.response;
+        }
         const body = yield* bodyReader.read(request);
         if (!body.ok) return body.response;
         const isEmpty = body.byteLength === 0;

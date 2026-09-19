@@ -59,6 +59,42 @@ it("rejects malformed cursor and producer tuple fields at ingress", async () => 
   }
 });
 
+it("reads the unread body to its end when an append is rejected at ingress", async () => {
+  const edge = makeEdge({}, Streams.layerMemory());
+  try {
+    await edge.handler(new Request("http://x/s", { method: "PUT" }));
+    const rejected: ReadonlyArray<Record<string, string>> = [
+      { "producer-id": "p", "producer-epoch": "x", "producer-seq": "0" },
+      { "stream-expected-offset": "nope" },
+    ];
+    for (const headers of rejected) {
+      let pulls = 0;
+      let cancelled = false;
+      const request = new Request("http://x/s", {
+        method: "POST",
+        headers,
+        body: new ReadableStream<Uint8Array>({
+          pull: (controller) => {
+            pulls += 1;
+            if (pulls < 3) controller.enqueue(new Uint8Array([pulls]));
+            else controller.close();
+          },
+          cancel: () => {
+            cancelled = true;
+          },
+        }),
+      });
+      const response = await edge.handler(request);
+      expect(response.status).toBe(400);
+      expect(request.bodyUsed).toBe(true);
+      expect(pulls).toBe(3);
+      expect(cancelled).toBe(false);
+    }
+  } finally {
+    await edge.dispose();
+  }
+});
+
 for (const when of ["before", "after"] as const) {
   it(`maps ${when}-commit StorageFault to 500 without an opaque append retry`, async () => {
     const layer = Protocol.layer().pipe(

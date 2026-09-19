@@ -8,6 +8,7 @@ import * as ProducerHeaders from "../../src/http/producer-header-parser.ts";
 import { readQueryParser } from "../../src/http/read-query-parser.ts";
 import { isValid } from "../../src/offset/index.ts";
 import { requestBodyReader } from "../../src/http/request-body-reader.ts";
+import { discardRequestBody } from "../../src/http/request-body-discard.ts";
 import * as Responses from "../../src/http/responses.ts";
 import * as SseEvents from "../../src/http/sse-event-encoder.ts";
 import { streamPath } from "../../src/http/stream-path-service.ts";
@@ -193,6 +194,56 @@ describe("HTTP requestBodyReader", () => {
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(dec.decode(result.data)).toBe("hi");
+  });
+});
+
+const streamingRequest = (chunks: number, onCancel: () => void) => {
+  let pulls = 0;
+  const request = new Request("http://x/s", {
+    method: "POST",
+    body: new ReadableStream<Uint8Array>({
+      pull: (controller) => {
+        pulls += 1;
+        if (pulls <= chunks) controller.enqueue(new Uint8Array([pulls]));
+        else controller.close();
+      },
+      cancel: onCancel,
+    }),
+  });
+  return { request, pulls: () => pulls };
+};
+
+describe("HTTP discardRequestBody", () => {
+  it("reads the Web body behind a request to its end without cancelling", async () => {
+    let cancelled = false;
+    const { request, pulls } = streamingRequest(2, () => {
+      cancelled = true;
+    });
+    await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(request)));
+    expect(pulls()).toBe(3);
+    expect(cancelled).toBe(false);
+    expect(request.bodyUsed).toBe(true);
+  });
+
+  it("leaves a locked body alone", async () => {
+    const { request } = streamingRequest(2, () => undefined);
+    const reader = request.body?.getReader();
+    if (!reader) throw new Error("expected a body reader");
+    await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(request)));
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    reader.releaseLock();
+  });
+
+  it("succeeds when the body is absent or fails while reading", async () => {
+    const empty = new Request("http://x/s", { method: "POST" });
+    await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(empty)));
+    const failing = new Request("http://x/s", {
+      method: "POST",
+      body: new ReadableStream<Uint8Array>({
+        pull: () => Promise.reject(new Error("no")),
+      }),
+    });
+    await Effect.runPromise(discardRequestBody(HttpServerRequest.fromWeb(failing)));
   });
 });
 
