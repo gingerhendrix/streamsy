@@ -15,6 +15,10 @@ Three Layers give a program its streams: memory for one process and tests, SQLit
 
 `Streams.layerMemory(options)` holds every stream in the process. Two processes hold two unrelated stores, and disposing the Layer loses the data.
 
+Its commit boundary copies the whole store for every mutation, so one append
+costs linear time in the number of stored messages. This is the development
+host; use SQLite for anything that grows.
+
 `constrained: true` mimics a store that copies a fork prefix instead of sharing it, polls for wakes, and has no expiry index. Use it in tests to check that a program does not depend on the richer defaults.
 
 ## Bun SQLite

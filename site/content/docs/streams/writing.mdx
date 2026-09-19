@@ -18,7 +18,29 @@ const write = Effect.gen(function* () {
 
 `Appended` carries the new tail `offset`. Because reads are after-exclusive, that offset is also the next read position. `Duplicate` means this producer position was already accepted.
 
-A JSON ref stores one message per item. A bytes ref joins the items into one stored message.
+A JSON ref stores one message per item. A bytes append joins all items from one call into one stored message.
+
+## Durable State changes
+
+`State.changes` turns upsert and delete descriptions into the wire events for a
+`StreamRef.state`. It derives each key from the ref, records the source
+`offset`, and assigns `txid` as `${offset}:${index}` within the append.
+
+```ts
+import { Effect } from "effect";
+import { State, Streams } from "@streamsy/core";
+import { stories } from "./refs.ts";
+
+const updateIndex = (offset: string, story: { id: number; title: string }) =>
+  Effect.gen(function* () {
+    const facts = State.changes(stories, { offset }, [State.upsert(story), State.delete(story)]);
+    yield* Streams.append(stories, facts);
+  });
+```
+
+Reading the state ref with `Streams.read` or `Streams.follow` returns the typed
+change events; browser consumers can pass the same stream to
+`@durable-streams/state`.
 
 ## Close
 
@@ -42,6 +64,11 @@ const importOne = (position: Producer.Position) =>
 ```
 
 Advance the position only after `Appended` or `Duplicate`. Keep the bytes identical across a retry, because a duplicate acknowledges the position and does not compare payloads.
+
+The protocol does not allocate epochs for a restarted producer. When a payload
+cannot be recomputed, persist it with its full producer tuple before appending
+and re-send both after restart. The [core producer restart contract](https://github.com/gingerhendrix/streamsy/blob/effect/packages/core/README.md#producer-restarts)
+explains why `Duplicate` confirms that the earlier send landed.
 
 `seq` starts at 0 for a new epoch and increases by one. A repeat of an accepted `seq` is `Duplicate`. A skip is `ProducerGap`. A higher epoch fences older writers, and their appends then fail with `StaleEpoch`. See [PROTOCOL.md section 5.2.1](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#521-idempotent-producers).
 

@@ -28,8 +28,9 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
 
 ## What you get
 
-- `StreamRef` names a stream with its content type and schema. `StreamRoute`
-  names a family of streams from an id template.
+- `StreamRef` names a stream with its content type and schema, including
+  `StreamRef.state` for Durable State change events. `StreamRoute` names a
+  family of streams from an id template.
 - `Streams` creates, appends, reads, follows, and removes streams. Create and
   append return `_tag` variants such as `Created` / `Exists` and
   `Appended` / `Duplicate`. Protocol failures are tagged errors
@@ -38,6 +39,13 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
 - `Producer` appends under a producer tuple so retries are safe.
 - `Fold` reduces a stream into a value.
 - `Backend` and `Streams.layerRouted` select a backend per stream id.
+
+### Producer restarts
+
+The protocol does not allocate producer epochs. If a producer cannot recompute
+a payload after restart, persist the payload together with its `producerId`,
+`producerEpoch`, and `producerSeq` before appending. Re-send that same tuple and
+payload after a restart; `Duplicate` then means the earlier send landed.
 
 ## Entries
 
@@ -50,8 +58,11 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
 
 ## Storage and hosts
 
-The memory Layer is process-local and not persistent. For SQLite on Bun or in
-a Durable Object, use [`@streamsy/storage`](https://www.npmjs.com/package/@streamsy/storage).
+The memory Layer is process-local and not persistent. Its commit boundary copies
+the whole store for each mutation, so one append costs linear time in the number
+of stored messages. It is a development host; for anything that grows, use
+SQLite from [`@streamsy/storage`](https://www.npmjs.com/package/@streamsy/storage),
+on Bun or in a Durable Object.
 To serve the protocol, use [`@streamsy/serve`](https://www.npmjs.com/package/@streamsy/serve).
 
 Browsers use the official `@durable-streams/client` and

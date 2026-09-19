@@ -20,6 +20,28 @@ const ensure = Effect.gen(function* () {
 
 `closed: true` creates a closed stream. `initialData` seeds the first messages in the same write.
 
+## Durable State refs
+
+`StreamRef.state` describes a JSON stream of change events that
+`@durable-streams/state` can materialize. Give it the value schema, the event
+type, and the value field used as its key.
+
+```ts
+import { Schema } from "effect";
+import { StreamRef } from "@streamsy/core";
+
+const Story = Schema.Struct({ id: Schema.Finite, title: Schema.String });
+
+export const stories = StreamRef.state("session/main", {
+  schema: Story,
+  type: "story",
+  key: "id",
+});
+```
+
+The ref reads and writes typed Durable State changes. Construct those changes
+with the `State` helpers described on the [Writing](/docs/streams/writing) page.
+
 ## Expiry
 
 `ttlSeconds` sets a time to live. The clock restarts on every append and every read. `expiresAt` sets a fixed date that never moves. Set one or the other.
