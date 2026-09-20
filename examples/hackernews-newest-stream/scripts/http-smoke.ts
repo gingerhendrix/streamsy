@@ -7,7 +7,7 @@ import { Option, Schema } from "effect";
 import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.ts";
 
 // Offline vertical smoke: local HN fixture -> deterministic source batch ->
-// scoped @streamsy/projection follow -> public target stream consumed by the browser,
+// scoped @streamsy/projection change watcher -> public target stream consumed by the browser,
 // including a process restart against the same SQLite file.
 
 const packageDir = resolve(import.meta.dir, "..");

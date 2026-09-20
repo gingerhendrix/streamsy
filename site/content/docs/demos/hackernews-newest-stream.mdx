@@ -4,7 +4,7 @@ description: Follow newest stories through an Effect server and an official Dura
 ---
 
 The server polls Hacker News, writes changes to a JSON source stream, and keeps
-a declared-output `@streamsy/projection` following that source. The browser
+a declared-output `@streamsy/projection` watching that source. The browser
 consumes the Durable State target with `@durable-streams/state/db` and renders
 TanStack DB live queries. It shows the newest stories, score and comment changes,
 new arrivals and stories leaving the configured set.
@@ -21,7 +21,7 @@ bun run --cwd examples/hackernews-newest-stream dev
 Open http://localhost:1339. `PORT` selects another port. `HN_DB` selects the
 SQLite file and defaults to `.data/hackernews.sqlite`; the literal `memory`
 selects a process-local test host. `HN_PROJECTION_LIMIT` bounds the checkpoint
-transactions in one follower pass. The status view reports poll counts, follower
+transactions in one projection pass. The status view reports poll counts, projection
 health, and the source offset loaded from the checkpoint. To run the offline
 HTTP proof:
 
@@ -43,9 +43,9 @@ fact index as `${offset}:${index}`. The stream form pins a unit before appending
 so a retry uses the same producer identity and does not repeat its output.
 
 Source, target and checkpoint share a Bun SQLite storage Layer held by the
-runtime that also serves the HTTP edge. `Projection.follow` is forked in that
-Layer's scope. Appends wake it on memory; SQLite is covered by the one-second
-repair interval. The poller's interval fiber has the same scoped lifetime, so
+runtime that also serves the HTTP edge. `Projection.onChange` is forked in that
+Layer's scope, and source appends wake it through the storage change feed. The
+poller's interval fiber has the same scoped lifetime, so
 disposing the runtime stops both loops. `POST /api/poll` only polls.
 
 ## Limits
