@@ -6,7 +6,8 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "smoke:http": "bun run scripts/http-smoke.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "bun test test"
   },
   "dependencies": {
     "@streamsy/core": "workspace:*"

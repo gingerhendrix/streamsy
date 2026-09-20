@@ -2,22 +2,19 @@
 
 A [Fold Core](https://www.npmjs.com/package/@humanlayer/fold-core) agent whose
 log lives in Streamsy. Fold owns the agent loop, tool settlement, and
-conversation projections. Streamsy stores each session's event log and an
-append journal, so a session can resume after a crash or be taken over by a
-new process without duplicating entries.
+conversation projections. Streamsy stores each session's event log, so a
+session can resume from durable history after a crash.
 
 ## Run it
 
 ```text
 bun run --cwd examples/fold-agent start   <prompt>
-bun run --cwd examples/fold-agent resume  <stream-id> [--epoch <n>] [--takeover] <prompt>
+bun run --cwd examples/fold-agent resume  <stream-id> <prompt>
 bun run --cwd examples/fold-agent inspect <stream-id>
 ```
 
-`start` opens a new session. `resume` continues one: without a flag it uses
-the last journal epoch, `--epoch` requires an exact match, and `--takeover`
-fences the old writer and starts a new epoch. `inspect` renders a session and
-needs no model credentials.
+`start` opens a new session. `resume` continues one from the stored log.
+`inspect` renders a session and needs no model credentials.
 
 | Variable                              | Meaning                                                       |
 | ------------------------------------- | ------------------------------------------------------------- |
@@ -28,14 +25,15 @@ needs no model credentials.
 
 ## How it works
 
-A session uses the streams `fold/sessions/<id>/events` and
-`fold/sessions/<id>/journal` with producer id `fold-session:<id>`. Each append
-journals the exact entry and producer tuple first, then appends under that
-tuple with `Producer.append`. Because the tuple is stable, a retry or a
-delayed append from an old process settles as `Duplicate` instead of
-duplicating the entry. Recovery replays the log, settles the last pending
-entry from the journal, and then either resumes the same epoch or takes over
-with a new one.
+A session uses one stream, `fold/sessions/<id>/events`. Opening the writer
+reads that log, validates Fold's sequence, and uses its length as the next
+sequence. Each append names the observed tail with `expectedOffset`. If
+another process advances the log first, the append fails and the stale writer
+stays fenced until the caller opens a new writer from durable history.
+
+If the process crashes after a model call but before its append commits, the
+model call runs again on the next turn. This is the accepted cost of keeping
+the example to one stream and one write per entry.
 
 `openMemoryStore()` and `openStore({ filename })` give the same store on the
 memory Layer and on Bun SQLite.
@@ -48,12 +46,16 @@ bun run --cwd examples/fold-agent test:unit
 ```
 
 The tests run the store contract on memory and SQLite, drive real CLI
-subprocesses with the scripted fixture, and prove crash recovery and takeover
-fencing across separate writer processes.
+subprocesses with the scripted fixture, and prove `expectedOffset` fencing
+across separate writer processes. This demo has no HTTP surface, so its three
+SQLite process tests are its smoke suite.
 
 ## Limits
 
-Full-history recovery is O(log + journal). Snapshots, retention, and recovery
-of an in-flight provider request are not provided. Effect is pinned to
-`4.0.0-rc.115` through the workspace override; `@humanlayer/fold-core`
-declares older peers, and the tests cover that combination.
+Full-history recovery is O(log). Snapshots, retention, and recovery of an
+in-flight provider request are not provided. Non-recomputable payloads need
+the persisted tuple contract described under
+[Producer restarts](../../packages/core/README.md#producer-restarts). Effect is
+pinned to `4.0.0-rc.115` through the workspace override;
+`@humanlayer/fold-core` declares older peers, and the tests cover that
+combination.

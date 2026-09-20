@@ -7,34 +7,14 @@ import { databasePathFromEnv, DEFAULT_DATABASE_PATH } from "../src/storage.ts";
 import { decodeStoredLogEntry, AgentId, EventId, SessionId } from "@humanlayer/fold-core";
 
 describe("Fold CLI parsing and rendering", () => {
-  test("resume defaults to the durable epoch", async () => {
+  test("resume accepts a stream id and prompt", async () => {
     expect(await Effect.runPromise(parseResumeArgs(["fold/sessions/a/events", "hello"]))).toEqual({
       streamId: "fold/sessions/a/events",
       prompt: "hello",
-      epoch: undefined,
-      takeover: false,
     });
   });
-  test("resume accepts an explicit epoch or takeover", async () => {
-    expect(await Effect.runPromise(parseResumeArgs(["a", "--epoch", "7", "hello"]))).toMatchObject({
-      epoch: 7,
-      takeover: false,
-    });
-    expect(await Effect.runPromise(parseResumeArgs(["a", "--takeover", "hello"]))).toMatchObject({
-      epoch: undefined,
-      takeover: true,
-    });
-  });
-  test("resume rejects malformed, unsafe and conflicting options", async () => {
-    for (const args of [
-      [],
-      ["a"],
-      ["a", "--epoch", "-1", "hi"],
-      ["a", "--epoch", "1.5", "hi"],
-      ["a", "--epoch", "9007199254740992", "hi"],
-      ["a", "--epoch", "1", "--takeover", "hi"],
-      ["a", "--other", "hi"],
-    ]) {
+  test("resume rejects missing arguments and flags", async () => {
+    for (const args of [[], ["a"], ["a", "--other", "hi"]]) {
       expect(Exit.isFailure(await Effect.runPromiseExit(parseResumeArgs(args)))).toBe(true);
     }
   });

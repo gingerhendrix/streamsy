@@ -6,7 +6,6 @@ package entries that no longer exist. Each was last green at `0d895c2`.
 
 | Directory                                | What it showed                                                |
 | ---------------------------------------- | ------------------------------------------------------------- |
-| `examples/memory-server`                 | A curl walkthrough over a memory host                         |
 | `examples/issue-tracker-projections`     | Per-issue projections and a fan-in board on the old mesh, with Alchemy |
 | `examples/issue-tracker`                 | The full stack: views, three sinks, an action outbox, Bun and Cloudflare hosts |
 | `examples/risk-demo`                     | An event-sourced game with per-generation board projections and SSE |

@@ -23,20 +23,24 @@ A JSON ref stores one message per item. A bytes append joins all items from one 
 ## Durable State changes
 
 `State.changes` turns upsert and delete descriptions into the wire events for a
-`StreamRef.state`. It derives each key from the ref, records the source
-`offset`, and assigns `txid` as `${offset}:${index}` within the append.
+`StreamRef.state`. Each description names its collection. The helper derives the
+key from that collection's key field, records the source `offset`, and assigns
+`txid` as `${offset}:${index}` within the append.
 
 ```ts
 import { Effect } from "effect";
 import { State, Streams } from "@streamsy/core";
-import { stories } from "./refs.ts";
+import { workspace } from "./refs.ts";
 
-const updateIndex = (offset: string, story: { id: number; title: string }) =>
+const createIssue = (offset: string, issue: { id: string; projectId: string; title: string }) =>
   Effect.gen(function* () {
-    const facts = State.changes(stories, { offset }, [State.upsert(story)]);
-    yield* Streams.append(stories, facts);
+    const facts = State.changes(workspace, { offset }, [State.upsert("issue", issue)]);
+    yield* Streams.append(workspace, facts);
   });
 ```
+
+A change for a collection the ref does not declare, or a value that does not
+match that collection's schema, fails to compile.
 
 Reading the state ref with `Streams.read` or `Streams.follow` returns the typed
 change events; browser consumers can pass the same stream to
