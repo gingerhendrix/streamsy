@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Streams, StreamsReader } from "@streamsy/core";
+import { Streams, StreamsReader, ZERO_OFFSET } from "@streamsy/core";
 import { Deferred, Effect, Ref, Stream } from "effect";
 import type { Issue } from "../../shared/state-schema.ts";
 import { issueUpsert, mutateWorkspace, projectUpsert } from "../../server/state.ts";
@@ -26,6 +26,10 @@ test("two concurrent Transact writers land without a lost update", async () => {
     mutateWorkspace(workspaceId, (state) => {
       attempts += 1;
       expect(state.getProject(project.id)).toBeDefined();
+      if (attempts === 3) {
+        const otherId = issue.id === "issue_a" ? "issue_b" : "issue_a";
+        expect(state.getIssue(otherId)).toBeDefined();
+      }
       return {
         event: issueUpsert(issue),
         respond: ({ offset }) => Response.json({ offset }),
@@ -34,7 +38,7 @@ test("two concurrent Transact writers land without a lost update", async () => {
 
   const program = Effect.gen(function* () {
     yield* Streams.create(workspaceEvents(workspaceId));
-    yield* appendWorkspaceEvent(workspaceId, projectUpsert(project));
+    yield* appendWorkspaceEvent(workspaceId, projectUpsert(project), ZERO_OFFSET);
     const reader = yield* StreamsReader;
     const firstReads = yield* Ref.make(0);
     const bothRead = yield* Deferred.make<void>();
@@ -44,6 +48,7 @@ test("two concurrent Transact writers land without a lost update", async () => {
         Effect.gen(function* () {
           const result = yield* reader.read(id, options);
           const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+          // The memory store materializes in one read; these are the two writers' first reads.
           if (readNumber <= 2) {
             if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
             yield* Deferred.await(bothRead);

@@ -61,6 +61,50 @@ it("supports string keys and rejects empty derived keys", () => {
   ).toThrow('Invalid state key for type "slug": field "slug"');
 });
 
+it("rejects an omitted optional key at runtime", () => {
+  const OptionalSlug = Schema.Struct({
+    slug: Schema.optionalKey(Schema.String),
+    title: Schema.String,
+  });
+  const optionalSlugs = StreamRef.state("optional-slugs", {
+    collections: {
+      // SAFETY: bypass the compile-time key constraint to cover the runtime boundary.
+      slug: { schema: OptionalSlug, key: "slug" as never },
+    },
+  });
+  expect(() =>
+    State.changes(optionalSlugs, { offset: "source:7" }, [
+      State.upsert("slug", { title: "missing" }),
+    ]),
+  ).toThrow(TypeError);
+});
+
+it("lets a change override txid and add source headers without replacing offset", () => {
+  const facts = State.changes(stories, { offset: "source:8" }, [
+    State.upsert(
+      "story",
+      { id: 7, title: "first" },
+      {
+        headers: { txid: "client-uuid", timestamp: "2026-09-20T10:00:00Z" },
+      },
+    ),
+    State.upsert("story", { id: 8, title: "second" }),
+  ]);
+  expect(facts.map((fact) => fact.headers)).toEqual([
+    {
+      operation: "upsert",
+      offset: "source:8",
+      txid: "client-uuid",
+      timestamp: "2026-09-20T10:00:00Z",
+    },
+    { operation: "upsert", offset: "source:8", txid: "source:8:1" },
+  ]);
+  const encoded = Schema.encodeSync(stories.codec)(facts[0]!);
+  // SAFETY: `StreamRef.state` constructs a JSON ref whose codec encodes to a string.
+  const encodedText = encoded as string;
+  expect(JSON.parse(encodedText).headers).toEqual(facts[0]!.headers);
+});
+
 it("writes and reads several collections through one state ref", () =>
   Effect.runPromise(
     Effect.gen(function* () {

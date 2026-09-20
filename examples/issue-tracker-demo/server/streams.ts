@@ -1,4 +1,4 @@
-import { StreamRef, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import { State, StreamRef, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Context, Effect, Layer } from "effect";
@@ -15,17 +15,19 @@ export const workspaceEvents = (workspaceId: string) =>
     },
   });
 
-export type WorkspaceEvent = StreamRef.CollectionsChange<
-  ReturnType<typeof workspaceEvents>["collections"]
->;
+type WorkspaceCollections = ReturnType<typeof workspaceEvents>["collections"];
+export type WorkspaceEvent = StreamRef.CollectionsChange<WorkspaceCollections>;
+export type WorkspaceChange = State.Change<WorkspaceCollections>;
 
 export function appendWorkspaceEvent(
   workspaceId: string,
-  event: WorkspaceEvent,
+  change: WorkspaceChange,
+  sourceOffset: string,
   expectedOffset?: string,
 ) {
+  const events = State.changes(workspaceEvents(workspaceId), { offset: sourceOffset }, [change]);
   const options = expectedOffset === undefined ? {} : { expectedOffset };
-  return Streams.append(workspaceEvents(workspaceId), [event], options);
+  return Streams.append(workspaceEvents(workspaceId), events, options);
 }
 
 /** Minimal runtime surface used by the Promise-native Bun route handlers. */

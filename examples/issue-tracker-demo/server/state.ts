@@ -1,14 +1,9 @@
 import { MaterializedState } from "@durable-streams/state";
-import { Streams, ZERO_OFFSET } from "@streamsy/core";
+import { State, Streams, ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Stream } from "effect";
-import {
-  issueTrackerState,
-  type Comment,
-  type Issue,
-  type Project,
-} from "../shared/state-schema.ts";
+import { type Comment, type Issue, type Project } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
-import { appendWorkspaceEvent, workspaceEvents, type WorkspaceEvent } from "./streams.ts";
+import { appendWorkspaceEvent, workspaceEvents, type WorkspaceChange } from "./streams.ts";
 import { conflict, id, notFound, now, type TxId } from "./utils.ts";
 
 /** Read-only view over one workspace's materialized state. */
@@ -21,6 +16,9 @@ export interface WorkspaceState {
 function eventHeaders(txid: TxId = crypto.randomUUID()) {
   return { timestamp: now(), txid };
 }
+type WorkspaceChangeWithHeaders = WorkspaceChange & {
+  readonly headers: ReturnType<typeof eventHeaders>;
+};
 
 /**
  * Fold one workspace from its durable stream. No materialized state survives
@@ -45,7 +43,7 @@ export const materializeWorkspace = Effect.fn("Workspace.materialize")(function*
 /** Outcome of one mutation attempt against freshly materialized state. */
 export type MutationAttempt =
   | { response: Response }
-  | { event: WorkspaceEvent; respond: (ack: { offset: string }) => Response };
+  | { event: WorkspaceChange; respond: (ack: { offset: string }) => Response };
 
 /**
  * The Transact recipe: read, fold, append with `expectedOffset`, and retry
@@ -73,6 +71,7 @@ export const mutateWorkspace = (
       workspaceId,
       outcome.event,
       materialized.value.headOffset,
+      materialized.value.headOffset,
     );
     return outcome.respond({ offset: ack.offset });
   }).pipe(
@@ -82,44 +81,28 @@ export const mutateWorkspace = (
     ),
   );
 
-// These builders preserve the browser transaction id and timestamp. A later
-// toolkit helper can replace them once custom header metadata is supported.
-export function projectUpsert(project: Project, txid?: TxId): WorkspaceEvent {
-  const event = issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) });
-  return {
-    type: "project",
-    key: event.key,
-    value: project,
-    headers: { ...event.headers, operation: "upsert" },
-  };
+export function projectUpsert(project: Project, txid?: TxId): WorkspaceChangeWithHeaders {
+  const headers = eventHeaders(txid);
+  return { ...State.upsert("project", project, { headers }), headers };
 }
 
-export function issueUpsert(issue: Issue, txid?: TxId): WorkspaceEvent {
-  const event = issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) });
-  return {
-    type: "issue",
-    key: event.key,
-    value: issue,
-    headers: { ...event.headers, operation: "upsert" },
-  };
+export function issueUpsert(issue: Issue, txid?: TxId): WorkspaceChangeWithHeaders {
+  const headers = eventHeaders(txid);
+  return { ...State.upsert("issue", issue, { headers }), headers };
 }
 
-export function commentUpsert(comment: Comment, txid?: TxId): WorkspaceEvent {
-  const event = issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) });
-  return {
-    type: "comment",
-    key: event.key,
-    value: comment,
-    headers: { ...event.headers, operation: "upsert" },
-  };
+export function commentUpsert(comment: Comment, txid?: TxId): WorkspaceChangeWithHeaders {
+  const headers = eventHeaders(txid);
+  return { ...State.upsert("comment", comment, { headers }), headers };
 }
 
 const appendSeedEvent = Effect.fn("Workspace.appendSeedEvent")(function* (
   workspaceId: string,
-  event: WorkspaceEvent,
+  event: WorkspaceChange,
+  sourceOffset: string,
   expectedOffset?: string,
 ) {
-  yield* appendWorkspaceEvent(workspaceId, event, expectedOffset);
+  return yield* appendWorkspaceEvent(workspaceId, event, sourceOffset, expectedOffset);
 });
 
 /** Ensure and seed the known demo workspace at boot. */
@@ -178,12 +161,16 @@ export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
       createdAt,
     },
   ];
-  const events: WorkspaceEvent[] = [
+  const events: WorkspaceChange[] = [
     ...initialProjects.map((project) => projectUpsert(project)),
     ...initialIssues.map((issue) => issueUpsert(issue)),
     ...initialComments.map((comment) => commentUpsert(comment)),
   ];
-  for (const event of events) yield* appendSeedEvent(mainWorkspaceId, event);
+  let sourceOffset = materialized.headOffset;
+  for (const event of events) {
+    const ack = yield* appendSeedEvent(mainWorkspaceId, event, sourceOffset);
+    sourceOffset = ack.offset;
+  }
 });
 
 /** Seed a new shared workspace with one starter project. */
@@ -196,7 +183,7 @@ export const seedStarterProject = Effect.fn("Workspace.seedStarter")(function* (
     description: "Shared workspace — anyone with this link sees changes live.",
     createdAt: now(),
   };
-  yield* appendSeedEvent(workspaceId, projectUpsert(project), ZERO_OFFSET);
+  yield* appendSeedEvent(workspaceId, projectUpsert(project), ZERO_OFFSET, ZERO_OFFSET);
 });
 
 export function newProject(input: Partial<Project>): Project {

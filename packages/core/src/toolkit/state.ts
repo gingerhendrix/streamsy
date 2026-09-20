@@ -4,12 +4,20 @@ export interface Upsert<A, Type extends string = string> {
   readonly kind: "upsert";
   readonly type: Type;
   readonly value: A;
+  readonly headers?: ChangeHeaders;
 }
 
 export interface Delete<A, Type extends string = string> {
   readonly kind: "delete";
   readonly type: Type;
   readonly oldValue: A;
+  readonly headers?: ChangeHeaders;
+}
+
+export interface ChangeHeaders {
+  readonly txid?: string;
+  readonly timestamp?: string;
+  readonly from?: string;
 }
 
 /** A pending change for one of the collections in `C`. */
@@ -18,18 +26,18 @@ export type Change<C extends Collections> = {
 }[keyof C & string];
 
 /** Describe an upsert into a collection before its key and source position are applied. */
-export const upsert = <const Type extends string, A>(type: Type, value: A): Upsert<A, Type> => ({
-  kind: "upsert",
-  type,
-  value,
-});
+export const upsert = <const Type extends string, A>(
+  type: Type,
+  value: A,
+  options: { readonly headers?: ChangeHeaders } = {},
+): Upsert<A, Type> => ({ kind: "upsert", type, value, ...options });
 
 /** Describe a delete from a collection before its key and source position are applied. */
-const remove = <const Type extends string, A>(type: Type, oldValue: A): Delete<A, Type> => ({
-  kind: "delete",
-  type,
-  oldValue,
-});
+const remove = <const Type extends string, A>(
+  type: Type,
+  oldValue: A,
+  options: { readonly headers?: ChangeHeaders } = {},
+): Delete<A, Type> => ({ kind: "delete", type, oldValue, ...options });
 export { remove as delete };
 
 /** Read the key field of a value. `StateKey` limits the field to strings and numbers. */
@@ -54,7 +62,11 @@ export function changes<C extends Collections, RD, RE>(
     if (collection === undefined) throw new TypeError(`Unknown state collection "${entry.type}"`);
     const value = entry.kind === "upsert" ? entry.value : entry.oldValue;
     const key = readKey(entry.type, collection.key, value);
-    const headers = { offset: options.offset, txid: `${options.offset}:${index}` };
+    const headers = {
+      offset: options.offset,
+      txid: `${options.offset}:${index}`,
+      ...entry.headers,
+    };
     return entry.kind === "upsert"
       ? { type: entry.type, key, value, headers: { operation: "upsert", ...headers } }
       : { type: entry.type, key, old_value: value, headers: { operation: "delete", ...headers } };

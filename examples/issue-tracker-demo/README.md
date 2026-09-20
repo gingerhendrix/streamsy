@@ -50,7 +50,9 @@ changes, validate against the resulting view, and append with
 `expectedOffset`. An `OffsetMismatch` retries the whole recipe, so parallel
 writers cannot silently overwrite one another. Project, issue, and comment
 changes share one `StreamRef.state` whose collections type both reads and
-writes.
+writes. Because the tracker appends its own events rather than projecting an
+upstream stream, each change records the workspace head read by the transaction
+as its source offset.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows
 the public workspace stream and exposes projects, issues, and comments as

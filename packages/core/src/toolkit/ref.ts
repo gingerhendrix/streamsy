@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
 
+/** Omit `offset` and `txid` rather than setting them to `undefined`. */
 export interface StateHeaders {
   readonly operation: "upsert" | "delete";
   readonly offset?: string;
