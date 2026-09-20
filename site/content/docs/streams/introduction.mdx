@@ -23,19 +23,17 @@ const NoteRow = Schema.Struct({ id: Schema.String, text: Schema.String, updatedA
 export const notes = StreamRef.json("notes", { schema: Note });
 export const blobs = StreamRef.bytes("blobs", { contentType: "image/png" });
 export const noteIndex = StreamRef.state("note-index", {
-  schema: NoteRow,
-  type: "note",
-  key: "id",
+  collections: { note: { schema: NoteRow, key: "id" } },
 });
 ```
 
 A ref holds no resource and opens no connection. Two refs with the same id name the same stream.
 
-| Constructor                                  | Items                                            | Upstream mode                                             |
-| -------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| `StreamRef.json(id, { schema })`             | one message per item                             | [JSON mode](https://durablestreams.com/json-mode)         |
-| `StreamRef.bytes(id, { contentType? })`      | items joined into one message                    | [byte stream](https://durablestreams.com/concepts)        |
-| `StreamRef.state(id, { schema, type, key })` | Durable State change events for one value schema | [Durable State](https://durablestreams.com/durable-state) |
+| Constructor                             | Items                                            | Upstream mode                                             |
+| --------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
+| `StreamRef.json(id, { schema })`        | one message per item                             | [JSON mode](https://durablestreams.com/json-mode)         |
+| `StreamRef.bytes(id, { contentType? })` | items joined into one message                    | [byte stream](https://durablestreams.com/concepts)        |
+| `StreamRef.state(id, { collections })`  | Durable State change events, typed by collection | [Durable State](https://durablestreams.com/durable-state) |
 
 The id is a path. Segments are separated by `/`. A segment cannot be empty, `.`, or `..`, and the id cannot contain `%`, `?`, `#`, or `\`. Over HTTP the id is the stream path under the host prefix, so `notes` is served at `/notes`.
 
