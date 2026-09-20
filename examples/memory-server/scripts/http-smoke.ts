@@ -1,3 +1,4 @@
+/* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random, effecttsgo/node-builtin-import -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP through their native Promise APIs. */
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
@@ -89,12 +90,29 @@ async function readSseUntilControl(response: Response): Promise<string> {
   throw new SmokeError(`Timed out waiting for SSE data/control events. Received:\n${output}`);
 }
 
-const server = Bun.spawn(["bun", "src/index.ts"], {
-  cwd: packageDir,
-  env: { ...process.env, PORT: String(port) },
-  stdout: "pipe",
-  stderr: "pipe",
-});
+type DemoProcess = ReturnType<typeof startServer>;
+
+function startServer() {
+  return Bun.spawn(["bun", "src/index.ts"], {
+    cwd: packageDir,
+    env: { ...process.env, PORT: String(port) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+async function stopServer(server: DemoProcess): Promise<void> {
+  server.kill();
+  await server.exited.catch(() => undefined);
+
+  const stdout = await new Response(server.stdout).text();
+  const stderr = await new Response(server.stderr).text();
+  if (stdout.trim()) console.log(stdout.trim());
+  if (stderr.trim()) console.error(stderr.trim());
+  assert(stderr.trim().length === 0, `demo server wrote to stderr: ${stderr}`);
+}
+
+let server = startServer();
 
 try {
   await waitForServer();
@@ -150,7 +168,7 @@ try {
   const sseResponse = await request(`${streamUrl}?offset=-1&live=sse`);
   assert(sseResponse.status === 200, `SSE status ${sseResponse.status}`);
   assert(
-    sseResponse.headers.get("content-type")?.startsWith("text/event-stream"),
+    sseResponse.headers.get("content-type")?.startsWith("text/event-stream") === true,
     `unexpected SSE content-type ${sseResponse.headers.get("content-type")}`,
   );
   const sseText = await readSseUntilControl(sseResponse);
@@ -162,17 +180,17 @@ try {
   );
   assert(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
 
-  console.log(`memory-server HTTP smoke passed for ${streamId}`);
-} finally {
-  server.kill();
-  await server.exited.catch(() => undefined);
+  await stopServer(server);
+  server = startServer();
+  await waitForServer();
 
-  const stdout = await new Response(server.stdout).text();
-  const stderr = await new Response(server.stderr).text();
-  if (stdout.trim()) {
-    console.log(stdout.trim());
-  }
-  if (stderr.trim()) {
-    console.error(stderr.trim());
-  }
+  const afterRestartResponse = await request(`${streamUrl}?offset=-1`);
+  assert(
+    afterRestartResponse.status === 404,
+    `read after restart status ${afterRestartResponse.status}`,
+  );
+
+  console.log(`memory-server HTTP smoke passed for ${streamId}, including fresh-store restart`);
+} finally {
+  if (server.exitCode === null) await stopServer(server);
 }
