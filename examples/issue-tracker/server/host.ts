@@ -3,7 +3,7 @@ import * as Http from "@streamsy/core/http";
 import type { Host } from "@streamsy/projection";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Projection } from "@streamsy/projection";
 import { issueRows } from "./projection.ts";
@@ -43,11 +43,24 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
     Effect.gen(function* () {
       yield* prepareSchema;
       yield* createInputs(workspaces.flatMap(refs));
-      if (workspaces.length > 0)
-        yield* Projection.onChange(
+      if (workspaces.length > 0) {
+        const fibers = yield* Projection.onChange(
           issueRows,
           workspaces.map((workspaceId) => ({ workspaceId })),
         );
+        yield* Effect.forEach(
+          fibers,
+          (fiber) =>
+            Fiber.await(fiber).pipe(
+              Effect.flatMap((exit) =>
+                Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+                  ? Effect.logError("issue-rows watcher ended", exit)
+                  : Effect.void,
+              ),
+            ),
+          { concurrency: "unbounded", discard: true },
+        ).pipe(Effect.forkScoped);
+      }
       return true as const;
     }),
   ).pipe(Layer.provide(base));
@@ -57,4 +70,8 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
 };
 
 export const createInputs = (inputs: ReadonlyArray<Parameters<typeof Streams.create>[0]>) =>
-  Effect.forEach(inputs, (ref) => Streams.create(ref).pipe(Effect.ignore), { discard: true });
+  Effect.forEach(
+    inputs,
+    (ref) => Streams.create(ref).pipe(Effect.catchTag("CreateConflict", () => Effect.void)),
+    { discard: true },
+  );

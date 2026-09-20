@@ -1,10 +1,9 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- The executable host owns its SQLite path. */
 import { Checkpoints, Projection } from "@streamsy/projection";
-import { Effect, ManagedRuntime, Option } from "effect";
+import { Effect, ManagedRuntime, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Schema } from "effect";
 import { CommandRequest } from "../shared/api.ts";
 import { applicationLayer, StreamHttp } from "./host.ts";
 import { issueRows } from "./projection.ts";
@@ -32,8 +31,21 @@ const api = async (request: Request): Promise<Response> => {
     return json({ error: "Unknown workspace" }, { status: 404 });
   try {
     if (request.method === "POST" && resource === "commands") {
-      const command = Schema.decodeUnknownSync(CommandRequest)(await request.json());
-      const accepted = await runtime.runPromise(transact(workspaceId, command));
+      let command: typeof CommandRequest.Type;
+      try {
+        command = Schema.decodeUnknownSync(CommandRequest)(await request.json());
+      } catch {
+        return json({ error: "Invalid command" }, { status: 400 });
+      }
+      const acceptedResult = await runtime.runPromise(
+        transact(workspaceId, command).pipe(Effect.result),
+      );
+      if (acceptedResult._tag === "Failure") {
+        if (acceptedResult.failure._tag === "UnknownIssue")
+          return json({ error: "Unknown issue" }, { status: 400 });
+        throw acceptedResult.failure;
+      }
+      const accepted = acceptedResult.success;
       await runtime.runPromise(
         Projection.serialized(issueRows.member({ workspaceId }), { limit: 5 }),
       );
@@ -61,6 +73,7 @@ const api = async (request: Request): Promise<Response> => {
           [workspaceId],
         ),
       });
+    if (resource !== "status") return json({ error: "Not found" }, { status: 404 });
     const loaded = await runtime.runPromise(
       Effect.gen(function* () {
         const checkpoints = yield* Checkpoints;
@@ -74,8 +87,8 @@ const api = async (request: Request): Promise<Response> => {
         onSome: (record) => record.inputs,
       }),
     });
-  } catch (error) {
-    return json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
+  } catch {
+    return json({ error: "Internal server error" }, { status: 500 });
   }
 };
 
@@ -104,7 +117,7 @@ const readIssues = async (workspaceId: string) => {
   return rows.map((row) => ({
     ...row,
     assigneeId: row.assigneeId ?? undefined,
-    labelIds: String(row.labelIds).split(",").filter(Boolean),
+    labelIds: String(row.labelIds).split(",").filter(Boolean).sort(),
   }));
 };
 

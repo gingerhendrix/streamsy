@@ -1,5 +1,5 @@
 import { StreamRef, StreamRoute } from "@streamsy/core";
-import { Option } from "effect";
+import { Option, Schema } from "effect";
 import { LabelRow, ProjectRow, UserRow } from "../domain/catalog.ts";
 import { Identifier, IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 
@@ -13,21 +13,25 @@ export const labelEvents = StreamRoute.json("issue-tracker/:workspaceId/issue-la
   schema: IssueLabelEvent,
 });
 
-const parseState = (suffix: string, id: string) => {
-  const match = id.match(new RegExp(`^issue-tracker/([^/]+)/${suffix}$`));
+const projectPattern = /^issue-tracker\/([^/]+)\/projects$/;
+const userPattern = /^issue-tracker\/([^/]+)\/users$/;
+const labelPattern = /^issue-tracker\/([^/]+)\/labels$/;
+const decodeIdentifier = Schema.decodeUnknownOption(Identifier);
+const parseState = (pattern: RegExp, id: string) => {
+  const match = id.match(pattern);
   if (match?.[1] === undefined) return Option.none();
-  return Option.some({ workspaceId: match[1] });
+  return Option.map(decodeIdentifier(match[1]), (workspaceId) => ({ workspaceId }));
 };
 export const projects = StreamRoute.custom({
-  parse: (id) => parseState("projects", id),
+  parse: (id) => parseState(projectPattern, id),
   ref: ({ workspaceId }) => projectStream(workspaceId),
 });
 export const users = StreamRoute.custom({
-  parse: (id) => parseState("users", id),
+  parse: (id) => parseState(userPattern, id),
   ref: ({ workspaceId }) => userStream(workspaceId),
 });
 export const labels = StreamRoute.custom({
-  parse: (id) => parseState("labels", id),
+  parse: (id) => parseState(labelPattern, id),
   ref: ({ workspaceId }) => labelStream(workspaceId),
 });
 export const projectStream = (workspaceId: string) =>

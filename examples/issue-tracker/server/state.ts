@@ -1,43 +1,14 @@
 import { Streams, ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Stream } from "effect";
 import type { CommandRequest } from "../shared/api.ts";
-import type { IssueEvent, IssueRow } from "../domain/issue.ts";
+import { foldIssue, type IssueEvent, type IssueRow } from "../domain/issue.ts";
 import { events } from "./streams.ts";
 
 export const foldEvents = (items: ReadonlyArray<IssueEvent>): Map<string, IssueRow> => {
   const rows = new Map<string, IssueRow>();
   for (const item of items) {
-    const previous = rows.get(item.issueId);
-    if (
-      item.type === "IssueCreated" &&
-      (previous === undefined || item.sequence > previous.sequence)
-    )
-      rows.set(item.issueId, {
-        issueId: item.issueId,
-        workspaceId: item.workspaceId,
-        projectId: item.projectId,
-        title: item.title,
-        status: item.status,
-        sequence: item.sequence,
-        updatedAt: item.occurredAt,
-      });
-    else if (previous !== undefined && item.sequence > previous.sequence)
-      rows.set(
-        item.issueId,
-        item.type === "IssueAssigned"
-          ? {
-              ...previous,
-              assigneeId: item.assigneeId,
-              sequence: item.sequence,
-              updatedAt: item.occurredAt,
-            }
-          : {
-              ...previous,
-              status: item.status,
-              sequence: item.sequence,
-              updatedAt: item.occurredAt,
-            },
-      );
+    const next = foldIssue(rows.get(item.issueId), item);
+    if (next !== undefined) rows.set(item.issueId, next);
   }
   return rows;
 };
