@@ -6,12 +6,10 @@ import * as Streams from "../../src/toolkit/streams.ts";
 
 const Story = Schema.Struct({ id: Schema.Finite, title: Schema.String });
 const stories = StreamRef.state("stories", {
-  schema: Story,
-  type: "story",
-  key: "id",
+  collections: { story: { schema: Story, key: "id" } },
 });
 const Slug = Schema.Struct({ slug: Schema.String, title: Schema.String });
-const slugs = StreamRef.state("slugs", { schema: Slug, type: "slug", key: "slug" });
+const slugs = StreamRef.state("slugs", { collections: { slug: { schema: Slug, key: "slug" } } });
 
 it("state changes round trip with Durable State wire fields and source headers", () =>
   Effect.runPromise(
@@ -19,8 +17,8 @@ it("state changes round trip with Durable State wire fields and source headers",
       const first = { id: 7, title: "first" };
       const second = { id: 8, title: "second" };
       const facts = State.changes(stories, { offset: "source:4" }, [
-        State.upsert(first),
-        State.delete(second),
+        State.upsert("story", first),
+        State.delete("story", second),
       ]);
 
       yield* Streams.create(stories);
@@ -47,7 +45,7 @@ it("state changes round trip with Durable State wire fields and source headers",
 
 it("supports string keys and rejects empty derived keys", () => {
   expect(
-    State.changes(slugs, { offset: "source:5" }, [State.upsert({ slug: "a", title: "A" })]),
+    State.changes(slugs, { offset: "source:5" }, [State.upsert("slug", { slug: "a", title: "A" })]),
   ).toEqual([
     {
       type: "slug",
@@ -57,40 +55,53 @@ it("supports string keys and rejects empty derived keys", () => {
     },
   ]);
   expect(() =>
-    State.changes(slugs, { offset: "source:6" }, [State.upsert({ slug: "", title: "empty" })]),
+    State.changes(slugs, { offset: "source:6" }, [
+      State.upsert("slug", { slug: "", title: "empty" }),
+    ]),
   ).toThrow('Invalid state key for type "slug": field "slug"');
 });
 
-it("reads multiple Durable State types through a union of stateChange codecs", () =>
+it("writes and reads several collections through one state ref", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
-      const workspace = StreamRef.json("workspace", {
-        schema: Schema.Union([
-          StreamRef.stateChange({ schema: Project, type: "project" }),
-          StreamRef.stateChange({ schema: Story, type: "story" }),
-        ]),
+      const workspace = StreamRef.state("workspace", {
+        collections: {
+          project: { schema: Project, key: "id" },
+          story: { schema: Story, key: "id" },
+        },
       });
-      const facts = [
-        {
-          type: "project" as const,
-          key: "p1",
-          value: { id: "p1", name: "Streamsy" },
-          headers: { operation: "upsert" as const },
-        },
-        {
-          type: "story" as const,
-          key: "7",
-          value: { id: 7, title: "first" },
-          headers: { operation: "upsert" as const },
-        },
-      ];
+      const facts = State.changes(workspace, { offset: "source:9" }, [
+        State.upsert("project", { id: "p1", name: "Streamsy" }),
+        State.upsert("story", { id: 7, title: "first" }),
+        State.delete("project", { id: "p1", name: "Streamsy" }),
+      ]);
+      expect(facts.map((fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
+        ["project", "p1", "upsert"],
+        ["story", "7", "upsert"],
+        ["project", "p1", "delete"],
+      ]);
 
       yield* Streams.create(workspace);
       yield* Streams.append(workspace, facts);
 
-      expect(yield* Streams.read(workspace).pipe(Streams.items, Stream.runCollect)).toEqual(facts);
+      const items = yield* Streams.read(workspace).pipe(Streams.items, Stream.runCollect);
+      expect(items).toEqual([...facts]);
+      const names = items.flatMap((item) =>
+        item.type === "project" && "value" in item ? [item.value.name] : [],
+      );
+      expect(names).toEqual(["Streamsy"]);
     }).pipe(Effect.provide(Streams.layerMemory())),
+  ));
+
+it("fails to decode an event whose type is not a declared collection", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const result = yield* Schema.decodeEffect(stories.codec)(
+        '{"type":"comment","key":"1","value":{"id":1,"title":"x"},"headers":{"operation":"upsert"}}',
+      ).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+    }),
   ));
 
 it("decodes foreign-writer optional headers and delete null values", () =>
