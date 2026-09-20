@@ -15,7 +15,8 @@ five checkpoints in the same transaction as its application writes.
 read the issue stream, fold it, append with `expectedOffset`, then run the
 member through `Projection.serialized` before reading the result. At startup,
 `Projection.onChange` watches the same five streams for each configured
-workspace and uses the same keyed mutex. The hand trigger is:
+workspace and uses the same keyed mutex. A scoped supervisor logs any watcher
+that ends in failure; normal shutdown interruption is ignored. The hand trigger is:
 
 ```bash
 ISSUE_TRACKER_DB=tracker.sqlite \
