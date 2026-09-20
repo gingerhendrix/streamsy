@@ -5,9 +5,14 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Layer } from "effect";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import type { Family, FamilyDefinition, OnChangeOptions } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import manifest from "../package.json";
+
+type PublicHelperTypes = Family | FamilyDefinition | OnChangeOptions;
+const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
+void acceptsPublicHelperTypes;
 
 test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
