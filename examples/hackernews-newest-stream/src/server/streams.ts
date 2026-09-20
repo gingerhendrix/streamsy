@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable demo prepares its configured SQLite directory at the Bun edge. */
-import { StorageFault, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import { Storage, StorageFault, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
 import { ProjectionFault, type Host } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
@@ -60,11 +60,13 @@ const sqliteHostLayer = Layer.unwrap(
   ),
 );
 
-const memoryHost = Layer.effectContext(Effect.context<Host>()).pipe(
+const memoryHost = Layer.effectContext(Effect.context<Host | Storage>()).pipe(
   Layer.provide(ProjectionMemory.layerMemory()),
 );
-const sqliteHost = Layer.effectContext(Effect.context<Host>()).pipe(Layer.provide(sqliteHostLayer));
-const hostLayer: Layer.Layer<Host, ProjectionFault | StorageFault> =
+const sqliteHost = Layer.effectContext(Effect.context<Host | Storage>()).pipe(
+  Layer.provide(sqliteHostLayer),
+);
+const hostLayer: Layer.Layer<Host | Storage, ProjectionFault | StorageFault> =
   databasePath === "memory" ? memoryHost : sqliteHost;
 
 /** One retained host graph shared by streams, checkpoints, HTTP and background fibers. */

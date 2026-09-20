@@ -180,7 +180,7 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
             {status.lastPollError || status.projection.lastError ? (
               <span className="bad">error</span>
             ) : (
-              <span className="good">{status.projection.running ? "following" : "stopped"}</span>
+              <span className="good">{status.projection.running ? "running" : "stopped"}</span>
             )}
           </div>
         ) : null}

@@ -53,9 +53,11 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
           (fiber) =>
             Fiber.await(fiber).pipe(
               Effect.flatMap((exit) =>
-                Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
-                  ? Effect.logError("issue-rows watcher ended", exit)
-                  : Effect.void,
+                Exit.isSuccess(exit)
+                  ? Effect.logInfo("issue-rows watcher ended successfully", exit)
+                  : !Cause.hasInterruptsOnly(exit.cause)
+                    ? Effect.logError("issue-rows watcher ended", exit)
+                    : Effect.void,
               ),
             ),
           { concurrency: "unbounded", discard: true },
