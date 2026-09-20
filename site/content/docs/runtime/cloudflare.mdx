@@ -92,6 +92,8 @@ const objectLayer = (
 
 A fused handler's `Streams.append` and SQL through the object's client commit with the checkpoint, because all three go through the one `CommitBoundary` the storage Layer owns.
 
+A long-lived `follow` fiber is the wrong shape for a Durable Object; use request-triggered `run` plus an alarm-triggered `run`. `Placement.byRoute` with the same owner for every route in a projection family keeps its inputs, output, and checkpoint in one object.
+
 ## Local run
 
 `alchemy dev` runs the Worker and the object on your machine. See [Alchemy](/docs/runtime/alchemy). Miniflare remains the runner for the conformance harness in the repository.

@@ -46,6 +46,9 @@ const run = Projection.run(projection, { limit: 10 });
 Declare several with `inputs: { orders, refunds }` and read one slice per name.
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
+`Projection.family(definition)` declares routed members once, `Projection.serialized`
+runs one caller at a time per member key, and `Projection.onChange` runs members
+from their same-owner storage change feeds.
 
 [src/examples/minimal.ts](src/examples/minimal.ts) is the complete version of
 this example; the package tests execute it.
