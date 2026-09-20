@@ -7,14 +7,15 @@ description: Runnable examples of Streamsy's HTTP edge and projection toolkit.
 server, one process-local memory store, and a six-step `curl` walkthrough.
 
 [Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories, appends
-source changes, follows them with a declared-output `@streamsy/projection` over
-SQLite, and serves State facts to a live browser collection. Its offline smoke
-proves checkpoint resume across a process restart.
+source changes, wakes a declared-output `@streamsy/projection` through the
+same-owner change feed, and serves State facts to a live browser collection.
+Its offline smoke proves the change wake and checkpoint resume across a process
+restart.
 
-[Issue tracker](/docs/demos/issue-tracker-demo) is a complete rung-zero
+[Issue tracker](/docs/demos/issue-tracker-demo) is a complete stream-backed
 application: Promise-native Bun routes transact against workspace streams, and
 the browser replays each workspace directly into StreamDB.
 
-[Issue tracker projection](/docs/demos/issue-tracker) is the SQLite rung: five
-workspace inputs feed one fused family member, with request and change triggers
-sharing a keyed mutex.
+[Issue tracker projection](/docs/demos/issue-tracker) feeds five workspace
+inputs into one fused family member and proves that request and change triggers
+can safely run on the same key through a shared keyed mutex.

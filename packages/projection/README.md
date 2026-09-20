@@ -46,9 +46,13 @@ const run = Projection.run(projection, { limit: 10 });
 Declare several with `inputs: { orders, refunds }` and read one slice per name.
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
-`Projection.family(definition)` declares routed members once, `Projection.serialized`
-runs one caller at a time per member key, and `Projection.onChange` runs members
-from their same-owner storage change feeds.
+`Projection.family(definition)` declares routed members once; see
+[Families](https://streamsy.dev/docs/projections/projections#families).
+`Projection.serialized(projection, options)` runs one caller at a time per canonical key;
+see [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
+`Projection.onChange` runs a projection, or an explicit array of family members, from
+same-owner storage change feeds; see
+[Triggers](https://streamsy.dev/docs/projections/projections#triggers).
 
 [src/examples/minimal.ts](src/examples/minimal.ts) is the complete version of
 this example; the package tests execute it.

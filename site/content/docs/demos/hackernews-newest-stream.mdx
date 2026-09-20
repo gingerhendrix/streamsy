@@ -51,7 +51,7 @@ disposing the runtime stops both loops. `POST /api/poll` only polls.
 ## Limits
 
 The target grows without bound, and the browser replays all State facts. A later
-rung will fold the story set and serve rows so browser catch-up is bounded. The
+version can fold the story set and serve rows so browser catch-up is bounded. The
 poller's newest-set cache is not stored, so the first poll after restart can
 emit fresh upserts for the current set.
 

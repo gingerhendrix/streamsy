@@ -16,7 +16,8 @@ read the issue stream, fold it, append with `expectedOffset`, then run the
 member through `Projection.serialized` before reading the result. At startup,
 `Projection.onChange` watches the same five streams for each configured
 workspace and uses the same keyed mutex. A scoped supervisor logs any watcher
-that ends in failure; normal shutdown interruption is ignored. The hand trigger is:
+that completes successfully at info level and any unexpected failure at error
+level; normal shutdown interruption is ignored. The hand trigger is:
 
 ```bash
 ISSUE_TRACKER_DB=tracker.sqlite \
@@ -45,5 +46,5 @@ that arrives late, sends live commands, and restarts over the same database.
 The HTTP smoke checks one command, restart checkpoint continuity, persisted
 rows, and one more command after resume.
 
-This slice has no browser or hosted deployment. Those surfaces are separate
-steps so the SQLite family and its trigger rules remain visible here.
+This demo has no browser or hosted deployment, keeping the SQLite family and
+its trigger rules visible on their own.

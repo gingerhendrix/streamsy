@@ -90,9 +90,7 @@ const objectLayer = (
   );
 ```
 
-A fused handler's `Streams.append` and SQL through the object's client commit with the checkpoint, because all three go through the one `CommitBoundary` the storage Layer owns.
-
-A long-lived `follow` fiber is the wrong shape for a Durable Object; use request-triggered `run` plus an alarm-triggered `run`. `Placement.byRoute` with the same owner for every route in a projection family keeps its inputs, output, and checkpoint in one object.
+A fused handler's `Streams.append` and SQL through the object's client commit with the checkpoint because all three use the storage Layer's one `CommitBoundary`. A long-lived `follow` fiber is the wrong shape for a Durable Object; use request-triggered `run` plus alarm-triggered `run`. With `Placement.byRoute`, every route of a projection family must map to the same owner; a fused commit requires its inputs, output, and checkpoint in that one object.
 
 ## Local run
 

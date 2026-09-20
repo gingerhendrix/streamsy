@@ -106,27 +106,40 @@ On a host that owns the input storage, run from its change feed. Wakes arriving 
 
 ```ts
 Effect.gen(function* () {
-  const fiber = yield* Projection.onChange(orderTotalsProjection, { limit: 5 });
+  const projectionFiber = yield* Projection.onChange(orderTotalsProjection, { limit: 5 });
+  const familyFibers = yield* Projection.onChange(ordersByWorkspace, [{ workspaceId: "ws-42" }], {
+    limit: 5,
+  });
 });
 ```
 
-Inside a Durable Object, call `run` from an alarm. The alarm integration lands in a later phase:
+The ambient `Storage` must own every input. A family keeps no member list, so the caller supplies an explicit member array.
+
+Inside a Durable Object, call `run` from the host's alarm effect:
 
 ```ts
-const alarm = Projection.run(orderTotalsProjection, { limit: 10 });
+const alarm = Effect.gen(function* () {
+  return yield* Projection.run(orderTotalsProjection, { limit: 10 });
+});
 ```
 
 A CLI or other hand trigger is the same operation:
 
 ```ts
-await Effect.runPromise(Projection.run(orderTotalsProjection).pipe(Effect.provide(host)));
+const hand = Effect.gen(function* () {
+  return yield* Projection.run(orderTotalsProjection);
+});
+
+await Effect.runPromise(hand.pipe(Effect.provide(host)));
 ```
 
 `Projection.serialized` wraps `run` with one process-local runner per canonical projection key. `onChange` uses it, so an overlapping request can use the same wrapper without a token conflict. A second process is not fenced and is still detected by the checkpoint token.
 
+The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request and change triggers sharing a key. [Hacker News newest](/docs/demos/hackernews-newest-stream) demonstrates a change wake driving a declared-output projection.
+
 ## Families
 
-A family owns the parameter codecs and routed declarations. `member` encodes the full parameter bag to the ordinary projection `params`; `parse` tries input routes in declaration order. Output routes are not parsed.
+A family owns the parameter codecs and routed declarations. Each input and output route must declare a subset of the family parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `member` encodes every parameter to strings and yields an ordinary projection. `parse` tries input routes in declaration order and returns the decoded subset from the first match. Output routes are not parsed.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -156,9 +169,9 @@ const watch = Effect.gen(function* () {
 });
 ```
 
-Each input and output route may declare a compatible subset of the family parameters; a route with fewer parameters is shared by every member. The package keeps no member list, so `onChange` takes an explicit fixed member array and returns one fiber per member in array order. One member failure does not stop the other fibers. For a dynamic deployment, keep a registry stream of parameter records and use a small projection over that registry to start and stop member triggers.
+The package keeps no member list, so `onChange` takes an explicit fixed member array and returns one fiber per member in array order. One member failure does not stop the other fibers. For a dynamic deployment, keep a registry stream of parameter records; a projection over that stream can start a trigger when a member is registered and stop it when the member is removed.
 
-An unknown member is one whose input stream is absent. A served route answers 404 and creates nothing.
+An unknown member is one whose input stream is absent. A served family route must answer 404 and create neither the member's streams nor its checkpoint. See the complete [issue tracker projection](/docs/demos/issue-tracker).
 
 ## Checkpoints and generations
 
