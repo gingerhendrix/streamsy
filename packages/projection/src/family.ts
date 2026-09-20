@@ -74,6 +74,7 @@ export interface Family<
   Codecs extends StreamRoute.ParamCodecs = StreamRoute.ParamCodecs,
   Member = Fused<InputMap, unknown, unknown> | Pinned<InputMap, unknown, unknown, unknown>,
 > {
+  readonly _tag: "Family";
   readonly id: string;
   readonly params: Codecs;
   readonly member: (params: StreamRoute.Params<Codecs>) => Member;
@@ -94,10 +95,14 @@ const encodeParams = <Codecs extends StreamRoute.ParamCodecs>(
 const refsOf = <Routes extends RouteMap>(
   routes: Routes,
   params: Readonly<Record<string, unknown>>,
-): RouteRefs<Routes> =>
-  Object.fromEntries(
+): RouteRefs<Routes> => {
+  const built: unknown = Object.fromEntries(
     Object.entries(routes).map(([name, route]) => [name, route.ref(params)]),
-  ) as unknown as RouteRefs<Routes>;
+  );
+  // The loop calls each route under its own key, so the resulting ref record
+  // has exactly the mapped `RouteRefs<Routes>` shape.
+  return built as RouteRefs<Routes>;
+};
 
 export function family<Codecs extends StreamRoute.ParamCodecs, Routes extends RouteMap, E, R>(
   definition: FusedFamilyDefinition<Codecs, Routes, E, R>,
@@ -145,5 +150,5 @@ export function family<
     }
     return Option.none();
   };
-  return { id: definition.id, params: definition.params, member, parse };
+  return { _tag: "Family", id: definition.id, params: definition.params, member, parse };
 }

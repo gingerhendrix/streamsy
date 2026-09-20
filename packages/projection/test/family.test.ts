@@ -46,12 +46,12 @@ test("member is the ordinary routed projection", () => {
 
 test("number parameters encode to strings and parse back", () => {
   const numbered = StreamRoute.json("numbered/:id", {
-    params: { id: Schema.NumberFromString },
+    params: { id: Schema.FiniteFromString },
     schema: Schema.String,
   });
   const members = Projection.family({
     id: "numbered",
-    params: { id: Schema.NumberFromString },
+    params: { id: Schema.FiniteFromString },
     inputs: { numbered },
     process: () => Effect.void,
   });

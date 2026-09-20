@@ -7,6 +7,8 @@ import type { Unit } from "./unit.ts";
 export { pass, run } from "./run.ts";
 export { follow } from "./follow.ts";
 export { family } from "./family.ts";
+export { serialized } from "./serialized.ts";
+export { onChange } from "./on-change.ts";
 export type { Progress } from "./run.ts";
 export type { FollowOptions } from "./follow.ts";
 export type {
@@ -15,6 +17,7 @@ export type {
   FusedFamilyDefinition,
   PinnedFamilyDefinition,
 } from "./family.ts";
+export type { OnChangeOptions } from "./on-change.ts";
 
 /** The handler runs inside the checkpoint owner's transaction; its local writes commit with it. */
 export interface Fused<Inputs extends InputMap, E, R> {

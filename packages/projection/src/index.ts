@@ -8,6 +8,8 @@ export type {
   SinglePinnedDefinition,
 } from "./projection.ts";
 export type { FollowOptions } from "./follow.ts";
+export type { RunOptions } from "./read.ts";
+export type { OnChangeOptions } from "./on-change.ts";
 export type {
   Family,
   FamilyDefinition,
