@@ -82,6 +82,18 @@ Projection.family({
   process: () => Effect.void,
 });
 
+const literalId = StreamRoute.json("literal-id/:id", {
+  params: { id: Schema.Literal("a") },
+  schema: Schema.String,
+});
+Projection.family({
+  id: "narrow-route-codec",
+  params: { id: Schema.String },
+  // @ts-expect-error the family parameter must also be assignable to the route's decoded parameter
+  inputs: { literalId },
+  process: () => Effect.void,
+});
+
 const wrong = StreamRoute.json("wrong/:projectId", {
   params: { projectId: Schema.String },
   schema: Schema.String,

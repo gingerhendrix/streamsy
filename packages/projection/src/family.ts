@@ -17,7 +17,9 @@ type FamilyParams<Codecs extends StreamRoute.ParamCodecs> = StreamRoute.Params<C
 type InvalidRouteParam<Codecs extends StreamRoute.ParamCodecs, Route extends AnyRoute> = {
   readonly [Name in keyof RouteParams<Route>]: Name extends keyof FamilyParams<Codecs>
     ? RouteParams<Route>[Name] extends FamilyParams<Codecs>[Name]
-      ? never
+      ? FamilyParams<Codecs>[Name] extends RouteParams<Route>[Name]
+        ? never
+        : Name
       : Name
     : Name;
 }[keyof RouteParams<Route>];

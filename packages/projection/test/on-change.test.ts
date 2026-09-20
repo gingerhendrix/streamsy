@@ -2,11 +2,12 @@ import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import {
   Storage,
+  StreamGone,
   StreamRef,
   StreamRoute,
   Streams,
-  type StreamsReader,
-  type StreamsWriter,
+  StreamsReader,
+  StreamsWriter,
 } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
@@ -147,6 +148,77 @@ test("an invalid limit fails before a watcher fiber is created", () =>
       }
     }),
   ));
+
+test("an ownership probe preserves head failures other than a missing stream", () =>
+  run(
+    Effect.gen(function* () {
+      const input = StreamRef.json("change-probe-failure", { schema: Schema.Finite });
+      const projection = Projection.make({
+        id: "change-probe-failure",
+        input,
+        process: () => Effect.void,
+      });
+      const reader = yield* StreamsReader;
+      const fiber = yield* Projection.onChange(projection).pipe(
+        Effect.provideService(StreamsReader, {
+          ...reader,
+          head: (id) => Effect.fail(new StreamGone({ id })),
+        }),
+      );
+      const result = yield* Fiber.join(fiber).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.phase).toBe("read");
+        expect(result.failure.reason).toBe("storage-failure");
+        expect(result.failure.input).toBe("input");
+        expect(result.failure.cause).toBeInstanceOf(StreamGone);
+      }
+    }),
+  ));
+
+test("an empty family without Storage reports unsupported composition", async () => {
+  const route = StreamRoute.json("change-empty-family/:workspaceId", {
+    params: { workspaceId: Schema.String },
+    schema: Schema.Finite,
+  });
+  const family = Projection.family({
+    id: "change-empty-family",
+    params: { workspaceId: Schema.String },
+    inputs: { facts: route },
+    process: () => Effect.void,
+  });
+  const unused = Effect.die("unused host service");
+  const checkpoints = Checkpoints.of({
+    load: () => unused,
+    save: () => unused,
+    withTransaction: (body) => body,
+  });
+  const reader = StreamsReader.of({
+    head: () => unused,
+    read: () => unused,
+    readNext: () => unused,
+  });
+  const writer = StreamsWriter.of({
+    create: () => unused,
+    fork: () => unused,
+    append: () => unused,
+    remove: () => unused,
+  });
+  const result = await Effect.runPromise(
+    Projection.onChange(family, []).pipe(
+      Effect.result,
+      Effect.scoped,
+      Effect.provideService(Checkpoints, checkpoints),
+      Effect.provideService(StreamsReader, reader),
+      Effect.provideService(StreamsWriter, writer),
+    ),
+  );
+  expect(result._tag).toBe("Failure");
+  if (result._tag === "Failure") {
+    expect(result.failure.reason).toBe("unsupported-composition");
+    expect(result.failure.input).toBeUndefined();
+  }
+});
 
 test("onChange and a serialized request share the same key lock", () =>
   run(

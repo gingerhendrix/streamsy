@@ -56,8 +56,21 @@ const watch = <Inputs extends InputMap, O, E, R>(
       const reader = yield* StreamsReader;
       yield* Effect.forEach(inputs, ([name, ref]) =>
         Effect.gen(function* () {
-          const readable = yield* reader.head(ref.id).pipe(Effect.option);
-          if (Option.isSome(readable)) {
+          const readable = yield* reader.head(ref.id).pipe(
+            Effect.as(true),
+            Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
+            Effect.mapError(
+              (cause) =>
+                new ProjectionFault({
+                  phase: "read",
+                  reason: "storage-failure",
+                  input: name,
+                  message: `Cannot inspect ${ref.id}`,
+                  cause,
+                }),
+            ),
+          );
+          if (readable) {
             const owned = yield* storage.record(ref.id).pipe(
               Effect.mapError(
                 (cause) =>
@@ -109,6 +122,10 @@ const watch = <Inputs extends InputMap, O, E, R>(
     }),
   );
 
+/**
+ * Watches same-owner inputs. A missing input cannot be ownership-checked until it is created;
+ * all other head failures surface as `read / storage-failure`.
+ */
 export function onChange<Inputs extends InputMap, O, E, R>(
   projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
   options?: OnChangeOptions,
@@ -142,6 +159,16 @@ export function onChange(
     yield* validateOptions(options);
     const available = yield* Effect.serviceOption(Storage);
     if (Option.isNone(available)) {
+      if (
+        target._tag === "Family" &&
+        Array.isArray(membersOrOptions) &&
+        membersOrOptions.length === 0
+      )
+        return yield* new ProjectionFault({
+          phase: "read",
+          reason: "unsupported-composition",
+          message: "The projection family has no same-owner change feed",
+        });
       const firstParams = Array.isArray(membersOrOptions) ? (membersOrOptions[0] ?? {}) : {};
       const member = target._tag === "Family" ? target.member(firstParams) : target;
       const [name, ref] = Object.entries(member.inputs as InputMap)[0] ?? ["input", undefined];
