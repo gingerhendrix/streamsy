@@ -44,10 +44,7 @@ const api = async (request: Request): Promise<Response> => {
         if (acceptedResult.failure._tag === "UnknownIssue")
           return json({ error: "Unknown issue" }, { status: 400 });
         if (acceptedResult.failure._tag === "OffsetMismatch")
-          return new Response("Concurrent command conflict", {
-            status: 409,
-            headers: { "content-type": "text/plain; charset=utf-8" },
-          });
+          return json({ error: "Concurrent command conflict" }, { status: 409 });
         throw acceptedResult.failure;
       }
       const accepted = acceptedResult.success;

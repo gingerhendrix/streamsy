@@ -149,7 +149,7 @@ test("an invalid limit fails before a watcher fiber is created", () =>
     }),
   ));
 
-test("an ownership probe preserves head failures other than a missing stream", () =>
+test("an ownership probe reports a gone input as unavailable history", () =>
   run(
     Effect.gen(function* () {
       const input = StreamRef.json("change-probe-failure", { schema: Schema.Finite });
@@ -169,9 +169,8 @@ test("an ownership probe preserves head failures other than a missing stream", (
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.failure.phase).toBe("read");
-        expect(result.failure.reason).toBe("storage-failure");
+        expect(result.failure.reason).toBe("history-unavailable");
         expect(result.failure.input).toBe("input");
-        expect(result.failure.cause).toBeInstanceOf(StreamGone);
       }
     }),
   ));

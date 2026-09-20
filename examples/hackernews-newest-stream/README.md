@@ -68,8 +68,8 @@ no repeated `(key, txid)` fact.
 
 ## Limits
 
-The target grows without bound and the browser replays all of it. A later rung
-will use `Projection.fold` over the story set and serve rows to bound that work.
+The target grows without bound and the browser replays all of it. A later version
+can fold the story set and serve rows to bound that work.
 The poller's in-memory newest-set cache is rebuilt after a process restart, so
 its first poll may publish fresh upserts for the current set.
 

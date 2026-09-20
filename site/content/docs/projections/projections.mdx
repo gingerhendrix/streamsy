@@ -139,7 +139,7 @@ The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request a
 
 ## Families
 
-A family owns the parameter codecs and routed declarations. Each input and output route must declare a subset of the family parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `member` encodes every parameter to strings and yields an ordinary projection. `parse` tries input routes in declaration order and returns the decoded subset from the first match. Output routes are not parsed.
+A family owns the parameter codecs and routed declarations. Each input and output route must declare a subset of the family parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `member` encodes every parameter to strings and yields an ordinary projection. A route that declares fewer names is shared by every member, and `parse` on it returns only that subset. `parse` tries input routes in declaration order and returns the decoded subset from the first match. Output routes are not parsed.
 
 ```ts
 import { Effect, Schema } from "effect";

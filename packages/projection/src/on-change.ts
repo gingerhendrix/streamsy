@@ -59,6 +59,16 @@ const watch = <Inputs extends InputMap, O, E, R>(
           const readable = yield* reader.head(ref.id).pipe(
             Effect.as(true),
             Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
+            Effect.catchTag(
+              "StreamGone",
+              () =>
+                new ProjectionFault({
+                  phase: "read",
+                  reason: "history-unavailable",
+                  input: name,
+                  message: `Required history of ${ref.id} is unavailable`,
+                }),
+            ),
             Effect.mapError(
               (cause) =>
                 new ProjectionFault({
