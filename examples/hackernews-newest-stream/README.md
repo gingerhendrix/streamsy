@@ -11,7 +11,7 @@ across server restarts.
 flowchart LR
   HN[HN Firebase API] --> Poller[deterministic newest-set poller]
   Poller --> Source[Streamsy JSON source stream]
-  Source --> Projection[Layer-scoped Projection.follow]
+  Source --> Projection[Layer-scoped Projection.onChange]
   Projection --> Target[Durable State target]
   Target --> ClientDB[createStreamDB in browser]
   ClientDB --> React[React useLiveQuery]
@@ -38,17 +38,17 @@ build.
 | `HN_PROJECTION_LIMIT` | `10`                                    | Checkpoint transactions per pass |
 | `HN_DB`               | `.data/hackernews.sqlite`               | SQLite file, or `memory`         |
 
-`GET /api/status` reports poll counters, whether the follower is running, its
+`GET /api/status` reports poll counters, whether the projection is running, its
 last error, and the source offset loaded from the durable checkpoint.
-`POST /api/poll` runs one poll; the follower wakes independently when source
-data arrives (or on its one-second repair interval).
+`POST /api/poll` runs one poll; the projection wakes on the storage change feed
+when source data arrives.
 
 ## Where to look
 
 - `src/server/poller/`: the poll loop and pure newest-set reconciliation.
 - `src/server/story-index-projection.ts`: the `Projection.stream` declaration
   that maps source changes to State events with `State.changes`.
-- `src/server/projection.ts`: `Projection.follow`, forked in the application
+- `src/server/projection.ts`: `Projection.onChange`, forked in the application
   Layer scope, plus checkpoint-backed status.
 - `src/server/streams.ts`: the shared SQLite protocol and projection Layers,
   with a memory option for tests.

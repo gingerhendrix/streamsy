@@ -35,10 +35,7 @@ export function makeStoryProjection(
     const owner = yield* Checkpoints;
     const running = yield* Ref.make(true);
     const lastError = yield* Ref.make<string | undefined>(undefined);
-    const follower = yield* Projection.follow(hackerNewsStoryIndex, {
-      ...limits,
-      repairIntervalMs: 1000,
-    });
+    const follower = yield* Projection.onChange(hackerNewsStoryIndex, limits);
     yield* Fiber.await(follower).pipe(
       Effect.tap((exit) =>
         Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)

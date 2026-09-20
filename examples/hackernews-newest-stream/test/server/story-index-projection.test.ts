@@ -129,7 +129,7 @@ describe("Hacker News story index projection", () => {
     expect(after).toEqual(before);
   });
 
-  test("the Layer-scoped follower picks up an append without an explicit run", async () => {
+  test("the Layer-scoped change watcher indexes an append after catching up", async () => {
     const host = demoStreamsLayer.pipe(Layer.provideMerge(ProjectionMemory.layerMemory()));
     const runtime = ManagedRuntime.make(
       storyProjectionLayer(limits).pipe(Layer.provideMerge(host)),
@@ -137,22 +137,38 @@ describe("Hacker News story index projection", () => {
     try {
       const streams = await runtime.runPromise(DemoStreams);
       await runtime.runPromise(
-        streams.appendSourceBatch([sourceUpsert(story(101, 1_700_000_030, "Followed"))]),
+        streams.appendSourceBatch([sourceUpsert(story(101, 1_700_000_030, "Initial"))]),
+      );
+      await runtime.runPromise(
+        Streams.read(hackerNewsTarget).pipe(
+          Streams.items,
+          Stream.runCollect,
+          Effect.flatMap((items) =>
+            items.length === 0
+              ? Effect.fail("projection has not caught up yet")
+              : Effect.succeed(items),
+          ),
+          Effect.retry({ schedule: Schedule.spaced(10), times: 25 }),
+        ),
+      );
+
+      await runtime.runPromise(
+        streams.appendSourceBatch([sourceUpsert(story(102, 1_700_000_040, "Woken"))]),
       );
       const facts = await runtime.runPromise(
         Streams.read(hackerNewsTarget).pipe(
           Streams.items,
           Stream.runCollect,
           Effect.flatMap((items) =>
-            items.length === 0
+            items.length < 2
               ? Effect.fail("projection has not appended yet")
               : Effect.succeed(items),
           ),
-          Effect.retry({ schedule: Schedule.spaced(10), times: 100 }),
+          Effect.retry({ schedule: Schedule.spaced(10), times: 25 }),
         ),
       );
-      expect(facts).toHaveLength(1);
-      expect(facts[0]?.key).toBe("101");
+      expect(facts).toHaveLength(2);
+      expect(facts[1]?.key).toBe("102");
     } finally {
       await runtime.dispose();
     }
