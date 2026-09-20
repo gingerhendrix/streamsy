@@ -1,4 +1,10 @@
 {
   "title": "Demos",
-  "pages": ["index", "memory-server", "hackernews-newest-stream", "issue-tracker-demo"]
+  "pages": [
+    "index",
+    "memory-server",
+    "hackernews-newest-stream",
+    "issue-tracker-demo",
+    "issue-tracker"
+  ]
 }

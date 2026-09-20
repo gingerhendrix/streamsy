@@ -1,0 +1,48 @@
+---
+title: Issue tracker projection
+description: One fused multi-input projection family on SQLite, driven by request and change triggers.
+---
+
+This slim issue tracker proves a workspace projection family on a persistent
+SQLite host. Each member reads canonical issue facts, label membership facts,
+and three Durable State catalog streams: projects, users, and labels. The fused
+handler applies one page from each input in declaration order and advances all
+five checkpoints in the same transaction as its application writes.
+
+## Triggers
+
+`POST /api/workspaces/:workspaceId/commands` follows the transaction recipe:
+read the issue stream, fold it, append with `expectedOffset`, then run the
+member through `Projection.serialized` before reading the result. At startup,
+`Projection.onChange` watches the same five streams for each configured
+workspace and uses the same keyed mutex. The hand trigger is:
+
+```bash
+ISSUE_TRACKER_DB=tracker.sqlite \
+  bun run --cwd examples/issue-tracker run:once acme
+```
+
+Unknown workspace names return 404 and do not create streams.
+
+## Table ownership
+
+The application creates and migrates `issues`, `issue_labels`, `projects`,
+`users`, `labels`, `issue_changes`, and `notification_drafts`.
+`@streamsy/projection` creates and owns tables beginning with
+`streamsy_projection_v1_`. Both use the host's shared `SqlClient`; the package
+does not alter application tables.
+
+## Run the evidence
+
+```bash
+bun run --cwd examples/issue-tracker app:full
+bun run --cwd examples/issue-tracker smoke:http
+```
+
+The full run replays the recorded `acme` workspace, including an older sequence
+that arrives late, sends live commands, and restarts over the same database.
+The HTTP smoke checks one command, restart checkpoint continuity, persisted
+rows, and one more command after resume.
+
+This slice has no browser or hosted deployment. Those surfaces are separate
+steps so the SQLite family and its trigger rules remain visible here.
