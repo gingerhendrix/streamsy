@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 
 const repoRoot = join(import.meta.dirname, "..");
 
-const effectAreas = [
+export const effectAreas = [
   "packages/core",
   "packages/storage",
   "packages/projection",
@@ -113,60 +113,64 @@ const writeProbe = (relative: string): void => {
   writeFileSync(join(repoRoot, relative), probeSource);
 };
 
-try {
-  writeProbe(generalProbe);
-  writeProbe(effectProbe);
-  writeProbe(hostedEffectProbe);
+if (import.meta.main)
+  try {
+    writeProbe(generalProbe);
+    writeProbe(effectProbe);
+    writeProbe(hostedEffectProbe);
 
-  const general = lint(["."]);
-  const effect = lint(["--config", ".oxlintrc.effect.json", ...effectAreas]);
+    const general = lint(["."]);
+    const effect = lint(["--config", ".oxlintrc.effect.json", ...effectAreas]);
 
-  const generalProbeFindings = general.filter((d) => normalise(d.filename) === generalProbe);
-  check(
-    generalProbeFindings.some((d) => d.code === "unicorn(no-array-sort)"),
-    "general policy reports a general violation in a non-Effect package",
-  );
-  check(
-    !generalProbeFindings.some((d) => isEffectCode(d.code)),
-    "general policy reports no Effect violation in a non-Effect package",
-  );
-  check(
-    !general.some((d) => isEffectCode(d.code)),
-    "general policy reports no Effect diagnostic anywhere in the repository",
-  );
+    const generalProbeFindings = general.filter((d) => normalise(d.filename) === generalProbe);
+    check(
+      generalProbeFindings.some((d) => d.code === "unicorn(no-array-sort)"),
+      "general policy reports a general violation in a non-Effect package",
+    );
+    check(
+      !generalProbeFindings.some((d) => isEffectCode(d.code)),
+      "general policy reports no Effect violation in a non-Effect package",
+    );
+    check(
+      !general.some((d) => isEffectCode(d.code)),
+      "general policy reports no Effect diagnostic anywhere in the repository",
+    );
 
-  check(
-    !effect.some((d) => normalise(d.filename) === generalProbe),
-    "Effect policy does not scan a non-Effect package",
-  );
-  check(
-    effect.some(
-      (d) => normalise(d.filename) === effectProbe && d.code === "effecttsgo(async-function)",
-    ),
-    "Effect policy reports an Effect violation in an Effect-owned area",
-  );
-  check(
-    effect.some(
-      (d) => normalise(d.filename) === hostedEffectProbe && d.code === "effecttsgo(async-function)",
-    ),
-    "Effect policy reports an Effect violation in hosted",
-  );
-  check(
-    effect.every((d) => effectAreas.some((area) => normalise(d.filename).startsWith(`${area}/`))),
-    "Effect policy reports only inside the Effect-owned areas",
-  );
-  check(
-    effect.every((d) => isEffectCode(d.code)),
-    "Effect policy reports only Effect diagnostics",
-  );
-} finally {
-  rmSync(join(repoRoot, generalProbe), { force: true });
-  rmSync(join(repoRoot, effectProbe), { force: true });
-  rmSync(join(repoRoot, hostedEffectProbe), { force: true });
+    check(
+      !effect.some((d) => normalise(d.filename) === generalProbe),
+      "Effect policy does not scan a non-Effect package",
+    );
+    check(
+      effect.some(
+        (d) => normalise(d.filename) === effectProbe && d.code === "effecttsgo(async-function)",
+      ),
+      "Effect policy reports an Effect violation in an Effect-owned area",
+    );
+    check(
+      effect.some(
+        (d) =>
+          normalise(d.filename) === hostedEffectProbe && d.code === "effecttsgo(async-function)",
+      ),
+      "Effect policy reports an Effect violation in hosted",
+    );
+    check(
+      effect.every((d) => effectAreas.some((area) => normalise(d.filename).startsWith(`${area}/`))),
+      "Effect policy reports only inside the Effect-owned areas",
+    );
+    check(
+      effect.every((d) => isEffectCode(d.code)),
+      "Effect policy reports only Effect diagnostics",
+    );
+  } finally {
+    rmSync(join(repoRoot, generalProbe), { force: true });
+    rmSync(join(repoRoot, effectProbe), { force: true });
+    rmSync(join(repoRoot, hostedEffectProbe), { force: true });
+  }
+
+if (import.meta.main) {
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} lint policy check(s) failed.`);
+    process.exit(1);
+  }
+  console.log("\nLint policy checks passed.");
 }
-
-if (failures.length > 0) {
-  console.error(`\n${failures.length} lint policy check(s) failed.`);
-  process.exit(1);
-}
-console.log("\nLint policy checks passed.");
