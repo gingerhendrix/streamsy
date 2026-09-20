@@ -47,8 +47,8 @@ from a typed ref to a served projection.
 - [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
   server, a projection, and a browser client on the official Durable Streams
   client.
-- [Fold agent](examples/fold-agent/README.md): an agent loop whose log and
-  journal live in Streamsy.
+- [Fold agent](examples/fold-agent/README.md): an agent loop whose durable log
+  lives in Streamsy and fences competing writers by offset.
 
 ## Development
 

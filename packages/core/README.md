@@ -29,8 +29,9 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
 ## What you get
 
 - `StreamRef` names a stream with its content type and schema, including
-  `StreamRef.state` for Durable State change events. `StreamRoute` names a
-  family of streams from an id template.
+  `StreamRef.state(id, { collections })` for a Durable State stream whose
+  collections are keyed by their wire `type`. `StreamRoute` names a family of
+  streams from an id template.
 - `Streams` creates, appends, reads, follows, and removes streams. Create and
   append return `_tag` variants such as `Created` / `Exists` and
   `Appended` / `Duplicate`. Protocol failures are tagged errors

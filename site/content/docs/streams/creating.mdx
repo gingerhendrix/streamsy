@@ -23,36 +23,30 @@ const ensure = Effect.gen(function* () {
 ## Durable State refs
 
 `StreamRef.state` describes a JSON stream of change events that
-`@durable-streams/state` can materialize. Give it the value schema, the event
-type, and the value field used as its key.
+`@durable-streams/state` can materialize. One stream holds several collections,
+each named by the `type` field on its events. Give the ref a record of
+collections: the record key is the type, and each entry has the value schema and
+the value field used as the event key.
 
 ```ts
 import { Schema } from "effect";
 import { StreamRef } from "@streamsy/core";
 
-const Story = Schema.Struct({ id: Schema.Finite, title: Schema.String });
+const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
+const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
 
-export const stories = StreamRef.state("session/main", {
-  schema: Story,
-  type: "story",
-  key: "id",
+export const workspace = StreamRef.state("workspace/main", {
+  collections: {
+    project: { schema: Project, key: "id" },
+    issue: { schema: Issue, key: "id" },
+  },
 });
 ```
 
-The ref reads and writes typed Durable State changes. Construct those changes
-with the `State` helpers described on the [Writing](/docs/streams/writing) page.
-
-A state ref covers one event type. To read several types from one stream, combine
-their codecs in a JSON ref:
-
-```ts
-const workspace = StreamRef.json("workspace/main", {
-  schema: Schema.Union([
-    StreamRef.stateChange({ schema: Project, type: "project" }),
-    StreamRef.stateChange({ schema: Issue, type: "issue" }),
-  ]),
-});
-```
+The ref reads and writes the typed change events of every collection, as a union
+discriminated by `type`. Construct those changes with the `State` helpers
+described on the [Writing](/docs/streams/writing) page. A stream with one
+collection is a record with one entry.
 
 ## Expiry
 
