@@ -48,14 +48,14 @@ values are opaque: copy the value returned by the server.
    The response is `200 OK`, `Stream-Up-To-Date: true`, the current next offset,
    an `ETag`, and this body:
 
-   ```json
-   [{ "type": "hello", "n": 1 }]
+   ```text
+   [{"type":"hello","n":1}]
    ```
 
 4. Reuse that validator for a conditional catch-up read.
 
    ```bash
-   curl -i 'http://localhost:1337/walkthrough/demo?offset=-1' -H 'If-None-Match: "L3dhbGt0aHJvdWdoL2RlbW8:-1:0000000000000001_0000000000000000"'
+   curl -i 'http://localhost:1337/walkthrough/demo?offset=-1' -H 'If-None-Match: "L3dhbGt0aHJvdWdoL2RlbW8=:-1:0000000000000001_0000000000000000"'
    ```
 
    With no later append, the response is `304 Not Modified` with no body. Copy
@@ -71,8 +71,8 @@ values are opaque: copy the value returned by the server.
    command. The waiting response is `200 OK`, includes `Stream-Cursor` and
    `Stream-Next-Offset: 0000000000000002_0000000000000000`, and returns:
 
-   ```json
-   [{ "type": "hello", "n": 2 }]
+   ```text
+   [{"type":"hello","n":2}]
    ```
 
 6. Follow the stream with server-sent events.

@@ -168,7 +168,7 @@ try {
   const sseResponse = await request(`${streamUrl}?offset=-1&live=sse`);
   assert(sseResponse.status === 200, `SSE status ${sseResponse.status}`);
   assert(
-    sseResponse.headers.get("content-type")?.startsWith("text/event-stream"),
+    sseResponse.headers.get("content-type")?.startsWith("text/event-stream") === true,
     `unexpected SSE content-type ${sseResponse.headers.get("content-type")}`,
   );
   const sseText = await readSseUntilControl(sseResponse);

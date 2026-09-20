@@ -16,7 +16,7 @@ console.log(`Memory server listening on http://localhost:${server.port}`);
 let shuttingDown: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (shuttingDown) return shuttingDown;
-  const pending = edge.dispose().then(() => server.stop(true));
+  const pending = Promise.resolve(server.stop(true)).then(() => edge.dispose());
   shuttingDown = pending;
   return pending;
 }
