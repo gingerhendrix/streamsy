@@ -370,8 +370,8 @@ try {
   const afterRestart = await readStream(restartStreamUrl);
   findEvent(afterRestart.events, "issue", restartIssueId, "upsert");
   assert(
-    afterRestart.head !== beforeRestartIssue.head,
-    "workspace head should advance after the issue written before restart",
+    afterRestart.head === restartIssue.awaitOffset,
+    "workspace head after restart should match the persisted issue append",
   );
 
   console.log(

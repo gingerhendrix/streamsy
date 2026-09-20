@@ -14,16 +14,6 @@ export const createWorkspace = Effect.fn("Workspace.create")(function* () {
   return workspaceId;
 });
 
-/** A workspace exists iff its stream exists. */
-export const workspaceExists = (workspaceId: string) =>
-  Streams.head(workspaceEvents(workspaceId)).pipe(
-    Effect.as(true),
-    Effect.catchTags({
-      StreamNotFound: () => Effect.succeed(false),
-      StreamGone: () => Effect.succeed(false),
-    }),
-  );
-
 export function workspaceRoutes(runtime: DemoRuntime) {
   return {
     "/api/workspaces": {

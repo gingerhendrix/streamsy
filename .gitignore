@@ -31,3 +31,4 @@ examples/fold-agent/.data/
 
 # Hacker News example local database
 examples/hackernews-newest-stream/.data/
+examples/issue-tracker-demo/.data/

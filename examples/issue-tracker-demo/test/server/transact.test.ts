@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { Streams } from "@streamsy/core";
-import { Effect, Stream } from "effect";
+import { Streams, StreamsReader } from "@streamsy/core";
+import { Deferred, Effect, Ref, Stream } from "effect";
 import type { Issue } from "../../shared/state-schema.ts";
 import { issueUpsert, mutateWorkspace, projectUpsert } from "../../server/state.ts";
 import { appendWorkspaceEvent, workspaceEvents } from "../../server/streams.ts";
 
 test("two concurrent Transact writers land without a lost update", async () => {
+  let attempts = 0;
   const workspaceId = "concurrent-test";
   const project = {
     id: "proj_test",
@@ -23,6 +24,7 @@ test("two concurrent Transact writers land without a lost update", async () => {
   });
   const transact = (issue: Issue) =>
     mutateWorkspace(workspaceId, (state) => {
+      attempts += 1;
       expect(state.getProject(project.id)).toBeDefined();
       return {
         event: issueUpsert(issue),
@@ -33,16 +35,39 @@ test("two concurrent Transact writers land without a lost update", async () => {
   const program = Effect.gen(function* () {
     yield* Streams.create(workspaceEvents(workspaceId));
     yield* appendWorkspaceEvent(workspaceId, projectUpsert(project));
-    yield* Effect.all([transact(makeIssue("issue_a")), transact(makeIssue("issue_b"))], {
-      concurrency: "unbounded",
+    const reader = yield* StreamsReader;
+    const firstReads = yield* Ref.make(0);
+    const bothRead = yield* Deferred.make<void>();
+    const barrierReader = StreamsReader.of({
+      ...reader,
+      read: (id, options) =>
+        Effect.gen(function* () {
+          const result = yield* reader.read(id, options);
+          const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+          if (readNumber <= 2) {
+            if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
+            yield* Deferred.await(bothRead);
+          }
+          return result;
+        }),
     });
+    const responses = yield* Effect.all(
+      [transact(makeIssue("issue_a")), transact(makeIssue("issue_b"))],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.provideService(StreamsReader, barrierReader));
     const batches = yield* Streams.read(workspaceEvents(workspaceId)).pipe(Stream.runCollect);
-    return batches.flatMap((batch) => batch.items);
+    return { events: batches.flatMap((batch) => batch.items), responses };
   });
 
-  const events = await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
-  expect(events.filter((event) => event.type === "issue").map((event) => event.key)).toEqual([
-    "issue_a",
-    "issue_b",
-  ]);
+  const { events, responses } = await Effect.runPromise(
+    program.pipe(Effect.provide(Streams.layerMemory())),
+  );
+  expect(attempts).toBe(3);
+  expect(responses.map((response) => response.status)).toEqual([200, 200]);
+  expect(
+    events
+      .filter((event) => event.type === "issue")
+      .map((event) => event.key)
+      .toSorted(),
+  ).toEqual(["issue_a", "issue_b"]);
 });

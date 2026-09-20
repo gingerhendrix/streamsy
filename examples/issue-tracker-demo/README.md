@@ -19,6 +19,7 @@ From the repository root:
 
 ```bash
 bun install --frozen-lockfile
+bun run build
 bun run --cwd examples/issue-tracker-demo dev
 ```
 
@@ -65,8 +66,10 @@ bun run --cwd examples/issue-tracker-demo smoke:http
 ```
 
 The offline HTTP smoke covers projects, issues, comments, workspace isolation,
-parallel CAS writers, direct conditional-write conflicts, and a SQLite process
-restart.
+ten concurrent writers landing with the exact event count and no duplicates, a
+direct protocol 409 probe, and a SQLite process restart. The in-process
+transaction test uses a read barrier to force a CAS conflict and prove that the
+losing writer retries against the new state.
 
 ## Limits
 
