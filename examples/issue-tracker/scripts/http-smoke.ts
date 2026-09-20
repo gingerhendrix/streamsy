@@ -28,6 +28,7 @@ try {
     baseUrl,
     "/api/workspaces/live/status",
   );
+  assert(Object.keys(before.offsets).length === 5, "checkpoint does not have five inputs");
   assert(
     (await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/live/issues")).rows.length ===
       1,

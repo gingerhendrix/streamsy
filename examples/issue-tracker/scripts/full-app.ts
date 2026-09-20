@@ -1,6 +1,7 @@
 import { State, Streams, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
+import { SqlClient } from "effect/unstable/sql";
 import recording from "./recordings/acme.json";
 import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
@@ -70,6 +71,17 @@ try {
         ),
       );
       yield* Projection.run(issueRows.member({ workspaceId: "acme" }));
+      const sql = yield* SqlClient.SqlClient;
+      for (const [table, expected] of [
+        ["projects", 1],
+        ["users", 2],
+        ["labels", 2],
+      ] as const) {
+        const rows = yield* sql.unsafe<{ readonly n: number }>(
+          `SELECT COUNT(*) AS n FROM ${table}`,
+        );
+        assert(rows[0]?.n === expected, `expected ${expected} ${table}, got ${rows[0]?.n}`);
+      }
     }),
   );
   await producer.dispose();
@@ -90,6 +102,10 @@ try {
   assert(
     acme.rows.find((row) => row.issueId === "acme-2")?.labelIds.length === 2,
     "labels missing",
+  );
+  assert(
+    acme.rows.find((row) => row.issueId === "acme-1")?.labelIds.length === 0,
+    "detached label remained on acme-1",
   );
   const changes = await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/acme/changes");
   const drafts = await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/acme/drafts");

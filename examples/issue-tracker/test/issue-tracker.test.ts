@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { Streams } from "@streamsy/core";
+import { State, Streams, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
-import { events, refs } from "../server/streams.ts";
+import { events, refs, userStream } from "../server/streams.ts";
 import { transact } from "../server/state.ts";
 import { scratchDirectory, startServer, stopServer, waitForServer } from "../scripts/support.ts";
 
@@ -55,7 +55,7 @@ test("the fused handler writes application rows through the SQLite host", async 
   }
 });
 
-test("request and change triggers share one key without duplicating rows", async () => {
+test("the change trigger stays alive beside the request trigger on one key", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(":memory:", ["live"]));
   try {
     await runtime.runPromise(
@@ -69,14 +69,58 @@ test("request and change triggers share one key without duplicating rows", async
           status: "todo",
         });
         yield* Projection.serialized(issueRows.member({ workspaceId: "live" }), { limit: 5 });
-        yield* Effect.sleep("20 millis");
         const sql = yield* SqlClient.SqlClient;
-        const rows = yield* sql.unsafe<{ readonly n: number }>("SELECT COUNT(*) AS n FROM issues");
-        const changes = yield* sql.unsafe<{ readonly n: number }>(
-          "SELECT COUNT(*) AS n FROM issue_changes",
+        yield* Streams.append(events.ref({ workspaceId: "live" }), [
+          { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },
+        ]);
+        let count = 0;
+        for (let attempt = 0; attempt < 20 && count !== 2; attempt++) {
+          const rows = yield* sql.unsafe<{ readonly n: number }>(
+            "SELECT COUNT(*) AS n FROM issues",
+          );
+          count = rows[0]?.n ?? 0;
+          if (count !== 2) yield* Effect.sleep("10 millis");
+        }
+        expect(count).toBe(2);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("catalog state upserts and deletes a row", async () => {
+  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* createInputs(refs("live"));
+        const ref = userStream("live");
+        const ada = {
+          userId: "ada",
+          workspaceId: "live",
+          name: "Ada",
+          updatedAt: "2026-09-20T10:00:00.000Z",
+        };
+        yield* Streams.append(
+          ref,
+          State.changes(ref, { offset: ZERO_OFFSET }, [State.upsert("user", ada)]),
         );
-        expect(rows[0]?.n).toBe(1);
-        expect(changes[0]?.n).toBe(1);
+        yield* Projection.run(issueRows.member({ workspaceId: "live" }));
+        const sql = yield* SqlClient.SqlClient;
+        const afterUpsert = yield* sql.unsafe<{ readonly n: number }>(
+          "SELECT COUNT(*) AS n FROM users",
+        );
+        expect(afterUpsert[0]?.n).toBe(1);
+        yield* Streams.append(
+          ref,
+          State.changes(ref, { offset: "1" }, [State.delete("user", ada)]),
+        );
+        yield* Projection.run(issueRows.member({ workspaceId: "live" }));
+        const afterDelete = yield* sql.unsafe<{ readonly n: number }>(
+          "SELECT COUNT(*) AS n FROM users",
+        );
+        expect(afterDelete[0]?.n).toBe(0);
       }),
     );
   } finally {
@@ -93,6 +137,7 @@ test("an unknown workspace is a 404 and creates nothing", async () => {
     await waitForServer(baseUrl);
     const response = await fetch(`${baseUrl}/api/workspaces/missing/issues`);
     expect(response.status).toBe(404);
+    expect((await fetch(`${baseUrl}/api/workspaces/live/commands`)).status).toBe(404);
     const stream = await fetch(`${baseUrl}/streams/issue-tracker/missing/issue-events?offset=-1`);
     expect(stream.status).toBe(404);
   } finally {
