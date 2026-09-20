@@ -79,7 +79,76 @@ const serve = Effect.scoped(
 );
 ```
 
-`follow` returns a caller-scoped fiber. Join it to observe a close or a typed failure; closing the scope releases the parked waits and the fiber. Each wait is one bounded `readNext` per input, so a missed wake delays progress by at most `repairIntervalMs` without losing it. On HTTP backends each hint is one long poll per input.
+`follow` returns a caller-scoped fiber. Join it to observe a close or a typed failure; closing the scope releases the parked waits and the fiber. Each wait is one bounded `readNext` per input, so a missed wake delays progress by at most `repairIntervalMs` without losing it. On HTTP backends it issues one poll per input per `repairIntervalMs`, cancelling a still-parked request before the replacement.
+
+## Triggers
+
+Use `follow` for a process-lifetime loop:
+
+```ts
+const fiber = yield * Projection.follow(orderTotalsProjection);
+```
+
+For a request, run a bounded amount of work before answering:
+
+```ts
+yield * Projection.run(orderTotalsProjection, { limit: 5 });
+return yield * readOrderTotals();
+```
+
+On a host that owns the input storage, run from its change feed. Wakes arriving during a run coalesce to one follow-up run:
+
+```ts
+const fiber = yield * Projection.onChange(orderTotalsProjection, { limit: 5 });
+```
+
+Inside a Durable Object, call `run` from an alarm. The alarm integration lands in a later phase:
+
+```ts
+const alarm = Projection.run(orderTotalsProjection, { limit: 10 });
+```
+
+A CLI or other hand trigger is the same operation:
+
+```ts
+await Effect.runPromise(Projection.run(orderTotalsProjection).pipe(Effect.provide(host)));
+```
+
+`Projection.serialized` wraps `run` with one process-local runner per canonical projection key. `onChange` uses it, so an overlapping request can use the same wrapper without a token conflict. A second process is not fenced and is still detected by the checkpoint token.
+
+## Families
+
+A family owns the parameter codecs and routed declarations. `member` encodes the full parameter bag to the ordinary projection `params`; `parse` tries input routes in declaration order. Output routes are not parsed.
+
+```ts
+import { Schema } from "effect";
+import { StreamRoute } from "@streamsy/core";
+
+const facts = StreamRoute.json("facts/:workspaceId", {
+  params: { workspaceId: Schema.String },
+  schema: orderSchema,
+});
+const totals = StreamRoute.json("totals/:workspaceId", {
+  params: { workspaceId: Schema.String },
+  schema: totalSchema,
+});
+
+const ordersByWorkspace = Projection.family({
+  id: "order-totals",
+  params: { workspaceId: Schema.String },
+  inputs: { facts },
+  output: totals,
+  process: (batch) => Effect.succeed(toTotals(batch.facts.items)),
+});
+
+const member = ordersByWorkspace.member({ workspaceId: "ws-42" });
+const params = ordersByWorkspace.parse("facts/ws-42");
+const changes = yield * Projection.onChange(ordersByWorkspace, [{ workspaceId: "ws-42" }]);
+```
+
+Each input and output route may declare a subset of the family parameters; a route with fewer parameters is shared by every member. The package keeps no member list, so `onChange` takes an explicit fixed member array. For a dynamic deployment, keep a registry stream of parameter records and use a small projection over that registry to start and stop member triggers.
+
+An unknown member is one whose input stream is absent. A served route answers 404 and creates nothing.
 
 ## Checkpoints and generations
 

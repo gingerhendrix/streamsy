@@ -72,7 +72,8 @@ const hint = Effect.fn("Projection.wake")(function* (
 /**
  * Runs to caught-up, then waits for the first input to hint at a change and runs
  * again. The caller's scope owns the fiber and every parked wait; joining exposes
- * the terminal close or a typed failure. On HTTP backends each hint is one long poll.
+ * the terminal close or a typed failure. On HTTP backends a parked hint is cancelled
+ * and replaced once per `repairIntervalMs` until an input changes.
  */
 export const follow = Effect.fn("Projection.follow")(function* <Inputs extends InputMap, O, E, R>(
   projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
