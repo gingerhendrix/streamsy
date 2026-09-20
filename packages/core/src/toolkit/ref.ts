@@ -29,6 +29,14 @@ export type StateChange<A, Type extends string = string> =
   | StateUpsert<A, Type>
   | StateDelete<A, Type>;
 
+type StateEncodedChange<A, Type extends string = string> =
+  | (Omit<StateUpsert<A, Type>, "headers"> & {
+      readonly headers: Omit<StateHeaders, "operation"> & {
+        readonly operation: "insert" | "update" | "upsert";
+      };
+    })
+  | StateDelete<A, Type>;
+
 /** The value fields that may serve as a Durable State key. */
 export type StateKey<A> = {
   [K in keyof A]-?: A[K] extends string | number ? K : never;
@@ -59,7 +67,7 @@ export type CollectionsChange<C extends Collections> = {
 }[keyof C & string];
 
 export type CollectionsEncodedChange<C extends Collections> = {
-  [K in keyof C & string]: StateChange<C[K]["schema"]["Encoded"], K>;
+  [K in keyof C & string]: StateEncodedChange<C[K]["schema"]["Encoded"], K>;
 }[keyof C & string];
 
 export type CollectionsDecodingServices<C extends Collections> =
@@ -104,7 +112,12 @@ export function json<A, I, RD, RE>(
 export function stateChange<A, I, RD, RE, const Type extends string>(options: {
   readonly schema: Schema.Codec<A, I, RD, RE>;
   readonly type: Type;
-}): Schema.Codec<StateChange<A, Type>, StateChange<I, Type>, RD, RE> {
+}): Schema.Codec<StateChange<A, Type>, StateEncodedChange<I, Type>, RD, RE> {
+  const upsertOperation = Schema.Union([
+    Schema.Literal("upsert"),
+    Schema.Literal("insert").transform("upsert"),
+    Schema.Literal("update").transform("upsert"),
+  ]);
   const headers = {
     offset: Schema.optionalKey(Schema.String),
     txid: Schema.optionalKey(Schema.String),
@@ -116,7 +129,7 @@ export function stateChange<A, I, RD, RE, const Type extends string>(options: {
       type: Schema.Literal(options.type),
       key: Schema.String,
       value: options.schema,
-      headers: Schema.Struct({ operation: Schema.Literal("upsert"), ...headers }),
+      headers: Schema.Struct({ operation: upsertOperation, ...headers }),
     }),
     Schema.Struct({
       type: Schema.Literal(options.type),

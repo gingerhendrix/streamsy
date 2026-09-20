@@ -177,3 +177,25 @@ it("decodes foreign-writer optional headers and delete null values", () =>
       });
     }),
   ));
+
+it("normalizes Durable State insert, update, and upsert operations", () => {
+  for (const operation of ["insert", "update", "upsert"] as const) {
+    const decoded = Schema.decodeSync(stories.codec)(
+      JSON.stringify({
+        type: "story",
+        key: "7",
+        value: { id: 7, title: operation },
+        headers: { operation },
+      }),
+    );
+    expect(decoded.headers.operation).toBe("upsert");
+  }
+
+  const encoded = Schema.encodeSync(stories.codec)({
+    type: "story",
+    key: "7",
+    value: { id: 7, title: "canonical" },
+    headers: { operation: "upsert" },
+  });
+  expect(JSON.parse(encoded as string).headers.operation).toBe("upsert");
+});

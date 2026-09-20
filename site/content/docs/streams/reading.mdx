@@ -88,6 +88,8 @@ const count = Fold.run(notes, {
 
 A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the ref codec. A decode failure stops that read. The application picks the offset to restart from.
 
+A Durable State reader accepts `insert` and `update` operations from other producers and reports both as `upsert`.
+
 ## Over HTTP
 
 `GET` on the stream path with `offset` reads a batch. Add `live=long-poll` or `live=sse` to follow. See [HTTP](/docs/runtime/http) and [PROTOCOL.md sections 5.6 to 5.8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#56-read-stream---catch-up).
