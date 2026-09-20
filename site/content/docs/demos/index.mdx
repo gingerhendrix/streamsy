@@ -14,3 +14,7 @@ proves checkpoint resume across a process restart.
 [Issue tracker](/docs/demos/issue-tracker-demo) is a complete rung-zero
 application: Promise-native Bun routes transact against workspace streams, and
 the browser replays each workspace directly into StreamDB.
+
+[Issue tracker projection](/docs/demos/issue-tracker) is the SQLite rung: five
+workspace inputs feed one fused family member, with request and change triggers
+sharing a keyed mutex.

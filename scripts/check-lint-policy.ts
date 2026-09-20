@@ -25,6 +25,7 @@ export const effectAreas = [
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
   "examples/issue-tracker-demo",
+  "examples/issue-tracker",
   "examples/memory-server",
   "hosted",
 ] as const;

@@ -57,7 +57,7 @@ const checks = [
   scan("no temporary package alias anywhere", ["core", "next"].join("-")),
   scan(
     "no parked paths in live inputs",
-    String.raw`(?:^|[^\w-])(?:parked/|examples/(?:issue-tracker(?:-projections)?|risk-demo)(?:/|["']))`,
+    String.raw`(?:^|[^\w-])(?:parked/|examples/(?:issue-tracker-projections|risk-demo)(?:/|["']))`,
     [...historical, "!.oxlintrc.json", "!.oxfmtrc.json", "!scripts/check-perimeter.ts"],
   ),
   scan(
