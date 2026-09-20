@@ -25,7 +25,9 @@ A JSON ref stores one message per item. A bytes append joins all items from one 
 `State.changes` turns upsert and delete descriptions into the wire events for a
 `StreamRef.state`. Each description names its collection. The helper derives the
 key from that collection's key field, records the source `offset`, and assigns
-`txid` as `${offset}:${index}` within the append.
+`txid` as `${offset}:${index}` within the append. An upsert or delete can override
+`txid` and add `timestamp` or `from`; the source offset always comes from
+`State.changes`.
 
 ```ts
 import { Effect } from "effect";
@@ -118,9 +120,7 @@ const mutateWorkspace = (workspaceId, attempt) =>
     const { state, headOffset } = yield* materializeWorkspace(workspaceId);
     const outcome = attempt(state);
     if ("response" in outcome) return outcome.response;
-    const ack = yield* Streams.append(workspaceEvents(workspaceId), [outcome.event], {
-      expectedOffset: headOffset,
-    });
+    const ack = yield* appendWorkspaceEvent(workspaceId, outcome.event, headOffset, headOffset);
     return outcome.respond({ offset: ack.offset });
   }).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }));
 ```
@@ -128,6 +128,9 @@ const mutateWorkspace = (workspaceId, attempt) =>
 The attempt runs again after a conflict, so validation and event construction
 use the new state rather than values captured before the retry. The same
 collection-declared ref types the read events and the conditional append.
+The tracker has no upstream source stream, so it records the workspace head it
+just read as the change's source offset. Its builders override `txid` with the
+browser UUID and add the server timestamp.
 
 `expectedOffset` is a Streamsy extension to the protocol. See the extensions note on the [HTTP](/docs/runtime/http) page.
 

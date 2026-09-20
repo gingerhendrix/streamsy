@@ -1,6 +1,6 @@
 ---
 title: A small sync path with Durable Streams and TanStack DB
-description: How the Hacker News demo connects an Effect memory server to local browser queries.
+description: How the Hacker News demo connects an Effect SQLite server to local browser queries.
 date: 2026-09-06
 ---
 
@@ -15,11 +15,10 @@ serves them over the Durable Streams protocol.
 
 ## Three pieces
 
-The server uses Streamsy's protocol services and a memory Layer. A private
-projection bridge turns source upserts and deletes into State facts with source
-positions. The browser uses the official `@durable-streams/state/db` integration
-to maintain TanStack DB collections. React live queries then render those local
-collections.
+The server uses Streamsy's protocol services and a SQLite Layer. A declared-output
+projection turns source upserts and deletes into State facts with source positions.
+The browser uses the official `@durable-streams/state/db` integration to maintain
+TanStack DB collections. React live queries then render those local collections.
 
 ![State facts travel over Durable Streams into TanStack DB, which serves live queries to the UI.](/articles/durable-state-tanstack-db.svg)
 
@@ -30,27 +29,27 @@ carries them without interpreting the application's entity model.
 
 ## Read the running code
 
-The compiled [browser entry](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/hackernews-newest-stream/src/client/main.tsx)
+The compiled [browser entry](https://github.com/gingerhendrix/streamsy/blob/effect/examples/hackernews-newest-stream/src/client/main.tsx)
 creates the official StreamDB from the target URL and shared state schema,
 preloads it and closes it with the React lifecycle. The compiled
-[server entry](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/examples/hackernews-newest-stream/src/server/index.ts)
-owns the shared memory services, polling and HTTP edge.
+[server entry](https://github.com/gingerhendrix/streamsy/blob/effect/examples/hackernews-newest-stream/src/server/index.ts)
+owns the shared SQLite services, polling and HTTP edge.
 
 The [Introduction](/docs/introduction) walks through the public Streamsy
 toolkit and Bun host. The first release packages are `@streamsy/core`,
-`@streamsy/storage`, `@streamsy/serve` and `@streamsy/views`. Effect is the server and toolkit boundary;
-official Durable Streams packages supply the browser path.
+`@streamsy/storage`, `@streamsy/projection`, `@streamsy/serve` and
+`@streamsy/views`. Effect is the server and toolkit boundary; official Durable
+Streams packages supply the browser path.
 
 ## What this demo establishes
 
 The [Hacker News demo](/docs/demos/hackernews-newest-stream) shows initial catch-up,
-updates and deletes in a browser collection. Its projection bridge is private
-and incubating. Whole source pages above the item or byte bound can repeatedly
-reject; another pass need not make progress. It offers no general replay-safe
-pending writes, owner fencing or generation activation.
+updates and deletes in a browser collection. Its `Projection.stream` declaration
+pins input ranges and producer position before appending, so a retry reproduces
+the same unit and producer tuple.
 
-This demo deliberately uses one acquired memory store. The separate SQL package
-ships Bun and Durable Object SQLite storage, but it is not yet composed into this
-example. The local Cloudflare Durable Object host is implemented with workerd
-evidence; hosted execution and release acceptance remain pending. See the
-[Cloudflare guide](/docs/runtime/cloudflare).
+This demo deliberately uses one acquired SQLite store for streams and projection
+checkpoints, with `HN_DB=memory` as an explicit ephemeral option. The local
+Cloudflare Durable Object host is implemented with workerd evidence; hosted
+execution and release acceptance remain pending. See the [Cloudflare
+guide](/docs/runtime/cloudflare).

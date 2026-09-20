@@ -29,7 +29,7 @@ A definition has an `id`, a `version` (default 1), a `generation` (default 1), o
 
 The fused form, `Projection.make`, runs the handler inside the checkpoint owner's transaction. `Streams.append` to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back. A write to anything outside that owner is at-least-once.
 
-Fused is for SQL and side effects; `Projection.stream` is the declared-output form, including outputs on another backend or behind a fetch Layer. The handler returns the items to append. The output is created when absent; gone or closed outputs fail with `pin / invalid-output`.
+Fused is for SQL and side effects; `Projection.stream` is the declared-output form, including outputs on another backend or behind a fetch Layer. The handler returns the items to append. Before a non-empty result is appended, the output is created when absent; gone or closed outputs fail with `pin / invalid-output`. An empty result advances the checkpoint without creating the output.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -62,7 +62,7 @@ const program = Projection.run(orderTotalsProjection, { limit: 10 });
 await Effect.runPromise(program.pipe(Effect.provide(layerMemory())));
 ```
 
-`limit` is the maximum number of checkpoint transactions per call. There is no default cap. The server decides the read page; each pass reads one page per input in declaration order. A bad `limit` or `repairIntervalMs` fails before any read with `load / invalid-options`.
+`limit` is the maximum number of processed units per call. There is no default cap. The server decides the read page; each pass reads one page per input in declaration order. A bad `limit` or `repairIntervalMs` fails before any read with `load / invalid-options`.
 
 `Projection.follow` runs to `caught-up`, then waits for the first input to hint at a change and runs again.
 

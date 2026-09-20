@@ -4,6 +4,15 @@ import { staleTerms } from "../../scripts/site-stale-terms";
 
 const site = new URL("..", import.meta.url).pathname;
 const repo = dirname(site);
+interface Manifest {
+  readonly name?: string;
+  readonly private?: boolean;
+  readonly overrides?: { readonly effect?: string };
+}
+// SAFETY: package manifests are trusted repository JSON; optional fields are checked before use.
+const rootManifest = JSON.parse(await readFile(join(repo, "package.json"), "utf8")) as Manifest;
+const effectPin = rootManifest.overrides?.effect;
+if (effectPin === undefined) throw new Error("Root manifest has no Effect pin");
 const skipped = new Set([
   "node_modules",
   ".git",
@@ -32,6 +41,17 @@ async function scan(directory: string): Promise<void> {
             hits++;
           }
         }
+        if (sitePath.startsWith("content/docs/") || sitePath.startsWith("src/")) {
+          for (const match of line.matchAll(/\bEffect(?:@|\s+)(\d+\.\d+\.\d+(?:-[\w.]+)?)/g)) {
+            const version = match[1];
+            if (version !== undefined && version !== effectPin) {
+              console.error(
+                `${sitePath}:${index + 1}: Effect version ${version} does not match ${effectPin}`,
+              );
+              hits++;
+            }
+          }
+        }
       }
     }
   }
@@ -39,33 +59,16 @@ async function scan(directory: string): Promise<void> {
 await scan(site);
 if (files === 0) throw new Error("Empty site language scope");
 
-const rootManifest = JSON.parse(await readFile(join(repo, "package.json"), "utf8"));
-const effectPin: unknown = rootManifest.overrides?.effect;
-if (typeof effectPin !== "string") throw new Error("Root manifest has no Effect pin");
-for (const path of [join(site, "content", "docs"), join(site, "src")]) {
-  for (const entry of await Array.fromAsync(new Bun.Glob("**/*.{md,mdx,ts,tsx}").scan(path))) {
-    const source = await readFile(join(path, entry), "utf8");
-    for (const match of source.matchAll(/\bEffect(?:@|\s+)(\d+\.\d+\.\d+(?:-[\w.]+)?)/g)) {
-      if (match[1] !== effectPin) {
-        console.error(
-          `${relative(site, join(path, entry))}: Effect version ${match[1]} does not match ${effectPin}`,
-        );
-        hits++;
-      }
-    }
-  }
-}
-
 const packageNames: Array<string> = [];
 for (const entry of await readdir(join(repo, "packages"), { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
   const manifestPath = join(repo, "packages", entry.name, "package.json");
   try {
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    if (manifest.private !== true && typeof manifest.name === "string")
-      packageNames.push(manifest.name);
+    // SAFETY: package manifests are trusted repository JSON; optional fields are checked before use.
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Manifest;
+    if (manifest.private !== true && manifest.name !== undefined) packageNames.push(manifest.name);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
   }
 }
 const docsIndex = await readFile(join(site, "content", "docs", "index.mdx"), "utf8");

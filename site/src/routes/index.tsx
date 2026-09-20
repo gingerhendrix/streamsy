@@ -7,7 +7,7 @@ import { withBasePath } from "#/lib/base-path";
 
 const title = "Streamsy — Effect streams, from server to browser";
 const description =
-  "An Effect server and toolkit for Durable Streams. Typed streams, a Bun memory host, and official Durable Streams packages in the browser.";
+  "An Effect server and toolkit for Durable Streams. Typed streams, Bun and Cloudflare hosts, and official Durable Streams packages in the browser.";
 
 const loadImage = createServerFn({ method: "GET" }).handler(
   () => new URL(withBasePath("/og.webp"), getRequestUrl().origin).href,
@@ -67,6 +67,8 @@ function Home() {
               "@streamsy/core",
               "Protocol services, typed streams, storage contract and memory Layer.",
             ],
+            ["@streamsy/storage", "SQLite storage for Bun and Durable Objects."],
+            ["@streamsy/projection", "Checkpointed projections over one or more streams."],
             ["@streamsy/serve", "Checked serving contracts and an owned Bun HTTP host."],
             ["@streamsy/views", "Incremental views and view-store contracts."],
           ].map(([name, detail]) => (
@@ -80,9 +82,10 @@ function Home() {
           <h2 className="text-2xl font-semibold">Start locally, with explicit lifetimes.</h2>
           <p className="mt-4 leading-7 text-fd-muted-foreground">
             The Hacker News demo shares one SQLite Layer across its streams and projection
-            checkpoint, and resumes after a process restart. Cloudflare hosting is future work.
-            Effect 4.0.0-rc.112 powers the server and toolkit. Browsers use official Durable Streams
-            client and State packages.
+            checkpoint, and resumes after a process restart. A Durable Object host exists, and{" "}
+            <code>hosted:check</code> exercises it on local workerd. Live deployment remains a
+            preview pending a hosted evidence run. Effect 4.0.0-rc.115 powers the server and
+            toolkit. Browsers use official Durable Streams client and State packages.
           </p>
           <p className="mt-4 leading-7">
             Read the{" "}
