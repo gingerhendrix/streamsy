@@ -1,0 +1,26 @@
+{
+  "name": "issue-tracker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run server/index.ts",
+    "app:full": "bun run scripts/full-app.ts",
+    "smoke:http": "bun run scripts/http-smoke.ts",
+    "run:once": "bun run scripts/run-once.ts",
+    "test": "bun test test",
+    "test:unit": "bun test test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.0.0-rc.115",
+    "typescript": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0"
+  }
+}

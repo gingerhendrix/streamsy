@@ -51,6 +51,21 @@
         "@types/react-dom": "latest",
       },
     },
+    "examples/issue-tracker": {
+      "name": "issue-tracker",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "effect": "4.0.0-rc.115",
+        "typescript": "catalog:",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+      },
+    },
     "examples/issue-tracker-demo": {
       "name": "issue-tracker-demo",
       "version": "0.0.1",
@@ -951,6 +966,8 @@
     "isarray": ["isarray@1.0.0", "", {}, "sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ=="],
 
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
+
+    "issue-tracker": ["issue-tracker@workspace:examples/issue-tracker"],
 
     "issue-tracker-demo": ["issue-tracker-demo@workspace:examples/issue-tracker-demo"],
 
