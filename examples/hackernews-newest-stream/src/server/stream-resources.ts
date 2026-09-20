@@ -8,9 +8,7 @@ export const hackerNewsSource = StreamRef.json(sourceStreamId, { schema: HackerN
 
 /** The public Durable State target consumed by createStreamDB in the browser. */
 export const hackerNewsTarget = StreamRef.state(targetStreamId, {
-  schema: HackerNewsStory,
-  type: "hn-story",
-  key: "id",
+  collections: { "hn-story": { schema: HackerNewsStory, key: "id" } },
 });
 
 export const hackerNewsResources: ReadonlyArray<StreamRef.StreamRef<unknown>> = [

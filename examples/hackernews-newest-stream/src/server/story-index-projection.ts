@@ -22,7 +22,9 @@ export const hackerNewsStoryIndex = Projection.stream({
         hackerNewsTarget,
         { offset: unit.ranges.input.nextOffset },
         Projection.items(batch).map(({ item }) =>
-          item.operation === "delete" ? State.delete(item.oldValue) : State.upsert(item.story),
+          item.operation === "delete"
+            ? State.delete("hn-story", item.oldValue)
+            : State.upsert("hn-story", item.story),
         ),
       ),
     ),
