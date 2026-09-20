@@ -28,3 +28,6 @@ build/
 
 # fold-agent example local database
 examples/fold-agent/.data/
+
+# Hacker News example local database
+examples/hackernews-newest-stream/.data/

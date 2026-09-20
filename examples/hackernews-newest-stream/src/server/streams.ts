@@ -1,8 +1,14 @@
-import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+/* oxlint-disable effecttsgo/node-builtin-import -- This executable demo prepares its configured SQLite directory at the Bun edge. */
+import { StorageFault, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
+import { ProjectionFault, type Host } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
+import * as ProjectionSqlite from "@streamsy/projection/sqlite";
+import * as BunStorage from "@streamsy/storage/bun";
 import { Context, Effect, Layer } from "effect";
-import { streamPrefix } from "./config.ts";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { databasePath, streamPrefix } from "./config.ts";
 import { pollFailure } from "./poller/contract.ts";
 import { hackerNewsResources, hackerNewsSource } from "./stream-resources.ts";
 import type { HackerNewsSourceChange } from "./source-change.ts";
@@ -44,11 +50,22 @@ export const demoStreamsLayer = Layer.effect(
     });
   }),
 );
-/**
- * One memory owner for the process lifetime. The projection checkpoint store,
- * the source and target streams, the HTTP edge and the poller all share it, so
- * the fused projection commits its target appends with its checkpoint.
- */
-export const demoMemoryLayer = demoStreamsLayer.pipe(
-  Layer.provideMerge(ProjectionMemory.layerMemory()),
+const sqliteHostLayer = Layer.unwrap(
+  Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
+    Effect.as(
+      ProjectionSqlite.layer.pipe(
+        Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: databasePath } })),
+      ),
+    ),
+  ),
 );
+
+const memoryHost = Layer.effectContext(Effect.context<Host>()).pipe(
+  Layer.provide(ProjectionMemory.layerMemory()),
+);
+const sqliteHost = Layer.effectContext(Effect.context<Host>()).pipe(Layer.provide(sqliteHostLayer));
+const hostLayer: Layer.Layer<Host, ProjectionFault | StorageFault> =
+  databasePath === "memory" ? memoryHost : sqliteHost;
+
+/** One retained host graph shared by streams, checkpoints, HTTP and background fibers. */
+export const demoHostLayer = demoStreamsLayer.pipe(Layer.provideMerge(hostLayer));

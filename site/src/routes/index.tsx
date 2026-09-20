@@ -79,10 +79,10 @@ function Home() {
         <section className="mt-12 max-w-3xl border-t pt-8">
           <h2 className="text-2xl font-semibold">Start locally, with explicit lifetimes.</h2>
           <p className="mt-4 leading-7 text-fd-muted-foreground">
-            Memory is the only shipped protocol storage backend. One acquired Layer holds data
-            within one process; closing it loses that data. SQLite protocol storage and Cloudflare
-            hosting are future work. Effect 4.0.0-rc.112 powers the server and toolkit. Browsers use
-            official Durable Streams client and State packages.
+            The Hacker News demo shares one SQLite Layer across its streams and projection
+            checkpoint, and resumes after a process restart. Cloudflare hosting is future work.
+            Effect 4.0.0-rc.112 powers the server and toolkit. Browsers use official Durable Streams
+            client and State packages.
           </p>
           <p className="mt-4 leading-7">
             Read the{" "}

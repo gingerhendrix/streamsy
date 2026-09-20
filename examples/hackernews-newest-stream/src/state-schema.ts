@@ -53,7 +53,6 @@ export const HackerNewsStateChange = Schema.Union([
 ]);
 export type HackerNewsStateChange = Schema.Schema.Type<typeof HackerNewsStateChange>;
 
-const ProjectionProgressView = Schema.Struct({ sourceThrough: Schema.optionalKey(Schema.String) });
 export const ApiStatus = Schema.Struct({
   streamPath: Schema.String,
   sourceStreamPath: Schema.String,
@@ -63,16 +62,12 @@ export const ApiStatus = Schema.Struct({
   projection: Schema.Struct({
     running: Schema.Boolean,
     lastError: Schema.optional(Schema.String),
-    lastOutcome: Schema.optional(
-      Schema.Struct({
-        status: Schema.String,
-        progress: Schema.optionalKey(ProjectionProgressView),
-      }),
-    ),
+    sourceThrough: Schema.optionalKey(Schema.String),
   }),
   lastPollStartedAt: Schema.optional(Schema.String),
   lastPollCompletedAt: Schema.optional(Schema.String),
   lastPollError: Schema.optional(Schema.String),
+  lastSourceOffset: Schema.optional(Schema.String),
   lastStoryCount: Schema.Finite,
   lastFetchedNewStories: Schema.Finite,
   lastRefreshedStories: Schema.Finite,
@@ -86,6 +81,7 @@ export interface ApiStatus extends Schema.Schema.Type<typeof ApiStatus> {}
 export const ApiStatusSmokeView = Schema.Struct({
   lastPollCompletedAt: ApiStatus.fields.lastPollCompletedAt,
   lastPollError: ApiStatus.fields.lastPollError,
+  lastSourceOffset: ApiStatus.fields.lastSourceOffset,
   lastStoryCount: ApiStatus.fields.lastStoryCount,
   sourceBatches: ApiStatus.fields.sourceBatches,
   sourceChanges: ApiStatus.fields.sourceChanges,

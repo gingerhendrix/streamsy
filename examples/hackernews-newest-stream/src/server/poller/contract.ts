@@ -1,6 +1,5 @@
 import { Context, Effect, Schema } from "effect";
 import type { HnStory } from "../../state-schema.ts";
-import type { ProjectionServices } from "../projection.ts";
 import type { HackerNewsSourceChange } from "../source-change.ts";
 import { errorMessage } from "../util.ts";
 
@@ -12,8 +11,6 @@ export class PollFailure extends Schema.TaggedError<PollFailure>()(
 
 export const pollFailure = (operation: string) => (cause: unknown) =>
   new PollFailure({ operation, reason: errorMessage(cause) });
-
-export type { ProjectionServices };
 
 export type PollCounters = {
   readonly lastPollStartedAt?: string;
@@ -38,7 +35,6 @@ export type PollerSink = {
   readonly appendSourceBatch: (
     changes: readonly HackerNewsSourceChange[],
   ) => Effect.Effect<string, PollFailure>;
-  readonly catchUpProjection: Effect.Effect<unknown, never, ProjectionServices>;
 };
 
 export type HackerNewsApi = {
@@ -55,11 +51,7 @@ export type PollerConfig = {
 
 export interface NewestStoriesPollerService {
   /** One coalesced poll pass. Joins the in-flight pass instead of queueing another. */
-  readonly pollNow: Effect.Effect<void, never, ProjectionServices>;
-  /** Fork the interval polling loop. The first pass runs immediately. */
-  readonly start: Effect.Effect<void, never, ProjectionServices>;
-  /** Stop the loop and wait for any in-flight pass to complete. */
-  readonly stop: Effect.Effect<void>;
+  readonly pollNow: Effect.Effect<void>;
   readonly stats: Effect.Effect<PollStats>;
 }
 

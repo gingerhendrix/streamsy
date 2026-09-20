@@ -1,19 +1,16 @@
 /* oxlint-disable effecttsgo/async-function -- This Bun scenario exercises the demo's Promise compatibility edges through one explicit ManagedRuntime. */
-import { ZERO_OFFSET } from "@streamsy/core";
 import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 import type { HnStory } from "../../src/state-schema.ts";
 import { type HackerNewsApi } from "../../src/server/poller/contract.ts";
 import { makeNewestStoriesPoller } from "../../src/server/poller/poller.ts";
-import { makeStoryProjection } from "../../src/server/projection.ts";
-import { hackerNewsSource, hackerNewsTarget } from "../../src/server/stream-resources.ts";
+import { hackerNewsSource } from "../../src/server/stream-resources.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 
 describe("NewestStoriesPoller", () => {
-  test("an unchanged second poll appends no source or projection output", async () => {
+  test("an unchanged second poll appends no source output", async () => {
     const h = await demoHarness();
     const runtime = h.runtime;
-    const projection = await runtime.runPromise(makeStoryProjection({ limit: 10 }));
     const stories = new Map<number, HnStory>([
       [101, story(101, 1_700_000_030, "First")],
       [102, story(102, 1_700_000_020, "Second")],
@@ -35,7 +32,6 @@ describe("NewestStoriesPoller", () => {
         api,
         sink: {
           appendSourceBatch: h.streams.appendSourceBatch,
-          catchUpProjection: projection.catchUp,
         },
       }),
     );
@@ -43,14 +39,9 @@ describe("NewestStoriesPoller", () => {
     try {
       await runtime.runPromise(poller.pollNow);
       const sourceAfterFirst = await h.read(hackerNewsSource.id);
-      const targetAfterFirst = await h.read(hackerNewsTarget.id);
-      const firstOutcome = (await runtime.runPromise(projection.status)).lastOutcome;
-      expect(firstOutcome).toMatchObject({ status: "caught-up" });
-      expect(firstOutcome?.progress.sourceThrough).not.toBe(ZERO_OFFSET);
 
       await runtime.runPromise(poller.pollNow);
       expect(await h.read(hackerNewsSource.id)).toEqual(sourceAfterFirst);
-      expect(await h.read(hackerNewsTarget.id)).toEqual(targetAfterFirst);
       expect(await runtime.runPromise(poller.stats)).toMatchObject({
         lastStoryCount: 2,
         lastFetchedNewStories: 0,
@@ -60,11 +51,7 @@ describe("NewestStoriesPoller", () => {
         sourceBatches: 1,
         sourceChanges: 2,
       });
-      expect(await runtime.runPromise(projection.status)).toMatchObject({
-        lastOutcome: { status: "caught-up", progress: firstOutcome?.progress },
-      });
     } finally {
-      await runtime.runPromise(poller.stop);
       await runtime.dispose();
     }
   });

@@ -15,7 +15,7 @@ import { NewestStoriesPoller } from "./poller/contract.ts";
 import { newestStoriesPollerLayer } from "./poller/poller.ts";
 import { StoryProjection, storyProjectionLayer } from "./projection.ts";
 import { serveStatic } from "./static.ts";
-import { demoMemoryLayer, DemoStreams } from "./streams.ts";
+import { demoHostLayer, DemoStreams } from "./streams.ts";
 
 const pollerLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -31,7 +31,7 @@ const pollerLayer = Layer.unwrap(
 );
 const applicationLayer = pollerLayer.pipe(
   Layer.provideMerge(storyProjectionLayer(projectionLimits)),
-  Layer.provideMerge(demoMemoryLayer),
+  Layer.provideMerge(demoHostLayer),
 );
 const runtime = ManagedRuntime.make(applicationLayer);
 const { projection, poller, streams } = await runtime.runPromise(
@@ -44,10 +44,18 @@ const { projection, poller, streams } = await runtime.runPromise(
   }),
 );
 
-const currentStats = () => ({
-  projection: runtime.runSync(projection.status),
-  ...runtime.runSync(poller.stats),
-});
+const currentStats = () =>
+  runtime.runPromise(
+    Effect.all({
+      projection: projection.status,
+      poller: poller.stats,
+    }).pipe(
+      Effect.map(({ projection: projectionStatus, poller: pollStats }) => ({
+        projection: projectionStatus,
+        ...pollStats,
+      })),
+    ),
+  );
 
 const server = Bun.serve({
   port,
@@ -65,12 +73,12 @@ const server = Bun.serve({
           newestLimit,
           pollIntervalMs,
           projectionLimits,
-          ...currentStats(),
+          ...(await currentStats()),
         });
       }
       if (url.pathname === "/api/poll" && request.method === "POST") {
         await runtime.runPromise(poller.pollNow);
-        return json({ ok: true, ...currentStats() });
+        return json({ ok: true, ...(await currentStats()) });
       }
       if (url.pathname.startsWith("/api/")) {
         return json({ error: "Not found" }, { status: 404 });
@@ -83,14 +91,11 @@ const server = Bun.serve({
   },
 });
 
-await runtime.runPromise(poller.start);
-
 let shuttingDown: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (shuttingDown) return shuttingDown;
   shuttingDown = (async () => {
     await server.stop(true);
-    await runtime.runPromise(poller.stop);
     await runtime.dispose();
   })();
   return shuttingDown;

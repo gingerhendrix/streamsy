@@ -1,11 +1,14 @@
 import { Streams, StreamsReader, type StreamsWriter, ZERO_OFFSET } from "@streamsy/core";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
-import { Context, Effect, Schema } from "effect";
+import * as ProjectionMemory from "@streamsy/projection/memory";
+import { Context, Effect, Layer, ManagedRuntime, Schedule, Schema, Stream } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
 import { sourceDelete, sourceUpsert } from "../../src/server/source-change.ts";
 import { hackerNewsSource, hackerNewsTarget } from "../../src/server/stream-resources.ts";
 import { hackerNewsStoryIndex } from "../../src/server/story-index-projection.ts";
+import { storyProjectionLayer } from "../../src/server/projection.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
+import { DemoStreams, demoStreamsLayer } from "../../src/server/streams.ts";
 import { HackerNewsStateChange, type HnStory } from "../../src/state-schema.ts";
 
 type Harness = Awaited<ReturnType<typeof demoHarness>>;
@@ -110,10 +113,11 @@ describe("Hacker News story index projection", () => {
     const before = await h.read(hackerNewsTarget.id);
 
     // A fresh declaration with the same identity restores the stored checkpoint.
-    const restarted = Projection.make({
+    const restarted = Projection.stream({
       id: hackerNewsStoryIndex.id,
       generation: hackerNewsStoryIndex.generation,
       input: hackerNewsSource,
+      output: hackerNewsTarget,
       process: hackerNewsStoryIndex.process,
     });
     const result = await Effect.runPromise(
@@ -123,6 +127,35 @@ describe("Hacker News story index projection", () => {
 
     expect(result).toMatchObject({ status: "caught-up", units: 0, items: 0 });
     expect(after).toEqual(before);
+  });
+
+  test("the Layer-scoped follower picks up an append without an explicit run", async () => {
+    const host = demoStreamsLayer.pipe(Layer.provideMerge(ProjectionMemory.layerMemory()));
+    const runtime = ManagedRuntime.make(
+      storyProjectionLayer(limits).pipe(Layer.provideMerge(host)),
+    );
+    try {
+      const streams = await runtime.runPromise(DemoStreams);
+      await runtime.runPromise(
+        streams.appendSourceBatch([sourceUpsert(story(101, 1_700_000_030, "Followed"))]),
+      );
+      const facts = await runtime.runPromise(
+        Streams.read(hackerNewsTarget).pipe(
+          Streams.items,
+          Stream.runCollect,
+          Effect.flatMap((items) =>
+            items.length === 0
+              ? Effect.fail("projection has not appended yet")
+              : Effect.succeed(items),
+          ),
+          Effect.retry({ schedule: Schedule.spaced(10), times: 100 }),
+        ),
+      );
+      expect(facts).toHaveLength(1);
+      expect(facts[0]?.key).toBe("101");
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   test("limit-reached at one item per pass, then resumes to caught-up", async () => {
@@ -174,10 +207,10 @@ describe("Hacker News story index projection", () => {
       Projection.run(hackerNewsStoryIndex, limits).pipe(Effect.flip, Effect.provide(raced)),
     );
     expect(failed).toBeInstanceOf(ProjectionFault);
-    expect(failed).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
+    expect(failed).toMatchObject({ phase: "pin", reason: "token-conflict" });
 
     expect(await h.read(hackerNewsTarget.id)).toHaveLength(1);
-    expect((await loadRecord(h)).token).toBe("1");
+    expect((await loadRecord(h)).token).toBe("2");
     expect(await run(h)).toMatchObject({ status: "caught-up", units: 0, items: 0 });
     expect(await h.read(hackerNewsTarget.id)).toHaveLength(1);
   });

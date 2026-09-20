@@ -15,6 +15,7 @@ export const demoConfig = Config.all({
   pollIntervalMs: Config.Int("HN_POLL_INTERVAL_MS").pipe(Config.withDefault(60_000)),
   newestLimit: configuredNewestLimit,
   projectionLimit: Config.Int("HN_PROJECTION_LIMIT").pipe(Config.withDefault(10)),
+  databasePath: Config.String("HN_DB").pipe(Config.withDefault(".data/hackernews.sqlite")),
   hnApiBase: Config.String("HN_API_BASE").pipe(
     Config.withDefault("https://hacker-news.firebaseio.com/v0"),
   ),
@@ -36,6 +37,7 @@ export const demoConfig = Config.all({
       projectionLimits: {
         limit: config.projectionLimit,
       },
+      databasePath: config.databasePath,
       hnApiBase: config.hnApiBase.replace(/\/$/, ""),
     };
   }),
@@ -53,6 +55,7 @@ export const streamContentType = loaded.streamContentType;
 export const pollIntervalMs = loaded.pollIntervalMs;
 export const newestLimit = loaded.newestLimit;
 export const projectionLimits = loaded.projectionLimits;
+export const databasePath = loaded.databasePath;
 export const hnApiBase = loaded.hnApiBase;
 
 // Streamsy's in-memory storage long-polls for up to 30 seconds. Bun's default

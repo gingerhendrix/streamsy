@@ -1,17 +1,23 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/extends-native-error, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-random -- This offline Bun smoke is a single executable/platform boundary that drives child processes and HTTP fixtures through their native Promise APIs. */
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun smoke resolves the demo child-process working directory with the Node-compatible path API.
-import { resolve } from "node:path";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The Bun smoke owns one temporary SQLite directory and resolves the demo working directory at the process boundary.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { Option, Schema } from "effect";
 import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.ts";
 
 // Offline vertical smoke: local HN fixture -> deterministic source batch ->
-// bounded @streamsy/projection run -> public target stream consumed by the browser.
+// scoped @streamsy/projection follow -> public target stream consumed by the browser,
+// including a process restart against the same SQLite file.
 
 const packageDir = resolve(import.meta.dir, "..");
-const demoPort = 20_000 + Math.floor(Math.random() * 20_000);
-const fixturePort = demoPort + 1;
+const portReservation = Bun.serve({ port: 0, fetch: () => new Response("reserved") });
+const demoPort = portReservation.port;
+await portReservation.stop(true);
 const baseUrl = `http://127.0.0.1:${demoPort}`;
 const streamUrl = `${baseUrl}/streams/session/main`;
+const scratchDir = mkdtempSync(join(tmpdir(), "streamsy-hn-smoke-"));
+const databasePath = join(scratchDir, "hackernews.sqlite");
 
 class SmokeError extends Error {
   constructor(message: string) {
@@ -48,7 +54,7 @@ type ChangeEvent = HackerNewsStateChange;
 type ApiStatus = Schema.Schema.Type<typeof ApiStatusSmokeView>;
 
 const fixture = Bun.serve({
-  port: fixturePort,
+  port: 0,
   fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/newstories.json") return Response.json(newestIds);
@@ -57,6 +63,7 @@ const fixture = Bun.serve({
     return new Response("not found", { status: 404 });
   },
 });
+const fixturePort = fixture.port;
 
 async function waitForServer(): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -84,7 +91,8 @@ async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
       assert(!last.projection.lastError, `projection failed: ${last.projection.lastError}`);
       if (
         last.sourceBatches >= sourceBatches &&
-        last.projection.lastOutcome?.status === "caught-up"
+        last.lastSourceOffset !== undefined &&
+        last.projection.sourceThrough === last.lastSourceOffset
       ) {
         return last;
       }
@@ -105,19 +113,33 @@ async function readStoryEvents(): Promise<ChangeEvent[]> {
   });
 }
 
-const server = Bun.spawn(["bun", "src/server/index.ts"], {
-  cwd: packageDir,
-  env: {
-    ...process.env,
-    PORT: String(demoPort),
-    HN_API_BASE: `http://127.0.0.1:${fixturePort}`,
-    HN_NEWEST_LIMIT: "2",
-    HN_POLL_INTERVAL_MS: "600000",
-  },
-  stdout: "pipe",
-  stderr: "pipe",
-});
+function startDemo() {
+  return Bun.spawn(["bun", "src/server/index.ts"], {
+    cwd: packageDir,
+    env: {
+      ...process.env,
+      PORT: String(demoPort),
+      HN_API_BASE: `http://127.0.0.1:${fixturePort}`,
+      HN_NEWEST_LIMIT: "2",
+      HN_POLL_INTERVAL_MS: "600000",
+      HN_DB: databasePath,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
 
+async function stopDemo(server: ReturnType<typeof startDemo>): Promise<string> {
+  server.kill();
+  await server.exited.catch(() => undefined);
+  const stdout = await new Response(server.stdout).text();
+  const stderr = await new Response(server.stderr).text();
+  if (stdout.trim()) console.log(stdout.trim());
+  if (stderr.trim()) console.error(stderr.trim());
+  return stderr;
+}
+
+let server: ReturnType<typeof startDemo> | undefined = startDemo();
 let serverStderr = "";
 try {
   await waitForServer();
@@ -165,18 +187,55 @@ try {
     "unchanged poll must not append projection output",
   );
 
+  const sourceThroughBeforeRestart = unchangedStatus.projection.sourceThrough;
+  assert(sourceThroughBeforeRestart, "first process should expose its stored checkpoint offset");
+  serverStderr += await stopDemo(server);
+  server = undefined;
+
+  server = startDemo();
+  await waitForServer();
+  const restartedStatus = await waitForStatus(1);
+  const restartedEvents = await readStoryEvents();
+  assert(
+    restartedStatus.projection.sourceThrough !== sourceThroughBeforeRestart,
+    "projection checkpoint should continue after restart",
+  );
+  assert(
+    restartedStatus.sourceChanges === 2,
+    "restarted process should append only the two changes its own poll found",
+  );
+  assert(
+    restartedEvents.length === unchangedEvents.length + 2,
+    "a resumed checkpoint projects only the post-restart poll, never the retained prefix again",
+  );
+  assert(
+    JSON.stringify(restartedEvents.slice(0, unchangedEvents.length)) ===
+      JSON.stringify(unchangedEvents),
+    "restart should preserve every target fact already stored",
+  );
+  const identities = restartedEvents.map((event) => `${event.key}:${event.headers.txid}`);
+  assert(
+    new Set(identities).size === identities.length,
+    "restart must not repeat a fact with the same key and txid",
+  );
+
+  const restartedUnchangedPoll = await fetch(`${baseUrl}/api/poll`, { method: "POST" });
+  assert(restartedUnchangedPoll.ok, `post-restart poll failed: ${restartedUnchangedPoll.status}`);
+  const restartedUnchangedStatus = await waitForStatus(1);
+  const finalEvents = await readStoryEvents();
+  assert(
+    restartedUnchangedStatus.sourceBatches === 1,
+    "unchanged post-restart poll must not append another source batch",
+  );
+  assert(finalEvents.length === restartedEvents.length, "unchanged post-restart poll must be idle");
+
   console.log(
-    `hackernews-newest-stream HTTP smoke passed: ${unchangedStatus.sourceChanges} source changes, ${unchangedEvents.length} client-readable State events`,
+    `hackernews-newest-stream HTTP smoke passed: ${finalEvents.length} client-readable State events with SQLite restart resume`,
   );
 } finally {
-  server.kill();
-  await server.exited.catch(() => undefined);
+  if (server !== undefined) serverStderr += await stopDemo(server);
   await fixture.stop(true);
-
-  const stdout = await new Response(server.stdout).text();
-  serverStderr = await new Response(server.stderr).text();
-  if (stdout.trim()) console.log(stdout.trim());
-  if (serverStderr.trim()) console.error(serverStderr.trim());
+  rmSync(scratchDir, { recursive: true, force: true });
 }
 
 assert(serverStderr.trim().length === 0, `demo server wrote to stderr: ${serverStderr}`);
