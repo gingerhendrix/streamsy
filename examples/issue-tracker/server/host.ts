@@ -69,9 +69,10 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
   ).pipe(Layer.provide(ready.pipe(Layer.provideMerge(base))));
 };
 
+/**
+ * `Streams.create` already treats an existing stream with the same config as
+ * success, so a `CreateConflict` means the stored stream disagrees with the
+ * declared ref; that stops the host at startup, where the message names it.
+ */
 export const createInputs = (inputs: ReadonlyArray<Parameters<typeof Streams.create>[0]>) =>
-  Effect.forEach(
-    inputs,
-    (ref) => Streams.create(ref).pipe(Effect.catchTag("CreateConflict", () => Effect.void)),
-    { discard: true },
-  );
+  Effect.forEach(inputs, (ref) => Streams.create(ref), { discard: true });
