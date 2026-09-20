@@ -82,10 +82,10 @@ function Home() {
           <h2 className="text-2xl font-semibold">Start locally, with explicit lifetimes.</h2>
           <p className="mt-4 leading-7 text-fd-muted-foreground">
             The Hacker News demo shares one SQLite Layer across its streams and projection
-            checkpoint, and resumes after a process restart. A Durable Object host exists, and{" "}
-            <code>hosted:check</code> exercises it on local workerd. Live deployment remains a
-            preview pending a hosted evidence run. Effect 4.0.0-rc.115 powers the server and
-            toolkit. Browsers use official Durable Streams client and State packages.
+            checkpoint, and resumes after a process restart. A Durable Object host exists, and the
+            conformance suite exercises it on local workerd. Live deployment remains a preview
+            pending a hosted evidence run. Effect 4.0.0-rc.115 powers the server and toolkit.
+            Browsers use official Durable Streams client and State packages.
           </p>
           <p className="mt-4 leading-7">
             Read the{" "}

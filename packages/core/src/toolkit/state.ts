@@ -1,4 +1,4 @@
-import type { Collections, CollectionsChange, StateKey, StateRef } from "./ref.ts";
+import type { Collections, CollectionsChange, StateHeaders, StateKey, StateRef } from "./ref.ts";
 
 export interface Upsert<A, Type extends string = string> {
   readonly kind: "upsert";
@@ -62,11 +62,15 @@ export function changes<C extends Collections, RD, RE>(
     if (collection === undefined) throw new TypeError(`Unknown state collection "${entry.type}"`);
     const value = entry.kind === "upsert" ? entry.value : entry.oldValue;
     const key = readKey(entry.type, collection.key, value);
-    const headers = {
-      offset: options.offset,
-      txid: `${options.offset}:${index}`,
-      ...entry.headers,
-    };
+    // Only the three overridable fields are read from the entry, so a wider
+    // value cannot replace `offset` and an explicit `undefined` cannot drop `txid`.
+    const override = entry.headers ?? {};
+    const stamped = { offset: options.offset, txid: override.txid ?? `${options.offset}:${index}` };
+    const withTimestamp =
+      override.timestamp === undefined ? stamped : { ...stamped, timestamp: override.timestamp };
+    const headers = (
+      override.from === undefined ? withTimestamp : { ...withTimestamp, from: override.from }
+    ) satisfies Omit<StateHeaders, "operation">;
     return entry.kind === "upsert"
       ? { type: entry.type, key, value, headers: { operation: "upsert", ...headers } }
       : { type: entry.type, key, old_value: value, headers: { operation: "delete", ...headers } };
