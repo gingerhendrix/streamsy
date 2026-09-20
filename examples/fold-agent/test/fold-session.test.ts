@@ -6,7 +6,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import { resumeSession, SessionId, startSession, type LogEntry } from "@humanlayer/fold-core";
-import { readHistory, sessionRefs } from "../src/session-journal.ts";
 import { Effect } from "effect";
 import { exampleAgent } from "../src/agent.ts";
 import { openMemoryStore, sessionStreamId } from "../src/storage.ts";
@@ -16,7 +15,7 @@ import { scriptedModel, textTurn, toolCallTurn } from "./fixtures/scripted-model
 const tags = (entries: ReadonlyArray<LogEntry>) => entries.map((entry) => entry._tag);
 
 describe("Fold session over a Streamsy durable log", () => {
-  test("rebuilds a tool session in a new scope over the same memory Layer and resumes epoch 0", async () => {
+  test("rebuilds a tool session in a new scope over the same memory Layer", async () => {
     const firstStore = await Effect.runPromise(openMemoryStore());
     try {
       const sessionId = SessionId.create();
@@ -81,20 +80,6 @@ describe("Fold session over a Streamsy durable log", () => {
 
       expect(durable.map((entry) => entry.seq)).toEqual(durable.map((_, index) => index));
       expect(tags(durable)).toEqual(tags(secondRun.entries));
-      const journal = await Effect.runPromise(
-        readHistory(sessionRefs(streamId).journal).pipe(Effect.provide(firstStore.context)),
-      );
-      const pending = journal.items.filter((row) => row._tag === "Pending");
-      expect(pending[firstRun.entries.length]).toMatchObject({
-        epoch: 0,
-        producerSeq: firstRun.entries.length,
-        entrySeq: firstRun.entries.length,
-      });
-      expect(pending.map((row) => row.entrySeq)).toEqual(durable.map((entry) => entry.seq));
-      expect(journal.items.filter((row) => row._tag === "Epoch")).toEqual([
-        { _tag: "Epoch", epoch: 0, reason: "start" },
-        { _tag: "Epoch", epoch: 0, reason: "resume" },
-      ]);
     } finally {
       await firstStore.close();
     }

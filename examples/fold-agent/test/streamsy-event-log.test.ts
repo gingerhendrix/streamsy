@@ -15,19 +15,8 @@ import {
   type LogEntry,
   type LogEntryInput,
 } from "@humanlayer/fold-core";
-import {
-  StorageFault,
-  Memory,
-  Protocol,
-  Producer,
-  StreamsReader,
-  StreamsWriter,
-  Streams,
-  StreamRef,
-} from "@streamsy/core";
+import { StorageFault, StreamsReader, StreamsWriter, Streams, StreamRef } from "@streamsy/core";
 import { Context, Deferred, Layer, Schema } from "effect";
-import { faultyStorage } from "@streamsy/core/testing";
-import { appendJournal, readHistory, sessionRefs, type Pending } from "../src/session-journal.ts";
 type JsonValue = Schema.Json;
 import { Cause, Effect, Exit, Fiber, Stream } from "effect";
 import {
@@ -270,25 +259,28 @@ const registerEventLogContract = (
 
     test("a competing writer is fenced by the exact-offset precondition", async () => {
       await withStore(async (store) => {
-        const exit = await Effect.runPromiseExit(
+        await Effect.runPromise(
           Effect.scoped(
             Effect.gen(function* () {
               const owner = yield* openLog(store, "fold/sessions/h/events", "create");
               yield* owner.append(sessionStarted());
 
-              // A second adapter claims the journal at the same producer epoch.
+              // A second adapter reads the same tail.
               const rival = yield* openLog(store, "fold/sessions/h/events", "resume");
-              // The new journal owner moves the log on.
-              yield* rival.append(sessionTitle("rival owns the journal"));
+              // The rival moves the log on.
+              yield* rival.append(sessionTitle("rival advances the log"));
               // The old owner cannot silently re-sequence onto new history.
-              yield* owner.append(sessionTitle("old owner is behind"));
+              const conflict = yield* Effect.flip(
+                owner.append(sessionTitle("old owner is behind")),
+              );
+              expect(conflict._tag).toBe("EventLogUnavailableError");
+              expect(conflict.message).toContain("Fenced: another writer advanced the log");
+
+              const latched = yield* Effect.flip(owner.append(sessionTitle("still fenced")));
+              expect(latched.message).toContain("This writer is fenced");
             }),
           ),
         );
-
-        const error = failureOf(exit);
-        expect(error._tag).toBe("EventLogUnavailableError");
-        expect(error.message).toContain("Fenced");
       });
     });
 
@@ -366,9 +358,8 @@ registerEventLogContract("SQLite", () => {
   );
 });
 
-describe("Fold journal fault recovery and ownership", () => {
+describe("Fold writer capability failures", () => {
   const streamId = "fold/sessions/recovery/events";
-  const refs = sessionRefs(streamId);
   const withContext = <E>(
     program: (store: StreamsyStore) => Effect.Effect<void, E, import("effect").Scope.Scope>,
     layer: Layer.Layer<StreamsReader | StreamsWriter> = Streams.layerMemory(),
@@ -381,285 +372,6 @@ describe("Fold journal fault recovery and ownership", () => {
         }),
       ),
     );
-
-  for (const when of ["before", "after"] as const) {
-    test(`ambiguous log completion ${when} commit replays the exact tuple and bytes`, async () => {
-      // create log + journal, Epoch, Pending, then the first producer append.
-      const outcomes: string[] = [];
-      const payloads: Uint8Array[] = [];
-      const source = Protocol.layer().pipe(
-        Layer.provide(faultyStorage(Memory.layer(), { failOn: 5, when })),
-      );
-      const observed = Layer.effectContext(
-        Effect.gen(function* () {
-          const reader = yield* StreamsReader;
-          const writer = yield* StreamsWriter;
-          return Context.make(StreamsReader, reader).pipe(
-            Context.add(
-              StreamsWriter,
-              StreamsWriter.of({
-                ...writer,
-                append: (id, options) =>
-                  Effect.gen(function* () {
-                    if (id === refs.log.id) payloads.push(options.data.slice());
-                    const result = yield* writer.append(id, options);
-                    if (id === refs.log.id) outcomes.push(result._tag);
-                    return result;
-                  }),
-              }),
-            ),
-          );
-        }),
-      ).pipe(Layer.provide(source));
-      await withContext(
-        (store) =>
-          Effect.gen(function* () {
-            const log = yield* openLog(store, streamId, "create");
-            const first = yield* log.append(sessionStarted());
-            yield* log.append(sessionTitle("after retry"));
-            const journal = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-            const pending = journal.items.filter((row) => row._tag === "Pending");
-            expect(pending.map((row) => [row.entrySeq, row.producerSeq])).toEqual([
-              [0, 0],
-              [1, 1],
-            ]);
-            expect(pending[0]?.entryId).toBe(first.eventId);
-            expect(yield* readFoldLog(store, streamId)).toHaveLength(2);
-            expect(payloads[0]).toEqual(payloads[1]);
-            expect(outcomes[0]).toBe(when === "after" ? "Duplicate" : "Appended");
-          }),
-        observed,
-      );
-    });
-  }
-
-  test("crash between Pending and log resumes the exact journaled payload before any new entry", async () => {
-    await withContext((store) =>
-      Effect.gen(function* () {
-        const log = yield* openLog(store, streamId, "create");
-        yield* log.append(sessionStarted());
-        const pending = yield* plantPending(store);
-        const resumed = yield* openLog(store, streamId, "resume");
-        yield* resumed.append(sessionTitle("new payload"));
-        const history = yield* readHistory(refs.log).pipe(Effect.provide(store.context));
-        expect(history.items[1]).toEqual(pending.entry);
-        expect(history.items).toHaveLength(3);
-        const journal = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-        expect(journal.items.map((row) => row._tag)).toEqual([
-          "Epoch",
-          "Pending",
-          "Pending",
-          "Epoch",
-          "Pending",
-        ]);
-        expect(journal.items.at(-1)).toMatchObject({ entrySeq: 2, producerSeq: 2, epoch: 0 });
-      }),
-    );
-  });
-
-  test("takeover settles old Pending before its Epoch and fences both old ownership and producer tuple", async () => {
-    await withContext((store) =>
-      Effect.gen(function* () {
-        const old = yield* openLog(store, streamId, "create");
-        yield* old.append(sessionStarted());
-        const pending = yield* plantPending(store);
-        const owner = yield* openLog(store, streamId, "takeover");
-        yield* owner.append(sessionTitle("new epoch"));
-        const failure = yield* Effect.flip(old.append(sessionTitle("stale owner")));
-        expect(failure.message).toContain("Fenced: stale-epoch");
-        const result = yield* Producer.append(refs.log, [pending.entry], {
-          producerId: refs.producerId,
-          producerEpoch: 0,
-          producerSeq: 1,
-        }).pipe(Effect.flip, Effect.provide(store.context));
-        expect(result._tag).toBe("StaleEpoch");
-        const journal = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-        expect(journal.items.map((row) => row._tag)).toEqual([
-          "Epoch",
-          "Pending",
-          "Pending",
-          "Epoch",
-          "Pending",
-        ]);
-        expect(journal.items[3]).toEqual({ _tag: "Epoch", epoch: 1, reason: "takeover" });
-        expect(journal.items[4]).toMatchObject({ epoch: 1, producerSeq: 0, entrySeq: 2 });
-        const history = yield* readHistory(refs.log).pipe(Effect.provide(store.context));
-        expect(history.items[1]).toEqual(pending.entry);
-        expect(history.items).toHaveLength(3);
-      }),
-    );
-  });
-
-  test("resume with an explicit mismatched epoch changes neither journal nor log", async () => {
-    await withContext((store) =>
-      Effect.gen(function* () {
-        const log = yield* openLog(store, streamId, "create");
-        yield* log.append(sessionStarted());
-        const before = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-        const failure = yield* Effect.flip(
-          makeEventLog({ store, streamId, mode: "resume", epoch: 1 }),
-        );
-        expect(failure.message).toContain("requested epoch");
-        expect(yield* readHistory(refs.journal).pipe(Effect.provide(store.context))).toEqual(
-          before,
-        );
-      }),
-    );
-  });
-
-  test("payload disagreement in acknowledged journal history is corruption", async () => {
-    await withContext((store) =>
-      Effect.gen(function* () {
-        const log = yield* openLog(store, streamId, "create");
-        yield* log.append(sessionStarted());
-        yield* plantPending(store);
-        yield* Streams.append(refs.log, [{ ...rawTitleEntry(1), title: "different bytes" }]).pipe(
-          Effect.provide(store.context),
-        );
-        const failure = yield* Effect.flip(openLog(store, streamId, "resume"));
-        expect(failure._tag).toBe("EventLogCorruptEntryError");
-        expect(failure.message).toContain("payload differs");
-      }),
-    );
-  });
-
-  test("five exhausted attempts leave Pending intact and prohibit a replacement payload", async () => {
-    await withContext((store) =>
-      Effect.gen(function* () {
-        const writer = Context.get(store.context, StreamsWriter);
-        let calls = 0;
-        const failingStore: StreamsyStore = {
-          ...store,
-          context: Context.add(
-            store.context,
-            StreamsWriter,
-            StreamsWriter.of({
-              ...writer,
-              append: (id, options) =>
-                id === refs.log.id
-                  ? Effect.suspend(() => {
-                      calls++;
-                      return Effect.fail(
-                        new StorageFault({
-                          operation: "mutate",
-                          message: "outage",
-                          retryable: true,
-                        }),
-                      );
-                    })
-                  : writer.append(id, options),
-            }),
-          ),
-        };
-        const log = yield* openLog(failingStore, streamId, "create");
-        expect(yield* Effect.flip(log.append(sessionStarted()))).toMatchObject({ retryable: true });
-        expect(calls).toBe(5);
-        const before = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-        expect((yield* Effect.flip(log.append(sessionStarted()))).message).toContain(
-          "resume from the journal",
-        );
-        expect(yield* readHistory(refs.journal).pipe(Effect.provide(store.context))).toEqual(
-          before,
-        );
-        const recovered = yield* openLog(store, streamId, "resume");
-        yield* recovered.append(sessionTitle("after recovery"));
-        expect(yield* readFoldLog(store, streamId)).toHaveLength(2);
-      }),
-    );
-  });
-
-  test("ambiguous journal commit is recovered without minting a second Pending", async () => {
-    await withContext(
-      (store) =>
-        Effect.gen(function* () {
-          const log = yield* openLog(store, streamId, "create");
-          const failed = yield* Effect.flip(log.append(sessionStarted()));
-          expect(failed).toMatchObject({ retryable: true });
-          expect((yield* Effect.flip(log.append(sessionStarted()))).message).toContain(
-            "resume from the journal",
-          );
-          const resumed = yield* openLog(store, streamId, "resume");
-          yield* resumed.append(sessionTitle("recovered"));
-          const journal = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-          expect(
-            journal.items.filter((row) => row._tag === "Pending").map((row) => row.entrySeq),
-          ).toEqual([0, 1]);
-          expect(yield* readFoldLog(store, streamId)).toHaveLength(2);
-        }),
-      Protocol.layer().pipe(
-        Layer.provide(faultyStorage(Memory.layer(), { failOn: 4, when: "after" })),
-      ),
-    );
-  });
-
-  test("takeover while the old owner is parked after journaling settles before epoch advance", async () => {
-    await withContext((store) =>
-      Effect.gen(function* () {
-        const parked = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        const writer = Context.get(store.context, StreamsWriter);
-        let hold = false;
-        const oldStore: StreamsyStore = {
-          ...store,
-          context: Context.add(
-            store.context,
-            StreamsWriter,
-            StreamsWriter.of({
-              ...writer,
-              append: (id, options) =>
-                Effect.gen(function* () {
-                  if (hold && id === refs.log.id) {
-                    yield* Deferred.succeed(parked, undefined);
-                    yield* Deferred.await(release);
-                  }
-                  return yield* writer.append(id, options);
-                }),
-            }),
-          ),
-        };
-        const old = yield* openLog(oldStore, streamId, "create");
-        yield* old.append(sessionStarted());
-        hold = true;
-        const running = yield* Effect.forkChild(
-          Effect.exit(old.append(sessionTitle("parked payload"))),
-        );
-        yield* Deferred.await(parked);
-        const before = yield* readHistory(refs.journal).pipe(Effect.provide(store.context));
-        const pending = before.items.at(-1);
-        if (pending?._tag !== "Pending") throw new Error("expected durable Pending");
-        const takeoverStore: StreamsyStore = {
-          ...store,
-          context: Context.add(
-            store.context,
-            StreamsWriter,
-            StreamsWriter.of({
-              ...writer,
-              append: (id, options) =>
-                Effect.gen(function* () {
-                  if (id === refs.journal.id) {
-                    // The first takeover write is Epoch: old payload must already be in log.
-                    const history = yield* readHistory(refs.log).pipe(
-                      Effect.provide(store.context),
-                      Effect.orDie,
-                    );
-                    expect(history.items[1]).toEqual(pending.entry);
-                  }
-                  return yield* writer.append(id, options);
-                }),
-            }),
-          ),
-        };
-        const owner = yield* openLog(takeoverStore, streamId, "takeover");
-        yield* owner.append(sessionTitle("new epoch"));
-        yield* Deferred.succeed(release, undefined);
-        const exit = yield* Fiber.join(running);
-        expect(failureOf(exit).message).toContain("stale-epoch");
-        const history = yield* readFoldLog(store, streamId);
-        expect(history.map((entry) => entry.seq)).toEqual([0, 1, 2]);
-        expect(String(history[1]?.eventId)).toBe(pending.entryId);
-      }),
-    );
-  });
 
   for (const operation of ["read", "create"] as const) {
     test(`a scripted ${operation} capability failure remains typed and retryable`, async () => {
@@ -700,21 +412,4 @@ describe("Fold journal fault recovery and ownership", () => {
       );
     });
   }
-
-  const plantPending = (store: StreamsyStore) =>
-    Effect.gen(function* () {
-      const entry = rawTitleEntry(1);
-      const decoded = yield* decodeStoredLogEntry(entry);
-      const pending: Pending = {
-        _tag: "Pending",
-        epoch: 0,
-        producerSeq: 1,
-        entrySeq: 1,
-        entryId: decoded.eventId,
-        entry,
-      };
-      const journal = yield* readHistory(refs.journal);
-      yield* appendJournal(refs, pending, journal.offset);
-      return pending;
-    }).pipe(Effect.provide(store.context));
 });

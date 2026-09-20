@@ -34,7 +34,7 @@ import { readFoldLog, streamsyEventLog } from "./streamsy-event-log.ts";
 
 const USAGE = `Usage:
   bun run src/cli.ts start   "<prompt>"
-  bun run src/cli.ts resume  <stream-id> [--epoch <n>] [--takeover] "<prompt>"
+  bun run src/cli.ts resume  <stream-id> "<prompt>"
   bun run src/cli.ts inspect <stream-id>
 
 Environment:
@@ -89,7 +89,7 @@ const start = (prompt: string) =>
     );
   });
 
-const resume = (streamId: string, prompt: string, epoch?: number, takeover = false) =>
+const resume = (streamId: string, prompt: string) =>
   Effect.gen(function* () {
     const model = yield* modelFromEnv(process.env);
 
@@ -98,12 +98,7 @@ const resume = (streamId: string, prompt: string, epoch?: number, takeover = fal
         Effect.gen(function* () {
           const session = yield* resumeSession({
             agent: exampleAgent(model),
-            log: streamsyEventLog({
-              store,
-              streamId,
-              mode: takeover ? "takeover" : "resume",
-              epoch,
-            }),
+            log: streamsyEventLog({ store, streamId, mode: "resume" }),
           });
           yield* session.send(prompt);
           yield* printTurn(session, streamId);
@@ -130,29 +125,13 @@ export const parseResumeArgs = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const [streamId, ...rest] = args;
     const promptParts: string[] = [];
-    let epoch: number | undefined;
-    let takeover = false;
-    for (let i = 0; i < rest.length; i++) {
-      const arg = rest[i];
-      if (arg === "--epoch") {
-        const value = rest[++i];
-        if (
-          epoch !== undefined ||
-          value === undefined ||
-          !/^\d+$/.test(value) ||
-          !Number.isSafeInteger(Number(value))
-        )
-          return yield* usage();
-        epoch = Number(value);
-      } else if (arg === "--takeover") {
-        if (takeover) return yield* usage();
-        takeover = true;
-      } else if (arg?.startsWith("--")) return yield* usage();
-      else if (arg !== undefined) promptParts.push(arg);
+    for (const arg of rest) {
+      if (arg.startsWith("--")) return yield* usage();
+      promptParts.push(arg);
     }
     const prompt = promptParts.join(" ").trim();
-    if (!streamId || !prompt || (epoch !== undefined && takeover)) return yield* usage();
-    return { streamId, prompt, epoch, takeover };
+    if (!streamId || !prompt) return yield* usage();
+    return { streamId, prompt };
   });
 
 type CliError =
@@ -173,9 +152,7 @@ const main = (argv: ReadonlyArray<string>): Effect.Effect<unknown, CliError> => 
     }
     case "resume": {
       return parseResumeArgs(rest).pipe(
-        Effect.flatMap(({ streamId, prompt, epoch, takeover }) =>
-          resume(streamId, prompt, epoch, takeover),
-        ),
+        Effect.flatMap(({ streamId, prompt }) => resume(streamId, prompt)),
       );
     }
     case "inspect": {
