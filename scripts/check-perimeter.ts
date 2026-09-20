@@ -46,7 +46,7 @@ const scan = (label: string, pattern: string, globs: Array<string> = []): boolea
   for (const finding of findings) console.log(finding);
   return passed;
 };
-const historical = ["!parked/**", "!docs/**"];
+const historical = ["!parked/**"];
 const authored = ["packages/*/src/**", "!*.test.ts"];
 // These are existing published Bun test registration kits, not live runtime owners.
 const testKits = [

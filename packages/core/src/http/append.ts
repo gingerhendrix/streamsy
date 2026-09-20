@@ -18,7 +18,7 @@ export function parseHeaders(request: { readonly headers: Headers }):
   const producerHeaders = producerParser.parse(request);
   if (producerHeaders.kind === "invalid")
     return { ok: false, response: responses.badRequest("Invalid producer headers") };
-  // Streamsy extension: optimistic-concurrency precondition (see docs/api.md).
+  // Streamsy extension: optimistic-concurrency precondition.
   const expectedOffset = request.headers.get("stream-expected-offset") ?? undefined;
   if (expectedOffset !== undefined && !isValid(expectedOffset))
     return { ok: false, response: responses.badRequest("Invalid expected offset") };

@@ -44,6 +44,10 @@ from a typed ref to a served projection.
 
 ## Examples
 
+- [Memory server](examples/memory-server/README.md): the smallest Bun host,
+  backed by one process-local memory store and exercised with `curl`.
+- [Issue tracker](examples/issue-tracker-demo/README.md): a complete application
+  with conditional writes, SQLite persistence, and live browser collections.
 - [Hacker News newest](examples/hackernews-newest-stream/README.md): a Bun
   server, a projection, and a browser client on the official Durable Streams
   client.
