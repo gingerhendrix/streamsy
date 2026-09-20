@@ -201,6 +201,14 @@ try {
     "projection checkpoint should continue after restart",
   );
   assert(
+    restartedStatus.sourceChanges === 2,
+    "restarted process should append only the two changes its own poll found",
+  );
+  assert(
+    restartedEvents.length === unchangedEvents.length + 2,
+    "a resumed checkpoint projects only the post-restart poll, never the retained prefix again",
+  );
+  assert(
     JSON.stringify(restartedEvents.slice(0, unchangedEvents.length)) ===
       JSON.stringify(unchangedEvents),
     "restart should preserve every target fact already stored",
