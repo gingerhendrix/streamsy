@@ -38,7 +38,7 @@
     "format:check": "oxfmt . --check",
     "test": "bun run test:unit",
     "test:conformance": "bun run test:conformance:memory && bun run test:conformance:sqlite && bun run test:conformance:workerd && bun run test:conformance:ownership && bun run test:conformance:fetch",
-    "test:unit": "bun run --filter '*' test:unit",
+    "test:unit": "bun scripts/test-unit.ts",
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",
