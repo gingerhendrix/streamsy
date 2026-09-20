@@ -73,7 +73,9 @@ import { orderTotalsProjection } from "./order-totals.ts";
 
 const serve = Effect.scoped(
   Effect.gen(function* () {
-    const fiber = yield* Projection.follow(orderTotalsProjection, { repairIntervalMs: 1000 });
+    const fiber = yield* Projection.follow(orderTotalsProjection, {
+      repairIntervalMs: 1000,
+    });
     return yield* Fiber.join(fiber);
   }),
 );
@@ -86,20 +88,26 @@ const serve = Effect.scoped(
 Use `follow` for a process-lifetime loop:
 
 ```ts
-const fiber = yield * Projection.follow(orderTotalsProjection);
+Effect.gen(function* () {
+  const fiber = yield* Projection.follow(orderTotalsProjection);
+});
 ```
 
 For a request, run a bounded amount of work before answering:
 
 ```ts
-yield * Projection.run(orderTotalsProjection, { limit: 5 });
-return yield * readOrderTotals();
+Effect.gen(function* () {
+  yield* Projection.run(orderTotalsProjection, { limit: 5 });
+  return yield* readOrderTotals();
+});
 ```
 
 On a host that owns the input storage, run from its change feed. Wakes arriving during a run coalesce to one follow-up run:
 
 ```ts
-const fiber = yield * Projection.onChange(orderTotalsProjection, { limit: 5 });
+Effect.gen(function* () {
+  const fiber = yield* Projection.onChange(orderTotalsProjection, { limit: 5 });
+});
 ```
 
 Inside a Durable Object, call `run` from an alarm. The alarm integration lands in a later phase:
@@ -121,7 +129,7 @@ await Effect.runPromise(Projection.run(orderTotalsProjection).pipe(Effect.provid
 A family owns the parameter codecs and routed declarations. `member` encodes the full parameter bag to the ordinary projection `params`; `parse` tries input routes in declaration order. Output routes are not parsed.
 
 ```ts
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { StreamRoute } from "@streamsy/core";
 
 const facts = StreamRoute.json("facts/:workspaceId", {
@@ -143,10 +151,12 @@ const ordersByWorkspace = Projection.family({
 
 const member = ordersByWorkspace.member({ workspaceId: "ws-42" });
 const params = ordersByWorkspace.parse("facts/ws-42");
-const changes = yield * Projection.onChange(ordersByWorkspace, [{ workspaceId: "ws-42" }]);
+const watch = Effect.gen(function* () {
+  const fibers = yield* Projection.onChange(ordersByWorkspace, [{ workspaceId: "ws-42" }]);
+});
 ```
 
-Each input and output route may declare a subset of the family parameters; a route with fewer parameters is shared by every member. The package keeps no member list, so `onChange` takes an explicit fixed member array. For a dynamic deployment, keep a registry stream of parameter records and use a small projection over that registry to start and stop member triggers.
+Each input and output route may declare a compatible subset of the family parameters; a route with fewer parameters is shared by every member. The package keeps no member list, so `onChange` takes an explicit fixed member array and returns one fiber per member in array order. One member failure does not stop the other fibers. For a dynamic deployment, keep a registry stream of parameter records and use a small projection over that registry to start and stop member triggers.
 
 An unknown member is one whose input stream is absent. A served route answers 404 and creates nothing.
 
