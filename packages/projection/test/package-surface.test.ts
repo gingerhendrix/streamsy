@@ -28,6 +28,7 @@ test("built public entries and declared files exist", () => {
   expect(Projection.pass).toBeFunction();
   expect(Projection.stream).toBeFunction();
   expect(Projection.follow).toBeFunction();
+  expect(Projection.family).toBeFunction();
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
   expect(Projection.key).toBeFunction();

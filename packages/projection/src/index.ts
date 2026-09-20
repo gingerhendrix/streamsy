@@ -8,6 +8,12 @@ export type {
   SinglePinnedDefinition,
 } from "./projection.ts";
 export type { FollowOptions } from "./follow.ts";
+export type {
+  Family,
+  FamilyDefinition,
+  FusedFamilyDefinition,
+  PinnedFamilyDefinition,
+} from "./family.ts";
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 export type { Host, Progress } from "./run.ts";
 export type { Range, Unit } from "./unit.ts";

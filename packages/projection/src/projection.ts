@@ -6,8 +6,15 @@ import { entries } from "./read.ts";
 import type { Unit } from "./unit.ts";
 export { pass, run } from "./run.ts";
 export { follow } from "./follow.ts";
+export { family } from "./family.ts";
 export type { Progress } from "./run.ts";
 export type { FollowOptions } from "./follow.ts";
+export type {
+  Family,
+  FamilyDefinition,
+  FusedFamilyDefinition,
+  PinnedFamilyDefinition,
+} from "./family.ts";
 
 /** The handler runs inside the checkpoint owner's transaction; its local writes commit with it. */
 export interface Fused<Inputs extends InputMap, E, R> {
