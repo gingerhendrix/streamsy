@@ -1,11 +1,11 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
 import { Effect, Fiber, Option, Queue, Stream, type Scope } from "effect";
-import { Storage, type StreamRef } from "@streamsy/core";
+import { Storage, StreamsReader, type StreamRef, type StreamRoute } from "@streamsy/core";
 import type { InputMap } from "./batch.ts";
 import type { Family } from "./family.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Fused, Pinned } from "./projection.ts";
-import type { RunOptions } from "./read.ts";
+import { validateOptions, type RunOptions } from "./read.ts";
 import { serialized } from "./serialized.ts";
 import type { Host, Progress } from "./run.ts";
 
@@ -17,8 +17,7 @@ type AnyProjection =
 type RuntimeProjection =
   | Fused<InputMap, ProjectionFault, Host>
   | Pinned<InputMap, unknown, ProjectionFault, Host>;
-type FamilyParams<F> =
-  F extends Family<infer Codecs, any> ? import("@streamsy/core").StreamRoute.Params<Codecs> : never;
+type FamilyParams<F> = F extends Family<infer Codecs, any> ? StreamRoute.Params<Codecs> : never;
 type FamilyMember<F> = F extends Family<any, infer Member> ? Member : never;
 type MemberError<Member> =
   Member extends Fused<infer _Inputs, infer E, infer _R>
@@ -48,9 +47,33 @@ const watch = <Inputs extends InputMap, O, E, R>(
 ): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
   Effect.scoped(
     Effect.gen(function* () {
-      const wake = yield* Queue.make<void>({ capacity: 1, strategy: "dropping" });
+      const wake = yield* Queue.make<void>({
+        capacity: 1,
+        strategy: "dropping",
+      });
       const closed = new Set<string>();
       const inputs = Object.entries(projection.inputs);
+      const reader = yield* StreamsReader;
+      yield* Effect.forEach(inputs, ([name, ref]) =>
+        Effect.gen(function* () {
+          const readable = yield* reader.head(ref.id).pipe(Effect.option);
+          if (Option.isSome(readable)) {
+            const owned = yield* storage.record(ref.id).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectionFault({
+                    phase: "read",
+                    reason: "storage-failure",
+                    input: name,
+                    message: `Cannot inspect ${ref.id}`,
+                    cause,
+                  }),
+              ),
+            );
+            if (Option.isNone(owned)) return yield* unsupported(name, ref);
+          }
+        }),
+      );
       const subscriptions = inputs.map(([name, ref]) =>
         storage.changes(ref.id).pipe(
           Stream.takeUntil((snapshot) => snapshot.closed),
@@ -76,7 +99,8 @@ const watch = <Inputs extends InputMap, O, E, R>(
       const runner = Effect.gen(function* () {
         while (true) {
           yield* Queue.take(wake);
-          const result = yield* serialized(projection, options);
+          let result = yield* serialized(projection, options);
+          while (result.status === "limit-reached") result = yield* serialized(projection, options);
           if (result.status === "source-closed" && closed.size === inputs.length) return result;
         }
       });
@@ -97,7 +121,7 @@ export function onChange<F extends Family<any, any>>(
   members: ReadonlyArray<FamilyParams<F>>,
   options?: OnChangeOptions,
 ): Effect.Effect<
-  Fiber.Fiber<ReadonlyArray<Progress>, MemberError<FamilyMember<F>> | ProjectionFault>,
+  ReadonlyArray<Fiber.Fiber<Progress, MemberError<FamilyMember<F>> | ProjectionFault>>,
   ProjectionFault,
   MemberRequirements<FamilyMember<F>> | Host | Scope.Scope
 >;
@@ -105,8 +129,16 @@ export function onChange(
   target: AnyProjection | Family<any, any>,
   membersOrOptions: ReadonlyArray<Record<string, unknown>> | OnChangeOptions = {},
   maybeOptions: OnChangeOptions = {},
-): Effect.Effect<Fiber.Fiber<any, any>, ProjectionFault, any> {
+): Effect.Effect<
+  Fiber.Fiber<any, any> | ReadonlyArray<Fiber.Fiber<any, any>>,
+  ProjectionFault,
+  any
+> {
   return Effect.gen(function* () {
+    const options = Array.isArray(membersOrOptions)
+      ? maybeOptions
+      : (membersOrOptions as OnChangeOptions);
+    yield* validateOptions(options);
     const available = yield* Effect.serviceOption(Storage);
     if (Option.isNone(available)) {
       const firstParams = Array.isArray(membersOrOptions) ? (membersOrOptions[0] ?? {}) : {};
@@ -122,13 +154,10 @@ export function onChange(
     }
     if (target._tag === "Family") {
       const members = membersOrOptions as ReadonlyArray<Record<string, unknown>>;
-      return yield* Effect.all(
-        members.map((params) => {
-          const projection = target.member(params) as RuntimeProjection;
-          return watch(projection, available.value, maybeOptions);
-        }),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.forkScoped);
+      return yield* Effect.forEach(members, (params) => {
+        const projection = target.member(params) as RuntimeProjection;
+        return watch(projection, available.value, maybeOptions).pipe(Effect.forkScoped);
+      });
     }
     const erased: unknown = target;
     const projection = erased as RuntimeProjection;

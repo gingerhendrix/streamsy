@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { Backend, Protocol, StreamRoute, Streams } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Projection, ProjectionFault } from "@streamsy/projection";
@@ -49,7 +49,9 @@ test("a routed projection reads its input from memory and commits output with th
       const first = yield* Projection.run(projection);
       expect(first.status).toBe("caught-up");
       expect(first.items).toBe(3);
-      expect(first.record.inputs).toEqual({ input: (yield* Streams.head(sourceRef)).nextOffset });
+      expect(first.record.inputs).toEqual({
+        input: (yield* Streams.head(sourceRef)).nextOffset,
+      });
       expect(yield* Streams.read(outputRef).pipe(Streams.items, Stream.runCollect)).toEqual([
         2, 4, 6,
       ]);
@@ -67,6 +69,28 @@ test("a routed projection reads its input from memory and commits output with th
         expect(third.failure.reason).toBe("history-unavailable");
         expect(third.failure.input).toBe("input");
       } else throw new Error("Expected a ProjectionFault");
+    }).pipe(Effect.provide(host), Effect.scoped),
+  );
+});
+
+test("onChange rejects an input not owned by the ambient Storage", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const sourceRef = Source.ref({ name: "watch" });
+      yield* Streams.create(sourceRef);
+      const projection = Projection.make({
+        id: "routed-watch",
+        input: sourceRef,
+        process: () => Effect.void,
+      });
+      const fiber = yield* Projection.onChange(projection);
+      const result = yield* Fiber.join(fiber).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.phase).toBe("read");
+        expect(result.failure.reason).toBe("unsupported-composition");
+        expect(result.failure.input).toBe("input");
+      }
     }).pipe(Effect.provide(host), Effect.scoped),
   );
 });

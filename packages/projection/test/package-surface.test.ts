@@ -5,12 +5,25 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { Layer } from "effect";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
-import type { Family, FamilyDefinition, OnChangeOptions } from "@streamsy/projection";
+import type {
+  Family,
+  FamilyDefinition,
+  FusedFamilyDefinition,
+  OnChangeOptions,
+  PinnedFamilyDefinition,
+  RunOptions,
+} from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import manifest from "../package.json";
 
-type PublicHelperTypes = Family | FamilyDefinition | OnChangeOptions;
+type PublicHelperTypes =
+  | Family
+  | FamilyDefinition
+  | FusedFamilyDefinition<any, any, any, any>
+  | PinnedFamilyDefinition<any, any, any, any, any>
+  | OnChangeOptions
+  | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
 void acceptsPublicHelperTypes;
 
@@ -40,9 +53,13 @@ test("built public entries and declared files exist", () => {
   expect(Projection.each).toBeFunction();
   expect(Projection.key).toBeFunction();
   expect(Checkpoints.key).toBe("@streamsy/projection/Checkpoints");
-  expect(new ProjectionFault({ phase: "load", reason: "invalid-options", message: "" })._tag).toBe(
-    "ProjectionFault",
-  );
+  expect(
+    new ProjectionFault({
+      phase: "load",
+      reason: "invalid-options",
+      message: "",
+    })._tag,
+  ).toBe("ProjectionFault");
   expect(Layer.isLayer(Memory.layer)).toBe(true);
   expect(Memory.layerMemory).toBeFunction();
   expect(Layer.isLayer(Sqlite.layer)).toBe(true);

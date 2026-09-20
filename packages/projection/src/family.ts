@@ -12,22 +12,28 @@ type RouteParams<Route extends AnyRoute> =
   Route extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : never;
 type RouteItem<Route extends AnyRoute> =
   ReturnType<Route["ref"]> extends StreamRef.StreamRef<infer A> ? A : never;
+type FamilyParams<Codecs extends StreamRoute.ParamCodecs> = StreamRoute.Params<Codecs>;
+
+type InvalidRouteParam<Codecs extends StreamRoute.ParamCodecs, Route extends AnyRoute> = {
+  readonly [Name in keyof RouteParams<Route>]: Name extends keyof FamilyParams<Codecs>
+    ? RouteParams<Route>[Name] extends FamilyParams<Codecs>[Name]
+      ? never
+      : Name
+    : Name;
+}[keyof RouteParams<Route>];
 
 type RouteRefs<Routes extends RouteMap> = {
   readonly [Name in keyof Routes]: ReturnType<Routes[Name]["ref"]>;
 };
 
 type RoutesWithin<Codecs extends StreamRoute.ParamCodecs, Routes extends RouteMap> = {
-  readonly [Name in keyof Routes]: Exclude<
-    keyof RouteParams<Routes[Name]>,
-    keyof Codecs
-  > extends never
+  readonly [Name in keyof Routes]: InvalidRouteParam<Codecs, Routes[Name]> extends never
     ? Routes[Name]
     : never;
 };
 
 type RouteWithin<Codecs extends StreamRoute.ParamCodecs, Route extends AnyRoute> =
-  Exclude<keyof RouteParams<Route>, keyof Codecs> extends never ? Route : never;
+  InvalidRouteParam<Codecs, Route> extends never ? Route : never;
 
 interface FamilyCommon<Codecs extends StreamRoute.ParamCodecs, Routes extends RouteMap> {
   readonly id: string;
@@ -83,12 +89,18 @@ export interface Family<
 }
 
 const encodeParams = <Codecs extends StreamRoute.ParamCodecs>(
+  familyId: string,
   codecs: Codecs,
   params: StreamRoute.Params<Codecs>,
 ): Record<string, string> => {
   const values: Readonly<Record<string, unknown>> = params;
   return Object.fromEntries(
-    Object.entries(codecs).map(([name, codec]) => [name, Schema.encodeSync(codec)(values[name])]),
+    Object.entries(codecs).map(([name, codec]) => {
+      const encoded = Schema.encodeOption(codec)(values[name]);
+      if (Option.isNone(encoded))
+        throw new RangeError(`Cannot encode family ${familyId} parameter ${name}`);
+      return [name, encoded.value];
+    }),
   );
 };
 
@@ -129,7 +141,7 @@ export function family<
           id: definition.id,
           version: definition.version,
           generation: definition.generation,
-          params: encodeParams(definition.params, params),
+          params: encodeParams(definition.id, definition.params, params),
           inputs: refsOf(definition.inputs, params),
           output: definition.output.ref(params),
           process: definition.process,
@@ -138,7 +150,7 @@ export function family<
           id: definition.id,
           version: definition.version,
           generation: definition.generation,
-          params: encodeParams(definition.params, params),
+          params: encodeParams(definition.id, definition.params, params),
           inputs: refsOf(definition.inputs, params),
           process: definition.process,
         });
@@ -150,5 +162,11 @@ export function family<
     }
     return Option.none();
   };
-  return { _tag: "Family", id: definition.id, params: definition.params, member, parse };
+  return {
+    _tag: "Family",
+    id: definition.id,
+    params: definition.params,
+    member,
+    parse,
+  };
 }

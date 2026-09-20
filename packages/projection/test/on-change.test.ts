@@ -20,8 +20,12 @@ const readAll = <A>(ref: StreamRef.StreamRef<A>) =>
 test("an append runs a fused projection and commits its write with the checkpoint", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-fused-input", { schema: Schema.Finite });
-      const output = StreamRef.json("change-fused-output", { schema: Schema.Finite });
+      const input = StreamRef.json("change-fused-input", {
+        schema: Schema.Finite,
+      });
+      const output = StreamRef.json("change-fused-output", {
+        schema: Schema.Finite,
+      });
       yield* Streams.create(input);
       yield* Streams.create(output);
       const handled = yield* Deferred.make<void>();
@@ -51,8 +55,12 @@ test("an append runs a fused projection and commits its write with the checkpoin
 test("changes during an in-flight run coalesce to one follow-up run", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-coalesce-input", { schema: Schema.Finite });
-      const output = StreamRef.json("change-coalesce-output", { schema: Schema.Finite });
+      const input = StreamRef.json("change-coalesce-input", {
+        schema: Schema.Finite,
+      });
+      const output = StreamRef.json("change-coalesce-output", {
+        schema: Schema.Finite,
+      });
       yield* Streams.create(input);
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -90,20 +98,76 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
     }),
   ));
 
+test("a limited wake drains the backlog before waiting for another change", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const input = StreamRef.json("change-limit-input", {
+        schema: Schema.Finite,
+      });
+      yield* Streams.create(input);
+      yield* Streams.append(input, [1, 2, 3]);
+      const seen: Array<number> = [];
+      const drained = yield* Deferred.make<void>();
+      const projection = Projection.make({
+        id: "change-limit",
+        input,
+        process: (batch) =>
+          Effect.gen(function* () {
+            seen.push(...batch.input.items);
+            if (seen.length === 3) yield* Deferred.succeed(drained, undefined);
+          }),
+      });
+      const fiber = yield* Projection.onChange(projection, { limit: 1 });
+      yield* Deferred.await(drained);
+      yield* Projection.serialized(projection);
+      expect(seen).toEqual([1, 2, 3]);
+      const tail = yield* Streams.head(input);
+      const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
+      expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.scoped, Effect.provide(layerMemory({ readLimit: 1 }))),
+  ));
+
+test("an invalid limit fails before a watcher fiber is created", () =>
+  run(
+    Effect.gen(function* () {
+      const input = StreamRef.json("change-invalid-limit", {
+        schema: Schema.Finite,
+      });
+      const projection = Projection.make({
+        id: "change-invalid-limit",
+        input,
+        process: () => Effect.void,
+      });
+      const result = yield* Projection.onChange(projection, { limit: 0 }).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.phase).toBe("load");
+        expect(result.failure.reason).toBe("invalid-options");
+      }
+    }),
+  ));
+
 test("onChange and a serialized request share the same key lock", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-request-input", { schema: Schema.Finite });
-      const output = StreamRef.json("change-request-output", { schema: Schema.Finite });
+      const input = StreamRef.json("change-request-input", {
+        schema: Schema.Finite,
+      });
+      const output = StreamRef.json("change-request-output", {
+        schema: Schema.Finite,
+      });
       yield* Streams.create(input);
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+      let calls = 0;
       const projection = Projection.stream({
         id: "change-request",
         input,
         output,
         process: (batch) =>
-          Deferred.succeed(entered, undefined).pipe(
+          Effect.sync(() => (calls += 1)).pipe(
+            Effect.andThen(Deferred.succeed(entered, undefined)),
             Effect.andThen(Deferred.await(release)),
             Effect.as(batch.input.items),
           ),
@@ -115,6 +179,7 @@ test("onChange and a serialized request share the same key lock", () =>
       expect(request.pollUnsafe()).toBeUndefined();
       yield* Deferred.succeed(release, undefined);
       expect((yield* Fiber.join(request)).status).toBe("caught-up");
+      expect(calls).toBe(1);
       expect(yield* readAll(output)).toEqual([1]);
       yield* Fiber.interrupt(watcher);
     }),
@@ -145,7 +210,7 @@ test("a family watches its fixed member set independently", () =>
       const bRef = route.ref({ workspaceId: "b" });
       yield* Streams.create(aRef);
       yield* Streams.create(bRef);
-      const fiber = yield* Projection.onChange(family, [
+      const fibers = yield* Projection.onChange(family, [
         { workspaceId: "a" },
         { workspaceId: "b" },
       ]);
@@ -155,7 +220,44 @@ test("a family watches its fixed member set independently", () =>
       yield* Streams.append(bRef, [2]);
       yield* Deferred.await(b);
       expect(seen).toEqual(["a", "b"]);
-      yield* Fiber.interrupt(fiber);
+      yield* Effect.forEach(fibers, Fiber.interrupt);
+    }),
+  ));
+
+test("closing the caller scope interrupts every family member fiber", () =>
+  run(
+    Effect.gen(function* () {
+      const route = StreamRoute.json("change-family-scope/:workspaceId", {
+        params: { workspaceId: Schema.String },
+        schema: Schema.Finite,
+      });
+      const family = Projection.family({
+        id: "change-family-scope",
+        params: { workspaceId: Schema.String },
+        inputs: { facts: route },
+        process: () => Effect.void,
+      });
+      const fibers = yield* Effect.scoped(
+        Projection.onChange(family, [{ workspaceId: "a" }, { workspaceId: "b" }]),
+      );
+      for (const fiber of fibers) expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+    }),
+  ));
+
+test("a closed and drained input ends its watcher", () =>
+  run(
+    Effect.gen(function* () {
+      const input = StreamRef.json("change-closed", { schema: Schema.Finite });
+      yield* Streams.create(input);
+      const projection = Projection.make({
+        id: "change-closed",
+        input,
+        process: () => Effect.void,
+      });
+      const fiber = yield* Projection.onChange(projection);
+      yield* Streams.append(input, [1]);
+      yield* Streams.append(input, [], { close: true });
+      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
     }),
   ));
 
@@ -170,6 +272,6 @@ test("closing the caller scope ends the watcher fiber", () =>
         process: () => Effect.void,
       });
       const fiber = yield* Effect.scoped(Projection.onChange(projection));
-      expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true);
+      expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
     }),
   ));

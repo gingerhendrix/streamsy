@@ -9,7 +9,10 @@ const facts = StreamRoute.json("facts/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
 });
-const config = StreamRoute.json("config", { params: {}, schema: Schema.String });
+const config = StreamRoute.json("config", {
+  params: {},
+  schema: Schema.String,
+});
 const output = StreamRoute.json("boards/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
@@ -27,7 +30,10 @@ test("member is the ordinary routed projection", () => {
   const direct = Projection.stream({
     id: "board",
     params: { workspaceId: "ws-42" },
-    inputs: { facts: facts.ref({ workspaceId: "ws-42" }), config: config.ref({}) },
+    inputs: {
+      facts: facts.ref({ workspaceId: "ws-42" }),
+      config: config.ref({}),
+    },
     output: output.ref({ workspaceId: "ws-42" }),
     process: (batch) => Effect.succeed(batch.facts.items),
   });
@@ -38,7 +44,9 @@ test("member is the ordinary routed projection", () => {
   expect(producerId(member.id, member.params)).toBe(producerId(direct.id, direct.params));
   expect(member.inputs.facts.id).toBe(direct.inputs.facts.id);
   expect(member.output.id).toBe(direct.output.id);
-  expect(Option.getOrThrow(board.parse("facts/ws-42"))).toEqual({ workspaceId: "ws-42" });
+  expect(Option.getOrThrow(board.parse("facts/ws-42"))).toEqual({
+    workspaceId: "ws-42",
+  });
   expect(Option.getOrThrow(board.parse("config"))).toEqual({});
   expect(Option.isNone(board.parse("elsewhere/ws-42"))).toBe(true);
   expect(Option.isNone(board.parse("boards/ws-42"))).toBe(true);
@@ -57,6 +65,21 @@ test("number parameters encode to strings and parse back", () => {
   });
   expect(members.member({ id: 42 }).params).toEqual({ id: "42" });
   expect(Option.getOrThrow(members.parse("numbered/42"))).toEqual({ id: 42 });
+  expect(() => members.member({} as { id: number })).toThrow(
+    "Cannot encode family numbered parameter id",
+  );
+});
+
+const stringId = StreamRoute.json("string-id/:id", {
+  params: { id: Schema.String },
+  schema: Schema.String,
+});
+Projection.family({
+  id: "incompatible-codec",
+  params: { id: Schema.FiniteFromString },
+  // @ts-expect-error the route's decoded parameter must be assignable to the family parameter
+  inputs: { stringId },
+  process: () => Effect.void,
 });
 
 const wrong = StreamRoute.json("wrong/:projectId", {
