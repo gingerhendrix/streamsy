@@ -1,84 +1,31 @@
 import { StreamRef, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Context, Effect, Layer, Schema } from "effect";
-import {
-  CommentCodec,
-  IssueCodec,
-  ProjectCodec,
-  type Comment,
-  type Issue,
-  type Project,
-  type StateEvent,
-} from "../shared/state-schema.ts";
+import { Context, Effect, Layer } from "effect";
+import { CommentCodec, IssueCodec, ProjectCodec } from "../shared/state-schema.ts";
 import { databasePath, streamPrefix, workspaceStreamId } from "./config.ts";
 
-const projectChange = StreamRef.stateChange({ schema: ProjectCodec, type: "project" });
-const issueChange = StreamRef.stateChange({ schema: IssueCodec, type: "issue" });
-const commentChange = StreamRef.stateChange({ schema: CommentCodec, type: "comment" });
-
-/** One multi-type reader for the workspace stream. */
+/** One multi-collection ref for reading and writing a workspace stream. */
 export const workspaceEvents = (workspaceId: string) =>
-  StreamRef.json(workspaceStreamId(workspaceId), {
-    schema: Schema.Union([projectChange, issueChange, commentChange]),
+  StreamRef.state(workspaceStreamId(workspaceId), {
+    collections: {
+      project: { schema: ProjectCodec, key: "id" },
+      issue: { schema: IssueCodec, key: "id" },
+      comment: { schema: CommentCodec, key: "id" },
+    },
   });
 
-/** Per-type refs write the same stream while retaining the entity codec. */
-export const projectEvents = (workspaceId: string) =>
-  StreamRef.state(workspaceStreamId(workspaceId), {
-    schema: ProjectCodec,
-    type: "project",
-    key: "id",
-  });
-export const issueEvents = (workspaceId: string) =>
-  StreamRef.state(workspaceStreamId(workspaceId), {
-    schema: IssueCodec,
-    type: "issue",
-    key: "id",
-  });
-export const commentEvents = (workspaceId: string) =>
-  StreamRef.state(workspaceStreamId(workspaceId), {
-    schema: CommentCodec,
-    type: "comment",
-    key: "id",
-  });
+export type WorkspaceEvent = StreamRef.CollectionsChange<
+  ReturnType<typeof workspaceEvents>["collections"]
+>;
 
 export function appendWorkspaceEvent(
   workspaceId: string,
-  event: StateEvent,
+  event: WorkspaceEvent,
   expectedOffset?: string,
 ) {
   const options = expectedOffset === undefined ? {} : { expectedOffset };
-  // `stateChange` currently widens `type` to string, so the runtime
-  // discriminator needs these local casts to recover the entity type.
-  switch (event.type) {
-    case "project":
-      // SAFETY: this branch checked the public event discriminator; the cast
-      // restores the literal type that `stateChange` currently widens.
-      return Streams.append(
-        projectEvents(workspaceId),
-        [event as StreamRef.StateChange<Project>],
-        options,
-      );
-    case "issue":
-      // SAFETY: this branch checked the public event discriminator; the cast
-      // restores the literal type that `stateChange` currently widens.
-      return Streams.append(
-        issueEvents(workspaceId),
-        [event as StreamRef.StateChange<Issue>],
-        options,
-      );
-    case "comment":
-      // SAFETY: this branch checked the public event discriminator; the cast
-      // restores the literal type that `stateChange` currently widens.
-      return Streams.append(
-        commentEvents(workspaceId),
-        [event as StreamRef.StateChange<Comment>],
-        options,
-      );
-    default:
-      return Effect.die(new TypeError(`Unknown workspace event type: ${event.type}`));
-  }
+  return Streams.append(workspaceEvents(workspaceId), [event], options);
 }
 
 /** Minimal runtime surface used by the Promise-native Bun route handlers. */

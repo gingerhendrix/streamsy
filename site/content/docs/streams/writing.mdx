@@ -118,13 +118,16 @@ const mutateWorkspace = (workspaceId, attempt) =>
     const { state, headOffset } = yield* materializeWorkspace(workspaceId);
     const outcome = attempt(state);
     if ("response" in outcome) return outcome.response;
-    const ack = yield* appendWorkspaceEvent(workspaceId, outcome.event, headOffset);
+    const ack = yield* Streams.append(workspaceEvents(workspaceId), [outcome.event], {
+      expectedOffset: headOffset,
+    });
     return outcome.respond({ offset: ack.offset });
   }).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }));
 ```
 
 The attempt runs again after a conflict, so validation and event construction
-use the new state rather than values captured before the retry.
+use the new state rather than values captured before the retry. The same
+collection-declared ref types the read events and the conditional append.
 
 `expectedOffset` is a Streamsy extension to the protocol. See the extensions note on the [HTTP](/docs/runtime/http) page.
 

@@ -37,10 +37,9 @@ the same SQLite file.
 
 One managed Effect runtime owns the stream services and the `/streams` edge.
 Promise-native Bun routes call `runtime.runPromise` with `mutateWorkspace`.
-That named recipe reads the workspace through a union of three
-`StreamRef.stateChange` codecs, folds every batch into `MaterializedState`, and
-appends through the matching per-type `StreamRef.state` ref with the head as
-`expectedOffset`.
+That named recipe reads and writes the workspace through one `StreamRef.state`
+with project, issue, and comment collections. It folds every batch into
+`MaterializedState`, then appends with the head as `expectedOffset`.
 
 Only `OffsetMismatch` is retried. The retry repeats the read, validation and
 event construction, so each accepted event was checked against the exact state

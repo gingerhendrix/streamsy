@@ -48,8 +48,8 @@ that runtime.
 changes, validate against the resulting view, and append with
 `expectedOffset`. An `OffsetMismatch` retries the whole recipe, so parallel
 writers cannot silently overwrite one another. Project, issue, and comment
-changes share a stream; one union ref reads them and per-type `StreamRef.state`
-refs write them.
+changes share one `StreamRef.state` whose collections type both reads and
+writes.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows
 the public workspace stream and exposes projects, issues, and comments as

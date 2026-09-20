@@ -6,10 +6,9 @@ import {
   type Comment,
   type Issue,
   type Project,
-  type StateEvent,
 } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
-import { appendWorkspaceEvent, workspaceEvents } from "./streams.ts";
+import { appendWorkspaceEvent, workspaceEvents, type WorkspaceEvent } from "./streams.ts";
 import { conflict, id, notFound, now, type TxId } from "./utils.ts";
 
 /** Read-only view over one workspace's materialized state. */
@@ -46,7 +45,7 @@ export const materializeWorkspace = Effect.fn("Workspace.materialize")(function*
 /** Outcome of one mutation attempt against freshly materialized state. */
 export type MutationAttempt =
   | { response: Response }
-  | { event: StateEvent; respond: (ack: { offset: string }) => Response };
+  | { event: WorkspaceEvent; respond: (ack: { offset: string }) => Response };
 
 /**
  * The Transact recipe: read, fold, append with `expectedOffset`, and retry
@@ -85,21 +84,39 @@ export const mutateWorkspace = (
 
 // These builders preserve the browser transaction id and timestamp. A later
 // toolkit helper can replace them once custom header metadata is supported.
-export function projectUpsert(project: Project, txid?: TxId): StateEvent {
-  return issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) });
+export function projectUpsert(project: Project, txid?: TxId): WorkspaceEvent {
+  const event = issueTrackerState.projects.upsert({ value: project, headers: eventHeaders(txid) });
+  return {
+    type: "project",
+    key: event.key,
+    value: project,
+    headers: { ...event.headers, operation: "upsert" },
+  };
 }
 
-export function issueUpsert(issue: Issue, txid?: TxId): StateEvent {
-  return issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) });
+export function issueUpsert(issue: Issue, txid?: TxId): WorkspaceEvent {
+  const event = issueTrackerState.issues.upsert({ value: issue, headers: eventHeaders(txid) });
+  return {
+    type: "issue",
+    key: event.key,
+    value: issue,
+    headers: { ...event.headers, operation: "upsert" },
+  };
 }
 
-export function commentUpsert(comment: Comment, txid?: TxId): StateEvent {
-  return issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) });
+export function commentUpsert(comment: Comment, txid?: TxId): WorkspaceEvent {
+  const event = issueTrackerState.comments.upsert({ value: comment, headers: eventHeaders(txid) });
+  return {
+    type: "comment",
+    key: event.key,
+    value: comment,
+    headers: { ...event.headers, operation: "upsert" },
+  };
 }
 
 const appendSeedEvent = Effect.fn("Workspace.appendSeedEvent")(function* (
   workspaceId: string,
-  event: StateEvent,
+  event: WorkspaceEvent,
   expectedOffset?: string,
 ) {
   yield* appendWorkspaceEvent(workspaceId, event, expectedOffset);
@@ -161,7 +178,7 @@ export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
       createdAt,
     },
   ];
-  const events: StateEvent[] = [
+  const events: WorkspaceEvent[] = [
     ...initialProjects.map((project) => projectUpsert(project)),
     ...initialIssues.map((issue) => issueUpsert(issue)),
     ...initialComments.map((comment) => commentUpsert(comment)),
