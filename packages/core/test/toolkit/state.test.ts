@@ -197,5 +197,6 @@ it("normalizes Durable State insert, update, and upsert operations", () => {
     value: { id: 7, title: "canonical" },
     headers: { operation: "upsert" },
   });
+  // SAFETY: `StreamRef.state` constructs a JSON ref whose codec encodes to a string.
   expect(JSON.parse(encoded as string).headers.operation).toBe("upsert");
 });
