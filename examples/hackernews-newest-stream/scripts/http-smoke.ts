@@ -11,8 +11,9 @@ import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.t
 // including a process restart against the same SQLite file.
 
 const packageDir = resolve(import.meta.dir, "..");
-const demoPort = 20_000 + Math.floor(Math.random() * 20_000);
-const fixturePort = demoPort + 1;
+const portReservation = Bun.serve({ port: 0, fetch: () => new Response("reserved") });
+const demoPort = portReservation.port;
+await portReservation.stop(true);
 const baseUrl = `http://127.0.0.1:${demoPort}`;
 const streamUrl = `${baseUrl}/streams/session/main`;
 const scratchDir = mkdtempSync(join(tmpdir(), "streamsy-hn-smoke-"));
@@ -53,7 +54,7 @@ type ChangeEvent = HackerNewsStateChange;
 type ApiStatus = Schema.Schema.Type<typeof ApiStatusSmokeView>;
 
 const fixture = Bun.serve({
-  port: fixturePort,
+  port: 0,
   fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/newstories.json") return Response.json(newestIds);
@@ -62,6 +63,7 @@ const fixture = Bun.serve({
     return new Response("not found", { status: 404 });
   },
 });
+const fixturePort = fixture.port;
 
 async function waitForServer(): Promise<void> {
   const deadline = Date.now() + 10_000;
