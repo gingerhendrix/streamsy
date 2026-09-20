@@ -65,7 +65,7 @@ test("number parameters encode to strings and parse back", () => {
   });
   expect(members.member({ id: 42 }).params).toEqual({ id: "42" });
   expect(Option.getOrThrow(members.parse("numbered/42"))).toEqual({ id: 42 });
-  expect(() => members.member({} as { id: number })).toThrow(
+  expect(() => members.member({ id: Number.NaN })).toThrow(
     "Cannot encode family numbered parameter id",
   );
 });

@@ -72,6 +72,7 @@ const watch = <Inputs extends InputMap, O, E, R>(
             );
             if (Option.isNone(owned)) return yield* unsupported(name, ref);
           }
+          return undefined;
         }),
       );
       const subscriptions = inputs.map(([name, ref]) =>
