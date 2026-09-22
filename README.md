@@ -14,7 +14,7 @@ Documentation: [streamsy.dev](https://streamsy.dev)
 | [`@streamsy/storage`](packages/storage/README.md)       | SQLite storage for Bun and Durable Objects                                |
 | [`@streamsy/projection`](packages/projection/README.md) | Checkpointed projections over one or more streams                         |
 | [`@streamsy/serve`](packages/serve/README.md)           | Bun and Cloudflare hosts, sink contracts, action delivery                 |
-| [`@streamsy/views`](packages/views/README.md)           | Declarative keyed relations with incremental maintenance                  |
+| [`@streamsy/views`](packages/views/README.md)           | Keyed relations, serializable plan IR, and a pure incremental engine      |
 
 All packages are version `0.4.0` and require `effect@4.0.0-rc.115`.
 

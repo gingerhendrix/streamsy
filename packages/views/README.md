@@ -8,7 +8,7 @@ maintain its rows incrementally. Version 0.4.0 requires
 bun add @streamsy/views effect
 ```
 
-The package has four tiers, one per entry:
+The package has three pure tiers: relation authoring, plan IR, and the incremental engine.
 
 | Entry                  | Contents                                                        |
 | ---------------------- | --------------------------------------------------------------- |
@@ -16,9 +16,6 @@ The package has four tiers, one per entry:
 | `./ir`                 | The serializable plan contracts                                 |
 | `./engine`             | The incremental graph runtime                                   |
 | `./engine/conformance` | A full-recompute reference implementation for testing an engine |
-| `./store`              | The maintained-view store contract and its memory backend       |
-| `./store/sqlite`       | The SQLite store backend                                        |
-| `./store/conformance`  | The store conformance harness                                   |
 
 ## Authoring
 
@@ -37,13 +34,17 @@ Effect error channel; `collectPlanIssues` returns all of them at once.
   it to publish what happened without publishing the relation.
 - `planHash` is a change-detection identity, not a security digest.
 
-## Store
+## Incremental engine
 
-`ViewStore.commit` is the transaction boundary: rows, operator state, one
-change batch, and the source cursor advance together or not at all. A stale
-maintainer gets `ViewCursorConflict`. History positions are store-owned; reads
-below the retention floor fail with `ViewHistoryExpired`. The SQLite backend
-uses tables prefixed `streamsy_view_` with its own schema version.
+`maintainGraph` from `@streamsy/views/engine` takes a plan, prior operator
+state, and normalized source changes. It returns the next operator state,
+row changes, and current rows without I/O. The host owns input delivery and
+persistence.
+
+For fold state between projection passes, use `Projection.fold` from
+`@streamsy/projection`. Persist row sets in application tables through the
+shared `SqlClient`; see the
+[State guide](https://streamsy.dev/docs/projections/projections#state).
 
 Guide: [streamsy.dev/docs/projections/views](https://streamsy.dev/docs/projections/views).
 

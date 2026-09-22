@@ -35,7 +35,13 @@ A state sink publishes a keyed relation as a Durable State collection. A client 
 ```ts
 import { Schema } from "effect";
 import { defineStateSink } from "@streamsy/serve";
-import { OrderRow, openOrders } from "./views.ts";
+
+const OrderRow = Schema.Struct({
+  orderId: Schema.String,
+  customerId: Schema.String,
+  total: Schema.Finite,
+});
+const openOrders = { name: "shop.open-orders", key: "orderId" } as const;
 
 export const openOrdersSink = defineStateSink({
   name: "shop.open-orders",
@@ -54,6 +60,8 @@ export const openOrdersSink = defineStateSink({
 });
 ```
 
+These examples use a plain relation declaration: its name and key describe the application's rows. The host supplies the data and scopes each snapshot and change feed to the decoded `customerId`; declaring the relation does not persist or filter rows.
+
 The collection's primary key is the relation key, so the sink and its relation cannot disagree about what identifies a row.
 
 `handleStateSink(sink, request, { snapshot, suffix })` serves it. `snapshot(params)` returns the current rows and their offset. `suffix(request, params)` serves the live tail after that offset. The snapshot response is the Durable State control sequence: `snapshot-start`, the rows, `snapshot-end`. See [Durable State](https://durablestreams.com/durable-state) and the [state protocol](https://github.com/durable-streams/durable-streams/blob/main/packages/state/STATE-PROTOCOL.md).
@@ -68,7 +76,12 @@ A stream sink publishes the changes of a relation as a feed. Arrival order is th
 import { Schema } from "effect";
 import { defineStreamSink } from "@streamsy/serve/stream";
 import { changes } from "@streamsy/views";
-import { OrderChange, openOrders } from "./views.ts";
+
+const OrderChange = Schema.Struct({
+  orderId: Schema.String,
+  operation: Schema.Literals(["upsert", "delete"]),
+});
+const openOrders = { name: "shop.open-orders", key: "orderId" } as const;
 
 export const openOrdersFeed = defineStreamSink({
   name: "shop.open-orders.feed",
@@ -87,6 +100,8 @@ export const openOrdersFeed = defineStreamSink({
 });
 ```
 
+The event schema is an application-defined wire format. The host converts its row changes to these events; `changes(openOrders)` only declares which relation the feed describes.
+
 `handleStreamSink(sink, request, { read })` serves it. `read(params, offset)` returns one page of events with `nextOffset` and `upToDate`, and the client passes `nextOffset` back to continue.
 
 ## Document sink
@@ -96,7 +111,9 @@ A document sink publishes one derived value per route with a cache policy.
 ```ts
 import { Schema } from "effect";
 import { defineDocumentSink } from "@streamsy/serve/document";
-import { CustomerSummary, openOrders } from "./views.ts";
+
+const CustomerSummary = Schema.Struct({ customerId: Schema.String, openOrderCount: Schema.Int });
+const openOrders = { name: "shop.open-orders", key: "orderId" } as const;
 
 export const customerSummary = defineDocumentSink({
   name: "shop.customer-summary",
