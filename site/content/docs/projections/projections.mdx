@@ -21,7 +21,7 @@ export const orderTotalsProjection = Projection.make({
 
 A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. `input: ref` is sugar for `inputs: { input: ref }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders, refunds }` and read one slice per name.
 
-`process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection, the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
+`process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection (`projectionId`, `version`, `generation`, `params`), the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
 
 `Projection.items(batch)` flattens a batch into `{ input, item, index }` entries in declaration order, then stream order. `Projection.each(handle)` builds a handler that runs `handle(entry, unit)` once per entry, one at a time.
 
@@ -226,7 +226,7 @@ const orderRows = Projection.make({
 
 The application creates and migrates `order_totals`; this snippet uses the `orders` ref introduced above.
 
-`Projection.forget(member)` deletes its state and checkpoint in one transaction, then releases its process lock. Stop live `onChange` or `follow` fibers and wait for in-flight runs first: forgetting interrupts neither. A watcher whose key is forgotten starts from zero on its next run. Releasing the lock lets a new serialized call run beside an in-flight run; checkpoint token conflict detects concurrent work.
+`Projection.forget(member)` deletes its state and checkpoint in one transaction, then releases its process lock. Stop live `onChange` or `follow` fibers and wait for in-flight runs first: forgetting interrupts neither. A watcher whose key is forgotten starts from zero on its next run. Releasing the lock lets a new serialized call run beside an in-flight run. The record version restarts after `forget`, so token conflict does not refuse the older run when the two save counts match; that run then commits on top of the fresh record and folds its items twice. Wait for in-flight runs before `forget`.
 
 Forgetting does not delete streams. Do not forget a stream-form member while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
 

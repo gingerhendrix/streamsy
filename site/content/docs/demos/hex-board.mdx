@@ -22,6 +22,8 @@ const boardProjection = (gameId: string) =>
 const current = Projection.loadState(boardProjection("game"), BoardState);
 ```
 
+`ranges.input` is present in a fused single-input pass, because an empty read never reaches the handler.
+
 `BoardState` contains the next move ordinal and the schema-typed board. Every
 event in a unit shares its source watermark, while move ids use distinct
 ordinals that survive restart. The recent-move feed is capped at 40 entries.
