@@ -190,6 +190,7 @@ test("an empty family without Storage reports unsupported composition", async ()
   const checkpoints = Checkpoints.of({
     load: () => unused,
     save: () => unused,
+    remove: () => unused,
     withTransaction: (body) => body,
   });
   const reader = StreamsReader.of({

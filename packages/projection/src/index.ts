@@ -27,3 +27,5 @@ export {
   type ProjectionKey,
 } from "./checkpoint.ts";
 export { ProjectionFault } from "./fault.ts";
+
+export { State, type StateApi } from "./state.ts";

@@ -49,6 +49,8 @@ export interface CheckpointsApi {
     record: CheckpointRecord,
     ifToken: string,
   ) => Effect.Effect<string, ProjectionFault>;
+  /** Deletes the record inside the caller's transaction. */
+  readonly remove: (key: ProjectionKey) => Effect.Effect<void, ProjectionFault>;
   readonly withTransaction: <A, E, R>(
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProjectionFault, R>;
@@ -58,10 +60,14 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsApi>()(
   "@streamsy/projection/Checkpoints",
 ) {}
 
-/** The encoded seam a host owner provides; both first-cut Layers build on it. */
+/** The encoded seam a host owner provides; both shipped Layers build on it. */
 export interface EncodedStore {
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
+  readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
+  readonly readState: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
+  readonly writeState: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
+  readonly removeState: (key: string) => Effect.Effect<void, ProjectionFault>;
   readonly withTransaction: <A, E, R>(
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProjectionFault, R>;
@@ -119,7 +125,12 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
       }),
     );
   });
-  return { load, save, withTransaction: store.withTransaction };
+  return {
+    load,
+    save,
+    remove: (key) => store.remove(recordKey(key)),
+    withTransaction: store.withTransaction,
+  };
 };
 
 /** What the kernel needs to locate a record; every projection value satisfies it. */
@@ -189,3 +200,5 @@ export const rangesOf = (slices: Record<string, Slice<unknown>>): Record<string,
   );
 
 export { PendingUnit, PinnedRange, encodeKey } from "./unit.ts";
+
+export { stateFromStore } from "./state.ts";

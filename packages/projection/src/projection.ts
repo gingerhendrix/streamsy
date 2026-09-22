@@ -140,3 +140,7 @@ export const each =
       concurrency: 1,
       discard: true,
     });
+
+export { State } from "./state.ts";
+export { fold, loadState } from "./fold.ts";
+export { forget } from "./forget.ts";

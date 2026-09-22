@@ -8,7 +8,7 @@ import type { ProjectionFault } from "./fault.ts";
 
 /**
  * Process-scoped locks keyed exactly like checkpoint records. Entries are retained
- * for the life of the module so repeated triggers reuse the same semaphore. The
+ * until forget releases them, so repeated triggers reuse the same semaphore. The
  * key does not distinguish independent checkpoint hosts in the same process.
  */
 const locks = new Map<string, Semaphore.Semaphore>();
@@ -33,3 +33,11 @@ export const serialized = <Inputs extends InputMap, O, E, R>(
   options: RunOptions = {},
 ): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
   Effect.suspend(() => lockFor(projection).withPermits(1)(run(projection, options)));
+
+/** Internal lifecycle hook; call only after deleting both rows successfully. */
+export const releaseLock = (key: string): void => {
+  locks.delete(key);
+};
+
+/** Internal test probe for lifecycle assertions; not a package export. */
+export const hasLock = (key: string): boolean => locks.has(key);

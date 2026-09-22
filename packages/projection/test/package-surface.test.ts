@@ -12,12 +12,15 @@ import type {
   OnChangeOptions,
   PinnedFamilyDefinition,
   RunOptions,
+  StateApi,
 } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import manifest from "../package.json";
 
 type PublicHelperTypes =
+  | StateApi
+  | Checkpoint.EncodedStore
   | Family
   | FamilyDefinition
   | FusedFamilyDefinition<any, any, any, any>
@@ -29,12 +32,21 @@ void acceptsPublicHelperTypes;
 
 test("built public entries and declared files exist", () => {
   expect(Checkpoint.recordKey).toBeFunction();
+  expect(Checkpoint.stateFromStore).toBeFunction();
+  expect(Root.State).toBe(Projection.State);
+  expect(Root.State.key).toBe("@streamsy/projection/State");
+  expect(Projection.fold).toBeFunction();
+  expect(Projection.loadState).toBeFunction();
+  expect(Projection.forget).toBeFunction();
   expect(Checkpoint.fromStore).toBeFunction();
   expect(Checkpoint.CheckpointRecord).toBeDefined();
   for (const name of [
     "encodeKey",
     "recordKey",
     "fromStore",
+    "stateFromStore",
+    "releaseLock",
+    "hasLock",
     "PendingUnit",
     "PinnedRange",
     "producerId",

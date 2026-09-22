@@ -37,6 +37,7 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
   if (read.items === 0) return { ...empty, status: closed ? "source-closed" : "caught-up" };
   const unit = unitOf(
     projection.id,
+    projection.version,
     projection.generation,
     projection.params,
     rangesOf(read.slices),

@@ -2,7 +2,7 @@ import { Context, Effect, Option, Semaphore } from "effect";
 import { copyState, type State } from "./state.ts";
 
 /**
- * Internal fused-host seam. Encoded records have no Derive schema or lifecycle yet.
+ * Internal fused-host seam. Encoded records are owned by the caller.
  * Nested calls join (no savepoints); failure must escape the outer body to roll back.
  * Bodies stay on the owner fiber and must not wait for their own post-commit wakes.
  * Each outer transaction copies the host state; intended for bounded memory hosts.
@@ -10,6 +10,7 @@ import { copyState, type State } from "./state.ts";
 export interface MemoryCommitBoundaryApi {
   readonly withTransaction: <A, E, R>(body: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>>;
+  readonly remove: (key: string) => Effect.Effect<void>;
   readonly write: (key: string, encoded: string) => Effect.Effect<void>;
 }
 export class MemoryCommitBoundary extends Context.Service<
@@ -88,6 +89,13 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
       read: (key) =>
         Effect.map(current, (draft) =>
           Option.fromUndefinedOr((Option.isSome(draft) ? draft.value.records : records).get(key)),
+        ),
+      remove: (key) =>
+        withTransaction(
+          Effect.map(current, (draft) => {
+            if (Option.isNone(draft)) throw new Error("Memory record delete requires an owner");
+            draft.value.records.delete(key);
+          }),
         ),
       write: (key, encoded) =>
         withTransaction(

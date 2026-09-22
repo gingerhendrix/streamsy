@@ -118,7 +118,13 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
       slices[name] = read.slice;
       items += read.slice.items.length;
     }
-    const unit = unitOf(projection.id, projection.generation, projection.params, pending.ranges);
+    const unit = unitOf(
+      projection.id,
+      projection.version,
+      projection.generation,
+      projection.params,
+      pending.ranges,
+    );
     // SAFETY: `slices` has exactly the keys of `inputs`, each reproduced through that input's codec.
     const outputs = yield* projection.process(slices as Slices<Inputs>, unit);
     yield* appendPinned(projection.output, outputs, position(pending.seq));
@@ -133,7 +139,13 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   const closed = slices.every((slice) => slice.closed);
   if (read.items === 0) return { ...empty, status: closed ? "source-closed" : "caught-up" };
   const ranges = rangesOf(read.slices);
-  const unit = unitOf(projection.id, projection.generation, projection.params, ranges);
+  const unit = unitOf(
+    projection.id,
+    projection.version,
+    projection.generation,
+    projection.params,
+    ranges,
+  );
   const outputs = yield* projection.process(read.slices, unit);
   const inputs = advance(before.record.inputs, read.slices);
   let record: CheckpointRecord;

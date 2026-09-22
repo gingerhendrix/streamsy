@@ -1,9 +1,11 @@
-import { Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { CommitBoundary } from "@streamsy/storage";
 import { Checkpoints, fromStore, type EncodedStore } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
+import { State, stateFromStore } from "./state.ts";
 
+const STATE_TABLE = "streamsy_projection_v1_state";
 const TABLE = "streamsy_projection_v1_records";
 
 const storageFailure = (phase: ProjectionFault["phase"], message: string) => (cause: unknown) =>
@@ -11,37 +13,54 @@ const storageFailure = (phase: ProjectionFault["phase"], message: string) => (ca
 
 /**
  * Checkpoints over the host's `CommitBoundary` and shared `SqlClient`. The
- * package-owned table is created additively at acquisition and never reset; a
+ * package-owned tables are created additively at acquisition and never reset; a
  * fused handler's SQL and stream writes on the same client join the owner
  * transaction the checkpoint commits in. Neither SQL driver is imported here.
  */
-export const layer = Layer.effect(
-  Checkpoints,
+export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const boundary = yield* CommitBoundary;
     yield* boundary
       .withTransaction(
-        sql.unsafe(
-          `CREATE TABLE IF NOT EXISTS ${TABLE} (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)`,
+        Effect.forEach([TABLE, STATE_TABLE], (table) =>
+          sql.unsafe(
+            `CREATE TABLE IF NOT EXISTS ${table} (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)`,
+          ),
         ),
       )
       .pipe(Effect.mapError(storageFailure("load", `Cannot prepare ${TABLE}`)));
+    const read = (table: string) => (key: string) =>
+      sql
+        .unsafe<{ readonly value: string }>(`SELECT value FROM ${table} WHERE key = ?`, [key])
+        .pipe(
+          Effect.mapError(storageFailure("load", `Cannot read ${table}`)),
+          Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.value)),
+        );
+    const write = (table: string) => (key: string, value: string) =>
+      sql
+        .unsafe(
+          `INSERT INTO ${table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [key, value],
+        )
+        .pipe(
+          Effect.mapError(storageFailure("checkpoint", `Cannot write ${table}`)),
+          Effect.asVoid,
+        );
+    const remove = (table: string) => (key: string) =>
+      sql
+        .unsafe(`DELETE FROM ${table} WHERE key = ?`, [key])
+        .pipe(
+          Effect.mapError(storageFailure("checkpoint", `Cannot delete from ${table}`)),
+          Effect.asVoid,
+        );
     const store: EncodedStore = {
-      read: Effect.fn("Projection.Sqlite.read")(function* (key: string) {
-        const rows = yield* sql
-          .unsafe<{ readonly value: string }>(`SELECT value FROM ${TABLE} WHERE key = ?`, [key])
-          .pipe(Effect.mapError(storageFailure("load", `Cannot read ${TABLE}`)));
-        return Option.fromUndefinedOr(rows[0]?.value);
-      }),
-      write: Effect.fn("Projection.Sqlite.write")(function* (key: string, value: string) {
-        yield* sql
-          .unsafe(
-            `INSERT INTO ${TABLE} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-            [key, value],
-          )
-          .pipe(Effect.mapError(storageFailure("checkpoint", `Cannot write ${TABLE}`)));
-      }),
+      read: read(TABLE),
+      write: write(TABLE),
+      remove: remove(TABLE),
+      readState: read(STATE_TABLE),
+      writeState: write(STATE_TABLE),
+      removeState: remove(STATE_TABLE),
       withTransaction: (body) =>
         boundary
           .withTransaction(body)
@@ -52,6 +71,8 @@ export const layer = Layer.effect(
             ),
           ),
     };
-    return Checkpoints.of(fromStore(store));
+    return Context.make(Checkpoints, fromStore(store)).pipe(
+      Context.add(State, stateFromStore(store)),
+    );
   }),
 );

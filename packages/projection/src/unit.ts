@@ -25,6 +25,8 @@ export interface PendingUnit extends Schema.Schema.Type<typeof PendingUnit> {}
 
 export interface Unit {
   readonly projectionId: string;
+  /** The declared version; defaults to 1. */
+  readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   /** Only the inputs that contributed items; a retry reproduces exactly these. */
@@ -53,11 +55,13 @@ export const canonicalRanges = (ranges: Record<string, Range>): string =>
 /** The key is stable across stream-form retries; fused retries may read a longer tail. */
 export const unitOf = (
   projectionId: string,
+  version: number,
   generation: number,
   params: Record<string, string>,
   ranges: Record<string, Range>,
 ): Unit => ({
   projectionId,
+  version,
   generation,
   params,
   ranges,
