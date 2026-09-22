@@ -3,7 +3,7 @@ title: Views
 description: Declare a keyed relation over sources as data, compile it to a plan, and maintain its rows incrementally.
 ---
 
-`@streamsy/views` declares a keyed relation over sources as data. Its three pure tiers are relation authoring, serializable plan IR, and an incremental engine. Declarations and engine steps do no I/O.
+`@streamsy/views` declares a keyed relation over sources as data. Its three pure parts are relation authoring, serializable plan IR, and an incremental engine. Declarations and engine steps do no I/O.
 
 | Entry                                | Purpose                                                  |
 | ------------------------------------ | -------------------------------------------------------- |
@@ -82,7 +82,7 @@ export const ordersForCustomer = defineView({
 });
 ```
 
-`changes(relation)` names the change stream of a keyed relation. It is an inert declaration of row transitions in arrival order; the host supplies the events. The [stream sink](/docs/projections/sinks) consumes it.
+`changes(relation)` declares a relation's change stream in arrival order. A [stream sink](/docs/projections/sinks) publishes it, and the host supplies the events.
 
 ## Check the plan
 

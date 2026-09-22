@@ -8,7 +8,7 @@ maintain its rows incrementally. Version 0.4.0 requires
 bun add @streamsy/views effect
 ```
 
-The package has three pure tiers: relation authoring, plan IR, and the incremental engine.
+The package has three pure parts: relation authoring, plan IR, and the incremental engine.
 
 | Entry                  | Contents                                                        |
 | ---------------------- | --------------------------------------------------------------- |
@@ -30,8 +30,8 @@ Effect error channel; `collectPlanIssues` returns all of them at once.
   `isPresent()` before reading `.value`, or supply `orElse`.
 - `top` is always bounded, and its last sort term must be a stable ascending
   key so ties never reorder between hosts.
-- `changes(relation)` names a relation's change stream in arrival order. Use
-  it to publish what happened without publishing the relation.
+- `changes(relation)` declares a relation's change stream in arrival order.
+  A stream sink publishes it, and the host supplies the events.
 - `planHash` is a change-detection identity, not a security digest.
 
 ## Incremental engine

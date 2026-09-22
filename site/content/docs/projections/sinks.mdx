@@ -28,6 +28,8 @@ A declaration carries a `fingerprint` over the facts a consumer can observe. A c
 
 The handlers do not authorize. Wrap the handler with your own check.
 
+These examples use a plain relation declaration: its name and key describe the application's rows. The host supplies the data and scopes each snapshot, change feed, and document to the decoded `customerId`; declaring the relation does not persist or filter rows.
+
 ## State sink
 
 A state sink publishes a keyed relation as a Durable State collection. A client reads the snapshot, then follows the suffix from the snapshot offset.
@@ -59,8 +61,6 @@ export const openOrdersSink = defineStateSink({
   },
 });
 ```
-
-These examples use a plain relation declaration: its name and key describe the application's rows. The host supplies the data and scopes each snapshot and change feed to the decoded `customerId`; declaring the relation does not persist or filter rows.
 
 The collection's primary key is the relation key, so the sink and its relation cannot disagree about what identifies a row.
 
