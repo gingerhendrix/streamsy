@@ -5,6 +5,7 @@
     "memory-server",
     "hackernews-newest-stream",
     "issue-tracker-demo",
-    "issue-tracker"
+    "issue-tracker",
+    "hex-board"
   ]
 }

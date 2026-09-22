@@ -1,0 +1,52 @@
+---
+title: Hex board
+description: A complete board folded into transactional state, with SQLite restart evidence.
+---
+
+The slim `examples/hex-board` package proves persisted fold state. It replays
+canonical game events into a board and a move ordinal. `Projection.fold` saves
+one state row in the same transaction as the checkpoint; a restarted runtime
+reads both and resumes from that cut.
+
+```ts
+const boardProjection = (gameId: string) =>
+  Projection.make({
+    id: "hex-board",
+    params: { gameId },
+    input: StreamRef.json(`games/${gameId}/events`, { schema: GameEvent }),
+    process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
+      stepBoard(state, item, unit.ranges.input!.nextOffset),
+    ),
+  });
+
+const current = Projection.loadState(boardProjection("game"), BoardState);
+```
+
+`BoardState` contains the next move ordinal and the schema-typed board. Every
+event in a unit shares its source watermark, while move ids use distinct
+ordinals that survive restart. The recent-move feed is capped at 40 entries.
+The package has no output stream, metadata row, server or UI.
+
+Run the evidence from the repository root:
+
+```sh
+bun run build
+bun run --cwd examples/hex-board test
+```
+
+The SQLite test pauses during a pending attack, disposes the runtime, reopens
+the same file, and checks zero new items, identical state and a checkpoint at
+the input tail. Appending the remaining events resumes the saved board and
+matches a pure fold. Memory and independent aggregate-equivalence tests run
+alongside it.
+
+O6 measurement (Bun 1.4.2, file-backed WAL, 3,005 generated events): encoded row
+21,599 B final / 22,944 B maximum; state-upsert transaction mean FULL/NORMAL
+0.549/0.046 ms at one event per unit, 0.581/0.049 ms at 32 events per unit.
+These local timings exclude encoding and checkpoint writes; the full projection
+transaction means were 1.340/0.760 ms and 7.547/5.462 ms respectively.
+
+See [projection state](/docs/projections/projections#state) for ownership,
+transaction and generation rules. Application row sets belong in application
+tables through the shared SQL client; this demo deliberately measures a whole
+board stored as one fold value.
