@@ -15,7 +15,7 @@ const boardProjection = (gameId: string) =>
     params: { gameId },
     input: StreamRef.json(`games/${gameId}/events`, { schema: GameEvent }),
     process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
-      stepBoard(state, item, unit.ranges.input!.nextOffset),
+      stepBoard(state, item, unit.ranges.input.nextOffset),
     ),
   });
 
@@ -34,17 +34,23 @@ bun run build
 bun run --cwd examples/hex-board test
 ```
 
-The SQLite test pauses during a pending attack, disposes the runtime, reopens
-the same file, and checks zero new items, identical state and a checkpoint at
-the input tail. Appending the remaining events resumes the saved board and
-matches a pure fold. Memory and independent aggregate-equivalence tests run
-alongside it.
+The SQLite tests cover the 12-event victory game, split after 5 events, and
+the 450-event four-player game, split after 400 events. Both reopen the same
+file and check zero new items, identical state and a checkpoint at the input
+tail, then resume and match a pure fold. The long case checks the exact 40 move
+ids and ordinal after restart. A contradictory resolution saves neither state
+nor checkpoint. Memory, aggregate-equivalence and schema round-trip tests run
+alongside them.
 
 O6 measurement (Bun 1.4.2, file-backed WAL, 3,005 generated events): encoded row
 21,599 B final / 22,944 B maximum; state-upsert transaction mean FULL/NORMAL
 0.549/0.046 ms at one event per unit, 0.581/0.049 ms at 32 events per unit.
-These local timings exclude encoding and checkpoint writes; the full projection
-transaction means were 1.340/0.760 ms and 7.547/5.462 ms respectively.
+A separate local split measured checkpoint-only commits at 0.4258/0.0098 ms
+FULL/NORMAL and checkpoint plus state at 0.5280/0.0597 ms: the marginal state-row
+cost is about 0.1022/0.0499 ms. At FULL most of the commit cost is the WAL fsync
+that every checkpoint commit pays.
+The state-upsert-only timings exclude encoding and checkpoint writes; the full
+projection transaction means were 1.340/0.760 ms and 7.547/5.462 ms respectively.
 
 See [projection state](/docs/projections/projections#state) for ownership,
 transaction and generation rules. Application row sets belong in application

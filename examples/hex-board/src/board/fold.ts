@@ -28,6 +28,6 @@ export const boardProjection = (gameId: string) =>
     params: { gameId },
     input: StreamRef.json(`games/${gameId}/events`, { schema: GameEvent }),
     process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
-      stepBoard(state, item, unit.ranges.input!.nextOffset),
+      stepBoard(state, item, unit.ranges.input.nextOffset),
     ),
   });
