@@ -420,3 +420,50 @@ test("run without a limit drains more than one hundred server pages", () =>
     }),
     1,
   ));
+
+test("stream units retain the declared version on a fresh pass and pinned retry", () =>
+  run(
+    Effect.gen(function* () {
+      yield* initialize;
+      const versions: number[] = [];
+      const output = StreamRef.json("versioned-output", { schema: Schema.Finite });
+      const projection = Projection.stream({
+        id: "versioned-stream",
+        version: 7,
+        input,
+        output,
+        process: (batch, unit) =>
+          Effect.sync(() => {
+            versions.push(unit.version);
+            return batch.input.items;
+          }),
+      });
+      const owner = yield* Checkpoints;
+      let saves = 0;
+      const failed = yield* Projection.run(projection).pipe(
+        Effect.provideService(Checkpoints, {
+          ...owner,
+          save: (key, record, token) => {
+            saves += 1;
+            return saves === 2
+              ? Effect.fail(
+                  new ProjectionFault({
+                    phase: "checkpoint",
+                    reason: "storage-failure",
+                    message: "after append",
+                  }),
+                )
+              : owner.save(key, record, token);
+          },
+        }),
+        Effect.result,
+      );
+      expect(failed._tag).toBe("Failure");
+      expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeDefined();
+      expect(versions).toEqual([7]);
+      yield* Projection.run(projection);
+      expect(versions).toEqual([7, 7]);
+      expect(Option.getOrThrow((yield* owner.load(projection)).record).pending).toBeUndefined();
+      expect(yield* readAll(output)).toEqual([1, -1, 3]);
+    }),
+  ));

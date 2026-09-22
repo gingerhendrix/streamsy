@@ -30,6 +30,19 @@ export interface StreamRoute<RouteParams, A, RD = never, RE = never> {
   readonly ref: (params: RouteParams) => StreamRef.StreamRef<A, RD, RE>;
 }
 
+/** A route whose member refs retain their declared State collections. */
+export type StateRoute<P, C extends StreamRef.Collections> = Omit<
+  StreamRoute<
+    P,
+    StreamRef.CollectionsChange<C>,
+    StreamRef.CollectionsDecodingServices<C>,
+    StreamRef.CollectionsEncodingServices<C>
+  >,
+  "ref"
+> & {
+  readonly ref: (params: P) => StreamRef.StateRef<C>;
+};
+
 /** The minimal shape any consumer needs. The binding table reads only this. */
 export interface Matcher {
   readonly match: (id: string) => boolean;
@@ -177,17 +190,7 @@ export function state<
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly collections: C & StreamRef.ValidCollections<C>;
   },
-): Omit<
-  StreamRoute<
-    Params<Codecs>,
-    StreamRef.CollectionsChange<C>,
-    StreamRef.CollectionsDecodingServices<C>,
-    StreamRef.CollectionsEncodingServices<C>
-  >,
-  "ref"
-> & {
-  readonly ref: (params: Params<Codecs>) => StreamRef.StateRef<C>;
-} {
+): StateRoute<Params<Codecs>, C> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);

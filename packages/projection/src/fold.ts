@@ -2,7 +2,7 @@ import { Effect, Option, Schema } from "effect";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { ProjectionKey } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import { items } from "./projection.ts";
+import { entries } from "./read.ts";
 import { State } from "./state.ts";
 import type { Unit } from "./unit.ts";
 
@@ -67,7 +67,9 @@ export function fold<Inputs extends InputMap, A, I, E, R>(
           typeof initial === "function"
           ? (initial as (params: Record<string, string>) => A)(unit.params)
           : initial;
-      for (const entry of items(batch)) {
+      // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.
+      const items = entries(batch) as ReadonlyArray<Entry<Inputs>>;
+      for (const entry of items) {
         const next = step(value, entry, unit);
         value = Effect.isEffect(next) ? yield* next : next;
       }

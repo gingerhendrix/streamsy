@@ -121,6 +121,7 @@ it("state routes round trip decoded params and reject bad segments", () => {
     collections: { entry: { schema: Entry, key: "text" } },
   });
   const ref = route.ref({ id: 7 });
+  expect(Object.keys(ref.collections)).toEqual(["entry"]);
   expect(route.parse(ref.id)).toEqual(Option.some({ id: 7 }));
   expect(ref.contentType).toBe("application/json");
   for (const id of ["catalog/no", "catalog/..", "catalog/7/extra"])

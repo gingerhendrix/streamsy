@@ -46,7 +46,7 @@ const hosts: ReadonlyArray<
   ["SQLite", sqlite()],
 ];
 for (const [name, host] of hosts) {
-  test(`${name}: fold round trip, version key, State provision, and rollback on second item`, async () => {
+  test(`${name}: fold round trip, version key, State provision, and a failing step saves nothing`, async () => {
     const runtime = ManagedRuntime.make(host);
     try {
       await runtime.runPromise(
@@ -75,6 +75,68 @@ for (const [name, host] of hosts) {
           expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
           expect((yield* Projection.run(total)).items).toBe(2);
           expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(23));
+        }),
+      );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  test(`${name}: handler failure after a real State.save rolls back state and record`, async () => {
+    const runtime = ManagedRuntime.make(host);
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* Projection.run(total);
+          const checkpoints = yield* Checkpoints;
+          const before = yield* checkpoints.load(total);
+          yield* Streams.append(input, [7]);
+          const saveThenFail = Projection.make({
+            id: total.id,
+            version: total.version,
+            input,
+            process: () =>
+              Effect.gen(function* () {
+                const state = yield* State;
+                yield* state.save(total, "999");
+                return yield* Effect.fail("after save");
+              }),
+          });
+          const failed = yield* Projection.run(saveThenFail).pipe(Effect.result);
+          expect(failed._tag).toBe("Failure");
+          expect(yield* checkpoints.load(total)).toEqual(before);
+          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
+        }),
+      );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  test(`${name}: token conflict at save rolls back the state already written by fold`, async () => {
+    const runtime = ManagedRuntime.make(host);
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          yield* seed;
+          yield* Projection.run(total);
+          yield* Streams.append(input, [7]);
+          const owner = yield* Checkpoints;
+          const before = yield* owner.load(total);
+          const failed = yield* Projection.run(total).pipe(
+            Effect.provideService(Checkpoints, {
+              ...owner,
+              save: (key, record, token) =>
+                owner.save(key, record, token).pipe(Effect.andThen(owner.save(key, record, token))),
+            }),
+            Effect.result,
+          );
+          expect(failed._tag).toBe("Failure");
+          if (failed._tag === "Failure")
+            expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
+          expect(yield* owner.load(total)).toEqual(before);
+          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
         }),
       );
     } finally {
@@ -134,36 +196,6 @@ for (const [name, host] of hosts) {
     }
   });
 }
-
-test("SQLite token conflict at save rolls back the state already written by fold", async () => {
-  const runtime = ManagedRuntime.make(sqlite());
-  try {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* seed;
-        yield* Projection.run(total);
-        yield* Streams.append(input, [7]);
-        const owner = yield* Checkpoints;
-        const before = yield* owner.load(total);
-        const failed = yield* Projection.run(total).pipe(
-          Effect.provideService(Checkpoints, {
-            ...owner,
-            save: (key, record, token) =>
-              owner.save(key, record, token).pipe(Effect.andThen(owner.save(key, record, token))),
-          }),
-          Effect.result,
-        );
-        expect(failed._tag).toBe("Failure");
-        if (failed._tag === "Failure")
-          expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
-        expect(yield* owner.load(total)).toEqual(before);
-        expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
-      }),
-    );
-  } finally {
-    await runtime.dispose();
-  }
-});
 
 test("SQLite file restart retains folded state and reads zero new items", async () => {
   const directory = mkdtempSync("/tmp/projection-state-");

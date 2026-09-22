@@ -29,31 +29,37 @@ export const layer = Layer.effectContext(
           ),
         ),
       )
-      .pipe(Effect.mapError(storageFailure("load", `Cannot prepare ${TABLE}`)));
-    const read = (table: string) => (key: string) =>
-      sql
-        .unsafe<{ readonly value: string }>(`SELECT value FROM ${table} WHERE key = ?`, [key])
-        .pipe(
-          Effect.mapError(storageFailure("load", `Cannot read ${table}`)),
-          Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.value)),
-        );
-    const write = (table: string) => (key: string, value: string) =>
-      sql
-        .unsafe(
-          `INSERT INTO ${table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-          [key, value],
-        )
-        .pipe(
-          Effect.mapError(storageFailure("checkpoint", `Cannot write ${table}`)),
-          Effect.asVoid,
-        );
-    const remove = (table: string) => (key: string) =>
-      sql
-        .unsafe(`DELETE FROM ${table} WHERE key = ?`, [key])
-        .pipe(
-          Effect.mapError(storageFailure("checkpoint", `Cannot delete from ${table}`)),
-          Effect.asVoid,
-        );
+      .pipe(Effect.mapError(storageFailure("load", `Cannot prepare ${TABLE} and ${STATE_TABLE}`)));
+    const read = (table: string) =>
+      Effect.fn("Projection.Sqlite.read")((key: string) =>
+        sql
+          .unsafe<{ readonly value: string }>(`SELECT value FROM ${table} WHERE key = ?`, [key])
+          .pipe(
+            Effect.mapError(storageFailure("load", `Cannot read ${table}`)),
+            Effect.map((rows) => Option.fromUndefinedOr(rows[0]?.value)),
+          ),
+      );
+    const write = (table: string) =>
+      Effect.fn("Projection.Sqlite.write")((key: string, value: string) =>
+        sql
+          .unsafe(
+            `INSERT INTO ${table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            [key, value],
+          )
+          .pipe(
+            Effect.mapError(storageFailure("checkpoint", `Cannot write ${table}`)),
+            Effect.asVoid,
+          ),
+      );
+    const remove = (table: string) =>
+      Effect.fn("Projection.Sqlite.remove")((key: string) =>
+        sql
+          .unsafe(`DELETE FROM ${table} WHERE key = ?`, [key])
+          .pipe(
+            Effect.mapError(storageFailure("checkpoint", `Cannot delete from ${table}`)),
+            Effect.asVoid,
+          ),
+      );
     const store: EncodedStore = {
       read: read(TABLE),
       write: write(TABLE),

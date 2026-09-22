@@ -4,9 +4,12 @@ import { State } from "./state.ts";
 import { releaseLock } from "./serialized.ts";
 
 /**
- * Deletes both rows and releases the process lock after commit. Stop live watchers first:
- * their next run would restart from zero. Delete a stream-form output first, or use a new
- * generation, because forgetting restarts its producer sequence. Streams are not deleted.
+ * Deletes both rows and releases the process lock after commit. This does not interrupt
+ * a live `onChange` or `follow` fiber or an in-flight run. A serialized call can then run
+ * beside that run; checkpoint token conflict detects concurrent work. Stop live watchers
+ * and wait for in-flight runs first: the next run would restart from zero. Delete a
+ * stream-form output first, or use a new generation, because forgetting restarts its
+ * producer sequence. Streams are not deleted.
  */
 export const forget = (projection: ProjectionKey) =>
   Effect.gen(function* () {
