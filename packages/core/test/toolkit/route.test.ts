@@ -114,3 +114,15 @@ it("the codec record backstop covers a widened template", () => {
     RangeError,
   );
 });
+
+it("state routes round trip decoded params and reject bad segments", () => {
+  const route = StreamRoute.state("catalog/:id", {
+    params: { id: Schema.FiniteFromString },
+    collections: { entry: { schema: Entry, key: "text" } },
+  });
+  const ref = route.ref({ id: 7 });
+  expect(route.parse(ref.id)).toEqual(Option.some({ id: 7 }));
+  expect(ref.contentType).toBe("application/json");
+  for (const id of ["catalog/no", "catalog/..", "catalog/7/extra"])
+    expect(route.parse(id)).toEqual(Option.none());
+});

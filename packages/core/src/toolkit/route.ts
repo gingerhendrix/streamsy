@@ -167,6 +167,39 @@ export function json<const Template extends string, Codecs extends ParamCodecs, 
   };
 }
 
+export function state<
+  const Template extends string,
+  Codecs extends ParamCodecs,
+  const C extends StreamRef.Collections,
+>(
+  template: Template,
+  options: {
+    readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
+    readonly collections: C & StreamRef.ValidCollections<C>;
+  },
+): Omit<
+  StreamRoute<
+    Params<Codecs>,
+    StreamRef.CollectionsChange<C>,
+    StreamRef.CollectionsDecodingServices<C>,
+    StreamRef.CollectionsEncodingServices<C>
+  >,
+  "ref"
+> & {
+  readonly ref: (params: Params<Codecs>) => StreamRef.StateRef<C>;
+} {
+  const { segments, names } = compileSegments(template);
+  const codecs = options.params;
+  checkTemplateParams(template, names, codecs);
+  return {
+    _tag: "StreamRoute",
+    template,
+    match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
+    parse: (id) => matchTemplate(segments, codecs, id),
+    ref: (params) => StreamRef.state(buildId(template, segments, codecs, params), options),
+  };
+}
+
 export function bytes<const Template extends string, Codecs extends ParamCodecs>(
   template: Template,
   options: {

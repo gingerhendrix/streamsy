@@ -1,5 +1,4 @@
-import { StreamRef, StreamRoute } from "@streamsy/core";
-import { Option, Schema } from "effect";
+import { StreamRoute } from "@streamsy/core";
 import { LabelRow, ProjectRow, UserRow } from "../domain/catalog.ts";
 import { Identifier, IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 
@@ -13,39 +12,21 @@ export const labelEvents = StreamRoute.json("issue-tracker/:workspaceId/issue-la
   schema: IssueLabelEvent,
 });
 
-const projectPattern = /^issue-tracker\/([^/]+)\/projects$/;
-const userPattern = /^issue-tracker\/([^/]+)\/users$/;
-const labelPattern = /^issue-tracker\/([^/]+)\/labels$/;
-const decodeIdentifier = Schema.decodeUnknownOption(Identifier);
-const parseState = (pattern: RegExp, id: string) => {
-  const match = id.match(pattern);
-  if (match?.[1] === undefined) return Option.none();
-  return Option.map(decodeIdentifier(match[1]), (workspaceId) => ({ workspaceId }));
-};
-export const projects = StreamRoute.custom({
-  parse: (id) => parseState(projectPattern, id),
-  ref: ({ workspaceId }) => projectStream(workspaceId),
+export const projects = StreamRoute.state("issue-tracker/:workspaceId/projects", {
+  params,
+  collections: { project: { schema: ProjectRow, key: "projectId" } },
 });
-export const users = StreamRoute.custom({
-  parse: (id) => parseState(userPattern, id),
-  ref: ({ workspaceId }) => userStream(workspaceId),
+export const projectStream = (workspaceId: string) => projects.ref({ workspaceId });
+export const users = StreamRoute.state("issue-tracker/:workspaceId/users", {
+  params,
+  collections: { user: { schema: UserRow, key: "userId" } },
 });
-export const labels = StreamRoute.custom({
-  parse: (id) => parseState(labelPattern, id),
-  ref: ({ workspaceId }) => labelStream(workspaceId),
+export const userStream = (workspaceId: string) => users.ref({ workspaceId });
+export const labels = StreamRoute.state("issue-tracker/:workspaceId/labels", {
+  params,
+  collections: { label: { schema: LabelRow, key: "labelId" } },
 });
-export const projectStream = (workspaceId: string) =>
-  StreamRef.state(`issue-tracker/${workspaceId}/projects`, {
-    collections: { project: { schema: ProjectRow, key: "projectId" } },
-  });
-export const userStream = (workspaceId: string) =>
-  StreamRef.state(`issue-tracker/${workspaceId}/users`, {
-    collections: { user: { schema: UserRow, key: "userId" } },
-  });
-export const labelStream = (workspaceId: string) =>
-  StreamRef.state(`issue-tracker/${workspaceId}/labels`, {
-    collections: { label: { schema: LabelRow, key: "labelId" } },
-  });
+export const labelStream = (workspaceId: string) => labels.ref({ workspaceId });
 export const routes = { events, labelEvents, projects, users, labels } as const;
 export const refs = (workspaceId: string) =>
   Object.values(routes).map((route) => route.ref({ workspaceId }));

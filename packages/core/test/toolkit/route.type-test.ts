@@ -63,3 +63,19 @@ const built = journal.ref({ user: "ann" });
 void built;
 // @ts-expect-error the ref constructor takes the decoded parameter set
 journal.ref({ account: "ann" });
+
+const catalog = StreamRoute.state("catalog/:user", {
+  params: one,
+  collections: { entry: { schema: Entry, key: "text" } },
+});
+void catalog.ref({ user: "ann" }).collections.entry.schema;
+StreamRoute.state("catalog/:user", {
+  // @ts-expect-error template params must be exact
+  params: {},
+  collections: { entry: { schema: Entry, key: "text" } },
+});
+StreamRoute.state("catalog/:user", {
+  params: one,
+  // @ts-expect-error collection keys must name a string field in the row
+  collections: { entry: { schema: Entry, key: "missing" } },
+});
