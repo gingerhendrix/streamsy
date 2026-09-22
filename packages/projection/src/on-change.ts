@@ -130,8 +130,9 @@ const watch = <Inputs extends InputMap, O, E, R>(
   );
 
 /**
- * Watches same-owner inputs. A missing input cannot be ownership-checked until it is created;
- * all other head failures surface as `read / storage-failure`.
+ * Watches same-owner inputs. An input that does not exist yet is not checked until it does.
+ * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
+ * failures surface as `read / storage-failure`.
  */
 export function onChange<Inputs extends InputMap, O, E, R>(
   projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,

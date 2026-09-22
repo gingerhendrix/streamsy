@@ -171,7 +171,31 @@ const watch = Effect.gen(function* () {
 
 The package keeps no member list, so `onChange` takes an explicit fixed member array and returns one fiber per member in array order. One member failure does not stop the other fibers. For a dynamic deployment, keep a registry stream of parameter records; a projection over that stream can start a trigger when a member is registered and stop it when the member is removed.
 
+Use `Projection.forget(member)` when a member is retired, after stopping its live triggers; see [State](#state).
+
 An unknown member is one whose input stream is absent. A served family route must answer 404 and create neither the member's streams nor its checkpoint. See the complete [issue tracker projection](/docs/demos/issue-tracker).
+
+## State
+
+Both shipped Layers provide `Projection.State` with `Checkpoints`. `Projection.fold` loads one state row per key, folds tagged items in unit order, and saves once per pass inside the owner transaction. A failing handler or checkpoint save rolls back both rows. Every save overwrites; a schema change needs a new generation.
+
+```ts
+import { Schema } from "effect";
+import { StreamRef } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
+const total = Projection.make({
+  id: "running-total",
+  input: numbers,
+  process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
+});
+const current = Projection.loadState(total, Schema.Finite); // Effect<Option<number>>
+```
+
+Fold state is the value a handler needs between passes; row sets belong in application tables through the shared `SqlClient`, while the kernel keeps the cut. A step can also return an Effect. An initial value can be a function of the member's encoded params, called only when the row is absent. Direct `State.save` and `State.remove` calls must run inside `Checkpoints.withTransaction`; fused handlers already do.
+
+`Projection.forget(member)` deletes its state and checkpoint in one transaction, then releases its process lock. Stop live `onChange` or `follow` fibers first: forgetting does not interrupt them, and their next run starts from zero. Forgetting does not delete streams. Delete a stream-form member's output first, or use a new generation, because forgetting restarts its producer sequence.
 
 ## Checkpoints and generations
 

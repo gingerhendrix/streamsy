@@ -44,6 +44,10 @@ const run = Projection.run(projection, { limit: 10 });
 
 `input: numbers` is one named input; the handler reads `batch.input.items`.
 Declare several with `inputs: { orders, refunds }` and read one slice per name.
+`Projection.State` provides one encoded value per key in the checkpoint transaction.
+`Projection.fold(schema, initial, step)` loads, folds, and saves that value once per pass.
+`Projection.loadState(projection, schema)` reads the typed value as an `Option`.
+`Projection.forget(projection)` deletes state and checkpoint rows and releases the process lock.
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
 `Projection.family(definition)` declares routed members once; see
@@ -126,7 +130,7 @@ retries; a fused retry re-reads and may see a longer input range.
 - Input history after the checkpoint must stay readable. Deleting or
   rewriting input streams behind a projection stops it with
   `history-unavailable`.
-- SQLite adds one table, `streamsy_projection_v1_records`.
+- SQLite adds `streamsy_projection_v1_records` and `streamsy_projection_v1_state`.
 
 Layer authors use `@streamsy/projection/checkpoint` for the record and store
 contracts. A fused projection needs a real owner transaction. The memory
