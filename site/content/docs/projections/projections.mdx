@@ -232,7 +232,7 @@ Forgetting does not delete streams. Do not forget a stream-form member while kee
 
 Layer authors must provide `State` from the same store and owner transaction as `Checkpoints` for fused projections. `fromStore` and `stateFromStore` from `@streamsy/projection/checkpoint`, given one `EncodedStore`, build the two services over that store. This is a Layer-author rule, not a runtime check.
 
-The [hex board demo](/docs/demos/hex-board) is the worked example, including restart and rollback evidence and the O6 measurement: a 21,599 B final encoded row, with a 22,944 B maximum in the measured game.
+The [hex board demo](/docs/demos/hex-board) is the worked example, including restart and rollback evidence and the state-size measurement: a 21,599 B final encoded row, with a 22,944 B maximum in the measured game.
 
 ## Checkpoints and generations
 

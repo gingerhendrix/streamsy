@@ -3,7 +3,7 @@ title: Introduction
 description: What a projection is, the two kinds of stream it connects, and the pages that cover each part.
 ---
 
-A projection is a named, typed, checkpointed consumer of one or more input streams. It reads a slice of each input, runs an Effect handler over that unit, and commits a checkpoint so a restart resumes where it stopped. A handler can keep optional fold state through [`Projection.fold` and State](/docs/projections/projections#state), in the same owner transaction as the checkpoint.
+A projection is a named, typed, checkpointed consumer of one or more input streams. It reads a slice of each input, runs an Effect handler over that unit, and commits a checkpoint so a restart resumes where it stopped. A fused handler can keep optional fold state through [`Projection.fold` and State](/docs/projections/projections#state), in the same owner transaction as the checkpoint.
 
 The kernel is one pass, repeated: restore the checkpoint, read every input in declaration order, run the handler over one unit, commit the checkpoint. `@streamsy/projection` ships two forms of that pass.
 
