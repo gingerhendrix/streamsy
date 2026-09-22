@@ -24,6 +24,7 @@ export const effectAreas = [
   "packages/sql-boundary-tests",
   "examples/fold-agent",
   "examples/hackernews-newest-stream",
+  "examples/hex-board",
   "examples/issue-tracker-demo",
   "examples/issue-tracker",
   "examples/memory-server",
