@@ -44,10 +44,14 @@ const run = Projection.run(projection, { limit: 10 });
 
 `input: numbers` is one named input; the handler reads `batch.input.items`.
 Declare several with `inputs: { orders, refunds }` and read one slice per name.
+
 `Projection.State` provides one encoded value per key in the checkpoint transaction.
 `Projection.fold(schema, initial, step)` loads, folds, and saves that value once per pass.
 `Projection.loadState(projection, schema)` reads the typed value as an `Option`.
 `Projection.forget(projection)` deletes state and checkpoint rows and releases the process lock.
+See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
+generation, and retirement rules.
+
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
 `Projection.family(definition)` declares routed members once; see

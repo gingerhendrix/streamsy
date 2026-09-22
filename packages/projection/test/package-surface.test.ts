@@ -90,3 +90,29 @@ test("the root entry does not import a SQL driver", async () => {
   expect(root).not.toContain("@effect/sql");
   expect(root).not.toContain("effect/unstable/sql");
 });
+
+test("root exports stay explicit", () => {
+  expect(Object.keys(Root).sort()).toEqual([
+    "Checkpoints",
+    "Projection",
+    "ProjectionFault",
+    "State",
+  ]);
+  expect(Object.keys(Projection).sort()).toEqual([
+    "State",
+    "each",
+    "family",
+    "fold",
+    "follow",
+    "forget",
+    "items",
+    "key",
+    "loadState",
+    "make",
+    "onChange",
+    "pass",
+    "run",
+    "serialized",
+    "stream",
+  ]);
+});

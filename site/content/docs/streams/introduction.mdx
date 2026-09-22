@@ -59,6 +59,21 @@ const owns = orderEvents.match("notes"); // false
 
 A template is relative. Each `:name` is exactly one segment, and there are no wildcards. The set of `:name` parameters and the keys of `params` must agree, and the compiler checks that. A parameter that does not decode makes `parse` return `None`.
 
+`StreamRoute.bytes` builds byte-stream members. `StreamRoute.state(template, { params, collections })` builds Durable State members whose refs retain their collections, so `State.changes` accepts the ref and stamps changes described by `State.upsert`:
+
+```ts
+import { State } from "@streamsy/core";
+
+const ordersByWorkspace = StreamRoute.state("workspaces/:workspaceId/orders", {
+  params: { workspaceId: Schema.String },
+  collections: { order: { schema: OrderEvent, key: "orderId" } },
+});
+const workspaceOrders = ordersByWorkspace.ref({ workspaceId: "acme" });
+const changes = State.changes(workspaceOrders, { offset: "source-offset" }, [
+  State.upsert("order", { type: "placed", orderId: "o-17" }),
+]);
+```
+
 The same route value is read again in two places. `Streams.layerRouted` uses it to pick a storage backend for an id, and `Placement.byRoute` uses it to name the Durable Object that owns the stream. Both are on the [Runtime](/docs/runtime/introduction) pages.
 
 A plain function is enough when nothing else needs the family:

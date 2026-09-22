@@ -21,7 +21,7 @@ export const orderTotalsProjection = Projection.make({
 
 A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. `input: ref` is sugar for `inputs: { input: ref }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders, refunds }` and read one slice per name.
 
-`process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection, the non-empty `ranges` keyed by input, and a `key` that is stable across retries of the same unit; use `unit.key` as the idempotency key for a target outside the transaction.
+`process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection, the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
 
 `Projection.items(batch)` flattens a batch into `{ input, item, index }` entries in declaration order, then stream order. `Projection.each(handle)` builds a handler that runs `handle(entry, unit)` once per entry, one at a time.
 
@@ -177,25 +177,62 @@ An unknown member is one whose input stream is absent. A served family route mus
 
 ## State
 
-Both shipped Layers provide `Projection.State` with `Checkpoints`. `Projection.fold` loads one state row per key, folds tagged items in unit order, and saves once per pass inside the owner transaction. A failing handler or checkpoint save rolls back both rows. Every save overwrites; a schema change needs a new generation.
+`Projection.State` keeps one encoded value per projection key beside its checkpoint. `Projection.fold` loads that value once at the start of the fused handler, folds every tagged item in declaration order and then stream order, and saves once at the end of the pass.
 
 ```ts
-import { Schema } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { Effect, Schema } from "effect";
+import { StreamRef, Streams } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 
-const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
-const total = Projection.make({
-  id: "running-total",
-  input: numbers,
-  process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
+const program = Effect.gen(function* () {
+  const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
+  yield* Streams.create(numbers);
+  yield* Streams.append(numbers, [1, 2, 3]);
+  const total = Projection.make({
+    id: "running-total",
+    input: numbers,
+    process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
+  });
+  yield* Projection.run(total);
+  return yield* Projection.loadState(total, Schema.Finite); // Option.some(6) on a fresh host
 });
-const current = Projection.loadState(total, Schema.Finite); // Effect<Option<number>>
 ```
 
-Fold state is the value a handler needs between passes; row sets belong in application tables through the shared `SqlClient`, while the kernel keeps the cut. A step can also return an Effect. An initial value can be a function of the member's encoded params, called only when the row is absent. Direct `State.save` and `State.remove` calls must run inside `Checkpoints.withTransaction`; fused handlers already do.
+`loadState(projection, schema)` decodes the stored value as an `Option`; it opens no transaction and returns `None` when the row is absent. `fold` uses its initial value only when the row is absent; that value may also be a function of the member's encoded params.
 
-`Projection.forget(member)` deletes its state and checkpoint in one transaction, then releases its process lock. Stop live `onChange` or `follow` fibers first: forgetting does not interrupt them, and their next run starts from zero. Forgetting does not delete streams. Delete a stream-form member's output first, or use a new generation, because forgetting restarts its producer sequence.
+`State.save` and `State.remove` are correct only inside the owner transaction, through `Checkpoints.withTransaction`. A fused handler is already inside it. Both shipped Layers provide `State` with `Checkpoints`, so a handler failure, interruption, or checkpoint token conflict rolls back the state and checkpoint together.
+
+There is one row per key, and every save overwrites it. There is no history, compaction, or cadence option. Restoring a checkpoint does not read the state row; `fold` or `loadState` reads it explicitly. A state schema change is a new generation.
+
+Fold state is for the value a handler needs between passes. Row sets belong in application tables through the shared `SqlClient`; the kernel keeps the cut. An Effect step can write those rows and return the next fold value inside the fused transaction:
+
+```ts
+import { SqlClient } from "effect/unstable/sql";
+
+const orderRows = Projection.make({
+  id: "order-rows",
+  input: orders,
+  process: Projection.fold(Schema.Finite, 0, (sum, { item }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO order_totals (order_id, total)
+        VALUES (${item.orderId}, ${item.amount})
+        ON CONFLICT (order_id) DO UPDATE SET total = excluded.total`;
+      return sum + item.amount;
+    }),
+  ),
+});
+```
+
+The application creates and migrates `order_totals`; this snippet uses the `orders` ref introduced above.
+
+`Projection.forget(member)` deletes its state and checkpoint in one transaction, then releases its process lock. Stop live `onChange` or `follow` fibers and wait for in-flight runs first: forgetting interrupts neither. A watcher whose key is forgotten starts from zero on its next run. Releasing the lock lets a new serialized call run beside an in-flight run; checkpoint token conflict detects concurrent work.
+
+Forgetting does not delete streams. Do not forget a stream-form member while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
+
+Layer authors must provide `State` from the same store and owner transaction as `Checkpoints` for fused projections. `fromStore` and `stateFromStore` from `@streamsy/projection/checkpoint`, given one `EncodedStore`, build the two services over that store. This is a Layer-author rule, not a runtime check.
+
+The [hex board demo](/docs/demos/hex-board) is the worked example, including restart and rollback evidence and the O6 measurement: a 21,599 B final encoded row, with a 22,944 B maximum in the measured game.
 
 ## Checkpoints and generations
 
