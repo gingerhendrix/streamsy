@@ -1,0 +1,22 @@
+{
+  "name": "hex-board",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test src test",
+    "test:unit": "bun test src test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+    "@streamsy/core": "workspace:*",
+    "@streamsy/projection": "workspace:*",
+    "@streamsy/storage": "workspace:*",
+    "effect": "4.0.0-rc.115",
+    "typescript": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0"
+  }
+}

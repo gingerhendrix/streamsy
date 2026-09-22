@@ -51,6 +51,21 @@
         "@types/react-dom": "latest",
       },
     },
+    "examples/hex-board": {
+      "name": "hex-board",
+      "version": "0.0.1",
+      "dependencies": {
+        "@effect/sql-sqlite-bun": "4.0.0-rc.115",
+        "@streamsy/core": "workspace:*",
+        "@streamsy/projection": "workspace:*",
+        "@streamsy/storage": "workspace:*",
+        "effect": "4.0.0-rc.115",
+        "typescript": "catalog:",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+      },
+    },
     "examples/issue-tracker": {
       "name": "issue-tracker",
       "version": "0.0.1",
@@ -934,6 +949,8 @@
     "graphmatch": ["graphmatch@1.1.1", "", {}, "sha512-5ykVn/EXM1hF0XCaWh05VbYvEiOL2lY1kBxZtaYsyvjp7cmWOU1XsAdfQBwClraEofXDT197lFbXOEVMHpvQOg=="],
 
     "hackernews-newest-stream": ["hackernews-newest-stream@workspace:examples/hackernews-newest-stream"],
+
+    "hex-board": ["hex-board@workspace:examples/hex-board"],
 
     "hono": ["hono@4.11.4", "", {}, "sha512-U7tt8JsyrxSRKspfhtLET79pU8K+tInj5QZXs1jSugO1Vq5dFj3kmZsRldo29mTBfcjDRVRXrEZ6LS63Cog9ZA=="],
 
