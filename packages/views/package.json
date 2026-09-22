@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/views",
   "version": "0.4.0",
-  "description": "Typed view authoring, the serializable plan IR, the incremental engine, and maintained-view storage for Streamsy.",
+  "description": "Typed keyed relations, serializable plan IR, and a pure incremental engine for Streamsy.",
   "homepage": "https://github.com/gingerhendrix/streamsy#readme",
   "bugs": {
     "url": "https://github.com/gingerhendrix/streamsy/issues"
@@ -39,28 +39,13 @@
       "types": "./dist/engine/reference.d.ts",
       "import": "./dist/engine/reference.js",
       "default": "./dist/engine/reference.js"
-    },
-    "./store": {
-      "types": "./dist/store/memory.d.ts",
-      "import": "./dist/store/memory.js",
-      "default": "./dist/store/memory.js"
-    },
-    "./store/sqlite": {
-      "types": "./dist/store/sqlite.d.ts",
-      "import": "./dist/store/sqlite.js",
-      "default": "./dist/store/sqlite.js"
-    },
-    "./store/conformance": {
-      "types": "./dist/store/conformance.d.ts",
-      "import": "./dist/store/conformance.js",
-      "default": "./dist/store/conformance.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts src/store/memory.ts src/store/sqlite.ts src/store/conformance.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle bun:test",
+    "build": "tsdown src/relation.ts src/ir/contracts.ts src/engine/engine.ts src/engine/reference.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },

@@ -49,10 +49,7 @@ const scan = (label: string, pattern: string, globs: Array<string> = []): boolea
 const historical = ["!parked/**"];
 const authored = ["packages/*/src/**", "!*.test.ts"];
 // These are existing published Bun test registration kits, not live runtime owners.
-const testKits = [
-  "packages/core/src/testing/storage-contract.ts",
-  "packages/views/src/store/conformance.ts",
-];
+const testKits = ["packages/core/src/testing/storage-contract.ts"];
 const checks = [
   scan("no temporary package alias anywhere", ["core", "next"].join("-")),
   scan(

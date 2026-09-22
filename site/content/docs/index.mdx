@@ -26,7 +26,7 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 - `@streamsy/storage`: SQLite storage for Bun and for Durable Objects.
 - `@streamsy/serve`: the Bun and Cloudflare hosts, and the sink contracts that publish over HTTP.
 - `@streamsy/projection`: checkpointed projections over one or more streams.
-- `@streamsy/views`: keyed relations maintained incrementally.
+- `@streamsy/views`: keyed relations, serializable plan IR, and a pure incremental engine.
 
 ## Where to go
 

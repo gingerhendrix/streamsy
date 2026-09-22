@@ -3,7 +3,16 @@ title: Views
 description: Declare a keyed relation over sources as data, compile it to a plan, and maintain its rows incrementally.
 ---
 
-`@streamsy/views` declares a keyed relation over sources as data. It compiles the declaration to a plan, maintains the rows incrementally as source changes arrive, and stores them in a durable view store.
+`@streamsy/views` declares a keyed relation over sources as data. Its three pure tiers are relation authoring, serializable plan IR, and an incremental engine. Declarations and engine steps do no I/O.
+
+| Entry                                | Purpose                                                  |
+| ------------------------------------ | -------------------------------------------------------- |
+| `@streamsy/views`                    | Keyed relation declarations and the plan compiler        |
+| `@streamsy/views/ir`                 | JSON plan, expression, and row-change contracts          |
+| `@streamsy/views/engine`             | Incremental maintenance over normalized source changes   |
+| `@streamsy/views/engine/conformance` | Full-recompute reference implementation for engine tests |
+
+The examples below build on the declarations in the preceding snippets.
 
 ## Declare a source
 
@@ -35,10 +44,7 @@ export const orders = source("shop.orders", {
 ## Build a relation
 
 ```ts
-import { aggregate, from, selectors, view } from "@streamsy/views";
-import { OrderRow, orders } from "./orders.ts";
-
-const x = selectors<OrderRow>();
+import { from, view } from "@streamsy/views";
 
 export const openOrders = view(
   "shop.open-orders",
@@ -58,11 +64,7 @@ export const openOrders = view(
 `view(name, { schema, schemaRef, key }, relation)` names the result and declares its output key. `defineView` adds parameters.
 
 ```ts
-import { Schema } from "effect";
-import { defineView, from, parameter, selectors } from "@streamsy/views";
-import { OrderRow, orders } from "./orders.ts";
-
-const x = selectors<OrderRow>();
+import { defineView, parameter } from "@streamsy/views";
 
 export const ordersForCustomer = defineView({
   name: "shop.orders-for-customer",
@@ -80,16 +82,15 @@ export const ordersForCustomer = defineView({
 });
 ```
 
-`changes(relation)` names the change stream of a keyed relation. It publishes what happened to the rows, in arrival order, without publishing the rows. The [stream sink](/docs/projections/sinks) consumes it.
+`changes(relation)` names the change stream of a keyed relation. It is an inert declaration of row transitions in arrival order; the host supplies the events. The [stream sink](/docs/projections/sinks) consumes it.
 
 ## Check the plan
 
-A declaration carries its `plan`. `checkPlan` reports every issue it can detect before anything runs. `planHash` is the canonical identity of the plan and serves as the view version.
+A declaration carries its `plan`. `checkPlan` reports every issue it can detect before anything runs. `planHash` is a change-detection identity over the canonical plan, not a security digest or an automatic projection generation.
 
 ```ts
 import { Effect } from "effect";
 import { checkPlan, planHash } from "@streamsy/views";
-import { openOrders } from "./views.ts";
 
 const checked = Effect.gen(function* () {
   const { plan, hash } = yield* checkPlan(openOrders);
@@ -103,67 +104,30 @@ const checked = Effect.gen(function* () {
 
 ```ts
 import { maintainGraph } from "@streamsy/views/engine";
-import { openOrders, orders } from "./views.ts";
+import type { Change } from "@streamsy/views/ir";
 
+const incoming: Change<OrderRow>[] = [
+  {
+    kind: "enter",
+    key: "o-17",
+    after: { orderId: "o-17", customerId: "c-1", total: 25, status: "placed" },
+  },
+];
 const result = maintainGraph({
   plan: openOrders.plan,
-  state: previousState,
   inputs: [{ sourceId: orders.name, changes: incoming }],
 });
 // result.state, result.changes, result.rows
 ```
 
-A maintained view is a projection whose handler runs the engine. The input is the stream the view reads. The handler loads the operator state from a store it owns, runs `maintainGraph` over the batch, saves the new state, and appends the row changes to the state stream that holds the view. The plan hash goes into the projection `params`, so a plan change is a new checkpoint key and rebuilds into a new generation of the rows.
+Pass `result.state` as `state` on the next call. Omitting it starts from empty state. The engine accepts complete-row `enter`, `update`, and `exit` changes; converting domain events to those changes is the application's responsibility.
 
-```ts
-import { Effect } from "effect";
-import { Streams } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
-import { planHash } from "@streamsy/views";
-import { maintainGraph } from "@streamsy/views/engine";
-import { openOrders, orders } from "./views.ts";
-import { OperatorStore, openOrderRows, orderChanges } from "./maintenance.ts";
+## Persisted state and rows
 
-const maintained = Projection.make({
-  id: "shop.open-orders",
-  params: { plan: planHash(openOrders.plan) },
-  inputs: { orders: orderChanges },
-  process: (batch, unit) =>
-    Effect.gen(function* () {
-      const store = yield* OperatorStore;
-      const state = yield* store.load(unit.projectionId);
-      const result = maintainGraph({
-        plan: openOrders.plan,
-        state,
-        inputs: [
-          { sourceId: orders.name, changes: Projection.items(batch).map((entry) => entry.item) },
-        ],
-      });
-      yield* store.save(unit.projectionId, result.state);
-      yield* Streams.append(openOrderRows, result.changes);
-    }),
-});
-```
+For a projection's fold state between passes, use [`Projection.fold` and State](/docs/projections/projections#state). State holds one encoded value per projection key. Persist row sets in application tables through the shared `SqlClient`, with a fused `Projection.make` handler so those writes and the checkpoint share a transaction.
 
-`OperatorStore` is the application's own service. When it writes through the same owner as the checkpoint, for example SQL through the shared `SqlClient`, the operator state, the row changes, and the checkpoint commit together. This is a sketch: the store contract, the ref for the row stream, and the change encoding are the application's to define.
+A host integrating the engine owns the encoding and persistence of operator state, application rows, and any change history it needs. The pure engine does not acquire a database, advance projection checkpoints, or wire itself into a runner. Choose a new projection generation when changing the plan requires rebuilding derived data.
 
-## Persist the view
+## Serving a relation
 
-`ViewStore` is the durable store for rows, operator values, and the history of changes. `memoryLayer()` from `@streamsy/views/store` serves one process. `sqliteLayer` from `@streamsy/views/store/sqlite` runs over an Effect `SqlClient`.
-
-```ts
-import { Effect } from "effect";
-import { ViewStore } from "@streamsy/views/store";
-
-const persist = (commit: MaintenanceCommit) =>
-  Effect.gen(function* () {
-    const store = yield* ViewStore;
-    return yield* store.commit(commit, { keepLastBatches: 100 });
-  });
-```
-
-`commit` writes the rows and the cursor together and refuses a cursor that does not match the stored one. `recover` rebuilds from a checkpoint plus the suffix after it on restart. Retention keeps `keepLastBatches` or `keepForMilliseconds` of history. The full store surface is in the reference.
-
-## Serving a view
-
-A view reaches a client through a serve sink. A state sink publishes its rows, a stream sink publishes its changes, and a document sink publishes one derived value. See [Sinks](/docs/projections/sinks).
+[Sinks](/docs/projections/sinks) declare HTTP contracts over a keyed relation, its changes, or a derived document. The application's handler supplies snapshots, change pages, or document values from its own data.
