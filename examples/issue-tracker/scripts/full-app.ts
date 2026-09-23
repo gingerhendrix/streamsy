@@ -16,6 +16,7 @@ import {
 } from "../server/streams.ts";
 import {
   post,
+  readBoard,
   requestJson,
   scratchDirectory,
   startServer,
@@ -88,9 +89,7 @@ try {
 
   let server = startServer(port, scratch.database);
   await waitForServer(baseUrl);
-  const acme = await requestJson<{
-    rows: Array<{ issueId: string; status: string; assigneeId?: string; labelIds: string[] }>;
-  }>(baseUrl, "/api/workspaces/acme/issues");
+  const acme = await readBoard(baseUrl, "acme");
   assert(
     acme.rows.find((row) => row.issueId === "acme-1")?.status === "done",
     "older sequence overwrote acme-1",
@@ -107,9 +106,12 @@ try {
     acme.rows.find((row) => row.issueId === "acme-1")?.labelIds.length === 0,
     "detached label remained on acme-1",
   );
-  const changes = await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/acme/changes");
+  const changes = await requestJson<unknown[]>(
+    baseUrl,
+    "/feed/workspaces/acme/issue-transitions?offset=-1",
+  );
   const drafts = await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/acme/drafts");
-  assert(changes.rows.length === 4, `expected 4 accepted changes, got ${changes.rows.length}`);
+  assert(changes.length === 4, `expected 4 accepted changes, got ${changes.length}`);
   assert(drafts.rows.length === 1, `expected one draft, got ${drafts.rows.length}`);
 
   await post(baseUrl, "/api/workspaces/live/commands", {
@@ -127,8 +129,7 @@ try {
     status: "done",
   });
   assert(
-    (await requestJson<{ rows: Array<{ status: string }> }>(baseUrl, "/api/workspaces/live/issues"))
-      .rows[0]?.status === "done",
+    (await readBoard(baseUrl, "live")).rows[0]?.status === "done",
     "live commands were not projected",
   );
 
@@ -136,13 +137,11 @@ try {
   server = startServer(port, scratch.database);
   await waitForServer(baseUrl);
   assert(
-    (await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/acme/issues")).rows.length ===
-      2,
+    (await readBoard(baseUrl, "acme")).rows.length === 2,
     "recorded rows did not survive restart",
   );
   assert(
-    (await requestJson<{ rows: Array<{ status: string }> }>(baseUrl, "/api/workspaces/live/issues"))
-      .rows[0]?.status === "done",
+    (await readBoard(baseUrl, "live")).rows[0]?.status === "done",
     "live row did not survive restart",
   );
   assert(

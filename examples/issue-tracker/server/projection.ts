@@ -1,4 +1,4 @@
-import { Projection } from "@streamsy/projection";
+import { Projection, ProjectionFault } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Identifier, IssueRow, foldIssue, type IssueEvent } from "../domain/issue.ts";
@@ -109,7 +109,12 @@ export const issueRows = Projection.family({
           const idColumn =
             table === "projects" ? "project_id" : table === "users" ? "user_id" : "label_id";
           if (!("value" in item)) {
-            if (item.old_value === undefined) break;
+            if (item.old_value === undefined)
+              return yield* new ProjectionFault({
+                phase: "process",
+                reason: "invalid-output",
+                message: `Catalog delete ${item.type}/${item.key} requires old_value`,
+              });
             yield* sql.unsafe(`DELETE FROM ${table} WHERE workspace_id=? AND ${idColumn}=?`, [
               item.old_value.workspaceId,
               item.key,

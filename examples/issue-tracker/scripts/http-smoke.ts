@@ -1,5 +1,6 @@
 import {
   post,
+  readBoard,
   requestJson,
   scratchDirectory,
   startServer,
@@ -29,11 +30,7 @@ try {
     "/api/workspaces/live/status",
   );
   assert(Object.keys(before.offsets).length === 5, "checkpoint does not have five inputs");
-  assert(
-    (await requestJson<{ rows: unknown[] }>(baseUrl, "/api/workspaces/live/issues")).rows.length ===
-      1,
-    "first row missing",
-  );
+  assert((await readBoard(baseUrl, "live")).rows.length === 1, "first row missing");
   await stopServer(server);
   server = startServer(port, scratch.database);
   await waitForServer(baseUrl);
@@ -51,11 +48,7 @@ try {
     issueId: "smoke",
     status: "done",
   });
-  assert(
-    (await requestJson<{ rows: Array<{ status: string }> }>(baseUrl, "/api/workspaces/live/issues"))
-      .rows[0]?.status === "done",
-    "second command missing",
-  );
+  assert((await readBoard(baseUrl, "live")).rows[0]?.status === "done", "second command missing");
   await stopServer(server);
   console.log("smoke:http ok: checkpoint and row resumed, then advanced once");
 } finally {

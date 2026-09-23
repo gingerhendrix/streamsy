@@ -73,6 +73,7 @@
         "@effect/sql-sqlite-bun": "4.0.0-rc.115",
         "@streamsy/core": "workspace:*",
         "@streamsy/projection": "workspace:*",
+        "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "effect": "4.0.0-rc.115",
         "typescript": "catalog:",

@@ -41,6 +41,7 @@
     "test:unit": "bun scripts/test-unit.ts",
     "smoke:hackernews": "bun run --cwd examples/hackernews-newest-stream smoke:http",
     "smoke:issue-tracker": "bun run --cwd examples/issue-tracker smoke:http",
+    "smoke:issue-tracker-serve": "bun run --cwd examples/issue-tracker smoke:serve",
     "app:issue-tracker": "bun run --cwd examples/issue-tracker app:full",
     "test:conformance:memory": "bun run --cwd packages/conformance-tests test:memory",
     "test:conformance:sqlite": "bun run --cwd packages/conformance-tests test:sqlite",

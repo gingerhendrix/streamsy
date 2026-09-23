@@ -10,12 +10,14 @@
     "run:once": "bun run scripts/run-once.ts",
     "test": "bun test test",
     "test:unit": "bun test test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke:serve": "bun run scripts/serve-smoke.ts"
   },
   "dependencies": {
     "@effect/sql-sqlite-bun": "4.0.0-rc.115",
     "@streamsy/core": "workspace:*",
     "@streamsy/projection": "workspace:*",
+    "@streamsy/serve": "workspace:*",
     "@streamsy/storage": "workspace:*",
     "effect": "4.0.0-rc.115",
     "typescript": "catalog:"

@@ -1,31 +1,14 @@
-import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
-import * as Http from "@streamsy/core/http";
-import type { Host } from "@streamsy/projection";
+import { Streams } from "@streamsy/core";
+import type { Host, State } from "@streamsy/projection";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Projection } from "@streamsy/projection";
+import { tracker } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
 import { refs } from "./streams.ts";
-
-export class StreamHttp extends Context.Service<
-  StreamHttp,
-  { readonly fetch: (request: Request) => Promise<Response> }
->()("IssueTracker/StreamHttp") {}
-
-const streamHttpLayer = Layer.effect(
-  StreamHttp,
-  Effect.gen(function* () {
-    const context = yield* Effect.context<StreamsReader | StreamsWriter>();
-    const edge = yield* Effect.acquireRelease(
-      Effect.sync(() => Http.makeEdge({ pathPrefix: "/streams" }, Layer.succeedContext(context))),
-      (value) => Effect.promise(() => value.dispose()),
-    );
-    return StreamHttp.of({ fetch: edge.handler });
-  }),
-);
 
 export const hostLayer = (filename: string) =>
   ProjectionSqlite.layer.pipe(
@@ -37,26 +20,32 @@ export class ApplicationReady extends Context.Service<ApplicationReady, true>()(
 ) {}
 
 export const applicationLayer = (filename: string, workspaces: ReadonlyArray<string> = []) => {
-  const base = streamHttpLayer.pipe(Layer.provideMerge(hostLayer(filename)));
+  const base = hostLayer(filename);
   const ready = Layer.effect(
     ApplicationReady,
     Effect.gen(function* () {
       yield* prepareSchema;
       yield* createInputs(workspaces.flatMap(refs));
       if (workspaces.length > 0) {
-        const fibers = yield* Projection.onChange(
-          issueRows,
-          workspaces.map((workspaceId) => ({ workspaceId })),
-        );
+        const members = workspaces.map((workspaceId) => ({ workspaceId }));
+        // Complete startup replay before accepting HTTP reads.
+        for (const params of members) {
+          yield* Projection.serialized(issueRows.member(params));
+          yield* Projection.serialized(tracker.member(params));
+        }
+        const fibers = [
+          ...(yield* Projection.onChange(issueRows, members)),
+          ...(yield* Projection.onChange(tracker, members)),
+        ];
         yield* Effect.forEach(
           fibers,
           (fiber) =>
             Fiber.await(fiber).pipe(
               Effect.flatMap((exit) =>
                 Exit.isSuccess(exit)
-                  ? Effect.logInfo("issue-rows watcher ended successfully", exit)
+                  ? Effect.logInfo("tracker watcher ended successfully", exit)
                   : !Cause.hasInterruptsOnly(exit.cause)
-                    ? Effect.logError("issue-rows watcher ended", exit)
+                    ? Effect.logError("tracker watcher ended", exit)
                     : Effect.void,
               ),
             ),
@@ -67,7 +56,7 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
     }),
   ).pipe(Layer.provide(base));
   return Layer.effectContext(
-    Effect.context<Host | SqlClient.SqlClient | StreamHttp | ApplicationReady>(),
+    Effect.context<State | Host | SqlClient.SqlClient | ApplicationReady>(),
   ).pipe(Layer.provide(ready.pipe(Layer.provideMerge(base))));
 };
 

@@ -1,3 +1,5 @@
+import { Schema } from "effect";
+import { ProjectBoardCard } from "../domain/outputs.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -64,3 +66,32 @@ export const post = <A>(baseUrl: string, path: string, body: JsonValue) =>
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+
+/** Reconstruct the board by replaying every retained page, starting at -1. */
+export const readBoard = async (baseUrl: string, workspaceId: string) => {
+  const rows = new Map<string, import("../domain/outputs.ts").ProjectBoardCard>();
+  let offset = "-1";
+  for (;;) {
+    const response = await fetch(
+      `${baseUrl}/state/workspaces/${workspaceId}/issues?offset=${offset}`,
+    );
+    if (!response.ok) throw new Error(`board: ${response.status} ${await response.text()}`);
+    const changes = Schema.decodeUnknownSync(
+      Schema.Array(
+        Schema.Struct({
+          key: Schema.String,
+          value: Schema.optionalKey(ProjectBoardCard),
+          headers: Schema.Struct({ operation: Schema.Literals(["upsert", "delete"]) }),
+        }),
+      ),
+    )(await response.json());
+    for (const change of changes) {
+      if (change.headers.operation === "delete") rows.delete(change.key);
+      else if (change.value !== undefined) rows.set(change.key, change.value);
+    }
+    if (response.headers.has("stream-up-to-date")) return { rows: [...rows.values()] };
+    const next = response.headers.get("stream-next-offset");
+    if (next === null || next === offset) throw new Error("board replay made no progress");
+    offset = next;
+  }
+};
