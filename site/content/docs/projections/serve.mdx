@@ -34,7 +34,10 @@ State serves the Durable State change stream without a snapshot. A new client re
 A named `Projection.family` accepts routed stream identities in its output declarations. Pass its bound `outputs` directly to Serve; the family codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
 
 ```ts
+import { Layer, Schema } from "effect";
+import { StreamRoute } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
+import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };
 const numbers = StreamRoute.json("numbers/:seat", { params, schema: Schema.Finite });
@@ -67,6 +70,8 @@ const OutputRoutes = Layer.mergeAll(
 ```
 
 The routed targets supply only ids: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's stream reader and `Projection.State` to the route app. Documents read the persisted value without running the projection; an absent value answers 503. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+
+In a named family, fixed-id outputs and targets using fewer parameters share a stream across matching members, each writing with its own producer id, and Serve exposes that stream at every matching member URL.
 
 For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateRef` codec; deletes may omit `old_value`. No read creates a stream or checkpoint.
 
