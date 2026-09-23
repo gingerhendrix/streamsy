@@ -48,7 +48,8 @@ Declare several with `inputs: { orders, refunds }` and read one slice per name.
 `Projection.State` provides one encoded value per key in the checkpoint transaction.
 `Projection.fold(schema, initial, step)` loads, folds, and saves that value once per pass.
 `Projection.loadState(projection, schema)` reads the typed value as an `Option`.
-`Projection.forget(projection)` deletes state and checkpoint rows and releases the process lock.
+`Projection.forget(projection)` takes the serialized permit, deletes state and checkpoint rows,
+and retires the process lock after its existing callers drain.
 See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
 generation, and retirement rules.
 
@@ -83,6 +84,33 @@ const totals = Projection.stream({
   process: (batch) => Effect.succeed([batch.input.items.reduce((sum, n) => sum + n, 0)]),
 });
 ```
+
+## Outputs
+
+`Projection.outputs({ id, inputs, outputs, process })` declares several pinned outputs.
+Import `Output` from the package root:
+
+- `Output.stream(schema, { stream })` appends typed JSON items. The option is an id
+  or `{ readonly id: string }`; only the id is used, and the declared schema owns encoding.
+- `Output.rows(schema, { key, stream })` appends `Output.upsert(row)` and
+  `Output.remove(key)` changes. The output name is the collection type; the kernel owns no rows table.
+- `Output.value(schema)` declares the fold state. At most one value is allowed.
+
+The handler returns an Effect of `{ state?, <outputName>: [...] }`, with every
+stream/rows output present (use `[]` to skip one). A value uses the reserved
+`state` result key. `Projection.fold(initial, (state, batch, unit) => result)`
+loads that value and runs once per batch; the result may also be an Effect.
+`Projection.each` concatenates keyed arrays returned by each item's Effect.
+The three-argument fused `fold(schema, initial, step)` is unchanged.
+
+Each output has its own sequence. Recovery reprocesses the pinned inputs from
+the previous state and resends all pinned outputs; state and checkpoint commit
+together at settle. Processing must be deterministic. There is no atomicity
+across outputs. Two outputs cannot share a stream or name one of the projection's inputs.
+
+Producer ids are `id/v<version>[/canonicalParamsJson]`, including `/v1`.
+A new version or generation should write to a new event stream.
+See [Outputs](https://streamsy.dev/docs/projections/projections#outputs) for a complete declaration.
 
 ## Choose a host
 
@@ -126,9 +154,9 @@ retries; a fused retry re-reads and may see a longer input range.
   per input in declaration order.
 - Failures are `ProjectionFault` values with a `phase` and a `reason`. Handler
   errors pass through untouched. Underlying failures are available as `cause`.
-  Nothing retries or resets on its own.
+  `run` is single-shot; `follow` retries `storage-failure` with logged backoff.
 - A record is keyed by `id`, `version` (default 1), `generation`, and `params`.
-  Version 1 is omitted from the encoded key so existing records keep their key.
+  Version 1 is omitted from the encoded checkpoint key; producer ids always include it.
   To change inputs or start over, declare a new `generation`; it starts from
   offset zero.
 - Input history after the checkpoint must stay readable. Deleting or
@@ -142,7 +170,9 @@ checkpoint Layer must share the stream Layer graph. Input history, including
 pending pinned ranges, must remain readable.
 
 `follow` returns a caller-scoped fiber and repairs missed wake hints every
-1000 ms by default. It has no default unit cap.
+1000 ms by default. It has no default unit cap. Storage failures retry forever with
+jittered exponential backoff from 200 ms, capped at 30 s; `retry` accepts a `Schedule` override.
+Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
 

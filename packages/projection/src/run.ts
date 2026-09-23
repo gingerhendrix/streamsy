@@ -1,3 +1,4 @@
+import type { Named } from "./outputs.ts";
 import { Effect } from "effect";
 import type { StreamsReader, StreamsWriter } from "@streamsy/core";
 import type { InputMap, Slice } from "./batch.ts";
@@ -73,7 +74,7 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
 
 /** One unit under the strategy the declaration carries. */
 export const pass = <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
   options: RunOptions = {},
 ): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
   projection._tag === "Fused" ? passFused(projection, options) : passStream(projection, options);
@@ -83,7 +84,7 @@ export const pass = <Inputs extends InputMap, O, E, R>(
  * the limit is reached. The trailing empty pass adds nothing to the totals.
  */
 export const run = Effect.fn("Projection.run")(function* <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
   options: RunOptions = {},
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | Host> {
   yield* validateOptions(options);

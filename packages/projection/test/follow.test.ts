@@ -1,16 +1,18 @@
+import { defaultRetry } from "../src/follow.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
 import { expect, test } from "bun:test";
-import { Deferred, Effect, Fiber, Layer, Schema, type Scope } from "effect";
+import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope } from "effect";
 import { TestClock } from "effect/testing";
 import {
   StreamRef,
   Streams,
   StreamsReader,
-  type StreamsWriter,
+  StreamsWriter,
+  TransportFault,
   type Reader,
   type StreamsFault,
 } from "@streamsy/core";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 import { input, output, positives, readAll } from "./support/scenarios.ts";
 
@@ -218,5 +220,199 @@ test("follow rejects invalid options before reading", () =>
           expect(result.failure.reason).toBe("invalid-options");
         }
       }
+    }),
+  ));
+
+for (const point of ["read", "append"] as const) {
+  test(`follow retries a TransportFault on ${point} and retains each item once`, () =>
+    run(
+      Effect.gen(function* () {
+        yield* Streams.create(input);
+        yield* Streams.append(input, [1, 2, 3], { close: true });
+        const reader = yield* StreamsReader;
+        const writer = yield* StreamsWriter;
+        let failures = 0;
+        const lost = new TransportFault({
+          reason: "response",
+          operation: point,
+          message: "lost reply",
+        });
+        const projection = Projection.stream({
+          id: `retry-${point}`,
+          input,
+          output,
+          process: (batch) => Effect.succeed(batch.input.items),
+        });
+        const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
+          Effect.provideService(StreamsReader, {
+            ...reader,
+            read: (id, options) =>
+              Effect.suspend(() => {
+                if (point === "read" && failures++ === 0) return Effect.fail(lost);
+                return reader.read(id, options);
+              }),
+          }),
+          Effect.provideService(StreamsWriter, {
+            ...writer,
+            append: (id, options) =>
+              Effect.suspend(() => {
+                const append = writer.append(id, options);
+                return point === "append" && failures++ === 0
+                  ? append.pipe(Effect.andThen(Effect.fail(lost)))
+                  : append;
+              }),
+          }),
+        );
+        expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+        expect(yield* readAll(output)).toEqual([1, 2, 3]);
+      }),
+    ));
+}
+
+test("follow honours a finite retry budget and run remains single-shot", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      let attempts = 0;
+      const reader = yield* StreamsReader;
+      const broken = {
+        ...reader,
+        read: () =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return Effect.fail(
+              new TransportFault({ reason: "request", operation: "read", message: "offline" }),
+            );
+          }),
+      };
+      const fiber = yield* Projection.follow(positives, { retry: Schedule.recurs(2) }).pipe(
+        Effect.provideService(StreamsReader, broken),
+      );
+      expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
+      expect(attempts).toBe(3);
+      yield* Projection.run(positives).pipe(
+        Effect.provideService(StreamsReader, broken),
+        Effect.result,
+      );
+      expect(attempts).toBe(4);
+    }),
+  ));
+
+test("follow does not retry non-storage faults or handler failures", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(input, [1]);
+      for (const error of [
+        new ProjectionFault({ phase: "process", reason: "invalid-output", message: "invalid" }),
+        "handler-error",
+      ] as const) {
+        let calls = 0;
+        const projection = Projection.make({
+          id: "terminal",
+          input,
+          process: () =>
+            Effect.suspend(() => {
+              calls += 1;
+              return Effect.fail(error);
+            }),
+        });
+        const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(3) });
+        const result = yield* Fiber.join(fiber).pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") expect(result.failure).toBe(error);
+        expect(calls).toBe(1);
+      }
+    }),
+  ));
+
+test("default follow backoff retries a read after the clock advances", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.create(output);
+      yield* Streams.append(input, [7], { close: true });
+      const failed = yield* Deferred.make<void>();
+      let reads = 0;
+      const fiber = yield* withReader(Projection.follow(positives), (reader) => ({
+        read: (id, options) =>
+          Effect.suspend(() => {
+            reads += 1;
+            return reads === 1
+              ? Deferred.succeed(failed, undefined).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new TransportFault({
+                        reason: "request",
+                        operation: "read",
+                        message: "offline",
+                      }),
+                    ),
+                  ),
+                )
+              : reader.read(id, options);
+          }),
+      }));
+      yield* Deferred.await(failed);
+      yield* TestClock.adjust(240);
+      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+      expect(yield* readAll(output)).toEqual([7]);
+    }),
+  ));
+
+test("default retry remains jittered, capped and unbounded after many failures", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const step = yield* Schedule.toStep(defaultRetry);
+      for (let attempt = 0; attempt < 1100; attempt += 1) {
+        const [, delay] = yield* step(attempt, undefined);
+        const millis = Duration.toMillis(delay);
+        expect(millis).toBeLessThanOrEqual(30_000);
+        expect(millis).toBeGreaterThanOrEqual(attempt === 0 ? 160 : 1);
+        if (attempt === 0) expect(millis).toBeLessThanOrEqual(240);
+        if (attempt >= 8) expect(millis).toBeGreaterThanOrEqual(24_000);
+      }
+    }),
+  ));
+
+test("follow resets a finite retry budget after a successful cycle between outages", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(input, [1]);
+      const parked = yield* Deferred.make<void>();
+      let reads = 0;
+      const projection = Projection.stream({
+        id: "separate-outages",
+        input,
+        output,
+        process: (batch) => Effect.succeed(batch.input.items),
+      });
+      const fiber = yield* withReader(
+        Projection.follow(projection, { retry: Schedule.recurs(1) }),
+        (reader) => ({
+          read: (id, options) =>
+            Effect.suspend(() => {
+              reads += 1;
+              return reads === 1 || reads === 4
+                ? Effect.fail(
+                    new TransportFault({
+                      reason: "request",
+                      operation: "read",
+                      message: "one failure per outage",
+                    }),
+                  )
+                : reader.read(id, options);
+            }),
+          readNext: (id, options) =>
+            Deferred.succeed(parked, undefined).pipe(Effect.andThen(reader.readNext(id, options))),
+        }),
+      );
+      yield* Deferred.await(parked);
+      expect(yield* readAll(output)).toEqual([1]);
+      yield* Streams.append(input, [2], { close: true });
+      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+      expect(reads).toBe(6);
+      expect(yield* readAll(output)).toEqual([1, 2]);
     }),
   ));

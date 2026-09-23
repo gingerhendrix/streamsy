@@ -1,4 +1,5 @@
-import { Effect, type Fiber, type Scope } from "effect";
+import type { Named } from "./outputs.ts";
+import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
 import { StreamsReader, ZERO_OFFSET, type StreamRef } from "@streamsy/core";
 import type { InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -9,7 +10,21 @@ import { run, type Host, type Progress } from "./run.ts";
 export interface FollowOptions extends RunOptions {
   /** Upper bound on one wake wait; default 1000. */
   readonly repairIntervalMs?: number;
+  /** Override the forever, capped exponential storage-failure retry. */
+  readonly retry?: Schedule.Schedule<unknown, unknown>;
 }
+
+/** Internal default; the package root exports only follow and its options. */
+export const defaultRetry = Schedule.exponential("200 millis").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
+  ),
+  Schedule.jittered,
+  // Jitter ranges up to 1.2; clamp again so actual waits never exceed 30 s.
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.millis(Math.min(30_000, Duration.toMillis(duration)))),
+  ),
+);
 
 /**
  * One wake hint per input; the response is discarded because the next run is
@@ -76,7 +91,7 @@ const hint = Effect.fn("Projection.wake")(function* (
  * and replaced once per `repairIntervalMs` until an input changes.
  */
 export const follow = Effect.fn("Projection.follow")(function* <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress, E | ProjectionFault>,
@@ -101,6 +116,16 @@ export const follow = Effect.fn("Projection.follow")(function* <Inputs extends I
     Effect.tap((result) => (result.status === "caught-up" ? wake(result) : Effect.yieldNow)),
   );
   return yield* cycle.pipe(
+    Effect.retry({
+      while: (fault) => fault instanceof ProjectionFault && fault.reason === "storage-failure",
+      schedule: (options.retry ?? defaultRetry).pipe(
+        Schedule.tap(({ input }) =>
+          input instanceof ProjectionFault && input.reason === "storage-failure"
+            ? Effect.logWarning("Projection.follow retry", input)
+            : Effect.void,
+        ),
+      ),
+    }),
     Effect.repeat({ while: (result) => result.status !== "source-closed" }),
     Effect.forkScoped,
   );
