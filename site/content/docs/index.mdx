@@ -24,7 +24,7 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 
 - `@streamsy/core`: refs, routes, the `Streams` functions, the protocol, the HTTP program, and the memory Layer.
 - `@streamsy/storage`: SQLite storage for Bun and for Durable Objects.
-- `@streamsy/serve`: the Bun and Cloudflare hosts, and the sink contracts that publish over HTTP.
+- `@streamsy/serve`: HttpRouter routes, Bun and Cloudflare hosts, and action delivery.
 - `@streamsy/projection`: checkpointed projections over one or more streams.
 - `@streamsy/views`: keyed relations, serializable plan IR, and a pure incremental engine.
 

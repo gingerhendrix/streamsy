@@ -69,7 +69,10 @@ function Home() {
             ],
             ["@streamsy/storage", "SQLite storage for Bun and Durable Objects."],
             ["@streamsy/projection", "Checkpointed projections over one or more streams."],
-            ["@streamsy/serve", "Checked serving contracts and an owned Bun HTTP host."],
+            [
+              "@streamsy/serve",
+              "HttpRouter routes, Bun and Cloudflare hosts, and action delivery.",
+            ],
             ["@streamsy/views", "Keyed relations, plan IR, and a pure incremental engine."],
           ].map(([name, detail]) => (
             <div key={name} className="rounded-xl border p-6">

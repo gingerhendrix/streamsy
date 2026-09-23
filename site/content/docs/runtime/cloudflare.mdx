@@ -1,108 +1,40 @@
 ---
 title: Cloudflare
-description: A Worker routes each stream path to a Durable Object by placement, and the object owns the protocol and its SQLite.
+description: Route protocol paths to Durable Objects that own their HttpRouter application and SQLite storage.
 ---
 
-On Cloudflare a Worker routes each stream path to a Durable Object, and the object owns the protocol, the HTTP program, and SQLite storage for every stream placed on it.
-
-The Worker strips the path prefix, gives the stream path to a `Placement`, and forwards the request to the object that placement names. The object builds one Layer for its lifetime and answers every request for its streams from its own SQLite.
-
-## Router
+The Worker placement router forwards each raw protocol path to one Durable Object. The object owns its SQLite, alarm and HttpRouter application.
 
 ```ts
-import { Placement, router } from "@streamsy/serve/cloudflare";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { Http } from "@streamsy/core";
+import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
+import { layerProtocol } from "@streamsy/storage/durable-object";
 
 interface Env {
   readonly STREAMS: DurableObjectNamespace;
 }
-
+export class StreamsObject extends StreamsyObject.make<Env>({
+  app: Http.routes({ prefix: "/streams" }),
+  layer: (state) => layerProtocol({ client: { storage: state.storage } }),
+}) {}
 export default router<Env>({
-  pathPrefix: "/streams",
-  placement: Placement.byStream(),
+  prefix: "/streams",
   namespace: (env) => env.STREAMS,
+  placement: Placement.byKey(() => "streams"),
 });
 ```
 
-An empty placement key answers `400 Invalid placement key`. A placement function that throws answers `500`.
+Each object lazily acquires one successful storage context and builds `HttpRouter.toWebHandler` once for that acquisition. Concurrent accesses share it. A failed acquisition closes its attempted scope, returns 503 with `retry-after: 1`, and can retry on the next access. The compiled handler and its context share ownership. Object eviction has no universal asynchronous disposal hook. Request logging is disabled in this host.
 
-## Placement
+The host installs global mutation middleware around the application. PUT, POST and DELETE reconcile the alarm in an uninterruptible finalizer, including after an interrupted committed mutation. A reconciliation failure cannot replace a committed response. Defects return 500 with the common security headers. The platform alarm calls the expiry sweep directly; no URL or forged request header can invoke it. Sweep failures are left to platform retry and retain the healthy context.
 
-`Placement.byStream()` is the default and gives every stream its own object. `Placement.byKey(fn)` groups streams by a key such as the first path segment. `Placement.byRoute(rules)` names the object from `StreamRoute` parameters.
+## Placement and limits
 
-```ts
-import { Placement, rule } from "@streamsy/serve/cloudflare";
-import { orderEvents, orderIndex } from "./routes.ts";
+`Placement.byStream()` is the default. `Placement.byKey(fn)` groups stream paths. `Placement.byRoute([rule({ route, owner })])` decodes family params before selecting an owner. The first matching rule wins. Empty or unmatched owner keys return 400; throwing placement functions return 500.
 
-export const placement = Placement.byRoute([
-  rule({ route: orderEvents, owner: ({ orderId }) => `order:${orderId}` }),
-  rule({ route: orderIndex, owner: ({ orderId }) => `order:${orderId}` }),
-]);
-```
+Fork source and child must share an object. Placement determines the transaction owner, and must remain stable while data lives under its object names. No cross-object writes are added.
 
-The first matching rule names the object. A path that no rule matches yields an empty key and the `400` above.
+The Worker helper understands protocol URLs only. Serve routes inside an object require application-written Worker routing to select that object; placement does not automatically infer an output owner from a Serve URL. Authenticate before forwarding, and protect every public path to private data.
 
-Placement decides atomicity and forks. One object is one owner with one transaction scope. Keep the mapping stable, because stored data lives under the object name the function returned when it was written.
-
-## The object
-
-The host is two effects and a Layer: `fetch(options)`, `alarm`, and `alarmLayer(state)`. `StreamsyObject` wraps them as a class for wrangler.
-
-```ts
-import type { Layer } from "effect";
-import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { StreamsyObject, type ObjectOptions } from "@streamsy/serve/cloudflare";
-import { layerProtocol } from "@streamsy/storage/durable-object";
-
-export class StreamsObject extends StreamsyObject<Env> {
-  override layer(): Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault> {
-    return layerProtocol({ client: { storage: this.ctx.storage } });
-  }
-
-  override options(): ObjectOptions {
-    return { pathPrefix: "/streams" };
-  }
-}
-```
-
-Each in-memory object builds its Layer once and shares it between `fetch` and `alarm`. If the build fails, the object answers `503` with `retry-after: 1` and tries again on the next request. The `alarm` effect runs the expiry sweep. A missed alarm is repaired by the next access.
-
-Defaults: the long-poll timeout is 25 s, an SSE connection ends after 60 s, and the request body limit is 1 MiB. `ObjectOptions` is the same options type as `Http.app`.
-
-## Forks
-
-A source and its child must share an object. Use `byKey` or `byRoute` so a fork family lands on one object. A source in another object is not found.
-
-## Projections in the object
-
-Compose the projection SQLite Layer over the same storage Layer, and keep one runtime for the object lifetime. Run a pass from the `alarm` effect.
-
-```ts
-import { Layer } from "effect";
-import { Protocol } from "@streamsy/core";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
-import * as ProjectionSqlite from "@streamsy/projection/sqlite";
-
-const objectLayer = (
-  storage: DurableObjectStorage.DurableObjectStorageOptions["client"]["storage"],
-) =>
-  Layer.merge(Protocol.layer(), ProjectionSqlite.layer).pipe(
-    Layer.provideMerge(DurableObjectStorage.layer({ client: { storage } })),
-  );
-```
-
-A fused handler's `Streams.append` and SQL through the object's client commit with the checkpoint because all three use the storage Layer's one `CommitBoundary`. A long-lived `follow` fiber is the wrong shape for a Durable Object; use request-triggered `run` plus alarm-triggered `run`. With `Placement.byRoute`, every route of a projection family must map to the same owner; a fused commit requires its inputs, output, and checkpoint in that one object.
-
-## Local run
-
-`alchemy dev` runs the Worker and the object on your machine. See [Alchemy](/docs/runtime/alchemy). Miniflare remains the runner for the conformance harness in the repository.
-
-## Which form
-
-| Form     | Entry                        | Use                                                           |
-| -------- | ---------------------------- | ------------------------------------------------------------- |
-| Alchemy  | `@streamsy/serve/alchemy`    | an Alchemy stack; the object and the Worker are Effect values |
-| wrangler | `@streamsy/serve/cloudflare` | `StreamsyObject` as a class plus the `ExportedHandler` router |
-
-The upstream [`server-cloudflare`](https://github.com/durable-streams/durable-streams/tree/main/packages/server-cloudflare) package hosts the same protocol on Durable Objects without Effect.
-
-Neither form carries authorization. Authenticate in the Worker before the router, and derive the stream path from the authenticated identity.
+Projection work runs in an application request middleware or a platform alarm. Use the same storage/SqlClient Layer as its checkpoints and writes. A long-lived follow fiber is not the object hosting model. See [Alchemy](/docs/runtime/alchemy) for the Effect-native host.

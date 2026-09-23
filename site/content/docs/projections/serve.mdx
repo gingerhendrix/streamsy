@@ -1,0 +1,83 @@
+---
+title: Serve
+description: Publish stream families, Durable State changes and documents with Effect HttpRouter route layers.
+---
+
+`Serve.stream`, `Serve.state` and `Serve.document` return route Layers. Join them with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`. See [HTTP](/docs/runtime/http) for hosting.
+
+```ts
+import { Layer, Schema } from "effect";
+import { Http, StreamRoute } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+
+const events = StreamRoute.json("events/:seat", {
+  params: { seat: Schema.String },
+  schema: Schema.String,
+});
+const cards = StreamRoute.state("cards/:seat", {
+  params: { seat: Schema.String },
+  collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
+});
+const App = Layer.mergeAll(
+  Http.routes({ prefix: "/streams" }),
+  Serve.stream(events, "/feed/:seat"),
+  Serve.state(cards, "/state/:seat"),
+);
+```
+
+The family's Schema codecs decode path parameters. Literal route parameters must equal the family parameters; widened paths are checked at registration. Invalid values get 400, and unmatched paths get the router's 404. Each Serve path owns every method: GET and HEAD read, other methods get 405 with `allow: GET, HEAD`. A Serve URL beneath the protocol prefix is not a second writable id for that stream. Duplicate route shapes fail the Layer build.
+
+State serves the Durable State change stream without a snapshot. A new client reads from `-1`. On `replay-from-start`, clear local rows and replay from `-1`. Replay requires retained history and grows with it. `x-streamsy-state-reset: snapshot` gets 400; no snapshot reset headers are exported.
+
+## Auth and per-request params
+
+Provide `HttpRouter.middleware` to the route Layer. A `params` Effect on stream or state can read the identity service that middleware supplies:
+
+```ts
+const Mine = Serve.stream(events, "/me", {
+  params: Effect.map(CurrentSeat, (seat) => ({ seat: seat.id })),
+}).pipe(Layer.provide(SeatAuth.layer));
+```
+
+`SeatAuth` declares that it provides `CurrentSeat`, checks the token, and either answers 401 or provides the service around its handler. The params Effect replaces the complete parameter set. Its typed failures remain router request errors for application middleware. A runnable host must satisfy the identity requirement. Protect raw protocol routes too if they expose private data. An on-demand projection run belongs in application middleware.
+
+## Documents
+
+A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.document(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail with `ValueUnavailable` and return 503.
+
+## Browser contract and CORS
+
+Import header constants and `decodePublicError` from `@streamsy/serve/contract`; it loads neither Effect nor core. The server's `PublicErrorSchema` is on the package root. Errors distinguish invalid params, incompatible protocol/contract, failed resume, unavailable data and document encoding failures. State and stream errors use replay recovery; documents use refetch.
+
+A cross-origin app must configure CORS for request contract headers and expose response cursors:
+
+```ts
+const Cors = HttpRouter.cors({
+  allowedOrigins: ["https://app.example.com"],
+  allowedMethods: ["GET", "HEAD", "OPTIONS"],
+  allowedHeaders: [
+    "authorization",
+    "x-streamsy-state-version",
+    "x-streamsy-state-contract",
+    "x-streamsy-stream-version",
+    "x-streamsy-stream-contract",
+    "x-streamsy-document-contract",
+  ],
+  exposedHeaders: [
+    "stream-next-offset",
+    "stream-cursor",
+    "stream-up-to-date",
+    "etag",
+    "x-streamsy-state-version",
+    "x-streamsy-state-contract",
+    "x-streamsy-stream-version",
+    "x-streamsy-stream-contract",
+    "x-streamsy-document-contract",
+  ],
+});
+const BrowserApp = Layer.mergeAll(App, Cors);
+```
+
+Fingerprints include the selected stream member and state collection names/keys. `options.contract` supplies an explicit revision when Schema or resolver behavior changes without metadata changing. Fingerprints do not hash functions or replace authorization.
+
+The current protocol uses raw encoded URL ids; Serve resolves decoded family params. Spaces and non-ASCII params can therefore identify different raw protocol ids. Prefer canonical URL-safe family segments until the core URL/id policy is unified.

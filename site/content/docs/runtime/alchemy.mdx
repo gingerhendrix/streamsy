@@ -1,127 +1,38 @@
 ---
 title: Alchemy
-description: Declare the Durable Object and the Worker as an Alchemy stack, run it locally, and deploy it.
+description: Compose an Effect-native Durable Object application in its instance scope.
 ---
 
-An Alchemy stack declares a Durable Object whose runtime builds the Streamsy protocol over its own SQLite, and a Worker whose `fetch` routes stream paths to it. `alchemy dev` runs both on your machine.
-
-An Alchemy resource has two phases. The outer generator is construction. It runs at `alchemy plan`, `alchemy deploy`, `alchemy dev`, and cold start. The inner effects are runtime, and they run per request. Nothing in the outer phase touches storage.
-
-## The object
+Alchemy separates construction from runtime. The outer generator declares resources; storage acquisition belongs to the inner instance runtime. `objectHandlers` builds the same router application as the Cloudflare class host, through Effect's native `HttpRouter.toHttpEffect`.
 
 ```ts
-// src/streams.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
-import * as StreamsyObject from "@streamsy/serve/alchemy";
-import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { Http } from "@streamsy/core";
+import * as Host from "@streamsy/serve/alchemy";
+import { layerProtocol } from "@streamsy/storage/durable-object";
 
-export default class Streams extends Cloudflare.DurableObject<Streams>()(
+export class Streams extends Cloudflare.DurableObject<Streams>()(
   "Streams",
   Effect.gen(function* () {
-    // Construction: once per object instance.
     const state = yield* Cloudflare.DurableObjectState;
-
-    return Effect.gen(function* () {
-      // Runtime: build the protocol over this object's SQLite, in the instance scope.
-      const services = yield* Layer.build(
-        DurableObjectStorage.layerProtocol({ client: { storage: state.raw.storage } }).pipe(
-          Layer.provideMerge(StreamsyObject.alarmLayer(state)),
+    return Effect.suspend(() =>
+      Host.objectHandlers({
+        app: Http.routes({ prefix: "/streams" }),
+        layer: Layer.mergeAll(
+          layerProtocol({ client: { storage: state.raw.storage } }),
+          Host.alarmLayer(state.raw.storage),
         ),
-      );
-
-      return {
-        fetch: StreamsyObject.fetch({ pathPrefix: "/streams" }).pipe(Effect.provide(services)),
-        alarm: () => StreamsyObject.alarm.pipe(Effect.provide(services), Effect.orDie),
-      };
-    });
+      }),
+    );
   }),
 ) {}
 ```
 
-The Layer is the same `layerProtocol` the [Storage](/docs/runtime/storage) page shows. `alarm` is the expiry sweep, called as an effect. `Effect.orDie` is there because a `StorageFault` in a sweep is a defect for the platform to retry.
+The helper shares one successful acquisition across fetch and alarm, closes failed attempts before retry, and releases the context when the instance scope closes. It installs mutation reconciliation and defect mapping through the common object middleware. Alarms retain failures for platform retry. The native helper installs no request logger.
 
-A projection inside the object merges `ProjectionSqlite.layer` from `@streamsy/projection/sqlite` over the same storage value and runs a pass from the same `alarm` effect, before or after the sweep. See [Cloudflare](/docs/runtime/cloudflare).
+The Worker yields `Streams` during construction to obtain its namespace handle. Its fetch uses `Host.router({ objects, prefix: "/streams", placement: Host.Placement.byKey(...) })`. That router is an HttpEffect, so authentication can precede it without Web conversion helpers. The hosted source fixture in this repository proves the complete composition.
 
-## The Worker
+The placement helper routes protocol paths only. An application hosting Serve URLs inside an object must supply their Worker routing. Forks and transactional writes stay inside one object. See [Cloudflare](/docs/runtime/cloudflare) for placement and lifecycle details, and [Serve](/docs/projections/serve) for route composition and auth.
 
-```ts
-// src/api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import { Effect } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Placement, router } from "@streamsy/serve/alchemy";
-import Streams from "./streams.ts";
-import { authenticate } from "./auth.ts";
-
-export default Cloudflare.Worker(
-  "Api",
-  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
-  Effect.gen(function* () {
-    // Construction: yielding the class registers the namespace and returns its handle.
-    const objects = yield* Streams;
-    const streams = router({
-      objects,
-      pathPrefix: "/streams",
-      placement: Placement.byKey((path) => path.split("/", 1)[0] ?? ""),
-    });
-
-    return {
-      fetch: Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const identity = yield* authenticate(request);
-        if (!identity) return HttpServerResponse.empty({ status: 401 });
-        return yield* streams;
-      }),
-    };
-  }),
-);
-```
-
-The router is an `HttpEffect`, so it sits inside your own `fetch` after authentication. It strips the prefix, applies the placement, and forwards the request to the named object. `Placement.byRoute` names the object from `StreamRoute` parameters; see [Cloudflare](/docs/runtime/cloudflare).
-
-## The stack
-
-```ts
-// alchemy.run.ts
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import { Effect } from "effect";
-import Api from "./src/api.ts";
-
-export default Alchemy.Stack(
-  "streamsy-app",
-  { providers: Cloudflare.providers(), state: Cloudflare.state() },
-  Effect.gen(function* () {
-    const api = yield* Api;
-    return { url: api.url };
-  }),
-);
-```
-
-There is no `env`, no `className`, and no `dist`. The object is part of the Worker because the Worker's constructor yielded it, and Alchemy bundles the entry.
-
-```bash
-alchemy dev
-alchemy deploy
-alchemy destroy
-```
-
-The stack pins `alchemy` at `2.0.0-beta.76`.
-
-## A remote client
-
-Point the fetch Layer at the Worker URL with both capabilities asserted, because a Streamsy host supports them.
-
-```ts
-import { Layer } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import * as Fetch from "@streamsy/core/fetch";
-
-export const remote = Fetch.layer({
-  baseUrl: "https://streamsy-app.example.workers.dev/streams",
-  capabilities: { expectedOffset: true, producer: true },
-}).pipe(Layer.provide(FetchHttpClient.layer));
-```
-
-For the wrangler form of the same host, see [Cloudflare](/docs/runtime/cloudflare).
+A remote client uses `@streamsy/core/fetch` with the Worker's protocol prefix as `baseUrl`. The pinned Alchemy version is `2.0.0-beta.76`. Stack declaration and local checks do not deploy anything.

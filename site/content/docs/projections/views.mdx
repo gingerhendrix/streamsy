@@ -82,7 +82,7 @@ export const ordersForCustomer = defineView({
 });
 ```
 
-`changes(relation)` declares a relation's change stream in arrival order. A [stream sink](/docs/projections/sinks) publishes it, and the host supplies the events.
+`changes(relation)` declares a relation's change stream in arrival order. A [stream sink](/docs/projections/serve) publishes it, and the host supplies the events.
 
 ## Check the plan
 
@@ -130,4 +130,4 @@ A host integrating the engine owns the encoding and persistence of operator stat
 
 ## Serving a relation
 
-[Sinks](/docs/projections/sinks) declare HTTP contracts over a keyed relation, its changes, or a derived document. The application's handler supplies snapshots, change pages, or document values from its own data.
+[Sinks](/docs/projections/serve) declare HTTP contracts over a keyed relation, its changes, or a derived document. The application's handler supplies snapshots, change pages, or document values from its own data.

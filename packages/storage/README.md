@@ -26,17 +26,18 @@ exports `layer` over a `SqlClient` you supply, plus `CommitBoundary`.
 ## Serve a SQLite-backed host on Bun
 
 ```ts
-import { Effect } from "effect";
+import { Layer } from "effect";
+import { HttpRouter } from "effect/unstable/http";
+import { BunRuntime } from "@effect/platform-bun";
+import { Http } from "@streamsy/core";
+import { listener } from "@streamsy/serve/bun";
 import { layerProtocol } from "@streamsy/storage/bun";
-import { start } from "@streamsy/serve/bun";
 
-const host = await Effect.runPromise(
-  start({
-    layer: layerProtocol({ client: { filename: "./streamsy.sqlite" } }),
-    port: 3000,
-  }),
+const Server = HttpRouter.serve(Http.routes({ prefix: "/streams" })).pipe(
+  Layer.provide(layerProtocol({ client: { filename: "./streams.sqlite" } })),
+  Layer.provide(listener({ port: 3000 })),
 );
-await Effect.runPromise(host.stop);
+BunRuntime.runMain(Layer.launch(Server));
 ```
 
 ## Commit your SQL with a stream write

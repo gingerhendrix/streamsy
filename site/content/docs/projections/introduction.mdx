@@ -33,7 +33,7 @@ A state stream is a projection of the facts. A rebuild from the facts writes a n
 
 ## Serve sinks
 
-A serve sink is an HTTP contract that publishes a relation, its changes, a document, or an external effect; see [Sinks](/docs/projections/sinks). A projection writes to streams and services, and a serve sink publishes what those hold.
+A serve sink is an HTTP contract that publishes a relation, its changes, a document, or an external effect; see [Sinks](/docs/projections/serve). A projection writes to streams and services, and a serve sink publishes what those hold.
 
 ## A minimal projection
 
@@ -68,5 +68,5 @@ One run over `layerMemory()` from `@streamsy/projection/memory` yields `[2, 4, 6
 
 - [Projections](/docs/projections/projections): define, run, follow, and recover a projection.
 - [Views](/docs/projections/views): declare a keyed relation and maintain its rows.
-- [Sinks](/docs/projections/sinks): publish a relation over HTTP.
+- [Sinks](/docs/projections/serve): publish a relation over HTTP.
 - [Action sink](/docs/projections/action-sink): deliver an external effect at least once.
