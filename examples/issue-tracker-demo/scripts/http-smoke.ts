@@ -132,7 +132,12 @@ function findEvent(events: StateEvent[], type: string, key: string, operation: s
 const startServer = () =>
   Bun.spawn(["bun", "server/index.ts"], {
     cwd: packageDir,
-    env: { ...process.env, PORT: String(port), ISSUE_TRACKER_DB: databasePath },
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      PORT: String(port),
+      ISSUE_TRACKER_DB: databasePath,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -362,9 +367,25 @@ try {
   const restartIssueId = restartIssue.issue?.id;
   assert(restartIssueId, "restart fixture should create an issue");
 
+  // A browser normally has a parked read when the server stops. The listener's
+  // drain interruption must still close SQLite before the process exits.
+  let settled = false;
+  const parked = fetch(`${restartStreamUrl}?offset=now&live=long-poll`).then((response) => {
+    settled = true;
+    return response;
+  });
+  await Bun.sleep(250);
+  assert(!settled, "shutdown probe should have a parked long poll");
   server.kill();
-  await server.exited;
+  assert((await server.exited) === 0, "parked-read shutdown should exit successfully");
+  const interrupted = await parked;
+  assert(interrupted.status === 503, `shutdown long-poll status ${interrupted.status}`);
+  await interrupted.text();
+  assert(!(await Bun.file(`${databasePath}-wal`).exists()), "shutdown should close SQLite WAL");
+  assert(!(await Bun.file(`${databasePath}-shm`).exists()), "shutdown should close SQLite SHM");
+  const stoppedStderr = await new Response(server.stderr).text();
   server = startServer();
+  assert(stoppedStderr.trim() === "", `shutdown wrote to stderr: ${stoppedStderr}`);
   await waitForServer();
 
   const afterRestart = await readStream(restartStreamUrl);

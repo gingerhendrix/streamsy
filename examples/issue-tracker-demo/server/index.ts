@@ -1,7 +1,7 @@
 import index from "../public/index.html";
 import { BunHttpServer } from "@effect/platform-bun";
 import * as Http from "@streamsy/core/http";
-import { Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import {
   isDevelopment,
@@ -83,17 +83,26 @@ console.log(
 
 let shuttingDown: Promise<void> | undefined;
 function shutdown(): Promise<void> {
-  if (shuttingDown) return shuttingDown;
-  shuttingDown = (async () => {
-    await httpRuntime.dispose();
-    await runtime.dispose();
-  })();
-  return shuttingDown;
+  return (shuttingDown ??= Effect.runPromise(
+    httpRuntime.disposeEffect.pipe(
+      // Storage must close even when the listener's drain interrupts a request.
+      Effect.ensuring(runtime.disposeEffect),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause),
+      ),
+    ),
+  ));
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
-    void shutdown().finally(() => process.exit(0));
+    void shutdown().then(
+      () => process.exit(0),
+      (error) => {
+        console.error(error);
+        process.exit(1);
+      },
+    );
   });
 }
 

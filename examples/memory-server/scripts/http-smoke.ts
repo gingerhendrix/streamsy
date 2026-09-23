@@ -103,7 +103,7 @@ function startServer() {
 
 async function stopServer(server: DemoProcess): Promise<void> {
   server.kill();
-  await server.exited.catch(() => undefined);
+  assert((await server.exited) === 0, "server should exit successfully");
 
   const stdout = await new Response(server.stdout).text();
   const stderr = await new Response(server.stderr).text();
@@ -116,6 +116,11 @@ let server = startServer();
 
 try {
   await waitForServer();
+  for (const host of ["127.0.0.1", "[::1]"]) {
+    const response = await fetch(`http://${host}:${port}/`);
+    assert(response.status === 400, `${host} should reach the protocol listener`);
+    await response.text();
+  }
 
   const createResponse = await request(streamUrl, {
     method: "PUT",
@@ -180,7 +185,17 @@ try {
   );
   assert(sseText.includes('"upToDate":true'), "SSE control should mark upToDate");
 
+  let settled = false;
+  const parked = fetch(`${streamUrl}?offset=now&live=long-poll`).then((response) => {
+    settled = true;
+    return response;
+  });
+  await Bun.sleep(250);
+  assert(!settled, "shutdown probe should have a parked long poll");
   await stopServer(server);
+  const interrupted = await parked;
+  assert(interrupted.status === 503, `shutdown long-poll status ${interrupted.status}`);
+  await interrupted.text();
   server = startServer();
   await waitForServer();
 

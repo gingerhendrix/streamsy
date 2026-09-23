@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/async-function -- This executable owns process shutdown and the ManagedRuntime boundary. */
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { listener } from "@streamsy/serve/bun";
 import {
@@ -42,10 +42,22 @@ await runtime.runPromise(Effect.void);
 
 let shuttingDown: Promise<void> | undefined;
 export function shutdown(): Promise<void> {
-  return (shuttingDown ??= runtime.dispose());
+  return (shuttingDown ??= Effect.runPromise(
+    runtime.disposeEffect.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause),
+      ),
+    ),
+  ));
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
-    void shutdown().finally(() => process.exit(0));
+    void shutdown().then(
+      () => process.exit(0),
+      (error) => {
+        console.error(error);
+        process.exit(1);
+      },
+    );
   });
 }
