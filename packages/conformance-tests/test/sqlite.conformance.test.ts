@@ -2,17 +2,17 @@
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect } from "effect";
-import { start, type Host } from "@streamsy/serve/bun";
+import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 import * as SqlStorage from "@streamsy/storage/bun";
 
-let host: Host | undefined;
+let host: TestHost | undefined;
 describe("Effect SQLite Bun host", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {
     const scratch = process.env.STREAMSY_STORAGE_SCRATCH ?? "/tmp";
     const filename = `${scratch}/official-sqlite-conformance-${process.pid}-${crypto.randomUUID()}.sqlite`;
     host = await Effect.runPromise(
-      start({
+      testHost({
         layer: SqlStorage.layerProtocol({
           client: { filename },
           longPollTimeoutMs: 1_500,

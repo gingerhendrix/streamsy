@@ -5,18 +5,18 @@ import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { Streams } from "@streamsy/core";
 import * as Fetch from "@streamsy/core/fetch";
-import { start, type Host } from "@streamsy/serve/bun";
+import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 
-let backend: Host | undefined;
-let gateway: Host | undefined;
+let backend: TestHost | undefined;
+let gateway: TestHost | undefined;
 describe("Official conformance through Effect Fetch", () => {
   const config = { baseUrl: "" };
   beforeAll(async () => {
     backend = await Effect.runPromise(
-      start({ layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }), port: 0 }),
+      testHost({ layer: Streams.layerMemory({ longPollTimeoutMs: 1500 }), port: 0 }),
     );
     gateway = await Effect.runPromise(
-      start({
+      testHost({
         layer: Fetch.layer({
           baseUrl: new URL("/streams", backend.url).href,
           capabilities: { expectedOffset: true, producer: true },

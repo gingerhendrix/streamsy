@@ -4,7 +4,8 @@
     "types": ["bun"],
     "paths": {
       "@streamsy/serve/alchemy": ["../packages/serve/dist/alchemy.d.ts"],
-      "@streamsy/storage/durable-object": ["../packages/storage/dist/durable-object.d.ts"]
+      "@streamsy/storage/durable-object": ["../packages/storage/dist/durable-object.d.ts"],
+      "@streamsy/core": ["../packages/core/dist/index.d.ts"]
     },
     "noEmit": true
   },

@@ -192,6 +192,6 @@ export const layer = (options: BunStorageOptions) => {
   );
 };
 
-/** Complete persistent protocol Layer for the scoped `@streamsy/serve/bun` host. */
+/** Complete persistent protocol Layer for an HttpRouter application. */
 export const layerProtocol = (options: BunProtocolOptions) =>
   Protocol.layer(options).pipe(Layer.provideMerge(layer(options)));
