@@ -99,7 +99,7 @@ row that leaves the newest set during downtime stays in the served rows for good
 and remains visible on the page. With live HN, most restarts are expected to cause
 this as new stories arrive (an expectation, not a measured restart rate).
 The restart smoke keeps membership fixed across downtime. The follow-up is
-**poller membership recovery (review-batch-d2.md finding 2, option b)**: put the
+**poller membership recovery**: put the
 full newest id set in each source batch, retain known ids in checkpointed
 `Output.value` state, and emit removes for departed ids.
 
