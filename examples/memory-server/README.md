@@ -87,10 +87,9 @@ values are opaque: copy the value returned by the server.
 
 ## How it works
 
-`src/index.ts` gives `Http.makeEdge` one `Streams.layerMemory()` and passes the
-resulting web handler to `Bun.serve`. The 60-second Bun idle timeout allows the
-protocol's 30-second long poll to complete. Shutdown disposes the edge before
-stopping the server.
+`HttpRouter.serve(Http.routes())` runs with one `Streams.layerMemory()` and a
+scoped Bun listener. The 60-second idle timeout allows a 30-second protocol long
+poll to complete. Shutdown disposes the runtime, closing the listener and store.
 
 ## Verify
 

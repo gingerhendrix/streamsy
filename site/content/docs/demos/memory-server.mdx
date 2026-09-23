@@ -50,10 +50,9 @@ shows the expected status, headers, and body for every step. The
 
 ## How it works
 
-The server passes `Streams.layerMemory()` to `Http.makeEdge`, then gives the
-edge's web handler to `Bun.serve`. Bun's idle timeout is 60 seconds so a
-30-second protocol long poll is not cut short. On shutdown the server disposes
-the edge and releases its Effect runtime.
+`HttpRouter.serve(Http.routes())` runs with one `Streams.layerMemory()` and a
+scoped Bun listener. The 60-second idle timeout allows a 30-second protocol long
+poll to complete. Shutdown disposes the runtime, closing the listener and store.
 
 Run the offline proof with:
 

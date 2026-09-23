@@ -31,7 +31,7 @@ export const storage = BunStorage.layerProtocol({ client: { filename: "./streams
 
 The file is opened in WAL mode with the driver busy timeout at zero. Streamsy retries a busy transaction itself with a bounded yielding delay, so the event loop is not blocked while it waits.
 
-`layerProtocol` keeps the SQL client private. `BunStorage.layer` exposes the `SqlClient` and the `CommitBoundary` beside `Storage`, for an application that commits its own tables with a stream mutation. Put `Protocol.layer()` over it yourself in that case.
+`layerProtocol` exposes `SqlClient`, `CommitBoundary`, `Storage`, SQL reactivity, and the protocol reader and writer. Application SQL can share its transaction with stream mutations. `BunStorage.layer` exposes the storage services without the protocol reader and writer.
 
 The common shape is one process. The listener, a projection, and a drain run as Layers in one `Layer.launch` graph over one storage Layer value. See [HTTP](/docs/runtime/http).
 

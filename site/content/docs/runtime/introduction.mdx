@@ -24,7 +24,7 @@ A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch`
 
 ## How the services fit
 
-`Storage` is the backend. `Protocol.layer` sits over it and supplies `StreamsReader` and `StreamsWriter`, which every `Streams` function needs. `Streams.layerMemory` and each `layerProtocol` entry compose both in one call. `Http.app` is the HTTP program over those two services, and the fetch Layer supplies the same two services from a remote host.
+`Storage` is the backend. `Protocol.layer` sits over it and supplies `StreamsReader` and `StreamsWriter`, which every `Streams` function needs. `Streams.layerMemory` and each `layerProtocol` entry compose both in one call. `Http.routes` registers the HTTP program over those two services, and the fetch Layer supplies the same two services from a remote host.
 
 | Layer                                     | Persists              | Use                               | Page                                   |
 | ----------------------------------------- | --------------------- | --------------------------------- | -------------------------------------- |
@@ -64,6 +64,6 @@ Ids on different backends must differ by their segments, which the route templat
 ## Pages
 
 - [Storage](/docs/runtime/storage): memory, Bun SQLite, and Durable Object SQLite.
-- [HTTP](/docs/runtime/http): `Http.app`, the Bun server, and the fetch Layer.
+- [HTTP](/docs/runtime/http): `Http.routes`, scoped listeners, and the fetch Layer.
 - [Alchemy](/docs/runtime/alchemy): the Cloudflare stack in TypeScript.
 - [Cloudflare](/docs/runtime/cloudflare): the Worker, placement, and the Durable Object.

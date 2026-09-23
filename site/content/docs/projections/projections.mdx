@@ -77,11 +77,11 @@ const tracker = Projection.outputs({
 });
 ```
 
-The two-argument `fold` runs once per batch and returns `{ state, <outputName>: [...] }`, synchronously or in an Effect. A raw handler returns the same record in an Effect. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output.
+The two-argument `fold` runs once per batch and returns `{ state?, <outputName>: [...] }`, synchronously or in an Effect. A raw handler returns the same record in an Effect. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output. A value output requires `state` and persists through `Projection.State`.
 
 Each output has its own sequence. An empty output gets no append and consumes no sequence. Recovery reprocesses the pinned inputs from the state before the unit, resends each pinned output in declaration order, and saves the new state with the checkpoint only after every append settles. `process` must be deterministic on those inputs and state. There is no atomicity across outputs, and two outputs may not name the same stream or one of the projection's inputs.
 
-The producer id always includes the version: `id/v<version>[/canonicalParamsJson]`, including version 1. A new version or generation should write to a new event stream. Named outputs do not add cross-partition transactional writes, dynamic fan-in, or keyed fan-out. Per-item identity still depends on the input batch; `limit: 1` limits units, not items.
+The producer id always includes the version: `id/v<version>[/canonicalParamsJson]`, including version 1. A new version or generation should write to a new event stream. Named outputs do not add cross-partition transactional writes, dynamic fan-in, or keyed fan-out. Per-item identity still depends on the input batch; `limit: 1` limits units, not items. Use a source event identity for an item-stable external idempotency key.
 
 ## Running
 
@@ -211,7 +211,7 @@ The package keeps no member list, so `onChange` takes an explicit fixed member a
 
 Use `Projection.forget(member)` when a member is retired, after stopping its live triggers; see [State](#state).
 
-An unknown member is one whose input stream is absent. A served family route must answer 404 and create neither the member's streams nor its checkpoint. See the complete [issue tracker projection](/docs/demos/issue-tracker).
+Serve reads outputs without checking inputs. An initial read of an absent output stream answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Reads create no stream, checkpoint, or state row. Without on-demand run middleware, a member that never ran keeps answering 503 on its document until it runs. See the complete [issue tracker projection](/docs/demos/issue-tracker).
 
 ## State
 

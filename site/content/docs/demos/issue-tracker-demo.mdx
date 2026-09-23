@@ -36,7 +36,9 @@ the same SQLite file.
 
 ## The transaction recipe
 
-One managed Effect runtime owns the stream services and the `/streams` edge.
+`HttpRouter.serve(Http.routes({ prefix: "/streams" }))` uses the already-acquired
+stream services. A scoped `BunHttpServer.layer` retains the Bun API routes and
+HTML bundling. Shutdown closes the listener before disposing the services.
 Promise-native Bun routes call `runtime.runPromise` with `mutateWorkspace`.
 That named recipe reads and writes the workspace through one `StreamRef.state`
 with project, issue, and comment collections. It folds every batch into

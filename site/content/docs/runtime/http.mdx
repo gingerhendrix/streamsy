@@ -44,7 +44,7 @@ const web = HttpRouter.toWebHandler(App.pipe(HttpRouter.provideRequest(storage))
 // await web.dispose() at shutdown, including failure paths
 ```
 
-Effect owns the Request/Response conversion. `Http.makeEdge` is deprecated while the remaining example migrations are completed. There is no Serve `start` helper.
+Effect owns the Request/Response conversion and disposal. Streamsy provides route Layers and no Web-handler conversion helper.
 
 ## Protocol
 

@@ -30,10 +30,12 @@ BunRuntime.runMain(
 );
 ```
 
-`Serve.stream` reads a family stream through `StreamsReader`. `Serve.state`
-requires a StateRef family and reads its Durable State changes from `-1`, with
+`Serve.stream` reads a family stream or bound `Output.stream` through `StreamsReader`.
+`Serve.state` accepts a StateRef family or bound `Output.rows` and reads changes from `-1`, with
 no snapshot. `Serve.document` takes a value source with a Schema and a
-`resolve(params)` Effect; it serves canonical JSON with a deterministic ETag.
+`resolve(params)` Effect, including a bound `Output.value`; it serves canonical JSON with a deterministic ETag.
+Reads check outputs only: an initially absent stream answers 404 and an absent
+value answers 503 `DocumentUnavailable`. They create no stream, checkpoint or state row.
 Path parameters decode with the family's original Schema codecs. An explicit
 `params` Effect on stream/state can instead read a service provided by
 `HttpRouter.middleware`. Auth and on-demand projection runs are application

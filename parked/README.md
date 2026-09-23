@@ -6,7 +6,7 @@ package entries that no longer exist. Each was last green at `0d895c2`.
 
 | Directory                            | Disposition                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------- |
-| `examples/issue-tracker`             | The fused SQLite projection family and its command API are restored in `examples/issue-tracker`; publication through `@streamsy/serve`, the UI, and deployment remain parked.          |
+| `examples/issue-tracker`             | The fused SQLite projection family, command API, and named-output publication through `@streamsy/serve` are restored in `examples/issue-tracker`; the UI and deployment remain parked.          |
 | `examples/issue-tracker-projections` | Retired. Its three claims (stateful single-source fold, proven coverage, dynamic fan-in board) moved to `examples/issue-tracker`; the per-issue stream family and the fan-in kernel were dropped on purpose. |
 | `examples/risk-demo`                 | The board reducer and persisted fold are restored in `examples/hex-board`; the command API, server, bot, Cloudflare host, SSE actions, UI and mesh remain parked for phase 6. |
 

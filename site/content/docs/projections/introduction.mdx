@@ -10,6 +10,8 @@ The kernel is one pass, repeated: restore the checkpoint, read every input in de
 - `Projection.make` is the fused form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint.
 - `Projection.stream` is the stream-output form. The handler returns items, the kernel pins the unit's input ranges in the checkpoint, then appends the items to an output stream under a producer tuple. A retry reproduces the pinned ranges and sends the same tuple, so the output sees each unit once even when the output lives on another backend.
 
+`Projection.outputs` is the named stream form: `Output.stream`, `Output.rows`, and at most one `Output.value`. Each stream/rows output has its own producer sequence; the value settles with the checkpoint. See [Outputs](/docs/projections/projections#outputs).
+
 ## Inputs, unit, checkpoint
 
 Inputs are a map of names to `StreamRef` values. `input: ref` is sugar for `inputs: { input: ref }`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for the stream form the pending pin and producer sequence.

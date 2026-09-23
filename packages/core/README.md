@@ -54,7 +54,7 @@ payload after a restart; `Duplicate` then means the earlier send landed.
 | ------------------------ | ----------------------------------------------------------------------------------- |
 | `@streamsy/core`         | Streams, StreamRef, StreamRoute, Backend, Fold, Producer, storage contracts, errors |
 | `@streamsy/core/fetch`   | `Fetch.layer({ baseUrl })`: the same reader and writer over HTTP                    |
-| `@streamsy/core/http`    | `Http.app` and `makeEdge` to serve the protocol                                     |
+| `@streamsy/core/http`    | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                       |
 | `@streamsy/core/testing` | Contract tests and fault injection for backends                                     |
 
 ## Storage and hosts
@@ -64,7 +64,10 @@ the whole store for each mutation, so one append costs linear time in the number
 of stored messages. It is a development host; for anything that grows, use
 SQLite from [`@streamsy/storage`](https://www.npmjs.com/package/@streamsy/storage),
 on Bun or in a Durable Object.
-To serve the protocol, use [`@streamsy/serve`](https://www.npmjs.com/package/@streamsy/serve).
+Serve `Http.routes` with Effect’s `HttpRouter.serve` or `HttpRouter.toWebHandler`.
+`Http.read(id, options)` reads a resolved stream id; `securityHeaders` supplies the
+shared response headers. [`@streamsy/serve`](https://www.npmjs.com/package/@streamsy/serve)
+provides output routes and host glue.
 
 Browsers use the official `@durable-streams/client` and
 `@durable-streams/state` packages directly against any Streamsy host.
@@ -84,7 +87,7 @@ when that state is present. A close on an already closed stream with a fresh
 tuple returns `Appended` without producer state, including retries of that
 unpersisted tuple.
 
-`Http.app({ sseDeadlineMs })` and `Http.makeEdge` accept an SSE lifetime in
+`Http.routes({ sseDeadlineMs })`, `Http.app`, and `Http.read` accept an SSE lifetime in
 milliseconds. It defaults to 60,000 and closes the body normally at the
 deadline. Host-forced interruption and client cancellation remain owned by
 the host. Read results include `contentType`; a fetch long poll returning 204

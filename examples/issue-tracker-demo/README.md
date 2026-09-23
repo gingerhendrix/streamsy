@@ -41,9 +41,11 @@ Create the parent directory before starting the server.
 
 ## How it works
 
-`server/index.ts` creates one `ManagedRuntime` for the stream services and the
-HTTP edge. Bun routes remain Promise-native and submit Effect programs through
-that runtime.
+`server/index.ts` acquires the stream services once and shares their context with
+`HttpRouter.serve(Http.routes({ prefix: "/streams" }))`. A scoped
+`BunHttpServer.layer` retains Bun’s API routes and HTML bundling; protocol paths
+fall through to HttpRouter. API handlers submit Effects through the service
+runtime. Shutdown closes the listener runtime before the service runtime.
 
 `mutateWorkspace` is the Transact recipe: read the workspace, fold its State
 changes, validate against the resulting view, and append with

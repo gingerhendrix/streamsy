@@ -69,11 +69,11 @@ const OutputRoutes = Layer.mergeAll(
 );
 ```
 
-The routed targets supply only ids: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's stream reader and `Projection.State` to the route app. Documents read the persisted value without running the projection; an absent value answers 503. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+The routed targets supply only ids: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's stream reader and `Projection.State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
 
 In a named family, fixed-id outputs and targets using fewer parameters share a stream across matching members, each writing with its own producer id, and Serve exposes that stream at every matching member URL.
 
-For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateRef` codec; deletes may omit `old_value`. No read creates a stream or checkpoint.
+For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateRef` codec; deletes may omit `old_value`. No read creates a stream, checkpoint, or state row.
 
 ## Auth and per-request params
 
@@ -89,11 +89,15 @@ const Mine = Serve.stream(events, "/me", {
 
 ## Documents
 
-A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.document(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail with `ValueUnavailable` and return 503.
+A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.document(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail internally with `ValueUnavailable` and return 503 `DocumentUnavailable`.
+
+The Cloudflare and Alchemy hosts reconcile alarms after PUT, POST and DELETE, including rejected requests such as a Serve 405; see [Cloudflare](/docs/runtime/cloudflare).
 
 ## Browser contract and CORS
 
 Import header constants and `decodePublicError` from `@streamsy/serve/contract`; it loads neither Effect nor core. The server's `PublicErrorSchema` is on the package root. Errors distinguish invalid params, incompatible protocol/contract, failed resume, unavailable data and document encoding failures. State and stream errors use replay recovery; documents use refetch.
+
+The `@durable-streams/state` 0.3.1 StreamDB binding merges upserts on an existing key: a field omitted by a later row retains its old value, live and on replay.
 
 A cross-origin app must configure CORS for request contract headers and expose response cursors:
 

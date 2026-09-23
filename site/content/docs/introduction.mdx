@@ -107,12 +107,12 @@ See [Runtime](/docs/runtime/introduction).
 
 ```ts
 import { Layer } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpRouter } from "effect/unstable/http";
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { Http } from "@streamsy/core";
 import { storage } from "./storage.ts";
 
-const server = HttpServer.serve(Http.app({ pathPrefix: "/streams" })).pipe(
+const server = HttpRouter.serve(Http.routes({ prefix: "/streams" })).pipe(
   Layer.provide(storage),
   Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
 );
@@ -124,7 +124,7 @@ See [HTTP](/docs/runtime/http).
 
 ## 7. Deploy to Cloudflare
 
-The same `Http.app` runs inside a Durable Object. An Alchemy stack declares the object and the Worker in front of it, and `alchemy dev` runs both on your machine.
+The same `Http.routes` Layer runs inside a Durable Object. An Alchemy stack declares the object and the Worker in front of it, and `alchemy dev` runs both on your machine.
 
 ```bash
 alchemy dev

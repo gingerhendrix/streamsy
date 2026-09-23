@@ -1,13 +1,12 @@
 ---
 title: Hacker News newest
-description: Follow newest stories through an Effect server and an official Durable Streams browser client.
+description: Follow a declared rows output through Serve.state and a Durable Streams browser client.
 ---
 
-The server polls Hacker News, writes changes to a JSON source stream, and keeps
-a declared-output `@streamsy/projection` watching that source. The browser
-consumes the Durable State target with `@durable-streams/state/db` and renders
-TanStack DB live queries. It shows the newest stories, score and comment changes,
-new arrivals and stories leaving the configured set.
+The server polls Hacker News into a JSON source stream. `Projection.outputs`
+produces one `Output.rows`, and `Serve.state` publishes it at `/state/newest`.
+The React browser reads from `-1` into TanStack DB through `createStreamDB`, then
+follows live upserts and key-only deletes.
 
 ## Run locally
 
@@ -15,49 +14,90 @@ From the repository root:
 
 ```bash
 bun install --frozen-lockfile
+bun run build
 bun run --cwd examples/hackernews-newest-stream dev
 ```
 
-Open http://localhost:1339. `PORT` selects another port. `HN_DB` selects the
-SQLite file and defaults to `.data/hackernews.sqlite`; the literal `memory`
-selects a process-local test host. `HN_PROJECTION_LIMIT` bounds the checkpoint
-transactions in one projection pass. The status view reports poll counts, projection
-health, and the source offset loaded from the checkpoint. To run the offline
-HTTP proof:
+Open http://localhost:1339. `dev` builds the browser; `dev:api` runs the server
+with any existing browser build. `PORT` selects another port. `HN_DB` defaults
+to `.data/hackernews.sqlite`; `memory` selects a process-local host.
+`HN_NEWEST_LIMIT` defaults to 50, `HN_POLL_INTERVAL_MS` to 60000, and
+`HN_PROJECTION_LIMIT` to 10 checkpoint transactions per pass.
+
+`HttpRouter.serve` hosts the page, State route, raw `/streams` protocol routes,
+and status/poll API on one scoped Bun listener. They share an origin and need
+no CORS middleware. `GET /api/status` reports poll counters, projection health
+and checkpoint progress. `POST /api/poll` only polls; the change watcher projects
+its source append.
 
 ```bash
+curl -i 'http://localhost:1339/state/newest?offset=-1'
 bun run smoke:hackernews
 ```
 
-The smoke supplies local HN fixtures and checks inserts, updates, deletes and
-unchanged-poll suppression through the public target. It then stops the server,
-restarts it on the same SQLite file, and proves that the checkpoint advances
-without repeating a fact with the same key and transaction id.
+The offline smoke uses the actual browser collection factory with local HN
+fixtures. It checks live existing-key upserts, key-only deletes, fresh-session
+replay, and checkpoint/output continuity across a SQLite restart. Its newest
+membership stays fixed during downtime.
 
 ## The projection
 
-The story index is `Projection.stream` over the source ref with the State target
-declared as its output. Each source command becomes one `State.upsert` or
-`State.delete`; `State.changes` stamps the unit's accepted source offset and the
-fact index as `${offset}:${index}`. The stream form pins a unit before appending,
-so a retry uses the same producer identity and does not repeat its output.
+The output declaration is:
 
-Source, target and checkpoint share a Bun SQLite storage Layer held by the
-runtime that also serves the HTTP edge. `Projection.onChange` is forked in that
-Layer's scope, and source appends wake it through the storage change feed. The
-poller's interval fiber has the same scoped lifetime, so
-disposing the runtime stops both loops. `POST /api/poll` only polls.
+```ts
+outputs: {
+  "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: targetStreamId }),
+},
+```
+
+The raw handler returns an Effect of `{ "hn-story": [...] }`, containing
+`Output.upsert(story)` and `Output.remove(key)`. The kernel encodes and pins the
+changes. The served route is:
+
+```ts
+Serve.state(hackerNewsStoryIndex.outputs["hn-story"], "/state/newest");
+```
+
+Source, rows output, checkpoint and `Projection.State` share one Bun SQLite
+host. The application creates only the input; a nonempty projection output
+creates the target. Before that, an initial State read answers 404 without
+creating data. `Projection.onChange` and the poller have scoped lifetimes.
+
+## Replay figure
+
+Batch D2 measured Bun 1.4.2 on Linux x64, SQLite and warm loopback HTTP. Every
+poll changed all 50 stories: a worst-case workload, not typical HN traffic.
+Each milestone used five fresh sessions and retained 50 current rows. Bytes
+are uncompressed JSON bodies across all pages; timings are medians.
+
+| Polls | Retained changes | Pages | Body bytes | Raw replay | TanStack preload |
+| ----- | ---------------- | ----- | ---------- | ---------- | ---------------- |
+| 100   | 5,000            | 5     | 1,219,205  | 20.7 ms    | 20.8 ms          |
+| 1,000 | 50,000           | 50    | 12,289,350 | 137.1 ms   | 120.3 ms         |
+
+Raw replay includes HTTP, decoding and Map application. TanStack preload runs
+on Bun; these are not browser or WAN latency figures. At one poll per minute,
+1,000 polls span about 16 hours 40 minutes. The same worst case is about 17.7 MB
+of replay after one day. Server-side snapshots remain a follow-up; the proposed
+trigger is before a rows route runs for about a day without reset, or retains
+more than about 100 changes per current row. That scope decision remains open.
 
 ## Limits
 
-The target grows without bound, and the browser replays all State facts. A later
-version can fold the story set and serve rows so browser catch-up is bounded. The
-poller's newest-set cache is not stored, so the first poll after restart can
-emit fresh upserts for the current set.
+There is no snapshot. New sessions replay all retained changes, and history
+must remain available. A retention cap alone loses rows. After a server reset,
+reload the page to open a fresh collection from `-1`; automatic reopening is
+not implemented.
 
-The projection id is `hn-story-index`; its record does not reuse data from the
-earlier declaration. `HN_DB=memory` intentionally starts fresh after restart.
+The `@durable-streams/state` 0.3.1 binding merges an upsert on a known key. Fields
+omitted by a later row keep their old browser values, live and on replay.
 
-The demo makes no hosted claim. It runs on the Bun SQLite host and has not
-adopted a Cloudflare deployment. See the
-[Cloudflare guide](/docs/runtime/cloudflare) for the hosted path.
+The poller's newest-set cache is in memory. A restart publishes fresh upserts
+for current stories. A previously emitted story that leaves the set during
+downtime stays in the served rows and on the page for good. Poller membership
+recovery is a separate follow-up; the restart smoke does not prove it.
+
+Use a fresh database for the phase-5 declaration: earlier checkpoint/output
+formats are not migrated. `HN_DB=memory` starts fresh after every restart.
+The demo has no hosted deployment; see [Cloudflare](/docs/runtime/cloudflare)
+for the host path.
