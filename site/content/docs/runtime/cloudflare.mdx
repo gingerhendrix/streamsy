@@ -27,7 +27,7 @@ export default router<Env>({
 
 Each object lazily acquires one successful storage context and builds `HttpRouter.toWebHandler` once for that acquisition. Concurrent accesses share it. A failed acquisition closes its attempted scope, returns 503 with `retry-after: 1`, and can retry on the next access. The compiled handler and its context share ownership. Object eviction has no universal asynchronous disposal hook. Request logging is disabled in this host.
 
-The host installs global mutation middleware around the application. PUT, POST and DELETE reconcile the alarm in an uninterruptible finalizer, including after an interrupted committed mutation. A reconciliation failure cannot replace a committed response. Defects return 500 with the common security headers. The platform alarm calls the expiry sweep directly; no URL or forged request header can invoke it. Sweep failures are left to platform retry and retain the healthy context.
+The host installs global mutation middleware around the application. PUT, POST and DELETE reconcile the alarm in an uninterruptible finalizer, including after an interrupted committed mutation. Reconciliation also runs for rejected PUT, POST and DELETE requests, including a Serve 405. A reconciliation failure cannot replace a committed response. Defects return 500 with the common security headers. The platform alarm calls the expiry sweep directly; no URL or forged request header can invoke it. Sweep failures are left to platform retry and retain the healthy context.
 
 ## Placement and limits
 
