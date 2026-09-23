@@ -1,17 +1,12 @@
 import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
-import { streamPath as protocolPath } from "@streamsy/core/http";
+import { securityHeaders, streamPath as protocolPath } from "@streamsy/core/http";
 import { Placement, type Placement as PlacementType } from "./placement.ts";
 
 export interface RouterOptions<Env> {
   readonly namespace: (env: Env) => DurableObjectNamespace;
   readonly placement?: PlacementType;
-  readonly pathPrefix?: string;
+  readonly prefix?: `/${string}`;
 }
-
-const securityHeaders = {
-  "x-content-type-options": "nosniff",
-  "cross-origin-resource-policy": "cross-origin",
-};
 
 const badRequest = (message: string): Response =>
   new Response(message, { status: 400, headers: securityHeaders });
@@ -39,7 +34,7 @@ export const resolvePlacement = (
 };
 
 export const router = <Env>(options: RouterOptions<Env>): ExportedHandler<Env> => {
-  const path = protocolPath(options.pathPrefix);
+  const path = protocolPath(options.prefix);
   const placement = options.placement ?? Placement.byStream();
 
   return {

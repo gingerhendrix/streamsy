@@ -1,8 +1,8 @@
 import { Effect } from "effect";
 import { Streams } from "@streamsy/core";
-import { start } from "@streamsy/serve/bun";
+import { testHost } from "./scoped-host.ts";
 
-const host = await Effect.runPromise(start({ layer: Streams.layerMemory(), port: 0 }));
+const host = await Effect.runPromise(testHost({ layer: Streams.layerMemory(), port: 0 }));
 try {
   const response = await fetch(new URL("/streams/events", host.url), {
     method: "PUT",

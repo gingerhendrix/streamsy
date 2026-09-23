@@ -1,3 +1,4 @@
+import { Http } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- This fixture owns the real workerd boundary. */
 import type {
   AlarmInvocationInfo,
@@ -126,7 +127,7 @@ const probeLayer = (
 };
 
 class ProbeObject extends StreamsyObject.make<Env>({
-  options: { pathPrefix: "/streams" },
+  app: Http.routes({ prefix: "/streams" }),
   layer: probeLayer,
 }) {
   readonly #state = probeFor(this.ctx);

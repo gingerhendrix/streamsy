@@ -2,7 +2,7 @@
 import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Stream } from "effect";
 import { Memory, Protocol, Storage, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { start, type ServeOptions } from "@streamsy/serve/bun";
+import { testHost, type TestHostOptions } from "./support/scoped-host.ts";
 
 /**
  * A protocol Layer over memory storage that records a parked long-poll read and
@@ -40,8 +40,11 @@ const parkableLayer = (readStarted: Deferred.Deferred<void>, hold: Deferred.Defe
  * whether the poll is still open and can wait a bounded time for it to settle.
  * The caller closes the host.
  */
-const parkLongPoll = async (layer: ServeOptions["layer"], options: Omit<ServeOptions, "layer">) => {
-  const host = await Effect.runPromise(start({ ...options, layer, port: 0 }));
+const parkLongPoll = async (
+  layer: TestHostOptions["layer"],
+  options: Omit<TestHostOptions, "layer">,
+) => {
+  const host = await Effect.runPromise(testHost({ ...options, layer, port: 0 }));
   const created = await fetch(new URL("s", host.url), {
     method: "PUT",
     headers: { "content-type": "text/plain" },
@@ -145,7 +148,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
     const warnings = spyOn(console, "warn");
     const logs = spyOn(console, "log");
     const stderr = spyOn(process.stderr, "write");
-    const host = await Effect.runPromise(start({ layer: observedProtocol, port: 0 }));
+    const host = await Effect.runPromise(testHost({ layer: observedProtocol, port: 0 }));
     const abort = new AbortController();
     try {
       const url = new URL("s", host.url);
@@ -237,7 +240,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
       await Effect.runPromise(host.stop);
       expect(ownerClosed).toBe(true);
       const rebound = await Effect.runPromise(
-        start({ layer: Streams.layerMemory(), port: host.port }),
+        testHost({ layer: Streams.layerMemory(), port: host.port }),
       );
       try {
         expect(rebound.port).toBe(host.port);

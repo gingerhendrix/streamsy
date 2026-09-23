@@ -84,7 +84,7 @@ test("byKey routes a fork request to the child object without consulting the sou
 
 test("router follows the core prefix grammar and reports every invalid placement path", async () => {
   const namespace = makeNamespace();
-  const handler = router({ namespace: () => namespace, pathPrefix: "/streams" });
+  const handler = router({ namespace: () => namespace, prefix: "/streams" });
   for (const path of ["/streams", "/streams/", "/other/x"]) {
     const response = await invoke(handler, new Request(`https://streams.test${path}`));
     expect(response?.status).toBe(400);

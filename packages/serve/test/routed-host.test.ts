@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
 import { Backend, StreamRoute, Streams } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { start } from "@streamsy/serve/bun";
+import { testHost } from "./support/scoped-host.ts";
 
 const MemoryFamily = StreamRoute.json("memory/:name", {
   params: { name: Schema.String },
@@ -22,7 +22,7 @@ const routed = Streams.layerRouted([memory.serves(MemoryFamily), sqlite.serves(S
 );
 
 test("one Http.app host serves routed memory and SQLite families", async () => {
-  const host = await Effect.runPromise(start({ layer: routed, port: 0 }));
+  const host = await Effect.runPromise(testHost({ layer: routed, port: 0 }));
   try {
     for (const path of ["memory/notes", "sqlite/notes"]) {
       const created = await fetch(new URL(path, host.url), {

@@ -1,7 +1,7 @@
 {
   "name": "@streamsy/serve",
   "version": "0.4.0",
-  "description": "Checked state, stream, document, and action sink contracts, routes, protocol handling, and Effect server adapters.",
+  "description": "Effect HttpRouter routes, Bun and Cloudflare hosts, and durable action delivery.",
   "license": "MIT",
   "files": [
     "dist"
@@ -9,51 +9,6 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": {
-      "types": "./dist/state.d.ts",
-      "import": "./dist/state.js",
-      "default": "./dist/state.js"
-    },
-    "./stream": {
-      "types": "./dist/stream.d.ts",
-      "import": "./dist/stream.js",
-      "default": "./dist/stream.js"
-    },
-    "./document": {
-      "types": "./dist/document.d.ts",
-      "import": "./dist/document.js",
-      "default": "./dist/document.js"
-    },
-    "./route": {
-      "types": "./dist/route.d.ts",
-      "import": "./dist/route.js",
-      "default": "./dist/route.js"
-    },
-    "./route-params": {
-      "types": "./dist/route-params.d.ts",
-      "import": "./dist/route-params.js",
-      "default": "./dist/route-params.js"
-    },
-    "./fingerprint": {
-      "types": "./dist/fingerprint.d.ts",
-      "import": "./dist/fingerprint.js",
-      "default": "./dist/fingerprint.js"
-    },
-    "./server/state": {
-      "types": "./dist/server/state.d.ts",
-      "import": "./dist/server/state.js",
-      "default": "./dist/server/state.js"
-    },
-    "./server/stream": {
-      "types": "./dist/server/stream.d.ts",
-      "import": "./dist/server/stream.js",
-      "default": "./dist/server/stream.js"
-    },
-    "./server/document": {
-      "types": "./dist/server/document.d.ts",
-      "import": "./dist/server/document.js",
-      "default": "./dist/server/document.js"
-    },
     "./action": {
       "types": "./dist/action/contract.d.ts",
       "import": "./dist/action/contract.js",
@@ -93,13 +48,23 @@
       "types": "./dist/alchemy.d.ts",
       "import": "./dist/alchemy.js",
       "default": "./dist/alchemy.js"
+    },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "types": "./dist/contract.d.ts",
+      "import": "./dist/contract.js",
+      "default": "./dist/contract.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/state.ts src/stream.ts src/document.ts src/route.ts src/route-params.ts src/fingerprint.ts src/server/state.ts src/server/stream.ts src/server/document.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle cloudflare:workers --deps.never-bundle @cloudflare/workers-types",
+    "build": "tsdown src/index.ts src/contract.ts src/action/contract.ts src/action/errors.ts src/action/outbox.ts src/action/runtime.ts src/action/sqlite.ts src/bun.ts src/cloudflare.ts src/alchemy.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:sqlite --deps.never-bundle cloudflare:workers --deps.never-bundle @cloudflare/workers-types",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cloudflare.json --noEmit && tsc -p tsconfig.cloudflare-tests.json --noEmit",
     "test:unit": "bun test test"
   },

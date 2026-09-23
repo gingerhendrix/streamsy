@@ -3,9 +3,9 @@ import { Effect, Layer } from "effect";
 import { Memory, Protocol, StorageFault } from "@streamsy/core";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Alarm } from "../src/cloudflare/alarm.ts";
-import { ObjectOptions } from "../src/cloudflare/object-options.ts";
+import { Http } from "@streamsy/core";
 import { Option } from "effect";
-import { objectHandlers } from "./support/alchemy/runtime.ts";
+import { objectHandlers } from "../src/alchemy.ts";
 
 test("Alchemy construction lazily retries acquisition, shares a successful build, and closes its scope", async () => {
   let acquisitions = 0;
@@ -30,7 +30,6 @@ test("Alchemy construction lazily retries acquisition, shares a successful build
         );
       return Layer.mergeAll(
         protocol,
-        Layer.succeed(ObjectOptions, { pathPrefix: "/streams" }),
         Layer.succeed(Alarm, {
           current: Effect.succeed(Option.none()),
           arm: () => Effect.void,
@@ -43,7 +42,7 @@ test("Alchemy construction lazily retries acquisition, shares a successful build
   );
   await Effect.runPromise(
     Effect.gen(function* () {
-      const handlers = yield* objectHandlers(layer);
+      const handlers = yield* objectHandlers({ app: Http.routes({ prefix: "/streams" }), layer });
       expect(acquisitions).toBe(0);
       const fetch = handlers.fetch.pipe(
         Effect.provideService(
@@ -61,6 +60,14 @@ test("Alchemy construction lazily retries acquisition, shares a successful build
       expect(releases).toBe(1);
       const responses = yield* Effect.all([fetch, fetch], { concurrency: "unbounded" });
       expect(responses.map((response) => response.status)).toEqual([204, 204]);
+      const missing = yield* handlers.fetch.pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request("https://streams.test/outside")),
+        ),
+      );
+      expect(missing.status).toBe(404);
+
       yield* handlers.alarm();
       expect(acquisitions).toBe(2);
       expect(releases).toBe(1);

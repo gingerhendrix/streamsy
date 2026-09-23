@@ -8,15 +8,12 @@ type Assert<T extends true> = T;
 export type PublicNames = Assert<
   Equal<
     keyof typeof Host,
-    "fetch" | "alarm" | "alarmLayer" | "router" | "Placement" | "ObjectOptions"
+    "objectHandlers" | "alarm" | "alarmLayer" | "router" | "Placement" | "Alarm" | "rule"
   >
 >;
 export type RouterFits = Assert<ReturnType<typeof Host.router> extends HttpEffect ? true : false>;
 export type RouterError = Assert<
   Equal<Effect.Error<ReturnType<typeof Host.router>>, HttpServerError>
->;
-export type OptionsRequired = Assert<
-  Host.ObjectOptions extends Effect.Services<typeof Host.fetch> ? true : false
 >;
 export type AlarmError = Assert<
   Equal<Effect.Error<typeof Host.alarm>, import("@streamsy/core").StorageFault>

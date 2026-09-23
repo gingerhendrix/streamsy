@@ -11,25 +11,6 @@ import type {
   OutboxEntryState,
 } from "./outbox.ts";
 
-export const OUTBOX_SCHEMA = `CREATE TABLE IF NOT EXISTS streamsy_effect_outbox (
-  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  sink               TEXT NOT NULL,
-  partition_id       TEXT NOT NULL,
-  idempotency_key    TEXT NOT NULL,
-  payload            TEXT NOT NULL,
-  state              TEXT NOT NULL,
-  attempts           INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at_ms INTEGER NOT NULL,
-  last_error         TEXT,
-  dead_letter_reason TEXT,
-  enqueued_at_ms     INTEGER NOT NULL,
-  settled_at_ms      INTEGER
-);
-CREATE UNIQUE INDEX IF NOT EXISTS streamsy_effect_outbox_identity
-  ON streamsy_effect_outbox (sink, idempotency_key);
-CREATE INDEX IF NOT EXISTS streamsy_effect_outbox_due
-  ON streamsy_effect_outbox (sink, state, next_attempt_at_ms, id);
-`;
 const OUTBOX_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS streamsy_effect_outbox (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,

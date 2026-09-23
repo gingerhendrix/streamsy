@@ -1,3 +1,4 @@
+import { contractFingerprint } from "../contract.ts";
 /**
  * The action-sink declaration.
  *
@@ -110,11 +111,11 @@ export function defineActionSink<Payload, From extends ActionSinkRelation>(
     throw new TypeError(`action sink ${spec.name} declares an impossible backoff window`);
   }
   const key = spec.from.key;
-  const fingerprint = hashContract({
+  const fingerprint = contractFingerprint({
     name: spec.name,
     key,
-    handler: spec.handler,
-    delivery: spec.delivery,
+    handler: { ...spec.handler },
+    delivery: { ...spec.delivery },
   });
   return Object.freeze({ ...spec, kind: "checked-action-sink", key, fingerprint });
 }
@@ -124,24 +125,6 @@ export function backoffAfter(policy: ActionSinkDeliveryPolicy, attempts: number)
   const exponent = Math.max(0, attempts - 1);
   const raw = policy.initialBackoffMs * policy.backoffFactor ** exponent;
   return Math.min(policy.maxBackoffMs, Math.round(raw));
-}
-
-interface ContractFingerprintInput {
-  readonly name: string;
-  readonly key: string;
-  readonly handler: ActionSinkHandlerRef;
-  readonly delivery: ActionSinkDeliveryPolicy;
-}
-
-/** The same FNV-1a contract hash the checked state sink uses, so both read alike. */
-function hashContract(value: ContractFingerprintInput): string {
-  const input = JSON.stringify(value);
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 export type PayloadOf<Sink> =

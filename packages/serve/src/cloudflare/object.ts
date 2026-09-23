@@ -1,95 +1,88 @@
 import type { AlarmInvocationInfo, DurableObjectState } from "@cloudflare/workers-types";
 import { DurableObject } from "cloudflare:workers";
-import { Effect, Layer, ManagedRuntime } from "effect";
-import { HttpEffect } from "effect/unstable/http";
+import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
-import type { HttpOptions } from "@streamsy/core/http";
-import { Alarm, alarmLayer } from "./alarm.ts";
-import { fetch, alarm } from "./host-program.ts";
-import { ObjectOptions } from "./object-options.ts";
+import { alarmLayer } from "./alarm.ts";
+import { alarm } from "./host-program.ts";
+import { acquireObject, providedApp, unavailable, type ObjectApp } from "./object-runtime.ts";
 
-const unavailable = (): Response =>
-  new Response("Storage unavailable", {
-    status: 503,
-    headers: {
-      "retry-after": "1",
-      "x-content-type-options": "nosniff",
-      "cross-origin-resource-policy": "cross-origin",
-    },
-  });
-
-type Runtime = ManagedRuntime.ManagedRuntime<
-  StreamsReader | StreamsWriter | Storage | Alarm | ObjectOptions,
-  StorageFault
->;
-
-interface Configuration<Env> {
-  readonly options: HttpOptions;
+export interface ObjectConfiguration<Env, R = never> {
+  readonly app: ObjectApp<R>;
   readonly layer: (
     state: DurableObjectState,
     env: Env,
-  ) => Layer.Layer<StreamsReader | StreamsWriter | Storage, StorageFault>;
+  ) => Layer.Layer<StreamsReader | StreamsWriter | Storage | R, StorageFault>;
 }
+export interface ObjectInstance {
+  fetch(request: Request): Promise<Response>;
+  alarm(info?: AlarmInvocationInfo): Promise<void>;
+}
+interface Compiled {
+  readonly handler: (request: Request) => Promise<Response>;
+  readonly alarm: Effect.Effect<void, StorageFault>;
+}
+class ObjectOwner extends Context.Service<
+  ObjectOwner,
+  { readonly get: Effect.Effect<Compiled, StorageFault> }
+>()("streamsy/ObjectOwner") {}
 
-class ObjectHost<Env> extends DurableObject<Env> {
-  readonly #configuration: Configuration<Env>;
-  constructor(state: DurableObjectState, env: Env, configuration: Configuration<Env>) {
+class ObjectHost<Env, R> extends DurableObject<Env> {
+  readonly #runtime: ManagedRuntime.ManagedRuntime<ObjectOwner, never>;
+  constructor(state: DurableObjectState, env: Env, configuration: ObjectConfiguration<Env, R>) {
     super(state, env);
-    this.#configuration = configuration;
-  }
-  #runtime: Runtime | undefined;
-
-  #getRuntime(): Runtime {
-    return (this.#runtime ??= ManagedRuntime.make(
-      Layer.mergeAll(
-        this.#configuration.layer(this.ctx, this.env),
-        alarmLayer(this.ctx.storage),
-        Layer.succeed(ObjectOptions, this.#configuration.options),
+    this.#runtime = ManagedRuntime.make(
+      Layer.effect(
+        ObjectOwner,
+        Effect.map(
+          acquireObject(
+            Layer.suspend(() =>
+              Layer.merge(configuration.layer(state, env), alarmLayer(state.storage)),
+            ),
+            (context) =>
+              Effect.gen(function* () {
+                const web = HttpRouter.toWebHandler(providedApp(configuration.app, context), {
+                  disableLogger: true,
+                });
+                yield* Effect.addFinalizer(() => Effect.promise(web.dispose));
+                return { handler: web.handler, alarm: alarm.pipe(Effect.provide(context)) };
+              }),
+          ),
+          (get) => ({ get }),
+        ),
       ),
-    ));
-  }
-
-  #recover(runtime: Runtime): Promise<void> {
-    if (this.#runtime !== runtime) return Promise.resolve();
-    this.#runtime = undefined;
-    return runtime.dispose().catch(() => undefined);
-  }
-
-  override fetch(request: Request): Promise<Response> {
-    let runtime: Runtime;
-    try {
-      runtime = this.#getRuntime();
-    } catch {
-      return Promise.resolve(unavailable());
-    }
-    return runtime.context().then(
-      (context) =>
-        HttpEffect.toWebHandler(fetch.pipe(Effect.provide(context), Effect.interruptible))(request),
-      () => this.#recover(runtime).then(unavailable),
     );
   }
-
+  override fetch(request: Request): Promise<Response> {
+    return this.#runtime.runPromise(
+      Effect.gen(function* () {
+        const owner = yield* ObjectOwner;
+        const compiled = yield* owner.get;
+        return yield* Effect.promise(() => compiled.handler(request));
+      }).pipe(
+        Effect.catchTag("StorageFault", () =>
+          Effect.succeed(HttpServerResponse.toWeb(unavailable())),
+        ),
+      ),
+    );
+  }
   override alarm(_info?: AlarmInvocationInfo): Promise<void> {
-    const runtime = this.#getRuntime();
-    // Acquisition failures discard the cached runtime; sweep failures keep it.
-    return runtime.context().then(
-      () => runtime.runPromise(alarm),
-      (error) =>
-        this.#recover(runtime).then(() => {
-          throw error;
-        }),
+    return this.#runtime.runPromise(
+      Effect.gen(function* () {
+        const owner = yield* ObjectOwner;
+        const compiled = yield* owner.get;
+        yield* compiled.alarm;
+      }),
     );
   }
 }
-
-/** The wrangler/Miniflare boundary. Each instance owns one lazy runtime. */
-const make = <Env = unknown>(
-  configuration: Configuration<Env>,
-): new (state: DurableObjectState, env: Env) => ObjectHost<Env> =>
-  class extends ObjectHost<Env> {
-    constructor(state: DurableObjectState, env: Env) {
-      super(state, env, configuration);
-    }
-  };
-
-export const StreamsyObject = { make };
+export const StreamsyObject = {
+  make: <Env = unknown, R = never>(
+    configuration: ObjectConfiguration<Env, R>,
+  ): new (state: DurableObjectState, env: Env) => ObjectHost<Env, R> =>
+    class extends ObjectHost<Env, R> {
+      constructor(state: DurableObjectState, env: Env) {
+        super(state, env, configuration);
+      }
+    },
+};

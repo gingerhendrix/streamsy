@@ -14,14 +14,15 @@ const request = (path: string) =>
     }),
   );
 
-test("Alchemy exports exactly the six host names", () => {
+test("Alchemy exports the route host names", () => {
   expect(Object.keys(Host).toSorted()).toEqual([
-    "ObjectOptions",
+    "Alarm",
     "Placement",
     "alarm",
     "alarmLayer",
-    "fetch",
+    "objectHandlers",
     "router",
+    "rule",
   ]);
 });
 
@@ -32,7 +33,7 @@ test("Alchemy placement strips the prefix and preserves the request and response
   const output = HttpServerResponse.text("response body", { status: 202 });
   const response = await Effect.runPromise(
     Host.router({
-      pathPrefix: "/streams",
+      prefix: "/streams",
       placement: Host.Placement.byKey((path) => path.split("/")[0] ?? ""),
       objects: {
         getByName: (name) => {
@@ -79,7 +80,7 @@ test("Alchemy router shares prefix and placement failures without forwarding", a
   for (const row of cases) {
     const response = await Effect.runPromise(
       Host.router({
-        pathPrefix: "/streams",
+        prefix: "/streams",
         placement: row.placement,
         objects: {
           getByName: () => {

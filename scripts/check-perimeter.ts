@@ -93,7 +93,6 @@ const checks = [
     String.raw`runPromise|runSync|runFork|runCallback|ManagedRuntime\.make`,
     [
       ...authored,
-      "!packages/serve/src/bun.ts",
       "!packages/serve/src/cloudflare/object.ts",
       ...testKits.map((path) => `!${path}`),
     ],
