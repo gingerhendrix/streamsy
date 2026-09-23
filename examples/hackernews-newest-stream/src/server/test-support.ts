@@ -1,6 +1,6 @@
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { Streams, StreamRef } from "@streamsy/core";
-import type { Host } from "@streamsy/projection";
+import type { Host, State } from "@streamsy/projection";
 import { Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import type { HnStory } from "../state-schema.ts";
 import { DemoStreams, demoStreamsLayer } from "./streams.ts";
@@ -13,7 +13,7 @@ export async function demoHarness(readLimit = 1000) {
     demoStreamsLayer.pipe(Layer.provideMerge(ProjectionMemory.layerMemory({ readLimit }))),
   );
   const streams = await runtime.runPromise(DemoStreams);
-  const context = await runtime.runPromise(Effect.context<Host>());
+  const context = await runtime.runPromise(Effect.context<Host | State>());
   return {
     runtime,
     streams,
