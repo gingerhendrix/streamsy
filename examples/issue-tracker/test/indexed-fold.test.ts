@@ -200,7 +200,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               );
           }
           for (const row of previous.labels) {
-            if (!next.labels.some((label) => label.labelId === row.labelId))
+            if (!next.labels.some((candidate) => candidate.labelId === row.labelId))
               expectedCounts.push(
                 Schema.encodeSync(countsRef.codec)({
                   type: "labelCounts",
