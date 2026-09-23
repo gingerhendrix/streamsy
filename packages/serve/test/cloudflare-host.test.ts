@@ -863,3 +863,16 @@ test("a failed Layer build is not cached", async () => {
   expect((await create(harness, "/streams/retry-layer")).status).toBe(201);
   expect((await probe(harness, "retry-layer")).layerAcquisitions).toBe(2);
 });
+
+test("a throwing layer factory returns secured 503 and retries", async () => {
+  const harness = await makeHarness();
+  await direct(harness, "retry-layer", "/__probe?throw-layer-once=1");
+  const first = await create(harness, "/streams/retry-layer");
+  expect(first.status).toBe(503);
+  expect(first.headers.get("retry-after")).toBe("1");
+  expect(first.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(first.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
+  expect(await first.text()).toBe("Storage unavailable");
+  expect((await create(harness, "/streams/retry-layer")).status).toBe(201);
+  expect((await probe(harness, "retry-layer")).layerAcquisitions).toBe(2);
+});

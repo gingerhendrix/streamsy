@@ -28,6 +28,7 @@ interface ProbeState {
   activeReads: number;
   alarmInfo: Array<AlarmObservation>;
   failLayerOnce: boolean;
+  throwLayerOnce: boolean;
   failNextExpiry: boolean;
   failExpiryWhile: boolean;
   longPollTimeoutMs: number;
@@ -44,6 +45,7 @@ const probeFor = (state: DurableObjectState): ProbeState => {
       activeReads: 0,
       alarmInfo: [],
       failLayerOnce: false,
+      throwLayerOnce: false,
       failNextExpiry: false,
       failExpiryWhile: false,
       longPollTimeoutMs: 1_000,
@@ -59,6 +61,10 @@ const probeLayer = (
   const probe = probeFor(state);
   probe.layerAcquisitions += 1;
   probe.migrationAttempts += 1;
+  if (probe.throwLayerOnce) {
+    probe.throwLayerOnce = false;
+    throw new Error("fixture layer factory defect");
+  }
   if (probe.failLayerOnce) {
     probe.failLayerOnce = false;
     return Layer.effectContext(
@@ -135,6 +141,10 @@ class ProbeObject extends StreamsyObject.make<Env>({
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/__probe") {
+      if (url.searchParams.has("throw-layer-once")) {
+        this.#state.throwLayerOnce = true;
+        return Response.json({ ok: true });
+      }
       if (url.searchParams.has("fail-layer-once")) {
         this.#state.failLayerOnce = true;
         return Response.json({ ok: true });

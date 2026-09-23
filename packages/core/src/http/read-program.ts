@@ -12,14 +12,19 @@ export interface ReadOptions {
   readonly cacheVisibility?: "private" | "public";
 }
 
-/** Read an already resolved id using the protocol's HTTP framing and live modes. */
-export function read(id: StreamId, options: ReadOptions = {}) {
+/** @internal Shared construction-time validation for HTTP read routes. */
+export function checkReadOptions(options: ReadOptions): void {
   if (
     options.sseDeadlineMs !== undefined &&
     (!Number.isFinite(options.sseDeadlineMs) || options.sseDeadlineMs <= 0)
   ) {
     throw new RangeError("sseDeadlineMs must be positive");
   }
+}
+
+/** Read an already resolved id using the protocol's HTTP framing and live modes. */
+export function read(id: StreamId, options: ReadOptions = {}) {
+  checkReadOptions(options);
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const reader = yield* StreamsReader;

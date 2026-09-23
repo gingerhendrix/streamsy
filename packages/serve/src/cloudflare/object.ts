@@ -1,6 +1,6 @@
 import type { AlarmInvocationInfo, DurableObjectState } from "@cloudflare/workers-types";
 import { DurableObject } from "cloudflare:workers";
-import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
 import { alarmLayer } from "./alarm.ts";
@@ -57,13 +57,14 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
     return this.#runtime.runPromise(
       Effect.gen(function* () {
         const owner = yield* ObjectOwner;
-        const compiled = yield* owner.get;
-        return yield* Effect.promise(() => compiled.handler(request));
-      }).pipe(
-        Effect.catchTag("StorageFault", () =>
-          Effect.succeed(HttpServerResponse.toWeb(unavailable())),
-        ),
-      ),
+        const compiled = yield* owner.get.pipe(
+          Effect.map(Option.some),
+          Effect.catch(() => Effect.succeed(Option.none())),
+          Effect.catchDefect(() => Effect.succeed(Option.none())),
+        );
+        if (Option.isNone(compiled)) return HttpServerResponse.toWeb(unavailable());
+        return yield* Effect.promise(() => compiled.value.handler(request));
+      }),
     );
   }
   override alarm(_info?: AlarmInvocationInfo): Promise<void> {

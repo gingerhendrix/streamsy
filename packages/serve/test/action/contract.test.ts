@@ -83,3 +83,14 @@ describe("an action-sink declaration", () => {
     ]);
   });
 });
+
+test("infinite delivery backoff retains D8 behavior and has a distinct fingerprint", () => {
+  const uncapped = defineActionSink({
+    ...define(),
+    delivery: { ...delivery, maxBackoffMs: Infinity },
+  });
+  const capped = defineActionSink({ ...define(), delivery: { ...delivery, maxBackoffMs: 30_000 } });
+  expect(uncapped.delivery.maxBackoffMs).toBe(Infinity);
+  expect(backoffAfter(uncapped.delivery, 20)).toBe(52_428_800);
+  expect(uncapped.fingerprint).not.toBe(capped.fingerprint);
+});

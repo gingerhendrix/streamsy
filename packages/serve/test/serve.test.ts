@@ -312,3 +312,59 @@ test("fingerprints bind members, collection keys, and explicit contract revision
     first,
   );
 });
+
+test("read options and explicit params paths are checked at construction", () => {
+  expect(() => Serve.stream(family, "/feed/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
+  expect(() => Serve.state(rows, "/state/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
+  expect(() =>
+    Serve.stream(family, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
+  ).toThrow("must not contain path parameters");
+  expect(() =>
+    Serve.state(rows, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
+  ).toThrow("must not contain path parameters");
+});
+
+test("annotated parameter Structs retain their names and non-Struct schemas are rejected", async () => {
+  const annotated = {
+    ...family,
+    paramSchema: Schema.Struct({ seat: Schema.String }).annotate({ identifier: "SeatParams" }),
+  };
+  const path: `/${string}` = "/feed/:other";
+  expect(() => Serve.stream(annotated, path)).toThrow("Route params must equal family params");
+  const web = HttpRouter.toWebHandler(
+    Layer.mergeAll(Http.routes(), Serve.stream(annotated, "/feed/:seat")).pipe(
+      HttpRouter.provideRequest(storage),
+    ),
+    { disableLogger: true },
+  );
+  try {
+    await web.handler(
+      new Request("http://host/events/a", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: '"one"',
+      }),
+    );
+    expect(await (await web.handler(new Request("http://host/feed/a"))).json()).toEqual(["one"]);
+  } finally {
+    await web.dispose();
+  }
+  const record = {
+    template: family.template,
+    paramSchema: Schema.Record(Schema.String, Schema.String),
+    ref: (values: Readonly<Record<string, string>>) => family.ref({ seat: values.seat ?? "a" }),
+  };
+  expect(() => Serve.stream(record, path)).toThrow(
+    "paramSchema must be a Struct of path parameters",
+  );
+});
+
+test("invalid state collection metadata fails at construction", () => {
+  const collections = { cards: { schema: Schema.Struct({ id: Schema.String }), key: NaN } };
+  const invalid = {
+    ...rows,
+    collections,
+    ref: (values: { readonly seat: string }) => ({ ...rows.ref(values), collections }),
+  };
+  expect(() => Serve.state(invalid, "/state/:seat")).toThrow();
+});

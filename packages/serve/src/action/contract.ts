@@ -115,7 +115,12 @@ export function defineActionSink<Payload, From extends ActionSinkRelation>(
     name: spec.name,
     key,
     handler: { ...spec.handler },
-    delivery: { ...spec.delivery },
+    delivery: Object.fromEntries(
+      Object.entries(spec.delivery).map(([name, value]) => [
+        name,
+        Number.isFinite(value) ? value : String(value),
+      ]),
+    ),
   });
   return Object.freeze({ ...spec, kind: "checked-action-sink", key, fingerprint });
 }

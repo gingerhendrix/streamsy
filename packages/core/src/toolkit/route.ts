@@ -55,6 +55,7 @@ export type StateRoute<P, C extends StreamRef.Collections> = Omit<
   >,
   "ref"
 > & {
+  readonly collections: C;
   readonly ref: (params: P) => StreamRef.StateRef<C>;
 };
 
@@ -216,6 +217,7 @@ export function state<
     paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
+    collections: options.collections,
     ref: (params) => StreamRef.state(buildId(template, segments, codecs, params), options),
   };
 }

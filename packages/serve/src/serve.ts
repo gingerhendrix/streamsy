@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema, Result } from "effect";
+import { Effect, Layer, Schema, SchemaAST, Result } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Http, Offset, type StreamsReader, type StreamRef, type StreamRoute } from "@streamsy/core";
 import * as Contract from "./contract.ts";
@@ -73,9 +73,15 @@ export function state<P, C extends StreamRef.Collections, E, R>(
 function params<P>(schema: StreamRoute.PathSchema<P> | undefined, path: string) {
   if (!schema) throw new TypeError("Path source requires paramSchema or an explicit params Effect");
   const names = pathNames(path);
-  // Struct's encoded object properties are the original family's parameter names.
-  const fields = Schema.toJsonSchemaDocument(schema).schema.properties ?? {};
-  if (Object.keys(fields).toSorted().join("\0") !== names.toSorted().join("\0"))
+  const encoded = SchemaAST.toEncoded(schema.ast);
+  if (
+    !SchemaAST.isObjects(encoded) ||
+    encoded.indexSignatures.length > 0 ||
+    encoded.propertySignatures.some((field) => !Schema.is(Schema.String)(field.name))
+  )
+    throw new TypeError("paramSchema must be a Struct of path parameters");
+  const fields = encoded.propertySignatures.map((field) => String(field.name));
+  if (fields.toSorted().join("\0") !== names.toSorted().join("\0"))
     throw new TypeError("Route params must equal family params");
   return HttpRouter.schemaPathParams(schema).pipe(
     Effect.mapError(() => ({
@@ -116,12 +122,14 @@ function methodResponse() {
     headers: { ...Http.securityHeaders, allow: "GET, HEAD" },
   });
 }
-function readRoute<P, E, R>(
-  source: Source<P>,
+function readRoute<P, E, R, RS>(
+  source: Source<P, RS>,
   path: `/${string}`,
   options: ReadOptions | ParamsOptions<P, E, R>,
-): RouteLayer<StreamsReader | R, E> {
-  pathNames(path);
+): RouteLayer<StreamsReader | R | RS, E> {
+  Http.checkReadOptions(options);
+  if ("params" in options && pathNames(path).length > 0)
+    throw new TypeError("Explicit params routes must not contain path parameters");
   const selected = "params" in options ? undefined : params(source.paramSchema, path);
   const versionHeader =
     source.kind === "state" ? Contract.STATE_VERSION_HEADER : Contract.STREAM_VERSION_HEADER;
@@ -130,7 +138,7 @@ function readRoute<P, E, R>(
   const handler = Effect.gen(function* (): Effect.fn.Return<
     HttpServerResponse.HttpServerResponse,
     E,
-    StreamsReader | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R
+    StreamsReader | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RS
   > {
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (request.method !== "GET" && request.method !== "HEAD") return methodResponse();
@@ -271,7 +279,7 @@ function readRoute<P, E, R>(
   });
   return HttpRouter.add<
     E,
-    StreamsReader | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R
+    StreamsReader | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RS
   >("*", path, handler);
 }
 

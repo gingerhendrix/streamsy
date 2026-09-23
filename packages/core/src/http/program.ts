@@ -10,7 +10,7 @@ import { requestBodyReader } from "./request-body-reader.ts";
 import { discardRequestBody } from "./request-body-discard.ts";
 import * as Create from "./create.ts";
 import * as Append from "./append.ts";
-import { read } from "./read-program.ts";
+import { read, checkReadOptions } from "./read-program.ts";
 import { requestUrl } from "./route.ts";
 import { protocolErrorResponse } from "./protocol-error-response.ts";
 import { isProtocolError, type ProtocolError } from "../protocol/errors.ts";
@@ -33,11 +33,7 @@ const responses = Responses;
  * what let one composition serve several backends.
  */
 export function app(options: HttpOptions = {}) {
-  if (
-    options.sseDeadlineMs !== undefined &&
-    (!Number.isFinite(options.sseDeadlineMs) || options.sseDeadlineMs <= 0)
-  )
-    throw new RangeError("sseDeadlineMs must be positive");
+  checkReadOptions(options);
   const path = streamPath(options.pathPrefix ?? "/");
   const bodyReader = requestBodyReader(options.maxMessageSize ?? 1024 * 1024);
   const failure = (error: ProtocolError) =>

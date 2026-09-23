@@ -8,7 +8,7 @@ import {
 } from "./cloudflare/object-runtime.ts";
 import { alarm } from "./cloudflare/host-program.ts";
 import type { DurableObject } from "alchemy/Cloudflare";
-import { Effect, type Layer, type Scope } from "effect";
+import { Effect, Option, type Layer, type Scope } from "effect";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -86,8 +86,14 @@ export function objectHandlers<R = never>(options: {
       }),
     );
     return {
-      fetch: Effect.flatMap(get, (compiled) => compiled.fetch).pipe(
-        Effect.catchTag("StorageFault", () => Effect.succeed(unavailable())),
+      fetch: Effect.flatMap(
+        get.pipe(
+          Effect.map(Option.some),
+          Effect.catch(() => Effect.succeed(Option.none())),
+          Effect.catchDefect(() => Effect.succeed(Option.none())),
+        ),
+        (compiled) =>
+          Option.isSome(compiled) ? compiled.value.fetch : Effect.succeed(unavailable()),
       ),
       alarm: () => Effect.flatMap(get, (compiled) => compiled.alarm).pipe(Effect.orDie),
     };

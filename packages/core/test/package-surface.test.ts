@@ -11,6 +11,7 @@ test("public roots omit internal composition and obsolete aliases", () => {
   expect(Object.keys(Root.Protocol)).not.toContain("expireIfNeeded");
   expect(Object.keys(Http)).toEqual([
     "app",
+    "checkReadOptions",
     "makeEdge",
     "read",
     "routes",

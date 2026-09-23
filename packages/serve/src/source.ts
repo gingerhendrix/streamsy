@@ -9,6 +9,7 @@ export interface StreamSource<P> {
   readonly ref: (params: P) => { readonly id: StreamId };
 }
 export interface StateSource<P, C extends StreamRef.Collections> extends StreamSource<P> {
+  readonly collections: C;
   readonly ref: (params: P) => StreamRef.StateRef<C>;
 }
 export type PathSource<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
@@ -39,6 +40,10 @@ export function normalize<P>(
   path: string,
   kind: "stream" | "state" = "stream",
 ): Source<P> {
+  const descriptor =
+    kind === "state"
+      ? collectionDescriptor("collections" in source ? source.collections : undefined)
+      : null;
   return {
     kind,
     template: source.template,
@@ -47,8 +52,6 @@ export function normalize<P>(
       Effect.try({
         try: () => {
           const ref = source.ref(params);
-          const descriptor: CanonicalValue =
-            kind === "state" && "collections" in ref ? collectionDescriptor(ref.collections) : null;
           return { id: ref.id, descriptor };
         },
         catch: () => ({
