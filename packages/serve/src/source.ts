@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import type { StreamId, StreamRef, StreamRoute } from "@streamsy/core";
 import type { CanonicalValue, PublicError } from "./contract.ts";
 
-/** Minimal structural family consumed by Serve; C adapts declared outputs here. */
+/** Structural family consumed by Serve, including bound projection outputs. */
 export interface StreamSource<P> {
   readonly template: string;
   readonly paramSchema?: StreamRoute.PathSchema<P>;

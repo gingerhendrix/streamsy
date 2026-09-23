@@ -5,6 +5,7 @@ import type { InputMap, Slices } from "./batch.ts";
 import type * as Output from "./output.ts";
 import { ProjectionFault } from "./fault.ts";
 import { loadState, type Initial, type OutputFold } from "./fold.ts";
+import { bind, rowsRef, type Bound } from "./output-source.ts";
 import { State } from "./state.ts";
 import type { Unit } from "./unit.ts";
 
@@ -45,7 +46,7 @@ export function outputs<
     (Exclude<keyof Result, keyof Output.Result<D>> extends never
       ? unknown
       : { readonly invalidOutputKeys: never });
-}): Named<Inputs, E | ProjectionFault, R | State> & { readonly outputs: D } {
+}): Named<Inputs, E | ProjectionFault, R | State> & { readonly outputs: Bound<D, {}> } {
   const streams: Record<string, StreamRef.StreamRef<unknown>> = {};
   const values = Object.values(definition.outputs).filter((output) => output._tag === "Value");
   if (values.length > 1) throw new RangeError("A projection may declare at most one value output");
@@ -54,24 +55,7 @@ export function outputs<
   const value = values[0];
   for (const [name, output] of Object.entries(definition.outputs)) {
     if (output._tag === "Value") continue;
-    streams[name] =
-      output._tag === "Stream"
-        ? output.stream
-        : StreamRef.json(output.stream, {
-            schema: Schema.Union([
-              Schema.Struct({
-                type: Schema.Literal(name),
-                key: Schema.String,
-                value: output.schema,
-                headers: Schema.Struct({ operation: Schema.Literal("upsert") }),
-              }),
-              Schema.Struct({
-                type: Schema.Literal(name),
-                key: Schema.String,
-                headers: Schema.Struct({ operation: Schema.Literal("delete") }),
-              }),
-            ]),
-          });
+    streams[name] = output._tag === "Stream" ? output.stream : rowsRef(name, output);
   }
   const ids = Object.values(streams).map((ref) => ref.id);
   if (new Set(ids).size !== ids.length)
@@ -92,7 +76,10 @@ export function outputs<
     _tag: "Outputs",
     ...key,
     inputs: definition.inputs,
-    outputs: definition.outputs,
+    outputs: bind(definition.outputs, definition.id, Schema.Struct({}), () => ({
+      ...key,
+      outputs: definition.outputs,
+    })),
     streams,
     process: (batch, unit) =>
       Effect.gen(function* () {

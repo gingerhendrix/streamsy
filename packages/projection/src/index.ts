@@ -15,6 +15,7 @@ export type {
   FamilyDefinition,
   FusedFamilyDefinition,
   PinnedFamilyDefinition,
+  NamedFamilyDefinition,
 } from "./family.ts";
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 export type { Host, Progress } from "./run.ts";

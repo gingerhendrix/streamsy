@@ -14,62 +14,94 @@ export const upsert = <A>(row: A): Upsert<A> => ({ _tag: "Upsert", row });
 export const remove = (key: string | number): Remove => ({ _tag: "Remove", key });
 export type Change<A> = Upsert<A> | Remove;
 
-export interface Stream<A> {
+export interface Stream<A, Identity = StreamRef.StreamRef<A>> {
   readonly _tag: "Stream";
-  readonly stream: StreamRef.StreamRef<A>;
+  readonly schema: Schema.Codec<A, unknown, never, never>;
+  readonly stream: Identity;
 }
-export interface Rows<A> {
+export interface Rows<A, Identity = string> {
   readonly _tag: "Rows";
   readonly schema: Schema.Codec<A, unknown, never, never>;
   readonly key: StreamRef.StateKey<A>;
-  readonly stream: string;
+  readonly stream: Identity;
 }
-export interface Value<A> {
+export interface Value<A, I = unknown> {
   readonly _tag: "Value";
-  readonly schema: Schema.Codec<A, unknown, never, never>;
+  readonly schema: Schema.Codec<A, I, never, never>;
 }
-/** The schema owns the output encoding; a ref supplies its stream identity. */
-export const stream = <A, I>(
+/** Routed targets supply identity only; the declaration owns the JSON codec. */
+export interface Target<P> {
+  readonly ref: (params: P) => { readonly id: string };
+}
+export function stream<A, I, P>(
   schema: Schema.Codec<A, I, never, never>,
-  options: {
-    readonly stream: string | { readonly id: string };
-  },
-): Stream<A> => ({
-  _tag: "Stream",
-  stream: StreamRef.json(typeof options.stream === "string" ? options.stream : options.stream.id, {
+  options: { readonly stream: Target<P> },
+): Stream<A, Target<P>>;
+export function stream<A, I>(
+  schema: Schema.Codec<A, I, never, never>,
+  options: { readonly stream: string | { readonly id: string } },
+): Stream<A>;
+export function stream<A, I, P>(
+  schema: Schema.Codec<A, I, never, never>,
+  options: { readonly stream: string | { readonly id: string } | Target<P> },
+): Stream<A, StreamRef.StreamRef<A> | Target<P>> {
+  const target = options.stream;
+  return {
+    _tag: "Stream",
     schema,
-  }),
-});
+    stream:
+      typeof target !== "string" && "ref" in target
+        ? target
+        : StreamRef.json(typeof target === "string" ? target : target.id, { schema }),
+  };
+}
 /** The output name is the Durable State collection type. Deletes need only a key. */
-export const rows = <A, I>(
+export function rows<A, I, P>(
+  schema: Schema.Codec<A, I, never, never>,
+  options: { readonly key: StreamRef.StateKey<A>; readonly stream: Target<P> },
+): Rows<A, Target<P>>;
+export function rows<A, I>(
   schema: Schema.Codec<A, I, never, never>,
   options: {
     readonly key: StreamRef.StateKey<A>;
     readonly stream: string | { readonly id: string };
   },
-): Rows<A> => ({
-  _tag: "Rows",
-  schema,
-  key: options.key,
-  stream: typeof options.stream === "string" ? options.stream : options.stream.id,
-});
-export const value = <A, I>(schema: Schema.Codec<A, I, never, never>): Value<A> => ({
+): Rows<A>;
+export function rows<A, I, P>(
+  schema: Schema.Codec<A, I, never, never>,
+  options: {
+    readonly key: StreamRef.StateKey<A>;
+    readonly stream: string | { readonly id: string } | Target<P>;
+  },
+): Rows<A, string | Target<P>> {
+  const target = options.stream;
+  return {
+    _tag: "Rows",
+    schema,
+    key: options.key,
+    stream: typeof target === "string" ? target : "ref" in target ? target : target.id,
+  };
+}
+export const value = <A, I>(schema: Schema.Codec<A, I, never, never>): Value<A, I> => ({
   _tag: "Value",
   schema,
 });
 
 // The mapped public result recovers each declaration's item type before runtime erasure.
-export type Declaration = Stream<any> | Rows<any> | Value<any>;
+export type Declaration = Stream<any> | Rows<any> | Value<any, any>;
+export type RoutedMap = Readonly<
+  Record<string, Stream<any, Target<any>> | Rows<any, Target<any>> | Declaration>
+>;
 export type Map = Readonly<Record<string, Declaration>>;
-export type Items<D extends Map> = {
-  readonly [K in keyof D as D[K] extends Value<any> ? never : K]: ReadonlyArray<
-    D[K] extends Stream<infer A> ? A : D[K] extends Rows<infer A> ? Change<A> : never
+export type Items<D extends RoutedMap> = {
+  readonly [K in keyof D as D[K] extends Value<any, any> ? never : K]: ReadonlyArray<
+    D[K] extends Stream<infer A, any> ? A : D[K] extends Rows<infer A, any> ? Change<A> : never
   >;
 };
-export type StateOf<D extends Map> = {
-  [K in keyof D]: D[K] extends Value<infer A> ? A : never;
+export type StateOf<D extends RoutedMap> = {
+  [K in keyof D]: D[K] extends Value<infer A, any> ? A : never;
 }[keyof D];
-export type Result<D extends Map> = Items<D> &
+export type Result<D extends RoutedMap> = Items<D> &
   ([StateOf<D>] extends [never] ? {} : { readonly state: StateOf<D> });
 export interface Processed {
   readonly items: Readonly<Record<string, ReadonlyArray<unknown>>>;
