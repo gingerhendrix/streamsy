@@ -1,4 +1,4 @@
-import { createStateSchema, type ChangeEvent } from "@durable-streams/state";
+import { createStateSchema } from "@durable-streams/state";
 import { Schema } from "effect";
 
 export const HackerNewsStory = Schema.Struct({
@@ -31,24 +31,18 @@ export const HackerNewsItem = Schema.NullOr(
   }),
 );
 
-const StateHeaders = Schema.Struct({
-  operation: Schema.Literals(["upsert", "delete"]),
-  offset: Schema.String,
-  txid: Schema.String,
-});
-
 export const HackerNewsStateChange = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("hn-story"),
     key: Schema.String,
     value: HackerNewsStory,
-    headers: StateHeaders,
+    headers: Schema.Struct({ operation: Schema.Literal("upsert") }),
   }),
   Schema.Struct({
     type: Schema.Literal("hn-story"),
     key: Schema.String,
     old_value: Schema.optionalKey(HackerNewsStory),
-    headers: StateHeaders,
+    headers: Schema.Struct({ operation: Schema.Literal("delete") }),
   }),
 ]);
 export type HackerNewsStateChange = Schema.Schema.Type<typeof HackerNewsStateChange>;
@@ -95,8 +89,6 @@ export const hackerNewsState = createStateSchema({
     primaryKey: "id",
   },
 });
-
-export type HnStateEvent = ChangeEvent<HnStory>;
 
 export function newestStorySort(a: HnStory, b: HnStory): number {
   return b.time - a.time || b.id - a.id;

@@ -1,28 +1,11 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/global-timers -- React owns this browser lifecycle edge; Web fetch, wall-clock rendering, and interval cleanup are the platform contract here. */
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
+import { createHnDb, type HnDb } from "./db.ts";
 import { useLiveQuery } from "@tanstack/react-db";
 import { Option, Schema } from "effect";
-import { ApiStatus, hackerNewsState, type HnStory } from "../state-schema.ts";
+import { ApiStatus, type HnStory } from "../state-schema.ts";
 import "./styles.css";
-
-type HnDb = StreamDB<typeof hackerNewsState>;
-
-function streamUrl(): string {
-  return new URL("/streams/session/main", window.location.origin).toString();
-}
-
-function createHnDb(): HnDb {
-  return createStreamDB({
-    streamOptions: {
-      url: streamUrl(),
-      contentType: "application/json",
-      warnOnHttp: false,
-    },
-    state: hackerNewsState,
-  });
-}
 
 function formatAge(unixSeconds: number): string {
   const diff = Date.now() - unixSeconds * 1000;
@@ -47,7 +30,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    const created = createHnDb();
+    const created = createHnDb(window.location.origin);
 
     void created.preload().then(
       () => {
@@ -118,10 +101,9 @@ function HnApp({ db }: { db: HnDb }) {
         <p className="eyebrow">Streamsy projection demo</p>
         <h1>Hacker News newest stories</h1>
         <p>
-          A Bun server reconciles HN polls into a durable JSON source stream, then a bounded
-          <code> @streamsy/projection </code> run emits Durable State upserts and deletes with
-          source-position headers. The browser mirrors that target stream into TanStack DB via{" "}
-          <code>createStreamDB</code>.
+          A Bun server reconciles HN polls into a durable JSON source stream, and publishes the
+          newest stories at <code>/state/newest</code>. This page loads the retained changes, then
+          updates live as stories change.
         </p>
       </section>
 

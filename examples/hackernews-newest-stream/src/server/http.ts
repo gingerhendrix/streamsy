@@ -1,26 +1,74 @@
-import { streamContentType } from "./config.ts";
-import type { PollStats } from "./poller/contract.ts";
-import type { ProjectionLimits, ProjectionStatus } from "./projection.ts";
+import { Http } from "@streamsy/core";
+import { Serve } from "@streamsy/serve";
+import { Effect, Layer } from "effect";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import {
+  newestLimit,
+  pollIntervalMs,
+  projectionLimits,
+  sourceStreamPath,
+  streamPath,
+  streamPrefix,
+  streamContentType,
+} from "./config.ts";
+import { NewestStoriesPoller } from "./poller/contract.ts";
+import { StoryProjection } from "./projection.ts";
+import { serveStatic } from "./static.ts";
+import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 
-type CurrentStats = PollStats & { readonly projection: ProjectionStatus };
+const currentStats = Effect.gen(function* () {
+  const poller = yield* NewestStoriesPoller;
+  const projection = yield* StoryProjection;
+  return { ...(yield* poller.stats), projection: yield* projection.status };
+});
 
-type StatusResponse = CurrentStats & {
-  readonly streamPath: string;
-  readonly sourceStreamPath: string;
-  readonly newestLimit: number;
-  readonly pollIntervalMs: number;
-  readonly projectionLimits: ProjectionLimits;
-};
+export const stateRoute = Serve.state(hackerNewsStoryIndex.outputs["hn-story"], streamPath);
 
-type PollResponse = CurrentStats & { readonly ok: true };
-type ErrorResponse = { readonly error: string };
-export type JsonResponseBody = StatusResponse | PollResponse | ErrorResponse;
-
-export function json(value: JsonResponseBody, init: ResponseInit = {}): Response {
-  const headers = new Headers(init.headers);
-  if (!headers.has("content-type")) headers.set("content-type", streamContentType);
-  return new Response(JSON.stringify(value, null, 2), {
-    ...init,
-    headers,
-  });
-}
+/** The page and State route share an origin, so no CORS middleware is needed. */
+export const app = Layer.mergeAll(
+  stateRoute,
+  Http.routes({ prefix: streamPrefix }),
+  HttpRouter.add(
+    "GET",
+    "/api/status",
+    Effect.gen(function* () {
+      return HttpServerResponse.jsonUnsafe(
+        {
+          streamPath,
+          sourceStreamPath,
+          newestLimit,
+          pollIntervalMs,
+          projectionLimits,
+          ...(yield* currentStats),
+        },
+        { headers: { "content-type": streamContentType } },
+      );
+    }),
+  ),
+  HttpRouter.add(
+    "POST",
+    "/api/poll",
+    Effect.gen(function* () {
+      yield* (yield* NewestStoriesPoller).pollNow;
+      return HttpServerResponse.jsonUnsafe(
+        { ok: true, ...(yield* currentStats) },
+        { headers: { "content-type": streamContentType } },
+      );
+    }),
+  ),
+  HttpRouter.add(
+    "*",
+    "/api/*",
+    HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 }),
+  ),
+  HttpRouter.add(
+    "GET",
+    "/*",
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      return HttpServerResponse.fromWeb(
+        yield* Effect.promise(() => serveStatic(new URL(request.url, "http://localhost"))),
+      );
+    }),
+  ),
+);

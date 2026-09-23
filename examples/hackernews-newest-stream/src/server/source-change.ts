@@ -7,7 +7,6 @@ export const HackerNewsSourceChange = Schema.Union([
   Schema.Struct({
     operation: Schema.Literal("delete"),
     key: Schema.String,
-    oldValue: HackerNewsStory,
   }),
 ]);
 
@@ -18,5 +17,5 @@ export function sourceUpsert(story: HnStory): HackerNewsSourceChange {
 }
 
 export function sourceDelete(story: HnStory): HackerNewsSourceChange {
-  return { operation: "delete", key: String(story.id), oldValue: story };
+  return { operation: "delete", key: String(story.id) };
 }

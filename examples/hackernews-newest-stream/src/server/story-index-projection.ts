@@ -1,31 +1,23 @@
-import { State } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Output, Projection } from "@streamsy/projection";
 import { Effect } from "effect";
-import { hackerNewsSource, hackerNewsTarget } from "./stream-resources.ts";
+import { HackerNewsStory } from "../state-schema.ts";
+import { targetStreamId } from "./config.ts";
+import { hackerNewsSource } from "./stream-resources.ts";
 
-/**
- * Convert deterministic newest-set reconciliation commands into the public
- * Durable State vocabulary consumed by createStreamDB in the browser.
- *
- * The declared stream output is pinned to the checkpoint before append, so a
- * restart resumes without repeating output. State.changes keeps the source
- * offset and gives each fact a stable position within the unit.
- */
-export const hackerNewsStoryIndex = Projection.stream({
+/** The output name is the browser's Durable State collection type. */
+export const hackerNewsStoryIndex = Projection.outputs({
   id: "hn-story-index",
   generation: 1,
-  input: hackerNewsSource,
-  output: hackerNewsTarget,
-  process: (batch, unit) =>
-    Effect.sync(() =>
-      State.changes(
-        hackerNewsTarget,
-        { offset: unit.ranges.input.nextOffset },
-        Projection.items(batch).map(({ item }) =>
-          item.operation === "delete"
-            ? State.delete("hn-story", item.oldValue)
-            : State.upsert("hn-story", item.story),
-        ),
+  inputs: { input: hackerNewsSource },
+  outputs: {
+    "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: targetStreamId }),
+  },
+  process: (batch) =>
+    Effect.succeed({
+      "hn-story": Projection.items(batch).map(({ item }) =>
+        item.operation === "delete" ? Output.remove(item.key) : Output.upsert(item.story),
       ),
-    ),
+    }),
 });
+
+export const hackerNewsTarget = hackerNewsStoryIndex.outputs["hn-story"].ref({});
