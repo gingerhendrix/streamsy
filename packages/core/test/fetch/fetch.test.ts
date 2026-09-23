@@ -21,7 +21,8 @@ import {
   StreamId,
   ZERO_OFFSET,
 } from "@streamsy/core";
-import { makeEdge } from "../../src/http/edge.ts";
+import * as Http from "../../src/http/index.ts";
+import { HttpRouter } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
 
 const id = StreamId.make("orders/nested");
@@ -108,7 +109,10 @@ const fixture = Effect.gen(function* () {
 });
 
 it("every operation family returns the direct results over local HTTP", async () => {
-  const edge = makeEdge({ pathPrefix: "/streams" }, memory());
+  const edge = HttpRouter.toWebHandler(
+    Http.routes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+    { disableLogger: true },
+  );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
     const remote = Fetch.layer({
@@ -127,7 +131,10 @@ it("every operation family returns the direct results over local HTTP", async ()
 });
 
 it("merges text messages into one payload over the public wire", async () => {
-  const edge = makeEdge({ pathPrefix: "/streams" }, memory());
+  const edge = HttpRouter.toWebHandler(
+    Http.routes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+    { disableLogger: true },
+  );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
     const remote = Fetch.layer({ baseUrl: `${server.url.href}streams` }).pipe(
@@ -560,7 +567,10 @@ for (const mode of ["direct", "fetch"] as const) {
     "application/json; charset=utf-8",
   ]) {
     it(`${mode} client conformance: ${contentType} resumes after acknowledgement and closes atomically`, async () => {
-      const edge = makeEdge({ pathPrefix: "/streams" }, memory());
+      const edge = HttpRouter.toWebHandler(
+        Http.routes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+        { disableLogger: true },
+      );
       const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
       const modeTransport =
         mode === "direct"
@@ -653,7 +663,9 @@ it("keeps arbitrary append bad-request bodies as typed request errors", async ()
 
 for (const retry of [false, true]) {
   it(`decodes a close-only producer append${retry ? " retried after close" : " on an open stream"}`, async () => {
-    const edge = makeEdge({}, memory());
+    const edge = HttpRouter.toWebHandler(Http.routes({}).pipe(Layer.provideMerge(memory())), {
+      disableLogger: true,
+    });
     const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
     try {
       const remote = Fetch.layer({

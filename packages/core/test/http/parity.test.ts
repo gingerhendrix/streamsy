@@ -3,7 +3,8 @@ import { expect, it } from "bun:test";
 import { Clock, Effect, Layer } from "effect";
 import { Streams, StreamsReader, ZERO_OFFSET } from "@streamsy/core";
 import fixtures from "../../src/http/fixtures/wire.json";
-import { makeEdge } from "../../src/http/edge.ts";
+import * as Http from "../../src/http/index.ts";
+import { HttpRouter } from "effect/unstable/http";
 
 interface WireFixture {
   readonly label: string;
@@ -45,9 +46,18 @@ for (const visibility of ["private", "public"] as const) {
     const layer = Streams.layerMemory({ longPollTimeoutMs: 5 }).pipe(
       Layer.provideMerge(clockLayer),
     );
-    const edge = makeEdge(
-      { pathPrefix: "/api.v1", cacheVisibility: visibility, maxMessageSize: 64 },
-      layer,
+    const edge = HttpRouter.toWebHandler(
+      Layer.mergeAll(
+        Http.routes({ prefix: "/api.v1", cacheVisibility: visibility, maxMessageSize: 64 }),
+        // Keep the frozen protocol prefix-rejection proof; unmatched router paths
+        // separately retain the router's native 404.
+        HttpRouter.add(
+          "*",
+          "/wrong",
+          Http.app({ pathPrefix: "/api.v1", cacheVisibility: visibility, maxMessageSize: 64 }),
+        ),
+      ).pipe(Layer.provideMerge(layer)),
+      { disableLogger: true },
     );
     let position = 0;
     const compare = async (path: string, init?: RequestInit) => {
@@ -59,6 +69,7 @@ for (const visibility of ["private", "public"] as const) {
       return right;
     };
     try {
+      expect((await edge.handler(new Request("http://example.test/unmatched"))).status).toBe(404);
       await compare("/wrong");
       await compare("/api.v1/");
       await compare("/api.v1/s", { method: "OPTIONS" });
@@ -265,7 +276,12 @@ const expiryCases: ReadonlyArray<{
 
 for (const fixture of expiryCases) {
   it(`frozen expiry parsing and HEAD: ${fixture.name}${fixture.effectRejects ? " (intentional Effect rejection)" : ""}`, async () => {
-    const edge = makeEdge({}, Streams.layerMemory().pipe(Layer.provideMerge(clockLayer)));
+    const edge = HttpRouter.toWebHandler(
+      Http.routes({}).pipe(
+        Layer.provideMerge(Streams.layerMemory().pipe(Layer.provideMerge(clockLayer))),
+      ),
+      { disableLogger: true },
+    );
     try {
       for (const method of ["PUT", "HEAD"] as const) {
         const init = { method, headers: fixture.headers };
@@ -356,7 +372,9 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
         Streams.layerMemory({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clockLayer)),
       ),
     );
-    const edge = makeEdge({}, readers);
+    const edge = HttpRouter.toWebHandler(Http.routes({}).pipe(Layer.provideMerge(readers)), {
+      disableLogger: true,
+    });
     let right: Response | undefined;
     try {
       await edge.handler(

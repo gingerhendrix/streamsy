@@ -12,7 +12,6 @@ test("public roots omit internal composition and obsolete aliases", () => {
   expect(Object.keys(Http)).toEqual([
     "app",
     "checkReadOptions",
-    "makeEdge",
     "read",
     "routes",
     "securityHeaders",

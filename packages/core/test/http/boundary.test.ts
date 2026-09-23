@@ -12,11 +12,15 @@ import {
   ZERO_OFFSET,
 } from "@streamsy/core";
 import { faultyStorage } from "../../src/testing/fault-injection.ts";
-import { makeEdge } from "../../src/http/edge.ts";
+import * as Http from "../../src/http/index.ts";
+import { HttpRouter } from "effect/unstable/http";
 import { read } from "../../src/http/read.ts";
 
 it("rejects malformed cursor and producer tuple fields at ingress", async () => {
-  const edge = makeEdge({}, Streams.layerMemory());
+  const edge = HttpRouter.toWebHandler(
+    Http.routes({}).pipe(Layer.provideMerge(Streams.layerMemory())),
+    { disableLogger: true },
+  );
   try {
     await edge.handler(new Request("http://x/s", { method: "PUT" }));
     for (const cursor of [
@@ -60,7 +64,10 @@ it("rejects malformed cursor and producer tuple fields at ingress", async () => 
 });
 
 it("reads the unread body to its end when an append is rejected at ingress", async () => {
-  const edge = makeEdge({}, Streams.layerMemory());
+  const edge = HttpRouter.toWebHandler(
+    Http.routes({}).pipe(Layer.provideMerge(Streams.layerMemory())),
+    { disableLogger: true },
+  );
   try {
     await edge.handler(new Request("http://x/s", { method: "PUT" }));
     const rejected: ReadonlyArray<Record<string, string>> = [
@@ -100,7 +107,9 @@ for (const when of ["before", "after"] as const) {
     const layer = Protocol.layer().pipe(
       Layer.provide(faultyStorage(Memory.layer(), { failOn: 2, when })),
     );
-    const edge = makeEdge({}, layer);
+    const edge = HttpRouter.toWebHandler(Http.routes({}).pipe(Layer.provideMerge(layer)), {
+      disableLogger: true,
+    });
     try {
       await edge.handler(
         new Request("http://x/s", { method: "PUT", headers: { "content-type": "text/plain" } }),
@@ -236,7 +245,10 @@ it("caps catch-up pages while live reads return the entire available burst", () 
   ));
 
 it("HTTP catch-up omits up-to-date until the server page reaches the tail", async () => {
-  const edge = makeEdge({}, Streams.layerMemory({ readLimit: 1 }));
+  const edge = HttpRouter.toWebHandler(
+    Http.routes({}).pipe(Layer.provideMerge(Streams.layerMemory({ readLimit: 1 }))),
+    { disableLogger: true },
+  );
   try {
     await edge.handler(
       new Request("http://example.test/pages", {
@@ -283,7 +295,10 @@ it("the default catch-up page holds 1000 messages", () =>
   ));
 
 it("SSE closes its body normally at the configured deadline", async () => {
-  const edge = makeEdge({ sseDeadlineMs: 20 }, Streams.layerMemory());
+  const edge = HttpRouter.toWebHandler(
+    Http.routes({ sseDeadlineMs: 20 }).pipe(Layer.provideMerge(Streams.layerMemory())),
+    { disableLogger: true },
+  );
   try {
     await edge.handler(new Request("http://example.test/deadline", { method: "PUT" }));
     const response = await edge.handler(
@@ -315,7 +330,9 @@ it("GET, POST and DELETE use their protocol call without extra HEAD requests", a
       });
     }),
   ).pipe(Layer.provideMerge(Streams.layerMemory()));
-  const edge = makeEdge({}, readers);
+  const edge = HttpRouter.toWebHandler(Http.routes({}).pipe(Layer.provideMerge(readers)), {
+    disableLogger: true,
+  });
   try {
     await edge.handler(
       new Request("http://example.test/round-trips", {
