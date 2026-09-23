@@ -88,7 +88,20 @@ for (const [name, host] of hosts) {
             Effect.succeed({ a: [item * 10], b: item % 2 === 0 ? [item] : [] }),
           ),
         });
-        yield* Projection.run(projection);
+        const saved: import("@streamsy/projection/checkpoint").CheckpointRecord[] = [];
+        const owner = yield* Checkpoints;
+        yield* Projection.run(projection).pipe(
+          Effect.provideService(Checkpoints, {
+            ...owner,
+            save: (key, record, token) => {
+              saved.push(record);
+              return owner.save(key, record, token);
+            },
+          }),
+        );
+        // An owner may retain the passed record: settling must not mutate that pin.
+        expect(saved[0]?.adapters.outputs?.a?.nextSeq).toBe(0);
+        expect(saved[1]?.adapters.outputs?.a?.nextSeq).toBe(1);
         expect(yield* (yield* Checkpoints).load(projection)).toMatchObject({
           record: Option.some({
             identity: { inputs: expect.anything() },

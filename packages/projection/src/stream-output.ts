@@ -187,7 +187,7 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     const pinned: CheckpointRecord = {
       identity,
       inputs: before.record.inputs,
-      adapters: { outputs: positions },
+      adapters: { outputs: { ...positions } },
       pending: {
         seqs,
         ranges: Object.fromEntries(
