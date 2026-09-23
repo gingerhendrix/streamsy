@@ -1,35 +1,40 @@
 import index from "../public/index.html";
-import { ManagedRuntime } from "effect";
+import { BunHttpServer } from "@effect/platform-bun";
+import * as Http from "@streamsy/core/http";
+import { Layer, ManagedRuntime } from "effect";
+import { HttpRouter, HttpServer } from "effect/unstable/http";
 import {
   isDevelopment,
   mainWorkspaceId,
   port,
   serverIdleTimeoutSeconds,
+  streamPrefix,
   workspaceStreamId,
 } from "./config.ts";
 import { commentRoutes } from "./routes/comments.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { seedMainWorkspace } from "./state.ts";
-import { applicationLayer, DemoStreams } from "./streams.ts";
+import { applicationLayer } from "./streams.ts";
 import { json, notFound } from "./utils.ts";
 import { workspaceRoutes } from "./workspaces.ts";
 
 const runtime = ManagedRuntime.make(applicationLayer);
-const streams = await runtime.runPromise(DemoStreams);
 
 // Boot: ensure and seed the known demo workspace. Shared workspaces are
 // created on demand via POST /api/workspaces; their streams are the only
 // record that they exist.
 await runtime.runPromise(seedMainWorkspace());
 
-const server = Bun.serve({
+const listener = BunHttpServer.layer({
   port,
   idleTimeout: serverIdleTimeoutSeconds,
+  gracefulShutdownTimeout: 1000,
   routes: {
     // Streamsy durable stream endpoints, served by @streamsy/core's HTTP
     // handler. One stream per workspace: /streams/workspace/<id>.
-    "/streams/*": (request: Request) => streams.fetch(request),
+    "/streams": false,
+    "/streams/*": false,
 
     // API endpoints as Bun route objects: exact and parameterized routes with
     // per-HTTP-method handlers. Methods not defined on a route object fall
@@ -61,16 +66,26 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Issue tracker demo listening on http://localhost:${server.port}`);
+const httpRuntime = ManagedRuntime.make(
+  HttpRouter.serve(Http.routes({ prefix: streamPrefix }), {
+    disableLogger: true,
+    disableListenLog: true,
+  }).pipe(
+    Layer.provide(Layer.succeedContext(await runtime.context())),
+    Layer.provideMerge(listener),
+  ),
+);
+const server = await httpRuntime.runPromise(HttpServer.HttpServer);
+console.log(`Issue tracker demo listening on ${HttpServer.formatAddress(server.address)}`);
 console.log(
-  `Known workspace stream: http://localhost:${server.port}/streams/${workspaceStreamId(mainWorkspaceId)}`,
+  `Known workspace stream: http://localhost:${port}/streams/${workspaceStreamId(mainWorkspaceId)}`,
 );
 
 let shuttingDown: Promise<void> | undefined;
 function shutdown(): Promise<void> {
   if (shuttingDown) return shuttingDown;
   shuttingDown = (async () => {
-    await server.stop(true);
+    await httpRuntime.dispose();
     await runtime.dispose();
   })();
   return shuttingDown;

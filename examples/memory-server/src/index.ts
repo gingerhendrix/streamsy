@@ -1,28 +1,25 @@
-/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This Bun executable is the Promise-native HTTP/process edge and reads its port at startup. */
+/* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This executable owns the HTTP listener and process configuration. */
 import { Streams } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
+import { listener } from "@streamsy/serve/bun";
+import { Layer, ManagedRuntime } from "effect";
+import { HttpRouter, HttpServer } from "effect/unstable/http";
 
 const port = parseInt(process.env.PORT ?? "1337", 10);
-const edge = Http.makeEdge({ pathPrefix: "/" }, Streams.layerMemory());
-
-const server = Bun.serve({
-  port,
-  idleTimeout: 60,
-  fetch: (request) => edge.handler(request),
-});
-
-console.log(`Memory server listening on http://localhost:${server.port}`);
-
+const runtime = ManagedRuntime.make(
+  HttpRouter.serve(Http.routes(), { disableLogger: true, disableListenLog: true }).pipe(
+    Layer.provide(Streams.layerMemory()),
+    Layer.provideMerge(
+      listener({ port, hostname: "0.0.0.0", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
+    ),
+  ),
+);
+export const server = await runtime.runPromise(HttpServer.HttpServer);
+console.log(`Memory server listening on ${HttpServer.formatAddress(server.address)}`);
 let shuttingDown: Promise<void> | undefined;
-function shutdown(): Promise<void> {
-  if (shuttingDown) return shuttingDown;
-  const pending = Promise.resolve(server.stop(true)).then(() => edge.dispose());
-  shuttingDown = pending;
-  return pending;
+export function shutdown(): Promise<void> {
+  return (shuttingDown ??= runtime.dispose());
 }
-
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => void shutdown().finally(() => process.exit(0)));
 }
-
-export { server, shutdown };

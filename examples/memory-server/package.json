@@ -10,7 +10,9 @@
     "test:unit": "bun test test"
   },
   "dependencies": {
-    "@streamsy/core": "workspace:*"
+    "@streamsy/core": "workspace:*",
+    "@streamsy/serve": "workspace:*",
+    "effect": "4.0.0-rc.115"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
