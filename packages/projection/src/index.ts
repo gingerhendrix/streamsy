@@ -29,3 +29,6 @@ export {
 export { ProjectionFault } from "./fault.ts";
 
 export { State, type StateApi } from "./state.ts";
+
+export * as Output from "./output.ts";
+export type { Named } from "./outputs.ts";

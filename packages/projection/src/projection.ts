@@ -3,6 +3,7 @@ import type { StreamRef } from "@streamsy/core";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { Identity, ProjectionKey } from "./checkpoint.ts";
 import { entries } from "./read.ts";
+import type { Named } from "./outputs.ts";
 import type { Unit } from "./unit.ts";
 export { pass, run } from "./run.ts";
 export { follow } from "./follow.ts";
@@ -42,7 +43,8 @@ export interface Pinned<Inputs extends InputMap = InputMap, O = unknown, E = unk
 }
 export type Projection<Inputs extends InputMap = InputMap, O = unknown, E = unknown, R = unknown> =
   | Fused<Inputs, E, R>
-  | Pinned<Inputs, O, E, R>;
+  | Pinned<Inputs, O, E, R>
+  | Named<Inputs, E, R>;
 
 interface Common {
   readonly id: string;
@@ -130,17 +132,39 @@ export const items = <Inputs extends InputMap>(
   // SAFETY: each entry's item was decoded by the codec of the input it is tagged with.
   entries(batch) as ReadonlyArray<Entry<Inputs>>;
 
-/** A fused handler that runs `handle` once per tagged item, one at a time, in unit order. */
-export const each =
-  <Inputs extends InputMap, E, R>(
-    handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<unknown, E, R>,
-  ) =>
-  (batch: Slices<Inputs>, unit: Unit): Effect.Effect<void, E, R> =>
-    Effect.forEach(items(batch), (entry) => handle(entry, unit), {
-      concurrency: 1,
-      discard: true,
+/** Runs each tagged item in order; keyed output arrays are concatenated in that order. */
+export function each<
+  Inputs extends InputMap,
+  Result extends Readonly<Record<string, ReadonlyArray<unknown>>>,
+  E,
+  R,
+>(
+  handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<Result, E, R>,
+): (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Result, E, R>;
+export function each<Inputs extends InputMap, E, R>(
+  handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<unknown, E, R>,
+): (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
+export function each<Inputs extends InputMap, E, R>(
+  handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<unknown, E, R>,
+): (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<any, E, R> {
+  return (batch: Slices<Inputs>, unit: Unit) =>
+    Effect.gen(function* () {
+      const combined: Record<string, unknown[]> = {};
+      for (const entry of items(batch)) {
+        const result = yield* handle(entry, unit);
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The fused overload allows arbitrary ignored success values.
+        if (typeof result !== "object" || result === null) continue;
+        for (const [name, values] of Object.entries(result)) {
+          if (Array.isArray(values)) (combined[name] ??= []).push(...values);
+        }
+      }
+      return Object.keys(combined).length === 0 ? undefined : combined;
     });
+}
 
 export { State } from "./state.ts";
 export { fold, loadState } from "./fold.ts";
 export { forget } from "./forget.ts";
+
+export { outputs } from "./outputs.ts";
+export type { Named } from "./outputs.ts";

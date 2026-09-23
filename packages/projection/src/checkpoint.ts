@@ -10,7 +10,9 @@ export const CheckpointRecord = Schema.Struct({
   inputs: Schema.Record(Schema.String, Schema.String),
   pending: Schema.optionalKey(PendingUnit),
   adapters: Schema.Struct({
-    stream: Schema.optionalKey(Schema.Struct({ epoch: Counter, nextSeq: Counter })),
+    outputs: Schema.optionalKey(
+      Schema.Record(Schema.String, Schema.Struct({ epoch: Counter, nextSeq: Counter })),
+    ),
   }),
 });
 export interface CheckpointRecord extends Schema.Schema.Type<typeof CheckpointRecord> {}

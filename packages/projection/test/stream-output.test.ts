@@ -155,7 +155,11 @@ const scenario = (name: string) => {
 };
 const pinnedRecord = (record: CheckpointRecord | undefined) => {
   if (record?.pending === undefined) throw new Error("Expected a pinned unit");
-  return { pending: record.pending, stream: record.adapters.stream, inputs: record.inputs };
+  return {
+    pending: record.pending,
+    stream: record.adapters.outputs?.stream,
+    inputs: record.inputs,
+  };
 };
 
 test("crash after append and before the checkpoint settles by Duplicate without duplicate output", () =>
@@ -185,7 +189,7 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       const before = yield* stored(s.doubled);
       const pinned = pinnedRecord(before.record);
       expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seq).toBe(0);
+      expect(pinned.pending.seqs.stream).toBe(0);
       expect(pinned.pending.ranges.input?.count).toBe(3);
       expect(pinned.stream).toEqual({ epoch: 1, nextSeq: 0 });
 
@@ -199,7 +203,7 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       const after = yield* stored(s.doubled);
       expect(after.record?.pending).toBeUndefined();
       expect(after.record?.inputs.input).toBe(pinned.pending.ranges.input?.nextOffset ?? "");
-      expect(after.record?.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
       expect(after.token).toBe("2");
       // The retry processed exactly the pinned range under the same unit key.
       expect(s.seen.map((entry) => entry.items)).toEqual([
@@ -234,7 +238,7 @@ test("a competing save between the append and the settle fails in phase checkpoi
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       const before = yield* stored(s.doubled);
       expect(before.token).toBe("2");
-      expect(pinnedRecord(before.record).pending.seq).toBe(0);
+      expect(pinnedRecord(before.record).pending.seqs.stream).toBe(0);
 
       const appends = failingAppends(0);
       const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
@@ -244,7 +248,7 @@ test("a competing save between the append and the settle fails in phase checkpoi
       const after = yield* stored(s.doubled);
       expect(after.token).toBe("3");
       expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
     }),
   ));
 
@@ -266,7 +270,7 @@ test("the first pin stores the stream epoch before the append; a crash there set
       const pinned = pinnedRecord(before.record);
       expect(pinned.stream).toEqual({ epoch: 1, nextSeq: 0 });
       expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seq).toBe(0);
+      expect(pinned.pending.seqs.stream).toBe(0);
       expect(pinned.pending.ranges.input?.from).toBe(ZERO_OFFSET);
       expect(pinned.pending.ranges.input?.count).toBe(3);
       expect(pinned.pending.ranges.input?.nextOffset).not.toBe(ZERO_OFFSET);
@@ -277,7 +281,7 @@ test("the first pin stores the stream epoch before the append; a crash there set
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       const after = yield* stored(s.doubled);
       expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
     }),
   ));
 
@@ -303,14 +307,17 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
       const afterEmpty = yield* stored(evens);
       expect(afterEmpty.token).toBe("1");
       expect(afterEmpty.record?.pending).toBeUndefined();
-      expect(afterEmpty.record?.adapters.stream).toBeUndefined();
+      expect(afterEmpty.record?.adapters.outputs?.stream).toBeUndefined();
       expect(afterEmpty.record?.inputs.input).not.toBe(ZERO_OFFSET);
 
       yield* Streams.append(input, [4]);
       yield* withWriter(Projection.run(evens), recording.patch);
       expect(recording.positions).toEqual([{ epoch: 1, seq: 0 }]);
       expect(yield* readAll(output)).toEqual(["4"]);
-      expect((yield* stored(evens)).record?.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect((yield* stored(evens)).record?.adapters.outputs?.stream).toEqual({
+        epoch: 1,
+        nextSeq: 1,
+      });
     }),
   ));
 
@@ -467,7 +474,7 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
         const after = yield* stored(s.doubled);
         expect(after.token).toBe(String(Number(pinToken) + 1));
         expect(after.record?.pending).toBeUndefined();
-        expect(after.record?.adapters.stream).toEqual({ epoch: 1, nextSeq: 1 });
+        expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
       }),
     ));
 }
@@ -487,7 +494,10 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
         { epoch: 2, seq: 0 },
       ]);
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
-      expect((yield* stored(second)).record?.adapters.stream).toEqual({ epoch: 2, nextSeq: 1 });
+      expect((yield* stored(second)).record?.adapters.outputs?.stream).toEqual({
+        epoch: 2,
+        nextSeq: 1,
+      });
 
       yield* Streams.append(s.input, [4]);
       const failure = fault(
@@ -498,7 +508,7 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       expect(recording.positions[2]).toEqual({ epoch: 1, seq: 1 });
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
       // The pin stays until a new generation takes over; nothing advanced.
-      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seq).toBe(1);
+      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs.stream).toBe(1);
     }),
   ));
 
@@ -515,7 +525,7 @@ test("a stored stream epoch that is not the generation fails load/stale-epoch", 
         {
           identity: current.record.identity,
           inputs: current.record.inputs,
-          adapters: { stream: { epoch: 7, nextSeq: 1 } },
+          adapters: { outputs: { stream: { epoch: 7, nextSeq: 1 } } },
         },
         current.token,
       );
@@ -575,8 +585,8 @@ test("a two-input pending unit reproduces both ranges", () =>
   ));
 
 test("producer ids join params to the id", () => {
-  expect(producerId("x", {})).toBe("x");
-  expect(producerId("x", { b: "2", a: "1" })).toBe(`x/${JSON.stringify({ a: "1", b: "2" })}`);
+  expect(producerId("x", 1, {})).toBe("x/v1");
+  expect(producerId("x", 1, { b: "2", a: "1" })).toBe(`x/v1/${JSON.stringify({ a: "1", b: "2" })}`);
 });
 
 test("a missing output is created before the first pin", () =>
@@ -659,7 +669,7 @@ test("an over-long page whose log ends before the pin is unreproducible", () =>
           inputs: record.inputs,
           adapters: record.adapters,
           pending: {
-            seq: record.pending.seq,
+            seqs: record.pending.seqs,
             ranges: {
               input: {
                 from: ZERO_OFFSET,

@@ -41,7 +41,9 @@ test("member is the ordinary routed projection", () => {
   expect(member.params).toEqual(direct.params);
   expect(Projection.key(member)).toEqual(Projection.key(direct));
   expect(recordKey(Projection.key(member))).toBe(recordKey(Projection.key(direct)));
-  expect(producerId(member.id, member.params)).toBe(producerId(direct.id, direct.params));
+  expect(producerId(member.id, member.version, member.params)).toBe(
+    producerId(direct.id, direct.version, direct.params),
+  );
   expect(member.inputs.facts.id).toBe(direct.inputs.facts.id);
   expect(member.output.id).toBe(direct.output.id);
   expect(Option.getOrThrow(board.parse("facts/ws-42"))).toEqual({

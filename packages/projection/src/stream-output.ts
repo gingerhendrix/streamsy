@@ -3,14 +3,16 @@ import { Producer, Streams, StreamsReader, StreamsWriter, type StreamRef } from 
 import { emptySlice, type InputMap, type Slice, type Slices } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
+import type { Named } from "./outputs.ts";
+import type { Processed } from "./output.ts";
 import type { Pinned } from "./projection.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import type { Progress } from "./run.ts";
-import { canonicalParams, unitOf, type PendingUnit } from "./unit.ts";
+import { canonicalParams, unitOf } from "./unit.ts";
 
 /** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
-export const producerId = (id: string, params: Record<string, string>): string =>
-  Object.keys(params).length === 0 ? id : `${id}/${canonicalParams(params)}`;
+export const producerId = (id: string, version: number, params: Record<string, string>): string =>
+  `${id}/v${version}${Object.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
 
 /** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
 const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
@@ -64,18 +66,14 @@ const asPin = (fault: ProjectionFault): ProjectionFault =>
     ? new ProjectionFault({ phase: "pin", reason: fault.reason, message: fault.message })
     : fault;
 
-/**
- * One stream-output unit. A pinned unit from an earlier pass settles first: its
- * ranges are reproduced and sent under the pinned tuple, and both `Appended` and
- * `Duplicate` advance the record. Only then does the pass read new items.
- */
+/** One pinned unit, with independent tuple sequences and one atomic settle save. */
 export const passStream = Effect.fn("Projection.passStream")(function* <
   Inputs extends InputMap,
   O,
   E,
   R,
 >(
-  projection: Pinned<Inputs, O, E, R>,
+  projection: Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
   options: RunOptions = {},
 ): Effect.fn.Return<
   Progress,
@@ -86,59 +84,48 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   const owner = yield* Checkpoints;
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
-  const stream = adapters.stream ?? { epoch: projection.generation, nextSeq: 0 };
-  if (stream.epoch !== projection.generation)
-    return yield* new ProjectionFault({
-      phase: "load",
-      reason: "stale-epoch",
-      message: `Stored epoch ${stream.epoch} of ${projection.id} is not generation ${projection.generation}`,
-    });
-  const position = (seq: number): Producer.Position => ({
-    producerId: producerId(projection.id, projection.params),
-    producerEpoch: stream.epoch,
-    producerSeq: seq,
-  });
-  const settled = (inputs: Record<string, string>, nextSeq: number): CheckpointRecord => ({
-    identity,
-    inputs,
-    adapters: { ...adapters, stream: { epoch: stream.epoch, nextSeq } },
-  });
-
-  if (before.record.pending !== undefined) {
-    const pending: PendingUnit = before.record.pending;
+  const streams: Readonly<Record<string, StreamRef.StreamRef<unknown>>> =
+    projection._tag === "Stream" ? { stream: projection.output } : projection.streams;
+  const positions = { ...adapters.outputs };
+  for (const [name, position] of Object.entries(positions)) {
+    if (position.epoch !== projection.generation)
+      return yield* new ProjectionFault({
+        phase: "load",
+        reason: "stale-epoch",
+        message: `Stored epoch ${position.epoch} of ${projection.id}/${name} is not generation ${projection.generation}`,
+      });
+  }
+  const pending = before.record.pending;
+  let batch: Slices<Inputs>;
+  let count = 0;
+  if (pending !== undefined) {
     const slices: Record<string, Slice<unknown>> = {};
-    let items = 0;
     for (const [name, ref] of Object.entries(projection.inputs)) {
       const range = pending.ranges[name];
-      if (range === undefined) {
-        slices[name] = emptySlice(before.record.inputs[name] ?? "");
-        continue;
+      if (range === undefined) slices[name] = emptySlice(before.record.inputs[name] ?? "");
+      else {
+        const read = yield* reproduce(name, ref, range);
+        slices[name] = read.slice;
+        count += read.slice.items.length;
       }
-      const read = yield* reproduce(name, ref, range);
-      slices[name] = read.slice;
-      items += read.slice.items.length;
     }
-    const unit = unitOf(
-      projection.id,
-      projection.version,
-      projection.generation,
-      projection.params,
-      pending.ranges,
-    );
-    // SAFETY: `slices` has exactly the keys of `inputs`, each reproduced through that input's codec.
-    const outputs = yield* projection.process(slices as Slices<Inputs>, unit);
-    yield* appendPinned(projection.output, outputs, position(pending.seq));
-    const record = settled(advance(before.record.inputs, pending.ranges), pending.seq + 1);
-    yield* owner.save(projection, record, before.token);
-    return { status: "progress", units: 1, items, record };
+    // SAFETY: each slice is reproduced through the codec of its declared input.
+    batch = slices as Slices<Inputs>;
+  } else {
+    const read = yield* readInputs(projection.inputs, before.record.inputs);
+    batch = read.slices;
+    count = read.items;
+    if (count === 0)
+      return {
+        status: Object.values<Slice<unknown>>(batch).every((slice) => slice.closed)
+          ? "source-closed"
+          : "caught-up",
+        units: 0,
+        items: 0,
+        record: before.record,
+      };
   }
-
-  const empty = { units: 0, items: 0, record: before.record };
-  const read = yield* readInputs(projection.inputs, before.record.inputs);
-  const slices = Object.values<Slice<unknown>>(read.slices);
-  const closed = slices.every((slice) => slice.closed);
-  if (read.items === 0) return { ...empty, status: closed ? "source-closed" : "caught-up" };
-  const ranges = rangesOf(read.slices);
+  const ranges = pending?.ranges ?? rangesOf(batch);
   const unit = unitOf(
     projection.id,
     projection.version,
@@ -146,68 +133,99 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     projection.params,
     ranges,
   );
-  const outputs = yield* projection.process(read.slices, unit);
-  const inputs = advance(before.record.inputs, read.slices);
-  let record: CheckpointRecord;
-  if (outputs.length === 0) {
-    // Nothing to append: no pin, no sequence consumed, and the stream entry is left as loaded.
-    record = { identity, inputs, adapters };
-    yield* owner.save(projection, record, before.token);
-  } else {
-    const reader = yield* StreamsReader;
-    const head = yield* reader.head(projection.output.id).pipe(
-      Effect.catchTag("StreamNotFound", () =>
-        Streams.create(projection.output).pipe(Effect.andThen(reader.head(projection.output.id))),
-      ),
-      Effect.mapError(
-        (cause) =>
-          new ProjectionFault({
-            phase: "pin",
-            reason:
-              cause._tag === "StorageFault" || cause._tag === "TransportFault"
-                ? "storage-failure"
-                : "invalid-output",
-            message: `Cannot prepare output ${projection.output.id}`,
-            cause,
-          }),
-      ),
-    );
-    if (head.closed)
+  const processed: Processed =
+    projection._tag === "Stream"
+      ? { items: { stream: yield* projection.process(batch, unit) } }
+      : yield* projection.process(batch, unit);
+  const seqs: Record<string, number> =
+    pending === undefined
+      ? Object.fromEntries(
+          Object.keys(streams)
+            .filter((name) => (processed.items[name]?.length ?? 0) > 0)
+            .map((name) => [name, positions[name]?.nextSeq ?? 0]),
+        )
+      : pending.seqs;
+  // A changed handler may not silently omit a previously pinned output.
+  for (const name of Object.keys(seqs)) {
+    if (streams[name] === undefined || (processed.items[name]?.length ?? 0) === 0)
       return yield* new ProjectionFault({
-        phase: "pin",
+        phase: "process",
         reason: "invalid-output",
-        message: `Output ${projection.output.id} is closed`,
+        message: `Cannot reproduce pinned output ${name}`,
       });
+  }
+  let token = before.token;
+  if (pending === undefined && Object.keys(seqs).length > 0) {
+    const reader = yield* StreamsReader;
+    for (const [name, output] of Object.entries(streams)) {
+      if (seqs[name] === undefined) continue;
+      const head = yield* reader.head(output.id).pipe(
+        Effect.catchTag("StreamNotFound", () =>
+          Streams.create(output).pipe(Effect.andThen(reader.head(output.id))),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new ProjectionFault({
+              phase: "pin",
+              reason:
+                cause._tag === "StorageFault" || cause._tag === "TransportFault"
+                  ? "storage-failure"
+                  : "invalid-output",
+              message: `Cannot prepare output ${output.id}`,
+              cause,
+            }),
+        ),
+      );
+      if (head.closed)
+        return yield* new ProjectionFault({
+          phase: "pin",
+          reason: "invalid-output",
+          message: `Output ${output.id} is closed`,
+        });
+      positions[name] = positions[name] ?? { epoch: projection.generation, nextSeq: 0 };
+    }
     const pinned: CheckpointRecord = {
       identity,
       inputs: before.record.inputs,
+      adapters: { outputs: positions },
       pending: {
+        seqs,
         ranges: Object.fromEntries(
           Object.entries(ranges).map(([name, range]) => [
             name,
             {
               from: range.from,
               nextOffset: range.nextOffset,
-              count: read.slices[name]?.items.length ?? 0,
+              count: batch[name]?.items.length ?? 0,
             },
           ]),
         ),
-        seq: stream.nextSeq,
       },
-      adapters: { ...adapters, stream },
     };
-    const pinToken = yield* owner
-      .save(projection, pinned, before.token)
-      .pipe(Effect.mapError(asPin));
-    yield* appendPinned(projection.output, outputs, position(stream.nextSeq));
-    record = settled(inputs, stream.nextSeq + 1);
-    yield* owner.save(projection, record, pinToken);
+    token = yield* owner.save(projection, pinned, before.token).pipe(Effect.mapError(asPin));
   }
-  // A non-empty pass is progress; only an empty pass is authoritative for caught-up.
-  return {
-    status: "progress",
-    units: 1,
-    items: read.items,
-    record,
+  for (const [name, output] of Object.entries(streams)) {
+    const seq = seqs[name];
+    if (seq === undefined) continue;
+    yield* appendPinned(output, processed.items[name] ?? [], {
+      producerId: producerId(projection.id, projection.version, projection.params),
+      producerEpoch: projection.generation,
+      producerSeq: seq,
+    });
+    positions[name] = { epoch: projection.generation, nextSeq: seq + 1 };
+  }
+  const record: CheckpointRecord = {
+    identity,
+    inputs: advance(before.record.inputs, ranges),
+    adapters: Object.keys(positions).length === 0 ? adapters : { outputs: positions },
   };
+  if (processed.saveState === undefined) yield* owner.save(projection, record, token);
+  else
+    yield* owner.withTransaction(
+      Effect.gen(function* () {
+        yield* owner.save(projection, record, token);
+        if (processed.saveState !== undefined) yield* processed.saveState;
+      }),
+    );
+  return { status: "progress", units: 1, items: count, record };
 });

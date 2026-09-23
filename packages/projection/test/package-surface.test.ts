@@ -35,6 +35,8 @@ test("built public entries and declared files exist", () => {
   expect(Checkpoint.stateFromStore).toBeFunction();
   expect(Root.State).toBe(Projection.State);
   expect(Root.State.key).toBe("@streamsy/projection/State");
+  expect(Projection.outputs).toBeFunction();
+  expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert", "value"]);
   expect(Projection.fold).toBeFunction();
   expect(Projection.loadState).toBeFunction();
   expect(Projection.forget).toBeFunction();
@@ -94,6 +96,7 @@ test("the root entry does not import a SQL driver", async () => {
 test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
     "Checkpoints",
+    "Output",
     "Projection",
     "ProjectionFault",
     "State",
@@ -110,6 +113,7 @@ test("root exports stay explicit", () => {
     "loadState",
     "make",
     "onChange",
+    "outputs",
     "pass",
     "run",
     "serialized",

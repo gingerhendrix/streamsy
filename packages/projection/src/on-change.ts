@@ -1,3 +1,4 @@
+import type { Named } from "./outputs.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
 import { Effect, Fiber, Option, Queue, Stream, type Scope } from "effect";
 import { Storage, StreamsReader, type StreamRef, type StreamRoute } from "@streamsy/core";
@@ -13,10 +14,12 @@ export interface OnChangeOptions extends RunOptions {}
 
 type AnyProjection =
   | Fused<InputMap, unknown, unknown>
-  | Pinned<InputMap, unknown, unknown, unknown>;
+  | Pinned<InputMap, unknown, unknown, unknown>
+  | Named<InputMap, unknown, unknown>;
 type RuntimeProjection =
   | Fused<InputMap, ProjectionFault, Host>
-  | Pinned<InputMap, unknown, ProjectionFault, Host>;
+  | Pinned<InputMap, unknown, ProjectionFault, Host>
+  | Named<InputMap, ProjectionFault, Host>;
 type FamilyParams<F> = F extends Family<infer Codecs, any> ? StreamRoute.Params<Codecs> : never;
 type FamilyMember<F> = F extends Family<any, infer Member> ? Member : never;
 type MemberError<Member> =
@@ -41,7 +44,7 @@ const unsupported = (input: string, ref: StreamRef.StreamRef<unknown>) =>
   });
 
 const watch = <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
   storage: typeof Storage.Service,
   options: OnChangeOptions,
 ): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
@@ -135,7 +138,7 @@ const watch = <Inputs extends InputMap, O, E, R>(
  * failures surface as `read / storage-failure`.
  */
 export function onChange<Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R>,
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
   options?: OnChangeOptions,
 ): Effect.Effect<
   Fiber.Fiber<Progress, E | ProjectionFault>,
