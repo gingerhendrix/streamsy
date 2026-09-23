@@ -1,19 +1,42 @@
 import { Http } from "@streamsy/core";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { Checkpoints, Projection, type State } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer, Option, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
 import { issueRows } from "./projection.ts";
+import { WorkspaceSummary } from "../domain/outputs.ts";
 import { tracker } from "./outputs.ts";
 import { transact } from "./state.ts";
+
+export const summaryDocument: Serve.ValueSource<
+  { readonly workspaceId: string },
+  WorkspaceSummary,
+  State
+> = {
+  id: "issue-tracker/summary",
+  paramSchema: tracker.outputs.workspace.paramSchema,
+  schema: WorkspaceSummary,
+  resolve: (params) =>
+    tracker.outputs.workspace.resolve(params).pipe(
+      Effect.map((state) => ({
+        workspaceId: state.workspaceId,
+        issueCount: state.issueCount,
+        doneCount: state.doneCount,
+        labelCount: state.labels.length,
+        projectCount: state.projects.length,
+      })),
+    ),
+};
 
 export const outputRoutes = Layer.mergeAll(
   Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
   Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
   Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
-  Serve.document(tracker.outputs.summary, "/document/workspaces/:workspaceId/summary"),
+  Serve.document(summaryDocument, "/document/workspaces/:workspaceId/summary", {
+    contract: "compact-summary-v1",
+  }),
 );
 
 export const app = (workspaces: ReadonlyArray<string>) => {

@@ -28,29 +28,43 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
       yield* createInputs(workspaces.flatMap(refs));
       if (workspaces.length > 0) {
         const members = workspaces.map((workspaceId) => ({ workspaceId }));
-        // Complete startup replay before accepting HTTP reads.
         for (const params of members) {
-          yield* Projection.serialized(issueRows.member(params));
-          yield* Projection.serialized(tracker.member(params));
-        }
-        const fibers = [
-          ...(yield* Projection.onChange(issueRows, members)),
-          ...(yield* Projection.onChange(tracker, members)),
-        ];
-        yield* Effect.forEach(
-          fibers,
-          (fiber) =>
-            Fiber.await(fiber).pipe(
-              Effect.flatMap((exit) =>
-                Exit.isSuccess(exit)
-                  ? Effect.logInfo("tracker watcher ended successfully", exit)
-                  : !Cause.hasInterruptsOnly(exit.cause)
-                    ? Effect.logError("tracker watcher ended", exit)
-                    : Effect.void,
-              ),
+          const sqlMember = issueRows.member(params);
+          const outputMember = tracker.member(params);
+          // Startup and background failures are isolated to their member.
+          yield* Projection.serialized(sqlMember).pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logError("projection startup failed", Projection.key(sqlMember), cause),
             ),
-          { concurrency: "unbounded", discard: true },
-        ).pipe(Effect.forkScoped);
+          );
+          yield* Projection.serialized(outputMember).pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logError("projection startup failed", Projection.key(outputMember), cause),
+            ),
+          );
+          const watched = [
+            { key: Projection.key(sqlMember), fiber: yield* Projection.onChange(sqlMember) },
+            { key: Projection.key(outputMember), fiber: yield* Projection.onChange(outputMember) },
+          ];
+          yield* Effect.forEach(
+            watched,
+            ({ key, fiber }) =>
+              Fiber.await(fiber).pipe(
+                Effect.flatMap((exit) =>
+                  Exit.isSuccess(exit)
+                    ? Effect.logInfo("projection watcher ended successfully", key, exit)
+                    : !Cause.hasInterruptsOnly(exit.cause)
+                      ? Effect.logError("projection watcher ended", key, exit)
+                      : Effect.void,
+                ),
+              ),
+            { concurrency: "unbounded", discard: true },
+          ).pipe(Effect.forkScoped);
+        }
       }
       return true as const;
     }),

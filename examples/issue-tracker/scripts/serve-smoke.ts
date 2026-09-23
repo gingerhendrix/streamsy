@@ -46,10 +46,9 @@ try {
           ]),
         );
         yield* Projection.run(tracker.member({ workspaceId: "live" }));
-        yield* Streams.append(
-          ref,
-          State.changes(ref, { offset: "1" }, [State.delete("label", removed)]),
-        );
+        yield* Streams.append(ref, [
+          { type: "label", key: removed.labelId, headers: { operation: "delete" } },
+        ]);
         yield* Streams.append(labelEvents.ref({ workspaceId: "live" }), [
           {
             type: "LabelAttached",
@@ -84,10 +83,12 @@ try {
     issueId: "smoke",
     status: "done",
   });
-  const check = async () => {
+  const check = async (afterRestartCommand = false) => {
+    const status = afterRestartCommand ? "todo" : "done";
     const board = await readBoard(baseUrl, "live");
-    assert(board.rows.length === 1 && board.rows[0]?.status === "done", "board rows missing");
+    assert(board.rows.length === 1 && board.rows[0]?.status === status, "board rows missing");
     assert(board.rows[0]?.labelIds.join() === "keep", "membership missing");
+    // This small fixture fits label-counts and transitions in one protocol page.
     const changes = await requestJson<
       Array<{
         key: string;
@@ -116,13 +117,17 @@ try {
       "/feed/workspaces/live/issue-transitions?offset=-1",
     );
     assert(
-      transitions.map((event) => event.eventId).join() === "serve-1,serve-2",
+      transitions.map((event) => event.eventId).join() ===
+        (afterRestartCommand ? "serve-1,serve-2,serve-3" : "serve-1,serve-2"),
       "transitions duplicated or missing",
     );
     const response = await fetch(`${baseUrl}/document/workspaces/live/summary`);
     assert(response.status === 200, "document unavailable");
     const summary: WorkspaceSummary = await response.json();
-    assert(summary.issueCount === 1 && summary.doneCount === 1, "summary incorrect");
+    assert(
+      summary.issueCount === 1 && summary.doneCount === (afterRestartCommand ? 0 : 1),
+      "summary incorrect",
+    );
     const etag = response.headers.get("etag");
     assert(etag !== null, "document has no ETag");
     assert(
@@ -140,6 +145,20 @@ try {
   server = startServer(port, scratch.database);
   await waitForServer(baseUrl);
   assert((await check()) === etag, "document changed on restart");
+  await post(baseUrl, "/api/workspaces/live/commands", {
+    type: "status",
+    commandId: "serve-3",
+    issueId: "smoke",
+    status: "todo",
+  });
+  assert((await check(true)) !== etag, "document ETag did not advance");
+  const advanced = await fetch(`${baseUrl}/document/workspaces/live/summary`, {
+    headers: { "if-none-match": etag },
+  });
+  assert(
+    advanced.status === 200 && advanced.headers.get("etag") !== etag,
+    "old ETag incorrectly revalidated",
+  );
   console.log("smoke:serve ok: rows, key-only delete, transitions, ETag/304 and SQLite restart");
 } finally {
   if (server !== undefined) await stopServer(server);

@@ -1,16 +1,18 @@
 import { StreamRoute } from "@streamsy/core";
-import { Output, Projection, ProjectionFault } from "@streamsy/projection";
+import { Output, Projection } from "@streamsy/projection";
 import { Effect } from "effect";
 import { Identifier, foldIssue, type IssueEvent } from "../domain/issue.ts";
 import {
   ProjectBoardCard,
   LabelCountRow,
   IssueTransition,
-  WorkspaceSummary,
-  initialSummary,
-  boardCards,
-  countLabels,
+  WorkspaceState,
+  initialWorkspace,
+  indexWorkspace,
+  boardCard,
+  labelCount,
 } from "../domain/outputs.ts";
+import { checkCatalogWorkspace } from "./catalog.ts";
 import { routes } from "./streams.ts";
 
 const target = (name: string) =>
@@ -27,10 +29,11 @@ export const tracker = Projection.family({
     board: Output.rows(ProjectBoardCard, { key: "issueId", stream: target("board") }),
     labelCounts: Output.rows(LabelCountRow, { key: "labelId", stream: target("label-counts") }),
     transitions: Output.stream(IssueTransition, { stream: target("transitions") }),
-    summary: Output.value(WorkspaceSummary),
+    workspace: Output.value(WorkspaceState),
   },
   process: Projection.fold(
-    (params) => initialSummary(params.workspaceId!),
+    // The family codec guarantees workspaceId on every member.
+    (params) => initialWorkspace(params.workspaceId!),
     (previous, batch) =>
       Effect.gen(function* () {
         const issues = new Map(previous.issues.map((row) => [row.issueId, row]));
@@ -38,17 +41,29 @@ export const tracker = Projection.family({
         const projects = new Map(previous.projects.map((row) => [row.projectId, row]));
         const users = new Map(previous.users.map((row) => [row.userId, row]));
         const labels = new Map(previous.labels.map((row) => [row.labelId, row]));
+        const beforeIndex = indexWorkspace(previous);
+        const touchedIssues = new Set<string>();
+        const touchedLabels = new Set<string>();
+        const touchedProjects = new Set<string>();
+        const touchedUsers = new Set<string>();
         const transitions: IssueEvent[] = [];
         for (const event of batch.events.items) {
           const before = issues.get(event.issueId);
           const after = foldIssue(before, event);
           if (after === undefined || after === before) continue;
           issues.set(event.issueId, after);
+          touchedIssues.add(event.issueId);
           transitions.push(event);
         }
         for (const event of batch.labelEvents.items) {
           const before = memberships.get(event.membershipId);
           if (before !== undefined && before.sequence >= event.sequence) continue;
+          touchedIssues.add(event.issueId);
+          touchedLabels.add(event.labelId);
+          if (before !== undefined) {
+            touchedIssues.add(before.issueId);
+            touchedLabels.add(before.labelId);
+          }
           memberships.set(event.membershipId, {
             membershipId: event.membershipId,
             workspaceId: event.workspaceId,
@@ -59,32 +74,35 @@ export const tracker = Projection.family({
             updatedAt: event.occurredAt,
           });
         }
-        // Match the SQL reader's explicit refusal: never silently skip an ambiguous delete.
         for (const change of [
           ...batch.projects.items,
           ...batch.users.items,
           ...batch.labels.items,
         ]) {
-          if (!("value" in change) && change.old_value === undefined)
-            return yield* new ProjectionFault({
-              phase: "process",
-              reason: "invalid-output",
-              message: `Catalog delete ${change.type}/${change.key} requires old_value`,
-            });
+          if ("value" in change)
+            yield* checkCatalogWorkspace(
+              previous.workspaceId,
+              change.value.workspaceId,
+              change.type,
+              change.key,
+            );
         }
         for (const change of batch.projects.items) {
+          touchedProjects.add(change.key);
           if ("value" in change) projects.set(change.key, change.value);
           else projects.delete(change.key);
         }
         for (const change of batch.users.items) {
+          touchedUsers.add(change.key);
           if ("value" in change) users.set(change.key, change.value);
           else users.delete(change.key);
         }
         for (const change of batch.labels.items) {
+          touchedLabels.add(change.key);
           if ("value" in change) labels.set(change.key, change.value);
           else labels.delete(change.key);
         }
-        const state: WorkspaceSummary = {
+        const state: WorkspaceState = {
           workspaceId: previous.workspaceId,
           issueCount: issues.size,
           doneCount: [...issues.values()].filter((row) => row.status === "done").length,
@@ -94,22 +112,46 @@ export const tracker = Projection.family({
           users: [...users.values()],
           labels: [...labels.values()],
         };
-        const oldCards = new Map(boardCards(previous).map((row) => [row.issueId, row]));
-        const oldCounts = new Map(countLabels(previous).map((row) => [row.labelId, row]));
-        const counts = countLabels(state);
-        return {
-          state,
-          board: boardCards(state)
-            .filter((row) => JSON.stringify(row) !== JSON.stringify(oldCards.get(row.issueId)))
-            .map(Output.upsert),
-          labelCounts: [
-            ...counts
-              .filter((row) => JSON.stringify(row) !== JSON.stringify(oldCounts.get(row.labelId)))
-              .map(Output.upsert),
-            ...[...oldCounts.keys()].filter((key) => !labels.has(key)).map(Output.remove),
-          ],
-          transitions,
-        };
+        const afterIndex = indexWorkspace(state);
+        for (const key of touchedProjects) {
+          for (const issue of beforeIndex.issuesByProject.get(key) ?? [])
+            touchedIssues.add(issue.issueId);
+          for (const issue of afterIndex.issuesByProject.get(key) ?? [])
+            touchedIssues.add(issue.issueId);
+        }
+        for (const key of touchedUsers) {
+          for (const issue of beforeIndex.issuesByUser.get(key) ?? [])
+            touchedIssues.add(issue.issueId);
+          for (const issue of afterIndex.issuesByUser.get(key) ?? [])
+            touchedIssues.add(issue.issueId);
+        }
+        for (const key of touchedIssues) {
+          for (const row of beforeIndex.membershipsByIssue.get(key) ?? [])
+            touchedLabels.add(row.labelId);
+          for (const row of afterIndex.membershipsByIssue.get(key) ?? [])
+            touchedLabels.add(row.labelId);
+        }
+        // Preserve insertion order and builder field order, including for JSON comparisons.
+        const board: Output.Change<ProjectBoardCard>[] = [];
+        for (const issue of state.issues) {
+          if (!touchedIssues.has(issue.issueId)) continue;
+          const row = boardCard(afterIndex, issue);
+          const oldIssue = beforeIndex.issues.get(issue.issueId);
+          const oldRow = oldIssue === undefined ? undefined : boardCard(beforeIndex, oldIssue);
+          if (JSON.stringify(row) !== JSON.stringify(oldRow)) board.push(Output.upsert(row));
+        }
+        const labelCounts: Output.Change<LabelCountRow>[] = [];
+        for (const label of state.labels) {
+          if (!touchedLabels.has(label.labelId)) continue;
+          const row = labelCount(afterIndex, label);
+          const oldLabel = beforeIndex.labels.get(label.labelId);
+          const oldRow = oldLabel === undefined ? undefined : labelCount(beforeIndex, oldLabel);
+          if (JSON.stringify(row) !== JSON.stringify(oldRow)) labelCounts.push(Output.upsert(row));
+        }
+        for (const label of previous.labels) {
+          if (!labels.has(label.labelId)) labelCounts.push(Output.remove(label.labelId));
+        }
+        return { state, board, labelCounts, transitions };
       }),
   ),
 });

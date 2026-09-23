@@ -1,7 +1,8 @@
-import { Projection, ProjectionFault } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Identifier, IssueRow, foldIssue, type IssueEvent } from "../domain/issue.ts";
+import { checkCatalogWorkspace } from "./catalog.ts";
 import { events, labelEvents, labels, projects, users } from "./streams.ts";
 
 type StoredIssue = {
@@ -78,7 +79,7 @@ export const issueRows = Projection.family({
   id: "issue-rows",
   params: { workspaceId: Identifier },
   inputs: { events, labelEvents, projects, users, labels },
-  process: Projection.each((entry) =>
+  process: Projection.each((entry, unit) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       switch (entry.input) {
@@ -108,22 +109,20 @@ export const issueRows = Projection.family({
           const table = entry.input;
           const idColumn =
             table === "projects" ? "project_id" : table === "users" ? "user_id" : "label_id";
+          // The family codec guarantees this parameter on every member.
+          const workspaceId = unit.params.workspaceId!;
           if (!("value" in item)) {
-            if (item.old_value === undefined)
-              return yield* new ProjectionFault({
-                phase: "process",
-                reason: "invalid-output",
-                message: `Catalog delete ${item.type}/${item.key} requires old_value`,
-              });
             yield* sql.unsafe(`DELETE FROM ${table} WHERE workspace_id=? AND ${idColumn}=?`, [
-              item.old_value.workspaceId,
+              workspaceId,
               item.key,
             ]);
-          } else
+          } else {
+            yield* checkCatalogWorkspace(workspaceId, item.value.workspaceId, item.type, item.key);
             yield* sql.unsafe(
               `INSERT INTO ${table} (workspace_id,${idColumn},value) VALUES (?,?,?) ON CONFLICT(workspace_id,${idColumn}) DO UPDATE SET value=excluded.value`,
-              [item.value.workspaceId, item.key, JSON.stringify(item.value)],
+              [workspaceId, item.key, JSON.stringify(item.value)],
             );
+          }
           break;
         }
       }

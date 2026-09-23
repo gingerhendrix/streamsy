@@ -18,7 +18,7 @@ export const LabelCountRow = Schema.Struct({
 export type LabelCountRow = typeof LabelCountRow.Type;
 // Accepted issue facts retain their stable event identity in the transition feed.
 export const IssueTransition = IssueEvent;
-export const WorkspaceSummary = Schema.Struct({
+export const WorkspaceState = Schema.Struct({
   workspaceId: Identifier,
   issueCount: Sequence,
   doneCount: Sequence,
@@ -29,8 +29,8 @@ export const WorkspaceSummary = Schema.Struct({
   users: Schema.Array(UserRow),
   labels: Schema.Array(LabelRow),
 });
-export type WorkspaceSummary = typeof WorkspaceSummary.Type;
-export const initialSummary = (workspaceId: string): WorkspaceSummary => ({
+export type WorkspaceState = typeof WorkspaceState.Type;
+export const initialWorkspace = (workspaceId: string): WorkspaceState => ({
   workspaceId,
   issueCount: 0,
   doneCount: 0,
@@ -40,25 +40,59 @@ export const initialSummary = (workspaceId: string): WorkspaceSummary => ({
   users: [],
   labels: [],
 });
-export const boardCards = (state: WorkspaceSummary): ReadonlyArray<ProjectBoardCard> =>
-  state.issues.map((issue) => ({
-    ...issue,
-    labelIds: state.memberships
-      .filter((row) => row.issueId === issue.issueId && row.attached)
-      .map((row) => row.labelId)
-      .sort(),
-    projectName: state.projects.find((row) => row.projectId === issue.projectId)?.name ?? null,
-    assigneeName: state.users.find((row) => row.userId === issue.assigneeId)?.name ?? null,
-  }));
-export const countLabels = (state: WorkspaceSummary): ReadonlyArray<LabelCountRow> =>
-  state.labels.map((label) => ({
-    workspaceId: state.workspaceId,
-    labelId: label.labelId,
-    name: label.name,
-    count: state.memberships.filter(
-      (row) =>
-        row.labelId === label.labelId &&
-        row.attached &&
-        state.issues.some((issue) => issue.issueId === row.issueId),
-    ).length,
-  }));
+export const WorkspaceSummary = Schema.Struct({
+  workspaceId: Identifier,
+  issueCount: Sequence,
+  doneCount: Sequence,
+  labelCount: Sequence,
+  projectCount: Sequence,
+});
+export type WorkspaceSummary = typeof WorkspaceSummary.Type;
+
+const group = <A>(rows: ReadonlyArray<A>, key: (row: A) => string) => {
+  const result = new Map<string, A[]>();
+  for (const row of rows) {
+    const id = key(row);
+    const bucket = result.get(id);
+    if (bucket) bucket.push(row);
+    else result.set(id, [row]);
+  }
+  return result;
+};
+
+/** Rebuilt in linear time; row builders visit only the keys touched by a unit. */
+export const indexWorkspace = (state: WorkspaceState) => ({
+  issues: new Map(state.issues.map((row) => [row.issueId, row])),
+  projects: new Map(state.projects.map((row) => [row.projectId, row])),
+  users: new Map(state.users.map((row) => [row.userId, row])),
+  labels: new Map(state.labels.map((row) => [row.labelId, row])),
+  membershipsByIssue: group(
+    state.memberships.filter((row) => row.attached),
+    (row) => row.issueId,
+  ),
+  membershipsByLabel: group(
+    state.memberships.filter((row) => row.attached),
+    (row) => row.labelId,
+  ),
+  issuesByProject: group(state.issues, (row) => row.projectId),
+  issuesByUser: group(
+    state.issues.filter((row) => row.assigneeId !== undefined),
+    (row) => row.assigneeId!,
+  ),
+});
+export type WorkspaceIndex = ReturnType<typeof indexWorkspace>;
+export const boardCard = (index: WorkspaceIndex, issue: IssueRow): ProjectBoardCard => ({
+  ...issue,
+  labelIds: (index.membershipsByIssue.get(issue.issueId) ?? []).map((row) => row.labelId).sort(),
+  projectName: index.projects.get(issue.projectId)?.name ?? null,
+  assigneeName:
+    issue.assigneeId === undefined ? null : (index.users.get(issue.assigneeId)?.name ?? null),
+});
+export const labelCount = (index: WorkspaceIndex, label: LabelRow): LabelCountRow => ({
+  workspaceId: label.workspaceId,
+  labelId: label.labelId,
+  name: label.name,
+  count: (index.membershipsByLabel.get(label.labelId) ?? []).filter((row) =>
+    index.issues.has(row.issueId),
+  ).length,
+});

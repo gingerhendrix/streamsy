@@ -23,7 +23,59 @@ const created = {
   occurredAt: "2026-09-23T10:00:00Z",
 };
 
-test("key-only catalog deletes fail clearly and roll back the fused unit", async () => {
+test("key-only catalog deletes stay in the member workspace and advance both checkpoints", async () => {
+  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        for (const workspaceId of ["live", "acme"]) {
+          yield* createInputs(refs(workspaceId));
+          yield* Streams.append(userStream(workspaceId), [
+            {
+              type: "user",
+              key: "ada",
+              value: {
+                workspaceId,
+                userId: "ada",
+                name: "Ada",
+                updatedAt: created.occurredAt,
+              },
+              headers: { operation: "upsert" },
+            },
+          ]);
+          yield* Projection.run(issueRows.member({ workspaceId }));
+          yield* Projection.run(tracker.member({ workspaceId }));
+        }
+        const owner = yield* Checkpoints;
+        const sqlMember = issueRows.member({ workspaceId: "live" });
+        const outputMember = tracker.member({ workspaceId: "live" });
+        const sqlBefore = yield* owner.load(sqlMember);
+        const outputBefore = yield* owner.load(outputMember);
+        yield* Streams.append(userStream("live"), [
+          { type: "user", key: "ada", headers: { operation: "delete" } },
+        ]);
+        yield* Projection.run(sqlMember);
+        yield* Projection.run(outputMember);
+        expect(yield* owner.load(sqlMember)).not.toEqual(sqlBefore);
+        expect(yield* owner.load(outputMember)).not.toEqual(outputBefore);
+        const sql = yield* SqlClient.SqlClient;
+        expect(yield* sql.unsafe("SELECT workspace_id FROM users")).toEqual([
+          { workspace_id: "acme" },
+        ]);
+        expect((yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).users).toEqual(
+          [],
+        );
+        expect(
+          (yield* tracker.outputs.workspace.resolve({ workspaceId: "acme" })).users,
+        ).toHaveLength(1);
+      }),
+    );
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("catalog values cannot write another workspace in either projection", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   try {
     await runtime.runPromise(
@@ -31,7 +83,17 @@ test("key-only catalog deletes fail clearly and roll back the fused unit", async
         yield* createInputs(refs("live"));
         yield* Streams.append(events.ref({ workspaceId: "live" }), [created]);
         yield* Streams.append(userStream("live"), [
-          { type: "user", key: "ada", headers: { operation: "delete" } },
+          {
+            type: "user",
+            key: "ada",
+            value: {
+              workspaceId: "acme",
+              userId: "ada",
+              name: "Ada",
+              updatedAt: created.occurredAt,
+            },
+            headers: { operation: "upsert" },
+          },
         ]);
         for (const member of [
           issueRows.member({ workspaceId: "live" }),
@@ -46,16 +108,15 @@ test("key-only catalog deletes fail clearly and roll back the fused unit", async
           expect(result).toMatchObject({
             _tag: "Failure",
             failure: {
-              _tag: "ProjectionFault",
-              phase: "process",
-              reason: "invalid-output",
-              message: "Catalog delete user/ada requires old_value",
+              _tag: "CatalogWorkspaceMismatch",
+              message: "Catalog user/ada names workspace acme, but member workspace is live",
             },
           });
           expect(yield* owner.load(member)).toEqual(before);
         }
         const sql = yield* SqlClient.SqlClient;
         expect(yield* sql.unsafe("SELECT * FROM issues")).toEqual([]);
+        expect(yield* sql.unsafe("SELECT * FROM users")).toEqual([]);
       }),
     );
   } finally {
@@ -106,7 +167,7 @@ test("named output replay survives a lost append reply beside the SQL projection
           Stream.runCollect,
         );
         expect(board).toHaveLength(2);
-        expect(yield* tracker.outputs.summary.resolve({ workspaceId: "live" })).toMatchObject({
+        expect(yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,
           doneCount: 1,
         });
@@ -162,7 +223,7 @@ test("served route fingerprints pin member identity and reject incompatible cont
         source: "issue-tracker/summary",
         route: "/document/workspaces/:workspaceId/summary",
         cache: "private, max-age=0, must-revalidate",
-        contract: null,
+        contract: "compact-summary-v1",
       }),
     );
     const rejected = await web.handler(
@@ -182,6 +243,57 @@ test("served route fingerprints pin member identity and reject incompatible cont
         );
       }),
     );
+  } finally {
+    await web.dispose();
+    await runtime.dispose();
+  }
+});
+
+test("compact summary excludes fold rows and keeps its ETag across a count-neutral assignment", async () => {
+  const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
+  const services = await runtime.runPromise(Effect.context());
+  const web = HttpRouter.toWebHandler(
+    outputRoutes.pipe(HttpRouter.provideRequest(Layer.succeedContext(services))),
+    { disableLogger: true },
+  );
+  try {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* createInputs(refs("live"));
+        yield* Streams.append(events.ref({ workspaceId: "live" }), [created]);
+        yield* Projection.run(tracker.member({ workspaceId: "live" }));
+      }),
+    );
+    const response = await web.handler(new Request("http://host/document/workspaces/live/summary"));
+    expect(await response.json()).toEqual({
+      workspaceId: "live",
+      issueCount: 1,
+      doneCount: 0,
+      labelCount: 0,
+      projectCount: 0,
+    });
+    const etag = response.headers.get("etag");
+    expect(etag).not.toBeNull();
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* Streams.append(events.ref({ workspaceId: "live" }), [
+          { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
+        ]);
+        yield* Projection.run(tracker.member({ workspaceId: "live" }));
+        expect(
+          (yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).issues[0]?.assigneeId,
+        ).toBe("ada");
+      }),
+    );
+    expect(
+      (
+        await web.handler(
+          new Request("http://host/document/workspaces/live/summary", {
+            headers: { "if-none-match": etag! },
+          }),
+        )
+      ).status,
+    ).toBe(304);
   } finally {
     await web.dispose();
     await runtime.dispose();

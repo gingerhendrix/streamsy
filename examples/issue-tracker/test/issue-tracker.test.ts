@@ -135,8 +135,15 @@ test("an unknown workspace is a 404 and creates nothing", async () => {
   try {
     const baseUrl = `http://127.0.0.1:${port}`;
     await waitForServer(baseUrl);
-    const response = await fetch(`${baseUrl}/api/workspaces/missing/issues`);
+    const response = await fetch(`${baseUrl}/api/workspaces/missing/status`);
     expect(response.status).toBe(404);
+    for (const path of [
+      "/state/workspaces/missing/issues",
+      "/state/workspaces/missing/label-counts",
+      "/feed/workspaces/missing/issue-transitions",
+    ])
+      expect((await fetch(`${baseUrl}${path}?offset=-1`)).status).toBe(404);
+    expect((await fetch(`${baseUrl}/document/workspaces/missing/summary`)).status).toBe(503);
     expect((await fetch(`${baseUrl}/api/workspaces/live/commands`)).status).toBe(404);
     const stream = await fetch(`${baseUrl}/streams/issue-tracker/missing/issue-events?offset=-1`);
     expect(stream.status).toBe(404);
