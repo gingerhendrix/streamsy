@@ -20,7 +20,7 @@ export interface StateUpsert<A, Type extends string = string> {
 export interface StateDelete<A, Type extends string = string> {
   readonly type: Type;
   readonly key: string;
-  readonly old_value: A;
+  readonly old_value?: A;
   readonly headers: StateHeaders & { readonly operation: "delete" };
 }
 
@@ -134,7 +134,7 @@ export function stateChange<A, I, RD, RE, const Type extends string>(options: {
     Schema.Struct({
       type: Schema.Literal(options.type),
       key: Schema.String,
-      old_value: options.schema,
+      old_value: Schema.optionalKey(options.schema),
       headers: Schema.Struct({ operation: Schema.Literal("delete"), ...headers }),
     }),
   ]);

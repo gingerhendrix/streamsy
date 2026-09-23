@@ -47,7 +47,7 @@ export const HackerNewsStateChange = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("hn-story"),
     key: Schema.String,
-    old_value: HackerNewsStory,
+    old_value: Schema.optionalKey(HackerNewsStory),
     headers: StateHeaders,
   }),
 ]);

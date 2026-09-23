@@ -108,12 +108,13 @@ export const issueRows = Projection.family({
           const table = entry.input;
           const idColumn =
             table === "projects" ? "project_id" : table === "users" ? "user_id" : "label_id";
-          if ("old_value" in item)
+          if (!("value" in item)) {
+            if (item.old_value === undefined) break;
             yield* sql.unsafe(`DELETE FROM ${table} WHERE workspace_id=? AND ${idColumn}=?`, [
               item.old_value.workspaceId,
               item.key,
             ]);
-          else
+          } else
             yield* sql.unsafe(
               `INSERT INTO ${table} (workspace_id,${idColumn},value) VALUES (?,?,?) ON CONFLICT(workspace_id,${idColumn}) DO UPDATE SET value=excluded.value`,
               [item.value.workspaceId, item.key, JSON.stringify(item.value)],

@@ -178,6 +178,11 @@ it("decodes foreign-writer optional headers and delete null values", () =>
     }),
   ));
 
+it("decodes key-only deletes without inventing an old row", () => {
+  const change = { type: "story", key: "8", headers: { operation: "delete" } } as const;
+  expect(Schema.decodeSync(stories.codec)(JSON.stringify(change))).toEqual(change);
+});
+
 it("normalizes Durable State insert, update, and upsert operations", () => {
   for (const operation of ["insert", "update", "upsert"] as const) {
     const decoded = Schema.decodeSync(stories.codec)(
