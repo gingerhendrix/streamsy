@@ -2,6 +2,7 @@ import { createStreamDB } from "@durable-streams/state/db";
 import { STATE_VERSION_HEADER } from "@streamsy/serve/contract";
 import { hackerNewsState } from "../state-schema.ts";
 
+// The installed binding writes the string event key into row.id, despite HnStory.id being typed number.
 /** createStreamDB starts a fresh session at -1, then follows the live suffix. */
 export function createHnDb(origin: string) {
   return createStreamDB({

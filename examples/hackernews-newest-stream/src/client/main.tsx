@@ -74,7 +74,8 @@ function App() {
 function HnApp({ db }: { db: HnDb }) {
   const storiesQuery = useLiveQuery((q) => q.from({ stories: db.collections.stories }));
   const stories = useMemo(
-    () => (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || b.id - a.id),
+    () =>
+      (storiesQuery.data ?? []).toSorted((a, b) => b.time - a.time || Number(b.id) - Number(a.id)),
     [storiesQuery.data],
   );
   const [status, setStatus] = useState<ApiStatus | null>(null);

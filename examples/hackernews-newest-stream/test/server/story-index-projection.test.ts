@@ -98,7 +98,7 @@ describe("Hacker News story index projection", () => {
     await run(h);
     const before = await h.read(hackerNewsTarget.id);
 
-    // A fresh declaration with the same identity restores the stored checkpoint.
+    // A copy of the same declaration restores progress through its checkpoint identity.
     const restarted = { ...hackerNewsStoryIndex };
     const result = await Effect.runPromise(
       Projection.run(restarted, limits).pipe(Effect.provide(h.clientLayer)),
