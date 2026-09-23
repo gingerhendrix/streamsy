@@ -86,12 +86,22 @@ replaying fresh post-restart upserts. Unchanged polls append nothing.
 D1-0 has no snapshot. Every new browser replays the full retained history, which
 must remain available and grows even when the newest set stays at 50 rows.
 D1-2 (a server-side snapshot) is the follow-up for bounding this work. Recovery
-means closing the old collection and opening a fresh one from `-1`.
+means closing the old collection and opening a fresh one from `-1`. After a server
+reset, reload the page: it does not automatically reopen its collection.
+
+The installed `@durable-streams/state` binding updates an existing key in place
+without doubling rows, but merges its fields. A field omitted by a later upsert
+keeps its old value in the browser, both live and on replay.
+
 The poller's in-memory newest-set cache is rebuilt after a process restart, so
-its first poll may publish fresh upserts for the current set; the browser replaces
-existing keys rather than doubling rows. The cache is not persisted: if the newest
-set changes while the server is down, previously emitted rows that leave that set
-can remain in a replay. The restart smoke keeps membership fixed across downtime.
+its first poll publishes fresh upserts for the current set. A previously emitted
+row that leaves the newest set during downtime stays in the served rows for good
+and remains visible on the page. With live HN, most restarts are expected to cause
+this as new stories arrive (an expectation, not a measured restart rate).
+The restart smoke keeps membership fixed across downtime. The follow-up is
+**poller membership recovery (review-batch-d2.md finding 2, option b)**: put the
+full newest id set in each source batch, retain known ids in checkpointed
+`Output.value` state, and emit removes for departed ids.
 
 Use a fresh database for this phase-5 declaration: earlier checkpoint/output
 formats are not migrated. `HN_DB=memory` starts fresh on every process restart.
