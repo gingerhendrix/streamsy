@@ -29,6 +29,47 @@ The family's Schema codecs decode path parameters. Literal route parameters must
 
 State serves the Durable State change stream without a snapshot. A new client reads from `-1`. On `replay-from-start`, clear local rows and replay from `-1`. Replay requires retained history and grows with it. `x-streamsy-state-reset: snapshot` gets 400; no snapshot reset headers are exported.
 
+## Serving declared outputs
+
+A named `Projection.family` accepts routed stream identities in its output declarations. Pass its bound `outputs` directly to Serve; the family codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
+
+```ts
+import { Output, Projection } from "@streamsy/projection";
+
+const params = { seat: Schema.FiniteFromString };
+const numbers = StreamRoute.json("numbers/:seat", { params, schema: Schema.Finite });
+const board = StreamRoute.bytes("board/:seat", { params });
+const transitions = StreamRoute.bytes("transitions/:seat", { params });
+const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
+const tracker = Projection.family({
+  id: "tracker",
+  params,
+  inputs: { numbers },
+  outputs: {
+    board: Output.rows(Card, { key: "id", stream: board }),
+    transitions: Output.stream(Schema.FiniteFromString, { stream: transitions }),
+    summary: Output.value(Schema.Struct({ total: Schema.FiniteFromString })),
+  },
+  process: Projection.fold({ total: 0 }, (state, batch) => {
+    const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+    return {
+      state: { total },
+      board: [Output.upsert({ id: "total", total }), Output.remove("old")],
+      transitions: [total],
+    };
+  }),
+});
+const OutputRoutes = Layer.mergeAll(
+  Serve.state(tracker.outputs.board, "/board/:seat"),
+  Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
+  Serve.document(tracker.outputs.summary, "/summary/:seat"),
+);
+```
+
+The routed targets supply only ids: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's stream reader and `Projection.State` to the route app. Documents read the persisted value without running the projection; an absent value answers 503. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+
+For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateRef` codec; deletes may omit `old_value`. No read creates a stream or checkpoint.
+
 ## Auth and per-request params
 
 Provide `HttpRouter.middleware` to the route Layer. A `params` Effect on stream or state can read the identity service that middleware supplies:
