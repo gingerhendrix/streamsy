@@ -22,12 +22,27 @@ export interface StreamRoute<RouteParams, A, RD = never, RE = never> {
   readonly _tag: "StreamRoute";
   /** Relative template, for example `journal/:user`. Empty for a custom route. */
   readonly template: string;
+  readonly paramSchema?: PathSchema<RouteParams>;
   /** The router-facing contract. True when this route owns the id. */
   readonly match: (id: string) => boolean;
   /** The primitive. `None` when the id does not match or a parameter fails to decode. */
   readonly parse: (id: string) => Option.Option<RouteParams>;
   /** Build the member ref. `parse(ref(params).id)` must be `Some(params)`. */
   readonly ref: (params: RouteParams) => StreamRef.StreamRef<A, RD, RE>;
+}
+
+/** The family codecs exposed to HTTP path decoding. */
+export type PathSchema<P> = Schema.Codec<
+  P,
+  Readonly<Record<string, string | undefined>>,
+  never,
+  never
+>;
+type WithPathSchema<P> = { readonly paramSchema: PathSchema<P> };
+
+function pathSchema<C extends ParamCodecs>(codecs: C): PathSchema<Params<C>> {
+  // SAFETY: Struct decodes exactly the codec record keys into Params<C>; each encoded field is a string.
+  return Schema.Struct(codecs) as PathSchema<Params<C>>;
 }
 
 /** A route whose member refs retain their declared State collections. */
@@ -167,13 +182,14 @@ export function json<const Template extends string, Codecs extends ParamCodecs, 
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly schema: Schema.Codec<A, I, RD, RE>;
   },
-): StreamRoute<Params<Codecs>, A, RD, RE> {
+): StreamRoute<Params<Codecs>, A, RD, RE> & WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
   return {
     _tag: "StreamRoute",
     template,
+    paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     ref: (params) => StreamRef.json(buildId(template, segments, codecs, params), options),
@@ -190,13 +206,14 @@ export function state<
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly collections: C & StreamRef.ValidCollections<C>;
   },
-): StateRoute<Params<Codecs>, C> {
+): StateRoute<Params<Codecs>, C> & WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
   return {
     _tag: "StreamRoute",
     template,
+    paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     ref: (params) => StreamRef.state(buildId(template, segments, codecs, params), options),
@@ -209,13 +226,14 @@ export function bytes<const Template extends string, Codecs extends ParamCodecs>
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly contentType?: string;
   },
-): StreamRoute<Params<Codecs>, Uint8Array> {
+): StreamRoute<Params<Codecs>, Uint8Array> & WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
   return {
     _tag: "StreamRoute",
     template,
+    paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     ref: (params) =>

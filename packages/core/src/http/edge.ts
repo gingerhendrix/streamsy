@@ -3,7 +3,8 @@ import { HttpEffect, type HttpServerRequest, type HttpServerResponse } from "eff
 import type { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { app, type HttpOptions } from "./program.ts";
 
-/** Framework conversion boundary; the caller owns disposal for the edge lifetime. */
+/** @deprecated Use HttpRouter.toWebHandler(Http.routes(...)); example migrations remove this in phase 5 D/E.
+ * Framework conversion boundary; the caller owns disposal for the edge lifetime. */
 export const makeEdge = <E, R = never>(
   options: HttpOptions,
   layer: Layer.Layer<StreamsReader | StreamsWriter | R, E>,

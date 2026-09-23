@@ -4,12 +4,13 @@ import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { StreamId } from "../schema/index.ts";
 import type { StreamsFault } from "../fault.ts";
 import * as Responses from "./responses.ts";
+import { securityHeaders } from "./security-headers.ts";
 import { streamPath } from "./stream-path-service.ts";
 import { requestBodyReader } from "./request-body-reader.ts";
 import { discardRequestBody } from "./request-body-discard.ts";
 import * as Create from "./create.ts";
 import * as Append from "./append.ts";
-import { read } from "./read.ts";
+import { read } from "./read-program.ts";
 import { requestUrl } from "./route.ts";
 import { protocolErrorResponse } from "./protocol-error-response.ts";
 import { isProtocolError, type ProtocolError } from "../protocol/errors.ts";
@@ -39,7 +40,6 @@ export function app(options: HttpOptions = {}) {
     throw new RangeError("sseDeadlineMs must be positive");
   const path = streamPath(options.pathPrefix ?? "/");
   const bodyReader = requestBodyReader(options.maxMessageSize ?? 1024 * 1024);
-  const cacheControl = Responses.cacheControlForVisibility(options.cacheVisibility ?? "private");
   const failure = (error: ProtocolError) =>
     Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
       protocolErrorResponse(error, { method: request.method }),
@@ -50,7 +50,6 @@ export function app(options: HttpOptions = {}) {
     HttpServerRequest.HttpServerRequest | StreamsReader | StreamsWriter
   > {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const reader = yield* StreamsReader;
     const writer = yield* StreamsWriter;
     const url = requestUrl(request);
     if (!url) return responses.badRequest("Invalid request URL");
@@ -117,19 +116,8 @@ export function app(options: HttpOptions = {}) {
         return Append.toResponse(result, parsed.producerHeaders, isEmpty);
       }
       case "GET":
-        return yield* read(reader, id, url, headers, cacheControl, options.sseDeadlineMs);
-      case "HEAD": {
-        const meta = yield* reader.head(id);
-        const output = new Headers({
-          "content-type": meta.contentType,
-          "stream-next-offset": meta.nextOffset,
-          "cache-control": "no-store",
-        });
-        if (meta.ttlSeconds) output.set("stream-ttl", String(meta.ttlSeconds));
-        if (meta.expiresAt) output.set("stream-expires-at", meta.expiresAt);
-        if (meta.closed) output.set("stream-closed", "true");
-        return responses.empty(200, output);
-      }
+      case "HEAD":
+        return yield* read(id, options);
       case "DELETE": {
         yield* writer.remove(id);
         return responses.empty(204);
@@ -145,18 +133,8 @@ export function app(options: HttpOptions = {}) {
     }),
     Effect.map((response) => {
       // Raw preserves the legacy Web response's byte and content-type conventions.
-      const result =
-        response instanceof Response
-          ? HttpServerResponse.raw(response, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: Object.fromEntries(response.headers),
-            })
-          : response;
-      return HttpServerResponse.setHeaders(result, {
-        "x-content-type-options": "nosniff",
-        "cross-origin-resource-policy": "cross-origin",
-      });
+      const result = response instanceof Response ? responses.fromWeb(response) : response;
+      return HttpServerResponse.setHeaders(result, securityHeaders);
     }),
   );
 }

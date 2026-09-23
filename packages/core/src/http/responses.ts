@@ -1,3 +1,4 @@
+import { HttpServerResponse } from "effect/unstable/http";
 /**
  * Response factory for the HTTP layer.
  *
@@ -73,4 +74,13 @@ export function methodNotAllowed(): Response {
 
 export function internalError(): Response {
   return new Response("Internal server error", { status: 500 });
+}
+
+/** Preserve the protocol's frozen byte and content-type conventions at one boundary. */
+export function fromWeb(response: Response): HttpServerResponse.HttpServerResponse {
+  return HttpServerResponse.raw(response, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers),
+  });
 }
