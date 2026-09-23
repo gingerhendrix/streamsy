@@ -1,30 +1,48 @@
 ---
 title: Issue tracker projection
-description: One fused multi-input projection family on SQLite, driven by request and change triggers.
+description: SQL and named-output projection families on SQLite, with HTTP output routes.
 ---
 
-This slim issue tracker proves a workspace projection family on a persistent
+This issue tracker runs two workspace projection families on a persistent
 SQLite host. Each member reads canonical issue facts, label membership facts,
 and three Durable State catalog streams: projects, users, and labels. The fused
 handler applies one page from each input in declaration order and advances all
-five checkpoints in the same transaction as its application writes.
+five input offsets in the same transaction as its application writes. A separate
+named `tracker` family produces board rows, label-count rows, issue transitions,
+and a private workspace fold value. A compact summary is derived from that value.
+
+`HttpRouter.serve` runs one `Layer.mergeAll` application with a scoped Bun listener,
+protocol routes, commands, and these output routes:
+
+| Route                                                       | Result                                                     |
+| ----------------------------------------------------------- | ---------------------------------------------------------- |
+| `/state/workspaces/:workspaceId/issues?offset=-1`           | Board changes                                              |
+| `/state/workspaces/:workspaceId/label-counts?offset=-1`     | Label-count changes                                        |
+| `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue transitions                                 |
+| `/document/workspaces/:workspaceId/summary`                 | Workspace id and issue/done/label/project counts; ETag/304 |
+
+State readers replay from `-1`; there is no snapshot.
 
 ## Triggers
 
 `POST /api/workspaces/:workspaceId/commands` follows the transaction recipe:
 read the issue stream, fold it, append with `expectedOffset`, then run the
-member through `Projection.serialized` before reading the result. At startup,
+two members through `Projection.serialized` to full catch-up before reading the
+SQL result. At startup, catch-up is attempted for each member, then
 `Projection.onChange` watches the same five streams for each configured
-workspace and uses the same keyed mutex. A scoped supervisor logs any watcher
+workspace and uses the same keyed mutexes. A scoped supervisor logs any watcher
 that completes successfully at info level and any unexpected failure at error
-level; normal shutdown interruption is ignored. The hand trigger is:
+level; normal shutdown interruption is ignored. Startup member failures are also
+logged with the projection key and do not stop the server or other members.
+Failed members can serve stale rows or an unavailable document. The hand trigger runs both members:
 
 ```bash
 ISSUE_TRACKER_DB=tracker.sqlite \
   bun run --cwd examples/issue-tracker run:once acme
 ```
 
-Unknown workspace names return 404 and do not create streams.
+Unknown workspaces return 404 on the API and initially absent output streams,
+and 503 on the document. Output reads do not create streams or run projections.
 
 ## Table ownership
 
@@ -37,14 +55,16 @@ does not alter application tables.
 ## Run the evidence
 
 ```bash
-bun run --cwd examples/issue-tracker app:full
-bun run --cwd examples/issue-tracker smoke:http
+bun run smoke:issue-tracker
+bun run app:issue-tracker
+bun run smoke:issue-tracker-serve
 ```
 
 The full run replays the recorded `acme` workspace, including an older sequence
 that arrives late, sends live commands, and restarts over the same database.
 The HTTP smoke checks one command, restart checkpoint continuity, persisted
-rows, and one more command after resume.
+rows, and one more command after resume. The Serve smoke checks all four output
+routes, key-only deletes, ETag/304, restart, and output advancement after restart.
 
 This demo has no browser or hosted deployment, keeping the SQLite family and
 its trigger rules visible on their own.

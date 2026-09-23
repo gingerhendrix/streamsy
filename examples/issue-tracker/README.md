@@ -3,7 +3,10 @@
 This SQLite example combines five workspace inputs in two checkpointed projections.
 Commands append canonical issue facts through `transact`, run both workspace members
 under their keyed mutexes, and answer from SQL. Same-owner change feeds also run both
-members. Startup catches up configured workspaces before accepting requests.
+members. Startup attempts to catch up each configured member before accepting requests.
+Startup and watcher failures are logged with the projection key and do not stop other
+members or the server. A failed member can serve stale rows or a 503 document until
+repaired; a terminated watcher does not automatically restart.
 
 ```bash
 bun run --cwd examples/issue-tracker start
@@ -29,7 +32,7 @@ and runs `HttpRouter.serve` with a scoped Bun listener. The routes are:
 | `/state/workspaces/:workspaceId/issues?offset=-1`           | `board` Durable State changes, keyed by `issueId` |
 | `/state/workspaces/:workspaceId/label-counts?offset=-1`     | `labelCounts` changes, keyed by `labelId`         |
 | `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue facts, retaining their event ids   |
-| `/document/workspaces/:workspaceId/summary`                 | Workspace value, with ETag and conditional 304    |
+| `/document/workspaces/:workspaceId/summary`                 | Compact counts, with ETag and conditional 304     |
 
 The old `/api/.../issues` and `/api/.../changes` reads are replaced by the board and
 transition routes. State readers start at `-1`, apply upserts/deletes, and follow
@@ -42,7 +45,7 @@ The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
 `issue_changes`, and `notification_drafts`. The fused `issueRows` projection writes
 those tables and its checkpoint through the same SQL transaction. The separate
 `tracker` named family constructs `Projection.outputs` members: `board` and
-`labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and `summary`
+`labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and `workspace`
 uses `Output.value`. Each stream has its own workspace-specific identity and sequence.
 `@streamsy/projection` owns only its `streamsy_projection_v1_*` tables, including the
 persisted value. The command path still reads facts rather than Projection.State.
@@ -52,18 +55,23 @@ names. Label counts count attached memberships of existing issues for each catal
 label, including zero counts; deleting a catalog label emits `Output.remove(labelId)`
 without `old_value`. Membership ids remain on cards until a detach fact arrives.
 `IssueTransition` uses the existing `IssueEvent` schema, excluding stale facts rejected
-by the sequence fold. `WorkspaceSummary` contains totals plus issue, membership and
-catalog rows required for deterministic replay. Its membership tombstones preserve
-sequence checks. The whole value is public in this demo and grows with workspace size.
+by the sequence fold. The `workspace` value uses `WorkspaceState` to retain source rows
+and membership tombstones for deterministic replay. The full fold state stays private
+to the server. A `Serve.ValueSource` wrapper serves only `WorkspaceSummary`:
+`workspaceId`, `issueCount`, `doneCount`, `labelCount`, and `projectCount`. Counts of
+labels and projects are catalog row counts. Count-neutral changes preserve its ETag.
+The state row still grows with workspace size and is rewritten per unit and decoded
+per document read.
 
-Both projections reject a catalog input delete missing `old_value` with a clear
-`ProjectionFault`, preserving their checkpoints; the SQL unit rolls back. Supplied
-catalog producers include the old row. A bad input requires operator repair/rebuild.
-Output readers accept key-only deletes normally.
+Both projections apply catalog deletes, including key-only deletes, in the member's
+workspace. SQL catalog upserts use the member workspace too. A catalog value naming
+a different workspace fails with `CatalogWorkspaceMismatch`, naming both workspaces;
+SQL writes in that unit roll back and checkpoints do not advance. Such malformed
+input requires operator repair/rebuild; valid key-only deletes do not stop progress.
 
 The named fold uses only the pinned batch and prior value, never mutable SQL rows.
 SQL and output checkpoints are independent, and there is no atomicity across outputs
 or across the two projections. A command can be accepted before projection failure;
 this demo does not add command idempotency. The new `smoke:issue-tracker-serve` script
 (package-local `smoke:serve`) checks rows, a key-only delete, transitions, document
-ETags/304, and restart on the same SQLite file. Client bindings remain a later slice.
+ETags/304, restart on the same SQLite file, and another command after restart. Client bindings remain a later slice.
