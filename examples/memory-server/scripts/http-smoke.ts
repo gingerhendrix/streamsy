@@ -103,12 +103,13 @@ function startServer() {
 
 async function stopServer(server: DemoProcess): Promise<void> {
   server.kill();
-  assert((await server.exited) === 0, "server should exit successfully");
+  const exitCode = await server.exited;
 
   const stdout = await new Response(server.stdout).text();
   const stderr = await new Response(server.stderr).text();
   if (stdout.trim()) console.log(stdout.trim());
   if (stderr.trim()) console.error(stderr.trim());
+  assert(exitCode === 0, `server exit code ${exitCode}: ${stderr}`);
   assert(stderr.trim().length === 0, `demo server wrote to stderr: ${stderr}`);
 }
 
