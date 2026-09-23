@@ -116,7 +116,6 @@ export const follow = Effect.fn("Projection.follow")(function* <Inputs extends I
     Effect.tap((result) => (result.status === "caught-up" ? wake(result) : Effect.yieldNow)),
   );
   return yield* cycle.pipe(
-    Effect.repeat({ while: (result) => result.status !== "source-closed" }),
     Effect.retry({
       while: (fault) => fault instanceof ProjectionFault && fault.reason === "storage-failure",
       schedule: (options.retry ?? defaultRetry).pipe(
@@ -127,6 +126,7 @@ export const follow = Effect.fn("Projection.follow")(function* <Inputs extends I
         ),
       ),
     }),
+    Effect.repeat({ while: (result) => result.status !== "source-closed" }),
     Effect.forkScoped,
   );
 });

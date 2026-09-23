@@ -32,7 +32,7 @@ export interface Value<A> {
 export const stream = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
   options: {
-    readonly stream: string | StreamRef.StreamRef<A>;
+    readonly stream: string | { readonly id: string };
   },
 ): Stream<A> => ({
   _tag: "Stream",

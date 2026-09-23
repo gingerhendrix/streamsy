@@ -79,7 +79,7 @@ const tracker = Projection.outputs({
 
 The two-argument `fold` runs once per batch and returns `{ state, <outputName>: [...] }`, synchronously or in an Effect. A raw handler returns the same record in an Effect. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output.
 
-Each output has its own sequence. An empty output gets no append and consumes no sequence. Recovery reprocesses the pinned inputs from the state before the unit, resends each pinned output in declaration order, and saves the new state with the checkpoint only after every append settles. `process` must be deterministic on those inputs and state. There is no atomicity across outputs, and two outputs may not name the same stream.
+Each output has its own sequence. An empty output gets no append and consumes no sequence. Recovery reprocesses the pinned inputs from the state before the unit, resends each pinned output in declaration order, and saves the new state with the checkpoint only after every append settles. `process` must be deterministic on those inputs and state. There is no atomicity across outputs, and two outputs may not name the same stream or one of the projection's inputs.
 
 The producer id always includes the version: `id/v<version>[/canonicalParamsJson]`, including version 1. A new version or generation should write to a new event stream. Named outputs do not add cross-partition transactional writes, dynamic fan-in, or keyed fan-out. Per-item identity still depends on the input batch; `limit: 1` limits units, not items.
 
@@ -117,7 +117,7 @@ const serve = Effect.scoped(
 );
 ```
 
-`follow` retries `storage-failure` forever, logging each retry and its cause, with jittered exponential backoff from 200 ms capped at 30 s. Its `retry` option takes a `Schedule` override. Other faults end the fiber, and `run` stays single-shot.
+`follow` retries `storage-failure` forever, logging each retry and its cause, with jittered exponential backoff from 200 ms capped at 30 s. Its `retry` option takes a `Schedule` override. Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles. Other faults end the fiber, and `run` stays single-shot.
 
 `follow` returns a caller-scoped fiber. Join it to observe a close or a typed failure; closing the scope releases the parked waits and the fiber. Each wait is one bounded `readNext` per input, so a missed wake delays progress by at most `repairIntervalMs` without losing it. On HTTP backends it issues one poll per input per `repairIntervalMs`, cancelling a still-parked request before the replacement.
 
@@ -264,7 +264,7 @@ const orderRows = Projection.make({
 
 The application creates and migrates `order_totals`; this snippet uses the `orders` ref introduced above.
 
-`Projection.forget(member)` takes the same process-local permit as `serialized`, then deletes state and checkpoint in one transaction. It waits for an active serialized run and retains the shared lock until existing waiters drain. Stop live `onChange` or `follow` fibers before retirement. Bare runs and other processes do not take this permit: wait for them yourself. After deletion the record token restarts, so a stale bare run can match a fresh token and fold items twice. A watcher whose key is forgotten starts from zero on its next run.
+`Projection.forget(member)` takes the same process-local permit as `serialized`, then deletes state and checkpoint in one transaction. It waits for an active serialized run and retains the shared lock until existing waiters drain. Stop live `onChange` or `follow` fibers before you call `forget`. Bare runs and other processes do not take this permit: wait for them yourself. After deletion the record token restarts, so a stale bare run can match a fresh token and fold items twice. A watcher whose key is forgotten starts from zero on its next run.
 
 Forgetting does not delete streams. Do not forget a stream-form member while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
 

@@ -374,3 +374,45 @@ test("default retry remains jittered, capped and unbounded after many failures",
       }
     }),
   ));
+
+test("follow resets a finite retry budget after a successful cycle between outages", () =>
+  run(
+    Effect.gen(function* () {
+      yield* Streams.create(input);
+      yield* Streams.append(input, [1]);
+      const parked = yield* Deferred.make<void>();
+      let reads = 0;
+      const projection = Projection.stream({
+        id: "separate-outages",
+        input,
+        output,
+        process: (batch) => Effect.succeed(batch.input.items),
+      });
+      const fiber = yield* withReader(
+        Projection.follow(projection, { retry: Schedule.recurs(1) }),
+        (reader) => ({
+          read: (id, options) =>
+            Effect.suspend(() => {
+              reads += 1;
+              return reads === 1 || reads === 4
+                ? Effect.fail(
+                    new TransportFault({
+                      reason: "request",
+                      operation: "read",
+                      message: "one failure per outage",
+                    }),
+                  )
+                : reader.read(id, options);
+            }),
+          readNext: (id, options) =>
+            Deferred.succeed(parked, undefined).pipe(Effect.andThen(reader.readNext(id, options))),
+        }),
+      );
+      yield* Deferred.await(parked);
+      expect(yield* readAll(output)).toEqual([1]);
+      yield* Streams.append(input, [2], { close: true });
+      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+      expect(reads).toBe(6);
+      expect(yield* readAll(output)).toEqual([1, 2]);
+    }),
+  ));

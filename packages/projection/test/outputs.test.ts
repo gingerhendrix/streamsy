@@ -55,6 +55,55 @@ const tracker = Projection.outputs({
 });
 
 for (const [name, host] of hosts) {
+  test(`${name}: replay rejects items for an output that was empty at pin`, () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* Streams.create(b);
+        let replay = false;
+        const projection = Projection.outputs({
+          id: "changed-replay",
+          inputs: { input },
+          outputs: declarations,
+          process: () => Effect.succeed({ a: [1], b: replay ? [1] : [] }),
+        });
+        const writer = yield* StreamsWriter;
+        const failed = yield* Projection.run(projection).pipe(
+          Effect.provideService(StreamsWriter, {
+            ...writer,
+            append: (id, options) =>
+              writer.append(id, options).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new TransportFault({
+                      reason: "response",
+                      operation: "append",
+                      message: "lost reply",
+                    }),
+                  ),
+                ),
+              ),
+          }),
+          Effect.result,
+        );
+        expect(failed._tag).toBe("Failure");
+        const owner = yield* Checkpoints;
+        const before = yield* owner.load(projection);
+        expect(Option.getOrThrow(before.record).pending?.seqs).toEqual({ a: 0 });
+        replay = true;
+        const result = yield* Projection.run(projection).pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure")
+          expect(result.failure).toMatchObject({
+            phase: "process",
+            reason: "invalid-output",
+            message: "Cannot reproduce pinned unit: output b has items that were not pinned",
+          });
+        expect(yield* owner.load(projection)).toEqual(before);
+        expect(yield* readAll(a)).toEqual([1]);
+        expect(yield* readAll(b)).toEqual([]);
+      }).pipe(Effect.provide(host)),
+    ));
   test(`${name}: the Outputs documentation snippet writes rows, events and state`, () =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -367,3 +416,26 @@ const checkTypes = () => {
   });
 };
 void checkTypes;
+
+test("named outputs reject an output that names one of their inputs", () => {
+  for (const declaration of [
+    Output.stream(Schema.Finite, { stream: input }),
+    Output.rows(Card, { key: "issueId", stream: input.id }),
+  ]) {
+    expect(() =>
+      Projection.outputs({
+        id: "feedback",
+        inputs: { input },
+        outputs: { feedback: declaration },
+        process: () => Effect.succeed({ feedback: [] }),
+      }),
+    ).toThrow("An output may not name an input stream");
+  }
+});
+
+test("Output.stream uses only the supplied id and its declared schema", () => {
+  const declaration = Output.stream(Schema.Finite, { stream: { id: "id-only" } });
+  expect(String(declaration.stream.id)).toBe("id-only");
+  expect(declaration.stream.contentType).toBe("application/json");
+  expect(Schema.encodeSync(declaration.stream.codec)(42)).toBe("42");
+});

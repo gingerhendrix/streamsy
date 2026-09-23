@@ -90,7 +90,8 @@ const totals = Projection.stream({
 `Projection.outputs({ id, inputs, outputs, process })` declares several pinned outputs.
 Import `Output` from the package root:
 
-- `Output.stream(schema, { stream })` appends typed items.
+- `Output.stream(schema, { stream })` appends typed JSON items. The option is an id
+  or `{ readonly id: string }`; only the id is used, and the declared schema owns encoding.
 - `Output.rows(schema, { key, stream })` appends `Output.upsert(row)` and
   `Output.remove(key)` changes. The output name is the collection type; the kernel owns no rows table.
 - `Output.value(schema)` declares the fold state. At most one value is allowed.
@@ -105,7 +106,7 @@ The three-argument fused `fold(schema, initial, step)` is unchanged.
 Each output has its own sequence. Recovery reprocesses the pinned inputs from
 the previous state and resends all pinned outputs; state and checkpoint commit
 together at settle. Processing must be deterministic. There is no atomicity
-across outputs. Two outputs cannot share a stream.
+across outputs. Two outputs cannot share a stream or name one of the projection's inputs.
 
 Producer ids are `id/v<version>[/canonicalParamsJson]`, including `/v1`.
 A new version or generation should write to a new event stream.
@@ -171,6 +172,7 @@ pending pinned ranges, must remain readable.
 `follow` returns a caller-scoped fiber and repairs missed wake hints every
 1000 ms by default. It has no default unit cap. Storage failures retry forever with
 jittered exponential backoff from 200 ms, capped at 30 s; `retry` accepts a `Schedule` override.
+Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
 

@@ -76,6 +76,9 @@ export function outputs<
   const ids = Object.values(streams).map((ref) => ref.id);
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
+  const inputIds = new Set(Object.values(definition.inputs).map((ref) => ref.id));
+  if (ids.some((id) => inputIds.has(id)))
+    throw new RangeError("An output may not name an input stream");
   const handler = definition.process;
   if ("_tag" in handler && value === undefined)
     throw new RangeError("An output fold requires an Output.value declaration");

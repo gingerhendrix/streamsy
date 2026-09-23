@@ -154,6 +154,16 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
         message: `Cannot reproduce pinned output ${name}`,
       });
   }
+  if (pending !== undefined) {
+    for (const name of Object.keys(streams)) {
+      if ((processed.items[name]?.length ?? 0) > 0 && seqs[name] === undefined)
+        return yield* new ProjectionFault({
+          phase: "process",
+          reason: "invalid-output",
+          message: `Cannot reproduce pinned unit: output ${name} has items that were not pinned`,
+        });
+    }
+  }
   let token = before.token;
   if (pending === undefined && Object.keys(seqs).length > 0) {
     const reader = yield* StreamsReader;
