@@ -1,20 +1,17 @@
-/* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This Bun executable is the Promise-native HTTP/process edge; Effect-owned poller and projection work runs through the single ManagedRuntime below. */
+/* oxlint-disable effecttsgo/async-function -- This executable owns process shutdown and the ManagedRuntime boundary. */
 import { Effect, Layer, ManagedRuntime } from "effect";
+import { HttpRouter } from "effect/unstable/http";
+import { listener } from "@streamsy/serve/bun";
 import {
   newestLimit,
   pollIntervalMs,
   port,
   projectionLimits,
   serverIdleTimeoutSeconds,
-  sourceStreamPath,
-  streamPath,
-  streamPrefix,
 } from "./config.ts";
-import { json } from "./http.ts";
-import { NewestStoriesPoller } from "./poller/contract.ts";
+import { app } from "./http.ts";
 import { newestStoriesPollerLayer } from "./poller/poller.ts";
-import { StoryProjection, storyProjectionLayer } from "./projection.ts";
-import { serveStatic } from "./static.ts";
+import { storyProjectionLayer } from "./projection.ts";
 import { demoHostLayer, DemoStreams } from "./streams.ts";
 
 const pollerLayer = Layer.unwrap(
@@ -33,83 +30,22 @@ const applicationLayer = pollerLayer.pipe(
   Layer.provideMerge(storyProjectionLayer(projectionLimits)),
   Layer.provideMerge(demoHostLayer),
 );
-const runtime = ManagedRuntime.make(applicationLayer);
-const { projection, poller, streams } = await runtime.runPromise(
-  Effect.gen(function* () {
-    return {
-      streams: yield* DemoStreams,
-      projection: yield* StoryProjection,
-      poller: yield* NewestStoriesPoller,
-    };
-  }),
-);
-
-const currentStats = () =>
-  runtime.runPromise(
-    Effect.all({
-      projection: projection.status,
-      poller: poller.stats,
-    }).pipe(
-      Effect.map(({ projection: projectionStatus, poller: pollStats }) => ({
-        projection: projectionStatus,
-        ...pollStats,
-      })),
+const runtime = ManagedRuntime.make(
+  HttpRouter.serve(app, { disableLogger: true }).pipe(
+    Layer.provide(applicationLayer),
+    Layer.provide(
+      listener({ port, idleTimeout: serverIdleTimeoutSeconds, gracefulShutdownTimeout: 1000 }),
     ),
-  );
-
-const server = Bun.serve({
-  port,
-  idleTimeout: serverIdleTimeoutSeconds,
-  async fetch(request) {
-    const url = new URL(request.url);
-    try {
-      if (url.pathname.startsWith(`${streamPrefix}/`)) {
-        return streams.fetch(request);
-      }
-      if (url.pathname === "/api/status") {
-        return json({
-          streamPath,
-          sourceStreamPath,
-          newestLimit,
-          pollIntervalMs,
-          projectionLimits,
-          ...(await currentStats()),
-        });
-      }
-      if (url.pathname === "/api/poll" && request.method === "POST") {
-        await runtime.runPromise(poller.pollNow);
-        return json({ ok: true, ...(await currentStats()) });
-      }
-      if (url.pathname.startsWith("/api/")) {
-        return json({ error: "Not found" }, { status: 404 });
-      }
-      return serveStatic(url);
-    } catch (error) {
-      console.error(error);
-      return json({ error: "Internal server error" }, { status: 500 });
-    }
-  },
-});
+  ),
+);
+await runtime.runPromise(Effect.void);
 
 let shuttingDown: Promise<void> | undefined;
-function shutdown(): Promise<void> {
-  if (shuttingDown) return shuttingDown;
-  shuttingDown = (async () => {
-    await server.stop(true);
-    await runtime.dispose();
-  })();
-  return shuttingDown;
+export function shutdown(): Promise<void> {
+  return (shuttingDown ??= runtime.dispose());
 }
-
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     void shutdown().finally(() => process.exit(0));
   });
 }
-
-console.log(`Hacker News newest stream demo listening on http://localhost:${server.port}`);
-console.log(`Streamsy source stream: http://localhost:${server.port}${sourceStreamPath}`);
-console.log(`Streamsy durable State stream: http://localhost:${server.port}${streamPath}`);
-console.log(`Polling HN newest ${newestLimit} every ${pollIntervalMs}ms`);
-
-export { server, shutdown };

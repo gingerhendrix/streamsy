@@ -29,7 +29,6 @@ export const demoConfig = Config.all({
       streamPrefix,
       targetStreamId,
       sourceStreamId,
-      streamPath: `${streamPrefix}/${targetStreamId}`,
       sourceStreamPath: `${streamPrefix}/${sourceStreamId}`,
       streamContentType: config.streamContentType,
       pollIntervalMs: config.pollIntervalMs,
@@ -49,7 +48,7 @@ export const port = loaded.port;
 export const streamPrefix = loaded.streamPrefix;
 export const targetStreamId = loaded.targetStreamId;
 export const sourceStreamId = loaded.sourceStreamId;
-export const streamPath = loaded.streamPath;
+export const streamPath = "/state/newest";
 export const sourceStreamPath = loaded.sourceStreamPath;
 export const streamContentType = loaded.streamContentType;
 export const pollIntervalMs = loaded.pollIntervalMs;
@@ -63,9 +62,9 @@ export const hnApiBase = loaded.hnApiBase;
 // Streamsy returns its normal 204 timeout response.
 export const serverIdleTimeoutSeconds = 60;
 
-function normalizePrefix(value: string): string {
+function normalizePrefix(value: string): `/${string}` {
   const trimmed = value.replace(/\/+$/, "");
-  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return `/${trimmed.startsWith("/") ? trimmed.slice(1) : trimmed}`;
 }
 
 function normalizeStreamId(value: string): string {

@@ -37,6 +37,7 @@
         "@durable-streams/state": "^0.3.1",
         "@streamsy/core": "workspace:*",
         "@streamsy/projection": "workspace:*",
+        "@streamsy/serve": "workspace:*",
         "@streamsy/storage": "workspace:*",
         "@tanstack/db": "0.6.8",
         "@tanstack/react-db": "^0.1.83",

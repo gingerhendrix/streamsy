@@ -3,7 +3,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Option, Schema } from "effect";
+import { Schema } from "effect";
+import { createHnDb, type HnDb } from "../src/client/db.ts";
 import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.ts";
 
 // Offline vertical smoke: local HN fixture -> deterministic source batch ->
@@ -15,7 +16,7 @@ const portReservation = Bun.serve({ port: 0, fetch: () => new Response("reserved
 const demoPort = portReservation.port;
 await portReservation.stop(true);
 const baseUrl = `http://127.0.0.1:${demoPort}`;
-const streamUrl = `${baseUrl}/streams/session/main`;
+const streamUrl = `${baseUrl}/state/newest`;
 const scratchDir = mkdtempSync(join(tmpdir(), "streamsy-hn-smoke-"));
 const databasePath = join(scratchDir, "hackernews.sqlite");
 
@@ -102,15 +103,11 @@ async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
   throw new SmokeError(`HN demo did not converge. Last status: ${JSON.stringify(last)}`);
 }
 
-async function readStoryEvents(): Promise<ChangeEvent[]> {
+async function readStoryEvents(): Promise<readonly ChangeEvent[]> {
   const response = await fetch(`${streamUrl}?offset=-1`);
   assert(response.status === 200, `target stream read failed: ${response.status}`);
-  const values = Schema.decodeUnknownSync(Schema.Array(Schema.Unknown))(await response.json());
-  const decodeChange = Schema.decodeUnknownOption(HackerNewsStateChange);
-  return values.flatMap((value) => {
-    const decoded = decodeChange(value);
-    return Option.isSome(decoded) ? [decoded.value] : [];
-  });
+  assert(response.headers.get("x-streamsy-state-version") === "1", "served state version");
+  return Schema.decodeUnknownSync(Schema.Array(HackerNewsStateChange))(await response.json());
 }
 
 function startDemo() {
@@ -141,6 +138,32 @@ async function stopDemo(server: ReturnType<typeof startDemo>): Promise<string> {
 
 let server: ReturnType<typeof startDemo> | undefined = startDemo();
 let serverStderr = "";
+const sessions: HnDb[] = [];
+async function session(): Promise<HnDb> {
+  const db = createHnDb(baseUrl);
+  sessions.push(db);
+  await db.preload();
+  return db;
+}
+async function waitForRows(db: HnDb, title: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const rows = Array.from(db.collections.stories.values());
+    if (
+      rows.length === 2 &&
+      rows.some((row) => row.title === title) &&
+      rows
+        .map((row) => String(row.id))
+        .sort()
+        .join(",") === "101,103"
+    )
+      return;
+    await Bun.sleep(20);
+  }
+  throw new SmokeError(
+    `Collection did not converge: ${JSON.stringify(Array.from(db.collections.stories.values()))}`,
+  );
+}
 try {
   await waitForServer();
   const initialStatus = await waitForStatus(1);
@@ -148,14 +171,25 @@ try {
   assert(initialStatus.sourceChanges === 2, "initial poll should append two source changes");
   assert(initialEvents.length === 2, "initial projection should emit two story upserts");
 
+  const live = await session();
+  assert(live.collections.stories.size === 2, "new session replays two current rows from -1");
+  const initialOffset = live.offset;
   const updated = fixtureById.get(101);
-  assert(updated, "fixture story 101 should exist");
+  assert(updated !== undefined, "fixture story 101 should exist");
   fixtureById.set(101, { ...updated, title: "Streamsy ships a complete projection", score: 43 });
   newestIds = [103, 101];
   const changedPoll = await fetch(`${baseUrl}/api/poll`, { method: "POST" });
   assert(changedPoll.ok, `changed poll failed: ${changedPoll.status}`);
   const changedStatus = await waitForStatus(2);
   const changedEvents = await readStoryEvents();
+  await waitForRows(live, "Streamsy ships a complete projection");
+  assert(live.offset !== initialOffset, "same session consumes the live suffix after poll");
+  assert(
+    !("old_value" in changedEvents.find((event) => event.headers.operation === "delete")!),
+    "delete carries only a key",
+  );
+  const replay = await session();
+  await waitForRows(replay, "Streamsy ships a complete projection");
 
   assert(changedStatus.lastStoryCount === 2, "bounded newest set should still contain two rows");
   assert(changedStatus.sourceChanges === 5, "changed poll should append delete plus two upserts");
@@ -168,7 +202,8 @@ try {
       (event) =>
         event.key === "101" &&
         event.headers.operation === "upsert" &&
-        event.value?.title === "Streamsy ships a complete projection",
+        ("value" in event ? event.value.title : undefined) ===
+          "Streamsy ships a complete projection",
     ),
     "mutable story fields should emit an updated upsert",
   );
@@ -188,7 +223,10 @@ try {
   );
 
   const sourceThroughBeforeRestart = unchangedStatus.projection.sourceThrough;
-  assert(sourceThroughBeforeRestart, "first process should expose its stored checkpoint offset");
+  assert(
+    sourceThroughBeforeRestart !== undefined,
+    "first process should expose its stored checkpoint offset",
+  );
   serverStderr += await stopDemo(server);
   server = undefined;
 
@@ -213,10 +251,15 @@ try {
       JSON.stringify(unchangedEvents),
     "restart should preserve every target fact already stored",
   );
-  const identities = restartedEvents.map((event) => `${event.key}:${event.headers.txid}`);
+  const restartedSession = await session();
+  await waitForRows(restartedSession, "Streamsy ships a complete projection");
+  await waitForRows(live, "Streamsy ships a complete projection");
+  const resumeDeadline = Date.now() + 10_000;
+  while (live.offset !== restartedSession.offset && Date.now() < resumeDeadline)
+    await Bun.sleep(20);
   assert(
-    new Set(identities).size === identities.length,
-    "restart must not repeat a fact with the same key and txid",
+    live.offset === restartedSession.offset,
+    "pre-restart session resumes through fresh upserts",
   );
 
   const restartedUnchangedPoll = await fetch(`${baseUrl}/api/poll`, { method: "POST" });
@@ -230,9 +273,10 @@ try {
   assert(finalEvents.length === restartedEvents.length, "unchanged post-restart poll must be idle");
 
   console.log(
-    `hackernews-newest-stream HTTP smoke passed: ${finalEvents.length} client-readable State events with SQLite restart resume`,
+    `hackernews-newest-stream HTTP smoke passed: ${finalEvents.length} State events; TanStack replay, live upsert/key-only delete, and SQLite restart resume`,
   );
 } finally {
+  for (const db of sessions) db.close();
   if (server !== undefined) serverStderr += await stopDemo(server);
   await fixture.stop(true);
   rmSync(scratchDir, { recursive: true, force: true });

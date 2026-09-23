@@ -1,11 +1,11 @@
-import { Streams, StreamsReader, type StreamsWriter, ZERO_OFFSET } from "@streamsy/core";
-import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import { Streams, StreamsReader, type StreamsWriter } from "@streamsy/core";
+import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import { Context, Effect, Layer, ManagedRuntime, Schedule, Schema, Stream } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
 import { sourceDelete, sourceUpsert } from "../../src/server/source-change.ts";
-import { hackerNewsSource, hackerNewsTarget } from "../../src/server/stream-resources.ts";
-import { hackerNewsStoryIndex } from "../../src/server/story-index-projection.ts";
+import { hackerNewsSource } from "../../src/server/stream-resources.ts";
+import { hackerNewsStoryIndex, hackerNewsTarget } from "../../src/server/story-index-projection.ts";
 import { storyProjectionLayer } from "../../src/server/projection.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 import { DemoStreams, demoStreamsLayer } from "../../src/server/streams.ts";
@@ -63,26 +63,12 @@ describe("Hacker News story index projection", () => {
     expect(storyTitle(facts[2] && "value" in facts[2] ? facts[2].value : undefined)).toBe(
       "Updated title",
     );
-    expect(storyTitle(facts[3] && "old_value" in facts[3] ? facts[3].old_value : undefined)).toBe(
-      "Second title",
-    );
+    expect(facts[3]).toEqual({ type: "hn-story", key: "102", headers: { operation: "delete" } });
   });
 
-  test("fact headers carry the unit's source offset and the index within the unit", async () => {
-    const h = await harness();
-    await h.append(hackerNewsSource.id, [
-      sourceUpsert(story(101, 1_700_000_030, "First")),
-      sourceUpsert(story(102, 1_700_000_020, "Second")),
-    ]);
-    const progress = await run(h);
-    const sourceThrough = progress.record.inputs.input;
-    expect(sourceThrough).not.toBe(ZERO_OFFSET);
-
-    const facts = (await h.read(hackerNewsTarget.id)).filter(isStoryFact);
-    expect(facts.map((fact) => fact.headers)).toEqual([
-      { operation: "upsert", offset: sourceThrough, txid: `${sourceThrough}:0` },
-      { operation: "upsert", offset: sourceThrough, txid: `${sourceThrough}:1` },
-    ]);
+  test("declares one rows output keyed by story id", () => {
+    expect(hackerNewsStoryIndex.outputs["hn-story"]).toMatchObject({ _tag: "Rows", key: "id" });
+    expect(Object.keys(hackerNewsStoryIndex.streams)).toEqual(["hn-story"]);
   });
 
   test("resumes a bounded run at the next durable source boundary", async () => {
@@ -112,14 +98,8 @@ describe("Hacker News story index projection", () => {
     await run(h);
     const before = await h.read(hackerNewsTarget.id);
 
-    // A fresh declaration with the same identity restores the stored checkpoint.
-    const restarted = Projection.stream({
-      id: hackerNewsStoryIndex.id,
-      generation: hackerNewsStoryIndex.generation,
-      input: hackerNewsSource,
-      output: hackerNewsTarget,
-      process: hackerNewsStoryIndex.process,
-    });
+    // A copy of the same declaration restores progress through its checkpoint identity.
+    const restarted = { ...hackerNewsStoryIndex };
     const result = await Effect.runPromise(
       Projection.run(restarted, limits).pipe(Effect.provide(h.clientLayer)),
     );
@@ -201,7 +181,7 @@ describe("Hacker News story index projection", () => {
     const h = await harness();
     await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
     const context = await h.runtime.runPromise(
-      Effect.context<StreamsReader | StreamsWriter | Checkpoints>(),
+      Effect.context<StreamsReader | StreamsWriter | Checkpoints | State>(),
     );
     const reader = Context.get(context, StreamsReader);
     // A competing runner completes inside this runner's read window.
