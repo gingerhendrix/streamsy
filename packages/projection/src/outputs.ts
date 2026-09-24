@@ -88,7 +88,7 @@ export function outputs<
       outputs: definition.outputs,
     })),
     // SAFETY: each normalized member retains the key of its declaration in D.
-    streams: streams as Record<string, StreamFamily.Member<unknown, Output.Services<D>>>,
+    streams: streams as Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>>["streams"],
     process: (batch, unit) =>
       Effect.gen(function* () {
         let result: Result;
