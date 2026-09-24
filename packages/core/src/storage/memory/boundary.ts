@@ -8,6 +8,7 @@ import { copyState, type State } from "./state.ts";
  * Each outer transaction copies the host state; intended for bounded memory hosts.
  */
 export interface MemoryCommitBoundaryApi {
+  readonly owner: object;
   readonly withTransaction: <A, E, R>(body: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>>;
   readonly remove: (key: string) => Effect.Effect<void>;
@@ -19,7 +20,7 @@ export class MemoryCommitBoundary extends Context.Service<
 >()("@streamsy/core/internal/MemoryCommitBoundary") {}
 
 interface Draft {
-  readonly owner: symbol;
+  readonly owner: object;
   readonly fiberId: number;
   readonly state: State;
   readonly records: Map<string, string>;
@@ -32,7 +33,7 @@ class ActiveDraft extends Context.Service<ActiveDraft, Draft>()(
 
 export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
   Effect.gen(function* () {
-    const owner = Symbol();
+    const owner = {};
     const lock = yield* Semaphore.make(1);
     let records = new Map<string, string>();
     const current = Effect.flatMap(Effect.serviceOption(ActiveDraft), (draft) =>
@@ -85,6 +86,7 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
       draft.value.changed = true;
     });
     const api = MemoryCommitBoundary.of({
+      owner,
       withTransaction,
       read: (key) =>
         Effect.map(current, (draft) =>

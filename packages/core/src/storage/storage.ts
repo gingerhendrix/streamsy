@@ -14,6 +14,7 @@ import type {
 import type { StorageCapabilities } from "./capabilities.ts";
 import type { Mutation, MutationApplied, MutationRejected } from "./mutation.ts";
 export interface StorageShape {
+  readonly owner: object;
   readonly capabilities: StorageCapabilities;
   readonly record: (id: StreamId) => Effect.Effect<Option.Option<StreamRecord>, StorageFault>;
   readonly messages: (

@@ -1,4 +1,7 @@
 import { Context, Effect, Layer, Option, Stream } from "effect";
+import { checkWriteOwner, storageOf } from "../internal/owner.ts";
+import { Storage } from "../storage/storage.ts";
+import { Changes } from "./changes.ts";
 import { StreamId } from "../schema/index.ts";
 import { ForkSourceNotFound } from "../protocol/errors.ts";
 import type { StreamsFault } from "../fault.ts";
@@ -19,6 +22,10 @@ export function bind<P, A, RD, RE>(
   route: Route.StreamRoute<P, A, RD, RE>,
   services: Backend.BackendServices,
 ) {
+  const storage = storageOf(services.writer);
+  const owner = storage?.owner ?? services.writer;
+  const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
+    checkWriteOwner(owner, id).pipe(Effect.andThen(Effect.suspend(run)));
   const own = <A, E>(id: string, run: () => Effect.Effect<A, E>): Effect.Effect<A, E> =>
     Effect.suspend(() =>
       route.match(id)
@@ -30,26 +37,31 @@ export function bind<P, A, RD, RE>(
     read: (id, options) => own(id, () => services.reader.read(id, options)),
     readNext: (id, options) => own(id, () => services.reader.readNext(id, options)),
     create: (id, options) =>
-      own(id, () =>
-        options?.forkedFrom === undefined
-          ? services.writer.create(id, options)
-          : route.match(options.forkedFrom)
+      write(id, () =>
+        own(id, () =>
+          options?.forkedFrom === undefined
             ? services.writer.create(id, options)
-            : Effect.fail(
-                new ForkSourceNotFound({ id, source: StreamId.make(options.forkedFrom) }),
-              ),
+            : route.match(options.forkedFrom)
+              ? services.writer.create(id, options)
+              : Effect.fail(
+                  new ForkSourceNotFound({ id, source: StreamId.make(options.forkedFrom) }),
+                ),
+        ),
       ),
     fork: (id, source, options) =>
-      own(id, () =>
-        route.match(source)
-          ? services.writer.fork(id, source, options)
-          : Effect.fail(new ForkSourceNotFound({ id, source })),
+      write(id, () =>
+        own(id, () =>
+          route.match(source)
+            ? services.writer.fork(id, source, options)
+            : Effect.fail(new ForkSourceNotFound({ id, source })),
+        ),
       ),
-    append: (id, options) => own(id, () => services.writer.append(id, options)),
-    remove: (id) => own(id, () => services.writer.remove(id)),
+    append: (id, options) => write(id, () => own(id, () => services.writer.append(id, options))),
+    remove: (id) => write(id, () => own(id, () => services.writer.remove(id))),
   };
   const context = Context.make(StreamsReader, wire).pipe(Context.add(StreamsWriter, wire));
   return {
+    owner,
     route,
     wire,
     create: (params: P, options?: Omit<CreateOptions, "contentType">) =>
@@ -77,7 +89,10 @@ export type Family<P, A, RD = never, RE = never> = ReturnType<typeof bind<P, A, 
 
 /** A concrete member retains the family key used to access its scoped wire. */
 export type Member<A, R, RD = never, RE = never> = Ref.StreamRef<A, RD, RE> & {
-  readonly family: Context.Key<R, { readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }>;
+  readonly family: Context.Key<
+    R,
+    { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
+  >;
 };
 
 export type FamilyClass<
@@ -232,12 +247,13 @@ export interface FamilyIdentifier {
 /** The provider and HTTP boundary need only the wire and the route grammar. */
 export interface AnyFamily extends Context.Key<
   FamilyIdentifier,
-  { readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
+  { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
 > {
   readonly route: Route.Matcher;
   readonly template: string;
   readonly match: (id: string) => boolean;
   readonly make: (services: Backend.BackendServices) => {
+    readonly owner: object;
     readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
   };
 }
@@ -264,27 +280,52 @@ export function provides<Name extends string, const Keys extends ReadonlyArray<A
   backend: Backend.Backend<Name>,
   ...keys: Keys
 ): Layer.Layer<Identifiers<Keys>, never, Backend.BackendTag<Name>>;
-export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
-  graph: Layer.Layer<StreamsReader | StreamsWriter, E, R>,
+export function provides<A, E, R, const Keys extends ReadonlyArray<AnyFamily>>(
+  graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
   ...keys: Keys
-): Layer.Layer<Identifiers<Keys>, E, R>;
+): Layer.Layer<Identifiers<Keys> | (Storage extends A ? Changes<Identifiers<Keys>> : never), E, R>;
 export function provides<E, R, Name extends string, const Keys extends ReadonlyArray<AnyFamily>>(
   source: Backend.Backend<Name> | Layer.Layer<StreamsReader | StreamsWriter, E, R>,
   ...keys: Keys
 ) {
   checkFamilies(keys);
-  const services: Effect.Effect<
-    Backend.BackendServices,
-    never,
-    Backend.BackendTag<Name> | StreamsReader | StreamsWriter
-  > = "key" in source ? source.key : Effect.all({ reader: StreamsReader, writer: StreamsWriter });
-  const layer = Layer.effectContext(
-    Effect.map(services, (backend) => {
-      let context = Context.empty();
-      for (const key of keys) context = Context.add(context, key, key.make(backend));
-      // SAFETY: the loop supplies exactly the keys in Keys, each through its own route.
-      return context as Context.Context<Identifiers<Keys>>;
-    }),
+  const bindContext = (backend: Backend.BackendServices, storage?: typeof Storage.Service) => {
+    if (
+      storage !== undefined &&
+      (storageOf(backend.reader)?.owner !== storage.owner ||
+        storageOf(backend.writer)?.owner !== storage.owner)
+    )
+      throw new RangeError(
+        "Bind families to their storage protocol graph, not a routed or mixed graph",
+      );
+    let context = Context.empty();
+    for (const key of keys) {
+      context = Context.add(context, key, key.make(backend));
+      if (storage !== undefined)
+        context = Context.add(context, Changes(key), {
+          owner: storage.owner,
+          changes: (id) =>
+            key.match(id)
+              ? storage.changes(id)
+              : Stream.die(new RangeError(`${id} is outside family ${key.template}`)),
+        });
+    }
+    // SAFETY: each family comes from its factory; feed keys are added only for an exposed Storage.
+    return context as Context.Context<Identifiers<Keys>>;
+  };
+  if ("key" in source)
+    return Layer.effectContext(Effect.map(source.key, (backend) => bindContext(backend)));
+  return source.pipe(
+    Layer.flatMap((context) =>
+      Layer.syncContext(() =>
+        bindContext(
+          {
+            reader: Context.get(context, StreamsReader),
+            writer: Context.get(context, StreamsWriter),
+          },
+          Option.getOrUndefined(Context.getOption(context, Storage)),
+        ),
+      ),
+    ),
   );
-  return "key" in source ? layer : layer.pipe(Layer.provide(source));
 }

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { Cause, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import {
   AnyStream,
   Backend,
@@ -180,4 +180,52 @@ it("stable names define service identity and duplicate names are refused", () =>
 it("AnyStream ordering follows stable identity across class aliases", () => {
   class AnyAgain extends AnyStream {}
   expect(() => provides(Streams.layerMemory(), AnyAgain, Notes)).toThrow("AnyStream must be last");
+});
+
+it("provides a scoped feed with the family's owner", async () => {
+  const { Changes } = await import("../../src/index.ts");
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const notes = yield* Notes;
+      const feed = yield* Changes(Notes);
+      expect(feed.owner).toBe(notes.owner);
+      yield* notes.create({ user: "ann" });
+      const snapshots = yield* feed
+        .changes(Notes.at({ user: "ann" }).id)
+        .pipe(Stream.take(1), Stream.runCollect);
+      expect(snapshots[0]?.present).toBe(true);
+      const foreign = yield* feed
+        .changes(StreamId.make("foreign/id"))
+        .pipe(Stream.runDrain, Effect.exit);
+      expect(Exit.isFailure(foreign)).toBe(true);
+    }).pipe(Effect.provide(provides(Streams.layerMemory(), Notes))),
+  );
+});
+
+it("does not expose a feed when the graph hides Storage", async () => {
+  const { Changes, StreamsReader, StreamsWriter } = await import("../../src/index.ts");
+  const protocol = Layer.effectContext(
+    Effect.context<
+      import("../../src/index.ts").StreamsReader | import("../../src/index.ts").StreamsWriter
+    >().pipe(Effect.map(Context.pick(StreamsReader, StreamsWriter))),
+  ).pipe(Layer.provide(Streams.layerMemory()));
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      expect(Option.isNone(yield* Effect.serviceOption(Changes(Notes)))).toBe(true);
+      yield* (yield* Notes).create({ user: "ann" });
+    }).pipe(Effect.provide(provides(protocol, Notes))),
+  );
+});
+
+it("rejects a graph whose exposed Storage does not own the protocol wires", async () => {
+  const { Storage } = await import("../../src/index.ts");
+  const first = Streams.layerMemory();
+  const other = Streams.layerMemory();
+  const mixed = Layer.merge(first, Layer.effect(Storage, Storage).pipe(Layer.provide(other)));
+  const result = await Effect.runPromiseExit(
+    Effect.void.pipe(Effect.provide(provides(mixed, Notes))),
+  );
+  expect(Exit.isFailure(result)).toBe(true);
+  if (Exit.isFailure(result))
+    expect(String(Cause.squash(result.cause))).toContain("routed or mixed graph");
 });

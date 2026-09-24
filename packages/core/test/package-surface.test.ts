@@ -35,6 +35,7 @@ test("root exports stay explicit", () => {
     "AppendConflict",
     "Backend",
     "ChangeSnapshot",
+    "Changes",
     "CreateConflict",
     "DecodeFault",
     "EncodeFault",

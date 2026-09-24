@@ -6,6 +6,7 @@ import { withMutationReconciliation } from "../../src/cloudflare/host-program.ts
 import { alarm } from "../../src/cloudflare/host-program.ts";
 
 const failingStorage = Storage.of({
+  owner: {},
   capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
   record: () => Effect.succeed(Option.none()),
   messages: () => Effect.succeed([]),

@@ -48,4 +48,5 @@ export * as Backend from "./toolkit/backend.ts";
 export * as Http from "./http/index.ts";
 export type { Batch } from "./toolkit/streams.ts";
 export * as StreamFamily from "./toolkit/family.ts";
+export { Changes, type ChangesApi } from "./toolkit/changes.ts";
 export { AnyStream, provides } from "./toolkit/family.ts";

@@ -141,6 +141,7 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
         return { outcome: { _tag: "Applied", results: [first, ...rest] }, changed };
       };
       const storage = Storage.of({
+        owner: boundary.api.owner,
         capabilities: {
           fork: chain ? "chain" : "copy",
           atomicScope: chain ? "store" : "stream",

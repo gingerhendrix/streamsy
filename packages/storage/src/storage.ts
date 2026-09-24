@@ -527,6 +527,7 @@ const snapshot = (sql: SqlClient.SqlClient, id: StreamId) =>
 
 const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
   Storage.of({
+    owner: boundary.owner,
     capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
     record: Effect.fn("SqlStorage.record")((id) => readRecord(sql, id)),
     messages: Effect.fn("SqlStorage.messages")((id, window) => readMessages(sql, id, window)),

@@ -7,6 +7,7 @@ import { Alarm, reconcileAlarm } from "../../src/cloudflare/alarm.ts";
 
 const fakeStorage = (next: Option.Option<{ readonly at: number; readonly streamId: string }>) =>
   Storage.of({
+    owner: {},
     capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
     record: () => Effect.succeed(Option.none()),
     messages: () => Effect.succeed([]),

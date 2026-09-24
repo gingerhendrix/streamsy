@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect";
+import { attachStorage } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
 import { StreamsReader, StreamsWriter } from "./tags.ts";
 import { create } from "./create.ts";
@@ -55,6 +56,8 @@ export const layer = (
             );
         }),
       });
-      return Context.make(StreamsReader, reader).pipe(Context.add(StreamsWriter, writer));
+      return Context.make(StreamsReader, attachStorage(reader, storage)).pipe(
+        Context.add(StreamsWriter, attachStorage(writer, storage)),
+      );
     }),
   );
