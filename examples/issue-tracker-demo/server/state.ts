@@ -1,9 +1,9 @@
 import { MaterializedState } from "@durable-streams/state";
-import { State, Streams, ZERO_OFFSET } from "@streamsy/core";
+import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Stream } from "effect";
 import { type Comment, type Issue, type Project } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
-import { appendWorkspaceEvent, workspaceEvents, type WorkspaceChange } from "./streams.ts";
+import { appendWorkspaceEvent, Workspaces, type WorkspaceChange } from "./streams.ts";
 import { conflict, id, notFound, now, type TxId } from "./utils.ts";
 
 /** Read-only view over one workspace's materialized state. */
@@ -27,7 +27,7 @@ type WorkspaceChangeWithHeaders = WorkspaceChange & {
 export const materializeWorkspace = Effect.fn("Workspace.materialize")(function* (
   workspaceId: string,
 ) {
-  const batches = yield* Streams.read(workspaceEvents(workspaceId)).pipe(Stream.runCollect);
+  const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
   const state = new MaterializedState();
   for (const batch of batches) for (const event of batch.items) state.apply(event);
   return {
@@ -107,7 +107,7 @@ const appendSeedEvent = Effect.fn("Workspace.appendSeedEvent")(function* (
 
 /** Ensure and seed the known demo workspace at boot. */
 export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
-  yield* Streams.create(workspaceEvents(mainWorkspaceId));
+  yield* (yield* Workspaces).create({ workspaceId: mainWorkspaceId });
   const materialized = yield* materializeWorkspace(mainWorkspaceId);
   if (materialized.state.hasProjects()) return;
 

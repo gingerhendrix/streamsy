@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { Streams, StreamsReader, ZERO_OFFSET } from "@streamsy/core";
+import { Memory, ZERO_OFFSET } from "@streamsy/core";
 import { Deferred, Effect, Ref, Stream } from "effect";
 import type { Issue } from "../../shared/state-schema.ts";
 import { issueUpsert, mutateWorkspace, projectUpsert } from "../../server/state.ts";
-import { appendWorkspaceEvent, workspaceEvents } from "../../server/streams.ts";
+import { appendWorkspaceEvent, Workspaces } from "../../server/streams.ts";
 
 test("two concurrent Transact writers land without a lost update", async () => {
   let attempts = 0;
@@ -37,35 +37,37 @@ test("two concurrent Transact writers land without a lost update", async () => {
     });
 
   const program = Effect.gen(function* () {
-    yield* Streams.create(workspaceEvents(workspaceId));
+    yield* (yield* Workspaces).create({ workspaceId });
     yield* appendWorkspaceEvent(workspaceId, projectUpsert(project), ZERO_OFFSET);
-    const reader = yield* StreamsReader;
+    const reader = yield* Workspaces;
     const firstReads = yield* Ref.make(0);
     const bothRead = yield* Deferred.make<void>();
-    const barrierReader = StreamsReader.of({
+    const barrierReader = Workspaces.of({
       ...reader,
-      read: (id, options) =>
-        Effect.gen(function* () {
-          const result = yield* reader.read(id, options);
-          const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
-          // The memory store materializes in one read; these are the two writers' first reads.
-          if (readNumber <= 2) {
-            if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
-            yield* Deferred.await(bothRead);
-          }
-          return result;
-        }),
+      read: (params, options) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const result = yield* reader.read(params, options).pipe(Stream.runCollect);
+            const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+            // The memory store materializes in one read; these are the two writers' first reads.
+            if (readNumber <= 2) {
+              if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
+              yield* Deferred.await(bothRead);
+            }
+            return Stream.fromIterable(result);
+          }),
+        ),
     });
     const responses = yield* Effect.all(
       [transact(makeIssue("issue_a")), transact(makeIssue("issue_b"))],
       { concurrency: "unbounded" },
-    ).pipe(Effect.provideService(StreamsReader, barrierReader));
-    const batches = yield* Streams.read(workspaceEvents(workspaceId)).pipe(Stream.runCollect);
+    ).pipe(Effect.provideService(Workspaces, barrierReader));
+    const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
     return { events: batches.flatMap((batch) => batch.items), responses };
   });
 
   const { events, responses } = await Effect.runPromise(
-    program.pipe(Effect.provide(Streams.layerMemory())),
+    program.pipe(Effect.provide(Memory.layer({}, Workspaces))),
   );
   expect(attempts).toBe(3);
   expect(responses.map((response) => response.status)).toEqual([200, 200]);

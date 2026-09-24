@@ -1,18 +1,23 @@
-import { State, StreamRef, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import { State, StreamRef, StreamFamily, Memory } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Effect, type Layer } from "effect";
+import { Effect, Schema, type Layer } from "effect";
 import { CommentCodec, IssueCodec, ProjectCodec } from "../shared/state-schema.ts";
-import { databasePath, workspaceStreamId } from "./config.ts";
+import { databasePath } from "./config.ts";
 
-/** One multi-collection ref for reading and writing a workspace stream. */
-export const workspaceEvents = (workspaceId: string) =>
-  StreamRef.state(workspaceStreamId(workspaceId), {
+/** One family owns every workspace's multi-collection stream. */
+export class Workspaces extends StreamFamily.state<Workspaces>()(
+  "IssueTrackerDemo/Workspaces",
+  "workspace/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
     collections: {
       project: { schema: ProjectCodec, key: "id" },
       issue: { schema: IssueCodec, key: "id" },
       comment: { schema: CommentCodec, key: "id" },
     },
-  });
+  },
+) {}
+export const workspaceEvents = (workspaceId: string) => Workspaces.at({ workspaceId });
 
 type WorkspaceCollections = ReturnType<typeof workspaceEvents>["collections"];
 export type WorkspaceEvent = StreamRef.CollectionsChange<WorkspaceCollections>;
@@ -26,18 +31,17 @@ export function appendWorkspaceEvent(
 ) {
   const events = State.changes(workspaceEvents(workspaceId), { offset: sourceOffset }, [change]);
   const options = expectedOffset === undefined ? {} : { expectedOffset };
-  return Streams.append(workspaceEvents(workspaceId), events, options);
+  return Effect.flatMap(Workspaces, (workspaces) =>
+    workspaces.append({ workspaceId }, events, options),
+  );
 }
 
 /** Minimal runtime surface used by the Promise-native Bun route handlers. */
 export interface DemoRuntime {
-  runPromise<A, E>(effect: Effect.Effect<A, E, StreamsReader | StreamsWriter>): Promise<A>;
+  runPromise<A, E>(effect: Effect.Effect<A, E, Workspaces>): Promise<A>;
 }
 
-export const applicationLayer: Layer.Layer<
-  StreamsReader | StreamsWriter,
-  import("@streamsy/core").StorageFault
-> =
+export const applicationLayer: Layer.Layer<Workspaces, import("@streamsy/core").StorageFault> =
   databasePath === undefined
-    ? Streams.layerMemory()
-    : BunStorage.layerProtocol({ client: { filename: databasePath } });
+    ? Memory.layer({}, Workspaces)
+    : BunStorage.layer({ client: { filename: databasePath } }, Workspaces);

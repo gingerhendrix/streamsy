@@ -1,15 +1,14 @@
-import { Streams } from "@streamsy/core";
 import type { BunRequest } from "bun";
 import { Effect } from "effect";
 import { generateWorkspaceId } from "./config.ts";
 import { seedStarterProject } from "./state.ts";
-import { workspaceEvents, type DemoRuntime } from "./streams.ts";
+import { Workspaces, type DemoRuntime } from "./streams.ts";
 import { json } from "./utils.ts";
 
 /** Create a fresh shared workspace and seed its first project. */
 export const createWorkspace = Effect.fn("Workspace.create")(function* () {
   const workspaceId = generateWorkspaceId();
-  yield* Streams.create(workspaceEvents(workspaceId));
+  yield* (yield* Workspaces).create({ workspaceId });
   yield* seedStarterProject(workspaceId);
   return workspaceId;
 });

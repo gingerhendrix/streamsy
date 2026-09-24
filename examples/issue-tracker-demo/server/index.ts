@@ -1,5 +1,6 @@
 import index from "../public/index.html";
 import { BunHttpServer } from "@effect/platform-bun";
+import { Workspaces } from "./streams.ts";
 import * as Http from "@streamsy/core/http";
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -67,10 +68,13 @@ const listener = BunHttpServer.layer({
 });
 
 const httpRuntime = ManagedRuntime.make(
-  HttpRouter.serve(Http.routes({ prefix: streamPrefix }), {
-    disableLogger: true,
-    disableListenLog: true,
-  }).pipe(
+  HttpRouter.serve(
+    Http.routes([{ family: Workspaces, access: "read" }], { prefix: streamPrefix }),
+    {
+      disableLogger: true,
+      disableListenLog: true,
+    },
+  ).pipe(
     Layer.provide(Layer.succeedContext(await runtime.context())),
     Layer.provideMerge(listener),
   ),

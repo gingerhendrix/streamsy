@@ -35,24 +35,6 @@ function assert(condition: AssertionCondition, message: string): asserts conditi
   }
 }
 
-function probeEvent(suffix: string) {
-  return {
-    type: "project",
-    key: `proj_probe_${suffix}`,
-    value: {
-      id: `proj_probe_${suffix}`,
-      name: `Probe ${suffix}`,
-      description: "expectedOffset probe",
-      createdAt: new Date().toISOString(),
-    },
-    headers: {
-      operation: "upsert",
-      txid: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-    },
-  };
-}
-
 async function postJson(
   path: string,
   body: JsonValue,
@@ -326,32 +308,19 @@ try {
     findEvent(after.events, "issue", contendedId, "upsert");
   }
 
-  // === 7. Direct CAS conflict probe over HTTP ===
+  // === 7. Raw stream writes cannot bypass domain validation ===
 
-  const { head } = await readStream(mainStreamUrl);
-  const casMatch = await fetch(mainStreamUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json", "stream-expected-offset": head },
-    body: JSON.stringify(probeEvent("a")),
-  });
+  const beforeDenied = await readStream(mainStreamUrl);
+  for (const method of ["PUT", "POST", "DELETE"]) {
+    const denied = await fetch(mainStreamUrl, { method });
+    assert(denied.status === 405, `raw ${method} should 405, got ${denied.status}`);
+    await denied.text();
+  }
+  const unknownStream = await fetch(`${baseUrl}/streams/private/unknown`);
+  assert(unknownStream.status === 404, "undeclared stream should 404");
   assert(
-    casMatch.status >= 200 && casMatch.status < 300,
-    `append with matching expectedOffset should succeed, got ${casMatch.status}`,
-  );
-
-  const casStale = await fetch(mainStreamUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json", "stream-expected-offset": head },
-    body: JSON.stringify(probeEvent("b")),
-  });
-  assert(casStale.status === 409, `stale expectedOffset should 409, got ${casStale.status}`);
-  assert(
-    casStale.headers.get("stream-next-offset"),
-    "CAS conflict should report the actual tail in stream-next-offset",
-  );
-  assert(
-    casStale.headers.get("stream-closed") !== "true",
-    "CAS conflict must be distinguishable from the closed-stream 409",
+    (await readStream(mainStreamUrl)).head === beforeDenied.head,
+    "denied writes leave the stream unchanged",
   );
 
   // === 8. SQLite restart preserves a workspace and its issue ===
@@ -397,7 +366,7 @@ try {
 
   console.log(
     `issue-tracker-demo HTTP smoke passed: main project ${projectId}, issue ${issueId}, ` +
-      `shared workspace ${workspaceId}, ${after.events.length + 1} main stream events`,
+      `shared workspace ${workspaceId}, ${after.events.length} main stream events`,
   );
 } finally {
   server.kill();
