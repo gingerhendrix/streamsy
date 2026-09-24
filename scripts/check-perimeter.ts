@@ -56,7 +56,7 @@ const applicationProtocolAllowlist: Readonly<Record<string, string>> = {};
 const checks = [
   scan(
     "examples and hosted use families",
-    String.raw`@streamsy/core/protocol\b|\bStreams(?:Reader|Writer)\b`,
+    String.raw`@streamsy/core/protocol\b|\bStreams(?:Reader|Writer)\b|\blayerProtocol\b|\bHttp\.app\b|core/src/(?:protocol|toolkit/streams)`,
     [
       "examples/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       "hosted/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",

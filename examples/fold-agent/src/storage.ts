@@ -1,11 +1,11 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable example prepares its configured SQLite parent directory at the Bun edge. */
-/** Store acquisition is an example edge. One Scope owns one complete protocol Layer. */
+/** Store acquisition is an example edge. One Scope owns the Sessions family and its storage. */
 import { Memory } from "@streamsy/core";
-import { Sessions } from "./session-log.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Context, Effect, Exit, Layer, Schema, Scope } from "effect";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { Sessions } from "./session-log.ts";
 
 export interface StreamsyStore {
   readonly context: Context.Context<Sessions>;

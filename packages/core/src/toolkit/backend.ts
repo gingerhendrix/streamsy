@@ -23,7 +23,7 @@ export interface BackendTag<Name extends string> {
 }
 
 /**
- * One named storage backend for the routed Layer.
+ * One named storage backend for family binding.
  *
  * A backend is one `Context` key. `layer(graph)` re-tags a complete protocol
  * graph under that key without building the graph, so two backends can share
@@ -37,14 +37,13 @@ export interface Backend<Name extends string> {
   readonly layer: <E, R>(
     graph: Layer.Layer<StreamsReader | StreamsWriter, E, R>,
   ) => Layer.Layer<BackendTag<Name>, E, R>;
-  /** Bind stream families to this backend for the routed Layer. */
+  /** Describe stream families on this backend for overlap validation. */
   readonly serves: (...routes: ReadonlyArray<Matcher>) => Binding<Name>;
 }
 
 /**
- * The structural shape used by family binding. A named backend is not assignable to
- * another name, so the routed Layer takes this shape as its constraint and
- * derives the exact requirement from the literal bindings the caller passes.
+ * The structural backend shape used by family binding and overlap validation.
+ * Named backends retain their exact service requirement through provides.
  */
 export interface AnyBackend {
   readonly key: Context.Key<{ readonly name: string }, BackendServices>;

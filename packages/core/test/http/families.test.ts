@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { Http, StreamFamily, Memory } from "../../src/index.ts";
+import { Http, StreamFamily, Memory, AnyStream } from "../../src/index.ts";
 
 class Inputs extends StreamFamily.bytes<Inputs>()("Inputs", "inputs/:id", {
   params: { id: Schema.String },
@@ -89,6 +89,42 @@ it("append access allows POST but refuses creation and deletion", async () => {
     expect(await (await edge.handler(new Request("http://host/inputs/a?offset=-1"))).text()).toBe(
       "hello",
     );
+  } finally {
+    await edge.dispose();
+  }
+});
+
+it("HTTP rejects a catch-all before a narrower access policy", () => {
+  expect(() =>
+    Http.routes([
+      { family: AnyStream, access: "full" },
+      { family: Outputs, access: "read" },
+    ]),
+  ).toThrow("AnyStream must be last");
+});
+
+it("legacy JavaScript route calls report the family migration", () => {
+  // @ts-expect-error JavaScript callers can still supply a retired options-only argument.
+  expect(() => Http.routes({ prefix: "/streams" })).toThrow("Http.routes requires families");
+  // @ts-expect-error JavaScript callers can omit the required family argument.
+  expect(() => Http.routes()).toThrow("Http.routes requires families");
+});
+
+it("a final catch-all cannot widen a declared read-only family's HTTP access", async () => {
+  const edge = HttpRouter.toWebHandler(
+    Http.routes([
+      { family: Outputs, access: "read" },
+      { family: AnyStream, access: "full" },
+    ]).pipe(HttpRouter.provideRequest(Memory.layer({}, Outputs, AnyStream))),
+    { disableLogger: true },
+  );
+  try {
+    expect(
+      (await edge.handler(new Request("http://host/outputs/private", { method: "PUT" }))).status,
+    ).toBe(405);
+    expect(
+      (await edge.handler(new Request("http://host/arbitrary/path", { method: "PUT" }))).status,
+    ).toBe(201);
   } finally {
     await edge.dispose();
   }

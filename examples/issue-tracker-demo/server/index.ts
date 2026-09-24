@@ -1,6 +1,5 @@
 import index from "../public/index.html";
 import { BunHttpServer } from "@effect/platform-bun";
-import { Workspaces } from "./streams.ts";
 import * as Http from "@streamsy/core/http";
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
@@ -16,7 +15,7 @@ import { commentRoutes } from "./routes/comments.ts";
 import { issueRoutes } from "./routes/issues.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { seedMainWorkspace } from "./state.ts";
-import { applicationLayer } from "./streams.ts";
+import { applicationLayer, Workspaces } from "./streams.ts";
 import { json, notFound } from "./utils.ts";
 import { workspaceRoutes } from "./workspaces.ts";
 

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as Root from "@streamsy/core";
 import * as Protocol from "@streamsy/core/protocol";
+import * as Fetch from "@streamsy/core/fetch";
 import * as Http from "@streamsy/core/http";
 import * as InternalMemory from "@streamsy/core/internal/memory";
 import manifest from "../package.json";
@@ -127,4 +128,8 @@ test("protocol subpath retains the same services and memory forms", () => {
   ]);
   expect(Protocol.layerMemory).toBe(Protocol.Streams.layerMemory);
   expect(Protocol.layerProtocol).toBe(Protocol.layerMemory);
+});
+
+test("Fetch exposes separate family and protocol layer constructors", () => {
+  expect(Object.keys(Fetch).sort()).toEqual(["TransportFault", "layer", "layerProtocol"]);
 });

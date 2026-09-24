@@ -1,3 +1,5 @@
+import { Workspaces } from "../../server/streams.ts";
+import { workspaceStreamId } from "../../server/config.ts";
 import { describe, expect, test } from "bun:test";
 import { commentInput, issueInput, projectInput } from "../../shared/state-schema.ts";
 import { newComment, newIssue, newProject, nextIssue } from "../../server/state.ts";
@@ -59,4 +61,9 @@ describe("newComment", () => {
     expect(comment.body).toBe("hi");
     expect(comment.issueId).toBe("");
   });
+});
+
+test("workspace family ids match the public stream URL contract", () => {
+  for (const workspaceId of ["main", "abc123test", "concurrent-test"])
+    expect(Workspaces.at({ workspaceId }).id).toBe(workspaceStreamId(workspaceId));
 });

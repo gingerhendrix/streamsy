@@ -20,3 +20,10 @@ const missing = StreamsyObject.make<unknown, StreamGroup.Services<typeof group>>
   layer: (state) => DurableStorage.layer({ client: { storage: state.storage } }, Notes),
 });
 void [object, missing];
+
+const defaultRequirements = StreamsyObject.make<unknown>({
+  // @ts-expect-error Specifying only Env uses R = never; family requirements must be named too.
+  app,
+  layer: (state) => DurableStorage.layer({ client: { storage: state.storage } }, group),
+});
+void defaultRequirements;

@@ -1,4 +1,3 @@
-import { streams } from "./streams.ts";
 import { Http } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
@@ -16,6 +15,7 @@ import { NewestStoriesPoller } from "./poller/contract.ts";
 import { StoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
+import { streams } from "./streams.ts";
 
 const currentStats = Effect.gen(function* () {
   const poller = yield* NewestStoriesPoller;
