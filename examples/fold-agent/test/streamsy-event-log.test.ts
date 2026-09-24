@@ -15,7 +15,8 @@ import {
   type LogEntry,
   type LogEntryInput,
 } from "@humanlayer/fold-core";
-import { StorageFault, StreamsReader, StreamsWriter, Streams, StreamRef } from "@streamsy/core";
+import { StorageFault, Memory } from "@streamsy/core";
+import { Sessions } from "../src/session-log.ts";
 import { Context, Deferred, Layer, Schema } from "effect";
 type JsonValue = Schema.Json;
 import { Cause, Effect, Exit, Fiber, Stream } from "effect";
@@ -79,12 +80,12 @@ const rawSessionStartedEntry = (seq: number): JsonValue => ({
 
 /** Append arbitrary JSON through the client seam, bypassing the adapter, to plant fixtures. */
 const plant = async (store: StreamsyStore, streamId: string, values: ReadonlyArray<JsonValue>) => {
-  const ref = StreamRef.json(streamId, { schema: Schema.Json });
+  const params = { streamId };
   await Effect.runPromise(
     Effect.gen(function* () {
-      expect((yield* Streams.create(ref))._tag).toBe("Created");
+      expect((yield* (yield* Sessions).create(params))._tag).toBe("Created");
       for (const value of values)
-        expect((yield* Streams.append(ref, [value]))._tag).toBe("Appended");
+        expect((yield* (yield* Sessions).append(params, [value]))._tag).toBe("Appended");
     }).pipe(Effect.provide(store.context)),
   );
 };
@@ -132,8 +133,12 @@ const registerEventLogContract = (
         // Read the raw JSON Streamsy actually persisted, then hand each value to
         // Fold's decoder. Nothing in this assertion trusts the adapter.
         const stored = await Effect.runPromise(
-          Streams.read(StreamRef.json("fold/sessions/a/events", { schema: Schema.Json })).pipe(
-            Streams.items,
+          Stream.unwrap(
+            Effect.map(Sessions, (sessions) =>
+              sessions.read({ streamId: "fold/sessions/a/events" }),
+            ),
+          ).pipe(
+            Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
             Stream.runCollect,
             Effect.provide(store.context),
           ),
@@ -362,7 +367,7 @@ describe("Fold writer capability failures", () => {
   const streamId = "fold/sessions/recovery/events";
   const withContext = <E>(
     program: (store: StreamsyStore) => Effect.Effect<void, E, import("effect").Scope.Scope>,
-    layer: Layer.Layer<StreamsReader | StreamsWriter> = Streams.layerMemory(),
+    layer: Layer.Layer<Sessions> = Memory.layer({}, Sessions),
   ) =>
     Effect.runPromise(
       Effect.scoped(
@@ -382,24 +387,13 @@ describe("Fold writer capability failures", () => {
             message: "scripted outage",
             retryable: true,
           });
-          const context =
-            operation === "read"
-              ? Context.add(
-                  store.context,
-                  StreamsReader,
-                  StreamsReader.of({
-                    ...Context.get(store.context, StreamsReader),
-                    read: () => Effect.fail(fault),
-                  }),
-                )
-              : Context.add(
-                  store.context,
-                  StreamsWriter,
-                  StreamsWriter.of({
-                    ...Context.get(store.context, StreamsWriter),
-                    create: () => Effect.fail(fault),
-                  }),
-                );
+          const sessions = Context.get(store.context, Sessions);
+          const context = Context.add(store.context, Sessions, {
+            ...sessions,
+            ...(operation === "read"
+              ? { read: () => Stream.fail(fault) }
+              : { create: () => Effect.fail(fault) }),
+          });
           const failure = yield* Effect.flip(
             openLog({ ...store, context }, streamId, operation === "read" ? "resume" : "create"),
           );

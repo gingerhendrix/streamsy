@@ -1,13 +1,14 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable example prepares its configured SQLite parent directory at the Bun edge. */
 /** Store acquisition is an example edge. One Scope owns one complete protocol Layer. */
-import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core";
+import { Memory } from "@streamsy/core";
+import { Sessions } from "./session-log.ts";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Context, Effect, Exit, Layer, Schema, Scope } from "effect";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface StreamsyStore {
-  readonly context: Context.Context<StreamsReader | StreamsWriter>;
+  readonly context: Context.Context<Sessions>;
   readonly close: () => Promise<void>;
 }
 export interface StreamsyStoreOptions {
@@ -29,7 +30,7 @@ const closeScope = (scope: Scope.Closeable) => () =>
 export const openMemoryStore = (options: { longPollTimeoutMs?: number } = {}) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
-    const context = yield* Layer.buildWithScope(Streams.layerMemory(options), scope).pipe(
+    const context = yield* Layer.buildWithScope(Memory.layer(options, Sessions), scope).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
     );
     const store: StreamsyStore = { context, close: closeScope(scope) };
@@ -47,12 +48,15 @@ const openSqliteStore = (filename: string, options: StreamsyStoreOptions) =>
     });
     const scope = yield* Scope.make();
     const context = yield* Layer.buildWithScope(
-      BunStorage.layerProtocol({
-        client: { filename },
-        ...(options.longPollTimeoutMs === undefined
-          ? {}
-          : { longPollTimeoutMs: options.longPollTimeoutMs }),
-      }),
+      BunStorage.layer(
+        {
+          client: { filename },
+          ...(options.longPollTimeoutMs === undefined
+            ? {}
+            : { longPollTimeoutMs: options.longPollTimeoutMs }),
+        },
+        Sessions,
+      ),
       scope,
     ).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),

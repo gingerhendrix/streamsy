@@ -13,10 +13,17 @@ import {
   type EventLogService,
   type LogEntryInput,
 } from "@humanlayer/fold-core";
-import { StreamNotFound, StreamGone, Streams } from "@streamsy/core";
+import { StreamNotFound, StreamGone } from "@streamsy/core";
 import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 import type { StreamsyStore } from "./storage.ts";
-import { corrupt, decodeLog, readHistory, sessionRef, unavailable } from "./session-log.ts";
+import {
+  Sessions,
+  corrupt,
+  decodeLog,
+  readHistory,
+  sessionRef,
+  unavailable,
+} from "./session-log.ts";
 
 export type StreamsyEventLogMode = "create" | "resume";
 export interface StreamsyEventLogOptions {
@@ -46,9 +53,11 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
 export const makeEventLog = (options: StreamsyEventLogOptions) =>
   Effect.gen(function* () {
     const ref = sessionRef(options.streamId);
+    const sessions = yield* Sessions;
+    const params = { streamId: ref.id };
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
     if (options.mode === "create") {
-      const result = yield* Streams.create(ref);
+      const result = yield* sessions.create(params);
       if (result._tag === "Exists")
         return yield* unavailable(
           `Stream ${ref.id} already exists or is unavailable: ${result._tag}`,
@@ -76,11 +85,13 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
           const bytes = yield* Schema.encodeEffect(Schema.fromJsonString(LogEntrySchema))(entry);
           const json = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(bytes);
           fenced = true;
-          const result = yield* Streams.append(ref, [json], { expectedOffset: tail }).pipe(
-            Effect.catchTag("OffsetMismatch", () =>
-              unavailable("Fenced: another writer advanced the log"),
-            ),
-          );
+          const result = yield* sessions
+            .append(params, [json], { expectedOffset: tail })
+            .pipe(
+              Effect.catchTag("OffsetMismatch", () =>
+                unavailable("Fenced: another writer advanced the log"),
+              ),
+            );
           tail = result.offset;
           nextEntrySeq++;
           fenced = false;
@@ -100,8 +111,8 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
       Stream.unwrap(
         Effect.sync(() => {
           let seq = 0;
-          return Streams.follow(ref).pipe(
-            Streams.items,
+          return sessions.follow(params).pipe(
+            Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
             Stream.mapEffect((value) =>
               Effect.gen(function* () {
                 const entry = yield* decodeStoredLogEntry(value);

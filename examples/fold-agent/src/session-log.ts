@@ -4,14 +4,19 @@ import {
   EventLogUnavailableError,
   type LogEntry,
 } from "@humanlayer/fold-core";
-import { StreamRef, Streams, ZERO_OFFSET } from "@streamsy/core";
-import { Effect, Schema, Stream } from "effect";
+import { StreamFamily, StreamRef, ZERO_OFFSET } from "@streamsy/core";
+import { Effect, Option, Schema, Stream } from "effect";
 
-export const sessionRef = (streamId: string) => {
-  if (!/^fold\/sessions\/.+\/events$/.test(streamId))
-    throw new TypeError("Expected fold/sessions/<id>/events");
-  return StreamRef.json(streamId, { schema: Schema.Json });
-};
+export class Sessions extends StreamFamily.custom<Sessions>()("Fold/Sessions", {
+  parse: (id: string) =>
+    /^fold\/sessions\/.+\/events$/.test(id) ? Option.some({ streamId: id }) : Option.none(),
+  ref: ({ streamId }: { streamId: string }) => {
+    if (!/^fold\/sessions\/.+\/events$/.test(streamId))
+      throw new TypeError("Expected fold/sessions/<id>/events");
+    return StreamRef.json(streamId, { schema: Schema.Json });
+  },
+}) {}
+export const sessionRef = (streamId: string) => Sessions.at({ streamId });
 
 export const unavailable = (message: string, retryable = false, cause?: unknown) =>
   new EventLogUnavailableError({
@@ -24,10 +29,10 @@ export const unavailable = (message: string, retryable = false, cause?: unknown)
 export const corrupt = (message: string) =>
   new EventLogCorruptEntryError({ operation: "entries", message });
 
-export const readHistory = Effect.fn("Fold.readHistory")(function* <A>(
-  ref: StreamRef.StreamRef<A>,
+export const readHistory = Effect.fn("Fold.readHistory")(function* (
+  ref: ReturnType<typeof sessionRef>,
 ) {
-  const batches = yield* Stream.runCollect(Streams.read(ref));
+  const batches = yield* Stream.runCollect((yield* Sessions).read({ streamId: ref.id }));
   return {
     items: batches.flatMap((batch) => batch.items),
     offset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
