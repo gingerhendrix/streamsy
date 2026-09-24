@@ -1,4 +1,4 @@
-import { Streams, ZERO_OFFSET } from "@streamsy/core";
+import { ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Stream } from "effect";
 import type { CommandRequest } from "../shared/api.ts";
 import { foldIssue, type IssueEvent, type IssueRow } from "../domain/issue.ts";
@@ -15,8 +15,8 @@ export const foldEvents = (items: ReadonlyArray<IssueEvent>): Map<string, IssueR
 
 export const transact = (workspaceId: string, command: CommandRequest) =>
   Effect.gen(function* () {
-    const ref = events.ref({ workspaceId });
-    const batches = yield* Streams.read(ref).pipe(Stream.runCollect);
+    const family = yield* events;
+    const batches = yield* family.read({ workspaceId }).pipe(Stream.runCollect);
     const items = batches.flatMap((batch) => batch.items);
     const rows = foldEvents(items);
     const head = batches.at(-1)?.nextOffset ?? ZERO_OFFSET;
@@ -49,6 +49,6 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
               status: previous!.status,
               assigneeId: command.assigneeId,
             };
-    const ack = yield* Streams.append(ref, [event], { expectedOffset: head });
+    const ack = yield* family.append({ workspaceId }, [event], { expectedOffset: head });
     return { event, ack };
   }).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }));

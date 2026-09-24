@@ -182,7 +182,10 @@ test("served route fingerprints pin member identity and reject incompatible cont
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   const services = await runtime.runPromise(Effect.context());
   const web = HttpRouter.toWebHandler(
-    outputRoutes.pipe(HttpRouter.provideRequest(Layer.succeedContext(services))),
+    outputRoutes.pipe(
+      Layer.provide(Layer.succeedContext(services)),
+      HttpRouter.provideRequest(Layer.succeedContext(services)),
+    ),
     { disableLogger: true },
   );
   try {
@@ -253,7 +256,10 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   const services = await runtime.runPromise(Effect.context());
   const web = HttpRouter.toWebHandler(
-    outputRoutes.pipe(HttpRouter.provideRequest(Layer.succeedContext(services))),
+    outputRoutes.pipe(
+      Layer.provide(Layer.succeedContext(services)),
+      HttpRouter.provideRequest(Layer.succeedContext(services)),
+    ),
     { disableLogger: true },
   );
   try {

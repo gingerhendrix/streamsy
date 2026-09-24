@@ -1,4 +1,4 @@
-import { StreamRoute } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 import { Effect } from "effect";
 import { Identifier, foldIssue, type IssueEvent } from "../domain/issue.ts";
@@ -15,10 +15,18 @@ import {
 import { checkCatalogWorkspace } from "./catalog.ts";
 import { routes } from "./streams.ts";
 
-const target = (name: string) =>
-  StreamRoute.bytes(`issue-tracker/:workspaceId/outputs/${name}`, {
-    params: { workspaceId: Identifier },
-  });
+export class Board extends StreamFamily.bytes<Board>()("issue-tracker/:workspaceId/outputs/board", {
+  params: { workspaceId: Identifier },
+}) {}
+export class LabelCounts extends StreamFamily.bytes<LabelCounts>()(
+  "issue-tracker/:workspaceId/outputs/label-counts",
+  { params: { workspaceId: Identifier } },
+) {}
+export class Transitions extends StreamFamily.bytes<Transitions>()(
+  "issue-tracker/:workspaceId/outputs/transitions",
+  { params: { workspaceId: Identifier } },
+) {}
+export const outputFamilies = [Board, LabelCounts, Transitions] as const;
 
 /** Named family members are Projection.outputs declarations, separate from issueRows. */
 export const tracker = Projection.family({
@@ -26,9 +34,9 @@ export const tracker = Projection.family({
   params: { workspaceId: Identifier },
   inputs: routes,
   outputs: {
-    board: Output.rows(ProjectBoardCard, { key: "issueId", stream: target("board") }),
-    labelCounts: Output.rows(LabelCountRow, { key: "labelId", stream: target("label-counts") }),
-    transitions: Output.stream(IssueTransition, { stream: target("transitions") }),
+    board: Output.rows(ProjectBoardCard, { key: "issueId", stream: Board }),
+    labelCounts: Output.rows(LabelCountRow, { key: "labelId", stream: LabelCounts }),
+    transitions: Output.stream(IssueTransition, { stream: Transitions }),
     workspace: Output.value(WorkspaceState),
   },
   process: Projection.fold(

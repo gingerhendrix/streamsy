@@ -1,26 +1,74 @@
-import { Streams } from "@streamsy/core";
+import { provides, StreamsReader } from "@streamsy/core";
 import type { Host, State } from "@streamsy/projection";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Projection } from "@streamsy/projection";
-import { tracker } from "./outputs.ts";
+import { tracker, outputFamilies, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
-import { refs } from "./streams.ts";
+import { refs, routes } from "./streams.ts";
 
-export const hostLayer = (filename: string) =>
-  ProjectionSqlite.layer.pipe(
+export const hostLayer = (filename: string) => {
+  const protocol = ProjectionSqlite.layer.pipe(
     Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
   );
+  return provides(protocol, ...Object.values(routes), ...outputFamilies).pipe(
+    Layer.provideMerge(protocol),
+  );
+};
+
+/** Stage 1 adapter: projection runners still use the protocol Host internally. */
+export class ProjectionRunner extends Context.Service<
+  ProjectionRunner,
+  {
+    readonly run: (
+      workspaceId: string,
+    ) => Effect.Effect<
+      void,
+      | import("@streamsy/projection").ProjectionFault
+      | import("effect/unstable/sql/SqlError").SqlError
+      | import("./catalog.ts").CatalogWorkspaceMismatch
+    >;
+  }
+>()("IssueTracker/ProjectionRunner") {}
+
+const runnerLayer = Layer.effect(
+  ProjectionRunner,
+  Effect.gen(function* () {
+    const context = yield* Effect.context<Host | State | SqlClient.SqlClient>();
+    return {
+      run: (workspaceId: string) =>
+        Effect.gen(function* () {
+          yield* Projection.serialized(issueRows.member({ workspaceId }));
+          yield* Projection.serialized(tracker.member({ workspaceId }));
+        }).pipe(Effect.provide(context)),
+    };
+  }),
+);
+
+/** Serve still requires a protocol reader until stage 2; each adapter supplies only its family wire. */
+export const boardReader = Layer.effect(
+  StreamsReader,
+  Effect.map(Board, (family) => family.wire),
+);
+export const labelCountsReader = Layer.effect(
+  StreamsReader,
+  Effect.map(LabelCounts, (family) => family.wire),
+);
+export const transitionsReader = Layer.effect(
+  StreamsReader,
+  Effect.map(Transitions, (family) => family.wire),
+);
 
 export class ApplicationReady extends Context.Service<ApplicationReady, true>()(
   "IssueTracker/ApplicationReady",
 ) {}
 
 export const applicationLayer = (filename: string, workspaces: ReadonlyArray<string> = []) => {
-  const base = hostLayer(filename);
+  const protocol = hostLayer(filename);
+  const base = runnerLayer.pipe(Layer.provideMerge(protocol));
   const ready = Layer.effect(
     ApplicationReady,
     Effect.gen(function* () {
@@ -70,14 +118,31 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
     }),
   ).pipe(Layer.provide(base));
   return Layer.effectContext(
-    Effect.context<State | Host | SqlClient.SqlClient | ApplicationReady>(),
+    Effect.context<
+      | State
+      | Host
+      | SqlClient.SqlClient
+      | ApplicationReady
+      | ProjectionRunner
+      | import("./streams.ts").events
+      | import("./streams.ts").labelEvents
+      | import("./streams.ts").projects
+      | import("./streams.ts").users
+      | import("./streams.ts").labels
+      | Board
+      | LabelCounts
+      | Transitions
+    >(),
   ).pipe(Layer.provide(ready.pipe(Layer.provideMerge(base))));
 };
 
-/**
- * `Streams.create` already treats an existing stream with the same config as
- * success, so a `CreateConflict` means the stored stream disagrees with the
- * declared ref; that stops the host at startup, where the message names it.
- */
-export const createInputs = (inputs: ReadonlyArray<Parameters<typeof Streams.create>[0]>) =>
-  Effect.forEach(inputs, (ref) => Streams.create(ref), { discard: true });
+/** Create declared inputs; a mismatched existing config stops startup. */
+export const createInputs = (inputs: ReturnType<typeof refs>) =>
+  Effect.gen(function* () {
+    const families = yield* Effect.all(Object.values(routes));
+    for (const ref of inputs) {
+      const family = families.find((family) => family.route.match(ref.id));
+      if (family === undefined) return yield* Effect.die(new RangeError(`Unknown input ${ref.id}`));
+      yield* family.wire.create(ref.id, { contentType: ref.contentType });
+    }
+  });

@@ -7,7 +7,9 @@ import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
 import { issueRows } from "./projection.ts";
 import { WorkspaceSummary } from "../domain/outputs.ts";
-import { tracker } from "./outputs.ts";
+import { tracker, outputFamilies } from "./outputs.ts";
+import { routes } from "./streams.ts";
+import { ProjectionRunner, boardReader, labelCountsReader, transitionsReader } from "./host.ts";
 import { transact } from "./state.ts";
 
 export const summaryDocument: Serve.ValueSource<
@@ -31,9 +33,15 @@ export const summaryDocument: Serve.ValueSource<
 };
 
 export const outputRoutes = Layer.mergeAll(
-  Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
-  Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
-  Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
+  Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues").pipe(
+    HttpRouter.provideRequest(boardReader),
+  ),
+  Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts").pipe(
+    HttpRouter.provideRequest(labelCountsReader),
+  ),
+  Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions").pipe(
+    HttpRouter.provideRequest(transitionsReader),
+  ),
   Serve.document(summaryDocument, "/document/workspaces/:workspaceId/summary", {
     contract: "compact-summary-v1",
   }),
@@ -63,8 +71,7 @@ export const app = (workspaces: ReadonlyArray<string>) => {
           return json({ error: "Concurrent command conflict" }, { status: 409 });
         return json({ error: "Internal server error" }, { status: 500 });
       }
-      yield* Projection.serialized(issueRows.member({ workspaceId }));
-      yield* Projection.serialized(tracker.member({ workspaceId }));
+      yield* (yield* ProjectionRunner).run(workspaceId);
       const sql = yield* SqlClient.SqlClient;
       const rows = yield* sql.unsafe<{
         readonly issueId: string;
@@ -121,7 +128,13 @@ export const app = (workspaces: ReadonlyArray<string>) => {
     ),
   );
   return Layer.mergeAll(
-    Http.routes({ prefix: "/streams" }),
+    Http.routes(
+      [
+        ...Object.values(routes).map((family) => ({ family, access: "read" as const })),
+        ...outputFamilies.map((family) => ({ family, access: "read" as const })),
+      ],
+      { prefix: "/streams" },
+    ),
     outputRoutes,
     HttpRouter.add("*", "/api/workspaces/:workspaceId/:resource", api),
     HttpRouter.add(
