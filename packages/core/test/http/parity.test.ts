@@ -1,7 +1,9 @@
+import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- These tests exercise the named Web conversion boundary and consume actual response bytes.
 import { expect, it } from "bun:test";
 import { Clock, Effect, Layer } from "effect";
-import { Streams, StreamsReader, ZERO_OFFSET } from "@streamsy/core";
+import { ZERO_OFFSET } from "@streamsy/core";
+import { Streams, StreamsReader } from "../../src/protocol/index.ts";
 import fixtures from "../../src/http/fixtures/wire.json";
 import * as Http from "../../src/http/index.ts";
 import { HttpRouter } from "effect/unstable/http";
@@ -48,7 +50,7 @@ for (const visibility of ["private", "public"] as const) {
     );
     const edge = HttpRouter.toWebHandler(
       Layer.mergeAll(
-        Http.routes({ prefix: "/api.v1", cacheVisibility: visibility, maxMessageSize: 64 }),
+        protocolRoutes({ prefix: "/api.v1", cacheVisibility: visibility, maxMessageSize: 64 }),
         // Keep the frozen protocol prefix-rejection proof; unmatched router paths
         // separately retain the router's native 404.
         HttpRouter.add(
@@ -277,7 +279,7 @@ const expiryCases: ReadonlyArray<{
 for (const fixture of expiryCases) {
   it(`frozen expiry parsing and HEAD: ${fixture.name}${fixture.effectRejects ? " (intentional Effect rejection)" : ""}`, async () => {
     const edge = HttpRouter.toWebHandler(
-      Http.routes({}).pipe(
+      protocolRoutes({}).pipe(
         Layer.provideMerge(Streams.layerMemory().pipe(Layer.provideMerge(clockLayer))),
       ),
       { disableLogger: true },
@@ -372,7 +374,7 @@ for (const contentType of ["application/json", "application/octet-stream"]) {
         Streams.layerMemory({ longPollTimeoutMs: 5 }).pipe(Layer.provideMerge(clockLayer)),
       ),
     );
-    const edge = HttpRouter.toWebHandler(Http.routes({}).pipe(Layer.provideMerge(readers)), {
+    const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(readers)), {
       disableLogger: true,
     });
     let right: Response | undefined;

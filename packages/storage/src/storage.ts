@@ -1,7 +1,6 @@
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
-  Protocol,
   provides,
   type StreamFamily,
   type StreamGroup,
@@ -22,6 +21,7 @@ import {
   type OperationResult,
   type RecordPatch,
 } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";

@@ -1,9 +1,10 @@
+import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Effect, Layer } from "effect";
-import { Memory, Protocol, StorageFault } from "@streamsy/core";
+import { Memory, StorageFault } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Alarm } from "../src/cloudflare/alarm.ts";
-import { Http } from "@streamsy/core";
 import { Option } from "effect";
 import { objectHandlers } from "../src/alchemy.ts";
 
@@ -46,7 +47,10 @@ test.each(["typed", "defect"])(
     );
     await Effect.runPromise(
       Effect.gen(function* () {
-        const handlers = yield* objectHandlers({ app: Http.routes({ prefix: "/streams" }), layer });
+        const handlers = yield* objectHandlers({
+          app: protocolRoutes({ prefix: "/streams" }),
+          layer,
+        });
         expect(acquisitions).toBe(0);
         const fetch = handlers.fetch.pipe(
           Effect.provideService(

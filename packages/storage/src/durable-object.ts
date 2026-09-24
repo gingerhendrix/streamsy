@@ -1,10 +1,5 @@
-import {
-  Protocol,
-  provides,
-  type StreamFamily,
-  type StreamGroup,
-  type Changes,
-} from "@streamsy/core";
+import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { Layer } from "effect";
 import { sharedSqlClientLayer } from "./boundary.ts";

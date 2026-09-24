@@ -1,5 +1,6 @@
 import { Effect, Schema, Stream } from "effect";
-import { Streams, StreamRef } from "@streamsy/core";
+import { StreamRef } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 
 const events = StreamRef.json("events", {
   schema: Schema.Struct({ text: Schema.String }),

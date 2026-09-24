@@ -1,14 +1,7 @@
 import * as Fetch from "@streamsy/core/fetch";
 import { Effect, Schema, type Scope } from "effect";
-import {
-  Changes,
-  StreamFamily,
-  StreamRef,
-  Streams,
-  provides,
-  type StreamsReader,
-  type StreamsWriter,
-} from "@streamsy/core";
+import { Changes, StreamFamily, StreamRef, provides } from "@streamsy/core";
+import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Output, Projection, State, type ProjectionFault } from "@streamsy/projection";
 // @ts-expect-error Host is no longer a public projection requirement.
 import type { Host } from "@streamsy/projection";
@@ -120,7 +113,7 @@ const missingFeed: Effect.Effect<unknown, ProjectionFault, Checkpoints | Scope.S
 void missingFeed;
 
 const fetchWatch = Projection.onChange(fused).pipe(
-  Effect.provide(provides(Fetch.layer({ baseUrl: "https://example.test" }), Input)),
+  Effect.provide(Fetch.layer({ baseUrl: "https://example.test" }, Input)),
 );
 // @ts-expect-error Fetch supplies the family, but cannot supply its local Changes capability.
 const missingFetchFeed: Effect.Effect<

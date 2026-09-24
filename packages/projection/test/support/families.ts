@@ -1,12 +1,6 @@
 import { Effect, Layer } from "effect";
-import {
-  AnyStream,
-  StreamRef,
-  StreamsReader,
-  StreamsWriter,
-  provides,
-  type StreamFamily,
-} from "@streamsy/core";
+import { AnyStream, StreamRef, provides, type StreamFamily } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 
 /** Protocol-focused fixtures use one explicit catch-all family. */
 export const json = <A, I>(

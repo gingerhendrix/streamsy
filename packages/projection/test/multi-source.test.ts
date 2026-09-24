@@ -1,7 +1,8 @@
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { Streams, ZERO_OFFSET } from "@streamsy/core";
+import { ZERO_OFFSET } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import {
   Checkpoints,
   Projection,

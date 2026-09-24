@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { Protocol } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import { reconcileAlarm } from "./alarm.ts";
 
 /**

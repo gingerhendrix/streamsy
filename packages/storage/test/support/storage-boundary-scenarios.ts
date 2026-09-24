@@ -3,15 +3,13 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Queue, Scope, Stream } from "effect";
 import {
   Offset,
-  Protocol,
-  StreamsReader,
-  StreamsWriter,
   Storage,
   StreamId,
   ZERO_OFFSET,
   type Mutation,
   type StreamRecord,
 } from "@streamsy/core";
+import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { CommitBoundary, type BoundaryTestProbe } from "../../src/boundary.ts";
 

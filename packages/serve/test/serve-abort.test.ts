@@ -1,3 +1,4 @@
+import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { provides } from "@streamsy/core";
 import { StreamFamily } from "@streamsy/core";
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test owns a real Bun listener and its Web client boundary.
@@ -5,7 +6,8 @@ import { expect, test } from "bun:test";
 import { Cause, Context, Deferred, Effect, Exit, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { NetAddress } from "effect/unstable/net";
-import { Http, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import { Http } from "@streamsy/core";
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { Serve } from "../src/index.ts";
 import { listener } from "../src/bun.ts";
 
@@ -56,7 +58,7 @@ test.each([false, true])(
             })
           : Serve.stream(family, "/feed/:seat");
         const context = yield* Layer.build(
-          HttpRouter.serve(Layer.mergeAll(Http.routes(), route), {
+          HttpRouter.serve(Layer.mergeAll(protocolRoutes(), route), {
             disableLogger: true,
             disableListenLog: true,
           }).pipe(

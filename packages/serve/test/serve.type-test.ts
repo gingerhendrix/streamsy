@@ -1,7 +1,7 @@
 import { StreamFamily, provides } from "@streamsy/core";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import { listener } from "../src/bun.ts";
 import { Serve } from "../src/index.ts";
 class family extends StreamFamily.json<family>()("serve/serve.type-test/family", "events/:seat", {

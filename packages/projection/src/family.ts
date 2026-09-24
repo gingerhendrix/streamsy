@@ -1,6 +1,7 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Family construction is the checked bridge between route records and their mapped projection inputs; each assertion is documented at its use. */
 import { Option, Schema } from "effect";
-import { StreamRoute, StreamRef, type StreamFamily } from "@streamsy/core";
+import { StreamRef, type StreamFamily } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
 import { make, stream, type Fused, type Pinned } from "./projection.ts";
 import * as Output from "./output.ts";

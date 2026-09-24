@@ -3,16 +3,14 @@ import { expect, it } from "bun:test";
 import { Context, Effect, Layer, Option, Schema } from "effect";
 import {
   AnyStream,
-  Backend,
   Changes,
   Memory,
   provides,
   Storage,
   StreamFamily,
   StreamGroup,
-  StreamsReader,
-  StreamsWriter,
 } from "../../src/index.ts";
+import { Backend, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import * as Protocol from "../../src/protocol/index.ts";
 
 class Notes extends StreamFamily.json<Notes>()("Group/Notes", "notes/:user", {

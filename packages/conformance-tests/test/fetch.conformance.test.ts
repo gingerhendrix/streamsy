@@ -3,7 +3,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import * as Fetch from "@streamsy/core/fetch";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 
@@ -17,7 +17,7 @@ describe("Official conformance through Effect Fetch", () => {
     );
     gateway = await Effect.runPromise(
       testHost({
-        layer: Fetch.layer({
+        layer: Fetch.layerProtocol({
           baseUrl: new URL("/streams", backend.url).href,
           capabilities: { expectedOffset: true, producer: true },
         }).pipe(Layer.provide(FetchHttpClient.layer)),

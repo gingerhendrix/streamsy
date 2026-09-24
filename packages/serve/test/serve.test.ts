@@ -1,9 +1,10 @@
+import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { StreamFamily, provides } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- These request tests own web handler disposal at the Web boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Http, Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import { Serve } from "../src/index.ts";
 import * as Contract from "../src/contract.ts";
 
@@ -30,7 +31,7 @@ const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
 function app() {
   return HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Http.routes(),
+      protocolRoutes(),
       Serve.stream(family, "/feed/:seat"),
       Serve.state(rows, "/state/:seat"),
       Serve.stream(family, "/me", { params: Seat }).pipe(Layer.provide(auth.layer)),
@@ -69,7 +70,7 @@ test("Serve owns every method beneath the root protocol wildcard", async () => {
 
 test("D5 params reads the middleware seat and unauthenticated requests get 401", async () => {
   const App = Layer.mergeAll(
-    Http.routes({ prefix: "/_seed" }),
+    protocolRoutes({ prefix: "/_seed" }),
     Serve.stream(family, "/me", { params: Seat }),
   ).pipe(Layer.provide(auth.layer), HttpRouter.provideRequest(storage));
   const web = HttpRouter.toWebHandler(App, { disableLogger: true });
@@ -97,7 +98,7 @@ test("D5 params reads the middleware seat and unauthenticated requests get 401",
 
 test("prefix registers once; bare prefix is 400 and neighbouring paths are 404", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.routes({ prefix: "/streams/" }).pipe(HttpRouter.provideRequest(storage)),
+    protocolRoutes({ prefix: "/streams/" }).pipe(HttpRouter.provideRequest(storage)),
     { disableLogger: true },
   );
   try {
@@ -340,7 +341,7 @@ test("annotated parameter Structs retain their names and non-Struct schemas are 
   const path: `/${string}` = "/feed/:other";
   expect(() => Serve.stream(annotated, path)).toThrow("Route params must equal family params");
   const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(Http.routes(), Serve.stream(annotated, "/feed/:seat")).pipe(
+    Layer.mergeAll(protocolRoutes(), Serve.stream(annotated, "/feed/:seat")).pipe(
       HttpRouter.provideRequest(storage),
     ),
     { disableLogger: true },

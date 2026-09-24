@@ -3,7 +3,7 @@ import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { AnyStream, Http, provides, Streams } from "@streamsy/core";
+import { AnyStream, Http, Memory } from "@streamsy/core";
 import { listener } from "@streamsy/serve/bun";
 
 describe("AnyStream memory Bun host", () => {
@@ -13,7 +13,7 @@ describe("AnyStream memory Bun host", () => {
       disableLogger: true,
       disableListenLog: true,
     }).pipe(
-      Layer.provide(provides(Streams.layerMemory({ longPollTimeoutMs: 1500 }), AnyStream)),
+      Layer.provide(Memory.layer({ longPollTimeoutMs: 1500 }, AnyStream)),
       Layer.provideMerge(listener({ port: 0 })),
     ),
   );

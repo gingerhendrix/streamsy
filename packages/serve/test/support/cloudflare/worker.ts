@@ -1,4 +1,4 @@
-import { Http } from "@streamsy/core";
+import { routes as protocolRoutes } from "@streamsy/core/protocol";
 /* oxlint-disable effecttsgo/async-function -- This fixture owns the real workerd boundary. */
 import type {
   AlarmInvocationInfo,
@@ -6,7 +6,8 @@ import type {
   DurableObjectState,
 } from "@cloudflare/workers-types";
 import { Context, Effect, Layer } from "effect";
-import { Storage, StorageFault, StreamsReader, StreamsWriter, type StreamId } from "@streamsy/core";
+import { Storage, StorageFault, type StreamId } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { StreamsyObject, router } from "@streamsy/serve/cloudflare";
 import { layerProtocol } from "@streamsy/storage/durable-object";
 import { byStreamOptions } from "./fixture-options.ts";
@@ -132,8 +133,8 @@ const probeLayer = (
   return observed.pipe(Layer.provideMerge(protocol));
 };
 
-class ProbeObject extends StreamsyObject.make<Env>({
-  app: Http.routes({ prefix: "/streams" }),
+class ProbeObject extends StreamsyObject.make<Env, StreamsReader | StreamsWriter>({
+  app: protocolRoutes({ prefix: "/streams" }),
   layer: probeLayer,
 }) {
   readonly #state = probeFor(this.ctx);

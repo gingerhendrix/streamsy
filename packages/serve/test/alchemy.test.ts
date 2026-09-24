@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Effect, Exit, Schema } from "effect";
 import { HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { StreamRoute } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
 import * as Host from "@streamsy/serve/alchemy";
 import { rule } from "../src/cloudflare/placement.ts";
 

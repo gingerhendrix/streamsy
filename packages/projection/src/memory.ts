@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import { MemoryCommitBoundary, attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Checkpoints, fromStore, type EncodedStore } from "./checkpoint.ts";
 import { State, stateFromStore } from "./state.ts";

@@ -8,9 +8,8 @@ import {
   Storage,
   StreamFamily,
   StreamGroup,
-  StreamsReader,
-  StreamsWriter,
 } from "../../src/index.ts";
+import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import type { MemoryCommitBoundary } from "../../src/internal/memory.ts";
 import * as Fetch from "../../src/fetch/index.ts";
 class A extends StreamFamily.json<A>()("GroupTypes/A", "a", {
@@ -65,10 +64,13 @@ const legacyMemory: Equal<
   Storage | MemoryCommitBoundary
 > = true;
 const legacyFetch: Equal<
-  Layer.Success<ReturnType<typeof Fetch.layer>>,
+  Layer.Success<ReturnType<typeof Fetch.layerProtocol>>,
   StreamsReader | StreamsWriter
 > = true;
-const mappedFetch = Effect.map(Effect.succeed({ baseUrl: "http://localhost" }), Fetch.layer);
+const mappedFetch = Effect.map(
+  Effect.succeed({ baseUrl: "http://localhost" }),
+  Fetch.layerProtocol,
+);
 const pointFreeFetch: Equal<
   Layer.Success<Effect.Success<typeof mappedFetch>>,
   StreamsReader | StreamsWriter
@@ -94,3 +96,8 @@ void [
   hasFeed,
   emptyExact,
 ];
+
+// @ts-expect-error Application Fetch always requires families.
+Fetch.layer({ baseUrl: "http://localhost" });
+// @ts-expect-error Application HTTP always requires families.
+Http.routes({ prefix: "/streams" });

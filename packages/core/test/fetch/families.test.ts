@@ -2,15 +2,8 @@
 import { expect, it } from "bun:test";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
-import {
-  Changes,
-  Http,
-  Memory,
-  StreamFamily,
-  StreamGroup,
-  StreamsReader,
-  StreamsWriter,
-} from "@streamsy/core";
+import { Changes, Http, Memory, StreamFamily, StreamGroup } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import * as Fetch from "@streamsy/core/fetch";
 
 class Notes extends StreamFamily.json<Notes>()("FetchFamilies/Notes", "notes/:user", {

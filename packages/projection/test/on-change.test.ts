@@ -2,14 +2,8 @@ import * as FamilyFixture from "./support/families.ts";
 import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
-import {
-  Storage,
-  StreamGone,
-  StreamRef,
-  Streams,
-  StreamsReader,
-  StreamsWriter,
-} from "@streamsy/core";
+import { Storage, StreamGone, StreamRef } from "@streamsy/core";
+import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 

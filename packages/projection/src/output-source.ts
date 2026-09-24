@@ -1,6 +1,7 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This mapped adapter preserves each declaration's schema and name while iterating its record. */
 import { Effect, Option, type Schema } from "effect";
-import { StreamRef, type StreamFamily, type StreamRoute } from "@streamsy/core";
+import { StreamRef, type StreamFamily } from "@streamsy/core";
+import { type StreamRoute } from "@streamsy/core/protocol";
 import type * as Output from "./output.ts";
 import type { ProjectionKey } from "./checkpoint.ts";
 import { loadState } from "./fold.ts";

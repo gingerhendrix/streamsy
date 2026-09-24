@@ -1,13 +1,8 @@
 import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
-import {
-  Streams,
-  StreamsReader,
-  ZERO_OFFSET,
-  type Reader,
-  type StreamsFault,
-} from "@streamsy/core";
+import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
+import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";

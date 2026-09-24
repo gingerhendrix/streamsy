@@ -1,11 +1,11 @@
 import {
-  Protocol,
   StorageFault,
   provides,
   type StreamFamily,
   type StreamGroup,
   type Changes,
 } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";

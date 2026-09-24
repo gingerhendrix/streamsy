@@ -4,18 +4,15 @@ import { producerId } from "../src/stream-output.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { StorageFault, StreamRef, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import {
   Protocol,
-  StorageFault,
-  StreamRef,
   Streams,
   StreamsReader,
   StreamsWriter,
-  ZERO_OFFSET,
   type Reader,
-  type StreamsFault,
   type Writer,
-} from "@streamsy/core";
+} from "@streamsy/core/protocol";
 import { Checkpoints, Projection, ProjectionFault, type Unit } from "@streamsy/projection";
 import { type CheckpointRecord } from "@streamsy/projection/checkpoint";
 import * as Memory from "@streamsy/projection/memory";

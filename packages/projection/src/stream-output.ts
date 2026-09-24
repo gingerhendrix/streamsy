@@ -1,5 +1,6 @@
 import { Effect } from "effect";
-import { Producer, Streams, StreamsWriter, type StreamFamily } from "@streamsy/core";
+import { Producer, type StreamFamily } from "@streamsy/core";
+import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import {
   inputEntries,
   emptySlice,

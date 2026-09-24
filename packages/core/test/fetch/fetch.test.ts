@@ -1,3 +1,4 @@
+import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/global-timers -- Bun tests own the real local HTTP boundary and its teardown.
 import { expect, it } from "bun:test";
 import {
@@ -13,15 +14,8 @@ import {
 } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { TransportFault } from "../../src/fault.ts";
-import {
-  StreamRef,
-  Streams,
-  StreamsReader,
-  StreamsWriter,
-  StreamId,
-  ZERO_OFFSET,
-} from "@streamsy/core";
-import * as Http from "../../src/http/index.ts";
+import { StreamRef, StreamId, ZERO_OFFSET } from "@streamsy/core";
+import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { HttpRouter } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
 
@@ -110,12 +104,12 @@ const fixture = Effect.gen(function* () {
 
 it("every operation family returns the direct results over local HTTP", async () => {
   const edge = HttpRouter.toWebHandler(
-    Http.routes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+    protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
     { disableLogger: true },
   );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
-    const remote = Fetch.layer({
+    const remote = Fetch.layerProtocol({
       baseUrl: `${server.url.href}streams`,
       capabilities: { expectedOffset: true, producer: true },
     }).pipe(Layer.provide(FetchHttpClient.layer));
@@ -132,12 +126,12 @@ it("every operation family returns the direct results over local HTTP", async ()
 
 it("merges text messages into one payload over the public wire", async () => {
   const edge = HttpRouter.toWebHandler(
-    Http.routes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+    protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
     { disableLogger: true },
   );
   const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
   try {
-    const remote = Fetch.layer({ baseUrl: `${server.url.href}streams` }).pipe(
+    const remote = Fetch.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
       Layer.provide(FetchHttpClient.layer),
     );
     const program = Effect.gen(function* () {
@@ -166,7 +160,7 @@ function mock(response: () => Response) {
   );
 }
 const against = (response: () => Response, capabilities: { readonly producer?: boolean } = {}) =>
-  Fetch.layer({ baseUrl: "http://localhost/streams", capabilities }).pipe(
+  Fetch.layerProtocol({ baseUrl: "http://localhost/streams", capabilities }).pipe(
     Layer.provide(mock(response)),
   );
 const headOver = (response: () => Response) =>
@@ -420,11 +414,13 @@ it("sends no Streamsy-specific request headers", async () => {
         return yield* (yield* StreamsReader).head(id);
       }).pipe(Effect.flip, Effect.provide(transport)),
     );
-  await probe(Fetch.layer({ baseUrl: "http://localhost/streams" }).pipe(Layer.provide(capture)));
+  await probe(
+    Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(Layer.provide(capture)),
+  );
   expect(accept).toBeUndefined();
   expect(cacheControl).toBe("no-cache");
   await probe(
-    Fetch.layer({
+    Fetch.layerProtocol({
       baseUrl: "http://localhost/streams",
       headers: { accept: "application/json" },
     }).pipe(Layer.provide(capture)),
@@ -434,7 +430,7 @@ it("sends no Streamsy-specific request headers", async () => {
 
 it("unknown CAS and producer support fail before any HTTP request", async () => {
   let requests = 0;
-  const transport = Fetch.layer({ baseUrl: "http://localhost/streams" }).pipe(
+  const transport = Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
     Layer.provide(
       mock(() => {
         requests++;
@@ -475,7 +471,9 @@ it("connection failure stays in the typed fault channel", async () => {
   const failure = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* StreamsReader).head(id).pipe(Effect.flip);
-    }).pipe(Effect.provide(Fetch.layer({ baseUrl }).pipe(Layer.provide(FetchHttpClient.layer)))),
+    }).pipe(
+      Effect.provide(Fetch.layerProtocol({ baseUrl }).pipe(Layer.provide(FetchHttpClient.layer))),
+    ),
   );
   expect(failure).toMatchObject({ _tag: "TransportFault", reason: "request" });
 });
@@ -513,7 +511,7 @@ for (const phase of ["request", "body"] as const) {
       );
     });
     const runtime = ManagedRuntime.make(
-      Fetch.layer({ baseUrl: "http://localhost/streams" }).pipe(
+      Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
       ),
     );
@@ -543,7 +541,7 @@ it("disposing the Layer interrupts active requests", async () => {
     }).pipe(Effect.andThen(Effect.never)),
   );
   const runtime = ManagedRuntime.make(
-    Fetch.layer({ baseUrl: "http://localhost/streams" }).pipe(
+    Fetch.layerProtocol({ baseUrl: "http://localhost/streams" }).pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
     ),
   );
@@ -568,14 +566,14 @@ for (const mode of ["direct", "fetch"] as const) {
   ]) {
     it(`${mode} client conformance: ${contentType} resumes after acknowledgement and closes atomically`, async () => {
       const edge = HttpRouter.toWebHandler(
-        Http.routes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
+        protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
         { disableLogger: true },
       );
       const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
       const modeTransport =
         mode === "direct"
           ? memory()
-          : Fetch.layer({ baseUrl: `${server.url.href}streams` }).pipe(
+          : Fetch.layerProtocol({ baseUrl: `${server.url.href}streams` }).pipe(
               Layer.provide(FetchHttpClient.layer),
             );
       try {
@@ -619,7 +617,7 @@ it("resolves prefixes and application headers without letting IDs escape", async
       return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
     }),
   );
-  const transport = Fetch.layer({
+  const transport = Fetch.layerProtocol({
     baseUrl: "https://example.test/api/streams/",
     headers: { authorization: "Bearer fixture" },
   }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)));
@@ -663,12 +661,12 @@ it("keeps arbitrary append bad-request bodies as typed request errors", async ()
 
 for (const retry of [false, true]) {
   it(`decodes a close-only producer append${retry ? " retried after close" : " on an open stream"}`, async () => {
-    const edge = HttpRouter.toWebHandler(Http.routes({}).pipe(Layer.provideMerge(memory())), {
+    const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(memory())), {
       disableLogger: true,
     });
     const server = Bun.serve({ port: 0, fetch: (request) => edge.handler(request) });
     try {
-      const remote = Fetch.layer({
+      const remote = Fetch.layerProtocol({
         baseUrl: server.url.href,
         capabilities: { producer: true },
       }).pipe(Layer.provide(FetchHttpClient.layer));

@@ -2,7 +2,8 @@ import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Layer, Option, Schema } from "effect";
-import { Streams, StreamsReader, type StorageFault } from "@streamsy/core";
+import { type StorageFault } from "@streamsy/core";
+import { Streams, StreamsReader } from "@streamsy/core/protocol";
 import { Checkpoints, Projection, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
@@ -13,8 +14,8 @@ const hosts: ReadonlyArray<
     string,
     Layer.Layer<
       | Checkpoints
-      | import("@streamsy/core").StreamsReader
-      | import("@streamsy/core").StreamsWriter
+      | import("@streamsy/core/protocol").StreamsReader
+      | import("@streamsy/core/protocol").StreamsWriter
       | Projection.State,
       StorageFault | ProjectionFault
     >,

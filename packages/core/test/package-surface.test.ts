@@ -8,8 +8,8 @@ import manifest from "../package.json";
 test("public roots omit internal composition and obsolete aliases", () => {
   expect(Object.keys(Root.State)).toEqual(["changes", "delete", "upsert"]);
   expect(Object.keys(Root)).not.toContain("MemoryCommitBoundary");
-  expect(Object.keys(Root.Protocol)).not.toContain("create");
-  expect(Object.keys(Root.Protocol)).not.toContain("expireIfNeeded");
+  expect(Object.keys(Protocol.Protocol)).not.toContain("create");
+  expect(Object.keys(Protocol.Protocol)).not.toContain("expireIfNeeded");
   expect(Object.keys(Http)).toEqual([
     "app",
     "checkReadOptions",
@@ -35,7 +35,6 @@ test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
     "AnyStream",
     "AppendConflict",
-    "Backend",
     "ChangeSnapshot",
     "Changes",
     "CreateConflict",
@@ -63,7 +62,6 @@ test("root exports stay explicit", () => {
     "ProducerId",
     "ProducerPrecondition",
     "ProducerState",
-    "Protocol",
     "RecordPatch",
     "StaleEpoch",
     "State",
@@ -82,17 +80,13 @@ test("root exports stay explicit", () => {
     "StreamNotFound",
     "StreamRecord",
     "StreamRef",
-    "StreamRoute",
-    "Streams",
-    "StreamsReader",
-    "StreamsWriter",
     "TransportFault",
     "ZERO_OFFSET",
     "compare",
     "isProtocolError",
     "provides",
   ]);
-  expect(Object.keys(Root.StreamRoute).sort()).toEqual(["bytes", "custom", "json", "state"]);
+  expect(Object.keys(Protocol.StreamRoute).sort()).toEqual(["bytes", "custom", "json", "state"]);
 });
 
 test("family namespace pins factories and backend composition helpers", () => {
@@ -118,7 +112,7 @@ test("protocol subpath retains the same services and memory forms", () => {
     "StreamsWriter",
     "layerMemory",
     "layerProtocol",
-    "layerRouted",
+    "routes",
   ]);
   expect(Object.keys(Protocol.Streams).sort()).toEqual([
     "append",
@@ -127,13 +121,10 @@ test("protocol subpath retains the same services and memory forms", () => {
     "head",
     "items",
     "layerMemory",
-    "layerRouted",
     "read",
     "remove",
     "session",
   ]);
-  expect(Protocol.StreamsReader).toBe(Root.StreamsReader);
-  expect(Protocol.StreamsWriter).toBe(Root.StreamsWriter);
-  expect(Protocol.layerMemory).toBe(Root.Streams.layerMemory);
+  expect(Protocol.layerMemory).toBe(Protocol.Streams.layerMemory);
   expect(Protocol.layerProtocol).toBe(Protocol.layerMemory);
 });

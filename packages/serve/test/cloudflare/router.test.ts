@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import type { DurableObjectNamespace, ExportedHandler } from "@cloudflare/workers-types";
 import { Schema } from "effect";
-import { StreamRoute } from "@streamsy/core";
+import { StreamRoute } from "@streamsy/core/protocol";
 import { Placement, rule } from "../../src/cloudflare/placement.ts";
 import { router } from "../../src/cloudflare/router.ts";
 

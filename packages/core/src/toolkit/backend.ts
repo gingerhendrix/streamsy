@@ -42,7 +42,7 @@ export interface Backend<Name extends string> {
 }
 
 /**
- * The structural shape `layerRouted` reads. A named backend is not assignable to
+ * The structural shape used by family binding. A named backend is not assignable to
  * another name, so the routed Layer takes this shape as its constraint and
  * derives the exact requirement from the literal bindings the caller passes.
  */

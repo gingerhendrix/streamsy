@@ -1,6 +1,7 @@
 import * as FamilyFixture from "./families.ts";
 import { Effect, Schema, Stream } from "effect";
-import { Streams, StreamRef, type StreamsReader, type StreamsWriter } from "@streamsy/core";
+import { StreamRef } from "@streamsy/core";
+import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 
 export const input = FamilyFixture.json("projection-input", { schema: Schema.Finite });

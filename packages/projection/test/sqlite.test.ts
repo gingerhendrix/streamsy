@@ -14,7 +14,7 @@ import {
   Schema,
 } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import { Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
@@ -160,7 +160,7 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       `
       import * as FamilyFixture from "./test/support/families.ts";
       import { Layer, ManagedRuntime, Option } from "effect";
-      import { Streams } from "@streamsy/core";
+      import { Streams } from "@streamsy/core/protocol";
       import * as BunStorage from "@streamsy/storage/bun";
       import * as Sqlite from "./src/sqlite.ts";
       import { Projection } from "./src/index.ts";

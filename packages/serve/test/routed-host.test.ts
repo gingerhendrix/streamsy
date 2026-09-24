@@ -1,28 +1,32 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web host boundary. */
 import { expect, test } from "bun:test";
-import { Effect, Layer, Schema } from "effect";
-import { Backend, StreamRoute, Streams } from "@streamsy/core";
+import { Layer, Schema } from "effect";
+import { Http, Memory, StreamFamily, StreamGroup } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { testHost } from "./support/scoped-host.ts";
+import { HttpRouter } from "effect/unstable/http";
 
-const MemoryFamily = StreamRoute.json("memory/:name", {
+class MemoryFamily extends StreamFamily.json<MemoryFamily>()("RoutedHost/Memory", "memory/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
-});
-const SqliteFamily = StreamRoute.json("sqlite/:name", {
+}) {}
+class SqliteFamily extends StreamFamily.json<SqliteFamily>()("RoutedHost/Sqlite", "sqlite/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
-});
+}) {}
 
-const memory = Backend.make("host-memory");
-const sqlite = Backend.make("host-sqlite");
-const routed = Streams.layerRouted([memory.serves(MemoryFamily), sqlite.serves(SqliteFamily)]).pipe(
-  Layer.provide(memory.layer(Streams.layerMemory())),
-  Layer.provide(sqlite.layer(BunStorage.layerProtocol({ client: { filename: ":memory:" } }))),
+const families = StreamGroup.make(MemoryFamily, SqliteFamily);
+const hostLayer = Layer.merge(
+  Memory.layer({}, MemoryFamily),
+  BunStorage.layer({ client: { filename: ":memory:" } }, SqliteFamily),
 );
 
 test("one Http.app host serves routed memory and SQLite families", async () => {
-  const host = await Effect.runPromise(testHost({ layer: routed, port: 0 }));
+  const web = HttpRouter.toWebHandler(
+    Http.routes(families, { access: "full" }).pipe(HttpRouter.provideRequest(hostLayer)),
+    { disableLogger: true },
+  );
+  const server = Bun.serve({ port: 0, fetch: (request) => web.handler(request) });
+  const host = { url: server.url };
   try {
     for (const path of ["memory/notes", "sqlite/notes"]) {
       const created = await fetch(new URL(path, host.url), {
@@ -46,10 +50,11 @@ test("one Http.app host serves routed memory and SQLite families", async () => {
 
     const unrouted = await fetch(new URL("unrouted/notes", host.url));
     expect({ status: unrouted.status, body: await unrouted.text() }).toEqual({
-      status: 500,
+      status: 404,
       body: "",
     });
   } finally {
-    await Effect.runPromise(host.stop);
+    await server.stop(true);
+    await web.dispose();
   }
 });

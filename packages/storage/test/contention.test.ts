@@ -18,13 +18,13 @@ import {
 } from "effect";
 import {
   Offset,
-  Protocol,
   Storage,
   StreamId,
   ZERO_OFFSET,
   type Mutation,
   type StorageFault,
 } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
 import {
   testHost,
   type TestHost,

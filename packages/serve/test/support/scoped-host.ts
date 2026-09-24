@@ -1,7 +1,9 @@
+import { routes as protocolRoutes } from "@streamsy/core/protocol";
 import { Context, Deferred, Effect, Fiber, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { NetAddress } from "effect/unstable/net";
-import { Http, type StreamsReader, type StreamsWriter } from "@streamsy/core";
+import { Http } from "@streamsy/core";
+import { type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { listener, type ListenerOptions } from "../../src/bun.ts";
 
 export interface TestHostOptions<E = never> extends ListenerOptions, Http.HttpOptions {
@@ -22,7 +24,7 @@ export function testHost<E>(options: TestHostOptions<E>) {
     const owner = yield* Effect.forkDetach(
       Effect.scoped(
         Effect.gen(function* () {
-          const routes = Http.routes({
+          const routes = protocolRoutes({
             ...options,
             prefix:
               options.pathPrefix === undefined ? "/" : `/${options.pathPrefix.replace(/^\//, "")}`,

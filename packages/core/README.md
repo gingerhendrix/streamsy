@@ -1,7 +1,7 @@
 # @streamsy/core
 
 An Effect implementation of the [Durable Streams](https://durablestreams.com)
-protocol. Typed stream refs, a `Streams` API, an in-process memory Layer, an
+protocol. Typed stream families, family services, an in-process memory Layer, an
 HTTP app, and a fetch client for remote hosts. Version 0.4.0 requires
 `effect@4.0.0-rc.115`.
 
@@ -11,17 +11,19 @@ bun add @streamsy/core effect
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
-import { Streams, StreamRef } from "@streamsy/core";
+import { Memory, StreamFamily } from "@streamsy/core";
 
-const events = StreamRef.json("events", { schema: Schema.String });
+class Events extends StreamFamily.json<Events>()("Readme/Events", "events", {
+  params: {},
+  schema: Schema.String,
+}) {}
 const program = Effect.gen(function* () {
-  yield* Streams.create(events);
-
-  yield* Streams.append(events, ["hello"]);
-
-  return yield* Streams.read(events).pipe(Stream.runCollect);
+  const events = yield* Events;
+  yield* events.create({});
+  yield* events.append({}, ["hello"]);
+  return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
+await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Events))));
 ```
 
 Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhendrix/streamsy/blob/effect-first-live-perimeter/packages/core/examples/readme.ts).
@@ -30,16 +32,16 @@ Compiled source: [packages/core/examples/readme.ts](https://github.com/gingerhen
 
 - `StreamRef` names a stream with its content type and schema, including
   `StreamRef.state(id, { collections })` for a Durable State stream. One ref
-  declares several collections keyed by their wire `type`. `StreamRoute` names
-  a family of streams from an id template.
-- `Streams` creates, appends, reads, follows, and removes streams. Create and
+  declares several collections keyed by their wire `type`. `StreamFamily` declares
+  a named family service from an id template.
+- Family services create, append, read, follow, and remove streams. Create and
   append return `_tag` variants such as `Created` / `Exists` and
   `Appended` / `Duplicate`. Protocol failures are tagged errors
   (`StreamNotFound`, `StreamGone`, `OffsetMismatch`, `AppendConflict`) for
   `Effect.catchTag`.
 - `Producer` appends under a producer tuple so retries are safe.
 - `Fold` reduces a stream into a value.
-- `Backend` and `Streams.layerRouted` select a backend per stream id.
+- `StreamGroup` and family-taking storage layers bind each family to its backend.
 
 ### Producer restarts
 
@@ -50,12 +52,13 @@ payload after a restart; `Duplicate` then means the earlier send landed.
 
 ## Entries
 
-| Entry                    | Contents                                                                            |
-| ------------------------ | ----------------------------------------------------------------------------------- |
-| `@streamsy/core`         | Streams, StreamRef, StreamRoute, Backend, Fold, Producer, storage contracts, errors |
-| `@streamsy/core/fetch`   | `Fetch.layer({ baseUrl })`: the same reader and writer over HTTP                    |
-| `@streamsy/core/http`    | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                       |
-| `@streamsy/core/testing` | Contract tests and fault injection for backends                                     |
+| Entry                     | Contents                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------- |
+| `@streamsy/core`          | StreamFamily, StreamGroup, AnyStream, Memory, StreamRef, Fold, Producer, storage contracts, errors |
+| `@streamsy/core/fetch`    | `Fetch.layer({ baseUrl }, families)`: the same family services over HTTP                           |
+| `@streamsy/core/http`     | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                                      |
+| `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, Backend, StreamRoute, and raw routes              |
+| `@streamsy/core/testing`  | Contract tests and fault injection for backends                                                    |
 
 ## Storage and hosts
 
@@ -72,8 +75,8 @@ provides output routes and host glue.
 Browsers use the official `@durable-streams/client` and
 `@durable-streams/state` packages directly against any Streamsy host.
 
-`Protocol.layer({ readLimit: 1000 })` sets the server catch-up page size.
-`Streams.layerMemory({ readLimit })` accepts the same option. The default is
+`Memory.layer({ readLimit: 1000 }, families)` sets the server catch-up page size.
+Protocol adapters can use `Protocol.layer({ readLimit })` from `@streamsy/core/protocol`. The default is
 1000 messages; `readNext` returns the whole available tail. Fetch clients send
 only an offset and accept the remote server’s page size. Both direct read
 methods reject malformed offsets with `InvalidReadRequest`; accepted offsets
@@ -87,7 +90,7 @@ when that state is present. A close on an already closed stream with a fresh
 tuple returns `Appended` without producer state, including retries of that
 unpersisted tuple.
 
-`Http.routes({ sseDeadlineMs })`, `Http.app`, and `Http.read` accept an SSE lifetime in
+`Http.routes(families, { access: "read", sseDeadlineMs })`, `Http.app`, and `Http.read` accept an SSE lifetime in
 milliseconds. It defaults to 60,000 and closes the body normally at the
 deadline. Host-forced interruption and client cancellation remain owned by
 the host. Read results include `contentType`; a fetch long poll returning 204

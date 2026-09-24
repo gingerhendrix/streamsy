@@ -1,14 +1,7 @@
 import { expect, it } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
-import {
-  AnyStream,
-  Backend,
-  provides,
-  StreamFamily,
-  StreamId,
-  StreamRef,
-  Streams,
-} from "../../src/index.ts";
+import { AnyStream, provides, StreamFamily, StreamId, StreamRef } from "../../src/index.ts";
+import { Backend, Streams } from "../../src/protocol/index.ts";
 
 class Notes extends StreamFamily.json<Notes>()("Notes", "notes/:user", {
   params: { user: Schema.String },
@@ -203,10 +196,12 @@ it("provides a scoped feed with the family's owner", async () => {
 });
 
 it("does not expose a feed when the graph hides Storage", async () => {
-  const { Changes, StreamsReader, StreamsWriter } = await import("../../src/index.ts");
+  const { Changes } = await import("../../src/index.ts");
+  const { StreamsReader, StreamsWriter } = await import("../../src/protocol/index.ts");
   const protocol = Layer.effectContext(
     Effect.context<
-      import("../../src/index.ts").StreamsReader | import("../../src/index.ts").StreamsWriter
+      | import("../../src/protocol/index.ts").StreamsReader
+      | import("../../src/protocol/index.ts").StreamsWriter
     >().pipe(Effect.map(Context.pick(StreamsReader, StreamsWriter))),
   ).pipe(Layer.provide(Streams.layerMemory()));
   await Effect.runPromise(
@@ -231,7 +226,8 @@ it("rejects a graph whose exposed Storage does not own the protocol wires", asyn
 });
 
 it("spreading a protocol writer does not copy its ownership claim", async () => {
-  const { StreamsReader, StreamsWriter, Storage } = await import("../../src/index.ts");
+  const { Storage } = await import("../../src/index.ts");
+  const { StreamsReader, StreamsWriter } = await import("../../src/protocol/index.ts");
   const graph = Streams.layerMemory().pipe(
     Layer.flatMap((context) =>
       Layer.succeedContext(

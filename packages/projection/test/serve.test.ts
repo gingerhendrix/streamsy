@@ -4,7 +4,7 @@ import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import { Output, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import { Serve } from "@streamsy/serve";

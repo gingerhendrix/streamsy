@@ -2,7 +2,7 @@ import type { AlarmInvocationInfo, DurableObjectState } from "@cloudflare/worker
 import { DurableObject } from "cloudflare:workers";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
-import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
+import type { Storage, StorageFault } from "@streamsy/core";
 import { alarmLayer } from "./alarm.ts";
 import { alarm } from "./host-program.ts";
 import { acquireObject, providedApp, unavailable, type ObjectApp } from "./object-runtime.ts";
@@ -75,8 +75,7 @@ class ObjectHost<Env, R> extends DurableObject<Env> {
   }
 }
 export const StreamsyObject = {
-  // The default retains legacy make<Env> calls; inferred or explicit R can be family-only.
-  make: <Env = unknown, R = StreamsReader | StreamsWriter>(
+  make: <Env = unknown, R = never>(
     configuration: ObjectConfiguration<Env, R>,
   ): new (state: DurableObjectState, env: Env) => ObjectHost<Env, R> =>
     class extends ObjectHost<Env, R> {

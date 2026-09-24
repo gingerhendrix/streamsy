@@ -4,14 +4,8 @@ import { defaultRetry } from "../src/follow.ts";
 import { expect, test } from "bun:test";
 import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope } from "effect";
 import { TestClock } from "effect/testing";
-import {
-  Streams,
-  StreamsReader,
-  StreamsWriter,
-  TransportFault,
-  type Reader,
-  type StreamsFault,
-} from "@streamsy/core";
+import { TransportFault, type StreamsFault } from "@streamsy/core";
+import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 import { input, output, positives, readAll } from "./support/scenarios.ts";

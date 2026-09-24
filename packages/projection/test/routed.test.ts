@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
-import { Backend, Storage, Streams, provides, StreamFamily } from "@streamsy/core";
+import { Storage, provides, StreamFamily } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
@@ -88,14 +89,20 @@ test("onChange rejects a family rebound without its matching feed", async () => 
   );
 });
 
-const legacyBackend = Backend.make("routed-legacy-owner");
 const legacyStorage = Memory.layerMemory();
-const legacyRouted = Streams.layerRouted([legacyBackend.serves(Source, Output)]).pipe(
-  Layer.provide(legacyBackend.layer(legacyStorage)),
-);
+// A custom adapter that copies protocol methods loses private storage-owner metadata.
+const unowned = Layer.effectContext(
+  Effect.gen(function* () {
+    const reader = yield* StreamsReader;
+    const writer = yield* StreamsWriter;
+    return Context.make(StreamsReader, { ...reader }).pipe(
+      Context.add(StreamsWriter, { ...writer }),
+    );
+  }),
+).pipe(Layer.provide(legacyStorage));
 
-test("a legacy routed family cannot establish the owner of a fused write", async () => {
-  const legacyHost = provides(legacyRouted, Source, Output).pipe(Layer.provideMerge(legacyStorage));
+test("a custom family wire cannot establish the owner of a fused write", async () => {
+  const legacyHost = provides(unowned, Source, Output).pipe(Layer.provideMerge(legacyStorage));
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
@@ -123,11 +130,11 @@ test("a legacy routed family cannot establish the owner of a fused write", async
   );
 });
 
-test("a legacy routed graph exposing ambient Storage is rejected during binding", async () => {
+test("a custom wire graph exposing ambient Storage is rejected during binding", async () => {
   const storageOnly = legacyStorage.pipe(
     Layer.flatMap((context) => Layer.succeed(Storage, Context.get(context, Storage))),
   );
-  const mixed = Layer.merge(legacyRouted, storageOnly);
+  const mixed = Layer.merge(unowned, storageOnly);
   const result = await Effect.runPromiseExit(
     Effect.void.pipe(Effect.provide(provides(mixed, Source, Output))),
   );

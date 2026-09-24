@@ -2,7 +2,7 @@
 import { runConformanceTests } from "@durable-streams/server-conformance-tests";
 import { afterAll, beforeAll, describe } from "vitest";
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core/protocol";
 import { testHost, type TestHost } from "../../serve/test/support/scoped-host.ts";
 
 let host: TestHost | undefined;

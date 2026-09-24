@@ -2,7 +2,8 @@ import { Checkpoints } from "./checkpoint.ts";
 import type { Named } from "./outputs.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
 import { Effect, Fiber, Queue, Stream, type Scope } from "effect";
-import { Changes, type StreamFamily, type StreamRoute } from "@streamsy/core";
+import { Changes, type StreamFamily } from "@streamsy/core";
+import { type StreamRoute } from "@streamsy/core/protocol";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import type { Family } from "./family.ts";
 import { ProjectionFault } from "./fault.ts";

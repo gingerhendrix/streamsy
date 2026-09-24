@@ -2,15 +2,8 @@
 import { expect, it } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
-import {
-  Changes,
-  Storage,
-  type StorageFault,
-  StreamFamily,
-  StreamGroup,
-  StreamsReader,
-  StreamsWriter,
-} from "@streamsy/core";
+import { Changes, Storage, type StorageFault, StreamFamily, StreamGroup } from "@streamsy/core";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import type * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { sharedSqlClientLayer } from "../src/boundary.ts";

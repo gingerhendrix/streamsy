@@ -4,5 +4,6 @@ export * as Streams from "../toolkit/streams.ts";
 export * as Protocol from "./layer.ts";
 export * as Backend from "../toolkit/backend.ts";
 export * as StreamRoute from "../toolkit/route.ts";
-export { layerRouted, layerMemory } from "../toolkit/layers.ts";
+export { layerMemory } from "../toolkit/layers.ts";
 export { layerMemory as layerProtocol } from "../toolkit/layers.ts";
+export { routes } from "./routes.ts";
