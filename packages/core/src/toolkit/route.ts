@@ -18,10 +18,16 @@ import { compileSegments, isCanonicalIdSegment, type Segment } from "./route-int
  * value drives two host decisions: the binding table picks the storage backend
  * for an id, and `Placement.byRoute` picks the Durable Object that owns it.
  */
-export interface StreamRoute<RouteParams, A, RD = never, RE = never> {
+export interface StreamRoute<
+  RouteParams,
+  A,
+  RD = never,
+  RE = never,
+  Template extends string = string,
+> {
   readonly _tag: "StreamRoute";
   /** Relative template, for example `journal/:user`. Empty for a custom route. */
-  readonly template: string;
+  readonly template: Template;
   readonly paramSchema?: PathSchema<RouteParams>;
   /** The router-facing contract. True when this route owns the id. */
   readonly match: (id: string) => boolean;
@@ -46,12 +52,13 @@ function pathSchema<C extends ParamCodecs>(codecs: C): PathSchema<Params<C>> {
 }
 
 /** A route whose member refs retain their declared State collections. */
-export type StateRoute<P, C extends StreamRef.Collections> = Omit<
+export type StateRoute<P, C extends StreamRef.Collections, Template extends string = string> = Omit<
   StreamRoute<
     P,
     StreamRef.CollectionsChange<C>,
     StreamRef.CollectionsDecodingServices<C>,
-    StreamRef.CollectionsEncodingServices<C>
+    StreamRef.CollectionsEncodingServices<C>,
+    Template
   >,
   "ref"
 > & {
@@ -183,7 +190,7 @@ export function json<const Template extends string, Codecs extends ParamCodecs, 
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly schema: Schema.Codec<A, I, RD, RE>;
   },
-): StreamRoute<Params<Codecs>, A, RD, RE> & WithPathSchema<Params<Codecs>> {
+): StreamRoute<Params<Codecs>, A, RD, RE, Template> & WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
@@ -207,7 +214,7 @@ export function state<
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly collections: C & StreamRef.ValidCollections<C>;
   },
-): StateRoute<Params<Codecs>, C> & WithPathSchema<Params<Codecs>> {
+): StateRoute<Params<Codecs>, C, Template> & WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);
@@ -228,7 +235,8 @@ export function bytes<const Template extends string, Codecs extends ParamCodecs>
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
     readonly contentType?: string;
   },
-): StreamRoute<Params<Codecs>, Uint8Array> & WithPathSchema<Params<Codecs>> {
+): StreamRoute<Params<Codecs>, Uint8Array, never, never, Template> &
+  WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
   const codecs = options.params;
   checkTemplateParams(template, names, codecs);

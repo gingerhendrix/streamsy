@@ -19,7 +19,8 @@ export interface ParameterSegment {
 
 export type Segment = LiteralSegment | ParameterSegment;
 
-export interface TemplateGrammar {
+export interface TemplateGrammar<Template extends string = string> {
+  readonly template: Template;
   readonly segments: ReadonlyArray<Segment>;
   readonly names: ReadonlyArray<string>;
 }
@@ -30,7 +31,9 @@ export function isCanonicalIdSegment(value: string): boolean {
   return !/[%?#/\\]/.test(value);
 }
 
-export function compileSegments(template: string): TemplateGrammar {
+export function compileSegments<const Template extends string>(
+  template: Template,
+): TemplateGrammar<Template> {
   if (template.length === 0)
     throw new RangeError("a stream route template must name at least one segment");
   if (template.startsWith("/"))
@@ -56,7 +59,7 @@ export function compileSegments(template: string): TemplateGrammar {
     names.push(name);
     segments.push({ kind: "parameter", name });
   }
-  return { segments: Object.freeze(segments), names: Object.freeze(names) };
+  return { template, segments: Object.freeze(segments), names: Object.freeze(names) };
 }
 
 /**

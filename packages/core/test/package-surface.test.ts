@@ -31,6 +31,7 @@ test("public roots omit internal composition and obsolete aliases", () => {
 
 test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
+    "AnyStream",
     "AppendConflict",
     "Backend",
     "ChangeSnapshot",
@@ -70,6 +71,7 @@ test("root exports stay explicit", () => {
     "StreamBusy",
     "StreamClosed",
     "StreamConfig",
+    "StreamFamily",
     "StreamGone",
     "StreamId",
     "StreamLifecycle",
@@ -84,6 +86,7 @@ test("root exports stay explicit", () => {
     "ZERO_OFFSET",
     "compare",
     "isProtocolError",
+    "provides",
   ]);
   expect(Object.keys(Root.StreamRoute).sort()).toEqual(["bytes", "custom", "json", "state"]);
 });
