@@ -12,7 +12,8 @@
     "build:worker": "bun run scripts/build-worker.ts",
     "measure:bundle": "bun run build:worker && cat dist/bundle-report.json",
     "check:browser": "bun scripts/check-browser.ts",
-    "test:fetch": "bun ./node_modules/vitest/vitest.mjs --run test/fetch.conformance.test.ts"
+    "test:fetch": "bun ./node_modules/vitest/vitest.mjs --run test/fetch.conformance.test.ts",
+    "test:memory:any-stream": "bun ./node_modules/vitest/vitest.mjs --run test/any-stream.conformance.test.ts"
   },
   "dependencies": {
     "@durable-streams/client": "0.2.6",
