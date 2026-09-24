@@ -1,13 +1,15 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
-import { Http } from "@streamsy/core";
+import { AnyStream, Http, StreamGroup } from "@streamsy/core";
 import * as Host from "@streamsy/serve/alchemy";
-import { layerProtocol } from "@streamsy/storage/durable-object";
+import { layer } from "@streamsy/storage/durable-object";
 import {
   COMPATIBILITY_DATE,
   COMPATIBILITY_FLAGS,
   CONFORMANCE_LONG_POLL_TIMEOUT_MS,
 } from "./contract.ts";
+
+const streams = StreamGroup.make(AnyStream);
 
 /** The runtime phase alone reads raw Durable Object storage. */
 export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
@@ -16,12 +18,15 @@ export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.suspend(() =>
       Host.objectHandlers({
-        app: Http.routes({ prefix: "/streams" }),
+        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
         layer: Layer.mergeAll(
-          layerProtocol({
-            client: { storage: state.raw.storage },
-            longPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
-          }),
+          layer(
+            {
+              client: { storage: state.raw.storage },
+              longPollTimeoutMs: CONFORMANCE_LONG_POLL_TIMEOUT_MS,
+            },
+            streams,
+          ),
           Host.alarmLayer(state.raw.storage),
         ),
       }),
