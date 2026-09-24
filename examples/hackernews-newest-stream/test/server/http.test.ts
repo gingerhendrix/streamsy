@@ -1,6 +1,6 @@
 /* oxlint-disable effecttsgo/async-function -- Bun tests own the Web handler and runtime lifetime. */
 import { expect, test } from "bun:test";
-import { Streams } from "@streamsy/core";
+import { HackerNewsSource, HackerNewsTarget } from "../../src/server/stream-resources.ts";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { HttpRouter } from "effect/unstable/http";
 import { Effect, Layer, Option, Schema } from "effect";
@@ -29,7 +29,9 @@ test("served rows read only outputs, replay pages, and resume at the cursor", as
       ),
     ).toBe(true);
     expect(
-      await h.runtime.runPromise(Streams.head(hackerNewsTarget).pipe(Effect.flip)),
+      await h.runtime.runPromise(
+        Effect.flatMap(HackerNewsTarget, (target) => target.head({})).pipe(Effect.flip),
+      ),
     ).toMatchObject({ _tag: "StreamNotFound" });
     const row = story(101, 1_700_000_030, "First");
     await h.append(hackerNewsSource.id, [sourceUpsert(row)]);
@@ -44,7 +46,7 @@ test("served rows read only outputs, replay pages, and resume at the cursor", as
     const cursor = initial.headers.get("stream-next-offset")!;
     await h.append(hackerNewsSource.id, [sourceDelete(row)]);
     await h.runtime.runPromise(Projection.run(hackerNewsStoryIndex));
-    await h.runtime.runPromise(Streams.remove(hackerNewsSource));
+    await h.runtime.runPromise(Effect.flatMap(HackerNewsSource, (source) => source.remove({})));
     const suffix = await read(`offset=${cursor}`);
     expect(await suffix.json()).toEqual([
       { type: "hn-story", key: "101", headers: { operation: "delete" } },
@@ -88,6 +90,16 @@ test("merged app keeps API and State routes ahead of the static fallback", async
     disableLogger: true,
   });
   try {
+    for (const ref of [hackerNewsSource, hackerNewsTarget]) {
+      for (const method of ["PUT", "POST", "DELETE"]) {
+        expect(
+          (await web.handler(new Request(`http://host/streams/${ref.id}`, { method }))).status,
+        ).toBe(405);
+      }
+    }
+    expect((await web.handler(new Request("http://host/streams/private/unknown"))).status).toBe(
+      404,
+    );
     const unknown = await web.handler(new Request("http://host/api/unknown"));
     expect(unknown.status).toBe(404);
     expect(unknown.headers.get("content-type")).toContain("application/json");

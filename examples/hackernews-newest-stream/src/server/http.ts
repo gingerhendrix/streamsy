@@ -1,3 +1,4 @@
+import { streams } from "./streams.ts";
 import { Http } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
@@ -27,7 +28,7 @@ export const stateRoute = Serve.state(hackerNewsStoryIndex.outputs["hn-story"], 
 /** The page and State route share an origin, so no CORS middleware is needed. */
 export const app = Layer.mergeAll(
   stateRoute,
-  Http.routes({ prefix: streamPrefix }),
+  Http.routes(streams, { prefix: streamPrefix, access: "read" }),
   HttpRouter.add(
     "GET",
     "/api/status",

@@ -1,12 +1,5 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable demo prepares its configured SQLite directory at the Bun edge. */
-import {
-  provides,
-  Storage,
-  StorageFault,
-  Streams,
-  StreamsReader,
-  StreamsWriter,
-} from "@streamsy/core";
+import { Memory, StreamGroup, type Storage, type StorageFault, type Changes } from "@streamsy/core";
 import { ProjectionFault, type State, type Checkpoints } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
@@ -16,15 +9,17 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { databasePath } from "./config.ts";
 import { pollFailure } from "./poller/contract.ts";
-import { hackerNewsSource, HackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
+import { HackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
 import type { HackerNewsSourceChange } from "./source-change.ts";
+
+export const streams = StreamGroup.make(HackerNewsSource, HackerNewsTarget);
 
 const appendSourceBatch = Effect.fn("DemoStreams.appendSourceBatch")(function* (
   items: readonly HackerNewsSourceChange[],
 ) {
-  const result = yield* Streams.append(hackerNewsSource, items).pipe(
-    Effect.mapError(pollFailure("appendSourceBatch")),
-  );
+  const result = yield* (yield* HackerNewsSource)
+    .append({}, items)
+    .pipe(Effect.mapError(pollFailure("appendSourceBatch")));
   return result.offset;
 });
 export class DemoStreams extends Context.Service<
@@ -40,8 +35,8 @@ export class DemoStreams extends Context.Service<
 export const demoStreamsLayer = Layer.effect(
   DemoStreams,
   Effect.gen(function* () {
-    const context = yield* Effect.context<StreamsReader | StreamsWriter>();
-    yield* Streams.create(hackerNewsSource).pipe(Effect.orDie);
+    const context = yield* Effect.context<HackerNewsSource>();
+    yield* (yield* HackerNewsSource).create({}).pipe(Effect.orDie);
     return DemoStreams.of({
       appendSourceBatch: (items) => appendSourceBatch(items).pipe(Effect.provide(context)),
     });
@@ -51,24 +46,24 @@ const sqliteHostLayer = Layer.unwrap(
   Effect.promise(() => mkdir(dirname(databasePath), { recursive: true })).pipe(
     Effect.as(
       ProjectionSqlite.layer.pipe(
-        Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: databasePath } })),
+        Layer.provideMerge(BunStorage.layer({ client: { filename: databasePath } }, streams)),
       ),
     ),
   ),
 );
 
-const memoryHost = Layer.effectContext(
-  Effect.context<Checkpoints | StreamsReader | StreamsWriter | State | Storage>(),
-).pipe(Layer.provide(ProjectionMemory.layerMemory()));
-const sqliteHost = Layer.effectContext(
-  Effect.context<Checkpoints | StreamsReader | StreamsWriter | State | Storage>(),
-).pipe(Layer.provide(sqliteHostLayer));
+export const memoryHost = (
+  options: Parameters<typeof Memory.layer>[0] & { readonly readLimit?: number } = {},
+) => ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer(options, streams)));
 const hostLayer: Layer.Layer<
-  Checkpoints | StreamsReader | StreamsWriter | State | Storage,
+  | Checkpoints
+  | State
+  | Storage
+  | HackerNewsSource
+  | HackerNewsTarget
+  | Changes<HackerNewsSource | HackerNewsTarget>,
   ProjectionFault | StorageFault
-> = databasePath === "memory" ? memoryHost : sqliteHost;
+> = databasePath === "memory" ? memoryHost() : sqliteHostLayer;
 
 /** One retained host graph shared by streams, checkpoints, HTTP and background fibers. */
-export const familyHost = <A, E, R>(graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>) =>
-  provides(graph, HackerNewsSource, HackerNewsTarget).pipe(Layer.provideMerge(graph));
-export const demoHostLayer = demoStreamsLayer.pipe(Layer.provideMerge(familyHost(hostLayer)));
+export const demoHostLayer = demoStreamsLayer.pipe(Layer.provideMerge(hostLayer));

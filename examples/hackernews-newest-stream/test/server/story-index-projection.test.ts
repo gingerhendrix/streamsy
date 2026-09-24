@@ -1,8 +1,6 @@
-import { familyHost } from "../../src/server/streams.ts";
+import { memoryHost } from "../../src/server/streams.ts";
 import { HackerNewsSource, HackerNewsTarget } from "../../src/server/stream-resources.ts";
-import { Streams, StreamsReader, type StreamsWriter } from "@streamsy/core";
 import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/projection";
-import * as ProjectionMemory from "@streamsy/projection/memory";
 import { Context, Effect, Layer, ManagedRuntime, Schedule, Schema, Stream } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
 import { sourceDelete, sourceUpsert } from "../../src/server/source-change.ts";
@@ -112,9 +110,7 @@ describe("Hacker News story index projection", () => {
   });
 
   test("the Layer-scoped change watcher indexes an append after catching up", async () => {
-    const host = demoStreamsLayer.pipe(
-      Layer.provideMerge(familyHost(ProjectionMemory.layerMemory())),
-    );
+    const host = demoStreamsLayer.pipe(Layer.provideMerge(memoryHost()));
     const runtime = ManagedRuntime.make(
       storyProjectionLayer(limits).pipe(Layer.provideMerge(host)),
     );
@@ -124,8 +120,8 @@ describe("Hacker News story index projection", () => {
         streams.appendSourceBatch([sourceUpsert(story(101, 1_700_000_030, "Initial"))]),
       );
       await runtime.runPromise(
-        Streams.read(hackerNewsTarget).pipe(
-          Streams.items,
+        Stream.unwrap(Effect.map(HackerNewsTarget, (target) => target.read({}))).pipe(
+          Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
           Stream.runCollect,
           Effect.flatMap((items) =>
             items.length === 0
@@ -140,8 +136,8 @@ describe("Hacker News story index projection", () => {
         streams.appendSourceBatch([sourceUpsert(story(102, 1_700_000_040, "Woken"))]),
       );
       const facts = await runtime.runPromise(
-        Streams.read(hackerNewsTarget).pipe(
-          Streams.items,
+        Stream.unwrap(Effect.map(HackerNewsTarget, (target) => target.read({}))).pipe(
+          Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
           Stream.runCollect,
           Effect.flatMap((items) =>
             items.length < 2
@@ -185,11 +181,9 @@ describe("Hacker News story index projection", () => {
     const h = await harness();
     await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
     const context = await h.runtime.runPromise(
-      Effect.context<
-        StreamsReader | StreamsWriter | Checkpoints | State | HackerNewsSource | HackerNewsTarget
-      >(),
+      Effect.context<Checkpoints | State | HackerNewsSource | HackerNewsTarget>(),
     );
-    const reader = Context.get(context, StreamsReader);
+    const reader = Context.get(context, HackerNewsSource).wire;
     // A competing runner completes inside this runner's read window.
     const raced = Context.add(context, HackerNewsSource, {
       ...Context.get(context, HackerNewsSource),
@@ -218,7 +212,7 @@ describe("Hacker News story index projection", () => {
 
   test("a missing source fails the read naming the input", async () => {
     const h = await harness();
-    await h.runtime.runPromise(Streams.remove(hackerNewsSource));
+    await h.runtime.runPromise(Effect.flatMap(HackerNewsSource, (source) => source.remove({})));
     const failed = await Effect.runPromise(
       Projection.run(hackerNewsStoryIndex, limits).pipe(Effect.flip, Effect.provide(h.clientLayer)),
     );
