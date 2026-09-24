@@ -1,3 +1,5 @@
+import { provides } from "@streamsy/core";
+import { GameEvents } from "../src/board/fold.ts";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +17,7 @@ import { fullGame, longGame } from "./fixtures.ts";
 const board = boardProjection("game");
 const input = board.inputs.input;
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
-const sqlite = (filename: string) =>
+const protocol = (filename: string) =>
   Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
@@ -95,7 +97,7 @@ for (const [name, events, cut] of [
 }
 
 test("memory folds the same game incrementally", async () => {
-  const runtime = ManagedRuntime.make(Memory.layerMemory());
+  const runtime = ManagedRuntime.make(withFamily(Memory.layerMemory()));
   try {
     const before = await runtime.runPromise(seed().pipe(Effect.andThen(read)));
     await runtime.runPromise(advance(before));
@@ -123,3 +125,12 @@ test("a contradictory AttackResolved leaves SQLite state and checkpoint at the p
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+const withFamily = <A, E, R>(
+  graph: Layer.Layer<
+    A | import("@streamsy/core").StreamsReader | import("@streamsy/core").StreamsWriter,
+    E,
+    R
+  >,
+) => provides(graph, GameEvents).pipe(Layer.provideMerge(graph));
+const sqlite = (filename: string) => withFamily(protocol(filename));

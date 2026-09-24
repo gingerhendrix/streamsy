@@ -1,4 +1,5 @@
-import { Checkpoints, Projection, type State, type Host } from "@streamsy/projection";
+import type { HackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
+import { Checkpoints, Projection, type State } from "@streamsy/projection";
 import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect";
 import { hackerNewsStoryIndex } from "./story-index-projection.ts";
 import { errorMessage } from "./util.ts";
@@ -14,7 +15,7 @@ export type ProjectionStatus = {
   readonly lastError?: string;
 };
 
-export type ProjectionServices = Host | State;
+export type ProjectionServices = Checkpoints | HackerNewsSource | HackerNewsTarget | State;
 
 export interface StoryProjectionService {
   readonly status: Effect.Effect<ProjectionStatus, import("@streamsy/projection").ProjectionFault>;
@@ -29,7 +30,7 @@ export function makeStoryProjection(
 ): Effect.Effect<
   StoryProjectionService,
   import("@streamsy/projection").ProjectionFault,
-  Host | State | Scope.Scope
+  Checkpoints | HackerNewsSource | HackerNewsTarget | State | Scope.Scope
 > {
   return Effect.gen(function* () {
     const owner = yield* Checkpoints;

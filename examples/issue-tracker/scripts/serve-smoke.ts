@@ -1,9 +1,10 @@
-import { State, Streams, ZERO_OFFSET } from "@streamsy/core";
+import * as Streams from "../test/support/members.ts";
+import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
-import { labelEvents, labelStream, refs } from "../server/streams.ts";
+import { LabelEvents, labelStream, refs } from "../server/streams.ts";
 import {
   post,
   readBoard,
@@ -49,7 +50,7 @@ try {
         yield* Streams.append(ref, [
           { type: "label", key: removed.labelId, headers: { operation: "delete" } },
         ]);
-        yield* Streams.append(labelEvents.ref({ workspaceId: "live" }), [
+        yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
           {
             type: "LabelAttached",
             workspaceId: "live",

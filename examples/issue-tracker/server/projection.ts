@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Identifier, IssueRow, foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { checkCatalogWorkspace } from "./catalog.ts";
-import { events, labelEvents, labels, projects, users } from "./streams.ts";
+import { Events, LabelEvents, Labels, Projects, Users } from "./streams.ts";
 
 type StoredIssue = {
   readonly workspace_id: string;
@@ -78,7 +78,13 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
 export const issueRows = Projection.family({
   id: "issue-rows",
   params: { workspaceId: Identifier },
-  inputs: { events, labelEvents, projects, users, labels },
+  inputs: {
+    events: Events,
+    labelEvents: LabelEvents,
+    projects: Projects,
+    users: Users,
+    labels: Labels,
+  },
   process: Projection.each((entry, unit) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

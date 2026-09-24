@@ -1,3 +1,5 @@
+import { familyHost } from "../../src/server/streams.ts";
+import { HackerNewsSource, HackerNewsTarget } from "../../src/server/stream-resources.ts";
 import { Streams, StreamsReader, type StreamsWriter } from "@streamsy/core";
 import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
@@ -110,7 +112,9 @@ describe("Hacker News story index projection", () => {
   });
 
   test("the Layer-scoped change watcher indexes an append after catching up", async () => {
-    const host = demoStreamsLayer.pipe(Layer.provideMerge(ProjectionMemory.layerMemory()));
+    const host = demoStreamsLayer.pipe(
+      Layer.provideMerge(familyHost(ProjectionMemory.layerMemory())),
+    );
     const runtime = ManagedRuntime.make(
       storyProjectionLayer(limits).pipe(Layer.provideMerge(host)),
     );
@@ -181,23 +185,24 @@ describe("Hacker News story index projection", () => {
     const h = await harness();
     await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
     const context = await h.runtime.runPromise(
-      Effect.context<StreamsReader | StreamsWriter | Checkpoints | State>(),
+      Effect.context<
+        StreamsReader | StreamsWriter | Checkpoints | State | HackerNewsSource | HackerNewsTarget
+      >(),
     );
     const reader = Context.get(context, StreamsReader);
     // A competing runner completes inside this runner's read window.
-    const raced = Context.add(
-      context,
-      StreamsReader,
-      StreamsReader.of({
-        ...reader,
+    const raced = Context.add(context, HackerNewsSource, {
+      ...Context.get(context, HackerNewsSource),
+      wire: {
+        ...Context.get(context, HackerNewsSource).wire,
         read: (id, options) =>
           Projection.run(hackerNewsStoryIndex, limits).pipe(
             Effect.provide(h.clientLayer),
             Effect.orDie,
             Effect.andThen(reader.read(id, options)),
           ),
-      }),
-    );
+      },
+    });
 
     const failed = await Effect.runPromise(
       Projection.run(hackerNewsStoryIndex, limits).pipe(Effect.flip, Effect.provide(raced)),

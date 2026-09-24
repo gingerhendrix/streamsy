@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { GameEvent } from "../domain/events.ts";
 import { initialProjection, projectEvent } from "./projection.ts";
@@ -26,8 +26,14 @@ export const boardProjection = (gameId: string) =>
   Projection.make({
     id: "hex-board",
     params: { gameId },
-    input: StreamRef.json(`games/${gameId}/events`, { schema: GameEvent }),
+    input: GameEvents.at({ gameId }),
     process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
       stepBoard(state, item, unit.ranges.input.nextOffset),
     ),
   });
+
+export class GameEvents extends StreamFamily.json<GameEvents>()(
+  "HexBoard/GameEvents",
+  "games/:gameId/events",
+  { params: { gameId: Schema.String }, schema: GameEvent },
+) {}

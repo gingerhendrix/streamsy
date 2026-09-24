@@ -1,5 +1,6 @@
+import * as Streams from "./support/members.ts";
 import { expect, test } from "bun:test";
-import { Streams, StreamsWriter, TransportFault } from "@streamsy/core";
+import { TransportFault } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { contractFingerprint } from "@streamsy/serve/contract";
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
@@ -9,7 +10,7 @@ import { applicationLayer, createInputs } from "../server/host.ts";
 import { outputRoutes } from "../server/app.ts";
 import { tracker } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
-import { events, refs, userStream } from "../server/streams.ts";
+import { Events, refs, userStream } from "../server/streams.ts";
 
 const created = {
   type: "IssueCreated" as const,
@@ -81,7 +82,7 @@ test("catalog values cannot write another workspace in either projection", async
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(events.ref({ workspaceId: "live" }), [created]);
+        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
         yield* Streams.append(userStream("live"), [
           {
             type: "user",
@@ -130,14 +131,12 @@ test("named output replay survives a lost append reply beside the SQL projection
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(events.ref({ workspaceId: "live" }), [created]);
+        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
         const member = tracker.member({ workspaceId: "live" });
-        const writer = yield* StreamsWriter;
         const failed = yield* Projection.run(member).pipe(
-          Effect.provideService(StreamsWriter, {
-            ...writer,
-            append: (id, options) =>
-              writer.append(id, options).pipe(
+          Streams.patchOutputAppends(
+            (append) => (id, options) =>
+              append(id, options).pipe(
                 Effect.andThen(
                   Effect.fail(
                     new TransportFault({
@@ -148,12 +147,12 @@ test("named output replay survives a lost append reply beside the SQL projection
                   ),
                 ),
               ),
-          }),
+          ),
           Effect.result,
         );
         expect(failed._tag).toBe("Failure");
         // Advancing SQL and input history must not change reproduction of the pinned range.
-        yield* Streams.append(events.ref({ workspaceId: "live" }), [
+        yield* Streams.append(Events.at({ workspaceId: "live" }), [
           { ...created, type: "IssueStatusChanged", eventId: "e2", status: "done", sequence: 2 },
         ]);
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
@@ -266,7 +265,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(events.ref({ workspaceId: "live" }), [created]);
+        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
         yield* Projection.run(tracker.member({ workspaceId: "live" }));
       }),
     );
@@ -282,7 +281,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     expect(etag).not.toBeNull();
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* Streams.append(events.ref({ workspaceId: "live" }), [
+        yield* Streams.append(Events.at({ workspaceId: "live" }), [
           { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
         ]);
         yield* Projection.run(tracker.member({ workspaceId: "live" }));

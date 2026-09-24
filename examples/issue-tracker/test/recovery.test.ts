@@ -1,20 +1,14 @@
+import * as Streams from "./support/members.ts";
 // Probe D: all three stream outputs nonempty; the unit stops after the second
 // append (labelCounts landed, transitions not). Recovery after new input must
 // give one copy of each item and match a clean run with the same unit boundaries.
 import { expect, test } from "bun:test";
-import {
-  State,
-  Streams,
-  StreamsWriter,
-  TransportFault,
-  ZERO_OFFSET,
-  type StreamRef,
-} from "@streamsy/core";
+import { State, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Stream } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
-import { events, labelEvents, labelStream, refs } from "../server/streams.ts";
+import { Events, LabelEvents, labelStream, refs } from "../server/streams.ts";
 const at = "2026-09-23T10:00:00Z";
 const seed = Effect.gen(function* () {
   yield* createInputs(refs("live"));
@@ -30,7 +24,7 @@ const seed = Effect.gen(function* () {
       }),
     ]),
   );
-  yield* Streams.append(events.ref({ workspaceId: "live" }), [
+  yield* Streams.append(Events.at({ workspaceId: "live" }), [
     {
       type: "IssueCreated",
       eventId: "e1",
@@ -43,7 +37,7 @@ const seed = Effect.gen(function* () {
       occurredAt: at,
     },
   ]);
-  yield* Streams.append(labelEvents.ref({ workspaceId: "live" }), [
+  yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
     {
       type: "LabelAttached",
       eventId: "a1",
@@ -56,7 +50,7 @@ const seed = Effect.gen(function* () {
     },
   ]);
 });
-const more = Streams.append(events.ref({ workspaceId: "live" }), [
+const more = Streams.append(Events.at({ workspaceId: "live" }), [
   {
     type: "IssueStatusChanged",
     eventId: "e2",
@@ -68,7 +62,7 @@ const more = Streams.append(events.ref({ workspaceId: "live" }), [
   },
 ]);
 const collect = Effect.gen(function* () {
-  const read = <A>(ref: StreamRef.StreamRef<A>) =>
+  const read = <A, R>(ref: import("@streamsy/core").StreamFamily.Member<A, R>) =>
     Streams.read(ref).pipe(Streams.items, Stream.runCollect);
   return {
     board: yield* read(tracker.outputs.board.ref({ workspaceId: "live" })),
@@ -83,18 +77,16 @@ const run = (failOn: number | undefined) =>
     const member = tracker.member({ workspaceId: "live" });
     if (failOn === undefined) yield* Projection.run(member);
     else {
-      const writer = yield* StreamsWriter;
       let calls = 0;
       const r = yield* Projection.run(member).pipe(
-        Effect.provideService(StreamsWriter, {
-          ...writer,
-          append: (id, o) =>
+        Streams.patchOutputAppends(
+          (append) => (id, o) =>
             ++calls === failOn
               ? Effect.fail(
                   new TransportFault({ reason: "response", operation: "append", message: "stop" }),
                 )
-              : writer.append(id, o),
-        }),
+              : append(id, o),
+        ),
         Effect.result,
       );
       expect(r._tag).toBe("Failure");

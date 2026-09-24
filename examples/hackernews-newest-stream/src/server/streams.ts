@@ -1,6 +1,13 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable demo prepares its configured SQLite directory at the Bun edge. */
-import { Storage, StorageFault, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
-import { ProjectionFault, type State, type Host } from "@streamsy/projection";
+import {
+  provides,
+  Storage,
+  StorageFault,
+  Streams,
+  StreamsReader,
+  StreamsWriter,
+} from "@streamsy/core";
+import { ProjectionFault, type State, type Checkpoints } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -9,7 +16,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { databasePath } from "./config.ts";
 import { pollFailure } from "./poller/contract.ts";
-import { hackerNewsSource } from "./stream-resources.ts";
+import { hackerNewsSource, HackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
 import type { HackerNewsSourceChange } from "./source-change.ts";
 
 const appendSourceBatch = Effect.fn("DemoStreams.appendSourceBatch")(function* (
@@ -50,14 +57,18 @@ const sqliteHostLayer = Layer.unwrap(
   ),
 );
 
-const memoryHost = Layer.effectContext(Effect.context<Host | State | Storage>()).pipe(
-  Layer.provide(ProjectionMemory.layerMemory()),
-);
-const sqliteHost = Layer.effectContext(Effect.context<Host | State | Storage>()).pipe(
-  Layer.provide(sqliteHostLayer),
-);
-const hostLayer: Layer.Layer<Host | State | Storage, ProjectionFault | StorageFault> =
-  databasePath === "memory" ? memoryHost : sqliteHost;
+const memoryHost = Layer.effectContext(
+  Effect.context<Checkpoints | StreamsReader | StreamsWriter | State | Storage>(),
+).pipe(Layer.provide(ProjectionMemory.layerMemory()));
+const sqliteHost = Layer.effectContext(
+  Effect.context<Checkpoints | StreamsReader | StreamsWriter | State | Storage>(),
+).pipe(Layer.provide(sqliteHostLayer));
+const hostLayer: Layer.Layer<
+  Checkpoints | StreamsReader | StreamsWriter | State | Storage,
+  ProjectionFault | StorageFault
+> = databasePath === "memory" ? memoryHost : sqliteHost;
 
 /** One retained host graph shared by streams, checkpoints, HTTP and background fibers. */
-export const demoHostLayer = demoStreamsLayer.pipe(Layer.provideMerge(hostLayer));
+export const familyHost = <A, E, R>(graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>) =>
+  provides(graph, HackerNewsSource, HackerNewsTarget).pipe(Layer.provideMerge(graph));
+export const demoHostLayer = demoStreamsLayer.pipe(Layer.provideMerge(familyHost(hostLayer)));

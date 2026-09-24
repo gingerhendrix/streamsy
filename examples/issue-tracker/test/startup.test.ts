@@ -1,5 +1,5 @@
+import * as Streams from "./support/members.ts";
 import { expect, test } from "bun:test";
-import { Streams } from "@streamsy/core";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { refs, userStream } from "../server/streams.ts";

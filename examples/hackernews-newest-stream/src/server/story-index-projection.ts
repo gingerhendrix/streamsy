@@ -1,8 +1,7 @@
 import { Output, Projection } from "@streamsy/projection";
 import { Effect } from "effect";
 import { HackerNewsStory } from "../state-schema.ts";
-import { targetStreamId } from "./config.ts";
-import { hackerNewsSource } from "./stream-resources.ts";
+import { hackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
 
 /** The output name is the browser's Durable State collection type. */
 export const hackerNewsStoryIndex = Projection.outputs({
@@ -10,7 +9,7 @@ export const hackerNewsStoryIndex = Projection.outputs({
   generation: 1,
   inputs: { input: hackerNewsSource },
   outputs: {
-    "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: targetStreamId }),
+    "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: HackerNewsTarget.at({}) }),
   },
   process: (batch) =>
     Effect.succeed({

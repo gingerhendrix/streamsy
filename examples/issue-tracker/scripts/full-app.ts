@@ -1,4 +1,5 @@
-import { State, Streams, ZERO_OFFSET } from "@streamsy/core";
+import * as Streams from "../test/support/members.ts";
+import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -7,8 +8,8 @@ import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import {
-  events,
-  labelEvents,
+  Events,
+  LabelEvents,
   labelStream,
   projectStream,
   refs,
@@ -37,11 +38,11 @@ try {
     Effect.gen(function* () {
       yield* createInputs(refs("acme"));
       yield* Streams.append(
-        events.ref({ workspaceId: "acme" }),
+        Events.at({ workspaceId: "acme" }),
         Schema.decodeUnknownSync(Schema.Array(IssueEvent))(recording.issueEvents),
       );
       yield* Streams.append(
-        labelEvents.ref({ workspaceId: "acme" }),
+        LabelEvents.at({ workspaceId: "acme" }),
         Schema.decodeUnknownSync(Schema.Array(IssueLabelEvent))(recording.issueLabelEvents),
       );
       const projectRef = projectStream("acme");

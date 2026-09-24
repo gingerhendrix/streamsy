@@ -1,13 +1,13 @@
+import * as Streams from "./support/members.ts";
 import { expect, test } from "bun:test";
-import { Streams } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema, Stream } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
 import {
-  events,
-  labelEvents,
+  Events,
+  LabelEvents,
   labelStream,
   projectStream,
   refs,
@@ -54,7 +54,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             yield* Streams.append(labelStream("live"), [
               { type: "label", key: "bug", value: label, headers: { operation: "upsert" } },
             ]);
-            yield* Streams.append(labelEvents.ref({ workspaceId: "live" }), [
+            yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
               {
                 ...common,
                 type: "LabelAttached",
@@ -66,7 +66,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               },
             ]);
           }),
-          Streams.append(events.ref({ workspaceId: "live" }), [
+          Streams.append(Events.at({ workspaceId: "live" }), [
             {
               ...common,
               type: "IssueCreated",
@@ -95,7 +95,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             yield* Streams.append(userStream("live"), [
               { type: "user", key: "ada", value: user, headers: { operation: "upsert" } },
             ]);
-            yield* Streams.append(events.ref({ workspaceId: "live" }), [
+            yield* Streams.append(Events.at({ workspaceId: "live" }), [
               {
                 ...common,
                 type: "IssueAssigned",
@@ -124,7 +124,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 headers: { operation: "upsert" },
               },
             ]);
-            yield* Streams.append(labelEvents.ref({ workspaceId: "live" }), [
+            yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
               {
                 ...common,
                 type: "LabelDetached",

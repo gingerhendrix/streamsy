@@ -2,7 +2,7 @@ import { ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Stream } from "effect";
 import type { CommandRequest } from "../shared/api.ts";
 import { foldIssue, type IssueEvent, type IssueRow } from "../domain/issue.ts";
-import { events } from "./streams.ts";
+import { Events } from "./streams.ts";
 
 export const foldEvents = (items: ReadonlyArray<IssueEvent>): Map<string, IssueRow> => {
   const rows = new Map<string, IssueRow>();
@@ -15,7 +15,7 @@ export const foldEvents = (items: ReadonlyArray<IssueEvent>): Map<string, IssueR
 
 export const transact = (workspaceId: string, command: CommandRequest) =>
   Effect.gen(function* () {
-    const family = yield* events;
+    const family = yield* Events;
     const batches = yield* family.read({ workspaceId }).pipe(Stream.runCollect);
     const items = batches.flatMap((batch) => batch.items);
     const rows = foldEvents(items);

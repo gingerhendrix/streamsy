@@ -15,14 +15,20 @@ import {
 import { checkCatalogWorkspace } from "./catalog.ts";
 import { routes } from "./streams.ts";
 
-export class Board extends StreamFamily.bytes<Board>()("issue-tracker/:workspaceId/outputs/board", {
-  params: { workspaceId: Identifier },
-}) {}
+export class Board extends StreamFamily.bytes<Board>()(
+  "Board",
+  "issue-tracker/:workspaceId/outputs/board",
+  {
+    params: { workspaceId: Identifier },
+  },
+) {}
 export class LabelCounts extends StreamFamily.bytes<LabelCounts>()(
+  "LabelCounts",
   "issue-tracker/:workspaceId/outputs/label-counts",
   { params: { workspaceId: Identifier } },
 ) {}
 export class Transitions extends StreamFamily.bytes<Transitions>()(
+  "Transitions",
   "issue-tracker/:workspaceId/outputs/transitions",
   { params: { workspaceId: Identifier } },
 ) {}
