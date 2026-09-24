@@ -124,6 +124,7 @@ const checks = [
       "*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       "!parked/**",
       "!packages/conformance-tests/test/memory.conformance.test.ts",
+      "!packages/conformance-tests/test/any-stream.conformance.test.ts",
       "!packages/conformance-tests/test/fetch.conformance.test.ts",
       "!packages/conformance-tests/test/sqlite.conformance.test.ts",
       "!packages/conformance-tests/test/workerd.conformance.test.ts",
