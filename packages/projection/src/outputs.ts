@@ -49,7 +49,7 @@ export function outputs<
 }): Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
   readonly outputs: Bound<D, {}>;
 } {
-  const streams: Record<string, StreamFamily.Member<unknown, Output.Services<D>>> = {};
+  const streams: Record<string, StreamFamily.Member<unknown, unknown>> = {};
   const values = Object.values(definition.outputs).filter((output) => output._tag === "Value");
   if (values.length > 1) throw new RangeError("A projection may declare at most one value output");
   if ("state" in definition.outputs)
@@ -87,7 +87,8 @@ export function outputs<
       ...key,
       outputs: definition.outputs,
     })),
-    streams,
+    // SAFETY: each normalized member retains the key of its declaration in D.
+    streams: streams as Record<string, StreamFamily.Member<unknown, Output.Services<D>>>,
     process: (batch, unit) =>
       Effect.gen(function* () {
         let result: Result;

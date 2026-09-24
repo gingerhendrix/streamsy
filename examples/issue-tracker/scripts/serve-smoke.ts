@@ -1,10 +1,9 @@
-import * as Streams from "../test/support/members.ts";
 import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
-import { LabelEvents, labelStream, refs } from "../server/streams.ts";
+import { Labels, LabelEvents, labelStream, refs } from "../server/streams.ts";
 import {
   post,
   readBoard,
@@ -39,18 +38,18 @@ try {
           updatedAt: "2026-09-23T10:00:00Z",
         };
         const removed = { ...label, labelId: "remove", name: "Remove" };
-        yield* Streams.append(
-          ref,
+        yield* (yield* Labels).append(
+          { workspaceId: "live" },
           State.changes(ref, { offset: ZERO_OFFSET }, [
             State.upsert("label", label),
             State.upsert("label", removed),
           ]),
         );
         yield* Projection.run(tracker.member({ workspaceId: "live" }));
-        yield* Streams.append(ref, [
+        yield* (yield* Labels).append({ workspaceId: "live" }, [
           { type: "label", key: removed.labelId, headers: { operation: "delete" } },
         ]);
-        yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
+        yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
           {
             type: "LabelAttached",
             workspaceId: "live",

@@ -13,12 +13,12 @@ export const upsert = <A>(row: A): Upsert<A> => ({ _tag: "Upsert", row });
 export const remove = (key: string | number): Remove => ({ _tag: "Remove", key });
 export type Change<A> = Upsert<A> | Remove;
 
-export interface Stream<A, Identity = StreamFamily.Member<A, any>> {
+export interface Stream<A, Identity = StreamFamily.Member<A, unknown>> {
   readonly _tag: "Stream";
   readonly schema: Schema.Codec<A, unknown, never, never>;
   readonly stream: Identity;
 }
-export interface Rows<A, Identity = StreamFamily.Member<unknown, any>> {
+export interface Rows<A, Identity = StreamFamily.Member<unknown, unknown>> {
   readonly _tag: "Rows";
   readonly schema: Schema.Codec<A, unknown, never, never>;
   readonly key: StreamRef.StateKey<A>;

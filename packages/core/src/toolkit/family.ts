@@ -100,6 +100,12 @@ export type FamilyClass<
     readonly make: (services: Backend.BackendServices) => Family<P, A, RD, RE>;
   };
 
+/**
+ * Names are global Context identities, including across separate providers.
+ * Use an application namespace for distinct families. Reusing a name intentionally
+ * aliases the service; providers cannot detect collisions in other Layer graphs.
+ * AnyStream is reserved for the built-in catch-all and its intentional aliases.
+ */
 function define<Self>() {
   return <const Name extends string, P, A, RD, RE, R extends Route.StreamRoute<P, A, RD, RE>>(
     name: Name,

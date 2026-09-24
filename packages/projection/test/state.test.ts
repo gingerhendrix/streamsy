@@ -1,7 +1,3 @@
-class numbers extends StreamFamily.json<numbers>()("state.test/numbers", "state/:name", {
-  params: { name: Schema.String },
-  schema: Schema.Finite,
-}) {}
 import * as FamilyFixture from "./support/families.ts";
 import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
@@ -17,6 +13,11 @@ import * as BunStorage from "@streamsy/storage/bun";
 import { serialized, hasLock } from "../src/serialized.ts";
 import { forget } from "../src/forget.ts";
 import { recordKey } from "@streamsy/projection/checkpoint";
+
+class numbers extends StreamFamily.json<numbers>()("state.test/numbers", "state/:name", {
+  params: { name: Schema.String },
+  schema: Schema.Finite,
+}) {}
 
 const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
 const total = Projection.make({

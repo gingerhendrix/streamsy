@@ -1,4 +1,3 @@
-import * as Streams from "../test/support/members.ts";
 import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
@@ -8,6 +7,9 @@ import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
 import {
+  Projects,
+  Users,
+  Labels,
   Events,
   LabelEvents,
   labelStream,
@@ -37,35 +39,35 @@ try {
   await producer.runPromise(
     Effect.gen(function* () {
       yield* createInputs(refs("acme"));
-      yield* Streams.append(
-        Events.at({ workspaceId: "acme" }),
+      yield* (yield* Events).append(
+        { workspaceId: "acme" },
         Schema.decodeUnknownSync(Schema.Array(IssueEvent))(recording.issueEvents),
       );
-      yield* Streams.append(
-        LabelEvents.at({ workspaceId: "acme" }),
+      yield* (yield* LabelEvents).append(
+        { workspaceId: "acme" },
         Schema.decodeUnknownSync(Schema.Array(IssueLabelEvent))(recording.issueLabelEvents),
       );
       const projectRef = projectStream("acme");
       const userRef = userStream("acme");
       const labelRef = labelStream("acme");
-      yield* Streams.append(
-        projectRef,
+      yield* (yield* Projects).append(
+        { workspaceId: "acme" },
         State.changes(
           projectRef,
           { offset: ZERO_OFFSET },
           recording.catalog.projects.map((row) => State.upsert("project", row)),
         ),
       );
-      yield* Streams.append(
-        userRef,
+      yield* (yield* Users).append(
+        { workspaceId: "acme" },
         State.changes(
           userRef,
           { offset: ZERO_OFFSET },
           recording.catalog.users.map((row) => State.upsert("user", row)),
         ),
       );
-      yield* Streams.append(
-        labelRef,
+      yield* (yield* Labels).append(
+        { workspaceId: "acme" },
         State.changes(
           labelRef,
           { offset: ZERO_OFFSET },

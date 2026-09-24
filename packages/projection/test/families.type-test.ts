@@ -78,3 +78,32 @@ Projection.make({
   input: StreamRef.json("plain", { schema: Schema.Finite }),
   process: () => Effect.void,
 });
+
+// Widening loses the exact keys, but must not erase the unresolved requirement.
+// oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context -- These negative tests deliberately widen declarations.
+const widenedInputs: import("@streamsy/projection").InputMap = { input: Input.at({ id: "a" }) };
+const widened = Projection.run(
+  Projection.make({ id: "widened", inputs: widenedInputs, process: () => Effect.void }),
+);
+const widenedOutput: Output.Stream<number> = Output.stream(Schema.Finite, {
+  stream: Result.at({ id: "a" }),
+});
+const widenedNamed = Projection.run(
+  Projection.outputs({
+    id: "widened-output",
+    inputs: { input: Input.at({ id: "a" }) },
+    outputs: { result: widenedOutput },
+    process: () => Effect.succeed({ result: [1] }),
+  }),
+);
+export type WidenedChecks = [
+  Assert<Same<Effect.Services<typeof widened>, unknown>>,
+  Assert<Same<Effect.Services<typeof widenedNamed>, unknown>>,
+];
+// @ts-expect-error a widened input map retains an unsatisfied requirement
+const cannotRunWidened: Effect.Effect<unknown, ProjectionFault> = widened;
+// @ts-expect-error a widened output declaration retains an unsatisfied requirement
+const cannotRunWidenedOutput: Effect.Effect<unknown, ProjectionFault> = widenedNamed;
+void cannotRunWidened;
+void cannotRunWidenedOutput;
+// oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context

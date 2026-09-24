@@ -1,3 +1,18 @@
+import * as FamilyFixture from "./support/families.ts";
+import { StreamFamily } from "@streamsy/core";
+import { expect, test } from "bun:test";
+import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
+import {
+  Storage,
+  StreamGone,
+  StreamRef,
+  Streams,
+  StreamsReader,
+  StreamsWriter,
+} from "@streamsy/core";
+import { Checkpoints, Projection } from "@streamsy/projection";
+import { layerMemory } from "@streamsy/projection/memory";
+
 class WatchRoute2 extends StreamFamily.json<WatchRoute2>()(
   "on-change.test/WatchRoute2",
   "change-family-scope/:workspaceId",
@@ -14,20 +29,6 @@ class WatchRoute1 extends StreamFamily.json<WatchRoute1>()(
     schema: Schema.Finite,
   },
 ) {}
-import * as FamilyFixture from "./support/families.ts";
-import { StreamFamily } from "@streamsy/core";
-import { expect, test } from "bun:test";
-import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
-import {
-  Storage,
-  StreamGone,
-  StreamRef,
-  Streams,
-  StreamsReader,
-  StreamsWriter,
-} from "@streamsy/core";
-import { Checkpoints, Projection } from "@streamsy/projection";
-import { layerMemory } from "@streamsy/projection/memory";
 
 type Services =
   | WatchRoute2

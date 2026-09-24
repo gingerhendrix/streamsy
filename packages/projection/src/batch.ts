@@ -1,7 +1,7 @@
 import type { StreamRef, StreamFamily } from "@streamsy/core";
 
 /** Declaration order of the map is the read and item order of every pass. */
-export type InputMap = Record<string, StreamFamily.Member<unknown, any>>;
+export type InputMap = Record<string, StreamFamily.Member<unknown, unknown>>;
 export type ItemOf<Ref> = Ref extends StreamRef.StreamRef<infer A> ? A : never;
 
 export interface Slice<A> {

@@ -19,6 +19,15 @@ const input = board.inputs.input;
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
 const protocol = (filename: string) =>
   Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
+const withFamily = <A, E, R>(
+  graph: Layer.Layer<
+    A | import("@streamsy/core").StreamsReader | import("@streamsy/core").StreamsWriter,
+    E,
+    R
+  >,
+) => provides(graph, GameEvents).pipe(Layer.provideMerge(graph));
+const sqlite = (filename: string) => withFamily(protocol(filename));
+
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
     yield* Streams.create(input);
@@ -125,12 +134,3 @@ test("a contradictory AttackResolved leaves SQLite state and checkpoint at the p
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
-const withFamily = <A, E, R>(
-  graph: Layer.Layer<
-    A | import("@streamsy/core").StreamsReader | import("@streamsy/core").StreamsWriter,
-    E,
-    R
-  >,
-) => provides(graph, GameEvents).pipe(Layer.provideMerge(graph));
-const sqlite = (filename: string) => withFamily(protocol(filename));

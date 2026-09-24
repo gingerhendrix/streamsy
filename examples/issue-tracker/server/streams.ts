@@ -4,7 +4,7 @@ import { Identifier, IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 
 const params = { workspaceId: Identifier } as const;
 export class Events extends StreamFamily.json<Events>()(
-  "Events",
+  "IssueTracker/Events",
   "issue-tracker/:workspaceId/issue-events",
   {
     params,
@@ -12,7 +12,7 @@ export class Events extends StreamFamily.json<Events>()(
   },
 ) {}
 export class LabelEvents extends StreamFamily.json<LabelEvents>()(
-  "LabelEvents",
+  "IssueTracker/LabelEvents",
   "issue-tracker/:workspaceId/issue-label-events",
   {
     params,
@@ -21,7 +21,7 @@ export class LabelEvents extends StreamFamily.json<LabelEvents>()(
 ) {}
 
 export class Projects extends StreamFamily.state<Projects>()(
-  "Projects",
+  "IssueTracker/Projects",
   "issue-tracker/:workspaceId/projects",
   {
     params,
@@ -30,7 +30,7 @@ export class Projects extends StreamFamily.state<Projects>()(
 ) {}
 export const projectStream = (workspaceId: string) => Projects.at({ workspaceId });
 export class Users extends StreamFamily.state<Users>()(
-  "Users",
+  "IssueTracker/Users",
   "issue-tracker/:workspaceId/users",
   {
     params,
@@ -39,7 +39,7 @@ export class Users extends StreamFamily.state<Users>()(
 ) {}
 export const userStream = (workspaceId: string) => Users.at({ workspaceId });
 export class Labels extends StreamFamily.state<Labels>()(
-  "Labels",
+  "IssueTracker/Labels",
   "issue-tracker/:workspaceId/labels",
   {
     params,

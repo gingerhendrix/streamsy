@@ -7,6 +7,7 @@ export interface StreamSource<P, F = never> {
   readonly template: string;
   readonly family: StreamFamily.Member<unknown, F>["family"];
   readonly paramSchema?: StreamRoute.PathSchema<P>;
+  /** The id must belong to family. A mismatch is rejected by the scoped wire as a defect. */
   readonly ref: (params: P) => { readonly id: StreamId };
 }
 export interface StateSource<P, C extends StreamRef.Collections, F = never> extends StreamSource<

@@ -727,3 +727,34 @@ const provideReader =
         Effect.provideService(StreamsReader, reader),
       ),
     );
+
+test("output preparation reads the output family wire", () =>
+  run(
+    Effect.gen(function* () {
+      const s = scenario("output-head-failure");
+      yield* s.initialize;
+      const output = yield* Out;
+      const headFault = new StorageFault({
+        operation: "head",
+        message: "output unavailable",
+        retryable: true,
+      });
+      let inspected = 0;
+      const result = yield* Projection.pass(s.doubled).pipe(
+        Effect.provideService(Out, {
+          ...output,
+          wire: {
+            ...output.wire,
+            head: () => {
+              inspected += 1;
+              return Effect.fail(headFault);
+            },
+          },
+        }),
+        Effect.result,
+      );
+      expect(inspected).toBe(1);
+      expect(fault(result).reason).toBe("storage-failure");
+      expect((yield* stored(s.doubled)).record).toBeUndefined();
+    }),
+  ));

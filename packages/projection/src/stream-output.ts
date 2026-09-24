@@ -174,12 +174,12 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   if (pending === undefined && Object.keys(seqs).length > 0) {
     for (const [name, output] of Object.entries(streams)) {
       if (seqs[name] === undefined) continue;
-      const { wire: reader } = yield* output.family;
-      const head = yield* reader.head(output.id).pipe(
+      const { wire } = yield* output.family;
+      const head = yield* wire.head(output.id).pipe(
         Effect.catchTag("StreamNotFound", () =>
           Streams.create(output).pipe(
-            Effect.provideService(StreamsWriter, reader),
-            Effect.andThen(reader.head(output.id)),
+            Effect.provideService(StreamsWriter, wire),
+            Effect.andThen(wire.head(output.id)),
           ),
         ),
         Effect.mapError(
