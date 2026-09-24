@@ -1,16 +1,10 @@
 import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import {
-  Http,
-  type Storage,
-  type StorageFault,
-  type StreamsReader,
-  type StreamsWriter,
-} from "@streamsy/core";
+import { Http, type Storage, type StorageFault } from "@streamsy/core";
 import { Alarm, reconcileAlarm } from "./alarm.ts";
 import { withMutationReconciliation } from "./host-program.ts";
 
-export type ObjectServices<R = never> = StreamsReader | StreamsWriter | Storage | Alarm | R;
+export type ObjectServices<R = never> = Storage | Alarm | R;
 export type ObjectApp<R = never> = Layer.Layer<
   never,
   never,

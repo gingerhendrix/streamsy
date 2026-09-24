@@ -2,17 +2,14 @@ import type { AlarmInvocationInfo, DurableObjectState } from "@cloudflare/worker
 import { DurableObject } from "cloudflare:workers";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
-import type { Storage, StorageFault, StreamsReader, StreamsWriter } from "@streamsy/core";
+import type { Storage, StorageFault } from "@streamsy/core";
 import { alarmLayer } from "./alarm.ts";
 import { alarm } from "./host-program.ts";
 import { acquireObject, providedApp, unavailable, type ObjectApp } from "./object-runtime.ts";
 
 export interface ObjectConfiguration<Env, R = never> {
   readonly app: ObjectApp<R>;
-  readonly layer: (
-    state: DurableObjectState,
-    env: Env,
-  ) => Layer.Layer<StreamsReader | StreamsWriter | Storage | R, StorageFault>;
+  readonly layer: (state: DurableObjectState, env: Env) => Layer.Layer<Storage | R, StorageFault>;
 }
 export interface ObjectInstance {
   fetch(request: Request): Promise<Response>;

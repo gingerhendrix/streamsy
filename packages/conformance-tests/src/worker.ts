@@ -1,7 +1,7 @@
-import { Http } from "@streamsy/core";
+import { AnyStream, Http, StreamGroup } from "@streamsy/core";
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
-import { layerProtocol } from "@streamsy/storage/durable-object";
+import { layer } from "@streamsy/storage/durable-object";
 
 interface Env {
   readonly STREAMS: DurableObjectNamespace;
@@ -11,9 +11,12 @@ const host = {
   prefix: "/",
 } as const;
 
-export class StreamsObject extends StreamsyObject.make<Env>({
-  app: Http.routes({ prefix: host.prefix }),
-  layer: (state) => layerProtocol({ client: { storage: state.storage }, longPollTimeoutMs: 1_500 }),
+const streams = StreamGroup.make(AnyStream);
+
+export class StreamsObject extends StreamsyObject.make<Env, StreamGroup.Services<typeof streams>>({
+  app: Http.routes(streams, { prefix: host.prefix, access: "full" }),
+  layer: (state) =>
+    layer({ client: { storage: state.storage }, longPollTimeoutMs: 1_500 }, streams),
 }) {}
 
 export default router<Env>({
