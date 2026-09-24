@@ -11,6 +11,13 @@ test("tracker streams expose declared families with host access rules", async ()
     { disableLogger: true },
   );
   try {
+    expect(
+      (
+        await web.handler(
+          new Request("http://host/streams/issue-tracker/live/issue-events?offset=-1"),
+        )
+      ).status,
+    ).toBe(200);
     for (const method of ["GET", "PUT", "POST", "DELETE"]) {
       expect(
         (await web.handler(new Request("http://host/streams/private/secret", { method }))).status,

@@ -63,10 +63,14 @@ it("every wire operation rejects foreign ids including both fork forms", async (
         wire.create(foreign),
         wire.append(foreign, { data: new Uint8Array(), contentType: "application/octet-stream" }),
         wire.remove(foreign),
-        wire.fork(own, foreign),
+
         wire.fork(foreign, own),
-        wire.create(own, { forkedFrom: foreign }),
       ];
+      for (const attempt of [wire.fork(own, foreign), wire.create(own, { forkedFrom: foreign })]) {
+        const result = yield* Effect.result(attempt);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") expect(result.failure._tag).toBe("ForkSourceNotFound");
+      }
       for (const attempt of attempts) {
         const exit = yield* Effect.exit(attempt);
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
@@ -122,3 +126,23 @@ const missingFamily = Effect.gen(function* () {
 const missing: Effect.Effect<void> = missingFamily;
 void missing;
 // oxlint-enable effecttsgo/missing-effect-context
+
+class Drafts extends StreamFamily.json<Drafts>()("drafts/:user", {
+  params: { user: Schema.String },
+  schema: Schema.Struct({ text: Schema.String }),
+}) {}
+const distinctFamilies: Notes extends Drafts ? false : true = true;
+void distinctFamilies;
+
+it("separate providers cannot alias classes declared with the same template", async () => {
+  expect(Notes.key).not.toBe(Copies.key);
+  const graph = Streams.layerMemory();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const notes = yield* Notes;
+      const copies = yield* Copies;
+      expect(notes.route).toBe(Notes.route);
+      expect(copies.route).toBe(Copies.route);
+    }).pipe(Effect.provide(Layer.mergeAll(provides(graph, Notes), provides(graph, Copies)))),
+  );
+});

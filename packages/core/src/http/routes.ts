@@ -40,6 +40,7 @@ export function routes(
   if (!prefix.startsWith("/") || /[?:#*]/.test(prefix) || prefix.includes("//")) {
     throw new RangeError("HTTP prefix must be an absolute literal path");
   }
+  const path = streamPath(prefix);
   const program = app({ ...settings, pathPrefix: prefix });
   if (entries !== undefined) checkFamilies(entries.map((entry) => entry.family));
   const handler =
@@ -48,26 +49,33 @@ export function routes(
       : Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
           const url = requestUrl(request);
-          const id = url === undefined ? undefined : streamPath(prefix).strip(url.pathname);
+          const id = url === undefined ? undefined : path.strip(url.pathname);
           const entry = entries.find(({ family }) => id !== undefined && family.match(id));
-          const denied =
-            entry === undefined
-              ? 404
-              : ["GET", "HEAD", "OPTIONS"].includes(request.method) ||
-                  entry.access === "full" ||
-                  (entry.access === "append" && request.method === "POST")
-                ? undefined
-                : 405;
-          if (denied !== undefined) {
+          if (entry === undefined) {
             yield* discardRequestBody(request);
-            return HttpServerResponse.empty({ status: denied, headers: securityHeaders });
+            return HttpServerResponse.empty({ status: 404, headers: securityHeaders });
           }
-          if (entry === undefined) return HttpServerResponse.empty({ status: 404 });
+          const allow =
+            entry.access === "read"
+              ? "GET, HEAD, OPTIONS"
+              : entry.access === "append"
+                ? "GET, HEAD, POST, OPTIONS"
+                : "GET, HEAD, PUT, POST, DELETE, OPTIONS";
+          if (entry.access !== "full" && !allow.split(", ").includes(request.method)) {
+            yield* discardRequestBody(request);
+            return HttpServerResponse.empty({
+              status: 405,
+              headers: { ...securityHeaders, allow },
+            });
+          }
           const service = yield* entry.family;
-          return yield* program.pipe(
+          const response = yield* program.pipe(
             Effect.provideService(StreamsReader, service.wire),
             Effect.provideService(StreamsWriter, service.wire),
           );
+          return request.method === "OPTIONS" && entry.access !== "full"
+            ? HttpServerResponse.setHeader(response, "access-control-allow-methods", allow)
+            : response;
         });
   return HttpRouter.add("*", prefix === "/" ? "/*" : `/${prefix.slice(1)}/*`, handler);
 }

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { Http, StreamFamily, Streams, provides } from "../../src/index.ts";
 
@@ -36,6 +36,20 @@ it("HTTP chooses family ownership and access before entering the complete protoc
     for (const method of ["PUT", "POST", "DELETE"])
       expect((await request("outputs/a", method)).status).toBe(405);
     expect((await request("inputs/a", "PUT", "hello")).status).toBe(201);
+    expect((await request("outputs/a", "POST")).headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+    expect(
+      (await request("outputs/a", "OPTIONS")).headers.get("access-control-allow-methods"),
+    ).toBe("GET, HEAD, OPTIONS");
+    for (const source of ["/streams/private/secret", "/streams/outputs/a"]) {
+      const fork = await edge.handler(
+        new Request("http://host/streams/inputs/fork", {
+          method: "PUT",
+          headers: { "stream-forked-from": source },
+        }),
+      );
+      expect(fork.status).toBe(404);
+      expect(await fork.text()).toContain("Source stream not found");
+    }
     const head = await request("inputs/a", "HEAD");
     expect(head.status).toBe(200);
     expect(head.headers.get("stream-next-offset")).not.toBeNull();
@@ -48,10 +62,12 @@ it("HTTP chooses family ownership and access before entering the complete protoc
 });
 
 it("append access allows POST but refuses creation and deletion", async () => {
+  const families = provides(Streams.layerMemory(), Inputs);
+  const seeded = Layer.effectDiscard(
+    Effect.flatMap(Inputs, (inputs) => inputs.create({ id: "a" })),
+  ).pipe(Layer.provideMerge(families));
   const edge = HttpRouter.toWebHandler(
-    Http.routes([{ family: Inputs, access: "append" }]).pipe(
-      HttpRouter.provideRequest(provides(Streams.layerMemory(), Inputs)),
-    ),
+    Http.routes([{ family: Inputs, access: "append" }]).pipe(HttpRouter.provideRequest(seeded)),
     { disableLogger: true },
   );
   try {
@@ -69,7 +85,10 @@ it("append access allows POST but refuses creation and deletion", async () => {
           }),
         )
       ).status,
-    ).toBe(404);
+    ).toBe(204);
+    expect(await (await edge.handler(new Request("http://host/inputs/a?offset=-1"))).text()).toBe(
+      "hello",
+    );
   } finally {
     await edge.dispose();
   }

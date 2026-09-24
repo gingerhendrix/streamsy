@@ -90,3 +90,15 @@ test("root exports stay explicit", () => {
   ]);
   expect(Object.keys(Root.StreamRoute).sort()).toEqual(["bytes", "custom", "json", "state"]);
 });
+
+test("family namespace pins factories and backend composition helpers", () => {
+  expect(Object.keys(Root.StreamFamily).sort()).toEqual([
+    "AnyStream",
+    "bind",
+    "bytes",
+    "checkFamilies",
+    "json",
+    "provides",
+    "state",
+  ]);
+});

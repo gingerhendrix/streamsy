@@ -1,4 +1,6 @@
 import { Context, Effect, Layer, Option, Stream } from "effect";
+import { StreamId } from "../schema/index.ts";
+import { ForkSourceNotFound } from "../protocol/errors.ts";
 import type { StreamsFault } from "../fault.ts";
 import { StreamsReader, StreamsWriter, type Reader, type Writer } from "../protocol/tags.ts";
 import type {
@@ -12,6 +14,7 @@ import * as Route from "./route.ts";
 import * as Ref from "./ref.ts";
 import * as Streams from "./streams.ts";
 
+/** Build a family implementation over backend values, retaining the same ownership guard. */
 export function bind<P, A, RD, RE>(
   route: Route.StreamRoute<P, A, RD, RE>,
   services: Backend.BackendServices,
@@ -30,10 +33,18 @@ export function bind<P, A, RD, RE>(
       own(id, () =>
         options?.forkedFrom === undefined
           ? services.writer.create(id, options)
-          : own(options.forkedFrom, () => services.writer.create(id, options)),
+          : route.match(options.forkedFrom)
+            ? services.writer.create(id, options)
+            : Effect.fail(
+                new ForkSourceNotFound({ id, source: StreamId.make(options.forkedFrom) }),
+              ),
       ),
     fork: (id, source, options) =>
-      own(id, () => own(source, () => services.writer.fork(id, source, options))),
+      own(id, () =>
+        route.match(source)
+          ? services.writer.fork(id, source, options)
+          : Effect.fail(new ForkSourceNotFound({ id, source })),
+      ),
     append: (id, options) => own(id, () => services.writer.append(id, options)),
     remove: (id) => own(id, () => services.writer.remove(id)),
   };
@@ -64,15 +75,20 @@ export function bind<P, A, RD, RE>(
 }
 export type Family<P, A, RD = never, RE = never> = ReturnType<typeof bind<P, A, RD, RE>>;
 
+let nextFamilyId = 0;
+
 function define<Self>() {
   return <P, A, RD, RE, R extends Route.StreamRoute<P, A, RD, RE>>(
     route: R & Route.StreamRoute<P, A, RD, RE>,
-  ) =>
-    Object.assign(
-      Context.Service<Self, Family<P, A, RD, RE>>()(`@streamsy/core/Family/${route.template}`),
+  ) => {
+    // The literal grammar distinguishes otherwise identical family types. The
+    // allocation suffix prevents separate declarations from aliasing at runtime.
+    const key: `@streamsy/core/Family/${R["template"]}/${number}` = `@streamsy/core/Family/${route.template}/${nextFamilyId++}`;
+    return Object.assign(Context.Service<Self, Family<P, A, RD, RE>>()(key), route, {
       route,
-      { route, make: (services: Backend.BackendServices) => bind(route, services) },
-    );
+      make: (services: Backend.BackendServices) => bind(route, services),
+    });
+  };
 }
 export const json =
   <Self>() =>
