@@ -117,6 +117,8 @@ const missingFamily = Effect.gen(function* () {
   yield* Notes;
   yield* Counts;
 }).pipe(Effect.provide(provides(Streams.layerMemory(), Notes)));
+// oxlint-disable effecttsgo/missing-effect-context -- This negative type test deliberately omits Counts.
 // @ts-expect-error providing Notes must leave Counts in the requirement
 const missing: Effect.Effect<void> = missingFamily;
 void missing;
+// oxlint-enable effecttsgo/missing-effect-context
