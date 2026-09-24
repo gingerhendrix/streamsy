@@ -1,5 +1,7 @@
+import * as Fetch from "@streamsy/core/fetch";
 import { Effect, Schema, type Scope } from "effect";
 import {
+  Changes,
   StreamFamily,
   StreamRef,
   Streams,
@@ -55,7 +57,7 @@ export type Checks = [
   Assert<
     Same<
       Effect.Services<typeof namedWatch>,
-      Input | Other | Result | State | Checkpoints | Scope.Scope
+      Input | Other | Changes<Input | Other> | Result | State | Checkpoints | Scope.Scope
     >
   >,
   Assert<
@@ -107,3 +109,22 @@ const cannotRunWidenedOutput: Effect.Effect<unknown, ProjectionFault> = widenedN
 void cannotRunWidened;
 void cannotRunWidenedOutput;
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context
+
+// The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
+const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
+  Streams.layerMemory();
+const withoutFeed = Projection.onChange(fused).pipe(Effect.provide(provides(protocolOnly, Input)));
+// @ts-expect-error onChange still requires Changes<Input> on a host without a feed.
+const missingFeed: Effect.Effect<unknown, ProjectionFault, Checkpoints | Scope.Scope> = withoutFeed;
+void missingFeed;
+
+const fetchWatch = Projection.onChange(fused).pipe(
+  Effect.provide(provides(Fetch.layer({ baseUrl: "https://example.test" }), Input)),
+);
+// @ts-expect-error Fetch supplies the family, but cannot supply its local Changes capability.
+const missingFetchFeed: Effect.Effect<
+  unknown,
+  unknown,
+  Checkpoints | Scope.Scope | import("effect/unstable/http/HttpClient").HttpClient
+> = fetchWatch;
+void missingFetchFeed;

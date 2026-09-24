@@ -61,6 +61,7 @@ export const layer = Layer.effectContext(
           ),
       );
     const store: EncodedStore = {
+      owner: boundary.owner,
       read: read(TABLE),
       write: write(TABLE),
       remove: remove(TABLE),

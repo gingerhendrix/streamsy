@@ -44,6 +44,7 @@ export interface Loaded {
   readonly token: string;
 }
 export interface CheckpointsApi {
+  readonly owner: object;
   readonly load: (key: ProjectionKey) => Effect.Effect<Loaded, ProjectionFault>;
   /** Compare-and-set inside the owner transaction; returns the new token. */
   readonly save: (
@@ -64,6 +65,7 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsApi>()(
 
 /** The encoded seam a host owner provides; both shipped Layers build on it. */
 export interface EncodedStore {
+  readonly owner: object;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
   readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
@@ -128,6 +130,7 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
     );
   });
   return {
+    owner: store.owner,
     load,
     save,
     remove: (key) => store.remove(recordKey(key)),

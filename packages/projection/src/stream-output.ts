@@ -88,10 +88,26 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
+  const stateOwner = projection._tag === "Outputs" ? yield* projection.stateOwner : undefined;
+  if (stateOwner !== undefined && stateOwner !== owner.owner)
+    return yield* new ProjectionFault({
+      phase: "load",
+      reason: "unsupported-composition",
+      message: "Output state does not share the checkpoint owner",
+    });
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
   const streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>> =
     projection._tag === "Stream" ? { stream: projection.output } : projection.streams;
+  for (const output of Object.values(streams)) {
+    const service = yield* output.family;
+    if (service.owner !== owner.owner)
+      return yield* new ProjectionFault({
+        phase: "load",
+        reason: "unsupported-composition",
+        message: `Output ${output.id} does not share the checkpoint owner`,
+      });
+  }
   const positions = { ...adapters.outputs };
   for (const [name, position] of Object.entries(positions)) {
     if (position.epoch !== projection.generation)

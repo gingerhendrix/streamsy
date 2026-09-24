@@ -17,6 +17,8 @@ export interface Named<Inputs extends InputMap, E, R, OR = never> {
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
+  /** Internal owner check for the value output store. */
+  readonly stateOwner: Effect.Effect<object | undefined, never, R>;
   readonly streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
 }
@@ -81,6 +83,8 @@ export function outputs<
   };
   return {
     _tag: "Outputs",
+    stateOwner:
+      value === undefined ? Effect.succeed(undefined) : Effect.map(State, (state) => state.owner),
     ...key,
     inputs: definition.inputs,
     outputs: bind(definition.outputs, definition.id, Schema.Struct({}), () => ({
@@ -88,7 +92,12 @@ export function outputs<
       outputs: definition.outputs,
     })),
     // SAFETY: each normalized member retains the key of its declaration in D.
-    streams: streams as Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>>["streams"],
+    streams: streams as Named<
+      Inputs,
+      E | ProjectionFault,
+      R | State,
+      Output.Services<D>
+    >["streams"],
     process: (batch, unit) =>
       Effect.gen(function* () {
         let result: Result;

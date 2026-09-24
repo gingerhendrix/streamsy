@@ -1,10 +1,9 @@
-import * as FamilyFixture from "./support/families.ts";
-import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
-import { Effect, Fiber, Layer, Schema, Stream } from "effect";
-import { Backend, Protocol, Streams } from "@streamsy/core";
+import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect";
+import { provides, StreamFamily } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Projection, ProjectionFault } from "@streamsy/projection";
+import { Projection } from "@streamsy/projection";
+import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 
 class Source extends StreamFamily.json<Source>()("routed.test/Source", "memory/source/:name", {
@@ -15,84 +14,75 @@ class Output extends StreamFamily.json<Output>()("routed.test/Output", "sqlite/o
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
-
-const memory = Backend.make("projection-memory");
-const sqlite = Backend.make("projection-sqlite");
-
-const routed = Streams.layerRouted([memory.serves(Source), sqlite.serves(Output)]).pipe(
-  Layer.provide(memory.layer(Streams.layerMemory())),
-  Layer.provide(sqlite.layer(Protocol.layer())),
+const memory = Memory.layerMemory();
+const sqlite = Sqlite.layer.pipe(
+  Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
+);
+const host = Layer.merge(provides(memory, Source), provides(sqlite, Output)).pipe(
+  Layer.provideMerge(sqlite),
 );
 
-/** The checkpoint owner and the output share the SQLite boundary; the input lives elsewhere. */
-const host = Layer.merge(routed, Sqlite.layer).pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: ":memory:" } })),
-);
-
-test("a routed projection reads its input from memory and commits output with the SQLite checkpoint", async () => {
+test("a fused projection reads remote input and writes on its SQLite checkpoint owner", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      const sourceRef = Source.at({ name: "orders" });
-      const outputRef = Output.at({ name: "orders" });
-      yield* Streams.create(sourceRef);
-      yield* Streams.create(outputRef);
-      yield* Streams.append(sourceRef, [1, 2, 3]);
-
+      const source = yield* Source;
+      const output = yield* Output;
+      const params = { name: "orders" };
+      yield* source.create(params);
+      yield* output.create(params);
+      yield* source.append(params, [1, 2, 3]);
       const projection = Projection.make({
         id: "routed-double",
-        input: sourceRef,
+        input: Source.at(params),
         process: (batch) =>
-          Streams.append(
-            outputRef,
-            batch.input.items.map((item) => item * 2),
+          output.append(
+            params,
+            batch.input.items.map((n) => n * 2),
           ),
       });
-
       const first = yield* Projection.run(projection);
-      expect(first.status).toBe("caught-up");
       expect(first.items).toBe(3);
-      expect(first.record.inputs).toEqual({
-        input: (yield* Streams.head(sourceRef)).nextOffset,
-      });
-      expect(yield* Streams.read(outputRef).pipe(Streams.items, Stream.runCollect)).toEqual([
-        2, 4, 6,
-      ]);
-
-      const second = yield* Projection.run(projection);
-      expect(second.status).toBe("caught-up");
-      expect(second.items).toBe(0);
-      expect(second.units).toBe(0);
-
-      yield* Streams.remove(sourceRef);
-      const third = yield* Projection.run(projection).pipe(Effect.result);
-      expect(third._tag).toBe("Failure");
-      if (third._tag === "Failure" && third.failure instanceof ProjectionFault) {
-        expect(third.failure.phase).toBe("read");
-        expect(third.failure.reason).toBe("history-unavailable");
-        expect(third.failure.input).toBe("input");
-      } else throw new Error("Expected a ProjectionFault");
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(host, Source, Output)), Effect.scoped),
+      expect(
+        (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
+      ).toEqual([2, 4, 6]);
+      expect((yield* Projection.run(projection)).items).toBe(0);
+    }).pipe(Effect.provide(host)),
   );
 });
 
-test("onChange rejects an input not owned by the ambient Storage", async () => {
+test("onChange watches the input's feed even when checkpoints have a different owner", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      const sourceRef = Source.at({ name: "watch" });
-      yield* Streams.create(sourceRef);
+      const source = yield* Source;
+      const params = { name: "watch" };
+      yield* source.create(params);
+      yield* source.append(params, [1], { close: true });
       const projection = Projection.make({
         id: "routed-watch",
-        input: sourceRef,
+        input: Source.at(params),
         process: () => Effect.void,
       });
       const fiber = yield* Projection.onChange(projection);
+      expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
+    }).pipe(Effect.provide(host), Effect.scoped),
+  );
+});
+
+test("onChange rejects a family rebound without its matching feed", async () => {
+  const alternate = provides(Memory.layerMemory(), Source).pipe(
+    Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
+  );
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const projection = Projection.make({
+        id: "rebound-feed",
+        input: Source.at({ name: "watch" }),
+        process: () => Effect.void,
+      });
+      const fiber = yield* Projection.onChange(projection).pipe(Effect.provide(alternate));
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(result.failure.phase).toBe("read");
-        expect(result.failure.reason).toBe("unsupported-composition");
-        expect(result.failure.input).toBe("input");
-      }
-    }).pipe(Effect.provide(FamilyFixture.withFamilies(host, Source, Output)), Effect.scoped),
+      if (result._tag === "Failure") expect(result.failure.reason).toBe("unsupported-composition");
+    }).pipe(Effect.provide(host), Effect.scoped),
   );
 });

@@ -3,6 +3,7 @@ import { recordKey, type EncodedStore, type ProjectionKey } from "./checkpoint.t
 import type { ProjectionFault } from "./fault.ts";
 
 export interface StateApi {
+  readonly owner: object;
   readonly load: (key: ProjectionKey) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   /** Overwrites the row; must run inside the owner transaction. */
   readonly save: (key: ProjectionKey, encoded: string) => Effect.Effect<void, ProjectionFault>;
@@ -13,6 +14,7 @@ export interface StateApi {
 export class State extends Context.Service<State, StateApi>()("@streamsy/projection/State") {}
 
 export const stateFromStore = (store: EncodedStore): StateApi => ({
+  owner: store.owner,
   load: (key) => store.readState(recordKey(key)),
   save: (key, encoded) => store.writeState(recordKey(key), encoded),
   remove: (key) => store.removeState(recordKey(key)),

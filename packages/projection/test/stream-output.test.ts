@@ -5,7 +5,6 @@ import { producerId } from "../src/stream-output.ts";
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import {
-  Backend,
   Protocol,
   StorageFault,
   StreamRef,
@@ -22,8 +21,8 @@ import { type CheckpointRecord } from "@streamsy/projection/checkpoint";
 import * as Memory from "@streamsy/projection/memory";
 
 /**
- * Inputs and the checkpoint store share one memory graph; outputs live on a
- * second one, so an append and a checkpoint save never share a transaction.
+ * Inputs, outputs and checkpoints share one owner. The pinned runner still commits
+ * appends and checkpoint saves separately, so crash/replay coverage remains essential.
  */
 class In extends StreamFamily.json<In>()("stream-output.test/In", "in/:name", {
   params: { name: Schema.String },
@@ -33,17 +32,12 @@ class Out extends StreamFamily.json<Out>()("stream-output.test/Out", "out/:name"
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
-const inputs = Backend.make("projection-inputs");
-const outputs = Backend.make("projection-outputs");
 const inputGraph = Streams.layerMemory();
 class PagedReader extends Context.Service<PagedReader, Reader<StreamsFault>>()(
   "test/PagedReader",
 ) {}
 const host = Layer.mergeAll(
-  Streams.layerRouted([inputs.serves(In), outputs.serves(Out)]).pipe(
-    Layer.provide(inputs.layer(inputGraph)),
-    Layer.provide(outputs.layer(Streams.layerMemory())),
-  ),
+  inputGraph,
   Memory.layer.pipe(Layer.provide(inputGraph)),
   Layer.effect(PagedReader, StreamsReader).pipe(
     Layer.provide(Protocol.layer({ readLimit: 1 }).pipe(Layer.provide(inputGraph))),

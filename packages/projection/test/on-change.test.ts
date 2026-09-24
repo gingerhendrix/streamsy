@@ -31,6 +31,7 @@ class WatchRoute1 extends StreamFamily.json<WatchRoute1>()(
 ) {}
 
 type Services =
+  | import("@streamsy/core").Changes<WatchRoute1 | WatchRoute2 | import("@streamsy/core").AnyStream>
   | WatchRoute2
   | WatchRoute1
   | Checkpoints
@@ -208,54 +209,6 @@ test("an ownership probe reports a gone input as unavailable history", () =>
       }
     }),
   ));
-
-test("an empty family without Storage reports unsupported composition", async () => {
-  class route extends StreamFamily.json<route>()(
-    "on-change.test/route",
-    "change-empty-family/:workspaceId",
-    {
-      params: { workspaceId: Schema.String },
-      schema: Schema.Finite,
-    },
-  ) {}
-  const family = Projection.family({
-    id: "change-empty-family",
-    params: { workspaceId: Schema.String },
-    inputs: { facts: route },
-    process: () => Effect.void,
-  });
-  const unused = Effect.die("unused host service");
-  const checkpoints = Checkpoints.of({
-    load: () => unused,
-    save: () => unused,
-    remove: () => unused,
-    withTransaction: (body) => body,
-  });
-  const reader = StreamsReader.of({
-    head: () => unused,
-    read: () => unused,
-    readNext: () => unused,
-  });
-  const writer = StreamsWriter.of({
-    create: () => unused,
-    fork: () => unused,
-    append: () => unused,
-    remove: () => unused,
-  });
-  const result = await Effect.runPromise(
-    Projection.onChange(family, []).pipe(
-      Effect.result,
-      Effect.scoped,
-      Effect.provideService(Checkpoints, checkpoints),
-      Effect.provideService(route, route.make({ reader, writer })),
-    ),
-  );
-  expect(result._tag).toBe("Failure");
-  if (result._tag === "Failure") {
-    expect(result.failure.reason).toBe("unsupported-composition");
-    expect(result.failure.input).toBeUndefined();
-  }
-});
 
 test("onChange and a serialized request share the same key lock", () =>
   run(

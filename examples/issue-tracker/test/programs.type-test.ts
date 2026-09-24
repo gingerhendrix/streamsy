@@ -1,5 +1,5 @@
 import type { Effect, Layer } from "effect";
-import type { StreamsReader, StreamsWriter } from "@streamsy/core";
+import type { Changes, Storage, StreamsReader, StreamsWriter } from "@streamsy/core";
 import { Projection, type State, type Checkpoints } from "@streamsy/projection";
 import type { HttpRouter } from "effect/unstable/http";
 import type { SqlClient } from "effect/unstable/sql";
@@ -33,13 +33,13 @@ export type Checks = [
   Assert<
     Same<
       Effect.Services<ReturnType<typeof sqlWatch>>,
-      Checkpoints | Inputs | SqlClient.SqlClient | import("effect").Scope.Scope
+      Checkpoints | Inputs | Changes<Inputs> | SqlClient.SqlClient | import("effect").Scope.Scope
     >
   >,
   Assert<
     Same<
       Effect.Services<ReturnType<typeof outputWatch>>,
-      Checkpoints | Inputs | Outputs | State | import("effect").Scope.Scope
+      Checkpoints | Inputs | Changes<Inputs> | Outputs | State | import("effect").Scope.Scope
     >
   >,
   Assert<
@@ -47,7 +47,7 @@ export type Checks = [
       Extract<
         | Layer.Success<ReturnType<typeof applicationLayer>>
         | Layer.Success<ReturnType<typeof hostLayer>>,
-        StreamsReader | StreamsWriter
+        StreamsReader | StreamsWriter | Storage
       >,
       never
     >

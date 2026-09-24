@@ -30,7 +30,12 @@ export function makeStoryProjection(
 ): Effect.Effect<
   StoryProjectionService,
   import("@streamsy/projection").ProjectionFault,
-  Checkpoints | HackerNewsSource | HackerNewsTarget | State | Scope.Scope
+  | Checkpoints
+  | HackerNewsSource
+  | HackerNewsTarget
+  | State
+  | import("@streamsy/core").Changes<HackerNewsSource>
+  | Scope.Scope
 > {
   return Effect.gen(function* () {
     const owner = yield* Checkpoints;

@@ -1,5 +1,5 @@
 import { provides } from "@streamsy/core";
-import type { Checkpoints, State } from "@streamsy/projection";
+import { Checkpoints, State } from "@streamsy/projection";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
@@ -15,22 +15,19 @@ export const hostLayer = (filename: string) => {
     Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
   );
   const families = provides(protocol, ...Object.values(routes), ...outputFamilies);
-  return Layer.effectContext(
-    Effect.context<
-      | import("@streamsy/core").Storage
-      | Checkpoints
-      | State
-      | SqlClient.SqlClient
-      | import("./streams.ts").Events
-      | import("./streams.ts").LabelEvents
-      | import("./streams.ts").Projects
-      | import("./streams.ts").Users
-      | import("./streams.ts").Labels
-      | Board
-      | LabelCounts
-      | Transitions
-    >(),
-  ).pipe(Layer.provide(Layer.merge(families, protocol)));
+  return Layer.merge(
+    families,
+    protocol.pipe(
+      Layer.flatMap((context) => {
+        const retained: Context.Context<Checkpoints | State | SqlClient.SqlClient> = Context.pick(
+          Checkpoints,
+          State,
+          SqlClient.SqlClient,
+        )(context);
+        return Layer.succeedContext(retained);
+      }),
+    ),
+  );
 };
 
 export class ApplicationReady extends Context.Service<ApplicationReady, true>()(

@@ -1,8 +1,8 @@
 import { Checkpoints } from "./checkpoint.ts";
 import type { Named } from "./outputs.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
-import { Effect, Fiber, Option, Queue, Stream, type Scope } from "effect";
-import { Storage, type StreamFamily, type StreamRef, type StreamRoute } from "@streamsy/core";
+import { Effect, Fiber, Queue, Stream, type Scope } from "effect";
+import { Changes, type StreamFamily, type StreamRoute } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import type { Family } from "./family.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -35,26 +35,21 @@ type MemberError<Member> =
         : never;
 type MemberRequirements<Member> =
   Member extends Fused<infer _Inputs, infer _E, infer R>
-    ? R | InputServices<_Inputs>
+    ? R | InputServices<_Inputs> | Changes<InputServices<_Inputs>>
     : Member extends Pinned<infer _Inputs, infer _Output, infer _E, infer R, infer OR>
-      ? R | OR | InputServices<_Inputs>
+      ? R | OR | InputServices<_Inputs> | Changes<InputServices<_Inputs>>
       : Member extends Named<infer Inputs, infer _E, infer R, infer OR>
-        ? R | OR | InputServices<Inputs>
+        ? R | OR | InputServices<Inputs> | Changes<InputServices<Inputs>>
         : never;
-
-const unsupported = (input: string, ref: StreamRef.StreamRef<unknown>) =>
-  new ProjectionFault({
-    phase: "read",
-    reason: "unsupported-composition",
-    input,
-    message: `${ref.id} has no same-owner change feed`,
-  });
 
 const watch = <Inputs extends InputMap, O, E, R, OR = never>(
   projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
-  storage: typeof Storage.Service,
   options: OnChangeOptions,
-): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
+): Effect.Effect<
+  Progress,
+  E | ProjectionFault,
+  R | OR | Checkpoints | InputServices<Inputs> | Changes<InputServices<Inputs>>
+> =>
   Effect.scoped(
     Effect.gen(function* () {
       const wake = yield* Queue.make<void>({
@@ -65,8 +60,17 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
       const inputs = inputEntries(projection.inputs);
       yield* Effect.forEach(inputs, ([name, ref]) =>
         Effect.gen(function* () {
-          const { wire: reader } = yield* ref.family;
-          const readable = yield* reader.head(ref.id).pipe(
+          const { owner, wire: reader } = yield* ref.family;
+          const feed = yield* Changes(ref.family);
+          // Independent Layer overrides can replace a family without replacing its feed.
+          if (feed.owner !== owner)
+            return yield* new ProjectionFault({
+              phase: "read",
+              reason: "unsupported-composition",
+              input: name,
+              message: `The change feed of ${ref.id} belongs to a different owner`,
+            });
+          yield* reader.head(ref.id).pipe(
             Effect.as(true),
             Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
             Effect.mapError((cause) =>
@@ -87,26 +91,11 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
                   }),
             ),
           );
-          if (readable) {
-            const owned = yield* storage.record(ref.id).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectionFault({
-                    phase: "read",
-                    reason: "storage-failure",
-                    input: name,
-                    message: `Cannot inspect ${ref.id}`,
-                    cause,
-                  }),
-              ),
-            );
-            if (Option.isNone(owned)) return yield* unsupported(name, ref);
-          }
           return undefined;
         }),
       );
       const subscriptions = inputs.map(([name, ref]) =>
-        storage.changes(ref.id).pipe(
+        Stream.unwrap(Effect.map(Changes(ref.family), (feed) => feed.changes(ref.id))).pipe(
           Stream.takeUntil((snapshot) => snapshot.closed),
           Stream.runForEach((snapshot) =>
             Effect.gen(function* () {
@@ -140,7 +129,7 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
   );
 
 /**
- * Watches same-owner inputs. An input that does not exist yet is not checked until it does.
+ * Watches each input through its family change-feed capability.
  * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
  * failures surface as `read / storage-failure`.
  */
@@ -150,7 +139,7 @@ export function onChange<Inputs extends InputMap, O, E, R, OR = never>(
 ): Effect.Effect<
   Fiber.Fiber<Progress, E | ProjectionFault>,
   ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs> | Scope.Scope
+  R | OR | Checkpoints | InputServices<Inputs> | Changes<InputServices<Inputs>> | Scope.Scope
 >;
 export function onChange<F extends Family<any, any>>(
   family: F,
@@ -175,40 +164,15 @@ export function onChange(
       ? maybeOptions
       : (membersOrOptions as OnChangeOptions);
     yield* validateOptions(options);
-    const available = yield* Effect.serviceOption(Storage);
-    if (Option.isNone(available)) {
-      if (
-        target._tag === "Family" &&
-        Array.isArray(membersOrOptions) &&
-        membersOrOptions.length === 0
-      )
-        return yield* new ProjectionFault({
-          phase: "read",
-          reason: "unsupported-composition",
-          message: "The projection family has no same-owner change feed",
-        });
-      const firstParams = Array.isArray(membersOrOptions) ? (membersOrOptions[0] ?? {}) : {};
-      const member = target._tag === "Family" ? target.member(firstParams) : target;
-      const [name, ref] = Object.entries(member.inputs as InputMap)[0] ?? ["input", undefined];
-      if (ref === undefined)
-        return yield* new ProjectionFault({
-          phase: "read",
-          reason: "unsupported-composition",
-          message: "The projection has no same-owner change feed",
-        });
-      return yield* unsupported(name, ref);
-    }
     if (target._tag === "Family") {
       const members = membersOrOptions as ReadonlyArray<Record<string, unknown>>;
       return yield* Effect.forEach(members, (params) => {
         const projection = target.member(params) as RuntimeProjection;
-        return watch(projection, available.value, maybeOptions).pipe(Effect.forkScoped);
+        return watch(projection, maybeOptions).pipe(Effect.forkScoped);
       });
     }
     const erased: unknown = target;
     const projection = erased as RuntimeProjection;
-    return yield* watch(projection, available.value, membersOrOptions as OnChangeOptions).pipe(
-      Effect.forkScoped,
-    );
+    return yield* watch(projection, membersOrOptions as OnChangeOptions).pipe(Effect.forkScoped);
   });
 }

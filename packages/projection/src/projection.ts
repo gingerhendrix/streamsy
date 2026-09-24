@@ -20,7 +20,11 @@ export type {
 } from "./family.ts";
 export type { OnChangeOptions } from "./on-change.ts";
 
-/** The handler runs inside the checkpoint owner's transaction; its local writes commit with it. */
+/**
+ * The handler runs inside the checkpoint owner's transaction. Family writes are checked
+ * individually before they execute. Other side effects, including SQL on another client,
+ * are outside this guard. Declared outputs are checked together before the first write.
+ */
 export interface Fused<Inputs extends InputMap, E, R> {
   readonly _tag: "Fused";
   readonly id: string;
@@ -110,7 +114,7 @@ export function make<Inputs extends InputMap, A, E, R, IR>(
     : { ...base, inputs: { input: definition.input }, process: definition.process };
 }
 
-/** Inert stream form for an output the checkpoint transaction cannot reach. */
+/** Inert stream form with a declared output on the checkpoint owner. */
 export function stream<A, O, E, R, IR, OR>(
   definition: SinglePinnedDefinition<A, O, E, R, IR, OR>,
 ): Pinned<{ readonly input: StreamFamily.Member<A, IR> }, O, E, R, OR>;

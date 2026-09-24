@@ -1,4 +1,5 @@
 import type { Named } from "./outputs.ts";
+import { CurrentOwner, ForeignOwner } from "@streamsy/core/internal/memory";
 import { Effect } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
@@ -48,7 +49,20 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
           reason: "token-conflict",
           message: `Record of ${projection.id} changed while the unit was read`,
         });
-      yield* projection.process(read.slices, unit);
+      yield* projection.process(read.slices, unit).pipe(
+        Effect.provideService(CurrentOwner, owner.owner),
+        Effect.catchDefect((defect) =>
+          defect instanceof ForeignOwner
+            ? Effect.fail(
+                new ProjectionFault({
+                  phase: "process",
+                  reason: "unsupported-composition",
+                  message: defect.message,
+                }),
+              )
+            : Effect.die(defect),
+        ),
+      );
       const inputs = advance(before.record.inputs, read.slices);
       const { identity, adapters, pending } = before.record;
       const next: CheckpointRecord =

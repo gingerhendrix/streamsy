@@ -10,6 +10,7 @@ export const layer = Layer.effectContext(
     const boundary = yield* MemoryCommitBoundary;
     const stateKey = (key: string) => `state:${key}`;
     const store: EncodedStore = {
+      owner: boundary.owner,
       read: boundary.read,
       write: boundary.write,
       remove: boundary.remove,
