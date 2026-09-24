@@ -1,4 +1,4 @@
-import * as Streams from "./support/members.ts";
+import * as Members from "./support/members.ts";
 // Probe D: all three stream outputs nonempty; the unit stops after the second
 // append (labelCounts landed, transitions not). Recovery after new input must
 // give one copy of each item and match a clean run with the same unit boundaries.
@@ -12,7 +12,7 @@ import { Events, LabelEvents, labelStream, refs } from "../server/streams.ts";
 const at = "2026-09-23T10:00:00Z";
 const seed = Effect.gen(function* () {
   yield* createInputs(refs("live"));
-  yield* Streams.append(
+  yield* Members.append(
     labelStream("live"),
     State.changes(labelStream("live"), { offset: ZERO_OFFSET }, [
       State.upsert("label", {
@@ -24,7 +24,7 @@ const seed = Effect.gen(function* () {
       }),
     ]),
   );
-  yield* Streams.append(Events.at({ workspaceId: "live" }), [
+  yield* Members.append(Events.at({ workspaceId: "live" }), [
     {
       type: "IssueCreated",
       eventId: "e1",
@@ -37,7 +37,7 @@ const seed = Effect.gen(function* () {
       occurredAt: at,
     },
   ]);
-  yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
+  yield* Members.append(LabelEvents.at({ workspaceId: "live" }), [
     {
       type: "LabelAttached",
       eventId: "a1",
@@ -50,7 +50,7 @@ const seed = Effect.gen(function* () {
     },
   ]);
 });
-const more = Streams.append(Events.at({ workspaceId: "live" }), [
+const more = Members.append(Events.at({ workspaceId: "live" }), [
   {
     type: "IssueStatusChanged",
     eventId: "e2",
@@ -63,7 +63,7 @@ const more = Streams.append(Events.at({ workspaceId: "live" }), [
 ]);
 const collect = Effect.gen(function* () {
   const read = <A, R>(ref: import("@streamsy/core").StreamFamily.Member<A, R>) =>
-    Streams.read(ref).pipe(Streams.items, Stream.runCollect);
+    Members.read(ref).pipe(Members.items, Stream.runCollect);
   return {
     board: yield* read(tracker.outputs.board.ref({ workspaceId: "live" })),
     counts: yield* read(tracker.outputs.labelCounts.ref({ workspaceId: "live" })),
@@ -79,7 +79,7 @@ const run = (failOn: number | undefined) =>
     else {
       let calls = 0;
       const r = yield* Projection.run(member).pipe(
-        Streams.patchOutputAppends(
+        Members.patchOutputAppends(
           (append) => (id, o) =>
             ++calls === failOn
               ? Effect.fail(

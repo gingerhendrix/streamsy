@@ -1,4 +1,4 @@
-import * as Streams from "./support/members.ts";
+import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
@@ -43,7 +43,7 @@ test("the fused handler writes application rows through the SQLite host", async 
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
         const result = yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         const sql = yield* SqlClient.SqlClient;
         const rows = yield* sql.unsafe<{ readonly status: string }>("SELECT status FROM issues");
@@ -71,7 +71,7 @@ test("the change trigger stays alive beside the request trigger on one key", asy
         });
         yield* Projection.serialized(issueRows.member({ workspaceId: "live" }), { limit: 5 });
         const sql = yield* SqlClient.SqlClient;
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [
+        yield* Members.append(Events.at({ workspaceId: "live" }), [
           { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },
         ]);
         let count = 0;
@@ -103,7 +103,7 @@ test("catalog state upserts and deletes a row", async () => {
           name: "Ada",
           updatedAt: "2026-09-20T10:00:00.000Z",
         };
-        yield* Streams.append(
+        yield* Members.append(
           ref,
           State.changes(ref, { offset: ZERO_OFFSET }, [State.upsert("user", ada)]),
         );
@@ -113,7 +113,7 @@ test("catalog state upserts and deletes a row", async () => {
           "SELECT COUNT(*) AS n FROM users",
         );
         expect(afterUpsert[0]?.n).toBe(1);
-        yield* Streams.append(
+        yield* Members.append(
           ref,
           State.changes(ref, { offset: "1" }, [State.delete("user", ada)]),
         );

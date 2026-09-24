@@ -1,5 +1,5 @@
 import type { Effect, Layer } from "effect";
-import type { Changes, Storage, StreamsReader, StreamsWriter } from "@streamsy/core";
+import type { Changes, Storage } from "@streamsy/core";
 import { Projection, type State, type Checkpoints } from "@streamsy/projection";
 import type { HttpRouter } from "effect/unstable/http";
 import type { SqlClient } from "effect/unstable/sql";
@@ -47,7 +47,7 @@ export type Checks = [
       Extract<
         | Layer.Success<ReturnType<typeof applicationLayer>>
         | Layer.Success<ReturnType<typeof hostLayer>>,
-        StreamsReader | StreamsWriter | Storage
+        Storage
       >,
       never
     >
@@ -63,7 +63,6 @@ export type Checks = [
     Same<AppR, HttpRouter.HttpRouter | Inputs | Outputs | State | SqlClient.SqlClient | Checkpoints>
   >,
   Assert<Same<OutputR, HttpRouter.HttpRouter | Outputs | State>>,
-  Assert<Same<Extract<AppR | OutputR, StreamsReader | StreamsWriter>, never>>,
   // Handlers retain their SQL/State requirements. Runners add declared families and checkpoints.
   Assert<
     Same<

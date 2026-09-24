@@ -1,4 +1,4 @@
-import * as Streams from "./support/members.ts";
+import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema, Stream } from "effect";
@@ -51,10 +51,10 @@ test("indexed touched-key output matches full scans byte for byte across catalog
         yield* createInputs(refs("live"));
         const phases = [
           Effect.gen(function* () {
-            yield* Streams.append(labelStream("live"), [
+            yield* Members.append(labelStream("live"), [
               { type: "label", key: "bug", value: label, headers: { operation: "upsert" } },
             ]);
-            yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
+            yield* Members.append(LabelEvents.at({ workspaceId: "live" }), [
               {
                 ...common,
                 type: "LabelAttached",
@@ -66,7 +66,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               },
             ]);
           }),
-          Streams.append(Events.at({ workspaceId: "live" }), [
+          Members.append(Events.at({ workspaceId: "live" }), [
             {
               ...common,
               type: "IssueCreated",
@@ -89,13 +89,13 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             },
           ]),
           Effect.gen(function* () {
-            yield* Streams.append(projectStream("live"), [
+            yield* Members.append(projectStream("live"), [
               { type: "project", key: "p1", value: project, headers: { operation: "upsert" } },
             ]);
-            yield* Streams.append(userStream("live"), [
+            yield* Members.append(userStream("live"), [
               { type: "user", key: "ada", value: user, headers: { operation: "upsert" } },
             ]);
-            yield* Streams.append(Events.at({ workspaceId: "live" }), [
+            yield* Members.append(Events.at({ workspaceId: "live" }), [
               {
                 ...common,
                 type: "IssueAssigned",
@@ -108,7 +108,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             ]);
           }),
           Effect.gen(function* () {
-            yield* Streams.append(userStream("live"), [
+            yield* Members.append(userStream("live"), [
               {
                 type: "user",
                 key: "ada",
@@ -116,7 +116,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 headers: { operation: "upsert" },
               },
             ]);
-            yield* Streams.append(projectStream("live"), [
+            yield* Members.append(projectStream("live"), [
               {
                 type: "project",
                 key: "p1",
@@ -124,7 +124,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 headers: { operation: "upsert" },
               },
             ]);
-            yield* Streams.append(LabelEvents.at({ workspaceId: "live" }), [
+            yield* Members.append(LabelEvents.at({ workspaceId: "live" }), [
               {
                 ...common,
                 type: "LabelDetached",
@@ -145,7 +145,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               },
             ]);
           }),
-          Streams.append(labelStream("live"), [
+          Members.append(labelStream("live"), [
             { type: "label", key: "bug", headers: { operation: "delete" } },
             {
               type: "label",
@@ -155,13 +155,13 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             },
           ]),
           Effect.gen(function* () {
-            yield* Streams.append(labelStream("live"), [
+            yield* Members.append(labelStream("live"), [
               { type: "label", key: "bug", headers: { operation: "delete" } },
             ]);
-            yield* Streams.append(projectStream("live"), [
+            yield* Members.append(projectStream("live"), [
               { type: "project", key: "p1", headers: { operation: "delete" } },
             ]);
-            yield* Streams.append(userStream("live"), [
+            yield* Members.append(userStream("live"), [
               { type: "user", key: "ada", headers: { operation: "delete" } },
             ]);
           }),
@@ -211,12 +211,12 @@ test("indexed touched-key output matches full scans byte for byte across catalog
           }
           // Before the first issue, board is correctly absent; label counts already exist.
           if (expectedBoard.length > 0) {
-            const actual = yield* Streams.read(boardRef).pipe(Streams.items, Stream.runCollect);
+            const actual = yield* Members.read(boardRef).pipe(Members.items, Stream.runCollect);
             expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
               expectedBoard,
             );
           }
-          const actual = yield* Streams.read(countsRef).pipe(Streams.items, Stream.runCollect);
+          const actual = yield* Members.read(countsRef).pipe(Members.items, Stream.runCollect);
           expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
             expectedCounts,
           );

@@ -1,4 +1,4 @@
-import { provides } from "@streamsy/core";
+import { StreamGroup, Changes } from "@streamsy/core";
 import { Checkpoints, State } from "@streamsy/projection";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -10,24 +10,20 @@ import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
 import { refs, routes } from "./streams.ts";
 
+export const families = StreamGroup.make(...Object.values(routes), ...outputFamilies);
 export const hostLayer = (filename: string) => {
-  const protocol = ProjectionSqlite.layer.pipe(
-    Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })),
+  const host = ProjectionSqlite.layer.pipe(
+    Layer.provideMerge(BunStorage.layer({ client: { filename } }, families)),
   );
-  const families = provides(protocol, ...Object.values(routes), ...outputFamilies);
-  return Layer.merge(
-    families,
-    protocol.pipe(
-      Layer.flatMap((context) => {
-        const retained: Context.Context<Checkpoints | State | SqlClient.SqlClient> = Context.pick(
-          Checkpoints,
-          State,
-          SqlClient.SqlClient,
-        )(context);
-        return Layer.succeedContext(retained);
-      }),
-    ),
-  );
+  return Layer.effectContext(
+    Effect.context<
+      | Checkpoints
+      | State
+      | SqlClient.SqlClient
+      | StreamGroup.Services<typeof families>
+      | Changes<StreamGroup.Services<typeof families>>
+    >(),
+  ).pipe(Layer.provide(host));
 };
 
 export class ApplicationReady extends Context.Service<ApplicationReady, true>()(

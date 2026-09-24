@@ -1,4 +1,4 @@
-import * as Streams from "./support/members.ts";
+import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
@@ -21,7 +21,7 @@ test("a member fault at startup leaves HTTP and other workspaces available", asy
       await producer.runPromise(
         Effect.gen(function* () {
           yield* createInputs(refs("acme"));
-          yield* Streams.append(userStream("acme"), [
+          yield* Members.append(userStream("acme"), [
             {
               type: "user",
               key: "ada",

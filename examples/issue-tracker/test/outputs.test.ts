@@ -1,4 +1,4 @@
-import * as Streams from "./support/members.ts";
+import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
@@ -31,7 +31,7 @@ test("key-only catalog deletes stay in the member workspace and advance both che
       Effect.gen(function* () {
         for (const workspaceId of ["live", "acme"]) {
           yield* createInputs(refs(workspaceId));
-          yield* Streams.append(userStream(workspaceId), [
+          yield* Members.append(userStream(workspaceId), [
             {
               type: "user",
               key: "ada",
@@ -52,7 +52,7 @@ test("key-only catalog deletes stay in the member workspace and advance both che
         const outputMember = tracker.member({ workspaceId: "live" });
         const sqlBefore = yield* owner.load(sqlMember);
         const outputBefore = yield* owner.load(outputMember);
-        yield* Streams.append(userStream("live"), [
+        yield* Members.append(userStream("live"), [
           { type: "user", key: "ada", headers: { operation: "delete" } },
         ]);
         yield* Projection.run(sqlMember);
@@ -82,8 +82,8 @@ test("catalog values cannot write another workspace in either projection", async
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
-        yield* Streams.append(userStream("live"), [
+        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* Members.append(userStream("live"), [
           {
             type: "user",
             key: "ada",
@@ -131,10 +131,10 @@ test("named output replay survives a lost append reply beside the SQL projection
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
         const member = tracker.member({ workspaceId: "live" });
         const failed = yield* Projection.run(member).pipe(
-          Streams.patchOutputAppends(
+          Members.patchOutputAppends(
             (append) => (id, options) =>
               append(id, options).pipe(
                 Effect.andThen(
@@ -152,17 +152,17 @@ test("named output replay survives a lost append reply beside the SQL projection
         );
         expect(failed._tag).toBe("Failure");
         // Advancing SQL and input history must not change reproduction of the pinned range.
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [
+        yield* Members.append(Events.at({ workspaceId: "live" }), [
           { ...created, type: "IssueStatusChanged", eventId: "e2", status: "done", sequence: 2 },
         ]);
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         yield* Projection.run(member);
-        const transitions = yield* Streams.read(
+        const transitions = yield* Members.read(
           tracker.outputs.transitions.ref({ workspaceId: "live" }),
-        ).pipe(Streams.items, Stream.runCollect);
+        ).pipe(Members.items, Stream.runCollect);
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
-        const board = yield* Streams.read(tracker.outputs.board.ref({ workspaceId: "live" })).pipe(
-          Streams.items,
+        const board = yield* Members.read(tracker.outputs.board.ref({ workspaceId: "live" })).pipe(
+          Members.items,
           Stream.runCollect,
         );
         expect(board).toHaveLength(2);
@@ -265,7 +265,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* createInputs(refs("live"));
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
         yield* Projection.run(tracker.member({ workspaceId: "live" }));
       }),
     );
@@ -281,7 +281,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     expect(etag).not.toBeNull();
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* Streams.append(Events.at({ workspaceId: "live" }), [
+        yield* Members.append(Events.at({ workspaceId: "live" }), [
           { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
         ]);
         yield* Projection.run(tracker.member({ workspaceId: "live" }));
