@@ -1,7 +1,8 @@
 import { Effect, Layer, Schema } from "effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpRouter } from "effect/unstable/http";
 import {
   Changes,
+  Http,
   Memory,
   StreamFamily,
   StreamGroup,
@@ -38,3 +39,12 @@ const missingFeed: Effect.Effect<void, unknown, HttpClient.HttpClient> = needsFe
   Effect.provide(fetch),
 );
 void [union, remote, remoteList, client, feeds, hidden, noFeed, missingFeed];
+
+const routes = Http.routes(group, { access: "full" });
+const routeRequirements: Equal<
+  Layer.Services<typeof routes>,
+  HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", A | B>
+> = true;
+// @ts-expect-error A group's host must explicitly choose an HTTP access policy.
+Http.routes(group);
+void routeRequirements;
