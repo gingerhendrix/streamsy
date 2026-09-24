@@ -1,7 +1,3 @@
-import * as Protocol from "../../protocol/layer.ts";
-import { provides, type AnyFamily, type Identifiers } from "../../toolkit/family.ts";
-import * as Group from "../../toolkit/group.ts";
-import type { Changes } from "../../toolkit/changes.ts";
 import { Context, Predicate, Effect, Layer, Option } from "effect";
 import { attachOwner, ownerOf } from "../../internal/owner.ts";
 import { Storage } from "../storage.ts";
@@ -79,7 +75,7 @@ function reject(state: State, operation: Operation, index: number): MutationReje
   return undefined;
 }
 
-const storageLayer = (options: MemoryOptions = {}): Layer.Layer<Storage | MemoryCommitBoundary> =>
+export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | MemoryCommitBoundary> =>
   Layer.effectContext(
     Effect.gen(function* () {
       const chain = !options.constrained;
@@ -204,19 +200,3 @@ const storageLayer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
       );
     }),
   );
-
-/** Memory host. Families and their feeds share the exposed storage boundary. */
-export function layer(options?: MemoryOptions): ReturnType<typeof storageLayer>;
-export function layer<const Keys extends ReadonlyArray<AnyFamily>>(
-  options: MemoryOptions & Protocol.ProtocolOptions,
-  ...input: Group.Input<Keys>
-): Layer.Layer<Storage | MemoryCommitBoundary | Identifiers<Keys> | Changes<Identifiers<Keys>>>;
-export function layer(
-  options: MemoryOptions & Protocol.ProtocolOptions = {},
-  ...input: Group.Input<ReadonlyArray<AnyFamily>>
-) {
-  const storage = storageLayer(options);
-  if (input.length === 0) return storage;
-  const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
-  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
-}

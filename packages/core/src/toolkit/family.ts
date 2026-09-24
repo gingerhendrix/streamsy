@@ -12,7 +12,7 @@ import type {
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
-import * as Group from "./group.ts";
+import type * as Group from "./group.ts";
 import * as Backend from "./backend.ts";
 import * as Route from "./route.ts";
 import * as Ref from "./ref.ts";
@@ -294,7 +294,9 @@ export function provides<E, R, Name extends string, const Keys extends ReadonlyA
   source: Backend.Backend<Name> | Layer.Layer<StreamsReader | StreamsWriter, E, R>,
   ...input: Group.Input<Keys>
 ) {
-  const keys = Group.families(input);
+  const first = input[0];
+  // SAFETY: Input is either the family tuple or one group containing that same tuple.
+  const keys = (first !== undefined && "families" in first ? first.families : input) as Keys;
   checkFamilies(keys);
   const bindContext = (backend: Backend.BackendServices, storage?: typeof Storage.Service) => {
     if (

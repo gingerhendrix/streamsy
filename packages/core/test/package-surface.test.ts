@@ -120,6 +120,18 @@ test("protocol subpath retains the same services and memory forms", () => {
     "layerProtocol",
     "layerRouted",
   ]);
+  expect(Object.keys(Protocol.Streams).sort()).toEqual([
+    "append",
+    "create",
+    "follow",
+    "head",
+    "items",
+    "layerMemory",
+    "layerRouted",
+    "read",
+    "remove",
+    "session",
+  ]);
   expect(Protocol.StreamsReader).toBe(Root.StreamsReader);
   expect(Protocol.StreamsWriter).toBe(Root.StreamsWriter);
   expect(Protocol.layerMemory).toBe(Root.Streams.layerMemory);

@@ -132,7 +132,7 @@ const probeLayer = (
   return observed.pipe(Layer.provideMerge(protocol));
 };
 
-class ProbeObject extends StreamsyObject.make<Env, StreamsReader | StreamsWriter>({
+class ProbeObject extends StreamsyObject.make<Env>({
   app: Http.routes({ prefix: "/streams" }),
   layer: probeLayer,
 }) {

@@ -138,11 +138,11 @@ const protocolLayer = (options: Options) =>
   );
 
 /** Remote families have no local Changes feed. The one-argument form is protocol-only. */
-export function layer(options: Options): ReturnType<typeof protocolLayer>;
 export function layer<const Keys extends ReadonlyArray<AnyFamily>>(
   options: Options,
-  ...input: Group.Input<Keys>
+  ...input: Group.NonEmptyInput<Keys>
 ): Layer.Layer<Identifiers<Keys>, TransportFault, HttpClient.HttpClient>;
+export function layer(options: Options): ReturnType<typeof protocolLayer>;
 export function layer(options: Options, ...input: Group.Input<ReadonlyArray<AnyFamily>>) {
   const protocol = protocolLayer(options);
   return input.length === 0 ? protocol : provides(protocol, ...input);

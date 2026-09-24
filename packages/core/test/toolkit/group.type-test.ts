@@ -5,11 +5,13 @@ import {
   Changes,
   Http,
   Memory,
+  Storage,
   StreamFamily,
   StreamGroup,
   StreamsReader,
   StreamsWriter,
 } from "../../src/index.ts";
+import type { MemoryCommitBoundary } from "../../src/internal/memory.ts";
 import * as Fetch from "../../src/fetch/index.ts";
 class A extends StreamFamily.json<A>()("GroupTypes/A", "a", {
   params: {},
@@ -51,3 +53,44 @@ const routeRequirements: Equal<
 // @ts-expect-error A group's host must explicitly choose an HTTP access policy.
 Http.routes(group);
 void routeRequirements;
+
+const memoryExact: Equal<
+  Layer.Success<typeof memory>,
+  Storage | MemoryCommitBoundary | A | B | Changes<A | B>
+> = true;
+const memoryRequirements: Equal<Layer.Services<typeof memory>, never> = true;
+const memoryErrors: Equal<Layer.Error<typeof memory>, never> = true;
+const legacyMemory: Equal<
+  Layer.Success<ReturnType<typeof Memory.layer>>,
+  Storage | MemoryCommitBoundary
+> = true;
+const legacyFetch: Equal<
+  Layer.Success<ReturnType<typeof Fetch.layer>>,
+  StreamsReader | StreamsWriter
+> = true;
+const mappedFetch = Effect.map(Effect.succeed({ baseUrl: "http://localhost" }), Fetch.layer);
+const pointFreeFetch: Equal<
+  Layer.Success<Effect.Success<typeof mappedFetch>>,
+  StreamsReader | StreamsWriter
+> = true;
+const mappedMemory = Effect.map(Effect.succeed({}), Memory.layer);
+const pointFreeMemory: Equal<
+  Layer.Success<Effect.Success<typeof mappedMemory>>,
+  Storage | MemoryCommitBoundary
+> = true;
+const hasFeed: Effect.Effect<void> = needsFeed.pipe(Effect.provide(memory));
+// @ts-expect-error Protocol options require at least one family argument.
+Memory.layer({ readLimit: 10 });
+const emptyGroup = Memory.layer({}, StreamGroup.make());
+const emptyExact: Equal<Layer.Success<typeof emptyGroup>, Storage | MemoryCommitBoundary> = true;
+void [
+  memoryExact,
+  memoryRequirements,
+  memoryErrors,
+  legacyMemory,
+  legacyFetch,
+  pointFreeFetch,
+  pointFreeMemory,
+  hasFeed,
+  emptyExact,
+];

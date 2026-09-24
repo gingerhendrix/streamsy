@@ -1,8 +1,11 @@
-import { Protocol } from "@streamsy/core";
-import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
+  Protocol,
+  provides,
+  type StreamFamily,
+  type StreamGroup,
+  type Changes,
   ChangeSnapshot,
   type MessageWindow,
   Offset,
@@ -641,10 +644,9 @@ export const layerWithDurableObjectTransactions = (options: SqlStorageOptions) =
 export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTestProbe) =>
   makeLayer(options, probe);
 
-export function layer(options?: SqlStorageOptions): ReturnType<typeof storageLayer>;
 export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   options: SqlStorageOptions & Protocol.ProtocolOptions,
-  ...input: StreamGroup.Input<Keys>
+  ...input: StreamGroup.NonEmptyInput<Keys>
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | StreamFamily.Identifiers<Keys>
@@ -652,6 +654,7 @@ export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
+export function layer(options?: SqlStorageOptions): ReturnType<typeof storageLayer>;
 export function layer(
   options: SqlStorageOptions & Protocol.ProtocolOptions = {},
   ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>

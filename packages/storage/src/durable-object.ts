@@ -1,7 +1,12 @@
-import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
+import {
+  Protocol,
+  provides,
+  type StreamFamily,
+  type StreamGroup,
+  type Changes,
+} from "@streamsy/core";
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { Layer } from "effect";
-import { Protocol } from "@streamsy/core";
 import { sharedSqlClientLayer } from "./boundary.ts";
 import { layerWithDurableObjectTransactions, type SqlStorageOptions } from "./storage.ts";
 
@@ -30,10 +35,9 @@ export const layerProtocol = (options: DurableObjectProtocolOptions) =>
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,
   }).pipe(Layer.provideMerge(layer(options)));
 
-export function layer(options: DurableObjectStorageOptions): ReturnType<typeof storageLayer>;
 export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   options: DurableObjectProtocolOptions,
-  ...input: StreamGroup.Input<Keys>
+  ...input: StreamGroup.NonEmptyInput<Keys>
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | StreamFamily.Identifiers<Keys>
@@ -41,6 +45,7 @@ export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
+export function layer(options: DurableObjectStorageOptions): ReturnType<typeof storageLayer>;
 export function layer(
   options: DurableObjectProtocolOptions,
   ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>

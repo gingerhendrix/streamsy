@@ -1,9 +1,14 @@
-import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
+import {
+  Protocol,
+  StorageFault,
+  provides,
+  type StreamFamily,
+  type StreamGroup,
+  type Changes,
+} from "@streamsy/core";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";
-import { StorageFault } from "@streamsy/core";
-import { Protocol } from "@streamsy/core";
 import { sharedSqlClientLayer } from "./boundary.ts";
 import { STORAGE_SCHEMA_VERSION, STORAGE_VERSION_TABLE } from "./schema.ts";
 import { layer as sqlLayer, type SqlStorageOptions } from "./storage.ts";
@@ -197,10 +202,9 @@ const storageLayer = (options: BunStorageOptions) => {
 export const layerProtocol = (options: BunProtocolOptions) =>
   Protocol.layer(options).pipe(Layer.provideMerge(layer(options)));
 
-export function layer(options: BunStorageOptions): ReturnType<typeof storageLayer>;
 export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   options: BunProtocolOptions,
-  ...input: StreamGroup.Input<Keys>
+  ...input: StreamGroup.NonEmptyInput<Keys>
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
   | StreamFamily.Identifiers<Keys>
@@ -208,6 +212,7 @@ export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
+export function layer(options: BunStorageOptions): ReturnType<typeof storageLayer>;
 export function layer(
   options: BunProtocolOptions,
   ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>

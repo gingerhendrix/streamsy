@@ -1,8 +1,16 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test owns a real local HTTP server. */
 import { expect, it } from "bun:test";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpRouter } from "effect/unstable/http";
-import { Http, Memory, StreamFamily, StreamGroup } from "@streamsy/core";
+import {
+  Changes,
+  Http,
+  Memory,
+  StreamFamily,
+  StreamGroup,
+  StreamsReader,
+  StreamsWriter,
+} from "@streamsy/core";
 import * as Fetch from "@streamsy/core/fetch";
 
 class Notes extends StreamFamily.json<Notes>()("FetchFamilies/Notes", "notes/:user", {
@@ -35,7 +43,14 @@ it("one application program runs unchanged on memory and Fetch families", async 
       Fetch.layer({ baseUrl: `${server.url.href}streams` }, Notes),
     ]) {
       const remote = host.pipe(Layer.provide(FetchHttpClient.layer));
-      expect(await Effect.runPromise(program.pipe(Effect.provide(remote)))).toEqual(local);
+      const inspected = Effect.gen(function* () {
+        const context = yield* Effect.context<Notes>();
+        expect(Option.isNone(Context.getOption(context, StreamsReader))).toBe(true);
+        expect(Option.isNone(Context.getOption(context, StreamsWriter))).toBe(true);
+        expect(Option.isNone(Context.getOption(context, Changes(Notes)))).toBe(true);
+        return yield* program;
+      });
+      expect(await Effect.runPromise(inspected.pipe(Effect.provide(remote)))).toEqual(local);
     }
     expect(local).toEqual(["hello", "world"]);
     expect(

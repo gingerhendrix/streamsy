@@ -14,9 +14,7 @@ export function make<const Keys extends ReadonlyArray<AnyFamily>>(
   return Object.freeze({ families: Object.freeze(keys) });
 }
 
-/** Normalize the two public argument forms without losing their family tuple. */
-export function families<const Keys extends ReadonlyArray<AnyFamily>>(input: Input<Keys>): Keys {
-  const first = input[0];
-  // SAFETY: Input is either the family tuple or one group containing that same tuple.
-  return (first !== undefined && "families" in first ? first.families : input) as Keys;
-}
+/** Family overloads require an argument; an explicit empty group is still valid. */
+export type NonEmptyInput<Keys extends ReadonlyArray<AnyFamily>> =
+  | readonly [StreamGroup<Keys>]
+  | (Keys & readonly [AnyFamily, ...ReadonlyArray<AnyFamily>]);
