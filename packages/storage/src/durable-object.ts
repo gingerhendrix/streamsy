@@ -1,3 +1,4 @@
+import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
 import { SqliteClient } from "@effect/sql-sqlite-do";
 import { Layer } from "effect";
 import { Protocol } from "@streamsy/core";
@@ -17,7 +18,7 @@ export interface DurableObjectProtocolOptions
   extends DurableObjectStorageOptions, Protocol.ProtocolOptions {}
 
 /** Official local/host Durable Object SQLite layer with commit-boundary support. */
-export const layer = (options: DurableObjectStorageOptions) => {
+const storageLayer = (options: DurableObjectStorageOptions) => {
   const clientLayer = Layer.effectContext(sharedSqlClientLayer(SqliteClient.make(options.client)));
   return layerWithDurableObjectTransactions(options).pipe(Layer.provideMerge(clientLayer));
 };
@@ -28,3 +29,27 @@ export const layerProtocol = (options: DurableObjectProtocolOptions) =>
     ...options,
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,
   }).pipe(Layer.provideMerge(layer(options)));
+
+export function layer(options: DurableObjectStorageOptions): ReturnType<typeof storageLayer>;
+export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
+  options: DurableObjectProtocolOptions,
+  ...input: StreamGroup.Input<Keys>
+): Layer.Layer<
+  | Layer.Success<ReturnType<typeof storageLayer>>
+  | StreamFamily.Identifiers<Keys>
+  | Changes<StreamFamily.Identifiers<Keys>>,
+  Layer.Error<ReturnType<typeof storageLayer>>,
+  Layer.Services<ReturnType<typeof storageLayer>>
+>;
+export function layer(
+  options: DurableObjectProtocolOptions,
+  ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
+) {
+  const storage = storageLayer(options);
+  if (input.length === 0) return storage;
+  const protocol = Protocol.layer({
+    ...options,
+    longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,
+  }).pipe(Layer.provideMerge(storage));
+  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
+}

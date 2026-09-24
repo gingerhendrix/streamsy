@@ -1,3 +1,4 @@
+import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
 import { Cause, Effect, Layer, Option, Result, Schema } from "effect";
@@ -165,7 +166,7 @@ const validateClientOpen = (
       );
 
 /** Official Bun SQLite host layer with one shared SqlClient/Reactivity graph. */
-export const layer = (options: BunStorageOptions) => {
+const storageLayer = (options: BunStorageOptions) => {
   const retryPolicy = transactionRetryPolicy(options);
   const preparesJournal =
     options.client.filename !== ":memory:" &&
@@ -195,3 +196,24 @@ export const layer = (options: BunStorageOptions) => {
 /** Complete persistent protocol Layer for an HttpRouter application. */
 export const layerProtocol = (options: BunProtocolOptions) =>
   Protocol.layer(options).pipe(Layer.provideMerge(layer(options)));
+
+export function layer(options: BunStorageOptions): ReturnType<typeof storageLayer>;
+export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
+  options: BunProtocolOptions,
+  ...input: StreamGroup.Input<Keys>
+): Layer.Layer<
+  | Layer.Success<ReturnType<typeof storageLayer>>
+  | StreamFamily.Identifiers<Keys>
+  | Changes<StreamFamily.Identifiers<Keys>>,
+  Layer.Error<ReturnType<typeof storageLayer>>,
+  Layer.Services<ReturnType<typeof storageLayer>>
+>;
+export function layer(
+  options: BunProtocolOptions,
+  ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
+) {
+  const storage = storageLayer(options);
+  if (input.length === 0) return storage;
+  const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
+  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
+}

@@ -1,3 +1,5 @@
+import { Protocol } from "@streamsy/core";
+import { provides, type StreamFamily, type StreamGroup, type Changes } from "@streamsy/core";
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
@@ -623,7 +625,7 @@ const makeLayer = (
 };
 
 /** Generic SQLite-family SQL layer. Hosts supply one matching SqlClient/Reactivity graph. */
-export const layer = (
+const storageLayer = (
   options: SqlStorageOptions = {},
 ): Layer.Layer<
   Storage | CommitBoundary,
@@ -638,3 +640,24 @@ export const layerWithDurableObjectTransactions = (options: SqlStorageOptions) =
 /** Internal test seam; deliberately absent from the package export map. */
 export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTestProbe) =>
   makeLayer(options, probe);
+
+export function layer(options?: SqlStorageOptions): ReturnType<typeof storageLayer>;
+export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
+  options: SqlStorageOptions & Protocol.ProtocolOptions,
+  ...input: StreamGroup.Input<Keys>
+): Layer.Layer<
+  | Layer.Success<ReturnType<typeof storageLayer>>
+  | StreamFamily.Identifiers<Keys>
+  | Changes<StreamFamily.Identifiers<Keys>>,
+  Layer.Error<ReturnType<typeof storageLayer>>,
+  Layer.Services<ReturnType<typeof storageLayer>>
+>;
+export function layer(
+  options: SqlStorageOptions & Protocol.ProtocolOptions = {},
+  ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
+) {
+  const storage = storageLayer(options);
+  if (input.length === 0) return storage;
+  const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
+  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
+}
