@@ -65,5 +65,5 @@ describe("newComment", () => {
 
 test("workspace family ids match the public stream URL contract", () => {
   for (const workspaceId of ["main", "abc123test", "concurrent-test"])
-    expect(Workspaces.at({ workspaceId }).id).toBe(workspaceStreamId(workspaceId));
+    expect(workspaceStreamId(workspaceId)).toBe(Workspaces.at({ workspaceId }).id);
 });
