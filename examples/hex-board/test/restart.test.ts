@@ -1,10 +1,9 @@
-import { provides } from "@streamsy/core";
+import { Memory as StorageMemory } from "@streamsy/core";
 import { GameEvents } from "../src/board/fold.ts";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Layer, ManagedRuntime, Option, Exit, Cause } from "effect";
-import { Streams } from "@streamsy/core";
 import { Checkpoints, Projection, State } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
@@ -15,23 +14,15 @@ import type { GameEvent } from "../src/domain/events.ts";
 import { fullGame, longGame } from "./fixtures.ts";
 
 const board = boardProjection("game");
-const input = board.inputs.input;
+const params = { gameId: "game" };
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
-const protocol = (filename: string) =>
-  Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
-const withFamily = <A, E, R>(
-  graph: Layer.Layer<
-    A | import("@streamsy/core").StreamsReader | import("@streamsy/core").StreamsWriter,
-    E,
-    R
-  >,
-) => provides(graph, GameEvents).pipe(Layer.provideMerge(graph));
-const sqlite = (filename: string) => withFamily(protocol(filename));
+const sqlite = (filename: string) =>
+  Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layer({ client: { filename } }, GameEvents)));
 
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
-    yield* Streams.create(input);
-    yield* Streams.append(input, events.slice(0, cut));
+    yield* (yield* GameEvents).create(params);
+    yield* (yield* GameEvents).append(params, events.slice(0, cut));
     expect((yield* Projection.run(board)).items).toBe(cut);
   });
 const snapshot = Effect.gen(function* () {
@@ -41,7 +32,7 @@ const snapshot = Effect.gen(function* () {
 });
 const read = Effect.gen(function* () {
   const { state, checkpoint, encoded } = yield* snapshot;
-  const tail = (yield* Streams.head(input)).nextOffset;
+  const tail = (yield* (yield* GameEvents).head(params)).nextOffset;
   expect(Option.getOrThrow(checkpoint.record).inputs.input).toBe(tail);
   expect(state.board.sourceThroughOffset).toBe(tail);
   return { state, checkpoint, tail, encoded };
@@ -52,7 +43,7 @@ const advance = (
   cut = split,
 ) =>
   Effect.gen(function* () {
-    yield* Streams.append(input, events.slice(cut));
+    yield* (yield* GameEvents).append(params, events.slice(cut));
     expect((yield* Projection.run(board)).items).toBe(events.length - cut);
     const after = yield* read;
     const pure = events.reduce(
@@ -106,7 +97,9 @@ for (const [name, events, cut] of [
 }
 
 test("memory folds the same game incrementally", async () => {
-  const runtime = ManagedRuntime.make(withFamily(Memory.layerMemory()));
+  const runtime = ManagedRuntime.make(
+    Memory.layer.pipe(Layer.provideMerge(StorageMemory.layer({}, GameEvents))),
+  );
   try {
     const before = await runtime.runPromise(seed().pipe(Effect.andThen(read)));
     await runtime.runPromise(advance(before));
@@ -123,7 +116,11 @@ test("a contradictory AttackResolved leaves SQLite state and checkpoint at the p
     const before = await runtime.runPromise(snapshot);
     const event = fullGame[split];
     if (event?.type !== "AttackResolved") throw new Error("fixture has no resolution at split");
-    await runtime.runPromise(Streams.append(input, [{ ...event, attackerRolls: [1, 1, 1] }]));
+    await runtime.runPromise(
+      Effect.flatMap(GameEvents, (events) =>
+        events.append(params, [{ ...event, attackerRolls: [1, 1, 1] }]),
+      ),
+    );
     const result = await runtime.runPromiseExit(Projection.run(board));
     expect(Exit.isFailure(result)).toBe(true);
     if (Exit.isFailure(result))
