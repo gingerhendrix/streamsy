@@ -40,13 +40,18 @@
       "types": "./dist/fetch/index.d.ts",
       "import": "./dist/fetch/index.js",
       "default": "./dist/fetch/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js",
+      "default": "./dist/protocol/index.js"
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/internal/memory.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:test",
+    "build": "tsdown src/index.ts src/internal/memory.ts src/testing/index.ts src/http/index.ts src/fetch/index.ts src/protocol/index.ts --format esm --dts --out-dir dist --clean --deps.never-bundle effect --deps.never-bundle bun:test",
     "typecheck": "tsc --noEmit",
     "test:unit": "bun test test"
   },

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import * as Root from "@streamsy/core";
+import * as Protocol from "@streamsy/core/protocol";
 import * as Http from "@streamsy/core/http";
 import * as InternalMemory from "@streamsy/core/internal/memory";
 import manifest from "../package.json";
@@ -26,6 +27,7 @@ test("public roots omit internal composition and obsolete aliases", () => {
     "./testing",
     "./http",
     "./fetch",
+    "./protocol",
   ]);
 });
 
@@ -74,6 +76,7 @@ test("root exports stay explicit", () => {
     "StreamConfig",
     "StreamFamily",
     "StreamGone",
+    "StreamGroup",
     "StreamId",
     "StreamLifecycle",
     "StreamNotFound",
@@ -103,4 +106,22 @@ test("family namespace pins factories and backend composition helpers", () => {
     "provides",
     "state",
   ]);
+});
+
+test("protocol subpath retains the same services and memory forms", () => {
+  expect(Object.keys(Protocol).sort()).toEqual([
+    "Backend",
+    "Protocol",
+    "StreamRoute",
+    "Streams",
+    "StreamsReader",
+    "StreamsWriter",
+    "layerMemory",
+    "layerProtocol",
+    "layerRouted",
+  ]);
+  expect(Protocol.StreamsReader).toBe(Root.StreamsReader);
+  expect(Protocol.StreamsWriter).toBe(Root.StreamsWriter);
+  expect(Protocol.layerMemory).toBe(Root.Streams.layerMemory);
+  expect(Protocol.layerProtocol).toBe(Protocol.layerMemory);
 });

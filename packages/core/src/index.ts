@@ -50,3 +50,4 @@ export type { Batch } from "./toolkit/streams.ts";
 export * as StreamFamily from "./toolkit/family.ts";
 export { Changes, type ChangesApi } from "./toolkit/changes.ts";
 export { AnyStream, provides } from "./toolkit/family.ts";
+export * as StreamGroup from "./toolkit/group.ts";

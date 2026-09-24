@@ -1,3 +1,5 @@
+import { provides, type AnyFamily, type Identifiers } from "../toolkit/family.ts";
+import type * as Group from "../toolkit/group.ts";
 import { Context, Effect, Fiber, Layer, Scope } from "effect";
 import { HttpClient, type HttpClientRequest } from "effect/unstable/http";
 import { StreamId } from "../schema/index.ts";
@@ -13,7 +15,7 @@ export { TransportFault } from "../fault.ts";
 type Decoder<A, E> = (operation: Response.Operation, response: HttpResponse) => Effect.Effect<A, E>;
 
 /** Supplies the existing services. HttpClient and the calling fiber own request lifetimes. */
-export const layer = (options: Options) =>
+const protocolLayer = (options: Options) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const client = HttpClient.withScope(yield* HttpClient.HttpClient);
@@ -134,3 +136,14 @@ export const layer = (options: Options) =>
       return Context.make(StreamsReader, reader).pipe(Context.add(StreamsWriter, writer));
     }),
   );
+
+/** Remote families have no local Changes feed. The one-argument form is protocol-only. */
+export function layer(options: Options): ReturnType<typeof protocolLayer>;
+export function layer<const Keys extends ReadonlyArray<AnyFamily>>(
+  options: Options,
+  ...input: Group.Input<Keys>
+): Layer.Layer<Identifiers<Keys>, TransportFault, HttpClient.HttpClient>;
+export function layer(options: Options, ...input: Group.Input<ReadonlyArray<AnyFamily>>) {
+  const protocol = protocolLayer(options);
+  return input.length === 0 ? protocol : provides(protocol, ...input);
+}

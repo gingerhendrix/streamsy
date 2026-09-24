@@ -12,6 +12,7 @@ import type {
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
+import * as Group from "./group.ts";
 import * as Backend from "./backend.ts";
 import * as Route from "./route.ts";
 import * as Ref from "./ref.ts";
@@ -283,16 +284,17 @@ export function checkFamilies(keys: ReadonlyArray<AnyFamily>): void {
  */
 export function provides<Name extends string, const Keys extends ReadonlyArray<AnyFamily>>(
   backend: Backend.Backend<Name>,
-  ...keys: Keys
+  ...input: Group.Input<Keys>
 ): Layer.Layer<Identifiers<Keys>, never, Backend.BackendTag<Name>>;
 export function provides<A, E, R, const Keys extends ReadonlyArray<AnyFamily>>(
   graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
-  ...keys: Keys
+  ...input: Group.Input<Keys>
 ): Layer.Layer<Identifiers<Keys> | (Storage extends A ? Changes<Identifiers<Keys>> : never), E, R>;
 export function provides<E, R, Name extends string, const Keys extends ReadonlyArray<AnyFamily>>(
   source: Backend.Backend<Name> | Layer.Layer<StreamsReader | StreamsWriter, E, R>,
-  ...keys: Keys
+  ...input: Group.Input<Keys>
 ) {
+  const keys = Group.families(input);
   checkFamilies(keys);
   const bindContext = (backend: Backend.BackendServices, storage?: typeof Storage.Service) => {
     if (

@@ -2,6 +2,7 @@ import { Effect, type Layer } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
 import { checkFamilies, type AnyFamily, type Identifiers } from "../toolkit/family.ts";
+import type * as Group from "../toolkit/group.ts";
 import { app, type HttpOptions } from "./program.ts";
 import { requestUrl } from "./route.ts";
 import { streamPath } from "./stream-path-service.ts";
@@ -22,6 +23,14 @@ export interface FamilyAccess<F extends AnyFamily = AnyFamily> {
   /** append permits POST; full also permits PUT and DELETE. */
   readonly access: "read" | "append" | "full";
 }
+/** Bare family lists and groups require an explicit host access policy. */
+export interface GroupRoutesOptions extends RoutesOptions {
+  readonly access: FamilyAccess["access"] | ((family: AnyFamily) => FamilyAccess["access"]);
+}
+export function routes<const Keys extends ReadonlyArray<AnyFamily>>(
+  group: Group.StreamGroup<Keys> | Keys,
+  options: GroupRoutesOptions,
+): RouteLayer<Identifiers<Keys>>;
 export function routes<const Entries extends ReadonlyArray<FamilyAccess>>(
   entries: Entries,
   options?: RoutesOptions,
@@ -29,12 +38,22 @@ export function routes<const Entries extends ReadonlyArray<FamilyAccess>>(
 export function routes(options?: RoutesOptions): RouteLayer<StreamsReader | StreamsWriter>;
 /** One prefix controls both route registration and protocol path stripping. */
 export function routes(
-  input: RoutesOptions | ReadonlyArray<FamilyAccess> = {},
-  options: RoutesOptions = {},
+  input: RoutesOptions | ReadonlyArray<FamilyAccess | AnyFamily> | Group.StreamGroup = {},
+  options: RoutesOptions | GroupRoutesOptions = {},
 ) {
-  // SAFETY: the overload union contains only an options object or a readonly entry array.
-  const entries = Array.isArray(input) ? (input as ReadonlyArray<FamilyAccess>) : undefined;
-  // SAFETY: absence of entries identifies the options branch of the overload union.
+  const list = "families" in input ? input.families : Array.isArray(input) ? input : undefined;
+  const entries: ReadonlyArray<FamilyAccess> | undefined = list?.map(
+    (entry: FamilyAccess | AnyFamily) => {
+      if ("access" in entry) return entry;
+      if (!("access" in options)) throw new TypeError("Family routes require an access policy");
+      return {
+        family: entry,
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The typed host policy is a literal or a callback, not external input.
+        access: typeof options.access === "function" ? options.access(entry) : options.access,
+      };
+    },
+  );
+  // SAFETY: absence of a family list identifies the legacy options-only overload.
   const settings = entries === undefined ? (input as RoutesOptions) : options;
   const prefix = settings.prefix?.replace(/\/$/, "") || "/";
   if (!prefix.startsWith("/") || /[?:#*]/.test(prefix) || prefix.includes("//")) {
