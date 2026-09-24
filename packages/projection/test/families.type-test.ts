@@ -110,6 +110,7 @@ void cannotRunWidened;
 void cannotRunWidenedOutput;
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context
 
+// oxlint-disable effecttsgo/missing-effect-context -- Negative tests deliberately omit Changes<Input>.
 // The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   Streams.layerMemory();
@@ -124,7 +125,9 @@ const fetchWatch = Projection.onChange(fused).pipe(
 // @ts-expect-error Fetch supplies the family, but cannot supply its local Changes capability.
 const missingFetchFeed: Effect.Effect<
   unknown,
-  unknown,
+  ProjectionFault | import("@streamsy/core").TransportFault,
   Checkpoints | Scope.Scope | import("effect/unstable/http/HttpClient").HttpClient
 > = fetchWatch;
 void missingFetchFeed;
+
+// oxlint-enable effecttsgo/missing-effect-context
