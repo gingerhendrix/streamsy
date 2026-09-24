@@ -22,7 +22,6 @@ class PendingInvalidations extends Context.Service<PendingInvalidations, Set<str
 ) {}
 
 export interface CommitBoundaryApi {
-  readonly owner: object;
   readonly withTransaction: <A, E, R>(
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | SqlError, R>;
@@ -265,7 +264,7 @@ const makeBoundary = (
         }),
       );
 
-    return { owner: {}, withTransaction, mutation, changes };
+    return { withTransaction, mutation, changes };
   });
 
 export const boundaryLayer = (

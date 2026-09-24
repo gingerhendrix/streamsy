@@ -23,7 +23,10 @@ export type { OnChangeOptions } from "./on-change.ts";
 /**
  * The handler runs inside the checkpoint owner's transaction. Family writes are checked
  * individually before they execute. Other side effects, including SQL on another client,
- * are outside this guard. Declared outputs are checked together before the first write.
+ * and ambient Streams.* / StreamsWriter writes are outside this guard. Bind fused output
+ * families directly to their storage protocol graph, not to a routed graph. Declared
+ * outputs are checked together before the first write. The owner reference is inherited
+ * by nested runs and forked fibers; cross-owner nested runs and detached writes are unsupported.
  */
 export interface Fused<Inputs extends InputMap, E, R> {
   readonly _tag: "Fused";

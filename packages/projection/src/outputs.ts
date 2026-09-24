@@ -1,5 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
 import { Effect, Option, Schema } from "effect";
+import { ownerOf } from "@streamsy/core/internal/memory";
 import { StreamRef, type StreamFamily } from "@streamsy/core";
 import type { InputMap, Slices } from "./batch.ts";
 import type * as Output from "./output.ts";
@@ -17,8 +18,6 @@ export interface Named<Inputs extends InputMap, E, R, OR = never> {
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
-  /** Internal owner check for the value output store. */
-  readonly stateOwner: Effect.Effect<object | undefined, never, R>;
   readonly streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
 }
@@ -81,10 +80,10 @@ export function outputs<
     generation: definition.generation ?? 1,
     params: definition.params ?? {},
   };
-  return {
+  const result: Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
+    readonly outputs: Bound<D, {}>;
+  } = {
     _tag: "Outputs",
-    stateOwner:
-      value === undefined ? Effect.succeed(undefined) : Effect.map(State, (state) => state.owner),
     ...key,
     inputs: definition.inputs,
     outputs: bind(definition.outputs, definition.id, Schema.Struct({}), () => ({
@@ -152,4 +151,19 @@ export function outputs<
         return { items, saveState: state.save(key, encoded) };
       }),
   };
+  return Object.defineProperty(result, StateOwner, {
+    value: value === undefined ? Effect.succeed(undefined) : Effect.map(State, ownerOf),
+    // Declaration copies must retain the dynamic State lookup; this is not a wire ownership claim.
+    enumerable: true,
+  });
 }
+
+const StateOwner = Symbol.for("@streamsy/projection/internal/StateOwner");
+/** Private normalized metadata; the public Named declaration does not gain a required field. */
+export const stateOwner = <Inputs extends InputMap, E, R, OR>(
+  projection: Named<Inputs, E, R, OR>,
+): Effect.Effect<object | undefined, never, R> => {
+  if (!(StateOwner in projection)) return Effect.succeed(undefined);
+  // SAFETY: outputs attaches an owner lookup whose State requirement is already included in R.
+  return projection[StateOwner] as Effect.Effect<object | undefined, never, R>;
+};

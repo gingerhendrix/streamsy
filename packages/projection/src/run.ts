@@ -1,5 +1,5 @@
 import type { Named } from "./outputs.ts";
-import { CurrentOwner, ForeignOwner } from "@streamsy/core/internal/memory";
+import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
 import { Effect } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
@@ -52,7 +52,7 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
       yield* projection.process(read.slices, unit).pipe(
         Effect.provideService(CurrentOwner, owner.owner),
         Effect.catchDefect((defect) =>
-          defect instanceof ForeignOwner
+          isForeignOwner(defect)
             ? Effect.fail(
                 new ProjectionFault({
                   phase: "process",

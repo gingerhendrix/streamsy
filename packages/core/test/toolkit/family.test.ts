@@ -229,3 +229,30 @@ it("rejects a graph whose exposed Storage does not own the protocol wires", asyn
   if (Exit.isFailure(result))
     expect(String(Cause.squash(result.cause))).toContain("routed or mixed graph");
 });
+
+it("spreading a protocol writer does not copy its ownership claim", async () => {
+  const { StreamsReader, StreamsWriter, Storage } = await import("../../src/index.ts");
+  const graph = Streams.layerMemory().pipe(
+    Layer.flatMap((context) =>
+      Layer.succeedContext(
+        Context.make(StreamsReader, Context.get(context, StreamsReader)).pipe(
+          Context.add(StreamsWriter, { ...Context.get(context, StreamsWriter) }),
+          Context.add(Storage, Context.get(context, Storage)),
+        ),
+      ),
+    ),
+  );
+  const result = await Effect.runPromiseExit(
+    Effect.void.pipe(Effect.provide(provides(graph, Notes))),
+  );
+  expect(Exit.isFailure(result)).toBe(true);
+});
+
+it("the private guard sentinel is recognized by its stable brand", async () => {
+  const { ForeignOwner, isForeignOwner } = await import("../../src/internal/owner.ts");
+  const foreignCopy = new ForeignOwner("notes/ann", true);
+  Object.setPrototypeOf(foreignCopy, Error.prototype);
+  expect(foreignCopy instanceof ForeignOwner).toBe(false);
+  expect(isForeignOwner(foreignCopy)).toBe(true);
+  expect(isForeignOwner(new Error("unrelated"))).toBe(false);
+});

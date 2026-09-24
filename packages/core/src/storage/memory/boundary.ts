@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Semaphore } from "effect";
+import { attachOwner } from "../../internal/owner.ts";
 import { copyState, type State } from "./state.ts";
 
 /**
@@ -8,7 +9,6 @@ import { copyState, type State } from "./state.ts";
  * Each outer transaction copies the host state; intended for bounded memory hosts.
  */
 export interface MemoryCommitBoundaryApi {
-  readonly owner: object;
   readonly withTransaction: <A, E, R>(body: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>>;
   readonly remove: (key: string) => Effect.Effect<void>;
@@ -86,7 +86,6 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
       draft.value.changed = true;
     });
     const api = MemoryCommitBoundary.of({
-      owner,
       withTransaction,
       read: (key) =>
         Effect.map(current, (draft) =>
@@ -107,5 +106,5 @@ export const makeBoundary = (committed: State, publish: Effect.Effect<void>) =>
           }),
         ),
     });
-    return { api, access, changed };
+    return { api: attachOwner(api, owner), access, changed };
   });

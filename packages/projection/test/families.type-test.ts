@@ -131,3 +131,16 @@ const missingFetchFeed: Effect.Effect<
 void missingFetchFeed;
 
 // oxlint-enable effecttsgo/missing-effect-context
+
+export type FeedChecks = [
+  Assert<Same<Effect.Services<typeof withoutFeed>, Changes<Input> | Checkpoints | Scope.Scope>>,
+  Assert<
+    Same<
+      Effect.Services<typeof fetchWatch>,
+      | Changes<Input>
+      | Checkpoints
+      | Scope.Scope
+      | import("effect/unstable/http/HttpClient").HttpClient
+    >
+  >,
+];

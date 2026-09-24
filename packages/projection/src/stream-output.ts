@@ -10,7 +10,7 @@ import {
 } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Named } from "./outputs.ts";
+import { stateOwner as outputStateOwner, type Named } from "./outputs.ts";
 import type { Processed } from "./output.ts";
 import type { Pinned } from "./projection.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
@@ -88,7 +88,8 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
-  const stateOwner = projection._tag === "Outputs" ? yield* projection.stateOwner : undefined;
+  const stateOwner =
+    projection._tag === "Outputs" ? yield* outputStateOwner(projection) : undefined;
   if (stateOwner !== undefined && stateOwner !== owner.owner)
     return yield* new ProjectionFault({
       phase: "load",

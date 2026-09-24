@@ -1,3 +1,4 @@
+import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
@@ -286,24 +287,32 @@ for (const [name, host] of hosts) {
         });
         const state = yield* Projection.State;
         const failed = yield* Projection.run(projection).pipe(
-          Effect.provideService(Projection.State, {
-            ...state,
-            save: (key, encoded) =>
-              state.save(key, encoded).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ProjectionFault({
-                      phase: "checkpoint",
-                      reason: "storage-failure",
-                      message: "after-state",
-                    }),
+          Effect.provideService(
+            Projection.State,
+            attachOwner(
+              {
+                ...state,
+                save: (key, encoded) =>
+                  state.save(key, encoded).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProjectionFault({
+                          phase: "checkpoint",
+                          reason: "storage-failure",
+                          message: "after-state",
+                        }),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-          }),
+              },
+              ownerOf(state),
+            ),
+          ),
           Effect.result,
         );
         expect(failed._tag).toBe("Failure");
+        if (failed._tag === "Failure")
+          expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "storage-failure" });
         expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
         expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.none());
         yield* Projection.run(projection);

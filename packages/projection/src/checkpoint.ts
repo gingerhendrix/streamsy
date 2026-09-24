@@ -1,4 +1,5 @@
 import { Context, Effect, Option, Schema } from "effect";
+import { ownerOf } from "@streamsy/core/internal/memory";
 import { ZERO_OFFSET } from "@streamsy/core";
 import type { InputMap, Slice } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -65,7 +66,6 @@ export class Checkpoints extends Context.Service<Checkpoints, CheckpointsApi>()(
 
 /** The encoded seam a host owner provides; both shipped Layers build on it. */
 export interface EncodedStore {
-  readonly owner: object;
   readonly read: (key: string) => Effect.Effect<Option.Option<string>, ProjectionFault>;
   readonly write: (key: string, value: string) => Effect.Effect<void, ProjectionFault>;
   readonly remove: (key: string) => Effect.Effect<void, ProjectionFault>;
@@ -130,7 +130,7 @@ export const fromStore = (store: EncodedStore): CheckpointsApi => {
     );
   });
   return {
-    owner: store.owner,
+    owner: ownerOf(store),
     load,
     save,
     remove: (key) => store.remove(recordKey(key)),

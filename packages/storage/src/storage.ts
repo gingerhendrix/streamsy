@@ -1,3 +1,4 @@
+import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
   ChangeSnapshot,
@@ -527,7 +528,6 @@ const snapshot = (sql: SqlClient.SqlClient, id: StreamId) =>
 
 const makeStorage = (sql: SqlClient.SqlClient, boundary: BoundaryRuntime) =>
   Storage.of({
-    owner: boundary.owner,
     capabilities: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
     record: Effect.fn("SqlStorage.record")((id) => readRecord(sql, id)),
     messages: Effect.fn("SqlStorage.messages")((id, window) => readMessages(sql, id, window)),
@@ -605,7 +605,7 @@ const makeLayer = (
       );
       const boundary = yield* BoundaryRuntimeService;
       return Context.empty().pipe(
-        Context.add(Storage, makeStorage(sql, boundary)),
+        Context.add(Storage, attachOwner(makeStorage(sql, boundary), ownerOf(boundary))),
         Context.add(CommitBoundary, CommitBoundary.of(boundary)),
       );
     }),

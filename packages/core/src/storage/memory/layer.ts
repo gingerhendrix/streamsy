@@ -1,4 +1,5 @@
 import { Context, Predicate, Effect, Layer, Option } from "effect";
+import { attachOwner, ownerOf } from "../../internal/owner.ts";
 import { Storage } from "../storage.ts";
 import {
   MutationRejected,
@@ -141,7 +142,6 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
         return { outcome: { _tag: "Applied", results: [first, ...rest] }, changed };
       };
       const storage = Storage.of({
-        owner: boundary.api.owner,
         capabilities: {
           fork: chain ? "chain" : "copy",
           atomicScope: chain ? "store" : "stream",
@@ -195,6 +195,8 @@ export const layer = (options: MemoryOptions = {}): Layer.Layer<Storage | Memory
           ),
         ),
       });
-      return Context.make(Storage, storage).pipe(Context.add(MemoryCommitBoundary, boundary.api));
+      return Context.make(Storage, attachOwner(storage, ownerOf(boundary.api))).pipe(
+        Context.add(MemoryCommitBoundary, boundary.api),
+      );
     }),
   );

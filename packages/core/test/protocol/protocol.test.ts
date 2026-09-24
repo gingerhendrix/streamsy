@@ -464,7 +464,6 @@ it("fork none refuses before any storage operation, even for an existing target"
       const control = yield* StreamsTest;
       const forbidden = Effect.die("unexpected storage call");
       const source = Storage.of({
-        owner: {},
         capabilities: {
           atomicScope: control.storage.capabilities.atomicScope,
           wake: control.storage.capabilities.wake,

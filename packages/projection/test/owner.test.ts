@@ -148,7 +148,7 @@ test("a value output on a foreign State owner fails before processing", async ()
             return { state: 1 };
           }),
       });
-      const result = yield* Projection.run(projection).pipe(
+      const result = yield* Projection.run({ ...projection }).pipe(
         Effect.provide(foreignState),
         Effect.result,
       );

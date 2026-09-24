@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql";
+import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { CommitBoundary } from "@streamsy/storage";
 import { Checkpoints, fromStore, type EncodedStore } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -61,7 +62,6 @@ export const layer = Layer.effectContext(
           ),
       );
     const store: EncodedStore = {
-      owner: boundary.owner,
       read: read(TABLE),
       write: write(TABLE),
       remove: remove(TABLE),
@@ -78,6 +78,7 @@ export const layer = Layer.effectContext(
             ),
           ),
     };
+    attachOwner(store, ownerOf(boundary));
     return Context.make(Checkpoints, fromStore(store)).pipe(
       Context.add(State, stateFromStore(store)),
     );

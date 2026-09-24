@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { Streams } from "@streamsy/core";
-import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
+import { MemoryCommitBoundary, attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Checkpoints, fromStore, type EncodedStore } from "./checkpoint.ts";
 import { State, stateFromStore } from "./state.ts";
 
@@ -10,7 +10,6 @@ export const layer = Layer.effectContext(
     const boundary = yield* MemoryCommitBoundary;
     const stateKey = (key: string) => `state:${key}`;
     const store: EncodedStore = {
-      owner: boundary.owner,
       read: boundary.read,
       write: boundary.write,
       remove: boundary.remove,
@@ -19,6 +18,7 @@ export const layer = Layer.effectContext(
       removeState: (key) => boundary.remove(stateKey(key)),
       withTransaction: boundary.withTransaction,
     };
+    attachOwner(store, ownerOf(boundary));
     return Context.make(Checkpoints, fromStore(store)).pipe(
       Context.add(State, stateFromStore(store)),
     );

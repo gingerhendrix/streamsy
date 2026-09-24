@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option, Stream } from "effect";
-import { checkWriteOwner, storageOf } from "../internal/owner.ts";
+import { checkWriteOwner, storageOf, ownerOf } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
 import { Changes } from "./changes.ts";
 import { StreamId } from "../schema/index.ts";
@@ -23,9 +23,9 @@ export function bind<P, A, RD, RE>(
   services: Backend.BackendServices,
 ) {
   const storage = storageOf(services.writer);
-  const owner = storage?.owner ?? services.writer;
+  const owner = storage === undefined ? services.writer : ownerOf(storage);
   const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
-    checkWriteOwner(owner, id).pipe(Effect.andThen(Effect.suspend(run)));
+    checkWriteOwner(owner, id, storage !== undefined).pipe(Effect.andThen(Effect.suspend(run)));
   const own = <A, E>(id: string, run: () => Effect.Effect<A, E>): Effect.Effect<A, E> =>
     Effect.suspend(() =>
       route.match(id)
@@ -276,6 +276,11 @@ export function checkFamilies(keys: ReadonlyArray<AnyFamily>): void {
   ]);
 }
 
+/**
+ * Bind directly to the owning protocol graph. A routed/mixed graph cannot establish
+ * family ownership for fused writes. Graphs exposing Storage also provide Changes;
+ * the legacy named Backend overload retains only its family capability type.
+ */
 export function provides<Name extends string, const Keys extends ReadonlyArray<AnyFamily>>(
   backend: Backend.Backend<Name>,
   ...keys: Keys
@@ -292,8 +297,7 @@ export function provides<E, R, Name extends string, const Keys extends ReadonlyA
   const bindContext = (backend: Backend.BackendServices, storage?: typeof Storage.Service) => {
     if (
       storage !== undefined &&
-      (storageOf(backend.reader)?.owner !== storage.owner ||
-        storageOf(backend.writer)?.owner !== storage.owner)
+      (storageOf(backend.reader) !== storage || storageOf(backend.writer) !== storage)
     )
       throw new RangeError(
         "Bind families to their storage protocol graph, not a routed or mixed graph",
@@ -303,7 +307,7 @@ export function provides<E, R, Name extends string, const Keys extends ReadonlyA
       context = Context.add(context, key, key.make(backend));
       if (storage !== undefined)
         context = Context.add(context, Changes(key), {
-          owner: storage.owner,
+          owner: ownerOf(storage),
           changes: (id) =>
             key.match(id)
               ? storage.changes(id)

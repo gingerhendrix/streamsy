@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect";
-import { provides, StreamFamily } from "@streamsy/core";
+import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
+import { Backend, Storage, Streams, provides, StreamFamily } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Projection } from "@streamsy/projection";
+import { Checkpoints, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 
@@ -82,7 +82,56 @@ test("onChange rejects a family rebound without its matching feed", async () => 
       const fiber = yield* Projection.onChange(projection).pipe(Effect.provide(alternate));
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") expect(result.failure.reason).toBe("unsupported-composition");
+      if (result._tag === "Failure")
+        expect(result.failure).toMatchObject({ reason: "unsupported-composition" });
     }).pipe(Effect.provide(host), Effect.scoped),
   );
+});
+
+const legacyBackend = Backend.make("routed-legacy-owner");
+const legacyStorage = Memory.layerMemory();
+const legacyRouted = Streams.layerRouted([legacyBackend.serves(Source, Output)]).pipe(
+  Layer.provide(legacyBackend.layer(legacyStorage)),
+);
+
+test("a legacy routed family cannot establish the owner of a fused write", async () => {
+  const legacyHost = provides(legacyRouted, Source, Output).pipe(Layer.provideMerge(legacyStorage));
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const source = yield* Source;
+      const output = yield* Output;
+      const params = { name: "legacy" };
+      yield* source.create(params);
+      yield* source.append(params, [1]);
+      yield* output.create(params);
+      const projection = Projection.make({
+        id: "legacy-routed",
+        input: Source.at(params),
+        process: () => output.append(params, [2]),
+      });
+      const result = yield* Projection.run(projection).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure).toMatchObject({ reason: "unsupported-composition" });
+        expect(result.failure.message).toContain("Cannot establish a storage owner");
+      }
+      expect(
+        (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
+      ).toEqual([]);
+      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
+    }).pipe(Effect.provide(legacyHost)),
+  );
+});
+
+test("a legacy routed graph exposing ambient Storage is rejected during binding", async () => {
+  const storageOnly = legacyStorage.pipe(
+    Layer.flatMap((context) => Layer.succeed(Storage, Context.get(context, Storage))),
+  );
+  const mixed = Layer.merge(legacyRouted, storageOnly);
+  const result = await Effect.runPromiseExit(
+    Effect.void.pipe(Effect.provide(provides(mixed, Source, Output))),
+  );
+  expect(Exit.isFailure(result)).toBe(true);
+  if (Exit.isFailure(result))
+    expect(String(Cause.squash(result.cause))).toContain("routed or mixed graph");
 });
