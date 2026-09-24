@@ -1,6 +1,13 @@
 import { Effect } from "effect";
-import { Producer, Streams, StreamsReader, StreamsWriter, type StreamRef } from "@streamsy/core";
-import { emptySlice, type InputMap, type Slice, type Slices } from "./batch.ts";
+import { Producer, Streams, StreamsWriter, type StreamFamily } from "@streamsy/core";
+import {
+  inputEntries,
+  emptySlice,
+  type InputServices,
+  type InputMap,
+  type Slice,
+  type Slices,
+} from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Named } from "./outputs.ts";
@@ -15,14 +22,16 @@ export const producerId = (id: string, version: number, params: Record<string, s
   `${id}/v${version}${Object.keys(params).length === 0 ? "" : `/${canonicalParams(params)}`}`;
 
 /** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
-const appendPinned = Effect.fn("Projection.appendPinned")(function* <O>(
-  output: StreamRef.StreamRef<O>,
+const appendPinned = Effect.fn("Projection.appendPinned")(function* <O, R>(
+  output: StreamFamily.Member<O, R>,
   items: ReadonlyArray<O>,
   position: Producer.Position,
 ) {
   const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
     new ProjectionFault({ phase: "pin", reason, message, cause });
+  const { wire } = yield* output.family;
   return yield* Producer.append(output, items, position).pipe(
+    Effect.provideService(StreamsWriter, wire),
     Effect.catchTags({
       EncodeFault: () =>
         new ProjectionFault({
@@ -72,19 +81,16 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   O,
   E,
   R,
+  OR,
 >(
-  projection: Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
+  projection: Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.fn.Return<
-  Progress,
-  E | ProjectionFault,
-  R | Checkpoints | StreamsReader | StreamsWriter
-> {
+): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
-  const streams: Readonly<Record<string, StreamRef.StreamRef<unknown>>> =
+  const streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>> =
     projection._tag === "Stream" ? { stream: projection.output } : projection.streams;
   const positions = { ...adapters.outputs };
   for (const [name, position] of Object.entries(positions)) {
@@ -100,7 +106,7 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   let count = 0;
   if (pending !== undefined) {
     const slices: Record<string, Slice<unknown>> = {};
-    for (const [name, ref] of Object.entries(projection.inputs)) {
+    for (const [name, ref] of inputEntries(projection.inputs)) {
       const range = pending.ranges[name];
       if (range === undefined) slices[name] = emptySlice(before.record.inputs[name] ?? "");
       else {
@@ -166,12 +172,15 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   }
   let token = before.token;
   if (pending === undefined && Object.keys(seqs).length > 0) {
-    const reader = yield* StreamsReader;
     for (const [name, output] of Object.entries(streams)) {
       if (seqs[name] === undefined) continue;
+      const { wire: reader } = yield* output.family;
       const head = yield* reader.head(output.id).pipe(
         Effect.catchTag("StreamNotFound", () =>
-          Streams.create(output).pipe(Effect.andThen(reader.head(output.id))),
+          Streams.create(output).pipe(
+            Effect.provideService(StreamsWriter, reader),
+            Effect.andThen(reader.head(output.id)),
+          ),
         ),
         Effect.mapError(
           (cause) =>

@@ -1,39 +1,46 @@
+import { Checkpoints } from "./checkpoint.ts";
 import type { Named } from "./outputs.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
 import { Effect, Fiber, Option, Queue, Stream, type Scope } from "effect";
-import { Storage, StreamsReader, type StreamRef, type StreamRoute } from "@streamsy/core";
-import type { InputMap } from "./batch.ts";
+import { Storage, type StreamFamily, type StreamRef, type StreamRoute } from "@streamsy/core";
+import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import type { Family } from "./family.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Fused, Pinned } from "./projection.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { serialized } from "./serialized.ts";
-import type { Host, Progress } from "./run.ts";
+import type { Progress } from "./run.ts";
 
 export interface OnChangeOptions extends RunOptions {}
 
 type AnyProjection =
   | Fused<InputMap, unknown, unknown>
-  | Pinned<InputMap, unknown, unknown, unknown>
-  | Named<InputMap, unknown, unknown>;
+  | Pinned<InputMap, unknown, unknown, unknown, unknown>
+  | Named<InputMap, unknown, unknown, unknown>;
+type RuntimeInputs = Record<string, StreamFamily.Member<unknown, StreamFamily.FamilyIdentifier>>;
+type RuntimeServices = Checkpoints | StreamFamily.FamilyIdentifier;
 type RuntimeProjection =
-  | Fused<InputMap, ProjectionFault, Host>
-  | Pinned<InputMap, unknown, ProjectionFault, Host>
-  | Named<InputMap, ProjectionFault, Host>;
+  | Fused<RuntimeInputs, ProjectionFault, RuntimeServices>
+  | Pinned<RuntimeInputs, unknown, ProjectionFault, RuntimeServices, StreamFamily.FamilyIdentifier>
+  | Named<RuntimeInputs, ProjectionFault, RuntimeServices, StreamFamily.FamilyIdentifier>;
 type FamilyParams<F> = F extends Family<infer Codecs, any> ? StreamRoute.Params<Codecs> : never;
 type FamilyMember<F> = F extends Family<any, infer Member> ? Member : never;
 type MemberError<Member> =
   Member extends Fused<infer _Inputs, infer E, infer _R>
     ? E
-    : Member extends Pinned<infer _Inputs, infer _Output, infer E, infer _R>
+    : Member extends Pinned<infer _Inputs, infer _Output, infer E, infer _R, infer _OR>
       ? E
-      : never;
+      : Member extends Named<infer _Inputs, infer E, infer _R, infer _OR>
+        ? E
+        : never;
 type MemberRequirements<Member> =
   Member extends Fused<infer _Inputs, infer _E, infer R>
-    ? R
-    : Member extends Pinned<infer _Inputs, infer _Output, infer _E, infer R>
-      ? R
-      : never;
+    ? R | InputServices<_Inputs>
+    : Member extends Pinned<infer _Inputs, infer _Output, infer _E, infer R, infer OR>
+      ? R | OR | InputServices<_Inputs>
+      : Member extends Named<infer Inputs, infer _E, infer R, infer OR>
+        ? R | OR | InputServices<Inputs>
+        : never;
 
 const unsupported = (input: string, ref: StreamRef.StreamRef<unknown>) =>
   new ProjectionFault({
@@ -43,11 +50,11 @@ const unsupported = (input: string, ref: StreamRef.StreamRef<unknown>) =>
     message: `${ref.id} has no same-owner change feed`,
   });
 
-const watch = <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
+const watch = <Inputs extends InputMap, O, E, R, OR = never>(
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
   storage: typeof Storage.Service,
   options: OnChangeOptions,
-): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
+): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
   Effect.scoped(
     Effect.gen(function* () {
       const wake = yield* Queue.make<void>({
@@ -55,10 +62,10 @@ const watch = <Inputs extends InputMap, O, E, R>(
         strategy: "dropping",
       });
       const closed = new Set<string>();
-      const inputs = Object.entries(projection.inputs);
-      const reader = yield* StreamsReader;
+      const inputs = inputEntries(projection.inputs);
       yield* Effect.forEach(inputs, ([name, ref]) =>
         Effect.gen(function* () {
+          const { wire: reader } = yield* ref.family;
           const readable = yield* reader.head(ref.id).pipe(
             Effect.as(true),
             Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
@@ -137,13 +144,13 @@ const watch = <Inputs extends InputMap, O, E, R>(
  * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
  * failures surface as `read / storage-failure`.
  */
-export function onChange<Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
+export function onChange<Inputs extends InputMap, O, E, R, OR = never>(
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
   options?: OnChangeOptions,
 ): Effect.Effect<
   Fiber.Fiber<Progress, E | ProjectionFault>,
   ProjectionFault,
-  R | Host | Scope.Scope
+  R | OR | Checkpoints | InputServices<Inputs> | Scope.Scope
 >;
 export function onChange<F extends Family<any, any>>(
   family: F,
@@ -152,7 +159,7 @@ export function onChange<F extends Family<any, any>>(
 ): Effect.Effect<
   ReadonlyArray<Fiber.Fiber<Progress, MemberError<FamilyMember<F>> | ProjectionFault>>,
   ProjectionFault,
-  MemberRequirements<FamilyMember<F>> | Host | Scope.Scope
+  MemberRequirements<FamilyMember<F>> | Checkpoints | Scope.Scope
 >;
 export function onChange(
   target: AnyProjection | Family<any, any>,

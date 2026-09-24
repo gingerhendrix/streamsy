@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Family construction is the checked bridge between route records and their mapped projection inputs; each assertion is documented at its use. */
 import { Option, Schema } from "effect";
-import { StreamRoute, StreamRef } from "@streamsy/core";
+import { StreamRoute, StreamRef, type StreamFamily } from "@streamsy/core";
 import type { InputMap, Slices } from "./batch.ts";
 import { make, stream, type Fused, type Pinned } from "./projection.ts";
 import * as Output from "./output.ts";
@@ -12,7 +12,10 @@ import type { ProjectionFault } from "./fault.ts";
 import type { Unit } from "./unit.ts";
 import type { Effect } from "effect";
 
-type AnyRoute = StreamRoute.StreamRoute<any, any, never, never>;
+type AnyRoute = StreamRoute.StreamRoute<any, any, never, never> &
+  StreamFamily.AnyFamily & {
+    readonly at: (params: any) => StreamFamily.Member<any, any>;
+  };
 type RouteMap = Readonly<Record<string, AnyRoute>>;
 type RouteParams<Route extends AnyRoute> =
   Route extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : never;
@@ -31,7 +34,7 @@ type InvalidRouteParam<Codecs extends StreamRoute.ParamCodecs, Route extends Any
 }[keyof RouteParams<Route>];
 
 type RouteRefs<Routes extends RouteMap> = {
-  readonly [Name in keyof Routes]: ReturnType<Routes[Name]["ref"]>;
+  readonly [Name in keyof Routes]: ReturnType<Routes[Name]["at"]>;
 };
 
 type RoutesWithin<Codecs extends StreamRoute.ParamCodecs, Routes extends RouteMap> = {
@@ -88,8 +91,8 @@ export interface Family<
   Codecs extends StreamRoute.ParamCodecs = StreamRoute.ParamCodecs,
   Member =
     | Fused<InputMap, unknown, unknown>
-    | Pinned<InputMap, unknown, unknown, unknown>
-    | Named<InputMap, unknown, unknown>,
+    | Pinned<InputMap, unknown, unknown, unknown, unknown>
+    | Named<InputMap, unknown, unknown, unknown>,
 > {
   readonly _tag: "Family";
   readonly id: string;
@@ -120,7 +123,7 @@ const refsOf = <Routes extends RouteMap>(
   params: Readonly<Record<string, unknown>>,
 ): RouteRefs<Routes> => {
   const built: unknown = Object.fromEntries(
-    Object.entries(routes).map(([name, route]) => [name, route.ref(params)]),
+    Object.entries(routes).map(([name, route]) => [name, route.at(params)]),
   );
   // The loop calls each route under its own key, so the resulting ref record
   // has exactly the mapped `RouteRefs<Routes>` shape.
@@ -171,7 +174,7 @@ export function family<
   definition: NamedFamilyDefinition<C, Routes, D, Result, E, R>,
 ): Family<
   C,
-  Named<RouteRefs<Routes>, E | ProjectionFault, R | State> & {
+  Named<RouteRefs<Routes>, E | ProjectionFault, R | State, Output.Services<D>> & {
     readonly outputs: Bound<Fixed<D>, {}>;
   }
 > & { readonly outputs: Bound<D, FamilyParams<C>> };
@@ -186,7 +189,7 @@ export function family<
   R,
 >(
   definition: PinnedFamilyDefinition<Codecs, Routes, OutRoute, E, R>,
-): Family<Codecs, Pinned<RouteRefs<Routes>, RouteItem<OutRoute>, E, R>>;
+): Family<Codecs, Pinned<RouteRefs<Routes>, RouteItem<OutRoute>, E, R, OutRoute["Identifier"]>>;
 export function family<
   Codecs extends StreamRoute.ParamCodecs,
   Routes extends RouteMap,
@@ -205,15 +208,15 @@ export function family<
         Object.entries(definition.outputs).map(([name, output]) => {
           if (output._tag === "Value") return [name, output];
           const target = output.stream;
-          // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Rows have string ids; routed targets expose ref.
-          if (typeof target === "string" || !("ref" in target)) return [name, output];
+          if (!("ref" in target)) return [name, output];
           const ref = target.ref(params);
           return [
             name,
             {
               ...output,
-              stream:
-                output._tag === "Rows" ? ref.id : StreamRef.json(ref.id, { schema: output.schema }),
+              stream: Object.assign(StreamRef.json(ref.id, { schema: output.schema }), {
+                family: target,
+              }),
             },
           ];
         }),
@@ -233,7 +236,7 @@ export function family<
           generation: definition.generation,
           params: encodeParams(definition.id, definition.params, params),
           inputs: refsOf(definition.inputs, params),
-          output: definition.output.ref(params),
+          output: definition.output.at(params),
           process: definition.process,
         })
       : make({

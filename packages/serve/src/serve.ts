@@ -1,6 +1,6 @@
 import { Effect, Layer, Schema, SchemaAST, Result } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Http, Offset, type StreamsReader, type StreamRef, type StreamRoute } from "@streamsy/core";
+import { Http, Offset, StreamsReader, type StreamRef, type StreamRoute } from "@streamsy/core";
 import * as Contract from "./contract.ts";
 import {
   normalize,
@@ -35,38 +35,38 @@ export interface ReadOptions extends Http.ReadOptions {
 export interface ParamsOptions<P, E = never, R = never> extends ReadOptions {
   readonly params: Effect.Effect<P, E, R>;
 }
-export function stream<P, const Path extends `/${string}`>(
-  source: StreamSource<P> & PathSource<P>,
+export function stream<P, F, const Path extends `/${string}`>(
+  source: StreamSource<P, F> & PathSource<P>,
   path: Path & ExactPath<Path, NoInfer<P>>,
   options?: ReadOptions,
-): RouteLayer<StreamsReader>;
-export function stream<P, E, R>(
-  source: StreamSource<P>,
+): RouteLayer<F>;
+export function stream<P, F, E, R>(
+  source: StreamSource<P, F>,
   path: `/${string}`,
   options: ParamsOptions<NoInfer<P>, E, R>,
-): RouteLayer<StreamsReader | R, E>;
-export function stream<P, E, R>(
-  source: StreamSource<P>,
+): RouteLayer<F | R, E>;
+export function stream<P, F, E, R>(
+  source: StreamSource<P, F>,
   path: `/${string}`,
   options: ReadOptions | ParamsOptions<P, E, R> = {},
-): RouteLayer<StreamsReader | R, E> {
+): RouteLayer<F | R, E> {
   return readRoute(normalize(source, path), path, options);
 }
-export function state<P, C extends StreamRef.Collections, const Path extends `/${string}`>(
-  source: StateSource<P, C> & PathSource<P>,
+export function state<P, C extends StreamRef.Collections, F, const Path extends `/${string}`>(
+  source: StateSource<P, C, F> & PathSource<P>,
   path: Path & ExactPath<Path, NoInfer<P>>,
   options?: ReadOptions,
-): RouteLayer<StreamsReader>;
-export function state<P, C extends StreamRef.Collections, E, R>(
-  source: StateSource<P, C>,
+): RouteLayer<F>;
+export function state<P, C extends StreamRef.Collections, F, E, R>(
+  source: StateSource<P, C, F>,
   path: `/${string}`,
   options: ParamsOptions<NoInfer<P>, E, R>,
-): RouteLayer<StreamsReader | R, E>;
-export function state<P, C extends StreamRef.Collections, E, R>(
-  source: StateSource<P, C>,
+): RouteLayer<F | R, E>;
+export function state<P, C extends StreamRef.Collections, F, E, R>(
+  source: StateSource<P, C, F>,
   path: `/${string}`,
   options: ReadOptions | ParamsOptions<P, E, R> = {},
-): RouteLayer<StreamsReader | R, E> {
+): RouteLayer<F | R, E> {
   return readRoute(normalize(source, path, "state"), path, options);
 }
 
@@ -126,7 +126,7 @@ function readRoute<P, E, R, RS>(
   source: Source<P, RS>,
   path: `/${string}`,
   options: ReadOptions | ParamsOptions<P, E, R>,
-): RouteLayer<StreamsReader | R | RS, E> {
+): RouteLayer<R | RS, E> {
   Http.checkReadOptions(options);
   if ("params" in options && pathNames(path).length > 0)
     throw new TypeError("Explicit params routes must not contain path parameters");
@@ -138,7 +138,7 @@ function readRoute<P, E, R, RS>(
   const handler = Effect.gen(function* (): Effect.fn.Return<
     HttpServerResponse.HttpServerResponse,
     E,
-    StreamsReader | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RS
+    HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RS
   > {
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (request.method !== "GET" && request.method !== "HEAD") return methodResponse();
@@ -207,7 +207,9 @@ function readRoute<P, E, R, RS>(
         },
         409,
       );
+    const wire = yield* source.wire;
     return yield* Http.read(resolved.id, options).pipe(
+      Effect.provideService(StreamsReader, wire),
       Effect.map(HttpServerResponse.setHeaders(headers)),
       Effect.catchTags({
         StreamNotFound: () =>
@@ -277,10 +279,11 @@ function readRoute<P, E, R, RS>(
       }),
     );
   });
-  return HttpRouter.add<
-    E,
-    StreamsReader | HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RS
-  >("*", path, handler);
+  return HttpRouter.add<E, HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RS>(
+    "*",
+    path,
+    handler,
+  );
 }
 
 export interface ValueUnavailable {

@@ -1,22 +1,22 @@
+import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { StreamRoute } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { producerId } from "../src/stream-output.ts";
 
-const facts = StreamRoute.json("facts/:workspaceId", {
+class facts extends StreamFamily.json<facts>()("family.test/facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
-});
-const config = StreamRoute.json("config", {
+}) {}
+class config extends StreamFamily.json<config>()("family.test/config", "config", {
   params: {},
   schema: Schema.String,
-});
-const output = StreamRoute.json("boards/:workspaceId", {
+}) {}
+class output extends StreamFamily.json<output>()("family.test/output", "boards/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
-});
+}) {}
 
 test("member is the ordinary routed projection", () => {
   const board = Projection.family({
@@ -31,10 +31,10 @@ test("member is the ordinary routed projection", () => {
     id: "board",
     params: { workspaceId: "ws-42" },
     inputs: {
-      facts: facts.ref({ workspaceId: "ws-42" }),
-      config: config.ref({}),
+      facts: facts.at({ workspaceId: "ws-42" }),
+      config: config.at({}),
     },
-    output: output.ref({ workspaceId: "ws-42" }),
+    output: output.at({ workspaceId: "ws-42" }),
     process: (batch) => Effect.succeed(batch.facts.items),
   });
 
@@ -55,10 +55,10 @@ test("member is the ordinary routed projection", () => {
 });
 
 test("number parameters encode to strings and parse back", () => {
-  const numbered = StreamRoute.json("numbered/:id", {
+  class numbered extends StreamFamily.json<numbered>()("family.test/numbered", "numbered/:id", {
     params: { id: Schema.FiniteFromString },
     schema: Schema.String,
-  });
+  }) {}
   const members = Projection.family({
     id: "numbered",
     params: { id: Schema.FiniteFromString },
@@ -72,10 +72,10 @@ test("number parameters encode to strings and parse back", () => {
   );
 });
 
-const stringId = StreamRoute.json("string-id/:id", {
+class stringId extends StreamFamily.json<stringId>()("family.test/stringId", "string-id/:id", {
   params: { id: Schema.String },
   schema: Schema.String,
-});
+}) {}
 Projection.family({
   id: "incompatible-codec",
   params: { id: Schema.FiniteFromString },
@@ -84,10 +84,10 @@ Projection.family({
   process: () => Effect.void,
 });
 
-const literalId = StreamRoute.json("literal-id/:id", {
+class literalId extends StreamFamily.json<literalId>()("family.test/literalId", "literal-id/:id", {
   params: { id: Schema.Literal("a") },
   schema: Schema.String,
-});
+}) {}
 Projection.family({
   id: "narrow-route-codec",
   params: { id: Schema.String },
@@ -96,10 +96,10 @@ Projection.family({
   process: () => Effect.void,
 });
 
-const wrong = StreamRoute.json("wrong/:projectId", {
+class wrong extends StreamFamily.json<wrong>()("family.test/wrong", "wrong/:projectId", {
   params: { projectId: Schema.String },
   schema: Schema.String,
-});
+}) {}
 Projection.family({
   id: "invalid",
   params: { workspaceId: Schema.String },

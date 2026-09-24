@@ -1,3 +1,4 @@
+import * as FamilyFixture from "./support/families.ts";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -19,10 +20,13 @@ import * as Sqlite from "@streamsy/projection/sqlite";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { composition, initialize, input, inspect, positives } from "./support/scenarios.ts";
 
-const host = (filename: string, readLimit = 1000) =>
+const protocolHost = (filename: string, readLimit = 1000) =>
   Sqlite.layer.pipe(
     Layer.provideMerge(BunStorage.layerProtocol({ client: { filename }, readLimit })),
   );
+
+const host = (filename: string, readLimit = 1000) =>
+  FamilyFixture.withFamilies(protocolHost(filename, readLimit));
 
 const scratch = Effect.runSync(
   Config.String("STREAMSY_PROJECTION_SCRATCH").pipe(Config.withDefault("/tmp")),
@@ -154,6 +158,7 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       process.execPath,
       "-e",
       `
+      import * as FamilyFixture from "./test/support/families.ts";
       import { Layer, ManagedRuntime, Option } from "effect";
       import { Streams } from "@streamsy/core";
       import * as BunStorage from "@streamsy/storage/bun";
@@ -163,7 +168,7 @@ test("a new Bun process reopens the file and resumes without repeated output", a
       const host = Sqlite.layer.pipe(
         Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: Bun.argv.at(-1) } })),
       );
-      const runtime = ManagedRuntime.make(host);
+      const runtime = ManagedRuntime.make(FamilyFixture.withFamilies(host));
       try {
         const resumed = await runtime.runPromise(Projection.run(positives));
         const stored = await runtime.runPromise(inspect);

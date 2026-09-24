@@ -1,7 +1,7 @@
+import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import {
-  StreamRef,
   Streams,
   StreamsReader,
   ZERO_OFFSET,
@@ -12,7 +12,7 @@ import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { layerMemory } from "@streamsy/projection/memory";
-import { minimal } from "../src/examples/minimal.ts";
+import { minimal, Numbers, Doubled } from "../src/examples/minimal.ts";
 import {
   composition,
   failAtSave,
@@ -24,9 +24,18 @@ import {
   type Services,
 } from "./support/scenarios.ts";
 
-const run = <A, E>(body: Effect.Effect<A, E, Services | MemoryCommitBoundary>, readLimit = 1000) =>
-  Effect.runPromise(body.pipe(Effect.provide(layerMemory({ readLimit }))));
-const failure = <A, E>(body: Effect.Effect<A, E, Services | MemoryCommitBoundary>) =>
+const run = <A, E>(
+  body: Effect.Effect<A, E, Services | MemoryCommitBoundary | Numbers | Doubled>,
+  readLimit = 1000,
+) =>
+  Effect.runPromise(
+    body.pipe(
+      Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit }), Numbers, Doubled)),
+    ),
+  );
+const failure = <A, E>(
+  body: Effect.Effect<A, E, Services | MemoryCommitBoundary | Numbers | Doubled>,
+) =>
   Effect.gen(function* () {
     const result = yield* body.pipe(Effect.result);
     expect(result._tag).toBe("Failure");
@@ -45,7 +54,7 @@ const withRead = <A, E, R>(
   Effect.gen(function* () {
     const reader = yield* StreamsReader;
     return yield* body.pipe(
-      Effect.provideService(StreamsReader, StreamsReader.of({ ...reader, read: read(reader) })),
+      FamilyFixture.provideReader(StreamsReader.of({ ...reader, read: read(reader) })),
     );
   });
 
@@ -154,7 +163,7 @@ test("identity mismatch on inputs stops without reset", () =>
       yield* initialize;
       yield* Projection.run(positives);
       const before = yield* inspect;
-      const other = StreamRef.json("elsewhere", { schema: Schema.Finite });
+      const other = FamilyFixture.json("elsewhere", { schema: Schema.Finite });
       yield* Streams.create(other);
       const changed = Projection.make({
         id: positives.id,
@@ -248,7 +257,7 @@ test("compiled minimal example doubles three inputs", () =>
       expect(result.status).toBe("caught-up");
       expect(result.items).toBe(3);
       expect(result.units).toBe(1);
-      const doubled = StreamRef.json("doubled", { schema: Schema.Finite });
+      const doubled = FamilyFixture.json("doubled", { schema: Schema.Finite });
       expect(yield* readAll(doubled)).toEqual([2, 4, 6]);
     }),
   ));
@@ -287,8 +296,8 @@ test("record change between load and transaction is a token conflict", () =>
             Projection.run(positives),
             (reader) => (id, options) =>
               Projection.run(positives).pipe(
+                FamilyFixture.provideReader(reader),
                 Effect.provide(services),
-                Effect.provideService(StreamsReader, reader),
                 Effect.orDie,
                 Effect.andThen(reader.read(id, options)),
               ),
@@ -426,7 +435,7 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
     Effect.gen(function* () {
       yield* initialize;
       const versions: number[] = [];
-      const output = StreamRef.json("versioned-output", { schema: Schema.Finite });
+      const output = FamilyFixture.json("versioned-output", { schema: Schema.Finite });
       const projection = Projection.stream({
         id: "versioned-stream",
         version: 7,

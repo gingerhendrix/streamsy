@@ -1,6 +1,7 @@
+import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { StreamRef, Streams, ZERO_OFFSET } from "@streamsy/core";
+import { Streams, ZERO_OFFSET } from "@streamsy/core";
 import {
   Checkpoints,
   Projection,
@@ -11,12 +12,14 @@ import {
 import { layerMemory } from "@streamsy/projection/memory";
 import { positives, initialize, type Services } from "./support/scenarios.ts";
 
-const a = StreamRef.json("multi-a", { schema: Schema.Finite });
-const b = StreamRef.json("multi-b", { schema: Schema.String });
+const a = FamilyFixture.json("multi-a", { schema: Schema.Finite });
+const b = FamilyFixture.json("multi-b", { schema: Schema.String });
 type Inputs = { readonly a: typeof a; readonly b: typeof b };
 
 const run = <A, E>(body: Effect.Effect<A, E, Services>, readLimit = 1000) =>
-  Effect.runPromise(body.pipe(Effect.provide(layerMemory({ readLimit }))));
+  Effect.runPromise(
+    body.pipe(Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit })))),
+  );
 const setup = Effect.gen(function* () {
   yield* Streams.create(a);
   yield* Streams.create(b);

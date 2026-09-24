@@ -1,23 +1,35 @@
 import { Effect, Schema } from "effect";
-import { StreamRef, Streams } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 import { Projection } from "../index.ts";
 
-const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
-const doubled = StreamRef.json("doubled", { schema: Schema.Finite });
+export class Numbers extends StreamFamily.json<Numbers>()("Minimal/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+export class Doubled extends StreamFamily.json<Doubled>()("Minimal/Doubled", "doubled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
 
-/** A stateless fused map: each doubled item is appended inside the checkpoint transaction. */
+/** A stateless fused map inside the checkpoint transaction. */
 export const minimal = Effect.gen(function* () {
-  yield* Streams.create(numbers);
-  yield* Streams.create(doubled);
-  yield* Streams.append(numbers, [1, 2, 3]);
-  const projection = Projection.make({
-    id: "doubled",
-    input: numbers,
-    process: (batch) =>
-      Streams.append(
-        doubled,
-        batch.input.items.map((n) => n * 2),
-      ),
-  });
-  return yield* Projection.run(projection, { limit: 10 });
+  const numbers = yield* Numbers;
+  const doubled = yield* Doubled;
+  yield* numbers.create({});
+  yield* doubled.create({});
+  yield* numbers.append({}, [1, 2, 3]);
+  return yield* Projection.run(
+    Projection.make({
+      id: "doubled",
+      input: Numbers.at({}),
+      process: (batch) =>
+        Effect.flatMap(Doubled, (output) =>
+          output.append(
+            {},
+            batch.input.items.map((n) => n * 2),
+          ),
+        ),
+    }),
+    { limit: 10 },
+  );
 });

@@ -2,12 +2,18 @@ import { Effect, Option, Predicate, Schema } from "effect";
 import {
   Offset,
   compare,
-  StreamsReader,
   type ReadMessage,
   type ReadResult,
   type StreamRef,
+  type StreamFamily,
 } from "@streamsy/core";
-import { type InputMap, type Slice, type Slices } from "./batch.ts";
+import {
+  inputEntries,
+  type InputServices,
+  type InputMap,
+  type Slice,
+  type Slices,
+} from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { PinnedRange } from "./unit.ts";
 
@@ -33,12 +39,12 @@ export interface Read<A> {
 }
 
 /** One bounded read after `from`; retain input history and never reuse a deleted stream id. */
-export const readSlice = Effect.fn("Projection.readSlice")(function* <A>(
+export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
   input: string,
-  ref: StreamRef.StreamRef<A>,
+  ref: StreamFamily.Member<A, R>,
   from: string,
-): Effect.fn.Return<Read<A>, ProjectionFault, StreamsReader> {
-  const reader = yield* StreamsReader;
+): Effect.fn.Return<Read<A>, ProjectionFault, R> {
+  const { wire: reader } = yield* ref.family;
   const historyUnavailable = () =>
     new ProjectionFault({
       phase: "read",
@@ -121,12 +127,12 @@ const decodeMessages = <A>(
   );
 
 /** Re-read server pages, retaining the pinned count and checking the boundary where available. */
-export const reproduce = Effect.fn("Projection.reproduce")(function* <A>(
+export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
   input: string,
-  ref: StreamRef.StreamRef<A>,
+  ref: StreamFamily.Member<A, R>,
   range: PinnedRange,
-): Effect.fn.Return<Read<A>, ProjectionFault, StreamsReader> {
-  const reader = yield* StreamsReader;
+): Effect.fn.Return<Read<A>, ProjectionFault, R> {
+  const { wire: reader } = yield* ref.family;
   const unreproducible = (detail: string) =>
     new ProjectionFault({
       phase: "pin",
@@ -204,10 +210,10 @@ export interface Pass<Inputs extends InputMap> {
 export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs extends InputMap>(
   inputs: Inputs,
   offsets: Record<string, string>,
-): Effect.fn.Return<Pass<Inputs>, ProjectionFault, StreamsReader> {
+): Effect.fn.Return<Pass<Inputs>, ProjectionFault, InputServices<Inputs>> {
   const slices: Record<string, Slice<unknown>> = {};
   let items = 0;
-  for (const [name, ref] of Object.entries(inputs)) {
+  for (const [name, ref] of inputEntries(inputs)) {
     const read = yield* readSlice(name, ref, offsets[name] ?? "");
     slices[name] = read.slice;
     items += read.slice.items.length;

@@ -1,3 +1,5 @@
+import * as FamilyFixture from "./support/families.ts";
+import { StreamFamily } from "@streamsy/core";
 import { producerId } from "../src/stream-output.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
@@ -6,7 +8,6 @@ import {
   Backend,
   Protocol,
   StorageFault,
-  StreamRoute,
   StreamRef,
   Streams,
   StreamsReader,
@@ -24,11 +25,14 @@ import * as Memory from "@streamsy/projection/memory";
  * Inputs and the checkpoint store share one memory graph; outputs live on a
  * second one, so an append and a checkpoint save never share a transaction.
  */
-const In = StreamRoute.json("in/:name", { params: { name: Schema.String }, schema: Schema.Finite });
-const Out = StreamRoute.json("out/:name", {
+class In extends StreamFamily.json<In>()("stream-output.test/In", "in/:name", {
+  params: { name: Schema.String },
+  schema: Schema.Finite,
+}) {}
+class Out extends StreamFamily.json<Out>()("stream-output.test/Out", "out/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
-});
+}) {}
 const inputs = Backend.make("projection-inputs");
 const outputs = Backend.make("projection-outputs");
 const inputGraph = Streams.layerMemory();
@@ -45,9 +49,16 @@ const host = Layer.mergeAll(
     Layer.provide(Protocol.layer({ readLimit: 1 }).pipe(Layer.provide(inputGraph))),
   ),
 );
-type Services = PagedReader | Checkpoints | StreamsReader | StreamsWriter;
+type Services =
+  | In
+  | Out
+  | PagedReader
+  | Checkpoints
+  | import("@streamsy/core").AnyStream
+  | StreamsReader
+  | StreamsWriter;
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
-  Effect.runPromise(body.pipe(Effect.provide(host)));
+  Effect.runPromise(body.pipe(Effect.provide(FamilyFixture.withFamilies(host, In, Out))));
 
 const fault = <A>(result: { readonly _tag: string; readonly failure?: A }): ProjectionFault => {
   if (result._tag !== "Failure") throw new Error("Expected a failure");
@@ -69,9 +80,7 @@ const withWriter = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     const writer = yield* StreamsWriter;
-    return yield* body.pipe(
-      Effect.provideService(StreamsWriter, StreamsWriter.of({ ...writer, ...patch(writer) })),
-    );
+    return yield* body.pipe(provideWriter(StreamsWriter.of({ ...writer, ...patch(writer) })));
   });
 const withReader = <A, E, R>(
   body: Effect.Effect<A, E, R | StreamsReader>,
@@ -79,9 +88,7 @@ const withReader = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     const reader = yield* StreamsReader;
-    return yield* body.pipe(
-      Effect.provideService(StreamsReader, StreamsReader.of({ ...reader, ...patch(reader) })),
-    );
+    return yield* body.pipe(provideReader(StreamsReader.of({ ...reader, ...patch(reader) })));
   });
 const withCheckpoints = <A, E, R>(
   body: Effect.Effect<A, E, R | Checkpoints>,
@@ -133,8 +140,8 @@ const failingAppends = (count: number) => {
 
 /** A stream projection that doubles numbers into strings; both refs are unique per scenario. */
 const scenario = (name: string) => {
-  const input = In.ref({ name });
-  const output = Out.ref({ name });
+  const input = In.at({ name });
+  const output = Out.at({ name });
   const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
   const doubled = Projection.stream({
     id: `doubled-${name}`,
@@ -288,8 +295,8 @@ test("the first pin stores the stream epoch before the append; a crash there set
 test("an empty-output unit writes no pin and consumes no seq", () =>
   run(
     Effect.gen(function* () {
-      const input = In.ref({ name: "evens" });
-      const output = Out.ref({ name: "evens" });
+      const input = In.at({ name: "evens" });
+      const output = Out.at({ name: "evens" });
       const evens = Projection.stream({
         id: "evens",
         input,
@@ -538,9 +545,9 @@ test("a stored stream epoch that is not the generation fails load/stale-epoch", 
 test("a two-input pending unit reproduces both ranges", () =>
   run(
     Effect.gen(function* () {
-      const a = In.ref({ name: "pair-a" });
-      const b = In.ref({ name: "pair-b" });
-      const output = Out.ref({ name: "pair" });
+      const a = In.at({ name: "pair-a" });
+      const b = In.at({ name: "pair-b" });
+      const output = Out.at({ name: "pair" });
       const seen: Array<{
         readonly a: ReadonlyArray<number>;
         readonly b: ReadonlyArray<number>;
@@ -606,7 +613,7 @@ test("a gone output still faults before pinning", () =>
     Effect.gen(function* () {
       const s = scenario("gone-output");
       yield* s.initialize;
-      yield* (yield* StreamsWriter).fork(Out.ref({ name: "retained-output" }).id, s.output.id);
+      yield* (yield* StreamsWriter).fork(Out.at({ name: "retained-output" }).id, s.output.id);
       yield* Streams.remove(s.output);
       const error = fault(yield* Projection.run(s.doubled).pipe(Effect.result));
       expect(error.phase).toBe("pin");
@@ -701,3 +708,22 @@ test("a closed output faults before pinning", () =>
       expect((yield* stored(s.doubled)).token).toBe("0");
     }),
   ));
+
+const provideWriter =
+  (writer: Writer<StreamsFault>) =>
+  <A, E, R>(body: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(Out, (service) =>
+      body.pipe(
+        Effect.provideService(Out, { ...service, wire: { ...service.wire, ...writer } }),
+        Effect.provideService(StreamsWriter, writer),
+      ),
+    );
+const provideReader =
+  (reader: Reader<StreamsFault>) =>
+  <A, E, R>(body: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(In, (service) =>
+      body.pipe(
+        Effect.provideService(In, { ...service, wire: { ...service.wire, ...reader } }),
+        Effect.provideService(StreamsReader, reader),
+      ),
+    );

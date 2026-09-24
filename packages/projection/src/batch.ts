@@ -1,7 +1,7 @@
-import type { StreamRef } from "@streamsy/core";
+import type { StreamRef, StreamFamily } from "@streamsy/core";
 
 /** Declaration order of the map is the read and item order of every pass. */
-export type InputMap = Record<string, StreamRef.StreamRef<unknown>>;
+export type InputMap = Record<string, StreamFamily.Member<unknown, any>>;
 export type ItemOf<Ref> = Ref extends StreamRef.StreamRef<infer A> ? A : never;
 
 export interface Slice<A> {
@@ -33,3 +33,10 @@ export const emptySlice = <A>(from: string): Slice<A> => ({
   upToDate: false,
   closed: false,
 });
+
+export type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["family"]["Identifier"];
+
+/** Iteration preserves the union of the declared input family requirements. */
+export const inputEntries = <Inputs extends InputMap>(inputs: Inputs) =>
+  // SAFETY: every iterated member comes from Inputs; its key is in the mapped union.
+  Object.entries(inputs) as Array<[string, StreamFamily.Member<unknown, InputServices<Inputs>>]>;

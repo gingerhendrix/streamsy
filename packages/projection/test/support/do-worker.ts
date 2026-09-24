@@ -1,3 +1,4 @@
+import * as FamilyFixture from "./families.ts";
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import { Layer, ManagedRuntime } from "effect";
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
@@ -28,7 +29,7 @@ export class ProjectionObject {
         }),
       ),
     );
-    const runtime = ManagedRuntime.make(host);
+    const runtime = ManagedRuntime.make(FamilyFixture.withFamilies(host));
     try {
       return Response.json(await runtime.runPromise(composition));
     } finally {

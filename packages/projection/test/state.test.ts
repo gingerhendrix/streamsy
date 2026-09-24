@@ -1,16 +1,15 @@
+class numbers extends StreamFamily.json<numbers>()("state.test/numbers", "state/:name", {
+  params: { name: Schema.String },
+  schema: Schema.Finite,
+}) {}
+import * as FamilyFixture from "./support/families.ts";
+import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Layer, ManagedRuntime, Option, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
-import {
-  StreamRef,
-  StreamRoute,
-  Streams,
-  type StreamsReader,
-  type StreamsWriter,
-  type StorageFault,
-} from "@streamsy/core";
+import { Streams, type StreamsReader, type StreamsWriter, type StorageFault } from "@streamsy/core";
 import { Checkpoints, Projection, State, type ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
@@ -19,15 +18,16 @@ import { serialized, hasLock } from "../src/serialized.ts";
 import { forget } from "../src/forget.ts";
 import { recordKey } from "@streamsy/projection/checkpoint";
 
-const input = StreamRef.json("state-input", { schema: Schema.Finite });
+const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
 const total = Projection.make({
   id: "state-total",
   version: 2,
   input,
   process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
 });
-const sqlite = (filename = ":memory:") =>
+const sqliteProtocol = (filename = ":memory:") =>
   Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
+const sqlite = (filename = ":memory:") => FamilyFixture.withFamilies(sqliteProtocol(filename));
 const seed = Effect.gen(function* () {
   yield* Streams.create(input);
   yield* Streams.append(input, [2, 3]);
@@ -37,12 +37,12 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      Checkpoints | State | StreamsReader | StreamsWriter,
+      Checkpoints | State | import("@streamsy/core").AnyStream | StreamsReader | StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
 > = [
-  ["memory", Memory.layerMemory()],
+  ["memory", FamilyFixture.withFamilies(Memory.layerMemory())],
   ["SQLite", sqlite()],
 ];
 for (const [name, host] of hosts) {
@@ -243,15 +243,11 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
         expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "invalid-record" });
       expect(failed._tag).toBe("Failure");
       expect(yield* state.load(total)).toEqual(Option.none());
-    }).pipe(Effect.provide(Memory.layerMemory())),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });
 
 test("family state rows are separate and initial factory receives params only on first use", async () => {
-  const numbers = StreamRoute.json("state/:name", {
-    params: { name: Schema.String },
-    schema: Schema.Finite,
-  });
   const calls: string[] = [];
   const family = Projection.family({
     id: "state-family",
@@ -280,12 +276,12 @@ test("family state rows are separate and initial factory receives params only on
         );
       }
       expect(calls).toEqual(["a", "b"]);
-    }).pipe(Effect.provide(Memory.layerMemory())),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });
 
 test("tagged multi-input fold narrows items and follows declaration order", async () => {
-  const words = StreamRef.json("state-words", { schema: Schema.String });
+  const words = FamilyFixture.json("state-words", { schema: Schema.String });
   const projection = Projection.make({
     id: "tagged",
     inputs: { input, words },
@@ -303,7 +299,7 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
       yield* Streams.append(words, ["a"]);
       yield* Projection.run(projection);
       expect(yield* Projection.loadState(projection, Schema.String)).toEqual(Option.some("23A"));
-    }).pipe(Effect.provide(Memory.layerMemory())),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });
 
@@ -412,6 +408,6 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
       yield* Streams.append(input, [7, 11]);
       yield* run;
       expect({ loads, saves, starts }).toEqual({ loads: 2, saves: 2, starts: 1 });
-    }).pipe(Effect.provide(Memory.layerMemory())),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });

@@ -1,6 +1,5 @@
-/* oxlint-disable anti-slop/no-runtime-typeof -- Output stream options explicitly accept either a string id or an inert ref. */
 import { Schema, type Effect } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamRef, type StreamFamily } from "@streamsy/core";
 
 export interface Upsert<A> {
   readonly _tag: "Upsert";
@@ -14,12 +13,12 @@ export const upsert = <A>(row: A): Upsert<A> => ({ _tag: "Upsert", row });
 export const remove = (key: string | number): Remove => ({ _tag: "Remove", key });
 export type Change<A> = Upsert<A> | Remove;
 
-export interface Stream<A, Identity = StreamRef.StreamRef<A>> {
+export interface Stream<A, Identity = StreamFamily.Member<A, any>> {
   readonly _tag: "Stream";
   readonly schema: Schema.Codec<A, unknown, never, never>;
   readonly stream: Identity;
 }
-export interface Rows<A, Identity = string> {
+export interface Rows<A, Identity = StreamFamily.Member<unknown, any>> {
   readonly _tag: "Rows";
   readonly schema: Schema.Codec<A, unknown, never, never>;
   readonly key: StreamRef.StateKey<A>;
@@ -29,58 +28,46 @@ export interface Value<A, I = unknown> {
   readonly _tag: "Value";
   readonly schema: Schema.Codec<A, I, never, never>;
 }
-/** Routed targets supply identity only; the declaration owns the JSON codec. */
-export interface Target<P> {
+/** Output declarations own their codec and retain the target family key. */
+export type Target<P> = StreamFamily.AnyFamily & {
   readonly ref: (params: P) => { readonly id: string };
-}
-export function stream<A, I, P>(
+};
+export type TargetServices<T> = T extends { readonly family: { readonly Identifier: infer R } }
+  ? R
+  : T extends { readonly Identifier: infer R }
+    ? R
+    : never;
+export type Services<D extends RoutedMap> = {
+  [K in keyof D]: D[K] extends { readonly stream: infer T } ? TargetServices<T> : never;
+}[keyof D];
+export function stream<A, I, T extends Target<any>>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly stream: Target<P> },
-): Stream<A, Target<P>>;
-export function stream<A, I>(
+  options: { readonly stream: T },
+): Stream<A, T>;
+export function stream<A, I, R>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly stream: string | { readonly id: string } },
-): Stream<A>;
-export function stream<A, I, P>(
+  options: { readonly stream: StreamFamily.Member<unknown, R> },
+): Stream<A, StreamFamily.Member<A, R>>;
+export function stream<A, I, R>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly stream: string | { readonly id: string } | Target<P> },
-): Stream<A, StreamRef.StreamRef<A> | Target<P>> {
+  options: { readonly stream: Target<any> | StreamFamily.Member<unknown, R> },
+): Stream<A, Target<any> | StreamFamily.Member<A, R>> {
   const target = options.stream;
   return {
     _tag: "Stream",
     schema,
     stream:
-      typeof target !== "string" && "ref" in target
+      "ref" in target
         ? target
-        : StreamRef.json(typeof target === "string" ? target : target.id, { schema }),
+        : Object.assign(StreamRef.json(target.id, { schema }), { family: target.family }),
   };
 }
 /** The output name is the Durable State collection type. Deletes need only a key. */
-export function rows<A, I, P>(
+export function rows<A, I, T extends Target<any> | StreamFamily.Member<unknown, any>>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly key: StreamRef.StateKey<A>; readonly stream: Target<P> },
-): Rows<A, Target<P>>;
-export function rows<A, I>(
-  schema: Schema.Codec<A, I, never, never>,
-  options: {
-    readonly key: StreamRef.StateKey<A>;
-    readonly stream: string | { readonly id: string };
-  },
-): Rows<A>;
-export function rows<A, I, P>(
-  schema: Schema.Codec<A, I, never, never>,
-  options: {
-    readonly key: StreamRef.StateKey<A>;
-    readonly stream: string | { readonly id: string } | Target<P>;
-  },
-): Rows<A, string | Target<P>> {
-  const target = options.stream;
-  return {
-    _tag: "Rows",
-    schema,
-    key: options.key,
-    stream: typeof target === "string" ? target : "ref" in target ? target : target.id,
-  };
+  options: { readonly key: StreamRef.StateKey<A>; readonly stream: T },
+): Rows<A, T> {
+  return { _tag: "Rows", schema, key: options.key, stream: options.stream };
 }
 export const value = <A, I>(schema: Schema.Codec<A, I, never, never>): Value<A, I> => ({
   _tag: "Value",

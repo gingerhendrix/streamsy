@@ -1,7 +1,8 @@
+import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema } from "effect";
-import { StreamRef, Streams, StreamsWriter, TransportFault } from "@streamsy/core";
+import { Streams, StreamsWriter, TransportFault } from "@streamsy/core";
 import { Checkpoints, Output, Projection, ProjectionFault } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
@@ -12,7 +13,10 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      import("@streamsy/projection").Host | Projection.State,
+      | import("@streamsy/projection").Checkpoints
+      | import("@streamsy/core").StreamsReader
+      | import("@streamsy/core").StreamsWriter
+      | Projection.State,
       import("@streamsy/core").StorageFault | ProjectionFault
     >,
   ]
@@ -25,23 +29,23 @@ const hosts: ReadonlyArray<
     ),
   ],
 ] as const;
-const input = StreamRef.json("named-input", { schema: Schema.Finite });
-const a = StreamRef.json("named-a", { schema: Schema.Finite });
-const b = StreamRef.json("named-b", { schema: Schema.Finite });
+const input = FamilyFixture.json("named-input", { schema: Schema.Finite });
+const a = FamilyFixture.json("named-a", { schema: Schema.Finite });
+const b = FamilyFixture.json("named-b", { schema: Schema.Finite });
 const declarations = {
   a: Output.stream(Schema.Finite, { stream: a }),
   b: Output.stream(Schema.Finite, { stream: b }),
 };
 const seed = Streams.create(input).pipe(Effect.andThen(Streams.append(input, [1])));
 
-const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
+const numbers = FamilyFixture.json("numbers", { schema: Schema.Finite });
 const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
 const tracker = Projection.outputs({
   id: "tracker",
   inputs: { numbers },
   outputs: {
-    board: Output.rows(Card, { key: "issueId", stream: "board" }),
-    transitions: Output.stream(Schema.Finite, { stream: "transitions" }),
+    board: Output.rows(Card, { key: "issueId", stream: FamilyFixture.bytes("board") }),
+    transitions: Output.stream(Schema.Finite, { stream: FamilyFixture.bytes("transitions") }),
     summary: Output.value(Schema.Finite),
   },
   process: Projection.fold(0, (state, batch) => {
@@ -69,7 +73,7 @@ for (const [name, host] of hosts) {
         });
         const writer = yield* StreamsWriter;
         const failed = yield* Projection.run(projection).pipe(
-          Effect.provideService(StreamsWriter, {
+          FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) =>
               writer.append(id, options).pipe(
@@ -102,7 +106,7 @@ for (const [name, host] of hosts) {
         expect(yield* owner.load(projection)).toEqual(before);
         expect(yield* readAll(a)).toEqual([1]);
         expect(yield* readAll(b)).toEqual([]);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
   test(`${name}: the Outputs documentation snippet writes rows, events and state`, () =>
     Effect.runPromise(
@@ -111,10 +115,10 @@ for (const [name, host] of hosts) {
         yield* Streams.append(numbers, [1, 2, 3]);
         yield* Projection.run(tracker);
         expect(yield* Projection.loadState(tracker, Schema.Finite)).toEqual(Option.some(6));
-        expect(yield* readAll(StreamRef.json("transitions", { schema: Schema.Finite }))).toEqual([
-          6,
-        ]);
-        expect(yield* readAll(StreamRef.json("board", { schema: Schema.Unknown }))).toEqual([
+        expect(
+          yield* readAll(FamilyFixture.json("transitions", { schema: Schema.Finite })),
+        ).toEqual([6]);
+        expect(yield* readAll(FamilyFixture.json("board", { schema: Schema.Unknown }))).toEqual([
           {
             type: "board",
             key: "total",
@@ -123,7 +127,7 @@ for (const [name, host] of hosts) {
           },
           { type: "board", key: "old", headers: { operation: "delete" } },
         ]);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
   test(`${name}: independent sequences skip empty outputs and versions own their producer ids`, () =>
     Effect.runPromise(
@@ -172,7 +176,7 @@ for (const [name, host] of hosts) {
           process: (batch) => Effect.succeed({ a: batch.input.items.map((n) => n * 100), b: [] }),
         });
         yield* Projection.run(v2).pipe(
-          Effect.provideService(StreamsWriter, {
+          FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) => {
               ids.push(options.producer?.producerId ?? "");
@@ -182,7 +186,7 @@ for (const [name, host] of hosts) {
         );
         expect(ids).toEqual(["named/v2"]);
         expect(yield* readAll(a)).toEqual([10, 20, 100, 200]);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 
   test(`${name}: a stop between appends replays from pre-unit state and settles once`, () =>
@@ -202,7 +206,7 @@ for (const [name, host] of hosts) {
         });
         const writer = yield* StreamsWriter;
         const failed = yield* Projection.run(projection).pipe(
-          Effect.provideService(StreamsWriter, {
+          FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) =>
               id === b.id
@@ -226,7 +230,7 @@ for (const [name, host] of hosts) {
         yield* Streams.append(input, [2]);
         const outcomes: string[] = [];
         yield* Projection.run(projection).pipe(
-          Effect.provideService(StreamsWriter, {
+          FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) =>
               writer.append(id, options).pipe(
@@ -246,7 +250,7 @@ for (const [name, host] of hosts) {
         // Fail another unit after state exists: its pin must retain that prior value.
         yield* Streams.append(input, [4]);
         yield* Projection.run(projection).pipe(
-          Effect.provideService(StreamsWriter, {
+          FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) =>
               id === b.id
@@ -267,7 +271,7 @@ for (const [name, host] of hosts) {
         expect(yield* readAll(a)).toEqual([1, 3, 7]);
         expect(yield* readAll(b)).toEqual([1, 3, 7]);
         expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(7));
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 
   test(`${name}: failed settle rolls back checkpoint and state together`, () =>
@@ -304,7 +308,7 @@ for (const [name, host] of hosts) {
         expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.none());
         yield* Projection.run(projection);
         expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(1));
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 
   test(`${name}: rows encode the declared collection and key, including key-only deletes`, () =>
@@ -312,7 +316,10 @@ for (const [name, host] of hosts) {
       Effect.gen(function* () {
         yield* seed;
         const RowCard = Schema.Struct({ issueId: Schema.String, title: Schema.String });
-        const board = Output.rows(RowCard, { key: "issueId", stream: "board" });
+        const board = Output.rows(RowCard, {
+          key: "issueId",
+          stream: FamilyFixture.bytes("board"),
+        });
         const projection = Projection.outputs({
           id: "rows",
           inputs: { input },
@@ -323,7 +330,7 @@ for (const [name, host] of hosts) {
             }),
         });
         yield* Projection.run(projection);
-        expect(yield* readAll(StreamRef.json("board", { schema: Schema.Unknown }))).toEqual([
+        expect(yield* readAll(FamilyFixture.json("board", { schema: Schema.Unknown }))).toEqual([
           {
             type: "board",
             key: "one",
@@ -332,7 +339,7 @@ for (const [name, host] of hosts) {
           },
           { type: "board", key: "old", headers: { operation: "delete" } },
         ]);
-      }).pipe(Effect.provide(host)),
+      }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 }
 
@@ -420,7 +427,7 @@ void checkTypes;
 test("named outputs reject an output that names one of their inputs", () => {
   for (const declaration of [
     Output.stream(Schema.Finite, { stream: input }),
-    Output.rows(Card, { key: "issueId", stream: input.id }),
+    Output.rows(Card, { key: "issueId", stream: input }),
   ]) {
     expect(() =>
       Projection.outputs({
@@ -433,9 +440,17 @@ test("named outputs reject an output that names one of their inputs", () => {
   }
 });
 
-test("Output.stream uses only the supplied id and its declared schema", () => {
-  const declaration = Output.stream(Schema.Finite, { stream: { id: "id-only" } });
-  expect(String(declaration.stream.id)).toBe("id-only");
-  expect(declaration.stream.contentType).toBe("application/json");
-  expect(Schema.encodeSync(declaration.stream.codec)(42)).toBe("42");
+test("Output.stream retains a member and uses its declared schema", () => {
+  const target = FamilyFixture.bytes("id-only");
+  const declaration = Output.stream(Schema.Finite, { stream: target });
+  const projection = Projection.outputs({
+    id: "codec-test",
+    inputs: { input },
+    outputs: { out: declaration },
+    process: () => Effect.succeed({ out: [42] }),
+  });
+  expect(Schema.encodeSync(projection.outputs.out.ref({}).codec)(42)).toBe("42");
+  expect(projection.streams.out?.family).toBe(target.family);
+  expect(projection.streams.out?.id).toBe(target.id);
+  expect(Schema.encodeSync(projection.streams.out!.codec)(42)).toBe("42");
 });

@@ -1,10 +1,27 @@
+class WatchRoute2 extends StreamFamily.json<WatchRoute2>()(
+  "on-change.test/WatchRoute2",
+  "change-family-scope/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
+    schema: Schema.Finite,
+  },
+) {}
+class WatchRoute1 extends StreamFamily.json<WatchRoute1>()(
+  "on-change.test/WatchRoute1",
+  "change-family/:workspaceId",
+  {
+    params: { workspaceId: Schema.String },
+    schema: Schema.Finite,
+  },
+) {}
+import * as FamilyFixture from "./support/families.ts";
+import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
 import {
   Storage,
   StreamGone,
   StreamRef,
-  StreamRoute,
   Streams,
   StreamsReader,
   StreamsWriter,
@@ -12,19 +29,32 @@ import {
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
-type Services = Checkpoints | Storage | StreamsReader | StreamsWriter | Scope.Scope;
+type Services =
+  | WatchRoute2
+  | WatchRoute1
+  | Checkpoints
+  | Storage
+  | import("@streamsy/core").AnyStream
+  | StreamsReader
+  | StreamsWriter
+  | Scope.Scope;
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
-  Effect.runPromise(body.pipe(Effect.scoped, Effect.provide(layerMemory())));
+  Effect.runPromise(
+    body.pipe(
+      Effect.scoped,
+      Effect.provide(FamilyFixture.withFamilies(layerMemory(), WatchRoute1, WatchRoute2)),
+    ),
+  );
 const readAll = <A>(ref: StreamRef.StreamRef<A>) =>
   Streams.read(ref).pipe(Streams.items, Stream.runCollect);
 
 test("an append runs a fused projection and commits its write with the checkpoint", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-fused-input", {
+      const input = FamilyFixture.json("change-fused-input", {
         schema: Schema.Finite,
       });
-      const output = StreamRef.json("change-fused-output", {
+      const output = FamilyFixture.json("change-fused-output", {
         schema: Schema.Finite,
       });
       yield* Streams.create(input);
@@ -56,10 +86,10 @@ test("an append runs a fused projection and commits its write with the checkpoin
 test("changes during an in-flight run coalesce to one follow-up run", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-coalesce-input", {
+      const input = FamilyFixture.json("change-coalesce-input", {
         schema: Schema.Finite,
       });
-      const output = StreamRef.json("change-coalesce-output", {
+      const output = FamilyFixture.json("change-coalesce-output", {
         schema: Schema.Finite,
       });
       yield* Streams.create(input);
@@ -102,7 +132,7 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
 test("a limited wake drains the backlog before waiting for another change", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-limit-input", {
+      const input = FamilyFixture.json("change-limit-input", {
         schema: Schema.Finite,
       });
       yield* Streams.create(input);
@@ -126,13 +156,16 @@ test("a limited wake drains the backlog before waiting for another change", () =
       const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
       expect(Option.getOrThrow(loaded.record).inputs.input).toBe(tail.nextOffset);
       yield* Fiber.interrupt(fiber);
-    }).pipe(Effect.scoped, Effect.provide(layerMemory({ readLimit: 1 }))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(FamilyFixture.withFamilies(layerMemory({ readLimit: 1 }))),
+    ),
   ));
 
 test("an invalid limit fails before a watcher fiber is created", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-invalid-limit", {
+      const input = FamilyFixture.json("change-invalid-limit", {
         schema: Schema.Finite,
       });
       const projection = Projection.make({
@@ -152,7 +185,7 @@ test("an invalid limit fails before a watcher fiber is created", () =>
 test("an ownership probe reports a gone input as unavailable history", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-probe-failure", { schema: Schema.Finite });
+      const input = FamilyFixture.json("change-probe-failure", { schema: Schema.Finite });
       const projection = Projection.make({
         id: "change-probe-failure",
         input,
@@ -160,7 +193,7 @@ test("an ownership probe reports a gone input as unavailable history", () =>
       });
       const reader = yield* StreamsReader;
       const fiber = yield* Projection.onChange(projection).pipe(
-        Effect.provideService(StreamsReader, {
+        FamilyFixture.provideReader({
           ...reader,
           head: (id) => Effect.fail(new StreamGone({ id })),
         }),
@@ -176,10 +209,14 @@ test("an ownership probe reports a gone input as unavailable history", () =>
   ));
 
 test("an empty family without Storage reports unsupported composition", async () => {
-  const route = StreamRoute.json("change-empty-family/:workspaceId", {
-    params: { workspaceId: Schema.String },
-    schema: Schema.Finite,
-  });
+  class route extends StreamFamily.json<route>()(
+    "on-change.test/route",
+    "change-empty-family/:workspaceId",
+    {
+      params: { workspaceId: Schema.String },
+      schema: Schema.Finite,
+    },
+  ) {}
   const family = Projection.family({
     id: "change-empty-family",
     params: { workspaceId: Schema.String },
@@ -209,8 +246,7 @@ test("an empty family without Storage reports unsupported composition", async ()
       Effect.result,
       Effect.scoped,
       Effect.provideService(Checkpoints, checkpoints),
-      Effect.provideService(StreamsReader, reader),
-      Effect.provideService(StreamsWriter, writer),
+      Effect.provideService(route, route.make({ reader, writer })),
     ),
   );
   expect(result._tag).toBe("Failure");
@@ -223,10 +259,10 @@ test("an empty family without Storage reports unsupported composition", async ()
 test("onChange and a serialized request share the same key lock", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-request-input", {
+      const input = FamilyFixture.json("change-request-input", {
         schema: Schema.Finite,
       });
-      const output = StreamRef.json("change-request-output", {
+      const output = FamilyFixture.json("change-request-output", {
         schema: Schema.Finite,
       });
       yield* Streams.create(input);
@@ -260,17 +296,13 @@ test("onChange and a serialized request share the same key lock", () =>
 test("a family watches its fixed member set independently", () =>
   run(
     Effect.gen(function* () {
-      const route = StreamRoute.json("change-family/:workspaceId", {
-        params: { workspaceId: Schema.String },
-        schema: Schema.Finite,
-      });
       const seen: Array<string> = [];
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
       const family = Projection.family({
         id: "change-family",
         params: { workspaceId: Schema.String },
-        inputs: { facts: route },
+        inputs: { facts: WatchRoute1 },
         process: (_batch, unit) =>
           Effect.gen(function* () {
             const workspaceId = unit.params.workspaceId ?? "";
@@ -278,8 +310,8 @@ test("a family watches its fixed member set independently", () =>
             yield* Deferred.succeed(workspaceId === "a" ? a : b, undefined);
           }),
       });
-      const aRef = route.ref({ workspaceId: "a" });
-      const bRef = route.ref({ workspaceId: "b" });
+      const aRef = WatchRoute1.at({ workspaceId: "a" });
+      const bRef = WatchRoute1.at({ workspaceId: "b" });
       yield* Streams.create(aRef);
       yield* Streams.create(bRef);
       const fibers = yield* Projection.onChange(family, [
@@ -299,14 +331,10 @@ test("a family watches its fixed member set independently", () =>
 test("closing the caller scope interrupts every family member fiber", () =>
   run(
     Effect.gen(function* () {
-      const route = StreamRoute.json("change-family-scope/:workspaceId", {
-        params: { workspaceId: Schema.String },
-        schema: Schema.Finite,
-      });
       const family = Projection.family({
         id: "change-family-scope",
         params: { workspaceId: Schema.String },
-        inputs: { facts: route },
+        inputs: { facts: WatchRoute2 },
         process: () => Effect.void,
       });
       const fibers = yield* Effect.scoped(
@@ -319,7 +347,7 @@ test("closing the caller scope interrupts every family member fiber", () =>
 test("a closed and drained input ends its watcher", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-closed", { schema: Schema.Finite });
+      const input = FamilyFixture.json("change-closed", { schema: Schema.Finite });
       yield* Streams.create(input);
       const projection = Projection.make({
         id: "change-closed",
@@ -336,7 +364,7 @@ test("a closed and drained input ends its watcher", () =>
 test("closing the caller scope ends the watcher fiber", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("change-scope", { schema: Schema.Finite });
+      const input = FamilyFixture.json("change-scope", { schema: Schema.Finite });
       yield* Streams.create(input);
       const projection = Projection.make({
         id: "change-scope",

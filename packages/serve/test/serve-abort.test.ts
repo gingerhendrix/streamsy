@@ -1,9 +1,11 @@
+import { provides } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test owns a real Bun listener and its Web client boundary.
 import { expect, test } from "bun:test";
 import { Cause, Context, Deferred, Effect, Exit, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 import { NetAddress } from "effect/unstable/net";
-import { Http, StreamRoute, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
+import { Http, Streams, StreamsReader, StreamsWriter } from "@streamsy/core";
 import { Serve } from "../src/index.ts";
 import { listener } from "../src/bun.ts";
 
@@ -40,10 +42,14 @@ test.each([false, true])(
             );
           }),
         ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 500 })));
-        const family = StreamRoute.json("events/:seat", {
-          params: { seat: Schema.String },
-          schema: Schema.String,
-        });
+        class family extends StreamFamily.json<family>()(
+          "serve/serve-abort.test/family",
+          "events/:seat",
+          {
+            params: { seat: Schema.String },
+            schema: Schema.String,
+          },
+        ) {}
         const route = control
           ? HttpRouter.add("GET", "/feed/:seat", Http.read(family.ref({ seat: "a" }).id), {
               uninterruptible: true,
@@ -53,7 +59,10 @@ test.each([false, true])(
           HttpRouter.serve(Layer.mergeAll(Http.routes(), route), {
             disableLogger: true,
             disableListenLog: true,
-          }).pipe(Layer.provide(protocol), Layer.provideMerge(listener({ port: 0 }))),
+          }).pipe(
+            Layer.provide(provides(protocol, family).pipe(Layer.provideMerge(protocol))),
+            Layer.provideMerge(listener({ port: 0 })),
+          ),
         );
         const server = Context.get(context, HttpServer.HttpServer);
         if (!NetAddress.isInetAddress(server.address))

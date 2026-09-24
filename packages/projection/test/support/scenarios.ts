@@ -1,9 +1,10 @@
+import * as FamilyFixture from "./families.ts";
 import { Effect, Schema, Stream } from "effect";
 import { Streams, StreamRef, type StreamsReader, type StreamsWriter } from "@streamsy/core";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 
-export const input = StreamRef.json("projection-input", { schema: Schema.Finite });
-export const output = StreamRef.json("projection-output", { schema: Schema.Finite });
+export const input = FamilyFixture.json("projection-input", { schema: Schema.Finite });
+export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
 /** Stateless fused filter: positive items are copied to `output` inside the transaction. */
 export const positives = Projection.make({
@@ -15,7 +16,11 @@ export const positives = Projection.make({
       if (kept.length > 0) yield* Streams.append(output, kept);
     }),
 });
-export type Services = Checkpoints | StreamsReader | StreamsWriter;
+export type Services =
+  | Checkpoints
+  | import("@streamsy/core").AnyStream
+  | StreamsReader
+  | StreamsWriter;
 
 export const initialize = Effect.gen(function* () {
   yield* Streams.create(input);

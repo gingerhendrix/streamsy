@@ -1,14 +1,18 @@
 import { Effect, Schema } from "effect";
-import type { StreamId, StreamRef, StreamRoute } from "@streamsy/core";
+import type { StreamFamily, StreamId, StreamRef, StreamRoute } from "@streamsy/core";
 import type { CanonicalValue, PublicError } from "./contract.ts";
 
 /** Structural family consumed by Serve, including bound projection outputs. */
-export interface StreamSource<P> {
+export interface StreamSource<P, F = never> {
   readonly template: string;
+  readonly family: StreamFamily.Member<unknown, F>["family"];
   readonly paramSchema?: StreamRoute.PathSchema<P>;
   readonly ref: (params: P) => { readonly id: StreamId };
 }
-export interface StateSource<P, C extends StreamRef.Collections> extends StreamSource<P> {
+export interface StateSource<P, C extends StreamRef.Collections, F = never> extends StreamSource<
+  P,
+  F
+> {
   readonly collections: C;
   readonly ref: (params: P) => StreamRef.StateRef<C>;
 }
@@ -17,6 +21,11 @@ export type PathSource<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
 /** Internal resolution seam: projection-output adapters can supply their own resolver. */
 export interface Source<P, R = never> {
   readonly kind: "stream" | "state";
+  readonly wire: Effect.Effect<
+    import("@streamsy/core").Reader<import("@streamsy/core").StreamsFault>,
+    never,
+    R
+  >;
   readonly template: string;
   readonly paramSchema: StreamRoute.PathSchema<P> | undefined;
   readonly resolve: (params: P) => Effect.Effect<
@@ -29,23 +38,24 @@ export interface Source<P, R = never> {
   >;
 }
 
-export function normalize<P>(source: StreamSource<P>, path: string): Source<P>;
-export function normalize<P, C extends StreamRef.Collections>(
-  source: StateSource<P, C>,
+export function normalize<P, F>(source: StreamSource<P, F>, path: string): Source<P, F>;
+export function normalize<P, C extends StreamRef.Collections, F>(
+  source: StateSource<P, C, F>,
   path: string,
   kind: "state",
-): Source<P>;
-export function normalize<P>(
-  source: StreamSource<P>,
+): Source<P, F>;
+export function normalize<P, F>(
+  source: StreamSource<P, F>,
   path: string,
   kind: "stream" | "state" = "stream",
-): Source<P> {
+): Source<P, F> {
   const descriptor =
     kind === "state"
       ? collectionDescriptor("collections" in source ? source.collections : undefined)
       : null;
   return {
     kind,
+    wire: Effect.map(source.family, (service) => service.wire),
     template: source.template,
     paramSchema: source.paramSchema,
     resolve: (params) =>

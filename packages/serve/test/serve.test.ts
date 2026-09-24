@@ -1,20 +1,22 @@
+import { StreamFamily, provides } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- These request tests own web handler disposal at the Web boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Http, StreamRoute, Streams, type StreamsReader } from "@streamsy/core";
+import { Http, Streams } from "@streamsy/core";
 import { Serve } from "../src/index.ts";
 import * as Contract from "../src/contract.ts";
 
-const family = StreamRoute.json("events/:seat", {
+class family extends StreamFamily.json<family>()("serve/serve.test/family", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
-});
-const rows = StreamRoute.state("rows/:seat", {
+}) {}
+class rows extends StreamFamily.state<rows>()("serve/serve.test/rows", "rows/:seat", {
   params: { seat: Schema.String },
   collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
-});
-const storage = Streams.layerMemory();
+}) {}
+const protocol = Streams.layerMemory();
+const storage = provides(protocol, family, rows).pipe(Layer.provideMerge(protocol));
 class Seat extends Context.Service<Seat, { readonly seat: string }>()("test/Seat") {}
 const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
   Effect.gen(function* () {
@@ -166,13 +168,13 @@ test("document encodes canonical JSON and conditional HEAD", async () => {
 });
 
 test("path codecs transform strings; widened paths check keys at registration", async () => {
-  const numbered = StreamRoute.json("numbers/:n", {
+  class numbered extends StreamFamily.json<numbered>()("serve/serve.test/numbered", "numbers/:n", {
     params: { n: Schema.FiniteFromString },
     schema: Schema.String,
-  });
+  }) {}
   const path: `/${string}` = "/numbers/:n";
   const web = HttpRouter.toWebHandler(
-    Serve.stream(numbered, path).pipe(HttpRouter.provideRequest(storage)),
+    Serve.stream(numbered, path).pipe(HttpRouter.provideRequest(provides(protocol, numbered))),
     { disableLogger: true },
   );
   try {
@@ -278,23 +280,28 @@ test("CORS handles Serve preflight and exposes cursor and contract headers", asy
 });
 
 test("fingerprints bind members, collection keys, and explicit contract revisions", async () => {
-  const changed = StreamRoute.state("rows/:seat", {
+  class changed extends StreamFamily.state<changed>()("serve/serve.test/changed", "rows/:seat", {
     params: { seat: Schema.String },
     collections: {
       cards: { schema: Schema.Struct({ id: Schema.String, other: Schema.String }), key: "other" },
     },
-  });
+  }) {}
   const fingerprint = async (
     route: Layer.Layer<
       never,
       never,
-      HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", StreamsReader>
+      HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", rows | changed>
     >,
     seat: string,
   ) => {
-    const web = HttpRouter.toWebHandler(route.pipe(HttpRouter.provideRequest(storage)), {
-      disableLogger: true,
-    });
+    const web = HttpRouter.toWebHandler(
+      route.pipe(
+        HttpRouter.provideRequest(provides(protocol, changed).pipe(Layer.provideMerge(storage))),
+      ),
+      {
+        disableLogger: true,
+      },
+    );
     try {
       return (await web.handler(new Request(`http://host/state/${seat}`))).headers.get(
         Contract.STATE_CONTRACT_HEADER,
@@ -326,7 +333,8 @@ test("read options and explicit params paths are checked at construction", () =>
 
 test("annotated parameter Structs retain their names and non-Struct schemas are rejected", async () => {
   const annotated = {
-    ...family,
+    ...family.route,
+    family: family.family,
     paramSchema: Schema.Struct({ seat: Schema.String }).annotate({ identifier: "SeatParams" }),
   };
   const path: `/${string}` = "/feed/:other";
@@ -350,6 +358,7 @@ test("annotated parameter Structs retain their names and non-Struct schemas are 
     await web.dispose();
   }
   const record = {
+    family: family.family,
     template: family.template,
     paramSchema: Schema.Record(Schema.String, Schema.String),
     ref: (values: Readonly<Record<string, string>>) => family.ref({ seat: values.seat ?? "a" }),
@@ -362,7 +371,8 @@ test("annotated parameter Structs retain their names and non-Struct schemas are 
 test("invalid state collection metadata fails at construction", () => {
   const collections = { cards: { schema: Schema.Struct({ id: Schema.String }), key: NaN } };
   const invalid = {
-    ...rows,
+    ...rows.route,
+    family: rows.family,
     collections,
     ref: (values: { readonly seat: string }) => ({ ...rows.ref(values), collections }),
   };

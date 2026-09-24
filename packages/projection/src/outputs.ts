@@ -1,6 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
 import { Effect, Option, Schema } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamRef, type StreamFamily } from "@streamsy/core";
 import type { InputMap, Slices } from "./batch.ts";
 import type * as Output from "./output.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -10,14 +10,14 @@ import { State } from "./state.ts";
 import type { Unit } from "./unit.ts";
 
 /** Normalized stream-form declaration consumed by the pinned kernel. */
-export interface Named<Inputs extends InputMap, E, R> {
+export interface Named<Inputs extends InputMap, E, R, OR = never> {
   readonly _tag: "Outputs";
   readonly id: string;
   readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
-  readonly streams: Readonly<Record<string, StreamRef.StreamRef<unknown>>>;
+  readonly streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
 }
 const initialValue = <A>(initial: Initial<A>, params: Record<string, string>): A =>
@@ -46,8 +46,10 @@ export function outputs<
     (Exclude<keyof Result, keyof Output.Result<D>> extends never
       ? unknown
       : { readonly invalidOutputKeys: never });
-}): Named<Inputs, E | ProjectionFault, R | State> & { readonly outputs: Bound<D, {}> } {
-  const streams: Record<string, StreamRef.StreamRef<unknown>> = {};
+}): Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
+  readonly outputs: Bound<D, {}>;
+} {
+  const streams: Record<string, StreamFamily.Member<unknown, Output.Services<D>>> = {};
   const values = Object.values(definition.outputs).filter((output) => output._tag === "Value");
   if (values.length > 1) throw new RangeError("A projection may declare at most one value output");
   if ("state" in definition.outputs)
@@ -55,7 +57,12 @@ export function outputs<
   const value = values[0];
   for (const [name, output] of Object.entries(definition.outputs)) {
     if (output._tag === "Value") continue;
-    streams[name] = output._tag === "Stream" ? output.stream : rowsRef(name, output);
+    streams[name] =
+      output._tag === "Stream"
+        ? Object.assign(StreamRef.json(output.stream.id, { schema: output.schema }), {
+            family: output.stream.family,
+          })
+        : rowsRef(name, output);
   }
   const ids = Object.values(streams).map((ref) => ref.id);
   if (new Set(ids).size !== ids.length)

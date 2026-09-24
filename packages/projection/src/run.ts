@@ -1,7 +1,6 @@
 import type { Named } from "./outputs.ts";
 import { Effect } from "effect";
-import type { StreamsReader, StreamsWriter } from "@streamsy/core";
-import type { InputMap, Slice } from "./batch.ts";
+import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Fused, Projection, Pinned } from "./projection.ts";
@@ -16,9 +15,6 @@ export interface Progress {
   readonly record: Pick<CheckpointRecord, "identity" | "inputs">;
 }
 
-/** The host services every strategy is given; a protocol Layer always carries both stream services. */
-export type Host = Checkpoints | StreamsReader | StreamsWriter;
-
 /** One fused unit: restore, read every input, then process and checkpoint in the owner transaction. */
 export const passFused = Effect.fn("Projection.passFused")(function* <
   Inputs extends InputMap,
@@ -27,7 +23,7 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
 >(
   projection: Fused<Inputs, E, R>,
   options: RunOptions = {},
-): Effect.fn.Return<Progress, E | ProjectionFault, R | Checkpoints | StreamsReader> {
+): Effect.fn.Return<Progress, E | ProjectionFault, R | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
   const before = yield* restore(projection, owner);
@@ -73,20 +69,26 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
 });
 
 /** One unit under the strategy the declaration carries. */
-export const pass = <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
+export const pass = <Inputs extends InputMap, O, E, R, OR = never>(
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.Effect<Progress, E | ProjectionFault, R | Host> =>
+): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
   projection._tag === "Fused" ? passFused(projection, options) : passStream(projection, options);
 
 /**
  * Repeats `pass` until an empty pass reports caught-up, every input is closed, or
  * the limit is reached. The trailing empty pass adds nothing to the totals.
  */
-export const run = Effect.fn("Projection.run")(function* <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
+export const run = Effect.fn("Projection.run")(function* <
+  Inputs extends InputMap,
+  O,
+  E,
+  R,
+  OR = never,
+>(
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.fn.Return<Progress, E | ProjectionFault, R | Host> {
+): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
   const cap = options.limit ?? Number.POSITIVE_INFINITY;
   let units = 0;

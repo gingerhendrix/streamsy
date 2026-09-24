@@ -1,11 +1,12 @@
+import { Checkpoints } from "./checkpoint.ts";
 import type { Named } from "./outputs.ts";
 import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
-import { StreamsReader, ZERO_OFFSET, type StreamRef } from "@streamsy/core";
-import type { InputMap } from "./batch.ts";
+import { ZERO_OFFSET, type StreamFamily } from "@streamsy/core";
+import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Fused, Pinned } from "./projection.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
-import { run, type Host, type Progress } from "./run.ts";
+import { run, type Progress } from "./run.ts";
 
 export interface FollowOptions extends RunOptions {
   /** Upper bound on one wake wait; default 1000. */
@@ -32,13 +33,13 @@ export const defaultRetry = Schedule.exponential("200 millis").pipe(
  * drained input parks for the interval instead of waking every cycle; the
  * open inputs, and the interval itself, decide when the next run happens.
  */
-const hint = Effect.fn("Projection.wake")(function* (
+const hint = Effect.fn("Projection.wake")(function* <R>(
   input: string,
-  ref: StreamRef.StreamRef<unknown>,
+  ref: StreamFamily.Member<unknown, R>,
   offset: string,
   interval: number,
 ) {
-  const reader = yield* StreamsReader;
+  const { wire: reader } = yield* ref.family;
   const historyUnavailable = () =>
     new ProjectionFault({
       phase: "read",
@@ -90,13 +91,19 @@ const hint = Effect.fn("Projection.wake")(function* (
  * the terminal close or a typed failure. On HTTP backends a parked hint is cancelled
  * and replaced once per `repairIntervalMs` until an input changes.
  */
-export const follow = Effect.fn("Projection.follow")(function* <Inputs extends InputMap, O, E, R>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R> | Named<Inputs, E, R>,
+export const follow = Effect.fn("Projection.follow")(function* <
+  Inputs extends InputMap,
+  O,
+  E,
+  R,
+  OR = never,
+>(
+  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress, E | ProjectionFault>,
   ProjectionFault,
-  R | Host | Scope.Scope
+  R | OR | Checkpoints | InputServices<Inputs> | Scope.Scope
 > {
   yield* validateOptions(options);
   const interval = options.repairIntervalMs ?? 1000;
@@ -108,7 +115,7 @@ export const follow = Effect.fn("Projection.follow")(function* <Inputs extends I
     });
   const wake = (result: Progress) =>
     Effect.raceAllFirst(
-      Object.entries(projection.inputs).map(([name, ref]) =>
+      inputEntries(projection.inputs).map(([name, ref]) =>
         hint(name, ref, result.record.inputs[name] ?? ZERO_OFFSET, interval),
       ),
     );

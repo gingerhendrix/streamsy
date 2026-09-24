@@ -1,18 +1,20 @@
+import * as FamilyFixture from "./support/families.ts";
+import { StreamFamily } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Effect, Fiber, Layer, Schema, Stream } from "effect";
-import { Backend, Protocol, StreamRoute, Streams } from "@streamsy/core";
+import { Backend, Protocol, Streams } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Projection, ProjectionFault } from "@streamsy/projection";
 import * as Sqlite from "@streamsy/projection/sqlite";
 
-const Source = StreamRoute.json("memory/source/:name", {
+class Source extends StreamFamily.json<Source>()("routed.test/Source", "memory/source/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
-});
-const Output = StreamRoute.json("sqlite/output/:name", {
+}) {}
+class Output extends StreamFamily.json<Output>()("routed.test/Output", "sqlite/output/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
-});
+}) {}
 
 const memory = Backend.make("projection-memory");
 const sqlite = Backend.make("projection-sqlite");
@@ -30,8 +32,8 @@ const host = Layer.merge(routed, Sqlite.layer).pipe(
 test("a routed projection reads its input from memory and commits output with the SQLite checkpoint", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      const sourceRef = Source.ref({ name: "orders" });
-      const outputRef = Output.ref({ name: "orders" });
+      const sourceRef = Source.at({ name: "orders" });
+      const outputRef = Output.at({ name: "orders" });
       yield* Streams.create(sourceRef);
       yield* Streams.create(outputRef);
       yield* Streams.append(sourceRef, [1, 2, 3]);
@@ -69,14 +71,14 @@ test("a routed projection reads its input from memory and commits output with th
         expect(third.failure.reason).toBe("history-unavailable");
         expect(third.failure.input).toBe("input");
       } else throw new Error("Expected a ProjectionFault");
-    }).pipe(Effect.provide(host), Effect.scoped),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(host, Source, Output)), Effect.scoped),
   );
 });
 
 test("onChange rejects an input not owned by the ambient Storage", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      const sourceRef = Source.ref({ name: "watch" });
+      const sourceRef = Source.at({ name: "watch" });
       yield* Streams.create(sourceRef);
       const projection = Projection.make({
         id: "routed-watch",
@@ -91,6 +93,6 @@ test("onChange rejects an input not owned by the ambient Storage", async () => {
         expect(result.failure.reason).toBe("unsupported-composition");
         expect(result.failure.input).toBe("input");
       }
-    }).pipe(Effect.provide(host), Effect.scoped),
+    }).pipe(Effect.provide(FamilyFixture.withFamilies(host, Source, Output)), Effect.scoped),
   );
 });

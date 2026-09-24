@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { StreamRef } from "@streamsy/core";
+import type { StreamFamily } from "@streamsy/core";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { Identity, ProjectionKey } from "./checkpoint.ts";
 import { entries } from "./read.ts";
@@ -31,20 +31,29 @@ export interface Fused<Inputs extends InputMap, E, R> {
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
 }
 /** The handler returns the items to append; a pinned unit makes the append exactly-once. */
-export interface Pinned<Inputs extends InputMap = InputMap, O = unknown, E = unknown, R = unknown> {
+export interface Pinned<
+  Inputs extends InputMap = InputMap,
+  O = unknown,
+  E = unknown,
+  R = unknown,
+  OR = never,
+> {
   readonly _tag: "Stream";
   readonly id: string;
   readonly version: number;
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
-  readonly output: StreamRef.StreamRef<O>;
+  readonly output: StreamFamily.Member<O, OR>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
-export type Projection<Inputs extends InputMap = InputMap, O = unknown, E = unknown, R = unknown> =
-  | Fused<Inputs, E, R>
-  | Pinned<Inputs, O, E, R>
-  | Named<Inputs, E, R>;
+export type Projection<
+  Inputs extends InputMap = InputMap,
+  O = unknown,
+  E = unknown,
+  R = unknown,
+  OR = unknown,
+> = Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>;
 
 interface Common {
   readonly id: string;
@@ -57,23 +66,23 @@ export interface FusedDefinition<Inputs extends InputMap, E, R> extends Common {
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
 }
 /** Sugar for one input: the slice is `batch.input`. */
-export interface SingleFusedDefinition<A, E, R> extends Common {
-  readonly input: StreamRef.StreamRef<A>;
+export interface SingleFusedDefinition<A, E, R, IR = never> extends Common {
+  readonly input: StreamFamily.Member<A, IR>;
   readonly process: (
-    batch: Slices<{ readonly input: StreamRef.StreamRef<A> }>,
+    batch: Slices<{ readonly input: StreamFamily.Member<A, IR> }>,
     unit: Unit,
   ) => Effect.Effect<void, E, R>;
 }
-export interface PinnedDefinition<Inputs extends InputMap, O, E, R> extends Common {
+export interface PinnedDefinition<Inputs extends InputMap, O, E, R, OR = never> extends Common {
   readonly inputs: Inputs;
-  readonly output: StreamRef.StreamRef<O>;
+  readonly output: StreamFamily.Member<O, OR>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
-export interface SinglePinnedDefinition<A, O, E, R> extends Common {
-  readonly input: StreamRef.StreamRef<A>;
-  readonly output: StreamRef.StreamRef<O>;
+export interface SinglePinnedDefinition<A, O, E, R, IR = never, OR = never> extends Common {
+  readonly input: StreamFamily.Member<A, IR>;
+  readonly output: StreamFamily.Member<O, OR>;
   readonly process: (
-    batch: Slices<{ readonly input: StreamRef.StreamRef<A> }>,
+    batch: Slices<{ readonly input: StreamFamily.Member<A, IR> }>,
     unit: Unit,
   ) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
@@ -86,15 +95,15 @@ const common = (definition: Common) => ({
 });
 
 /** Inert: acquires no service. Defaults are generation 1 and no params. */
-export function make<A, E, R>(
-  definition: SingleFusedDefinition<A, E, R>,
-): Fused<{ readonly input: StreamRef.StreamRef<A> }, E, R>;
+export function make<A, E, R, IR>(
+  definition: SingleFusedDefinition<A, E, R, IR>,
+): Fused<{ readonly input: StreamFamily.Member<A, IR> }, E, R>;
 export function make<Inputs extends InputMap, E, R>(
   definition: FusedDefinition<Inputs, E, R>,
 ): Fused<Inputs, E, R>;
-export function make<Inputs extends InputMap, A, E, R>(
-  definition: FusedDefinition<Inputs, E, R> | SingleFusedDefinition<A, E, R>,
-): Fused<Inputs, E, R> | Fused<{ readonly input: StreamRef.StreamRef<A> }, E, R> {
+export function make<Inputs extends InputMap, A, E, R, IR>(
+  definition: FusedDefinition<Inputs, E, R> | SingleFusedDefinition<A, E, R, IR>,
+): Fused<Inputs, E, R> | Fused<{ readonly input: StreamFamily.Member<A, IR> }, E, R> {
   const base = { _tag: "Fused", ...common(definition) } as const;
   return "inputs" in definition
     ? { ...base, inputs: definition.inputs, process: definition.process }
@@ -102,15 +111,17 @@ export function make<Inputs extends InputMap, A, E, R>(
 }
 
 /** Inert stream form for an output the checkpoint transaction cannot reach. */
-export function stream<A, O, E, R>(
-  definition: SinglePinnedDefinition<A, O, E, R>,
-): Pinned<{ readonly input: StreamRef.StreamRef<A> }, O, E, R>;
-export function stream<Inputs extends InputMap, O, E, R>(
-  definition: PinnedDefinition<Inputs, O, E, R>,
-): Pinned<Inputs, O, E, R>;
-export function stream<Inputs extends InputMap, A, O, E, R>(
-  definition: PinnedDefinition<Inputs, O, E, R> | SinglePinnedDefinition<A, O, E, R>,
-): Pinned<Inputs, O, E, R> | Pinned<{ readonly input: StreamRef.StreamRef<A> }, O, E, R> {
+export function stream<A, O, E, R, IR, OR>(
+  definition: SinglePinnedDefinition<A, O, E, R, IR, OR>,
+): Pinned<{ readonly input: StreamFamily.Member<A, IR> }, O, E, R, OR>;
+export function stream<Inputs extends InputMap, O, E, R, OR>(
+  definition: PinnedDefinition<Inputs, O, E, R, OR>,
+): Pinned<Inputs, O, E, R, OR>;
+export function stream<Inputs extends InputMap, A, O, E, R, IR, OR>(
+  definition: PinnedDefinition<Inputs, O, E, R, OR> | SinglePinnedDefinition<A, O, E, R, IR, OR>,
+):
+  | Pinned<Inputs, O, E, R, OR>
+  | Pinned<{ readonly input: StreamFamily.Member<A, IR> }, O, E, R, OR> {
   const base = { _tag: "Stream", ...common(definition), output: definition.output } as const;
   return "inputs" in definition
     ? { ...base, inputs: definition.inputs, process: definition.process }

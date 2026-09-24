@@ -1,17 +1,25 @@
+import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Schema, type Scope } from "effect";
-import { StreamRef, Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core";
+import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
-type Services = Checkpoints | StreamsReader | StreamsWriter | Scope.Scope;
+type Services =
+  | Checkpoints
+  | import("@streamsy/core").AnyStream
+  | StreamsReader
+  | StreamsWriter
+  | Scope.Scope;
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
-  Effect.runPromise(body.pipe(Effect.scoped, Effect.provide(layerMemory())));
+  Effect.runPromise(
+    body.pipe(Effect.scoped, Effect.provide(FamilyFixture.withFamilies(layerMemory()))),
+  );
 
 test("two calls on one key run in sequence without a token conflict", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("serialized-one", { schema: Schema.Finite });
+      const input = FamilyFixture.json("serialized-one", { schema: Schema.Finite });
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       const entered = yield* Deferred.make<void>();
@@ -44,14 +52,16 @@ test("two calls on one key run in sequence without a token conflict", () =>
 test("different keys can run together", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("serialized-two", { schema: Schema.Finite });
+      const input = FamilyFixture.json("serialized-two", { schema: Schema.Finite });
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       const both = yield* Deferred.make<void>();
       let active = 0;
       let maximum = 0;
       const make = (name: string) => {
-        const output = StreamRef.json(`serialized-two-output-${name}`, { schema: Schema.Finite });
+        const output = FamilyFixture.json(`serialized-two-output-${name}`, {
+          schema: Schema.Finite,
+        });
         return Projection.stream({
           id: "serialized-two",
           params: { name },
@@ -81,7 +91,7 @@ test("different keys can run together", () =>
 test("a failing handler releases the permit", () =>
   run(
     Effect.gen(function* () {
-      const input = StreamRef.json("serialized-failure", { schema: Schema.Finite });
+      const input = FamilyFixture.json("serialized-failure", { schema: Schema.Finite });
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       let fail = true;

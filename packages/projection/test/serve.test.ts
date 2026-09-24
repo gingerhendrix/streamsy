@@ -1,17 +1,26 @@
+import * as FamilyFixture from "./support/families.ts";
+import { StreamFamily } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/strict-effect-provide -- These integration tests own the managed runtime and Web handler boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { StreamRoute, Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };
-const numbers = StreamRoute.json("numbers/:seat", { params, schema: Schema.Finite });
-const board = StreamRoute.bytes("board/:seat", { params });
+class numbers extends StreamFamily.json<numbers>()("serve.test/numbers", "numbers/:seat", {
+  params,
+  schema: Schema.Finite,
+}) {}
+class board extends StreamFamily.bytes<board>()("serve.test/board", "board/:seat", { params }) {}
 // This identity intentionally has a different codec; Output.stream owns encoding.
-const transitions = StreamRoute.bytes("transitions/:seat", { params });
+class transitions extends StreamFamily.bytes<transitions>()(
+  "serve.test/transitions",
+  "transitions/:seat",
+  { params },
+) {}
 const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
 const tracker = Projection.family({
   id: "tracker",
@@ -42,7 +51,9 @@ const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
 );
 
 test("declared rows, stream and value share one memory app and their declared codecs", async () => {
-  const runtime = ManagedRuntime.make(Memory.layerMemory());
+  const runtime = ManagedRuntime.make(
+    FamilyFixture.withFamilies(Memory.layerMemory(), numbers, board, transitions),
+  );
   const services = await runtime.runPromise(Effect.context());
   const App = Layer.mergeAll(
     Serve.state(tracker.outputs.board, "/board/:seat"),
@@ -159,7 +170,11 @@ const typeChecks = () => {
   );
   // @ts-expect-error document resolution requires Projection.State at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
-  const wrongTarget = StreamRoute.bytes("wrong/:other", { params: { other: Schema.String } });
+  class wrongTarget extends StreamFamily.bytes<wrongTarget>()(
+    "serve.test/wrongTarget",
+    "wrong/:other",
+    { params: { other: Schema.String } },
+  ) {}
   // @ts-expect-error an output target cannot require a parameter absent from the family
   Projection.family({
     id: "wrong",

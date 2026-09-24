@@ -1,10 +1,10 @@
+import * as FamilyFixture from "./support/families.ts";
 import { defaultRetry } from "../src/follow.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete host graph with a test clock. */
 import { expect, test } from "bun:test";
 import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope } from "effect";
 import { TestClock } from "effect/testing";
 import {
-  StreamRef,
   Streams,
   StreamsReader,
   StreamsWriter,
@@ -16,10 +16,18 @@ import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 import { input, output, positives, readAll } from "./support/scenarios.ts";
 
-type Services = Checkpoints | StreamsReader | StreamsWriter | Scope.Scope;
+type Services =
+  | Checkpoints
+  | import("@streamsy/core").AnyStream
+  | StreamsReader
+  | StreamsWriter
+  | Scope.Scope;
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
   Effect.runPromise(
-    body.pipe(Effect.scoped, Effect.provide(Layer.merge(layerMemory(), TestClock.layer()))),
+    body.pipe(
+      Effect.scoped,
+      Effect.provide(FamilyFixture.withFamilies(Layer.merge(layerMemory(), TestClock.layer()))),
+    ),
   );
 const withReader = <A, E, R>(
   body: Effect.Effect<A, E, R | StreamsReader>,
@@ -28,7 +36,7 @@ const withReader = <A, E, R>(
   Effect.gen(function* () {
     const reader = yield* StreamsReader;
     return yield* body.pipe(
-      Effect.provideService(StreamsReader, StreamsReader.of({ ...reader, ...patch(reader) })),
+      FamilyFixture.provideReader(StreamsReader.of({ ...reader, ...patch(reader) })),
     );
   });
 /** A wake hint that parks forever and reports when it is parked and when it is released. */
@@ -85,9 +93,9 @@ test("follow cancellation releases parked waits", () =>
 test("a write to the second input wakes a two-input follower", () =>
   run(
     Effect.gen(function* () {
-      const a = StreamRef.json("wake-a", { schema: Schema.Finite });
-      const b = StreamRef.json("wake-b", { schema: Schema.Finite });
-      const target = StreamRef.json("wake-out", { schema: Schema.String });
+      const a = FamilyFixture.json("wake-a", { schema: Schema.Finite });
+      const b = FamilyFixture.json("wake-b", { schema: Schema.Finite });
+      const target = FamilyFixture.json("wake-out", { schema: Schema.String });
       yield* Streams.create(a);
       yield* Streams.create(b);
       yield* Streams.create(target);
@@ -138,9 +146,9 @@ test("a write to the second input wakes a two-input follower", () =>
 test("a closed and drained input beside an open one does not wake every cycle", () =>
   run(
     Effect.gen(function* () {
-      const a = StreamRef.json("closed-a", { schema: Schema.Finite });
-      const b = StreamRef.json("open-b", { schema: Schema.Finite });
-      const target = StreamRef.json("closed-out", { schema: Schema.String });
+      const a = FamilyFixture.json("closed-a", { schema: Schema.Finite });
+      const b = FamilyFixture.json("open-b", { schema: Schema.Finite });
+      const target = FamilyFixture.json("closed-out", { schema: Schema.String });
       yield* Streams.create(a);
       yield* Streams.create(b);
       yield* Streams.create(target);
@@ -244,7 +252,7 @@ for (const point of ["read", "append"] as const) {
           process: (batch) => Effect.succeed(batch.input.items),
         });
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
-          Effect.provideService(StreamsReader, {
+          FamilyFixture.provideReader({
             ...reader,
             read: (id, options) =>
               Effect.suspend(() => {
@@ -252,7 +260,7 @@ for (const point of ["read", "append"] as const) {
                 return reader.read(id, options);
               }),
           }),
-          Effect.provideService(StreamsWriter, {
+          FamilyFixture.provideWriter({
             ...writer,
             append: (id, options) =>
               Effect.suspend(() => {
@@ -286,14 +294,11 @@ test("follow honours a finite retry budget and run remains single-shot", () =>
           }),
       };
       const fiber = yield* Projection.follow(positives, { retry: Schedule.recurs(2) }).pipe(
-        Effect.provideService(StreamsReader, broken),
+        FamilyFixture.provideReader(broken),
       );
       expect((yield* Fiber.join(fiber).pipe(Effect.result))._tag).toBe("Failure");
       expect(attempts).toBe(3);
-      yield* Projection.run(positives).pipe(
-        Effect.provideService(StreamsReader, broken),
-        Effect.result,
-      );
+      yield* Projection.run(positives).pipe(FamilyFixture.provideReader(broken), Effect.result);
       expect(attempts).toBe(4);
     }),
   ));

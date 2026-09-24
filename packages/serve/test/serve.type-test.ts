@@ -1,16 +1,17 @@
+import { StreamFamily, provides } from "@streamsy/core";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { StreamRoute, Streams } from "@streamsy/core";
+import { Streams } from "@streamsy/core";
 import { listener } from "../src/bun.ts";
 import { Serve } from "../src/index.ts";
-const family = StreamRoute.json("events/:seat", {
+class family extends StreamFamily.json<family>()("serve/serve.type-test/family", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
-});
-const state = StreamRoute.state("rows/:seat", {
+}) {}
+class state extends StreamFamily.state<state>()("serve/serve.type-test/state", "rows/:seat", {
   params: { seat: Schema.String },
   collections: { rows: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
-});
+}) {}
 Serve.stream(family, "/feed/:seat");
 Serve.state(state, "/rows/:seat");
 // @ts-expect-error wrong parameter
@@ -27,7 +28,8 @@ Serve.state(family, "/rows/:seat");
 Serve.stream(family, "/me", { params: Effect.succeed({ seat: 1 }) });
 class Seat extends Context.Service<Seat, { readonly seat: string }>()("Seat") {}
 const mine = Serve.stream(family, "/me", { params: Seat });
-const storage = Streams.layerMemory();
+const protocol = Streams.layerMemory();
+const storage = provides(protocol, family, state).pipe(Layer.provideMerge(protocol));
 const unsafe = HttpRouter.toWebHandler(mine.pipe(HttpRouter.provideRequest(storage)));
 // @ts-expect-error no auth supplied the seat; handler requires a context
 void unsafe.handler(new Request("http://host/me"));
