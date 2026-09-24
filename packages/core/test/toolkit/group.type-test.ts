@@ -1,6 +1,7 @@
 import { Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpRouter } from "effect/unstable/http";
 import {
+  type TransportFault,
   Changes,
   Http,
   Memory,
@@ -34,10 +35,12 @@ const noFeed: Equal<Extract<Layer.Success<typeof fetch>, Changes<A | B>>, never>
 const needsFeed = Effect.gen(function* () {
   yield* Changes(A);
 });
+// oxlint-disable effecttsgo/missing-effect-context -- This negative type test deliberately omits the Changes capability.
 // @ts-expect-error Fetch families cannot supply a Changes capability.
-const missingFeed: Effect.Effect<void, unknown, HttpClient.HttpClient> = needsFeed.pipe(
+const missingFeed: Effect.Effect<void, TransportFault, HttpClient.HttpClient> = needsFeed.pipe(
   Effect.provide(fetch),
 );
+// oxlint-enable effecttsgo/missing-effect-context
 void [union, remote, remoteList, client, feeds, hidden, noFeed, missingFeed];
 
 const routes = Http.routes(group, { access: "full" });
