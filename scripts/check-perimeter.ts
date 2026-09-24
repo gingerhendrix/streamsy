@@ -50,7 +50,19 @@ const historical = ["!parked/**"];
 const authored = ["packages/*/src/**", "!*.test.ts"];
 // These are existing published Bun test registration kits, not live runtime owners.
 const testKits = ["packages/core/src/testing/storage-contract.ts"];
+// Application code has no protocol exceptions. Add a file and its concrete reason here only
+// when an adapter cannot use the family APIs.
+const applicationProtocolAllowlist: Readonly<Record<string, string>> = {};
 const checks = [
+  scan(
+    "examples and hosted use families",
+    String.raw`@streamsy/core/protocol\b|\bStreams(?:Reader|Writer)\b`,
+    [
+      "examples/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+      "hosted/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+      ...Object.keys(applicationProtocolAllowlist).map((path) => `!${path}`),
+    ],
+  ),
   scan("no temporary package alias anywhere", ["core", "next"].join("-")),
   scan(
     "no parked paths in live inputs",
