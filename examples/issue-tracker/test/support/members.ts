@@ -1,7 +1,6 @@
 import { Board, LabelCounts, Transitions } from "../../server/outputs.ts";
-import { Effect, Stream } from "effect";
+import { Effect, Option, Stream } from "effect";
 import { StreamFamily, type AppendOptions, type Batch } from "@streamsy/core";
-import { Option } from "effect";
 
 /** Bind the output member's codec to its existing family wire, retaining its owner guard. */
 const memberService = <A, R>(member: StreamFamily.Member<A, R>) =>

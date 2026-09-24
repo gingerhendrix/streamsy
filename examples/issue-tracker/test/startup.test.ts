@@ -1,7 +1,7 @@
 import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
-import { Effect, ManagedRuntime } from "effect";
-import { applicationLayer, createInputs } from "../server/host.ts";
+import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
+import { applicationLayer, createInputs, hostLayer, families } from "../server/host.ts";
 import { refs, userStream } from "../server/streams.ts";
 import {
   scratchDirectory,
@@ -63,4 +63,31 @@ test("a member fault at startup leaves HTTP and other workspaces available", asy
     if (server !== undefined) await stopServer(server);
     await scratch.remove();
   }
+});
+
+test("the host runtime exposes only families, feeds and application storage services", async () => {
+  const { Storage, Changes } = await import("@streamsy/core");
+  const { Checkpoints, State } = await import("@streamsy/projection");
+  const { SqlClient } = await import("effect/unstable/sql");
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const context = yield* Layer.build(hostLayer(":memory:"));
+        expect(Option.isNone(Context.getOption(context, Storage))).toBe(true);
+        expect([...context.mapUnsafe.keys()].sort()).toEqual(
+          [
+            Layer.CurrentMemoMap.key,
+            Checkpoints.key,
+            State.key,
+            SqlClient.SqlClient.key,
+            ...families.families.map((family) => family.key),
+            ...families.families.map(
+              (family) =>
+                Changes<import("@streamsy/core").StreamGroup.Services<typeof families>>(family).key,
+            ),
+          ].sort(),
+        );
+      }),
+    ),
+  );
 });

@@ -22,7 +22,19 @@ export const hostLayer = (filename: string) => {
       | SqlClient.SqlClient
       | StreamGroup.Services<typeof families>
       | Changes<StreamGroup.Services<typeof families>>
-    >(),
+    >().pipe(
+      Effect.map(
+        Context.pick(
+          Checkpoints,
+          State,
+          SqlClient.SqlClient,
+          ...families.families,
+          ...families.families.map((family) =>
+            Changes<StreamGroup.Services<typeof families>>(family),
+          ),
+        ),
+      ),
+    ),
   ).pipe(Layer.provide(host));
 };
 
