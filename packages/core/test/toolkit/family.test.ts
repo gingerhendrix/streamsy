@@ -176,3 +176,8 @@ it("stable names define service identity and duplicate names are refused", () =>
   expect(Notes.at({ user: "ann" }).family.key).toBe(Notes.key);
   expect(Notes.at({ user: "ann" }).id).toBe(Notes.ref({ user: "ann" }).id);
 });
+
+it("AnyStream ordering follows stable identity across class aliases", () => {
+  class AnyAgain extends AnyStream {}
+  expect(() => provides(Streams.layerMemory(), AnyAgain, Notes)).toThrow("AnyStream must be last");
+});

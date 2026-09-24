@@ -110,10 +110,11 @@ function define<Self>() {
     return Object.assign(service, route, {
       route,
       family: service,
-      at: (params: P): ReturnType<R["ref"]> & Member<A, Self, RD, RE> =>
-        // SAFETY: the route returns its own declared ref; attaching the key retains that shape.
-        Object.assign(route.ref(params), { family: service }) as unknown as ReturnType<R["ref"]> &
-          Member<A, Self, RD, RE>,
+      at: (params: P): ReturnType<R["ref"]> & Member<A, Self, RD, RE> => {
+        const member: unknown = Object.assign(route.ref(params), { family: service });
+        // SAFETY: the route returns its declared ref, including State collections; only its key is added.
+        return member as ReturnType<R["ref"]> & Member<A, Self, RD, RE>;
+      },
       make: (services: Backend.BackendServices) => bind(route, services),
     });
   };
@@ -143,6 +144,21 @@ export const json =
     ...args: Parameters<typeof Route.json<T, C, A, I, RD, RE>>
   ): JsonFamilyClass<Self, Name, T, C, A, I, RD, RE> =>
     define<Self>()(name, Route.json<T, C, A, I, RD, RE>(...args));
+export type StateFamilyClass<
+  Self,
+  Name extends string,
+  T extends string,
+  C extends Route.ParamCodecs,
+  Collections extends Ref.Collections,
+> = FamilyClass<
+  Self,
+  Name,
+  Route.Params<C>,
+  Ref.CollectionsChange<Collections>,
+  Ref.CollectionsDecodingServices<Collections>,
+  Ref.CollectionsEncodingServices<Collections>,
+  ReturnType<typeof Route.state<T, C, Collections>>
+>;
 export const state =
   <Self>() =>
   <
@@ -153,22 +169,45 @@ export const state =
   >(
     name: Name,
     ...args: Parameters<typeof Route.state<T, C, Collections>>
-  ) =>
+  ): StateFamilyClass<Self, Name, T, C, Collections> =>
     define<Self>()(name, Route.state<T, C, Collections>(...args));
+export type BytesFamilyClass<
+  Self,
+  Name extends string,
+  T extends string,
+  C extends Route.ParamCodecs,
+> = FamilyClass<
+  Self,
+  Name,
+  Route.Params<C>,
+  Uint8Array,
+  never,
+  never,
+  ReturnType<typeof Route.bytes<T, C>>
+>;
 export const bytes =
   <Self>() =>
   <const Name extends string, const T extends string, C extends Route.ParamCodecs>(
     name: Name,
     ...args: Parameters<typeof Route.bytes<T, C>>
-  ) =>
+  ): BytesFamilyClass<Self, Name, T, C> =>
     define<Self>()(name, Route.bytes<T, C>(...args));
 
+export type CustomFamilyClass<Self, Name extends string, P, A, RD, RE> = FamilyClass<
+  Self,
+  Name,
+  P,
+  A,
+  RD,
+  RE,
+  ReturnType<typeof Route.custom<P, A, RD, RE>>
+>;
 export const custom =
   <Self>() =>
   <const Name extends string, P, A, RD, RE>(
     name: Name,
     options: Parameters<typeof Route.custom<P, A, RD, RE>>[0],
-  ) =>
+  ): CustomFamilyClass<Self, Name, P, A, RD, RE> =>
     define<Self>()(name, Route.custom(options));
 
 export class AnyStream extends define<AnyStream>()(
@@ -207,7 +246,7 @@ export function checkFamilies(keys: ReadonlyArray<AnyFamily>): void {
     if (key.template !== "" && templates.has(key.template))
       throw new RangeError(`duplicate family template: ${key.template}`);
     templates.add(key.template);
-    if (key === AnyStream && index !== keys.length - 1)
+    if (key.key === AnyStream.key && index !== keys.length - 1)
       throw new RangeError("AnyStream must be last");
   }
   Backend.checkNoOverlap([
