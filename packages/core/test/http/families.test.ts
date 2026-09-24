@@ -3,10 +3,10 @@ import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { Http, StreamFamily, Streams, provides } from "../../src/index.ts";
 
-class Inputs extends StreamFamily.bytes<Inputs>()("inputs/:id", {
+class Inputs extends StreamFamily.bytes<Inputs>()("Inputs", "inputs/:id", {
   params: { id: Schema.String },
 }) {}
-class Outputs extends StreamFamily.bytes<Outputs>()("outputs/:id", {
+class Outputs extends StreamFamily.bytes<Outputs>()("Outputs", "outputs/:id", {
   params: { id: Schema.String },
 }) {}
 

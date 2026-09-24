@@ -75,41 +75,104 @@ export function bind<P, A, RD, RE>(
 }
 export type Family<P, A, RD = never, RE = never> = ReturnType<typeof bind<P, A, RD, RE>>;
 
-let nextFamilyId = 0;
+/** A concrete member retains the family key used to access its scoped wire. */
+export type Member<A, R, RD = never, RE = never> = Ref.StreamRef<A, RD, RE> & {
+  readonly family: Context.Key<R, { readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }>;
+};
+
+export type FamilyClass<
+  Self,
+  Name extends string,
+  P,
+  A,
+  RD,
+  RE,
+  R extends Route.StreamRoute<P, A, RD, RE>,
+> = Context.ServiceClass<Self, `@streamsy/core/Family/${Name}`, Family<P, A, RD, RE>> &
+  R & {
+    readonly route: R;
+    readonly family: Context.ServiceClass<
+      Self,
+      `@streamsy/core/Family/${Name}`,
+      Family<P, A, RD, RE>
+    >;
+    readonly at: (params: P) => ReturnType<R["ref"]> & Member<A, Self, RD, RE>;
+    readonly make: (services: Backend.BackendServices) => Family<P, A, RD, RE>;
+  };
 
 function define<Self>() {
-  return <P, A, RD, RE, R extends Route.StreamRoute<P, A, RD, RE>>(
+  return <const Name extends string, P, A, RD, RE, R extends Route.StreamRoute<P, A, RD, RE>>(
+    name: Name,
     route: R & Route.StreamRoute<P, A, RD, RE>,
-  ) => {
-    // The literal grammar distinguishes otherwise identical family types. The
-    // allocation suffix prevents separate declarations from aliasing at runtime.
-    const key: `@streamsy/core/Family/${R["template"]}/${number}` = `@streamsy/core/Family/${route.template}/${nextFamilyId++}`;
-    return Object.assign(Context.Service<Self, Family<P, A, RD, RE>>()(key), route, {
+  ): FamilyClass<Self, Name, P, A, RD, RE, R> => {
+    const key: `@streamsy/core/Family/${Name}` = `@streamsy/core/Family/${name}`;
+    const service = Context.Service<Self, Family<P, A, RD, RE>>()(key);
+    return Object.assign(service, route, {
       route,
+      family: service,
+      at: (params: P): ReturnType<R["ref"]> & Member<A, Self, RD, RE> =>
+        // SAFETY: the route returns its own declared ref; attaching the key retains that shape.
+        Object.assign(route.ref(params), { family: service }) as unknown as ReturnType<R["ref"]> &
+          Member<A, Self, RD, RE>,
       make: (services: Backend.BackendServices) => bind(route, services),
     });
   };
 }
+export type JsonFamilyClass<
+  Self,
+  Name extends string,
+  T extends string,
+  C extends Route.ParamCodecs,
+  A,
+  I,
+  RD,
+  RE,
+> = FamilyClass<
+  Self,
+  Name,
+  Route.Params<C>,
+  A,
+  RD,
+  RE,
+  ReturnType<typeof Route.json<T, C, A, I, RD, RE>>
+>;
 export const json =
   <Self>() =>
-  <const T extends string, C extends Route.ParamCodecs, A, I, RD, RE>(
+  <const Name extends string, const T extends string, C extends Route.ParamCodecs, A, I, RD, RE>(
+    name: Name,
     ...args: Parameters<typeof Route.json<T, C, A, I, RD, RE>>
-  ) =>
-    define<Self>()(Route.json<T, C, A, I, RD, RE>(...args));
+  ): JsonFamilyClass<Self, Name, T, C, A, I, RD, RE> =>
+    define<Self>()(name, Route.json<T, C, A, I, RD, RE>(...args));
 export const state =
   <Self>() =>
-  <const T extends string, C extends Route.ParamCodecs, const Collections extends Ref.Collections>(
+  <
+    const Name extends string,
+    const T extends string,
+    C extends Route.ParamCodecs,
+    const Collections extends Ref.Collections,
+  >(
+    name: Name,
     ...args: Parameters<typeof Route.state<T, C, Collections>>
   ) =>
-    define<Self>()(Route.state<T, C, Collections>(...args));
+    define<Self>()(name, Route.state<T, C, Collections>(...args));
 export const bytes =
   <Self>() =>
-  <const T extends string, C extends Route.ParamCodecs>(
+  <const Name extends string, const T extends string, C extends Route.ParamCodecs>(
+    name: Name,
     ...args: Parameters<typeof Route.bytes<T, C>>
   ) =>
-    define<Self>()(Route.bytes<T, C>(...args));
+    define<Self>()(name, Route.bytes<T, C>(...args));
+
+export const custom =
+  <Self>() =>
+  <const Name extends string, P, A, RD, RE>(
+    name: Name,
+    options: Parameters<typeof Route.custom<P, A, RD, RE>>[0],
+  ) =>
+    define<Self>()(name, Route.custom(options));
 
 export class AnyStream extends define<AnyStream>()(
+  "AnyStream",
   Route.custom({
     parse: (id: string) => Option.some({ id }),
     ref: ({ id }: { readonly id: string }) => Ref.bytes(id),
@@ -137,8 +200,11 @@ export type Identifiers<Keys extends ReadonlyArray<AnyFamily>> = Keys[number]["I
 
 export function checkFamilies(keys: ReadonlyArray<AnyFamily>): void {
   const templates = new Set<string>();
+  const names = new Set<string>();
   for (const [index, key] of keys.entries()) {
-    if (templates.has(key.template))
+    if (names.has(key.key)) throw new RangeError(`duplicate family name: ${key.key}`);
+    names.add(key.key);
+    if (key.template !== "" && templates.has(key.template))
       throw new RangeError(`duplicate family template: ${key.template}`);
     templates.add(key.template);
     if (key === AnyStream && index !== keys.length - 1)

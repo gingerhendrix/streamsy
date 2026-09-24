@@ -1,19 +1,27 @@
 import { expect, it } from "bun:test";
 import { Cause, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
-import { AnyStream, Backend, provides, StreamFamily, StreamId, Streams } from "../../src/index.ts";
+import {
+  AnyStream,
+  Backend,
+  provides,
+  StreamFamily,
+  StreamId,
+  StreamRef,
+  Streams,
+} from "../../src/index.ts";
 
-class Notes extends StreamFamily.json<Notes>()("notes/:user", {
+class Notes extends StreamFamily.json<Notes>()("Notes", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.Struct({ text: Schema.String }),
 }) {}
-class Copies extends StreamFamily.json<Copies>()("notes/:user", {
+class Copies extends StreamFamily.json<Copies>()("Copies", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
-class Overlap extends StreamFamily.bytes<Overlap>()("notes/:id", {
+class Overlap extends StreamFamily.bytes<Overlap>()("Overlap", "notes/:id", {
   params: { id: Schema.String },
 }) {}
-class Counts extends StreamFamily.state<Counts>()("counts/:id", {
+class Counts extends StreamFamily.state<Counts>()("Counts", "counts/:id", {
   params: { id: Schema.NumberFromString },
   collections: {
     count: { schema: Schema.Struct({ id: Schema.String, count: Schema.Number }), key: "id" },
@@ -127,7 +135,7 @@ const missing: Effect.Effect<void> = missingFamily;
 void missing;
 // oxlint-enable effecttsgo/missing-effect-context
 
-class Drafts extends StreamFamily.json<Drafts>()("drafts/:user", {
+class Drafts extends StreamFamily.json<Drafts>()("Drafts", "drafts/:user", {
   params: { user: Schema.String },
   schema: Schema.Struct({ text: Schema.String }),
 }) {}
@@ -145,4 +153,26 @@ it("separate providers cannot alias classes declared with the same template", as
       expect(copies.route).toBe(Copies.route);
     }).pipe(Effect.provide(Layer.mergeAll(provides(graph, Notes), provides(graph, Copies)))),
   );
+});
+
+class SameName extends StreamFamily.bytes<SameName>()("Notes", "other/:user", {
+  params: { user: Schema.String },
+}) {}
+class CustomA extends StreamFamily.custom<CustomA>()("CustomA", {
+  parse: (id: string) => (id.startsWith("custom-a/") ? Option.some({ id }) : Option.none()),
+  ref: ({ id }: { readonly id: string }) => StreamRef.bytes(id),
+}) {}
+class CustomB extends StreamFamily.custom<CustomB>()("CustomB", {
+  parse: (id: string) => (id.startsWith("custom-b/") ? Option.some({ id }) : Option.none()),
+  ref: ({ id }: { readonly id: string }) => StreamRef.bytes(id),
+}) {}
+
+it("stable names define service identity and duplicate names are refused", () => {
+  expect(Notes.key).toBe("@streamsy/core/Family/Notes");
+  expect(SameName.key).toBe(Notes.key);
+  expect(() => provides(Streams.layerMemory(), Notes, SameName)).toThrow("duplicate family name");
+  expect(() => provides(Streams.layerMemory(), CustomA, CustomB)).not.toThrow();
+  expect(() => provides(Streams.layerMemory(), CustomA, AnyStream)).not.toThrow();
+  expect(Notes.at({ user: "ann" }).family.key).toBe(Notes.key);
+  expect(Notes.at({ user: "ann" }).id).toBe(Notes.ref({ user: "ann" }).id);
 });

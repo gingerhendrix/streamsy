@@ -97,6 +97,7 @@ test("family namespace pins factories and backend composition helpers", () => {
     "bind",
     "bytes",
     "checkFamilies",
+    "custom",
     "json",
     "provides",
     "state",
