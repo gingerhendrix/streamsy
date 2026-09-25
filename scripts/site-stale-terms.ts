@@ -26,7 +26,7 @@ export const staleTerms = [
   "Backend.make",
 ];
 
-/** Approved batch 1 and 2 names. Parameterized projections belong to batch 3. */
+/** Retired names from the approved batch 1, 2 and 3 renames. */
 export const retiredCoreNames = [
   "Projection.make",
   "Projection.serialized",
@@ -46,5 +46,7 @@ export const retiredCoreNames = [
   "ChangesApi",
   "State.delete",
   "@streamsy/core/Family/",
+  "Projection.family",
+  ".member(",
 ];
 staleTerms.push(...retiredCoreNames);
