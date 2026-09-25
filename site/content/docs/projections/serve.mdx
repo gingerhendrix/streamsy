@@ -3,7 +3,7 @@ title: Serve
 description: Publish streams, Durable State changes and documents with Effect HttpRouter route layers.
 ---
 
-`Serve.stream`, `Serve.state` and `Serve.document` return route Layers. Join them with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`. See [HTTP](/docs/runtime/http) for hosting.
+`Serve.stream`, `Serve.state` and `Serve.value` return route Layers. Join them with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`. See [HTTP](/docs/runtime/http) for hosting.
 
 ```ts
 import { Layer, Schema } from "effect";
@@ -72,7 +72,7 @@ const tracker = Projection.family({
 const OutputRoutes = Layer.mergeAll(
   Serve.state(tracker.outputs.board, "/board/:seat"),
   Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
-  Serve.document(tracker.outputs.summary, "/summary/:seat"),
+  Serve.value(tracker.outputs.summary, "/summary/:seat"),
 );
 ```
 
@@ -96,7 +96,7 @@ const Mine = Serve.stream(Events, "/me", {
 
 ## Documents
 
-A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.document(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail internally with `ValueUnavailable` and return 503 `DocumentUnavailable`.
+A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.value(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail internally with `ValueUnavailable` and return 503 `DocumentUnavailable`.
 
 The Cloudflare and Alchemy hosts reconcile alarms after PUT, POST and DELETE, including rejected requests such as a Serve 405; see [Cloudflare](/docs/runtime/cloudflare).
 

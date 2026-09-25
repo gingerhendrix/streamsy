@@ -305,7 +305,7 @@ export interface DocumentOptions {
   };
   readonly contract?: Contract.CanonicalValue;
 }
-export function document<P, A, R, RE, const Path extends `/${string}`>(
+export function value<P, A, R, RE, const Path extends `/${string}`>(
   source: ValueSource<P, A, R, RE>,
   path: Path & ExactPath<Path, NoInfer<P>>,
   options: DocumentOptions = {},

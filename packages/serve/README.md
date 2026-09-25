@@ -33,7 +33,7 @@ BunRuntime.runMain(
 
 `Serve.stream` reads a stream or bound `Output.stream` through `StreamsReader`.
 `Serve.state` accepts a state declaration or bound `Output.rows` and reads changes from `-1`, with
-no snapshot. `Serve.document` takes a value source with a Schema and a
+no snapshot. `Serve.value` takes a value source with a Schema and a
 `resolve(params)` Effect, including a bound `Output.value`; it serves canonical JSON with a deterministic ETag.
 Reads check outputs only: an initially absent stream answers 404 and an absent
 value answers 503 `DocumentUnavailable`. They create no stream, checkpoint or state row.
@@ -53,15 +53,15 @@ on the pinned Effect/Bun router; client abort releases a parked long poll.
 The caller owns the Layer scope. Tests or custom hosts can use Effect's
 `HttpRouter.toWebHandler(App)` and must call its `dispose` at shutdown.
 
-| Entry                                                                   | Exports                                                                           |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `.`                                                                     | `Serve.stream`, `Serve.state`, `Serve.document`, their types; `PublicErrorSchema` |
-| `/contract`                                                             | Effect-free headers, public errors/decoder, canonical JSON, fingerprints          |
-| `/bun`                                                                  | `listener`, listener options and defaults                                         |
-| `/cloudflare`                                                           | `StreamsyObject`, placement router/rules, alarm service                           |
-| `/alchemy`                                                              | `objectHandlers`, placement router/rules, alarm service                           |
-| `/action`                                                               | Unchanged action declarations                                                     |
-| `/action/errors`, `/action/outbox`, `/action/runtime`, `/action/sqlite` | Unchanged action delivery and backing APIs, except unused OUTBOX_SCHEMA removed   |
+| Entry                                                                   | Exports                                                                         |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `.`                                                                     | `Serve.stream`, `Serve.state`, `Serve.value`, their types; `PublicErrorSchema`  |
+| `/contract`                                                             | Effect-free headers, public errors/decoder, canonical JSON, fingerprints        |
+| `/bun`                                                                  | `listener`, listener options and defaults                                       |
+| `/cloudflare`                                                           | `StreamsyObject`, placement router/rules, alarm service                         |
+| `/alchemy`                                                              | `objectHandlers`, placement router/rules, alarm service                         |
+| `/action`                                                               | Unchanged action declarations                                                   |
+| `/action/errors`, `/action/outbox`, `/action/runtime`, `/action/sqlite` | Unchanged action delivery and backing APIs, except unused OUTBOX_SCHEMA removed |
 
 Ten physical entries form six groups. Action's existing Sink names remain.
 State/stream recovery is `replay-from-start`; state consumers clear their local

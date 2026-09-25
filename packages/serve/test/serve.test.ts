@@ -153,7 +153,7 @@ test("document encodes canonical JSON and conditional HEAD", async () => {
     schema: Schema.Struct({ b: Schema.Finite, a: Schema.String }),
     resolve: () => Effect.succeed({ b: 2, a: "one" }),
   };
-  const web = HttpRouter.toWebHandler(Serve.document(source, "/document"), { disableLogger: true });
+  const web = HttpRouter.toWebHandler(Serve.value(source, "/document"), { disableLogger: true });
   try {
     const response = await web.handler(new Request("http://host/document"));
     expect(await response.text()).toBe('{"a":"one","b":2}');

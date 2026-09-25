@@ -36,7 +36,7 @@ export const outputRoutes = Layer.mergeAll(
   Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
   Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
   Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
-  Serve.document(summaryDocument, "/document/workspaces/:workspaceId/summary", {
+  Serve.value(summaryDocument, "/document/workspaces/:workspaceId/summary", {
     contract: "compact-summary-v1",
   }),
 );

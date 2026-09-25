@@ -60,7 +60,7 @@ test("declared rows, stream and value share one memory app and their declared co
   const App = Layer.mergeAll(
     Serve.state(tracker.outputs.board, "/board/:seat"),
     Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
-    Serve.document(tracker.outputs.summary, "/summary/:seat"),
+    Serve.value(tracker.outputs.summary, "/summary/:seat"),
     Serve.stream(tracker.outputs.transitions, "/me", { params: Seat }).pipe(
       Layer.provide(auth.layer),
     ),
@@ -154,7 +154,7 @@ const typeChecks = () => {
   // @ts-expect-error missing stream parameter
   Serve.stream(tracker.outputs.transitions, "/transitions");
   // @ts-expect-error extra route parameter
-  Serve.document(tracker.outputs.summary, "/summary/:seat/:extra");
+  Serve.value(tracker.outputs.summary, "/summary/:seat/:extra");
   // @ts-expect-error decoded params retain the number codec
   Serve.stream(tracker.outputs.transitions, "/me", { params: Effect.succeed({ seat: "42" }) });
   // @ts-expect-error a stream declaration does not supply rows collections
@@ -166,9 +166,9 @@ const typeChecks = () => {
     process: () => Effect.succeed({ state: { date: new Date() } }),
   });
   // @ts-expect-error Date is not a JSON encoded value; rejected before requests
-  Serve.document(date.outputs.date, "/date");
+  Serve.value(date.outputs.date, "/date");
   const missingState = HttpRouter.toWebHandler(
-    Serve.document(tracker.outputs.summary, "/summary/:seat"),
+    Serve.value(tracker.outputs.summary, "/summary/:seat"),
   );
   // @ts-expect-error document resolution requires Projection.State at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
@@ -196,6 +196,6 @@ const typeChecks = () => {
   const fixed = tracker.member({ seat: 42 });
   Serve.state(fixed.outputs.board, "/board");
   Serve.stream(fixed.outputs.transitions, "/transitions");
-  Serve.document(fixed.outputs.summary, "/summary");
+  Serve.value(fixed.outputs.summary, "/summary");
 };
 void typeChecks;
