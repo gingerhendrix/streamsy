@@ -1,7 +1,10 @@
 import { Deferred, Effect, Layer, Option, Ref, Schedule } from "effect";
-import type { HnStory } from "../../state-schema.ts";
+import { DurableState } from "@streamsy/core";
+import { Projection, type Checkpoints, type State } from "@streamsy/projection";
+import { newestRows, StoryRows, applyChange } from "../newest-rows.ts";
+import { HackerNewsStories, storiesAddress } from "../stories.ts";
 import { liveHackerNewsApi } from "../hnews.ts";
-import { nowIso } from "../util.ts";
+import { errorMessage, nowIso } from "../util.ts";
 import {
   initialCounters,
   NewestStoriesPoller,
@@ -10,7 +13,7 @@ import {
   type PollerConfig,
   type PollStats,
 } from "./contract.ts";
-import { reconcileNewest } from "./reconcile.ts";
+import { diffNewest } from "./reconcile.ts";
 
 type PollClaim = {
   readonly owner: boolean;
@@ -19,10 +22,10 @@ type PollClaim = {
 
 export function makeNewestStoriesPoller(
   config: PollerConfig,
-): Effect.Effect<NewestStoriesPollerService> {
+): Effect.Effect<NewestStoriesPollerService, never, HackerNewsStories | Checkpoints | State> {
   return Effect.gen(function* () {
     const api = config.api ?? liveHackerNewsApi;
-    const storiesRef = yield* Ref.make<ReadonlyMap<number, HnStory>>(new Map());
+    const context = yield* Effect.context<HackerNewsStories | Checkpoints | State>();
     const countersRef = yield* Ref.make(initialCounters);
     const activeRef = yield* Ref.make(Option.none<Deferred.Deferred<void>>());
 
@@ -33,10 +36,8 @@ export function makeNewestStoriesPoller(
       yield* patchCounters({
         lastPollStartedAt: yield* nowIso,
         lastPollError: undefined,
-        lastFetchedNewStories: 0,
-        lastRefreshedStories: 0,
-        lastChangedStories: 0,
-        lastRemovedStories: 0,
+        lastUpserts: 0,
+        lastDeletes: 0,
       });
 
       const pass = Effect.gen(function* () {
@@ -44,50 +45,61 @@ export function makeNewestStoriesPoller(
           0,
           config.limit,
         );
-        const newestIdSet = new Set(newestIds);
-        const previous = yield* Ref.get(storiesRef);
-        const newIds = newestIds.filter((id) => !previous.has(id));
-        const refreshIds = newestIds.filter((id) => previous.has(id));
-        const [newStories, refreshedStories] = yield* Effect.all(
-          [api.fetchStoriesById(newIds), api.fetchStoriesById(refreshIds)],
-          { concurrency: "unbounded" },
-        );
-        yield* patchCounters({
-          lastFetchedNewStories: newStories.length,
-          lastRefreshedStories: refreshedStories.length,
-        });
-
-        const outcome = reconcileNewest(previous, newestIdSet, [
-          ...newStories,
-          ...refreshedStories,
-        ]);
-        if (outcome.sourceChanges.length > 0) {
-          const offset = yield* config.sink.appendSourceBatch(outcome.sourceChanges);
-          yield* Ref.set(storiesRef, outcome.nextStories);
-          yield* Ref.update(countersRef, (counters) => ({
-            ...counters,
-            lastSourceOffset: offset,
-            sourceBatches: counters.sourceBatches + 1,
-            sourceChanges: counters.sourceChanges + outcome.sourceChanges.length,
-          }));
+        // Fetch once; every CAS retry reuses this result and re-reads durable rows.
+        const fetched = {
+          newestIds: new Set(newestIds),
+          stories: yield* api.fetchStoriesById(newestIds),
+        };
+        for (let attempt = 0; ; attempt++) {
+          const outcome = yield* Effect.gen(function* () {
+            const progress = yield* Projection.run(newestRows);
+            // The initial projection record supplies ZERO_OFFSET for a fresh store.
+            const token = progress.record.inputs.input;
+            const rows = Option.getOrElse(
+              yield* Projection.loadState(newestRows, StoryRows),
+              () => ({}),
+            );
+            const changes = diffNewest(rows, fetched);
+            const events = DurableState.changes(storiesAddress, { offset: token }, changes);
+            const offset =
+              events.length === 0
+                ? token
+                : (yield* (yield* HackerNewsStories).append({}, events, { expectedOffset: token }))
+                    .offset;
+            yield* patchCounters({
+              lastOffset: offset,
+              lastStoryCount: Object.keys(events.reduce(applyChange, rows)).length,
+              lastUpserts: changes.filter((change) => change.kind === "upsert").length,
+              lastDeletes: changes.filter((change) => change.kind === "delete").length,
+            });
+            return true;
+          }).pipe(
+            Effect.catchTag("OffsetMismatch", (error) =>
+              attempt === 3
+                ? Effect.fail(error)
+                : Ref.update(countersRef, (counters) => ({
+                    ...counters,
+                    totalConflictsRetried: counters.totalConflictsRetried + 1,
+                  })).pipe(Effect.as(false)),
+            ),
+          );
+          if (outcome) break;
         }
-
-        yield* patchCounters({
-          lastChangedStories: outcome.changed.length,
-          lastRemovedStories: outcome.removed.length,
-          lastPollCompletedAt: yield* nowIso,
-        });
-        yield* Effect.log(
-          `HN poll fetched ${newStories.length} new, refreshed ${refreshedStories.length}, upserted ${outcome.changed.length}, removed ${outcome.removed.length}`,
-        );
       });
 
       yield* pass.pipe(
         Effect.catch((failure) =>
-          patchCounters({ lastPollError: failure.reason }).pipe(
-            Effect.andThen(Effect.logError("HN poll failed", failure)),
-          ),
+          patchCounters({
+            lastPollError:
+              failure._tag === "NewestStoriesPoller.PollFailure"
+                ? failure.reason
+                : `${failure._tag}: ${errorMessage(failure)}`,
+          }).pipe(Effect.andThen(Effect.logError("HN poll failed", failure))),
         ),
+        Effect.ensuring(
+          Effect.flatMap(nowIso, (time) => patchCounters({ lastPollCompletedAt: time })),
+        ),
+        Effect.provide(context),
       );
     });
 
@@ -117,15 +129,9 @@ export function makeNewestStoriesPoller(
     }).pipe(Effect.withSpan("NewestStoriesPoller.pollNow"));
 
     const stats = Effect.gen(function* () {
-      const [counters, stories, active] = yield* Effect.all([
-        Ref.get(countersRef),
-        Ref.get(storiesRef),
-        Ref.get(activeRef),
-      ]);
+      const [counters, active] = yield* Effect.all([Ref.get(countersRef), Ref.get(activeRef)]);
       const result: PollStats = {
         polling: Option.isSome(active),
-        stopped: false,
-        lastStoryCount: stories.size,
         ...counters,
       };
       return result;

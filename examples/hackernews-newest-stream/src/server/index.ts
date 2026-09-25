@@ -2,34 +2,15 @@
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { listener } from "@streamsy/serve/bun";
-import {
-  newestLimit,
-  pollIntervalMs,
-  port,
-  projectionLimits,
-  serverIdleTimeoutSeconds,
-} from "./config.ts";
+import { newestLimit, pollIntervalMs, port, serverIdleTimeoutSeconds } from "./config.ts";
 import { app } from "./http.ts";
 import { newestStoriesPollerLayer } from "./poller/poller.ts";
-import { storyProjectionLayer } from "./projection.ts";
-import { demoHostLayer, DemoStreams } from "./streams.ts";
+import { demoHostLayer } from "./streams.ts";
 
-const pollerLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const streams = yield* DemoStreams;
-    return newestStoriesPollerLayer({
-      limit: newestLimit,
-      intervalMs: pollIntervalMs,
-      sink: {
-        appendSourceBatch: streams.appendSourceBatch,
-      },
-    });
-  }),
-);
-const applicationLayer = pollerLayer.pipe(
-  Layer.provideMerge(storyProjectionLayer(projectionLimits)),
-  Layer.provideMerge(demoHostLayer),
-);
+const applicationLayer = newestStoriesPollerLayer({
+  limit: newestLimit,
+  intervalMs: pollIntervalMs,
+}).pipe(Layer.provideMerge(demoHostLayer));
 const runtime = ManagedRuntime.make(
   HttpRouter.serve(app, { disableLogger: true }).pipe(
     Layer.provide(applicationLayer),

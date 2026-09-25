@@ -1,49 +1,31 @@
-import { Http } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import {
-  newestLimit,
-  pollIntervalMs,
-  projectionLimits,
-  sourceStreamPath,
-  streamPath,
-  streamPrefix,
-  streamContentType,
-} from "./config.ts";
+import { newestLimit, pollIntervalMs, streamPath } from "./config.ts";
 import { NewestStoriesPoller } from "./poller/contract.ts";
-import { StoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
-import { storyIndex } from "./story-index-projection.ts";
-import { streams } from "./streams.ts";
+import { HackerNewsStories } from "./stories.ts";
 
 const currentStats = Effect.gen(function* () {
   const poller = yield* NewestStoriesPoller;
-  const projection = yield* StoryProjection;
-  return { ...(yield* poller.stats), projection: yield* projection.status };
+  return yield* poller.stats;
 });
 
-export const stateRoute = Serve.state(storyIndex.outputs["hn-story"], streamPath);
+export const stateRoute = Serve.state(HackerNewsStories, streamPath);
 
 /** The page and State route share an origin, so no CORS middleware is needed. */
 export const app = Layer.mergeAll(
   stateRoute,
-  Http.routes(streams, { prefix: streamPrefix, access: "read" }),
   HttpRouter.add(
     "GET",
     "/api/status",
     Effect.gen(function* () {
-      return HttpServerResponse.jsonUnsafe(
-        {
-          streamPath,
-          sourceStreamPath,
-          newestLimit,
-          pollIntervalMs,
-          projectionLimits,
-          ...(yield* currentStats),
-        },
-        { headers: { "content-type": streamContentType } },
-      );
+      return HttpServerResponse.jsonUnsafe({
+        streamPath,
+        newestLimit,
+        pollIntervalMs,
+        ...(yield* currentStats),
+      });
     }),
   ),
   HttpRouter.add(
@@ -51,10 +33,7 @@ export const app = Layer.mergeAll(
     "/api/poll",
     Effect.gen(function* () {
       yield* (yield* NewestStoriesPoller).pollNow;
-      return HttpServerResponse.jsonUnsafe(
-        { ok: true, ...(yield* currentStats) },
-        { headers: { "content-type": streamContentType } },
-      );
+      return HttpServerResponse.jsonUnsafe({ ok: true, ...(yield* currentStats) });
     }),
   ),
   HttpRouter.add(

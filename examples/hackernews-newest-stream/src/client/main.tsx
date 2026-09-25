@@ -102,9 +102,9 @@ function HnApp({ db }: { db: HnDb }) {
         <p className="eyebrow">Streamsy projection demo</p>
         <h1>Hacker News newest stories</h1>
         <p>
-          A Bun server reconciles HN polls into a durable JSON source stream, and publishes the
-          newest stories at <code>/state/newest</code>. This page loads the retained changes, then
-          updates live as stories change.
+          A Bun server reconciles HN polls into a Durable State stream, and publishes the newest
+          stories at <code>/state/newest</code>. This page loads the retained changes, then updates
+          live as stories change.
         </p>
       </section>
 
@@ -114,7 +114,7 @@ function HnApp({ db }: { db: HnDb }) {
           <span>{status?.polling ? "Polling HN…" : "Live stream connected"}</span>
         </div>
         {stories.length === 0 ? (
-          <div className="empty">Waiting for the first projection batch…</div>
+          <div className="empty">Waiting for the first poll…</div>
         ) : (
           stories.map((story) => <StoryRow key={story.id} story={story} />)
         )}
@@ -158,12 +158,12 @@ function Shell({ children, status }: { children: React.ReactNode; status?: ApiSt
         {status ? (
           <div className="status">
             <span>{status.lastStoryCount} rows</span>
-            <span>{status.lastChangedStories + status.lastRemovedStories} changed</span>
+            <span>{status.lastUpserts + status.lastDeletes} changed</span>
             <span>poll {status.pollIntervalMs / 1000}s</span>
-            {status.lastPollError || status.projection.lastError ? (
+            {status.lastPollError ? (
               <span className="bad">error</span>
             ) : (
-              <span className="good">{status.projection.running ? "running" : "stopped"}</span>
+              <span className="good">{status.polling ? "polling" : "running"}</span>
             )}
           </div>
         ) : null}

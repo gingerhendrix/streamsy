@@ -31,56 +31,23 @@ export const HackerNewsItem = Schema.NullOr(
   }),
 );
 
-export const HackerNewsStateChange = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("hn-story"),
-    key: Schema.String,
-    value: HackerNewsStory,
-    headers: Schema.Struct({ operation: Schema.Literal("upsert") }),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("hn-story"),
-    key: Schema.String,
-    old_value: Schema.optionalKey(HackerNewsStory),
-    headers: Schema.Struct({ operation: Schema.Literal("delete") }),
-  }),
-]);
-export type HackerNewsStateChange = Schema.Schema.Type<typeof HackerNewsStateChange>;
-
 export const ApiStatus = Schema.Struct({
   streamPath: Schema.String,
-  sourceStreamPath: Schema.String,
   newestLimit: Schema.Finite,
   pollIntervalMs: Schema.Finite,
   polling: Schema.Boolean,
-  projection: Schema.Struct({
-    running: Schema.Boolean,
-    lastError: Schema.optional(Schema.String),
-    sourceThrough: Schema.optionalKey(Schema.String),
-  }),
   lastPollStartedAt: Schema.optional(Schema.String),
   lastPollCompletedAt: Schema.optional(Schema.String),
   lastPollError: Schema.optional(Schema.String),
-  lastSourceOffset: Schema.optional(Schema.String),
+  lastOffset: Schema.optional(Schema.String),
   lastStoryCount: Schema.Finite,
-  lastFetchedNewStories: Schema.Finite,
-  lastRefreshedStories: Schema.Finite,
-  lastChangedStories: Schema.Finite,
-  lastRemovedStories: Schema.Finite,
-  sourceBatches: Schema.Finite,
-  sourceChanges: Schema.Finite,
+  lastUpserts: Schema.Finite,
+  lastDeletes: Schema.Finite,
+  totalConflictsRetried: Schema.Finite,
 });
 export interface ApiStatus extends Schema.Schema.Type<typeof ApiStatus> {}
 
-export const ApiStatusSmokeView = Schema.Struct({
-  lastPollCompletedAt: ApiStatus.fields.lastPollCompletedAt,
-  lastPollError: ApiStatus.fields.lastPollError,
-  lastSourceOffset: ApiStatus.fields.lastSourceOffset,
-  lastStoryCount: ApiStatus.fields.lastStoryCount,
-  sourceBatches: ApiStatus.fields.sourceBatches,
-  sourceChanges: ApiStatus.fields.sourceChanges,
-  projection: ApiStatus.fields.projection,
-});
+export const ApiStatusSmokeView = ApiStatus;
 
 export const hackerNewsState = createStateSchema({
   stories: {

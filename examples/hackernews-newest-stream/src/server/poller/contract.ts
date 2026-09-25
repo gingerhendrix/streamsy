@@ -1,6 +1,5 @@
 import { Context, Effect, Schema } from "effect";
 import type { HnStory } from "../../state-schema.ts";
-import type { HackerNewsSourceChange } from "../source-change.ts";
 import { errorMessage } from "../util.ts";
 
 /** Expected operational failure from one poll pass boundary. */
@@ -16,26 +15,14 @@ export type PollCounters = {
   readonly lastPollStartedAt?: string;
   readonly lastPollCompletedAt?: string;
   readonly lastPollError?: string;
-  readonly lastFetchedNewStories: number;
-  readonly lastRefreshedStories: number;
-  readonly lastChangedStories: number;
-  readonly lastRemovedStories: number;
-  readonly lastSourceOffset?: string;
-  readonly sourceBatches: number;
-  readonly sourceChanges: number;
-};
-
-export type PollStats = PollCounters & {
-  readonly polling: boolean;
-  readonly stopped: boolean;
+  readonly lastUpserts: number;
+  readonly lastDeletes: number;
+  readonly totalConflictsRetried: number;
+  readonly lastOffset?: string;
   readonly lastStoryCount: number;
 };
 
-export type PollerSink = {
-  readonly appendSourceBatch: (
-    changes: readonly HackerNewsSourceChange[],
-  ) => Effect.Effect<string, PollFailure>;
-};
+export type PollStats = PollCounters & { readonly polling: boolean };
 
 export type HackerNewsApi = {
   readonly fetchNewestStoryIds: (limit: number) => Effect.Effect<number[], PollFailure>;
@@ -45,7 +32,6 @@ export type HackerNewsApi = {
 export type PollerConfig = {
   readonly limit: number;
   readonly intervalMs: number;
-  readonly sink: PollerSink;
   readonly api?: HackerNewsApi;
 };
 
@@ -61,10 +47,8 @@ export class NewestStoriesPoller extends Context.Service<
 >()("HackerNews/NewestStoriesPoller") {}
 
 export const initialCounters: PollCounters = {
-  lastFetchedNewStories: 0,
-  lastRefreshedStories: 0,
-  lastChangedStories: 0,
-  lastRemovedStories: 0,
-  sourceBatches: 0,
-  sourceChanges: 0,
+  lastUpserts: 0,
+  lastDeletes: 0,
+  totalConflictsRetried: 0,
+  lastStoryCount: 0,
 };

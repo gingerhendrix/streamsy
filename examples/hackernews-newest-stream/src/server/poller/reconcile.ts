@@ -1,39 +1,30 @@
-import type { HnStory } from "../../state-schema.ts";
-import { newestStorySort } from "../../state-schema.ts";
-import { sourceDelete, sourceUpsert, type HackerNewsSourceChange } from "../source-change.ts";
+import { DurableState } from "@streamsy/core";
+import { newestStorySort, type HnStory } from "../../state-schema.ts";
+import type { StoryRows } from "../newest-rows.ts";
+import type { StoryChange } from "../stories.ts";
 
-export type Reconciliation = {
-  readonly nextStories: ReadonlyMap<number, HnStory>;
-  readonly removed: readonly HnStory[];
-  readonly changed: readonly HnStory[];
-  readonly sourceChanges: readonly HackerNewsSourceChange[];
+export type FetchResult = {
+  readonly newestIds: ReadonlySet<number>;
+  readonly stories: readonly HnStory[];
 };
 
-/** Pure deterministic newest-set reconciliation with unchanged-write suppression. */
-export function reconcileNewest(
-  previous: ReadonlyMap<number, HnStory>,
-  newestIdSet: ReadonlySet<number>,
-  fetched: readonly HnStory[],
-): Reconciliation {
-  const nextStories = new Map([...previous].filter(([id]) => newestIdSet.has(id)));
-  for (const story of fetched) {
-    if (newestIdSet.has(story.id)) nextStories.set(story.id, story);
-  }
-  const removed = [...previous.values()]
-    .filter((story) => !nextStories.has(story.id))
+/** Keep known rows on item-fetch failures while their ids remain in the newest set. */
+export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly StoryChange[] {
+  const removed = Object.values(previous)
+    .filter((story) => !fetched.newestIds.has(story.id))
     .toSorted((a, b) => a.id - b.id);
-  const changed = [...nextStories.values()]
-    .filter((story) => {
-      const prior = previous.get(story.id);
-      return prior === undefined || !storyEquals(prior, story);
-    })
+  const changed = fetched.stories
+    .filter(
+      (story) =>
+        fetched.newestIds.has(story.id) &&
+        (previous[String(story.id)] === undefined ||
+          !storyEquals(previous[String(story.id)], story)),
+    )
     .toSorted(newestStorySort);
-  return {
-    nextStories,
-    removed,
-    changed,
-    sourceChanges: [...removed.map(sourceDelete), ...changed.map(sourceUpsert)],
-  };
+  return [
+    ...removed.map((story) => DurableState.remove("hn-story", story)),
+    ...changed.map((story) => DurableState.upsert("hn-story", story)),
+  ];
 }
 
 function storyEquals(a: HnStory, b: HnStory): boolean {

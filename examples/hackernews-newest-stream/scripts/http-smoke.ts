@@ -4,12 +4,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Schema } from "effect";
+import { StreamAddress } from "@streamsy/core";
 import { createHnDb, type HnDb } from "../src/client/db.ts";
-import { ApiStatusSmokeView, HackerNewsStateChange } from "../src/state-schema.ts";
+import { ApiStatusSmokeView } from "../src/state-schema.ts";
+import { storiesAddress, type StoryEvent } from "../src/server/stories.ts";
 
-// Offline vertical smoke: local HN fixture -> deterministic source batch ->
-// scoped @streamsy/projection change watcher -> public target stream consumed by the browser,
-// including a process restart against the same SQLite file.
+// Offline vertical smoke: fixture -> poller CAS append -> served State -> TanStack DB,
+// including a departure during downtime and restart on the same SQLite file.
 
 const packageDir = resolve(import.meta.dir, "..");
 const portReservation = Bun.serve({ port: 0, fetch: () => new Response("reserved") });
@@ -51,7 +52,7 @@ const fixtureStories: FixtureStory[] = [
 const fixtureById = new Map(fixtureStories.map((value) => [value.id, value]));
 let newestIds = [101, 102];
 
-type ChangeEvent = HackerNewsStateChange;
+type ChangeEvent = StoryEvent;
 type ApiStatus = Schema.Schema.Type<typeof ApiStatusSmokeView>;
 
 const fixture = Bun.serve({
@@ -81,7 +82,7 @@ async function waitForServer(): Promise<void> {
   throw new SmokeError(`HN demo server did not become ready: ${String(lastError)}`);
 }
 
-async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
+async function waitForStatus(): Promise<ApiStatus> {
   const deadline = Date.now() + 10_000;
   let last: ApiStatus | undefined;
   while (Date.now() < deadline) {
@@ -89,11 +90,10 @@ async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
     if (response.ok) {
       last = Schema.decodeUnknownSync(ApiStatusSmokeView)(await response.json());
       assert(!last.lastPollError, `poll reported an error: ${last.lastPollError}`);
-      assert(!last.projection.lastError, `projection failed: ${last.projection.lastError}`);
       if (
-        last.sourceBatches >= sourceBatches &&
-        last.lastSourceOffset !== undefined &&
-        last.projection.sourceThrough === last.lastSourceOffset
+        last.lastPollCompletedAt !== undefined &&
+        !last.polling &&
+        last.lastOffset !== undefined
       ) {
         return last;
       }
@@ -105,9 +105,16 @@ async function waitForStatus(sourceBatches: number): Promise<ApiStatus> {
 
 async function readStoryEvents(): Promise<readonly ChangeEvent[]> {
   const response = await fetch(`${streamUrl}?offset=-1`);
-  assert(response.status === 200, `target stream read failed: ${response.status}`);
+  assert(response.status === 200, `State stream read failed: ${response.status}`);
   assert(response.headers.get("x-streamsy-state-version") === "1", "served state version");
-  return Schema.decodeUnknownSync(Schema.Array(HackerNewsStateChange))(await response.json());
+  return Schema.decodeUnknownSync(
+    Schema.Array(
+      StreamAddress.stateChange({
+        type: "hn-story",
+        schema: storiesAddress.collections["hn-story"].schema,
+      }),
+    ),
+  )(await response.json());
 }
 
 function startDemo() {
@@ -145,17 +152,17 @@ async function session(): Promise<HnDb> {
   await db.preload();
   return db;
 }
-async function waitForRows(db: HnDb, title: string): Promise<void> {
+async function waitForRows(db: HnDb, title: string, ids = "101,103"): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const rows = Array.from(db.collections.stories.values());
     if (
-      rows.length === 2 &&
+      rows.length === ids.split(",").length &&
       rows.some((row) => row.title === title) &&
       rows
         .map((row) => String(row.id))
-        .sort()
-        .join(",") === "101,103"
+        .toSorted()
+        .join(",") === ids
     )
       return;
     await Bun.sleep(20);
@@ -166,10 +173,10 @@ async function waitForRows(db: HnDb, title: string): Promise<void> {
 }
 try {
   await waitForServer();
-  const initialStatus = await waitForStatus(1);
+  const initialStatus = await waitForStatus();
   const initialEvents = await readStoryEvents();
-  assert(initialStatus.sourceChanges === 2, "initial poll should append two source changes");
-  assert(initialEvents.length === 2, "initial projection should emit two story upserts");
+  assert(initialStatus.lastUpserts === 2, "initial poll should append two upserts");
+  assert(initialEvents.length === 2, "initial poll should emit two story upserts");
 
   const live = await session();
   assert(live.collections.stories.size === 2, "new session replays two current rows from -1");
@@ -180,19 +187,22 @@ try {
   newestIds = [103, 101];
   const changedPoll = await fetch(`${baseUrl}/api/poll`, { method: "POST" });
   assert(changedPoll.ok, `changed poll failed: ${changedPoll.status}`);
-  const changedStatus = await waitForStatus(2);
+  const changedStatus = await waitForStatus();
   const changedEvents = await readStoryEvents();
   await waitForRows(live, "Streamsy ships a complete projection");
   assert(live.offset !== initialOffset, "same session consumes the live suffix after poll");
   assert(
-    !("old_value" in changedEvents.find((event) => event.headers.operation === "delete")!),
-    "delete carries only a key",
+    "old_value" in changedEvents.find((event) => event.headers.operation === "delete")!,
+    "Durable State delete carries the departed row",
   );
   const replay = await session();
   await waitForRows(replay, "Streamsy ships a complete projection");
 
   assert(changedStatus.lastStoryCount === 2, "bounded newest set should still contain two rows");
-  assert(changedStatus.sourceChanges === 5, "changed poll should append delete plus two upserts");
+  assert(
+    changedStatus.lastUpserts === 2 && changedStatus.lastDeletes === 1,
+    "changed poll should append delete plus two upserts",
+  );
   assert(
     changedEvents.some((event) => event.key === "102" && event.headers.operation === "delete"),
     "story leaving the newest set should emit a delete",
@@ -214,66 +224,67 @@ try {
 
   const unchangedPoll = await fetch(`${baseUrl}/api/poll`, { method: "POST" });
   assert(unchangedPoll.ok, `unchanged poll failed: ${unchangedPoll.status}`);
-  const unchangedStatus = await waitForStatus(2);
+  const unchangedStatus = await waitForStatus();
   const unchangedEvents = await readStoryEvents();
-  assert(unchangedStatus.sourceBatches === 2, "unchanged poll must not append a source batch");
+  assert(
+    unchangedStatus.lastUpserts === 0 && unchangedStatus.lastDeletes === 0,
+    "unchanged poll must not append changes",
+  );
   assert(
     unchangedEvents.length === changedEvents.length,
-    "unchanged poll must not append projection output",
+    "unchanged poll must not append State events",
   );
 
-  const sourceThroughBeforeRestart = unchangedStatus.projection.sourceThrough;
-  assert(
-    sourceThroughBeforeRestart !== undefined,
-    "first process should expose its stored checkpoint offset",
-  );
+  const offsetBeforeRestart = unchangedStatus.lastOffset;
   serverStderr += await stopDemo(server);
   server = undefined;
-
+  // Story 103 leaves while the poller is stopped: F-1 must be repaired on the first pass.
+  newestIds = [101];
   server = startDemo();
   await waitForServer();
-  const restartedStatus = await waitForStatus(1);
+  const restartedStatus = await waitForStatus();
   const restartedEvents = await readStoryEvents();
+  assert(restartedStatus.lastOffset !== offsetBeforeRestart, "restart appends the departure");
   assert(
-    restartedStatus.projection.sourceThrough !== sourceThroughBeforeRestart,
-    "projection checkpoint should continue after restart",
+    restartedStatus.lastUpserts === 0 && restartedStatus.lastDeletes === 1,
+    "first restart poll deletes the downtime departure without redundant upserts",
   );
   assert(
-    restartedStatus.sourceChanges === 2,
-    "restarted process should append only the two changes its own poll found",
+    restartedEvents.length === unchangedEvents.length + 1,
+    "restart appends exactly one delete",
   );
   assert(
-    restartedEvents.length === unchangedEvents.length + 2,
-    "a resumed checkpoint projects only the post-restart poll, never the retained prefix again",
+    restartedEvents.at(-1)?.key === "103" && restartedEvents.at(-1)?.headers.operation === "delete",
+    "story 103 departed during downtime",
   );
   assert(
     JSON.stringify(restartedEvents.slice(0, unchangedEvents.length)) ===
       JSON.stringify(unchangedEvents),
-    "restart should preserve every target fact already stored",
+    "restart preserves the retained prefix",
   );
   const restartedSession = await session();
-  await waitForRows(restartedSession, "Streamsy ships a complete projection");
-  await waitForRows(live, "Streamsy ships a complete projection");
+  await waitForRows(restartedSession, "Streamsy ships a complete projection", "101");
+  await waitForRows(live, "Streamsy ships a complete projection", "101");
   const resumeDeadline = Date.now() + 10_000;
   while (live.offset !== restartedSession.offset && Date.now() < resumeDeadline)
     await Bun.sleep(20);
   assert(
     live.offset === restartedSession.offset,
-    "pre-restart session resumes through fresh upserts",
+    "pre-restart session resumes through downtime delete",
   );
 
   const restartedUnchangedPoll = await fetch(`${baseUrl}/api/poll`, { method: "POST" });
   assert(restartedUnchangedPoll.ok, `post-restart poll failed: ${restartedUnchangedPoll.status}`);
-  const restartedUnchangedStatus = await waitForStatus(1);
+  const restartedUnchangedStatus = await waitForStatus();
   const finalEvents = await readStoryEvents();
   assert(
-    restartedUnchangedStatus.sourceBatches === 1,
-    "unchanged post-restart poll must not append another source batch",
+    restartedUnchangedStatus.lastUpserts === 0 && restartedUnchangedStatus.lastDeletes === 0,
+    "unchanged post-restart poll must not append changes",
   );
   assert(finalEvents.length === restartedEvents.length, "unchanged post-restart poll must be idle");
 
   console.log(
-    `hackernews-newest-stream HTTP smoke passed: ${finalEvents.length} State events; TanStack replay, live upsert/key-only delete, and SQLite restart resume`,
+    `hackernews-newest-stream HTTP smoke passed: ${finalEvents.length} State events; TanStack replay, live upsert/delete, and SQLite restart with downtime departure`,
   );
 } finally {
   for (const db of sessions) db.close();
