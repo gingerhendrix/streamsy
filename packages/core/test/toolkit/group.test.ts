@@ -10,8 +10,7 @@ import {
   StreamFamily,
   StreamGroup,
 } from "../../src/index.ts";
-import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
-import * as Protocol from "../../src/protocol/index.ts";
+import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 
 class Notes extends StreamFamily.json<Notes>()("Group/Notes", "notes/:user", {
   params: { user: Schema.String },
@@ -62,7 +61,7 @@ it("memory families expose feeds and storage but no generic protocol keys", asyn
 });
 
 it("provides accepts groups for protocol graphs", async () => {
-  const host = provides(Protocol.layerMemory(), group);
+  const host = provides(Streams.layerMemory(), group);
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* (yield* Notes).create({ user: "ann" });

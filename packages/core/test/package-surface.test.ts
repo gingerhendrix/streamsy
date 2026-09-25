@@ -103,15 +103,13 @@ test("family namespace pins factories and backend composition helpers", () => {
   ]);
 });
 
-test("protocol subpath retains the same services and memory forms", () => {
+test("protocol subpath exposes protocol services and tools", () => {
   expect(Object.keys(Protocol).sort()).toEqual([
     "Protocol",
     "StreamRoute",
     "Streams",
     "StreamsReader",
     "StreamsWriter",
-    "layerMemory",
-    "layerProtocol",
     "routes",
   ]);
   expect(Object.keys(Protocol.Streams).sort()).toEqual([
@@ -125,8 +123,6 @@ test("protocol subpath retains the same services and memory forms", () => {
     "remove",
     "session",
   ]);
-  expect(Protocol.layerMemory).toBe(Protocol.Streams.layerMemory);
-  expect(Protocol.layerProtocol).toBe(Protocol.layerMemory);
 });
 
 test("Fetch exposes separate family and protocol layer constructors", () => {
