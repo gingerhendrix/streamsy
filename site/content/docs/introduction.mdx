@@ -80,7 +80,8 @@ import { Orders, OrderTotals } from "./streams.ts";
 
 const projection = Projection.fused({
   id: "order-totals",
-  inputs: { input: Orders.at({}) },
+  params: {},
+  inputs: { input: Orders },
   process: Projection.each(({ item }) =>
     Effect.flatMap(OrderTotals, (totals) =>
       totals.append({}, [{ orderId: item.orderId, total: item.amount }]),
@@ -88,10 +89,10 @@ const projection = Projection.fused({
   ),
 });
 
-export const catchUp = Projection.run(projection);
+export const catchUp = Projection.run(projection.at({}));
 ```
 
-`Orders.at({})` names one address as the projection input. The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. `catchUp` requires `Orders`, `OrderTotals`, and the `Checkpoints` service.
+`Orders` names the projection input, and `projection.at({})` binds a projection with no parameters. The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. `catchUp` requires `Orders`, `OrderTotals`, and the `Checkpoints` service.
 
 See [Projections](/docs/projections/introduction).
 

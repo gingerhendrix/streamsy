@@ -15,17 +15,16 @@ class GameEvents extends Streamsy.json<GameEvents>()(
   { params: { gameId: Schema.String }, schema: GameEvent },
 ) {}
 
-const boardProjection = (gameId: string) =>
-  Projection.fused({
-    id: "hex-board",
-    params: { gameId },
-    inputs: { input: GameEvents.at({ gameId }) },
-    process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
-      stepBoard(state, item, unit.ranges.input.nextOffset),
-    ),
-  });
+const board = Projection.fused({
+  id: "hex-board",
+  params: { gameId: Schema.String },
+  inputs: { input: GameEvents },
+  process: Projection.fold(BoardState, initialBoard, (state, { item }, unit) =>
+    stepBoard(state, item, unit.ranges.input.nextOffset),
+  ),
+});
 
-const current = Projection.loadState(boardProjection("game"), BoardState);
+const current = Projection.loadState(board.at({ gameId: "game" }), BoardState);
 ```
 
 `ranges.input` is present in a fused single-input pass, because an empty read never reaches the handler.

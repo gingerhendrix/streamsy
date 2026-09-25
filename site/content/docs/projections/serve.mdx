@@ -33,7 +33,7 @@ State serves the Durable State change stream without a snapshot. A new client re
 
 ## Serving declared outputs
 
-A named `Projection.family` accepts streams as output targets. Pass its bound `outputs` directly to Serve; the stream codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
+`Projection.outputs` accepts stream declarations as output targets. Pass the declaration's `outputs` directly to Serve; the stream codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
 
 ```ts
 import { Layer, Schema } from "effect";
@@ -51,7 +51,7 @@ class Transitions extends Streamsy.bytes<Transitions>()("Seats/Transitions", "tr
   params,
 }) {}
 const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
-const tracker = Projection.family({
+const tracker = Projection.outputs({
   id: "tracker",
   params,
   inputs: { numbers: Numbers },
@@ -76,11 +76,11 @@ const OutputRoutes = Layer.mergeAll(
 );
 ```
 
-The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `Projection.State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.at({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `Projection.State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
 
-In a named family, fixed-id outputs and targets using fewer parameters share a stream across matching members, each writing with its own producer id, and Serve exposes that stream at every matching member URL.
+Fixed addresses and targets using fewer parameters share a stream across the matching bound projections, each writing with its own producer id, and Serve exposes that stream at every matching URL.
 
-For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateAddress` codec; deletes may omit `old_value`. No read creates a stream, checkpoint, or state row.
+For a declaration with `params: {}`, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateAddress` codec; deletes may omit `old_value`. No read creates a stream, checkpoint, or state row.
 
 ## Auth and per-request params
 

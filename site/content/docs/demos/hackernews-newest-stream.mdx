@@ -58,7 +58,7 @@ The raw handler returns an Effect of `{ "hn-story": [...] }`, containing
 changes. The served route is:
 
 ```ts
-Serve.state(hackerNewsStoryIndex.outputs["hn-story"], "/state/newest");
+Serve.state(storyIndex.outputs["hn-story"], "/state/newest");
 ```
 
 Source, rows output, checkpoint and `Projection.State` share one Bun SQLite
