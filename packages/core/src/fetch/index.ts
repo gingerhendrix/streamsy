@@ -14,7 +14,7 @@ export { TransportFault } from "../fault.ts";
 
 type Decoder<A, E> = (operation: Response.Operation, response: HttpResponse) => Effect.Effect<A, E>;
 
-/** Supplies the existing services. HttpClient and the calling fiber own request lifetimes. */
+/** Generic reader and writer over HTTP for the protocol tier. HttpClient and the calling fiber own request lifetimes. */
 export const layerProtocol = (options: Options) =>
   Layer.effectContext(
     Effect.gen(function* () {

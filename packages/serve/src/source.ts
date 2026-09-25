@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
-import type { StreamFamily, StreamId, StreamRef } from "@streamsy/core";
-import type { StreamRoute } from "@streamsy/core/protocol";
+import type { StreamFamily, StreamId, StreamRef, StreamsFault } from "@streamsy/core";
+import type { Reader, StreamRoute } from "@streamsy/core/protocol";
 import type { CanonicalValue, PublicError } from "./contract.ts";
 
 /** Structural family consumed by Serve, including bound projection outputs. */
@@ -23,11 +23,7 @@ export type PathSource<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
 /** Internal resolution seam: projection-output adapters can supply their own resolver. */
 export interface Source<P, R = never> {
   readonly kind: "stream" | "state";
-  readonly wire: Effect.Effect<
-    import("@streamsy/core/protocol").Reader<import("@streamsy/core").StreamsFault>,
-    never,
-    R
-  >;
+  readonly wire: Effect.Effect<Reader<StreamsFault>, never, R>;
   readonly template: string;
   readonly paramSchema: StreamRoute.PathSchema<P> | undefined;
   readonly resolve: (params: P) => Effect.Effect<

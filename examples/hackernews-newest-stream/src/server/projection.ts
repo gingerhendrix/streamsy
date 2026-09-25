@@ -1,3 +1,4 @@
+import type { Changes } from "@streamsy/core";
 import type { HackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
 import { Checkpoints, Projection, type State } from "@streamsy/projection";
 import { Cause, Context, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect";
@@ -34,7 +35,7 @@ export function makeStoryProjection(
   | HackerNewsSource
   | HackerNewsTarget
   | State
-  | import("@streamsy/core").Changes<HackerNewsSource>
+  | Changes<HackerNewsSource>
   | Scope.Scope
 > {
   return Effect.gen(function* () {
