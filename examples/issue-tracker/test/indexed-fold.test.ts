@@ -1,3 +1,4 @@
+import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
@@ -203,28 +204,12 @@ test("indexed touched-key output matches full scans byte for byte across catalog
           }
           // Before the first issue, board is correctly absent; label counts already exist.
           if (expectedBoard.length > 0) {
-            const actual = yield* Effect.gen(function* () {
-              const output = tracker.outputs.board;
-              const ref = output.ref({ workspaceId: "live" });
-              const result = yield* (yield* output.family).wire.read(ref.id);
-              expect(result.upToDate).toBe(true);
-              return yield* Effect.forEach(result.messages, (message) =>
-                Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-              );
-            });
+            const actual = yield* Members.readOutput(tracker.outputs.board, "live");
             expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
               expectedBoard,
             );
           }
-          const actual = yield* Effect.gen(function* () {
-            const output = tracker.outputs.labelCounts;
-            const ref = output.ref({ workspaceId: "live" });
-            const result = yield* (yield* output.family).wire.read(ref.id);
-            expect(result.upToDate).toBe(true);
-            return yield* Effect.forEach(result.messages, (message) =>
-              Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-            );
-          });
+          const actual = yield* Members.readOutput(tracker.outputs.labelCounts, "live");
           expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
             expectedCounts,
           );

@@ -42,7 +42,7 @@ function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
         throw new RangeError(`stream route templates overlap: ${template} and ${other}`);
 }
 
-/** Build a family implementation over backend values, retaining the same ownership guard. */
+/** Build a family service over one protocol graph's wires, with the ownership guard on writes. */
 function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
@@ -312,15 +312,15 @@ export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
   // SAFETY: Input is either the family tuple or one group containing that same tuple.
   const keys = (first !== undefined && "families" in first ? first.families : input) as Keys;
   checkFamilies(keys);
-  const bindContext = (backend: Wires, storage?: typeof Storage.Service) => {
+  const bindContext = (wires: Wires, storage?: typeof Storage.Service) => {
     if (
       storage !== undefined &&
-      (storageOf(backend.reader) !== storage || storageOf(backend.writer) !== storage)
+      (storageOf(wires.reader) !== storage || storageOf(wires.writer) !== storage)
     )
       throw new RangeError("The exposed Storage does not own the protocol wires");
     let context = Context.empty();
     for (const key of keys) {
-      context = Context.add(context, key, key.make(backend));
+      context = Context.add(context, key, key.make(wires));
       if (storage !== undefined)
         context = Context.add(context, Changes(key), {
           owner: ownerOf(storage),

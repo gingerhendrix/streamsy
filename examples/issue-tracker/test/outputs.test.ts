@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { contractFingerprint } from "@streamsy/serve/contract";
-import { Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { applicationLayer, createInputs } from "../server/host.ts";
@@ -157,25 +157,9 @@ test("named output replay survives a lost append reply beside the SQL projection
         ]);
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         yield* Projection.run(member);
-        const transitions = yield* Effect.gen(function* () {
-          const output = tracker.outputs.transitions;
-          const ref = output.ref({ workspaceId: "live" });
-          const result = yield* (yield* output.family).wire.read(ref.id);
-          expect(result.upToDate).toBe(true);
-          return yield* Effect.forEach(result.messages, (message) =>
-            Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-          );
-        });
+        const transitions = yield* Members.readOutput(tracker.outputs.transitions, "live");
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
-        const board = yield* Effect.gen(function* () {
-          const output = tracker.outputs.board;
-          const ref = output.ref({ workspaceId: "live" });
-          const result = yield* (yield* output.family).wire.read(ref.id);
-          expect(result.upToDate).toBe(true);
-          return yield* Effect.forEach(result.messages, (message) =>
-            Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-          );
-        });
+        const board = yield* Members.readOutput(tracker.outputs.board, "live");
         expect(board).toHaveLength(2);
         expect(yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,

@@ -57,7 +57,7 @@ payload after a restart; `Duplicate` then means the earlier send landed.
 | `@streamsy/core`          | StreamFamily, StreamGroup, AnyStream, Memory, StreamRef, Fold, Producer, storage contracts, errors |
 | `@streamsy/core/fetch`    | `Fetch.layer({ baseUrl }, families)`: the same family services over HTTP                           |
 | `@streamsy/core/http`     | `Http.routes`, `Http.app`, `Http.read`, and `securityHeaders`                                      |
-| `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, Backend, StreamRoute, and raw routes              |
+| `@streamsy/core/protocol` | StreamsReader, StreamsWriter, Streams, Protocol, StreamRoute, and raw routes                       |
 | `@streamsy/core/testing`  | Contract tests and fault injection for backends                                                    |
 
 ## Storage and hosts

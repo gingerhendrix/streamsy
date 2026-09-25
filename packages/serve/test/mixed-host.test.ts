@@ -5,11 +5,11 @@ import { Http, Memory, StreamFamily, StreamGroup } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { HttpRouter } from "effect/unstable/http";
 
-class MemoryFamily extends StreamFamily.json<MemoryFamily>()("RoutedHost/Memory", "memory/:name", {
+class MemoryFamily extends StreamFamily.json<MemoryFamily>()("MixedHost/Memory", "memory/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
-class SqliteFamily extends StreamFamily.json<SqliteFamily>()("RoutedHost/Sqlite", "sqlite/:name", {
+class SqliteFamily extends StreamFamily.json<SqliteFamily>()("MixedHost/Sqlite", "sqlite/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}

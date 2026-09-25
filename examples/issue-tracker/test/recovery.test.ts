@@ -5,7 +5,7 @@ import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { State, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Effect, Schema, ManagedRuntime } from "effect";
+import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
 import { Events, LabelEvents, Labels } from "../server/streams.ts";
@@ -65,33 +65,9 @@ const more = Effect.flatMap(Events, (events) =>
 );
 const collect = Effect.gen(function* () {
   return {
-    board: yield* Effect.gen(function* () {
-      const output = tracker.outputs.board;
-      const ref = output.ref({ workspaceId: "live" });
-      const result = yield* (yield* output.family).wire.read(ref.id);
-      expect(result.upToDate).toBe(true);
-      return yield* Effect.forEach(result.messages, (message) =>
-        Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-      );
-    }),
-    counts: yield* Effect.gen(function* () {
-      const output = tracker.outputs.labelCounts;
-      const ref = output.ref({ workspaceId: "live" });
-      const result = yield* (yield* output.family).wire.read(ref.id);
-      expect(result.upToDate).toBe(true);
-      return yield* Effect.forEach(result.messages, (message) =>
-        Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-      );
-    }),
-    transitions: yield* Effect.gen(function* () {
-      const output = tracker.outputs.transitions;
-      const ref = output.ref({ workspaceId: "live" });
-      const result = yield* (yield* output.family).wire.read(ref.id);
-      expect(result.upToDate).toBe(true);
-      return yield* Effect.forEach(result.messages, (message) =>
-        Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
-      );
-    }),
+    board: yield* Members.readOutput(tracker.outputs.board, "live"),
+    counts: yield* Members.readOutput(tracker.outputs.labelCounts, "live"),
+    transitions: yield* Members.readOutput(tracker.outputs.transitions, "live"),
     summary: yield* tracker.outputs.workspace.resolve({ workspaceId: "live" }),
   };
 });
