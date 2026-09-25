@@ -3,27 +3,27 @@ title: Writing
 description: Append items as one atomic write, retry safely with a producer position, and guard a write with the expected offset.
 ---
 
-`Streams.append` encodes items with the ref codec and writes them as one atomic append. Options close the stream, fence a producer, or make the write conditional.
+`append(params, items, options?)` encodes items with the family codec and writes them as one atomic append. Options close the stream, fence a producer, or make the write conditional.
 
 ```ts
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core";
-import { notes } from "./refs.ts";
+import { Notes } from "./streams.ts";
 
 const write = Effect.gen(function* () {
-  const result = yield* Streams.append(notes, [{ id: "n1", text: "hello" }]);
+  const notes = yield* Notes;
+  const result = yield* notes.append({}, [{ id: "n1", text: "hello" }]);
   return result.offset;
 });
 ```
 
 `Appended` carries the new tail `offset`. Because reads are after-exclusive, that offset is also the next read position. `Duplicate` means this producer position was already accepted.
 
-A JSON ref stores one message per item. A bytes append joins all items from one call into one stored message.
+A JSON family stores one message per item. A bytes append joins all items from one call into one stored message.
 
 ## Durable State changes
 
 `State.changes` turns upsert and delete descriptions into the wire events for a
-`StreamRef.state`. Each description names its collection. The helper derives the
+member of a `StreamFamily.state` family. Each description names its collection. The helper derives the
 key from that collection's key field, records the source `offset`, and assigns
 `txid` as `${offset}:${index}` within the append. An upsert or delete can override
 `txid` and add `timestamp` or `from`; the source offset always comes from
@@ -31,39 +31,44 @@ key from that collection's key field, records the source `offset`, and assigns
 
 ```ts
 import { Effect } from "effect";
-import { State, Streams } from "@streamsy/core";
-import { workspace } from "./refs.ts";
+import { State } from "@streamsy/core";
+import { Workspace } from "./streams.ts";
 
 const createIssue = (offset: string, issue: { id: string; projectId: string; title: string }) =>
   Effect.gen(function* () {
-    const facts = State.changes(workspace, { offset }, [State.upsert("issue", issue)]);
-    yield* Streams.append(workspace, facts);
+    const workspace = yield* Workspace;
+    const params = { workspaceId: "main" };
+    const facts = State.changes(Workspace.at(params), { offset }, [State.upsert("issue", issue)]);
+    yield* workspace.append(params, facts);
   });
 ```
 
-A change for a collection the ref does not declare, or a value that does not
+A change for a collection the family does not declare, or a value that does not
 match that collection's schema, fails to compile.
 
-Reading the state ref with `Streams.read` or `Streams.follow` returns the typed
+Reading the state family with `read` or `follow` returns the typed
 change events; browser consumers can pass the same stream to
 `@durable-streams/state`.
 
 ## Close
 
-`append(ref, items, { close: true })` writes the items and closes the stream. `append(ref, [], { close: true })` closes it with no items. Later appends fail with `StreamClosed`.
+`append(params, items, { close: true })` writes the items and closes the stream. `append(params, [], { close: true })` closes it with no items. Later appends fail with `StreamClosed`.
 
 ## Idempotent retries and producer fencing
 
-A producer position is `{ producerId, producerEpoch, producerSeq }`. `Producer.append` sends it with the write, and `Producer.next` advances it.
+A producer position is `{ producerId, producerEpoch, producerSeq }`. The `producer` append option sends it with the write, and `Producer.next` advances it.
 
 ```ts
 import { Effect } from "effect";
 import { Producer } from "@streamsy/core";
-import { notes } from "./refs.ts";
+import { Notes } from "./streams.ts";
 
 const importOne = (position: Producer.Position) =>
   Effect.gen(function* () {
-    const result = yield* Producer.append(notes, [{ id: "n3", text: "retried" }], position);
+    const notes = yield* Notes;
+    const result = yield* notes.append({}, [{ id: "n3", text: "retried" }], {
+      producer: position,
+    });
     // Appended and Duplicate both acknowledge this position.
     return { result, next: Producer.next(position) };
   });
@@ -84,14 +89,16 @@ explains why `Duplicate` confirms that the earlier send landed.
 
 ```ts
 import { Effect, Stream } from "effect";
-import { Streams, ZERO_OFFSET } from "@streamsy/core";
-import { orders, apply, initial } from "./orders.ts";
+import { ZERO_OFFSET } from "@streamsy/core";
+import { Orders, apply, initial } from "./orders.ts";
 
 const reserve = (sku: string) =>
   Effect.gen(function* () {
-    const folded = yield* Streams.read(orders).pipe(
+    const orders = yield* Orders;
+    const empty: string = ZERO_OFFSET;
+    const folded = yield* orders.read({}).pipe(
       Stream.runFold(
-        () => ({ state: initial, tail: ZERO_OFFSET }),
+        () => ({ state: initial, tail: empty }),
         (acc, batch) => ({
           state: batch.items.reduce(apply, acc.state),
           tail: batch.nextOffset,
@@ -99,7 +106,7 @@ const reserve = (sku: string) =>
       ),
     );
     if (folded.state.reserved.has(sku)) return { _tag: "Rejected" as const };
-    const appended = yield* Streams.append(orders, [{ type: "reserved", sku }], {
+    const appended = yield* orders.append({}, [{ type: "reserved", sku }], {
       expectedOffset: folded.tail,
     });
     return { _tag: "Committed" as const, offset: appended.offset };
@@ -126,8 +133,8 @@ const mutateWorkspace = (workspaceId, attempt) =>
 ```
 
 The attempt runs again after a conflict, so validation and event construction
-use the new state rather than values captured before the retry. The same
-collection-declared ref types the read events and the conditional append.
+use the new state rather than values captured before the retry. One state
+family types the read events and the conditional append.
 The tracker has no upstream source stream, so it records the workspace head it
 just read as the change's source offset. Its builders override `txid` with the
 browser UUID and add the server timestamp.
@@ -140,4 +147,4 @@ An append fails with `StreamClosed`, `OffsetMismatch`, `StaleEpoch`, `ProducerGa
 
 ## Over HTTP
 
-`POST` on the stream path appends. The producer position travels in the `Producer-Id`, `Producer-Epoch`, and `Producer-Seq` headers, and the condition in `Stream-Expected-Offset`. The fetch Layer sends those headers only when its `capabilities` assert them. See [HTTP](/docs/runtime/http).
+`POST` on the stream path appends. The host serves it only for a family with `append` or `full` access. The producer position travels in the `Producer-Id`, `Producer-Epoch`, and `Producer-Seq` headers, and the condition in `Stream-Expected-Offset`. The fetch Layer sends those headers only when its `capabilities` assert them. See [HTTP](/docs/runtime/http).

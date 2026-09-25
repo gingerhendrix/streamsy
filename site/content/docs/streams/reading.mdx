@@ -16,39 +16,46 @@ interface Batch<A> {
 
 Reads are after-exclusive. The message at the given offset is not included. Omit the offset to read from the start. Store `nextOffset` when you have to resume later.
 
-`Streams.head(ref)` returns the tail and the configuration without messages. It does not renew a TTL.
+`head(params)` returns the tail and the configuration without messages. It does not renew a TTL.
 
 ## Read
 
-`Streams.read(ref, { offset?, limit? })` is an Effect `Stream` of batches. Nothing runs until a sink such as `Stream.runCollect` runs it. It ends when a batch reports `upToDate`.
-
-```ts
-import { Stream } from "effect";
-import { Streams } from "@streamsy/core";
-import { notes } from "./refs.ts";
-
-const everything = Streams.read(notes).pipe(Streams.items, Stream.runCollect);
-
-const tail = Streams.read(notes).pipe(
-  Stream.map((batch) => batch.nextOffset),
-  Stream.runLast,
-);
-```
-
-`Streams.items` flattens batches into items. Keep the batches when `nextOffset` or `closed` matter. `limit` bounds one batch to that many stored messages.
-
-## Follow
-
-`Streams.follow` catches up, then waits for more. One wait ends on a new message, on a close, or on the long-poll timeout. Empty batches that are not closed are filtered, whether from a timed-out wait or a catch-up read of an empty stream, and the follow waits again; a closed batch is always yielded and ends the stream. Use `Streams.session` (`readNext`) directly when an application needs to observe empty waits as liveness signals.
+`read(params, { offset?, limit? })` is an Effect `Stream` of batches. Nothing runs until a sink such as `Stream.runCollect` runs it. It ends when a batch reports `upToDate`.
 
 ```ts
 import { Effect, Stream } from "effect";
-import { Streams } from "@streamsy/core";
-import { notes } from "./refs.ts";
+import { Notes } from "./streams.ts";
 
-const live = Streams.follow(notes).pipe(
-  Streams.items,
-  Stream.runForEach((note) => Effect.log(note.text)),
+const everything = Effect.flatMap(Notes, (notes) =>
+  notes.read({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runCollect,
+  ),
+);
+
+const tail = Effect.flatMap(Notes, (notes) =>
+  notes.read({}).pipe(
+    Stream.map((batch) => batch.nextOffset),
+    Stream.runLast,
+  ),
+);
+```
+
+`Stream.flatMap` with `Stream.fromIterable` flattens batches into items. Keep the batches when `nextOffset` or `closed` matter. `limit` bounds one batch to that many stored messages.
+
+## Follow
+
+`follow(params, options?)` catches up, then waits for more. One wait ends on a new message, on a close, or on the long-poll timeout. Empty batches that are not closed are filtered, whether from a timed-out wait or a catch-up read of an empty stream, and the follow waits again; a closed batch is always yielded and ends the stream. Use `session` directly when an application needs to observe empty waits as liveness signals.
+
+```ts
+import { Effect, Stream } from "effect";
+import { Notes } from "./streams.ts";
+
+const live = Effect.flatMap(Notes, (notes) =>
+  notes.follow({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runForEach((note) => Effect.log(note.text)),
+  ),
 );
 
 const consumer = Effect.gen(function* () {
@@ -61,35 +68,40 @@ The scope owns the wait. Interrupting the fiber releases a parked wait, so run a
 
 ## Session
 
-`Streams.session(ref, { offset, cursor? })` is one raw long-poll wait for an application that owns its own polling loop. It returns the protocol result, with raw `messages`, `nextOffset`, `cursor`, `upToDate`, `closed`, and `timedOut`. The messages are not decoded.
+`session(params, { offset, cursor? })` is one raw long-poll wait for an application that owns its own polling loop. It returns the protocol result, with raw `messages`, `nextOffset`, `cursor`, `upToDate`, `closed`, and `timedOut`. The messages are not decoded.
 
 ```ts
-import { Streams } from "@streamsy/core";
-import { notes } from "./refs.ts";
+import { Effect } from "effect";
+import { Notes } from "./streams.ts";
 
-const once = (offset: string) => Streams.session(notes, { offset });
+const once = (offset: string) => Effect.flatMap(Notes, (notes) => notes.session({}, { offset }));
 ```
 
 ## Fold
 
-`Fold.run(ref, { initial, step, from? })` follows a stream and folds each item into a value. It completes when the stream closes.
+A fold over `follow` reduces a stream into a value. It completes when the stream closes. Fold over `read` instead to stop at the current tail.
 
 ```ts
-import { Fold } from "@streamsy/core";
-import { notes, type Note } from "./refs.ts";
+import { Effect, Stream } from "effect";
+import { Notes } from "./streams.ts";
 
-const count = Fold.run(notes, {
-  initial: 0,
-  step: (total, _note: Note) => total + 1,
-});
+const count = Effect.flatMap(Notes, (notes) =>
+  notes.follow({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runFold(
+      () => 0,
+      (total) => total + 1,
+    ),
+  ),
+);
 ```
 
 ## Errors
 
-A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the ref codec. A decode failure stops that read. The application picks the offset to restart from.
+A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the family codec. A decode failure stops that read. The application picks the offset to restart from.
 
 A Durable State reader accepts `insert` and `update` operations from other producers and reports both as `upsert`.
 
 ## Over HTTP
 
-`GET` on the stream path with `offset` reads a batch. Add `live=long-poll` or `live=sse` to follow. See [HTTP](/docs/runtime/http) and [PROTOCOL.md sections 5.6 to 5.8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#56-read-stream---catch-up).
+`GET` on the stream path with `offset` reads a batch. Add `live=long-poll` or `live=sse` to follow. Every access rule allows reads. See [HTTP](/docs/runtime/http) and [PROTOCOL.md sections 5.6 to 5.8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#56-read-stream---catch-up).
