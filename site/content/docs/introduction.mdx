@@ -78,9 +78,9 @@ import { Effect } from "effect";
 import { Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
 
-const projection = Projection.make({
+const projection = Projection.fused({
   id: "order-totals",
-  input: Orders.at({}),
+  inputs: { input: Orders.at({}) },
   process: Projection.each(({ item }) =>
     Effect.flatMap(OrderTotals, (totals) =>
       totals.append({}, [{ orderId: item.orderId, total: item.amount }]),

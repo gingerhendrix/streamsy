@@ -89,4 +89,4 @@ const remote = Fetch.layer(
 ).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
-The remote Layer provides the stream services of the group, so a program runs over it without change. It provides no `Streamsy.ChangeFeed` keys, so `Projection.onChange` cannot run over fetch streams; `Projection.follow` can. Capabilities are assertions about the host, not discovery. `Fetch.layerProtocol(options)` provides the generic reader and writer instead, for protocol tools. Browser applications use the official Durable Streams client and state packages.
+The remote Layer provides the stream services of the group, so a program runs over it without change. It provides no `Streamsy.ChangeFeed` keys, so `Projection.watch` cannot run over fetch streams; `Projection.follow` can. Capabilities are assertions about the host, not discovery. `Fetch.layerProtocol(options)` provides the generic reader and writer instead, for protocol tools. Browser applications use the official Durable Streams client and state packages.

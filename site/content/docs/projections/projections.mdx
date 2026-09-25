@@ -3,16 +3,16 @@ title: Projections
 description: Define a projection over one or more inputs, run it with checkpoints, and recover it by generation.
 ---
 
-`Projection.make`, `Projection.stream`, and `Projection.outputs` build inert definitions. Neither acquires a service. `run`, `pass`, or `follow` executes one, and every accepted unit commits its checkpoint through the `Checkpoints` service.
+`Projection.fused`, `Projection.stream`, and `Projection.outputs` build inert definitions. Neither acquires a service. `run`, `pass`, or `follow` executes one, and every accepted unit commits its checkpoint through the `Checkpoints` service.
 
 ```ts
 import { Effect } from "effect";
 import { Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
 
-export const orderTotalsProjection = Projection.make({
+export const orderTotalsProjection = Projection.fused({
   id: "order-totals",
-  input: Orders.at({}),
+  inputs: { input: Orders.at({}) },
   process: Projection.each(({ item }) =>
     Effect.flatMap(OrderTotals, (totals) =>
       totals.append({}, [{ orderId: item.orderId, total: item.amount }]),
@@ -21,7 +21,7 @@ export const orderTotalsProjection = Projection.make({
 });
 ```
 
-A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. Inputs are addresses from `Orders.at(params)`. `input: member` is sugar for `inputs: { input: member }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders: Orders.at({}), refunds: Refunds.at({}) }` and read one slice per name.
+A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. Inputs are addresses from `Orders.at(params)`. Use `inputs: { input: Orders.at({}) }` for one input and read `batch.input.items`. With several inputs, declare `inputs: { orders: Orders.at({}), refunds: Refunds.at({}) }` and read one slice per name.
 
 `process(batch, unit)` is an Effect. It may use any service in its requirements. A runner requires the handler's services, the stream service of every input, and `Checkpoints`. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection (`projectionId`, `version`, `generation`, `params`), the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
 
@@ -29,7 +29,7 @@ A definition has an `id`, a `version` (default 1), a `generation` (default 1), o
 
 ## The two forms
 
-The fused form, `Projection.make`, runs the handler inside the checkpoint owner's transaction. A stream append to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back.
+The fused form, `Projection.fused`, runs the handler inside the checkpoint owner's transaction. A stream append to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back.
 
 Each stream write in a fused handler is checked before it runs. A write to a stream on another storage owner fails with `process / unsupported-composition`, and the unit commits nothing. Side effects outside stream services, such as SQL on another client or a call to an external service, are not checked and are at-least-once.
 
@@ -48,7 +48,7 @@ export class Amounts extends Streamsy.json<Amounts>()("Shop/Amounts", "amounts",
 
 export const amounts = Projection.stream({
   id: "amounts",
-  input: Orders.at({}),
+  inputs: { input: Orders.at({}) },
   output: Amounts.at({}),
   process: (batch) => Effect.succeed(batch.input.items.map((event) => event.amount)),
 });
@@ -166,14 +166,14 @@ On a host that owns the input storage, run from its change feed. Wakes arriving 
 
 ```ts
 Effect.gen(function* () {
-  const projectionFiber = yield* Projection.onChange(orderTotalsProjection, { limit: 5 });
-  const familyFibers = yield* Projection.onChange(ordersByWorkspace, [{ workspaceId: "ws-42" }], {
+  const projectionFiber = yield* Projection.watch(orderTotalsProjection, { limit: 5 });
+  const familyFibers = yield* Projection.watch(ordersByWorkspace, [{ workspaceId: "ws-42" }], {
     limit: 5,
   });
 });
 ```
 
-`onChange` requires the `Streamsy.ChangeFeed` key of every input stream. A storage Layer provides one for each stream it binds. A fetch Layer provides none, so `onChange` over fetch streams does not compile; use `follow` there. A projection family keeps no member list, so the caller supplies an explicit member array.
+`watch` requires the `Streamsy.ChangeFeed` key of every input stream. A storage Layer provides one for each stream it binds. A fetch Layer provides none, so `watch` over fetch streams does not compile; use `follow` there. A projection family keeps no member list, so the caller supplies an explicit member array.
 
 Inside a Durable Object, call `run` from the host's alarm effect:
 
@@ -193,7 +193,7 @@ const hand = Effect.gen(function* () {
 await Effect.runPromise(hand.pipe(Effect.provide(host)));
 ```
 
-`Projection.serialized` wraps `run` with one process-local runner per canonical projection key. `onChange` uses it, so an overlapping request can use the same wrapper without a token conflict. A second process is not fenced and is still detected by the checkpoint token.
+`Projection.run` allows one process-local runner per canonical projection key. `watch` and `follow` use it, so overlapping requests use the same permit without a token conflict. A second process is not fenced and is still detected by the checkpoint token.
 
 The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request and change triggers sharing a key. [Hacker News newest](/docs/demos/hackernews-newest-stream) demonstrates a change wake driving a declared-output projection.
 
@@ -226,11 +226,11 @@ const ordersByWorkspace = Projection.family({
 const member = ordersByWorkspace.member({ workspaceId: "ws-42" });
 const params = ordersByWorkspace.parse("facts/ws-42");
 const watch = Effect.gen(function* () {
-  const fibers = yield* Projection.onChange(ordersByWorkspace, [{ workspaceId: "ws-42" }]);
+  const fibers = yield* Projection.watch(ordersByWorkspace, [{ workspaceId: "ws-42" }]);
 });
 ```
 
-The package keeps no member list, so `onChange` takes an explicit fixed member array and returns one fiber per member in array order. One member failure does not stop the other fibers. For a dynamic deployment, keep a registry stream of parameter records; a projection over that stream can start a trigger when a member is registered and stop it when the member is removed.
+The package keeps no member list, so `watch` takes an explicit fixed member array and returns one fiber per member in array order. One member failure does not stop the other fibers. For a dynamic deployment, keep a registry stream of parameter records; a projection over that stream can start a trigger when a member is registered and stop it when the member is removed.
 
 Use `Projection.forget(member)` when a member is retired, after stopping its live triggers; see [State](#state).
 
@@ -254,9 +254,9 @@ const program = Effect.gen(function* () {
   const numbers = yield* Numbers;
   yield* numbers.create({});
   yield* numbers.append({}, [1, 2, 3]);
-  const total = Projection.make({
+  const total = Projection.fused({
     id: "running-total",
-    input: Numbers.at({}),
+    inputs: { input: Numbers.at({}) },
     process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
   });
   yield* Projection.run(total);
@@ -275,9 +275,9 @@ Fold state is for the value a handler needs between passes. Row sets belong in a
 ```ts
 import { SqlClient } from "effect/unstable/sql";
 
-const orderRows = Projection.make({
+const orderRows = Projection.fused({
   id: "order-rows",
-  input: Orders.at({}),
+  inputs: { input: Orders.at({}) },
   process: Projection.fold(Schema.Finite, 0, (sum, { item }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -292,7 +292,7 @@ const orderRows = Projection.make({
 
 The application creates and migrates `order_totals`; this snippet uses the `Orders` stream introduced above.
 
-`Projection.forget(member)` takes the same process-local permit as `serialized`, then deletes state and checkpoint in one transaction. It waits for an active serialized run and retains the shared lock until existing waiters drain. Stop live `onChange` or `follow` fibers before you call `forget`. Bare runs and other processes do not take this permit: wait for them yourself. After deletion the record token restarts, so a stale bare run can match a fresh token and fold items twice. A watcher whose key is forgotten starts from zero on its next run.
+`Projection.forget(member)` takes the same process-local permit as `run`, then deletes state and checkpoint in one transaction. It waits for an active serialized run and retains the shared lock until existing waiters drain. Stop live `watch` or `follow` fibers before you call `forget`. Other processes and direct `Projection.pass` calls do not take this permit: wait for them yourself. After deletion the record token restarts, so a stale competing pass can match a fresh token and fold items twice. A watcher whose key is forgotten starts from zero on its next run.
 
 Forgetting does not delete streams. Do not forget a stream-form member while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
 

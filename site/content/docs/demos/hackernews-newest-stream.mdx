@@ -64,7 +64,7 @@ Serve.state(hackerNewsStoryIndex.outputs["hn-story"], "/state/newest");
 Source, rows output, checkpoint and `Projection.State` share one Bun SQLite
 host. The application creates only the input; a nonempty projection output
 creates the target. Before that, an initial State read answers 404 without
-creating data. `Projection.onChange` and the poller have scoped lifetimes.
+creating data. `Projection.watch` and the poller have scoped lifetimes.
 
 ## Replay figure
 

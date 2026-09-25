@@ -25,7 +25,7 @@ A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch`
 
 ## How the services fit
 
-`Storage` is the backend. A storage Layer builds the protocol over its `Storage` and binds the streams that you pass to it, so a program sees only stream services. It also provides a `Streamsy.ChangeFeed` key for each stream, which `Projection.onChange` needs. `Http.routes` serves a group of streams with one access rule per stream. `Fetch.layer` provides the same stream services from a remote host, without `Streamsy.ChangeFeed` keys.
+`Storage` is the backend. A storage Layer builds the protocol over its `Storage` and binds the streams that you pass to it, so a program sees only stream services. It also provides a `Streamsy.ChangeFeed` key for each stream, which `Projection.watch` needs. `Http.routes` serves a group of streams with one access rule per stream. `Fetch.layer` provides the same stream services from a remote host, without `Streamsy.ChangeFeed` keys.
 
 | Layer                                        | Persists              | Use                 | Page                                   |
 | -------------------------------------------- | --------------------- | ------------------- | -------------------------------------- |

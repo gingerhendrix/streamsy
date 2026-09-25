@@ -28,9 +28,9 @@ State readers replay from `-1`; there is no snapshot.
 
 `POST /api/workspaces/:workspaceId/commands` follows the transaction recipe:
 read the issue stream, fold it, append with `expectedOffset`, then run the
-two members through `Projection.serialized` to full catch-up before reading the
+two members through `Projection.run` to full catch-up before reading the
 SQL result. At startup, catch-up is attempted for each address, then
-`Projection.onChange` watches the same five streams for each configured
+`Projection.watch` watches the same five streams for each configured
 workspace and uses the same keyed mutexes. A scoped supervisor logs any watcher
 that completes successfully at info level and any unexpected failure at error
 level; normal shutdown interruption is ignored. Startup address failures are also

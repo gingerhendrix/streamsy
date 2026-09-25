@@ -29,9 +29,9 @@ import { Projection } from "@streamsy/projection";
 const numbers = StreamAddress.json("numbers", { schema: Schema.Finite });
 const doubled = StreamAddress.json("doubled", { schema: Schema.Finite });
 
-const projection = Projection.make({
+const projection = Projection.fused({
   id: "doubled",
-  input: numbers,
+  inputs: { input: numbers },
   process: (batch) =>
     Streams.append(
       doubled,
@@ -42,7 +42,7 @@ const projection = Projection.make({
 const run = Projection.run(projection, { limit: 10 });
 ```
 
-`input: numbers` is one named input; the handler reads `batch.input.items`.
+`inputs: { input: numbers }` declares one named input; the handler reads `batch.input.items`.
 Declare several with `inputs: { orders, refunds }` and read one slice per name.
 
 `Projection.State` provides one encoded value per key in the checkpoint transaction.
@@ -57,9 +57,9 @@ generation, and retirement rules.
 `Projection.follow(projection, options)` keeps running as new items arrive.
 `Projection.family(definition)` declares routed members once; see
 [Streams](https://streamsy.dev/docs/projections/projections#streams).
-`Projection.serialized(projection, options)` runs one caller at a time per canonical key;
+`Projection.run(projection, options)` runs one caller at a time per canonical key;
 see [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
-`Projection.onChange` runs a projection, or an explicit array of family members, from
+`Projection.watch` runs a projection, or an explicit array of family members, from
 same-owner storage change feeds; see
 [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
 
@@ -79,7 +79,7 @@ import { Effect } from "effect";
 
 const totals = Projection.stream({
   id: "totals",
-  input: numbers,
+  inputs: { input: numbers },
   output: StreamAddress.json("totals", { schema: Schema.Finite }),
   process: (batch) => Effect.succeed([batch.input.items.reduce((sum, n) => sum + n, 0)]),
 });

@@ -62,7 +62,7 @@ uses the read-only State route.
   rows output keyed by `id`, and `Output.upsert` / `Output.remove` results.
 - `src/server/http.ts`: the served rows, status, poll and static route app.
 - `src/server/index.ts`: scoped listener and shared application Layers.
-- `src/server/projection.ts`: `Projection.onChange` and checkpoint-backed status.
+- `src/server/projection.ts`: `Projection.watch` and checkpoint-backed status.
 - `src/server/streams.ts`: one shared SQLite protocol/projection host, with a memory option.
 - `src/server/poller/`: the poll loop and pure newest-set reconciliation.
 - `src/client/db.ts`: the same browser collection factory used by the HTTP smoke.

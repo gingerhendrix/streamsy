@@ -7,14 +7,14 @@ A projection is a named, typed, checkpointed consumer of one or more input strea
 
 The kernel is one pass, repeated: restore the checkpoint, read every input in declaration order, run the handler over one unit, commit the checkpoint. `@streamsy/projection` ships two forms of that pass.
 
-- `Projection.make` is the fused form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint. A stream write to a stream on another storage owner fails before it runs.
+- `Projection.fused` is the fused form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint. A stream write to a stream on another storage owner fails before it runs.
 - `Projection.stream` is the stream-output form. The handler returns items, the kernel pins the unit's input ranges in the checkpoint, then appends the items to an output stream under a producer tuple. A retry reproduces the pinned ranges and sends the same tuple, so the output sees each unit once. The output stream must share the checkpoint owner; the runner checks that before any write.
 
 `Projection.outputs` is the named stream form: `Output.stream`, `Output.rows`, and at most one `Output.value`. Each stream/rows output has its own producer sequence; the value settles with the checkpoint. See [Outputs](/docs/projections/projections#outputs).
 
 ## Inputs, unit, checkpoint
 
-Inputs are a map of names to addresses, such as `Orders.at({})`. `input: member` is sugar for `inputs: { input: member }`. A runner requires the stream service of every input, plus `Checkpoints`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for the stream form the pending pin and producer sequence.
+Inputs are a map of names to addresses, such as `Orders.at({})`. Use `inputs: { input: Orders.at({}) }` for a single input. A runner requires the stream service of every input, plus `Checkpoints`. Every pass hands the handler one slice per declared input, empty or not, and a `Unit` that names the projection and the non-empty ranges of this pass. The checkpoint stores the accepted offset per input, keyed by the same names, and for the stream form the pending pin and producer sequence.
 
 ## Fact streams and state streams
 
@@ -61,9 +61,9 @@ export const minimal = Effect.gen(function* () {
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
   return yield* Projection.run(
-    Projection.make({
+    Projection.fused({
       id: "doubled",
-      input: Numbers.at({}),
+      inputs: { input: Numbers.at({}) },
       process: (batch) =>
         Effect.flatMap(Doubled, (output) =>
           output.append(
