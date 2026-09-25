@@ -6,41 +6,50 @@ description: Define a projection over one or more inputs, run it with checkpoint
 `Projection.make`, `Projection.stream`, and `Projection.outputs` build inert definitions. Neither acquires a service. `run`, `pass`, or `follow` executes one, and every accepted unit commits its checkpoint through the `Checkpoints` service.
 
 ```ts
-import { Streams } from "@streamsy/core";
+import { Effect } from "effect";
 import { Projection } from "@streamsy/projection";
-import { orders, orderTotals } from "./refs.ts";
+import { Orders, OrderTotals } from "./streams.ts";
 
 export const orderTotalsProjection = Projection.make({
   id: "order-totals",
-  input: orders,
+  input: Orders.at({}),
   process: Projection.each(({ item }) =>
-    Streams.append(orderTotals, [{ orderId: item.orderId, total: item.amount }]),
+    Effect.flatMap(OrderTotals, (totals) =>
+      totals.append({}, [{ orderId: item.orderId, total: item.amount }]),
+    ),
   ),
 });
 ```
 
-A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. `input: ref` is sugar for `inputs: { input: ref }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders, refunds }` and read one slice per name.
+A definition has an `id`, a `version` (default 1), a `generation` (default 1), optional `params`, its inputs, and a `process` handler. Inputs are family members from `Family.at(params)`. `input: member` is sugar for `inputs: { input: member }`, so a single-input handler reads `batch.input.items`. With several inputs, declare `inputs: { orders: Orders.at({}), refunds: Refunds.at({}) }` and read one slice per name.
 
-`process(batch, unit)` is an Effect. It may use any service in its requirements. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection (`projectionId`, `version`, `generation`, `params`), the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
+`process(batch, unit)` is an Effect. It may use any service in its requirements. A runner requires the handler's services, the family service of every input, and `Checkpoints`. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection (`projectionId`, `version`, `generation`, `params`), the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
 
 `Projection.items(batch)` flattens a batch into `{ input, item, index }` entries in declaration order, then stream order. `Projection.each(handle)` builds a handler that runs `handle(entry, unit)` once per entry, one at a time.
 
 ## The two forms
 
-The fused form, `Projection.make`, runs the handler inside the checkpoint owner's transaction. `Streams.append` to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back. A write to anything outside that owner is at-least-once.
+The fused form, `Projection.make`, runs the handler inside the checkpoint owner's transaction. A family append to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back.
 
-Fused is for SQL and side effects; `Projection.stream` is the declared-output form, including outputs on another backend or behind a fetch Layer. The handler returns the items to append. Before a non-empty result is appended, the output is created when absent; gone or closed outputs fail with `pin / invalid-output`. An empty result advances the checkpoint without creating the output.
+Each family write in a fused handler is checked before it runs. A write to a family on another storage owner fails with `process / unsupported-composition`, and the unit commits nothing. Side effects outside families, such as SQL on another client or a call to an external service, are not checked and are at-least-once.
+
+Fused is for SQL and side effects; `Projection.stream` is the declared-output form. The handler returns the items to append. The output family must share the checkpoint owner. The runner checks every declared output before it processes, pins, or creates anything, and a foreign output fails with `load / unsupported-composition`. Before a non-empty result is appended, the output is created when absent; gone or closed outputs fail with `pin / invalid-output`. An empty result advances the checkpoint without creating the output.
 
 ```ts
 import { Effect, Schema } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { orders } from "./refs.ts";
+import { Orders } from "./streams.ts";
+
+export class Amounts extends StreamFamily.json<Amounts>()("Shop/Amounts", "amounts", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
 
 export const amounts = Projection.stream({
   id: "amounts",
-  input: orders,
-  output: StreamRef.json("amounts", { schema: Schema.Finite }),
+  input: Orders.at({}),
+  output: Amounts.at({}),
   process: (batch) => Effect.succeed(batch.input.items.map((event) => event.amount)),
 });
 ```
@@ -53,17 +62,25 @@ Before the append, the kernel pins the unit's non-empty ranges and the producer 
 
 ```ts
 import { Schema } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 
-const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
+class Numbers extends StreamFamily.json<Numbers>()("Tracker/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+class Board extends StreamFamily.bytes<Board>()("Tracker/Board", "board", { params: {} }) {}
+class Transitions extends StreamFamily.bytes<Transitions>()("Tracker/Transitions", "transitions", {
+  params: {},
+}) {}
+
 const Card = Schema.Struct({ issueId: Schema.String, total: Schema.Finite });
 const tracker = Projection.outputs({
   id: "tracker",
-  inputs: { numbers },
+  inputs: { numbers: Numbers.at({}) },
   outputs: {
-    board: Output.rows(Card, { key: "issueId", stream: "board" }),
-    transitions: Output.stream(Schema.Finite, { stream: "transitions" }),
+    board: Output.rows(Card, { key: "issueId", stream: Board.at({}) }),
+    transitions: Output.stream(Schema.Finite, { stream: Transitions.at({}) }),
     summary: Output.value(Schema.Finite),
   },
   process: Projection.fold(0, (state, batch) => {
@@ -77,6 +94,8 @@ const tracker = Projection.outputs({
 });
 ```
 
+Each stream and rows output names its target with a family member. The family supplies the stream id and the storage owner; the output declaration owns the JSON codec, so a `bytes` family is enough as a target. Every target must share the checkpoint owner, as in the stream form.
+
 The two-argument `fold` runs once per batch and returns `{ state?, <outputName>: [...] }`, synchronously or in an Effect. A raw handler returns the same record in an Effect. `each` returns only output keys and concatenates their arrays in item order. Every stream/rows key is required; use `[]` for an empty output. A value output requires `state` and persists through `Projection.State`.
 
 Each output has its own sequence. An empty output gets no append and consumes no sequence. Recovery reprocesses the pinned inputs from the state before the unit, resends each pinned output in declaration order, and saves the new state with the checkpoint only after every append settles. `process` must be deterministic on those inputs and state. There is no atomicity across outputs, and two outputs may not name the same stream or one of the projection's inputs.
@@ -88,14 +107,17 @@ The producer id always includes the version: `id/v<version>[/canonicalParamsJson
 `Projection.run` repeats passes until an empty pass reports `caught-up`, every input is closed and drained (`source-closed`), or the unit limit is reached (`limit-reached`). `Projection.pass` runs one unit. Both return a `Progress` with `status`, `units`, `items`, and the checkpoint `record`; a non-empty pass reports `progress`.
 
 ```ts
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
+import { Memory } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { layerMemory } from "@streamsy/projection/memory";
+import * as ProjectionMemory from "@streamsy/projection/memory";
 import { orderTotalsProjection } from "./order-totals.ts";
+import { shop } from "./streams.ts";
 
+const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
 const program = Projection.run(orderTotalsProjection, { limit: 10 });
 
-await Effect.runPromise(program.pipe(Effect.provide(layerMemory())));
+await Effect.runPromise(program.pipe(Effect.provide(host)));
 ```
 
 `limit` is the maximum number of processed units per call. There is no default cap. The server decides the read page; each pass reads one page per input in declaration order. A bad `limit` or `repairIntervalMs` fails before any read with `load / invalid-options`.
@@ -119,7 +141,7 @@ const serve = Effect.scoped(
 
 `follow` retries `storage-failure` forever, logging each retry and its cause, with jittered exponential backoff from 200 ms capped at 30 s. Its `retry` option takes a `Schedule` override. Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles. Other faults end the fiber, and `run` stays single-shot.
 
-`follow` returns a caller-scoped fiber. Join it to observe a close or a typed failure; closing the scope releases the parked waits and the fiber. Each wait is one bounded `readNext` per input, so a missed wake delays progress by at most `repairIntervalMs` without losing it. On HTTP backends it issues one poll per input per `repairIntervalMs`, cancelling a still-parked request before the replacement.
+`follow` returns a caller-scoped fiber. Join it to observe a close or a typed failure; closing the scope releases the parked waits and the fiber. Each wait is one bounded `readNext` per input, so a missed wake delays progress by at most `repairIntervalMs` without losing it. Over a fetch Layer it issues one poll per input per `repairIntervalMs`, cancelling a still-parked request before the replacement.
 
 ## Triggers
 
@@ -151,7 +173,7 @@ Effect.gen(function* () {
 });
 ```
 
-The ambient `Storage` must own every input. A family keeps no member list, so the caller supplies an explicit member array.
+`onChange` requires the `Changes` key of every input family. A storage Layer provides one for each family it binds. A fetch Layer provides none, so `onChange` over fetch families does not compile; use `follow` there. A projection family keeps no member list, so the caller supplies an explicit member array.
 
 Inside a Durable Object, call `run` from the host's alarm effect:
 
@@ -177,26 +199,27 @@ The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request a
 
 ## Families
 
-A family owns the parameter codecs and routed declarations. Each input and output route must declare a subset of the family parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `member` encodes every parameter to strings and yields an ordinary projection. A route that declares fewer names is shared by every member, and `parse` on it returns only that subset. `parse` tries input routes in declaration order and returns the decoded subset from the first match. Output routes are not parsed.
+A projection family owns the parameter codecs and names stream families as its inputs and outputs. Each input and output stream family must declare a subset of the projection family parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `member` encodes every parameter to strings and yields an ordinary projection over the matching stream members. A stream family that declares fewer names is shared by every member, and `parse` on it returns only that subset. `parse` tries input families in declaration order and returns the decoded subset from the first match. Output families are not parsed.
 
 ```ts
 import { Effect, Schema } from "effect";
-import { StreamRoute } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
 
-const facts = StreamRoute.json("facts/:workspaceId", {
+class Facts extends StreamFamily.json<Facts>()("Shop/Facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: orderSchema,
-});
-const totals = StreamRoute.json("totals/:workspaceId", {
+}) {}
+class Totals extends StreamFamily.json<Totals>()("Shop/Totals", "totals/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: totalSchema,
-});
+}) {}
 
 const ordersByWorkspace = Projection.family({
   id: "order-totals",
   params: { workspaceId: Schema.String },
-  inputs: { facts },
-  output: totals,
+  inputs: { facts: Facts },
+  output: Totals,
   process: (batch) => Effect.succeed(toTotals(batch.facts.items)),
 });
 
@@ -219,16 +242,21 @@ Serve reads outputs without checking inputs. An initial read of an absent output
 
 ```ts
 import { Effect, Schema } from "effect";
-import { StreamRef, Streams } from "@streamsy/core";
+import { StreamFamily } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 
+class Numbers extends StreamFamily.json<Numbers>()("Totals/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
 const program = Effect.gen(function* () {
-  const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
-  yield* Streams.create(numbers);
-  yield* Streams.append(numbers, [1, 2, 3]);
+  const numbers = yield* Numbers;
+  yield* numbers.create({});
+  yield* numbers.append({}, [1, 2, 3]);
   const total = Projection.make({
     id: "running-total",
-    input: numbers,
+    input: Numbers.at({}),
     process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
   });
   yield* Projection.run(total);
@@ -249,7 +277,7 @@ import { SqlClient } from "effect/unstable/sql";
 
 const orderRows = Projection.make({
   id: "order-rows",
-  input: orders,
+  input: Orders.at({}),
   process: Projection.fold(Schema.Finite, 0, (sum, { item }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -262,7 +290,7 @@ const orderRows = Projection.make({
 });
 ```
 
-The application creates and migrates `order_totals`; this snippet uses the `orders` ref introduced above.
+The application creates and migrates `order_totals`; this snippet uses the `Orders` family introduced above.
 
 `Projection.forget(member)` takes the same process-local permit as `serialized`, then deletes state and checkpoint in one transaction. It waits for an active serialized run and retains the shared lock until existing waiters drain. Stop live `onChange` or `follow` fibers before you call `forget`. Bare runs and other processes do not take this permit: wait for them yourself. After deletion the record token restarts, so a stale bare run can match a fresh token and fold items twice. A watcher whose key is forgotten starts from zero on its next run.
 
@@ -274,17 +302,17 @@ The [hex board demo](/docs/demos/hex-board) is the worked example, including res
 
 ## Checkpoints and generations
 
-The `Checkpoints` service holds the records and owns the transaction. `@streamsy/projection/memory` exports `layer` over the memory owner that `Streams.layerMemory()` retains, and `layerMemory(options)`, which provides both in one graph. `@streamsy/projection/sqlite` exports `layer` over the `CommitBoundary` and `SqlClient` of a storage Layer, so a checkpoint and a fused handler's writes commit together. The package root imports no SQL driver.
+The `Checkpoints` service holds the records and owns the transaction. `@streamsy/projection/memory` exports `layer` over the memory owner that `Memory.layer` retains. Its `layerMemory(options)` builds a protocol-tier memory graph with checkpoints, for protocol tests. `@streamsy/projection/sqlite` exports `layer` over the `CommitBoundary` and `SqlClient` of a storage Layer, so a checkpoint and a fused handler's writes commit together. The package root imports no SQL driver.
 
 ```ts
 import { Effect, Layer } from "effect";
-import { Protocol } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import { program } from "./run.ts";
+import { shop } from "./streams.ts";
 
-const host = Layer.merge(Protocol.layer(), ProjectionSqlite.layer).pipe(
-  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } })),
+const host = ProjectionSqlite.layer.pipe(
+  Layer.provideMerge(BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop)),
 );
 
 await Effect.runPromise(program.pipe(Effect.provide(host)));
@@ -306,4 +334,4 @@ Every input must retain its history after the accepted offset, and the stream fo
 
 ## Several backends
 
-A projection whose input is on one backend of `Streams.layerRouted` and whose `Checkpoints` and fused output share another backend commits correctly. When the output cannot join the checkpoint's backend, use `Projection.stream`. See [Runtime](/docs/runtime/introduction).
+A projection can read its inputs from any backend, including a fetch Layer, because it only reads them. Its `Checkpoints`, its fused family writes, and its declared outputs must share one storage owner. Provide `Checkpoints` from the storage Layer that holds the output families. A write or a declared output on another owner fails with `unsupported-composition` before it runs. See [Runtime](/docs/runtime/introduction) for hosts with several backends.
