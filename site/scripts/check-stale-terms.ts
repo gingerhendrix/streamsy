@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { staleTerms } from "../../scripts/site-stale-terms";
+import { staleTerms, retiredCoreNames } from "../../scripts/site-stale-terms";
 
 const site = new URL("..", import.meta.url).pathname;
 const repo = dirname(site);
@@ -36,7 +36,11 @@ async function scan(directory: string): Promise<void> {
       const sitePath = relative(site, path);
       for (const [index, line] of lines.entries()) {
         for (const term of staleTerms) {
-          if (line.toLowerCase().includes(term.toLowerCase())) {
+          if (
+            retiredCoreNames.includes(term)
+              ? line.includes(term)
+              : line.toLowerCase().includes(term.toLowerCase())
+          ) {
             console.error(`${sitePath}:${index + 1}: forbidden term ${term}`);
             hits++;
           }

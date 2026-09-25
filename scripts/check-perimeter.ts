@@ -1,4 +1,5 @@
 /** Final release perimeter, including all authored site content. */
+import { retiredCoreNames } from "./site-stale-terms.ts";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,11 +52,16 @@ const authored = ["packages/*/src/**", "!*.test.ts"];
 // These are existing published Bun test registration kits, not live runtime owners.
 const testKits = ["packages/core/src/testing/storage-contract.ts"];
 // Application code has no protocol exceptions. Add a file and its concrete reason here only
-// when an adapter cannot use the family APIs.
+// when an adapter cannot use the stream APIs.
 const applicationProtocolAllowlist: Readonly<Record<string, string>> = {};
 const checks = [
   scan(
-    "examples and hosted use families",
+    "no retired batch 1 names",
+    retiredCoreNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+    ["packages/**", "examples/**", "hosted/**", "site/content/docs/**"],
+  ),
+  scan(
+    "examples and hosted use streams",
     String.raw`@streamsy/core/protocol\b|\bStreams(?:Reader|Writer)\b|\blayerProtocol\b|\bHttp\.app\b|core/src/(?:protocol|toolkit/streams)`,
     [
       "examples/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
@@ -136,7 +142,7 @@ const checks = [
       "*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       "!parked/**",
       "!packages/conformance-tests/test/memory.conformance.test.ts",
-      "!packages/conformance-tests/test/any-stream.conformance.test.ts",
+      "!packages/conformance-tests/test/wildcard.conformance.test.ts",
       "!packages/conformance-tests/test/fetch.conformance.test.ts",
       "!packages/conformance-tests/test/sqlite.conformance.test.ts",
       "!packages/conformance-tests/test/workerd.conformance.test.ts",

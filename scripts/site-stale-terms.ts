@@ -25,3 +25,21 @@ export const staleTerms = [
   "layerRouted",
   "Backend.make",
 ];
+
+/** Approved batch 1 names. Projection renames belong to later batches. */
+export const retiredCoreNames = [
+  "StreamFamily",
+  "StreamGroup",
+  "AnyFamily",
+  "AnyStream",
+  "FamilyAccess",
+  "FamilyRoute",
+  "provides(",
+  "Streamsy.Ref",
+  "StreamRef",
+  "Changes<",
+  "ChangesApi",
+  "State.delete",
+  "@streamsy/core/Family/",
+];
+staleTerms.push(...retiredCoreNames);
