@@ -20,10 +20,10 @@ type Outputs = Board | LabelCounts | Transitions;
 type RequestServices<R> = R extends HttpRouter.Request<"Requires", infer S> ? S : R;
 type AppR = RequestServices<Layer.Services<ReturnType<typeof app>>>;
 type OutputR = RequestServices<Layer.Services<typeof outputRoutes>>;
-const sqlRun = (address: ReturnType<typeof issueRows.member>) => Projection.serialized(address);
-const outputRun = (address: ReturnType<typeof tracker.member>) => Projection.serialized(address);
-const sqlWatch = (address: ReturnType<typeof issueRows.member>) => Projection.onChange(address);
-const outputWatch = (address: ReturnType<typeof tracker.member>) => Projection.onChange(address);
+const sqlRun = (address: ReturnType<typeof issueRows.member>) => Projection.run(address);
+const outputRun = (address: ReturnType<typeof tracker.member>) => Projection.run(address);
+const sqlWatch = (address: ReturnType<typeof issueRows.member>) => Projection.watch(address);
+const outputWatch = (address: ReturnType<typeof tracker.member>) => Projection.watch(address);
 export type Checks = [
   Assert<
     Same<Effect.Services<ReturnType<typeof sqlRun>>, Checkpoints | Inputs | SqlClient.SqlClient>

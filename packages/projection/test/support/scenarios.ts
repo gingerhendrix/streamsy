@@ -8,9 +8,9 @@ export const input = FamilyFixture.json("projection-input", { schema: Schema.Fin
 export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
 /** Stateless fused filter: positive items are copied to `output` inside the transaction. */
-export const positives = Projection.make({
+export const positives = Projection.fused({
   id: "positives",
-  input,
+  inputs: { input },
   process: (batch) =>
     Effect.gen(function* () {
       const kept = batch.input.items.filter((item) => item > 0);

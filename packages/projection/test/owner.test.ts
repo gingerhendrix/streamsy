@@ -101,9 +101,9 @@ for (const method of [
           "wire.fork": other.wire.fork(target.id, ref.id),
           "wire.remove": other.wire.remove(ref.id),
         };
-        const projection = Projection.make({
+        const projection = Projection.fused({
           id: method,
-          input: Input.at({}),
+          inputs: { input: Input.at({}) },
           process: () =>
             Effect.gen(function* () {
               yield* own.append(params, [2]);
@@ -168,7 +168,7 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
       yield* seed;
       const projection = Projection.stream({
         id: "foreign-pinned",
-        input: Input.at({}),
+        inputs: { input: Input.at({}) },
         output: Foreign.at(params),
         process: () => Effect.succeed([1]),
       });

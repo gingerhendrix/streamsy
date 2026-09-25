@@ -1,10 +1,10 @@
 import { Checkpoints } from "./checkpoint.ts";
-import type { Named } from "./outputs.ts";
+import type { Outputs } from "./outputs.ts";
 import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Pinned } from "./projection.ts";
+import type { Fused, Stream } from "./projection.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Progress } from "./run.ts";
 
@@ -98,7 +98,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
   R,
   OR = never,
 >(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress, E | ProjectionFault>,

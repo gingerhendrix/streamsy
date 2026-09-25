@@ -9,7 +9,7 @@ import type {
   Family,
   FamilyDefinition,
   FusedFamilyDefinition,
-  OnChangeOptions,
+  WatchOptions,
   PinnedFamilyDefinition,
   RunOptions,
   StateApi,
@@ -25,7 +25,7 @@ type PublicHelperTypes =
   | FamilyDefinition
   | FusedFamilyDefinition<any, any, any, any>
   | PinnedFamilyDefinition<any, any, any, any, any>
-  | OnChangeOptions
+  | WatchOptions
   | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
 void acceptsPublicHelperTypes;
@@ -55,14 +55,13 @@ test("built public entries and declared files exist", () => {
     "CheckpointRecord",
   ])
     expect(Object.keys(Root)).not.toContain(name);
-  expect(Projection.make).toBeFunction();
+  expect(Projection.fused).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
   expect(Projection.stream).toBeFunction();
   expect(Projection.follow).toBeFunction();
   expect(Projection.family).toBeFunction();
-  expect(Projection.serialized).toBeFunction();
-  expect(Projection.onChange).toBeFunction();
+  expect(Projection.watch).toBeFunction();
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
   expect(Projection.key).toBeFunction();
@@ -108,15 +107,14 @@ test("root exports stay explicit", () => {
     "fold",
     "follow",
     "forget",
+    "fused",
     "items",
     "key",
     "loadState",
-    "make",
-    "onChange",
     "outputs",
     "pass",
     "run",
-    "serialized",
     "stream",
+    "watch",
   ]);
 });

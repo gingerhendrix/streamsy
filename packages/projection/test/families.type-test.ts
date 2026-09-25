@@ -15,14 +15,14 @@ class Other extends Streamsy.json<Other>()("ProjectionTypes/Other", "types/other
 class Result extends Streamsy.bytes<Result>()("ProjectionTypes/Result", "types/result/:id", {
   params: { id: Schema.String },
 }) {}
-const fused = Projection.make({
+const fused = Projection.fused({
   id: "types/fused",
-  input: Input.at({ id: "a" }),
+  inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
 });
 const pinned = Projection.stream({
   id: "types/pinned",
-  input: Input.at({ id: "a" }),
+  inputs: { input: Input.at({ id: "a" }) },
   output: Other.at({ id: "a" }),
   process: (batch) => Effect.succeed(batch.input.items.map(String)),
 });
@@ -36,8 +36,8 @@ const family = Projection.family({
 const named = family.member({ id: "a" });
 const fusedRun = Projection.run(fused);
 const pinnedRun = Projection.run(pinned);
-const namedRun = Projection.serialized(named);
-const namedWatch = Projection.onChange(family, [{ id: "a" }]);
+const namedRun = Projection.run(named);
+const namedWatch = Projection.watch(family, [{ id: "a" }]);
 const namedFollow = Projection.follow(named);
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
@@ -73,10 +73,10 @@ const missing = namedRun.pipe(
 const incomplete: Effect.Effect<unknown, ProjectionFault, Checkpoints | State> = missing;
 void incomplete;
 // oxlint-enable effecttsgo/missing-effect-context
-Projection.make({
+Projection.fused({
   id: "bare",
   // @ts-expect-error plain refs do not carry a stream key
-  input: StreamAddress.json("plain", { schema: Schema.Finite }),
+  inputs: { input: StreamAddress.json("plain", { schema: Schema.Finite }) },
   process: () => Effect.void,
 });
 
@@ -84,7 +84,7 @@ Projection.make({
 // oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context -- These negative tests deliberately widen declarations.
 const widenedInputs: import("@streamsy/projection").InputMap = { input: Input.at({ id: "a" }) };
 const widened = Projection.run(
-  Projection.make({ id: "widened", inputs: widenedInputs, process: () => Effect.void }),
+  Projection.fused({ id: "widened", inputs: widenedInputs, process: () => Effect.void }),
 );
 const widenedOutput: Output.Stream<number> = Output.stream(Schema.Finite, {
   stream: Result.at({ id: "a" }),
@@ -113,14 +113,14 @@ void cannotRunWidenedOutput;
 // The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   Streams.layerMemory();
-const withoutFeed = Projection.onChange(fused).pipe(
+const withoutFeed = Projection.watch(fused).pipe(
   Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
 );
-// @ts-expect-error onChange requires Streamsy.ChangeFeed<Input> on a host without a feed.
+// @ts-expect-error watch requires Streamsy.ChangeFeed<Input> on a host without a feed.
 const missingFeed: Effect.Effect<unknown, ProjectionFault, Checkpoints | Scope.Scope> = withoutFeed;
 void missingFeed;
 
-const fetchWatch = Projection.onChange(fused).pipe(
+const fetchWatch = Projection.watch(fused).pipe(
   Effect.provide(Fetch.layer({ baseUrl: "https://example.test" }, Streamsy.group(Input))),
 );
 // @ts-expect-error Fetch supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
@@ -150,3 +150,17 @@ export type FeedChecks = [
     >
   >,
 ];
+
+Projection.fused({
+  id: "single-input-removed",
+  // @ts-expect-error A projection requires an inputs map.
+  input: Input.at({ id: "a" }),
+  process: () => Effect.void,
+});
+Projection.stream({
+  id: "single-stream-input-removed",
+  // @ts-expect-error A stream projection also requires an inputs map.
+  input: Input.at({ id: "a" }),
+  output: Other.at({ id: "a" }),
+  process: () => Effect.succeed([]),
+});

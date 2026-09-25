@@ -95,7 +95,7 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.create(target);
       yield* Streams.append(a, [1]);
       const woke = yield* Deferred.make<void>();
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "wake",
         inputs: { a, b },
         process: (batch) =>
@@ -148,7 +148,7 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       yield* Streams.create(target);
       yield* Streams.append(a, [1], { close: true });
       yield* Streams.append(b, [2]);
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "closed-open",
         inputs: { a, b },
         process: (batch) =>
@@ -241,7 +241,7 @@ for (const point of ["read", "append"] as const) {
         });
         const projection = Projection.stream({
           id: `retry-${point}`,
-          input,
+          inputs: { input },
           output,
           process: (batch) => Effect.succeed(batch.input.items),
         });
@@ -307,9 +307,9 @@ test("follow does not retry non-storage faults or handler failures", () =>
         "handler-error",
       ] as const) {
         let calls = 0;
-        const projection = Projection.make({
+        const projection = Projection.fused({
           id: "terminal",
-          input,
+          inputs: { input },
           process: () =>
             Effect.suspend(() => {
               calls += 1;
@@ -383,7 +383,7 @@ test("follow resets a finite retry budget after a successful cycle between outag
       let reads = 0;
       const projection = Projection.stream({
         id: "separate-outages",
-        input,
+        inputs: { input },
         output,
         process: (batch) => Effect.succeed(batch.input.items),
       });

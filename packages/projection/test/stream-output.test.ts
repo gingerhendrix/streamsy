@@ -136,7 +136,7 @@ const scenario = (name: string) => {
   const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
   const doubled = Projection.stream({
     id: `doubled-${name}`,
-    input,
+    inputs: { input },
     output,
     process: (batch, unit) =>
       Effect.sync(() => {
@@ -290,7 +290,7 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
       const output = Out.at({ name: "evens" });
       const evens = Projection.stream({
         id: "evens",
-        input,
+        inputs: { input },
         output,
         process: (batch) =>
           Effect.succeed(batch.input.items.filter((n) => n % 2 === 0).map(String)),
@@ -386,7 +386,7 @@ test("a short reproduction fails pin/range-unreproducible", () =>
     }),
   ));
 
-test("two runners with one loaded token: the second pin fails before any append", () =>
+test("two competing passes with one loaded token: the second pin fails before any append", () =>
   run(
     Effect.gen(function* () {
       const s = scenario("token-race");
@@ -402,12 +402,12 @@ test("two runners with one loaded token: the second pin fails before any append"
           ),
       });
       const appends = failingAppends(0);
-      const second = yield* withWriter(Projection.run(late), appends.patch).pipe(
+      const second = yield* withWriter(Projection.pass(late), appends.patch).pipe(
         Effect.result,
         Effect.forkChild,
       );
       yield* Deferred.await(reading);
-      const first = yield* withWriter(Projection.run(s.doubled), appends.patch);
+      const first = yield* withWriter(Projection.pass(s.doubled), appends.patch);
       expect(first.items).toBe(3);
       yield* Deferred.succeed(gate, undefined);
       const failure = fault(yield* Fiber.join(second));
@@ -420,13 +420,13 @@ test("two runners with one loaded token: the second pin fails before any append"
   ));
 
 for (const order of ["first-then-second", "second-then-first"] as const) {
-  test(`two runners settle the identical pinned unit (${order}): one Appended, one Duplicate, one checkpoint`, () =>
+  test(`two competing passes settle the identical pinned unit (${order}): one Appended, one Duplicate, one checkpoint`, () =>
     run(
       Effect.gen(function* () {
         const s = scenario(`identical-${order}`);
         yield* s.initialize;
         const failing = failingAppends(1);
-        fault(yield* withWriter(Projection.run(s.doubled), failing.patch).pipe(Effect.result));
+        fault(yield* withWriter(Projection.pass(s.doubled), failing.patch).pipe(Effect.result));
         const pinToken = (yield* stored(s.doubled)).token;
 
         // Both runners load the pin before either appends; the gate fixes the append order.
@@ -435,7 +435,7 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
         const outcomes: Array<string> = [];
         const runner = (name: string, role: "leads" | "follows") =>
           withWriter(
-            Projection.run(
+            Projection.pass(
               Projection.stream({
                 ...s.doubled,
                 process: (batch) =>

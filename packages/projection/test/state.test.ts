@@ -1,3 +1,4 @@
+import { runKernel, run as runWithPermit } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
@@ -11,7 +12,7 @@ import { Checkpoints, Projection, State, type ProjectionFault } from "@streamsy/
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
-import { serialized, hasLock } from "../src/serialized.ts";
+import { hasLock } from "../src/serialize.ts";
 import { forget } from "../src/forget.ts";
 import { recordKey } from "@streamsy/projection/checkpoint";
 
@@ -21,10 +22,10 @@ class numbers extends Streamsy.json<numbers>()("state.test/numbers", "state/:nam
 }) {}
 
 const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
-const total = Projection.make({
+const total = Projection.fused({
   id: "state-total",
   version: 2,
-  input,
+  inputs: { input },
   process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
 });
 const sqliteProtocol = (filename = ":memory:") =>
@@ -67,10 +68,10 @@ for (const [name, host] of hosts) {
           const checkpoints = yield* Checkpoints;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7, 11]);
-          const failing = Projection.make({
+          const failing = Projection.fused({
             id: total.id,
             version: total.version,
-            input,
+            inputs: { input },
             process: Projection.fold(Schema.Finite, 0, (sum, { item }) =>
               item === 11 ? Effect.fail("second item") : Effect.succeed(sum + item),
             ),
@@ -98,10 +99,10 @@ for (const [name, host] of hosts) {
           const checkpoints = yield* Checkpoints;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7]);
-          const saveThenFail = Projection.make({
+          const saveThenFail = Projection.fused({
             id: total.id,
             version: total.version,
-            input,
+            inputs: { input },
             process: () =>
               Effect.gen(function* () {
                 const state = yield* State;
@@ -156,7 +157,7 @@ for (const [name, host] of hosts) {
       await runtime.runPromise(
         Effect.gen(function* () {
           yield* seed;
-          yield* serialized(total);
+          yield* runWithPermit(total);
           expect(hasLock(recordKey(total))).toBe(true);
           // Source imports share the internal lock map, which is intentionally absent from dist's public surface.
           yield* forget(total);
@@ -166,7 +167,7 @@ for (const [name, host] of hosts) {
           expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.none());
           yield* Projection.forget(total);
           yield* Projection.forget({ ...total, id: "never-ran" });
-          expect((yield* Projection.serialized(total)).items).toBe(2);
+          expect((yield* Projection.run(total)).items).toBe(2);
         }),
       );
     } finally {
@@ -180,7 +181,7 @@ for (const [name, host] of hosts) {
       await runtime.runPromise(
         Effect.gen(function* () {
           yield* seed;
-          yield* serialized(total);
+          yield* runWithPermit(total);
           const checkpoints = yield* Checkpoints;
           const before = yield* checkpoints.load(total);
           const result = yield* forget(total).pipe(
@@ -238,10 +239,10 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       }
       yield* Projection.forget(total);
       yield* seed;
-      const invalid = Projection.make({
+      const invalid = Projection.fused({
         id: total.id,
         version: total.version,
-        input,
+        inputs: { input },
         process: Projection.fold(Schema.Finite, 0, () => Infinity),
       });
       const failed = yield* Projection.run(invalid).pipe(Effect.result);
@@ -288,7 +289,7 @@ test("stream state rows are separate and initial factory receives params only on
 
 test("tagged multi-input fold narrows items and follows declaration order", async () => {
   const words = FamilyFixture.json("state-words", { schema: Schema.String });
-  const projection = Projection.make({
+  const projection = Projection.fused({
     id: "tagged",
     inputs: { input, words },
     process: Projection.fold(
@@ -318,11 +319,11 @@ test("State SQL failures retain phase and driver cause", async () => {
         const state = yield* State;
         yield* sql.unsafe("DROP TABLE streamsy_projection_v1_state");
         for (const [phase, operation] of [
-          ["load", state.load(total)],
+          ["load", state.load(total).pipe(Effect.asVoid)],
           ["checkpoint", state.save(total, "1")],
           ["checkpoint", state.remove(total)],
         ] as const) {
-          const failed = yield* operation.pipe(Effect.result);
+          const failed = yield* Effect.result(operation);
           expect(failed._tag).toBe("Failure");
           if (failed._tag === "Failure")
             expect(failed.failure).toMatchObject({
@@ -356,7 +357,7 @@ test("SQLite competing commit during the read window preserves the winner's stat
                 const before = yield* owner.load(key);
                 if (firstLoad) {
                   firstLoad = false;
-                  yield* Projection.run(total).pipe(Effect.provideService(Checkpoints, owner));
+                  yield* runKernel(total).pipe(Effect.provideService(Checkpoints, owner));
                 }
                 return before;
               }),
@@ -383,9 +384,9 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
       let loads = 0;
       let saves = 0;
       let starts = 0;
-      const counted = Projection.make({
+      const counted = Projection.fused({
         id: "counted",
-        input,
+        inputs: { input },
         process: Projection.fold(
           Schema.Finite,
           () => {

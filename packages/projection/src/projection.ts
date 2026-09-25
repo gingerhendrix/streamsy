@@ -3,13 +3,12 @@ import type { Streamsy } from "@streamsy/core";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { Identity, ProjectionKey } from "./checkpoint.ts";
 import { entries } from "./read.ts";
-import type { Named } from "./outputs.ts";
+import type { Outputs } from "./outputs.ts";
 import type { Unit } from "./unit.ts";
 export { pass, run } from "./run.ts";
 export { follow } from "./follow.ts";
 export { family } from "./family.ts";
-export { serialized } from "./serialized.ts";
-export { onChange } from "./on-change.ts";
+export { watch } from "./watch.ts";
 export type { Progress } from "./run.ts";
 export type { FollowOptions } from "./follow.ts";
 export type {
@@ -18,7 +17,7 @@ export type {
   FusedFamilyDefinition,
   PinnedFamilyDefinition,
 } from "./family.ts";
-export type { OnChangeOptions } from "./on-change.ts";
+export type { WatchOptions } from "./watch.ts";
 
 /**
  * The handler runs inside the checkpoint owner's transaction. Stream writes are checked
@@ -38,7 +37,7 @@ export interface Fused<Inputs extends InputMap, E, R> {
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
 }
 /** The handler returns the items to append; a pinned unit makes the append exactly-once. */
-export interface Pinned<
+export interface Stream<
   Inputs extends InputMap = InputMap,
   O = unknown,
   E = unknown,
@@ -60,7 +59,7 @@ export type Projection<
   E = unknown,
   R = unknown,
   OR = unknown,
-> = Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>;
+> = Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>;
 
 interface Common {
   readonly id: string;
@@ -72,28 +71,11 @@ export interface FusedDefinition<Inputs extends InputMap, E, R> extends Common {
   readonly inputs: Inputs;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
 }
-/** Sugar for one input: the slice is `batch.input`. */
-export interface SingleFusedDefinition<A, E, R, IR = never> extends Common {
-  readonly input: Streamsy.Address<A, IR>;
-  readonly process: (
-    batch: Slices<{ readonly input: Streamsy.Address<A, IR> }>,
-    unit: Unit,
-  ) => Effect.Effect<void, E, R>;
-}
-export interface PinnedDefinition<Inputs extends InputMap, O, E, R, OR = never> extends Common {
+export interface StreamDefinition<Inputs extends InputMap, O, E, R, OR = never> extends Common {
   readonly inputs: Inputs;
   readonly output: Streamsy.Address<O, OR>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
-export interface SinglePinnedDefinition<A, O, E, R, IR = never, OR = never> extends Common {
-  readonly input: Streamsy.Address<A, IR>;
-  readonly output: Streamsy.Address<O, OR>;
-  readonly process: (
-    batch: Slices<{ readonly input: Streamsy.Address<A, IR> }>,
-    unit: Unit,
-  ) => Effect.Effect<ReadonlyArray<O>, E, R>;
-}
-
 const common = (definition: Common) => ({
   id: definition.id,
   version: definition.version ?? 1,
@@ -102,35 +84,28 @@ const common = (definition: Common) => ({
 });
 
 /** Inert: acquires no service. Defaults are generation 1 and no params. */
-export function make<A, E, R, IR>(
-  definition: SingleFusedDefinition<A, E, R, IR>,
-): Fused<{ readonly input: Streamsy.Address<A, IR> }, E, R>;
-export function make<Inputs extends InputMap, E, R>(
+export function fused<Inputs extends InputMap, E, R>(
   definition: FusedDefinition<Inputs, E, R>,
-): Fused<Inputs, E, R>;
-export function make<Inputs extends InputMap, A, E, R, IR>(
-  definition: FusedDefinition<Inputs, E, R> | SingleFusedDefinition<A, E, R, IR>,
-): Fused<Inputs, E, R> | Fused<{ readonly input: Streamsy.Address<A, IR> }, E, R> {
-  const base = { _tag: "Fused", ...common(definition) } as const;
-  return "inputs" in definition
-    ? { ...base, inputs: definition.inputs, process: definition.process }
-    : { ...base, inputs: { input: definition.input }, process: definition.process };
+): Fused<Inputs, E, R> {
+  return {
+    _tag: "Fused",
+    ...common(definition),
+    inputs: definition.inputs,
+    process: definition.process,
+  };
 }
 
 /** Inert stream form with a declared output on the checkpoint owner. */
-export function stream<A, O, E, R, IR, OR>(
-  definition: SinglePinnedDefinition<A, O, E, R, IR, OR>,
-): Pinned<{ readonly input: Streamsy.Address<A, IR> }, O, E, R, OR>;
 export function stream<Inputs extends InputMap, O, E, R, OR>(
-  definition: PinnedDefinition<Inputs, O, E, R, OR>,
-): Pinned<Inputs, O, E, R, OR>;
-export function stream<Inputs extends InputMap, A, O, E, R, IR, OR>(
-  definition: PinnedDefinition<Inputs, O, E, R, OR> | SinglePinnedDefinition<A, O, E, R, IR, OR>,
-): Pinned<Inputs, O, E, R, OR> | Pinned<{ readonly input: Streamsy.Address<A, IR> }, O, E, R, OR> {
-  const base = { _tag: "Stream", ...common(definition), output: definition.output } as const;
-  return "inputs" in definition
-    ? { ...base, inputs: definition.inputs, process: definition.process }
-    : { ...base, inputs: { input: definition.input }, process: definition.process };
+  definition: StreamDefinition<Inputs, O, E, R, OR>,
+): Stream<Inputs, O, E, R, OR> {
+  return {
+    _tag: "Stream",
+    ...common(definition),
+    output: definition.output,
+    inputs: definition.inputs,
+    process: definition.process,
+  };
 }
 
 export type { Identity };
@@ -183,4 +158,4 @@ export { fold, loadState } from "./fold.ts";
 export { forget } from "./forget.ts";
 
 export { outputs } from "./outputs.ts";
-export type { Named } from "./outputs.ts";
+export type { Outputs, OutputsDefinition } from "./outputs.ts";

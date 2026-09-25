@@ -1,10 +1,11 @@
-import type { Named } from "./outputs.ts";
+import { withPermit } from "./serialize.ts";
+import type { Outputs } from "./outputs.ts";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
 import { Effect } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Projection, Pinned } from "./projection.ts";
+import type { Fused, Projection, Stream } from "./projection.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passStream } from "./stream-output.ts";
 import { unitOf } from "./unit.ts";
@@ -84,23 +85,24 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
 
 /** One unit under the strategy the declaration carries. */
 export const pass = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
 ): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
   projection._tag === "Fused" ? passFused(projection, options) : passStream(projection, options);
 
 /**
- * Repeats `pass` until an empty pass reports caught-up, every input is closed, or
+ * Internal kernel without a permit. Call only while holding the permit or simulating
+ * a competing process in tests. Repeats `pass` until caught-up, every input is closed, or
  * the limit is reached. The trailing empty pass adds nothing to the totals.
  */
-export const run = Effect.fn("Projection.run")(function* <
+export const runKernel = Effect.fn("Projection.runKernel")(function* <
   Inputs extends InputMap,
   O,
   E,
   R,
   OR = never,
 >(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
@@ -117,3 +119,10 @@ export const run = Effect.fn("Projection.run")(function* <
   return { ...result, status: "limit-reached", units, items };
 });
 export type { Projection };
+
+/** Runs one projection at a time for this canonical key across hosts in the current process. */
+export const run = <Inputs extends InputMap, O, E, R, OR = never>(
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+  options: RunOptions = {},
+): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
+  withPermit(projection, runKernel(projection, options));

@@ -55,14 +55,14 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
           const sqlMember = issueRows.member(params);
           const outputMember = tracker.member(params);
           // Startup and background failures are isolated to their address.
-          yield* Projection.serialized(sqlMember).pipe(
+          yield* Projection.run(sqlMember).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
                 ? Effect.failCause(cause)
                 : Effect.logError("projection startup failed", Projection.key(sqlMember), cause),
             ),
           );
-          yield* Projection.serialized(outputMember).pipe(
+          yield* Projection.run(outputMember).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
                 ? Effect.failCause(cause)
@@ -70,8 +70,8 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
             ),
           );
           const watched = [
-            { key: Projection.key(sqlMember), fiber: yield* Projection.onChange(sqlMember) },
-            { key: Projection.key(outputMember), fiber: yield* Projection.onChange(outputMember) },
+            { key: Projection.key(sqlMember), fiber: yield* Projection.watch(sqlMember) },
+            { key: Projection.key(outputMember), fiber: yield* Projection.watch(outputMember) },
           ];
           yield* Effect.forEach(
             watched,

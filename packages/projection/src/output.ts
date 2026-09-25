@@ -1,3 +1,4 @@
+import type { Target, TargetServices, RoutedMap } from "./output-internal.ts";
 import { Schema, type Effect } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 
@@ -28,15 +29,6 @@ export interface Value<A, I = unknown> {
   readonly _tag: "Value";
   readonly schema: Schema.Codec<A, I, never, never>;
 }
-/** Output declarations own their codec and retain the target stream key. */
-export type Target<P> = Streamsy.Any & {
-  readonly address: (params: P) => { readonly id: string };
-};
-export type TargetServices<T> = T extends { readonly stream: { readonly Identifier: infer R } }
-  ? R
-  : T extends { readonly Identifier: infer R }
-    ? R
-    : never;
 export type Services<D extends RoutedMap> = {
   [K in keyof D]: D[K] extends { readonly stream: infer T } ? TargetServices<T> : never;
 }[keyof D];
@@ -76,9 +68,6 @@ export const value = <A, I>(schema: Schema.Codec<A, I, never, never>): Value<A, 
 
 // The mapped public result recovers each declaration's item type before runtime erasure.
 export type Declaration = Stream<any> | Rows<any> | Value<any, any>;
-export type RoutedMap = Readonly<
-  Record<string, Stream<any, Target<any>> | Rows<any, Target<any>> | Declaration>
->;
 export type Map = Readonly<Record<string, Declaration>>;
 export type Items<D extends RoutedMap> = {
   readonly [K in keyof D as D[K] extends Value<any, any> ? never : K]: ReadonlyArray<

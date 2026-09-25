@@ -1,11 +1,11 @@
 import { Effect } from "effect";
 import { Checkpoints, type ProjectionKey } from "./checkpoint.ts";
 import { State } from "./state.ts";
-import { withPermit } from "./serialized.ts";
+import { withPermit } from "./serialize.ts";
 
 /**
  * Deletes both rows under the serialized permit. Stop watchers before retirement;
- * wait for bare runs and other processes yourself. Delete stream outputs first or
+ * wait for direct passes and other processes yourself. Delete stream outputs first or
  * use a new generation, because forgetting restarts their producer sequences.
  */
 export const forget = (projection: ProjectionKey) =>

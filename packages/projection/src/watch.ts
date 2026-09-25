@@ -1,51 +1,51 @@
 import { Checkpoints } from "./checkpoint.ts";
-import type { Named } from "./outputs.ts";
+import type { Outputs } from "./outputs.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
-import { Effect, Fiber, Queue, Stream, type Scope } from "effect";
+import { Effect, Fiber, Queue, Stream as EffectStream, type Scope } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { type StreamRoute } from "@streamsy/core/protocol";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import type { Family } from "./family.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Pinned } from "./projection.ts";
+import type { Fused, Stream } from "./projection.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
-import { serialized } from "./serialized.ts";
+import { run } from "./run.ts";
 import type { Progress } from "./run.ts";
 
-export interface OnChangeOptions extends RunOptions {}
+export interface WatchOptions extends RunOptions {}
 
 type AnyProjection =
   | Fused<InputMap, unknown, unknown>
-  | Pinned<InputMap, unknown, unknown, unknown, unknown>
-  | Named<InputMap, unknown, unknown, unknown>;
+  | Stream<InputMap, unknown, unknown, unknown, unknown>
+  | Outputs<InputMap, unknown, unknown, unknown>;
 type RuntimeInputs = Record<string, Streamsy.Address<unknown, Streamsy.Any["Identifier"]>>;
 type RuntimeServices = Checkpoints | Streamsy.Any["Identifier"];
 type RuntimeProjection =
   | Fused<RuntimeInputs, ProjectionFault, RuntimeServices>
-  | Pinned<RuntimeInputs, unknown, ProjectionFault, RuntimeServices, Streamsy.Any["Identifier"]>
-  | Named<RuntimeInputs, ProjectionFault, RuntimeServices, Streamsy.Any["Identifier"]>;
+  | Stream<RuntimeInputs, unknown, ProjectionFault, RuntimeServices, Streamsy.Any["Identifier"]>
+  | Outputs<RuntimeInputs, ProjectionFault, RuntimeServices, Streamsy.Any["Identifier"]>;
 type FamilyParams<F> = F extends Family<infer Codecs, any> ? StreamRoute.Params<Codecs> : never;
 type FamilyMember<F> = F extends Family<any, infer Member> ? Member : never;
 type MemberError<Member> =
   Member extends Fused<infer _Inputs, infer E, infer _R>
     ? E
-    : Member extends Pinned<infer _Inputs, infer _Output, infer E, infer _R, infer _OR>
+    : Member extends Stream<infer _Inputs, infer _Output, infer E, infer _R, infer _OR>
       ? E
-      : Member extends Named<infer _Inputs, infer E, infer _R, infer _OR>
+      : Member extends Outputs<infer _Inputs, infer E, infer _R, infer _OR>
         ? E
         : never;
 type MemberRequirements<Member> =
   Member extends Fused<infer _Inputs, infer _E, infer R>
     ? R | InputServices<_Inputs> | Streamsy.ChangeFeed<InputServices<_Inputs>>
-    : Member extends Pinned<infer _Inputs, infer _Output, infer _E, infer R, infer OR>
+    : Member extends Stream<infer _Inputs, infer _Output, infer _E, infer R, infer OR>
       ? R | OR | InputServices<_Inputs> | Streamsy.ChangeFeed<InputServices<_Inputs>>
-      : Member extends Named<infer Inputs, infer _E, infer R, infer OR>
+      : Member extends Outputs<infer Inputs, infer _E, infer R, infer OR>
         ? R | OR | InputServices<Inputs> | Streamsy.ChangeFeed<InputServices<Inputs>>
         : never;
 
-const watch = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
-  options: OnChangeOptions,
+const watchLoop = <Inputs extends InputMap, O, E, R, OR = never>(
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+  options: WatchOptions,
 ): Effect.Effect<
   Progress,
   E | ProjectionFault,
@@ -96,11 +96,11 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
         }),
       );
       const subscriptions = inputs.map(([name, address]) =>
-        Stream.unwrap(
+        EffectStream.unwrap(
           Effect.map(Streamsy.ChangeFeed(address.stream), (feed) => feed.changes(address.id)),
         ).pipe(
-          Stream.takeUntil((snapshot) => snapshot.closed),
-          Stream.runForEach((snapshot) =>
+          EffectStream.takeUntil((snapshot) => snapshot.closed),
+          EffectStream.runForEach((snapshot) =>
             Effect.gen(function* () {
               if (snapshot.closed) closed.add(name);
               if (snapshot.present) yield* Queue.offer(wake, undefined);
@@ -122,8 +122,8 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
       const runner = Effect.gen(function* () {
         while (true) {
           yield* Queue.take(wake);
-          let result = yield* serialized(projection, options);
-          while (result.status === "limit-reached") result = yield* serialized(projection, options);
+          let result = yield* run(projection, options);
+          while (result.status === "limit-reached") result = yield* run(projection, options);
           if (result.status === "source-closed" && closed.size === inputs.length) return result;
         }
       });
@@ -136,9 +136,9 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
  * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
  * failures surface as `read / storage-failure`.
  */
-export function onChange<Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
-  options?: OnChangeOptions,
+export function watch<Inputs extends InputMap, O, E, R, OR = never>(
+  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+  options?: WatchOptions,
 ): Effect.Effect<
   Fiber.Fiber<Progress, E | ProjectionFault>,
   ProjectionFault,
@@ -149,19 +149,19 @@ export function onChange<Inputs extends InputMap, O, E, R, OR = never>(
   | Streamsy.ChangeFeed<InputServices<Inputs>>
   | Scope.Scope
 >;
-export function onChange<F extends Family<any, any>>(
+export function watch<F extends Family<any, any>>(
   stream: F,
   members: ReadonlyArray<FamilyParams<F>>,
-  options?: OnChangeOptions,
+  options?: WatchOptions,
 ): Effect.Effect<
   ReadonlyArray<Fiber.Fiber<Progress, MemberError<FamilyMember<F>> | ProjectionFault>>,
   ProjectionFault,
   MemberRequirements<FamilyMember<F>> | Checkpoints | Scope.Scope
 >;
-export function onChange(
+export function watch(
   target: AnyProjection | Family<any, any>,
-  membersOrOptions: ReadonlyArray<Record<string, unknown>> | OnChangeOptions = {},
-  maybeOptions: OnChangeOptions = {},
+  membersOrOptions: ReadonlyArray<Record<string, unknown>> | WatchOptions = {},
+  maybeOptions: WatchOptions = {},
 ): Effect.Effect<
   Fiber.Fiber<any, any> | ReadonlyArray<Fiber.Fiber<any, any>>,
   ProjectionFault,
@@ -170,17 +170,17 @@ export function onChange(
   return Effect.gen(function* () {
     const options = Array.isArray(membersOrOptions)
       ? maybeOptions
-      : (membersOrOptions as OnChangeOptions);
+      : (membersOrOptions as WatchOptions);
     yield* validateOptions(options);
     if (target._tag === "Family") {
       const members = membersOrOptions as ReadonlyArray<Record<string, unknown>>;
       return yield* Effect.forEach(members, (params) => {
         const projection = target.member(params) as RuntimeProjection;
-        return watch(projection, maybeOptions).pipe(Effect.forkScoped);
+        return watchLoop(projection, maybeOptions).pipe(Effect.forkScoped);
       });
     }
     const erased: unknown = target;
     const projection = erased as RuntimeProjection;
-    return yield* watch(projection, membersOrOptions as OnChangeOptions).pipe(Effect.forkScoped);
+    return yield* watchLoop(projection, membersOrOptions as WatchOptions).pipe(Effect.forkScoped);
   });
 }

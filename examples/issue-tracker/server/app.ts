@@ -65,8 +65,8 @@ export const app = (workspaces: ReadonlyArray<string>) => {
           return json({ error: "Concurrent command conflict" }, { status: 409 });
         return json({ error: "Internal server error" }, { status: 500 });
       }
-      yield* Projection.serialized(issueRows.member({ workspaceId }));
-      yield* Projection.serialized(tracker.member({ workspaceId }));
+      yield* Projection.run(issueRows.member({ workspaceId }));
+      yield* Projection.run(tracker.member({ workspaceId }));
       const sql = yield* SqlClient.SqlClient;
       const rows = yield* sql.unsafe<{
         readonly issueId: string;

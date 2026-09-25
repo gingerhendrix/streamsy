@@ -11,7 +11,7 @@ import { State } from "./state.ts";
 import type { Unit } from "./unit.ts";
 
 /** Normalized stream-form declaration consumed by the pinned kernel. */
-export interface Named<Inputs extends InputMap, E, R, OR = never> {
+export interface Outputs<Inputs extends InputMap, E, R, OR = never> {
   readonly _tag: "Outputs";
   readonly id: string;
   readonly version: number;
@@ -27,13 +27,13 @@ const initialValue = <A>(initial: Initial<A>, params: Record<string, string>): A
     ? (initial as (params: Record<string, string>) => A)(params)
     : initial;
 
-export function outputs<
+export interface OutputsDefinition<
   Inputs extends InputMap,
-  const D extends Output.Map,
+  D extends Output.Map,
   Result extends Output.Result<D>,
   E,
   R,
->(definition: {
+> {
   readonly id: string;
   readonly version?: number;
   readonly generation?: number;
@@ -47,7 +47,17 @@ export function outputs<
     (Exclude<keyof Result, keyof Output.Result<D>> extends never
       ? unknown
       : { readonly invalidOutputKeys: never });
-}): Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
+}
+
+export function outputs<
+  Inputs extends InputMap,
+  const D extends Output.Map,
+  Result extends Output.Result<D>,
+  E,
+  R,
+>(
+  definition: OutputsDefinition<Inputs, D, Result, E, R>,
+): Outputs<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
   readonly outputs: Bound<D, {}>;
 } {
   const streams: Record<string, Streamsy.Address<unknown, unknown>> = {};
@@ -80,7 +90,7 @@ export function outputs<
     generation: definition.generation ?? 1,
     params: definition.params ?? {},
   };
-  const result: Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
+  const result: Outputs<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
     readonly outputs: Bound<D, {}>;
   } = {
     _tag: "Outputs",
@@ -91,7 +101,7 @@ export function outputs<
       outputs: definition.outputs,
     })),
     // SAFETY: each normalized address retains the key of its declaration in D.
-    streams: streams as Named<
+    streams: streams as Outputs<
       Inputs,
       E | ProjectionFault,
       R | State,
@@ -159,9 +169,9 @@ export function outputs<
 }
 
 const StateOwner = Symbol.for("@streamsy/projection/internal/StateOwner");
-/** Private normalized metadata; the public Named declaration does not gain a required field. */
+/** Private normalized metadata; the public Outputs declaration does not gain a required field. */
 export const stateOwner = <Inputs extends InputMap, E, R, OR>(
-  projection: Named<Inputs, E, R, OR>,
+  projection: Outputs<Inputs, E, R, OR>,
 ): Effect.Effect<object | undefined, never, R> => {
   if (!(StateOwner in projection)) return Effect.succeed(undefined);
   // SAFETY: outputs attaches an owner lookup whose State requirement is already included in R.

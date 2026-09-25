@@ -30,7 +30,7 @@ const setup = Effect.gen(function* () {
 /** Records every tagged item the handler saw, in order, with the unit it arrived in. */
 const recorder = (inputs: Inputs, id = "multi") => {
   const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
-  const projection = Projection.make({
+  const projection = Projection.fused({
     id,
     inputs,
     process: Projection.each<Inputs, never, never>((entry, unit) =>
@@ -86,7 +86,7 @@ test("one closed input stays in the batch while the other continues", () =>
       yield* Streams.append(a, [], { close: true });
       const batches: Array<Record<string, { readonly closed: boolean; readonly items: number }>> =
         [];
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "closing",
         inputs: { a, b },
         process: (batch) =>
@@ -153,7 +153,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       const order: Array<string> = [];
       let active = 0;
       let overlapped = false;
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "sequenced",
         inputs: { b, a },
         process: (batch, unit) =>

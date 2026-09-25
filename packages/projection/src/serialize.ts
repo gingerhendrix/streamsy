@@ -1,12 +1,5 @@
-import { Checkpoints } from "./checkpoint.ts";
-import type { Named } from "./outputs.ts";
 import { Effect, Semaphore } from "effect";
-import type { InputServices, InputMap } from "./batch.ts";
 import { recordKey, type ProjectionKey } from "./checkpoint.ts";
-import type { Fused, Pinned } from "./projection.ts";
-import type { RunOptions } from "./read.ts";
-import { run, type Progress } from "./run.ts";
-import type { ProjectionFault } from "./fault.ts";
 
 /** Users count both holders and waiters, preventing a forgotten key from splitting its queue. */
 const locks = new Map<string, { semaphore: Semaphore.Semaphore; users: number; retire: boolean }>();
@@ -40,13 +33,6 @@ export const withPermit = <A, E, R>(
         ),
       );
   });
-
-/** Runs one projection at a time for this canonical key across hosts in the current process. */
-export const serialized = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Pinned<Inputs, O, E, R, OR> | Named<Inputs, E, R, OR>,
-  options: RunOptions = {},
-): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
-  withPermit(projection, run(projection, options));
 
 /** Internal test probe for lifecycle assertions; not a package export. */
 export const hasLock = (key: string): boolean => locks.has(key);

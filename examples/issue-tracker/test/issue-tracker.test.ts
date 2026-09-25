@@ -68,7 +68,7 @@ test("the change trigger stays alive beside the request trigger on one key", asy
           title: "Both",
           status: "todo",
         });
-        yield* Projection.serialized(issueRows.member({ workspaceId: "live" }), { limit: 5 });
+        yield* Projection.run(issueRows.member({ workspaceId: "live" }), { limit: 5 });
         const sql = yield* SqlClient.SqlClient;
         yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },

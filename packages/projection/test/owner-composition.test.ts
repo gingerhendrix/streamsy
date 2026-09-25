@@ -34,9 +34,9 @@ test("a fused projection reads remote input and writes on its SQLite checkpoint 
       yield* source.create(params);
       yield* output.create(params);
       yield* source.append(params, [1, 2, 3]);
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "mixed-double",
-        input: Source.at(params),
+        inputs: { input: Source.at(params) },
         process: (batch) =>
           output.append(
             params,
@@ -53,36 +53,36 @@ test("a fused projection reads remote input and writes on its SQLite checkpoint 
   );
 });
 
-test("onChange watches the input's feed even when checkpoints have a different owner", async () => {
+test("watch watches the input's feed even when checkpoints have a different owner", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
       const params = { name: "watch" };
       yield* source.create(params);
       yield* source.append(params, [1], { close: true });
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "mixed-watch",
-        input: Source.at(params),
+        inputs: { input: Source.at(params) },
         process: () => Effect.void,
       });
-      const fiber = yield* Projection.onChange(projection);
+      const fiber = yield* Projection.watch(projection);
       expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
     }).pipe(Effect.provide(host), Effect.scoped),
   );
 });
 
-test("onChange rejects a stream rebound without its matching feed", async () => {
+test("watch rejects a stream rebound without its matching feed", async () => {
   const alternate = Protocol.bind(Memory.layerMemory(), Streamsy.group(Source)).pipe(
     Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
   );
   await Effect.runPromise(
     Effect.gen(function* () {
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "rebound-feed",
-        input: Source.at({ name: "watch" }),
+        inputs: { input: Source.at({ name: "watch" }) },
         process: () => Effect.void,
       });
-      const fiber = yield* Projection.onChange(projection).pipe(Effect.provide(alternate));
+      const fiber = yield* Projection.watch(projection).pipe(Effect.provide(alternate));
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure")
@@ -115,9 +115,9 @@ test("a custom stream wire cannot establish the owner of a fused write", async (
       yield* source.create(params);
       yield* source.append(params, [1]);
       yield* output.create(params);
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "unowned-write",
-        input: Source.at(params),
+        inputs: { input: Source.at(params) },
         process: () => output.append(params, [2]),
       });
       const result = yield* Projection.run(projection).pipe(Effect.result);

@@ -23,10 +23,10 @@ export const stepBoard = (state: BoardState, event: GameEvent, through: string):
 });
 
 export const boardProjection = (gameId: string) =>
-  Projection.make({
+  Projection.fused({
     id: "hex-board",
     params: { gameId },
-    input: GameEvents.at({ gameId }),
+    inputs: { input: GameEvents.at({ gameId }) },
     process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
       stepBoard(state, item, unit.ranges.input.nextOffset),
     ),

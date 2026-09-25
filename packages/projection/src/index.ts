@@ -1,15 +1,8 @@
 export * as Projection from "./projection.ts";
-export type {
-  Fused,
-  FusedDefinition,
-  SingleFusedDefinition,
-  Pinned,
-  PinnedDefinition,
-  SinglePinnedDefinition,
-} from "./projection.ts";
+export type { Fused, FusedDefinition, Stream, StreamDefinition } from "./projection.ts";
 export type { FollowOptions } from "./follow.ts";
 export type { RunOptions } from "./read.ts";
-export type { OnChangeOptions } from "./on-change.ts";
+export type { WatchOptions } from "./watch.ts";
 export type {
   Family,
   FamilyDefinition,
@@ -32,4 +25,4 @@ export { ProjectionFault } from "./fault.ts";
 export { State, type StateApi } from "./state.ts";
 
 export * as Output from "./output.ts";
-export type { Named } from "./outputs.ts";
+export type { Outputs, OutputsDefinition } from "./outputs.ts";

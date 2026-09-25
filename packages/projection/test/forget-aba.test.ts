@@ -1,3 +1,4 @@
+import { runKernel } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Tests own the runtime boundary and complete host graph. */
 import { expect, test } from "bun:test";
@@ -31,18 +32,18 @@ const hosts: ReadonlyArray<
 ];
 for (const [name, host] of hosts) {
   for (const serialized of [true, false]) {
-    test(`${name}: forget ${serialized ? "waits for the serialized runner, preventing ABA" : "cannot protect a bare run: caller must drain it first"}`, () =>
+    test(`${name}: forget ${serialized ? "waits for the serialized runner, preventing ABA" : "cannot protect an internal kernel run simulating another process"}`, () =>
       Effect.runPromise(
         Effect.gen(function* () {
           const input = FamilyFixture.json("aba-input", { schema: Schema.Finite });
-          const projection = Projection.make({
+          const projection = Projection.fused({
             id: `aba-${name}-${serialized}`,
-            input,
+            inputs: { input },
             process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
           });
           yield* Streams.create(input);
           yield* Streams.append(input, [2, 3]);
-          yield* Projection.serialized(projection);
+          yield* Projection.run(projection);
           yield* Streams.append(input, [7]);
           const reading = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
@@ -63,9 +64,10 @@ for (const [name, host] of hosts) {
                 return yield* reader.read(id, options);
               }),
           };
-          const a = yield* (
-            serialized ? Projection.serialized(projection) : Projection.run(projection)
-          ).pipe(FamilyFixture.provideReader(slow), Effect.forkChild);
+          const a = yield* (serialized ? Projection.run(projection) : runKernel(projection)).pipe(
+            FamilyFixture.provideReader(slow),
+            Effect.forkChild,
+          );
           yield* Deferred.await(reading);
           let forgotten = false;
           const started = yield* Deferred.make<void>();
@@ -87,16 +89,16 @@ for (const [name, host] of hosts) {
             expect((yield* Fiber.join(a)).items).toBe(1);
             yield* Fiber.join(forget);
             expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.none());
-            yield* Projection.serialized(projection);
+            yield* Projection.run(projection);
             expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(12));
           } else {
             yield* Fiber.join(forget);
-            yield* Projection.serialized(projection);
+            yield* Projection.run(projection);
             expect((yield* (yield* Checkpoints).load(projection)).token).toBe("1");
             expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(12));
             yield* Deferred.succeed(release, undefined);
             yield* Fiber.join(a);
-            // The old token 1 matches the fresh token 1: this is the remaining caller rule.
+            // The old token 1 matches the fresh token 1: another process must be drained separately.
             expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(19));
           }
         }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
@@ -108,9 +110,9 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
   Effect.runPromise(
     Effect.gen(function* () {
       const input = FamilyFixture.json("queued-input", { schema: Schema.Finite });
-      const projection = Projection.make({
+      const projection = Projection.fused({
         id: "queued-forget",
-        input,
+        inputs: { input },
         process: () => Effect.void,
       });
       yield* Streams.create(input);
@@ -128,14 +130,14 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
             Effect.andThen(reader.read(id, options)),
           ),
       });
-      const first = yield* Projection.serialized(projection).pipe(
+      const first = yield* Projection.run(projection).pipe(
         FamilyFixture.provideReader(gated(firstRead, firstRelease)),
         Effect.forkChild,
       );
       yield* Deferred.await(firstRead);
       const forget = yield* Projection.forget(projection).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
-      const second = yield* Projection.serialized(projection).pipe(
+      const second = yield* Projection.run(projection).pipe(
         FamilyFixture.provideReader(gated(secondRead, secondRelease)),
         Effect.forkChild,
       );
@@ -145,7 +147,7 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
       yield* Fiber.join(forget);
       yield* Deferred.await(secondRead);
       let thirdReads = 0;
-      const third = yield* Projection.serialized(projection).pipe(
+      const third = yield* Projection.run(projection).pipe(
         FamilyFixture.provideReader({
           ...reader,
           read: (id, options) =>

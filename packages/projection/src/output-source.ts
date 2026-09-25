@@ -1,3 +1,4 @@
+import type { TargetServices, RoutedMap } from "./output-internal.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This mapped adapter preserves each declaration's schema and name while iterating its record. */
 import { Effect, Option, type Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
@@ -7,11 +8,11 @@ import type { ProjectionKey } from "./checkpoint.ts";
 import { loadState } from "./fold.ts";
 import type { State } from "./state.ts";
 
-export type Fixed<D extends Output.RoutedMap> = {
+export type Fixed<D extends RoutedMap> = {
   readonly [K in keyof D]: D[K] extends Output.Stream<infer A, any>
-    ? Output.Stream<A, Streamsy.Address<A, Output.TargetServices<D[K]["stream"]>>>
+    ? Output.Stream<A, Streamsy.Address<A, TargetServices<D[K]["stream"]>>>
     : D[K] extends Output.Rows<infer A, any>
-      ? Output.Rows<A, Streamsy.Address<unknown, Output.TargetServices<D[K]["stream"]>>>
+      ? Output.Rows<A, Streamsy.Address<unknown, TargetServices<D[K]["stream"]>>>
       : D[K];
 };
 type Collection<Name extends string, A> = {
@@ -20,15 +21,13 @@ type Collection<Name extends string, A> = {
     readonly key: StreamAddress.StateKey<A>;
   };
 };
-export type Bound<D extends Output.RoutedMap, P> = {
+export type Bound<D extends RoutedMap, P> = {
   readonly [K in keyof D]: D[K] & {
     readonly paramSchema: StreamRoute.PathSchema<P>;
   } & (D[K] extends Output.Stream<infer A, any>
       ? {
           readonly template: string;
-          readonly address: (
-            params: P,
-          ) => Streamsy.Address<A, Output.TargetServices<D[K]["stream"]>>;
+          readonly address: (params: P) => Streamsy.Address<A, TargetServices<D[K]["stream"]>>;
         }
       : D[K] extends Output.Rows<infer A, any>
         ? {
@@ -37,7 +36,7 @@ export type Bound<D extends Output.RoutedMap, P> = {
             readonly address: (
               params: P,
             ) => StreamAddress.StateAddress<Collection<K & string, A>> &
-              Streamsy.Address<unknown, Output.TargetServices<D[K]["stream"]>>;
+              Streamsy.Address<unknown, TargetServices<D[K]["stream"]>>;
           }
         : D[K] extends Output.Value<infer A, any>
           ? {
@@ -65,7 +64,7 @@ export const rowsAddress = <A, R>(
     { stream: output.stream.stream },
   );
 
-export function bind<D extends Output.RoutedMap, P>(
+export function bind<D extends RoutedMap, P>(
   declarations: D,
   id: string,
   paramSchema: StreamRoute.PathSchema<P>,

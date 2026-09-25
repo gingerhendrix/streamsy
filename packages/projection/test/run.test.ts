@@ -160,9 +160,9 @@ test("identity mismatch on inputs stops without reset", () =>
       const before = yield* inspect;
       const other = FamilyFixture.json("elsewhere", { schema: Schema.Finite });
       yield* Streams.create(other);
-      const changed = Projection.make({
+      const changed = Projection.fused({
         id: positives.id,
-        input: other,
+        inputs: { input: other },
         process: () => Effect.void,
       });
       const failed = fault(yield* failure(Projection.run(changed)));
@@ -288,9 +288,9 @@ test("record change between load and transaction is a token conflict", () =>
       const failed = fault(
         yield* failure(
           withRead(
-            Projection.run(positives),
+            Projection.pass(positives),
             (reader) => (id, options) =>
-              Projection.run(positives).pipe(
+              Projection.pass(positives).pipe(
                 FamilyFixture.provideReader(reader),
                 Effect.provide(services),
                 Effect.orDie,
@@ -307,7 +307,7 @@ test("record change between load and transaction is a token conflict", () =>
     }),
   ));
 
-test("two runners on one memory host: the second conflicts and output is not doubled", () =>
+test("two competing passes on one memory host: the second conflicts and output is not doubled", () =>
   run(
     Effect.gen(function* () {
       yield* initialize;
@@ -315,9 +315,9 @@ test("two runners on one memory host: the second conflicts and output is not dou
       const inside = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
-      const gated = Projection.make({
+      const gated = Projection.fused({
         id: positives.id,
-        input,
+        inputs: { input },
         process: (batch, unit) =>
           Effect.gen(function* () {
             yield* Deferred.succeed(inside, undefined);
@@ -325,14 +325,14 @@ test("two runners on one memory host: the second conflicts and output is not dou
             yield* positives.process(batch, unit);
           }),
       });
-      const first = yield* Effect.forkChild(Projection.run(gated));
+      const first = yield* Effect.forkChild(Projection.pass(gated));
       yield* Deferred.await(inside);
       const observing = Checkpoints.of({
         ...owner,
         load: (key) => owner.load(key).pipe(Effect.tap(() => Deferred.succeed(loaded, undefined))),
       });
       const second = yield* Effect.forkChild(
-        Projection.run(positives).pipe(Effect.provideService(Checkpoints, observing)),
+        Projection.pass(positives).pipe(Effect.provideService(Checkpoints, observing)),
       );
       yield* Deferred.await(loaded);
       yield* Deferred.succeed(release, undefined);
@@ -352,9 +352,9 @@ test("interruption inside the transaction rolls back the output append and the c
       yield* initialize;
       const appended = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      const blocking = Projection.make({
+      const blocking = Projection.fused({
         id: positives.id,
-        input,
+        inputs: { input },
         process: (batch, unit) =>
           positives
             .process(batch, unit)
@@ -383,9 +383,9 @@ test("handler failure rolls back the output append and the checkpoint", () =>
     Effect.gen(function* () {
       yield* initialize;
       class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
-      const failing = Projection.make({
+      const failing = Projection.fused({
         id: positives.id,
-        input,
+        inputs: { input },
         process: (batch, unit) => positives.process(batch, unit).pipe(Effect.andThen(new Boom())),
       });
       const failed = yield* failure(Projection.run(failing));
@@ -397,10 +397,10 @@ test("handler failure rolls back the output append and the checkpoint", () =>
   ));
 
 test("version one keeps existing record keys and version two starts a fresh key", () => {
-  const definition = { id: "versioned", input, process: () => Effect.void };
-  const original = Projection.make(definition);
-  const one = Projection.make({ ...definition, version: 1 });
-  const two = Projection.make({ ...definition, version: 2 });
+  const definition = { id: "versioned", inputs: { input }, process: () => Effect.void };
+  const original = Projection.fused(definition);
+  const one = Projection.fused({ ...definition, version: 1 });
+  const two = Projection.fused({ ...definition, version: 2 });
   expect(recordKey(Projection.key(original))).toBe(
     '["streamsy.projection.v1","versioned","1","{}"]',
   );
@@ -416,7 +416,11 @@ test("run without a limit drains more than one hundred server pages", () =>
         input,
         Array.from({ length: 101 }, (_, n) => n),
       );
-      const projection = Projection.make({ id: "uncapped", input, process: () => Effect.void });
+      const projection = Projection.fused({
+        id: "uncapped",
+        inputs: { input },
+        process: () => Effect.void,
+      });
       const result = yield* Projection.run(projection);
       expect(result.status).toBe("caught-up");
       expect(result.units).toBe(101);
@@ -434,7 +438,7 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
       const projection = Projection.stream({
         id: "versioned-stream",
         version: 7,
-        input,
+        inputs: { input },
         output,
         process: (batch, unit) =>
           Effect.sync(() => {

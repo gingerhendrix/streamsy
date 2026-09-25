@@ -187,7 +187,7 @@ describe("Hacker News story index projection", () => {
       wire: {
         ...Context.get(context, HackerNewsSource).wire,
         read: (id, options) =>
-          Projection.run(hackerNewsStoryIndex, limits).pipe(
+          Projection.pass(hackerNewsStoryIndex, limits).pipe(
             Effect.provide(h.clientLayer),
             Effect.orDie,
             Effect.andThen(reader.read(id, options)),

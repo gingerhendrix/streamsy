@@ -19,9 +19,9 @@ export const minimal = Effect.gen(function* () {
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
   return yield* Projection.run(
-    Projection.make({
+    Projection.fused({
       id: "doubled",
-      input: Numbers.at({}),
+      inputs: { input: Numbers.at({}) },
       process: (batch) =>
         Effect.flatMap(Doubled, (output) =>
           output.append(
