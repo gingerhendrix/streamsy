@@ -10,4 +10,4 @@ export {
   MutationApplied,
   MutationRejected,
 } from "./mutation.ts";
-export * as Memory from "./memory/families.ts";
+export * as Memory from "./memory/streams.ts";

@@ -56,7 +56,7 @@ const testKits = ["packages/core/src/testing/storage-contract.ts"];
 const applicationProtocolAllowlist: Readonly<Record<string, string>> = {};
 const checks = [
   scan(
-    "no retired batch 1 names",
+    "no retired batch 1 or 2 names",
     retiredCoreNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
     ["packages/**", "examples/**", "hosted/**", "site/content/docs/**"],
   ),

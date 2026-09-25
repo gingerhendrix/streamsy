@@ -26,8 +26,13 @@ export const staleTerms = [
   "Backend.make",
 ];
 
-/** Approved batch 1 names. Projection renames belong to later batches. */
+/** Approved batch 1 and 2 names. Parameterized projections belong to batch 3. */
 export const retiredCoreNames = [
+  "Projection.make",
+  "Projection.serialized",
+  "Projection.onChange",
+  "Serve.document",
+  "OnChangeOptions",
   "StreamFamily",
   "StreamGroup",
   "AnyFamily",
