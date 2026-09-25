@@ -136,6 +136,7 @@ const scenario = (name: string) => {
   const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
   const doubled = Projection.stream({
     id: `doubled-${name}`,
+    params: {},
     inputs: { input },
     output,
     process: (batch, unit) =>
@@ -143,7 +144,7 @@ const scenario = (name: string) => {
         seen.push({ items: batch.input.items, unit });
         return batch.input.items.map((n) => String(n * 2));
       }),
-  });
+  }).at({});
   const initialize = Effect.gen(function* () {
     yield* Streams.create(input);
     yield* Streams.create(output);
@@ -290,11 +291,12 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
       const output = Out.at({ name: "evens" });
       const evens = Projection.stream({
         id: "evens",
+        params: {},
         inputs: { input },
         output,
         process: (batch) =>
           Effect.succeed(batch.input.items.filter((n) => n % 2 === 0).map(String)),
-      });
+      }).at({});
       yield* Streams.create(input);
       yield* Streams.create(output);
       yield* Streams.append(input, [1, 3]);
@@ -395,12 +397,13 @@ test("two competing passes with one loaded token: the second pin fails before an
       const reading = yield* Deferred.make<void>();
       const late = Projection.stream({
         ...s.doubled,
+        params: {},
         process: (batch) =>
           Deferred.succeed(reading, undefined).pipe(
             Effect.andThen(Deferred.await(gate)),
             Effect.as(batch.input.items.map((n) => String(n * 2))),
           ),
-      });
+      }).at({});
       const appends = failingAppends(0);
       const second = yield* withWriter(Projection.pass(late), appends.patch).pipe(
         Effect.result,
@@ -438,11 +441,12 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
             Projection.pass(
               Projection.stream({
                 ...s.doubled,
+                params: {},
                 process: (batch) =>
                   (role === "follows" ? Deferred.succeed(loaded, undefined) : Effect.void).pipe(
                     Effect.as(batch.input.items.map((n) => String(n * 2))),
                   ),
-              }),
+              }).at({}),
             ),
             (writer) => ({
               append: (id, options) =>
@@ -484,7 +488,7 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       yield* s.initialize;
       const recording = recordingAppends();
       yield* withWriter(Projection.run(s.doubled), recording.patch);
-      const second = Projection.stream({ ...s.doubled, generation: 2 });
+      const second = Projection.stream({ ...s.doubled, params: {}, generation: 2 }).at({});
       const again = yield* withWriter(Projection.run(second), recording.patch);
       expect(again.items).toBe(3);
       expect(recording.positions).toEqual([
@@ -546,6 +550,7 @@ test("a two-input pending unit reproduces both ranges", () =>
       }> = [];
       const pair = Projection.stream({
         id: "pair",
+        params: {},
         inputs: { a, b },
         output,
         process: (batch, unit) =>
@@ -553,7 +558,7 @@ test("a two-input pending unit reproduces both ranges", () =>
             seen.push({ a: batch.a.items, b: batch.b.items, unit });
             return Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`);
           }),
-      });
+      }).at({});
       yield* Streams.create(a);
       yield* Streams.create(b);
       yield* Streams.create(output);

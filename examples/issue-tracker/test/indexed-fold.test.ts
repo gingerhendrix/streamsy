@@ -166,7 +166,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
         let previous = initialWorkspace("live");
         for (const phase of phases) {
           yield* phase;
-          yield* Projection.run(tracker.member({ workspaceId: "live" }));
+          yield* Projection.run(tracker.at({ workspaceId: "live" }));
           const next = yield* tracker.outputs.workspace.resolve({ workspaceId: "live" });
           const oldCards = new Map(cards(previous).map((row) => [row.issueId, row]));
           const oldCounts = new Map(counts(previous).map((row) => [row.labelId, row]));

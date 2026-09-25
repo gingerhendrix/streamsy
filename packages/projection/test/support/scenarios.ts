@@ -10,13 +10,14 @@ export const output = FamilyFixture.json("projection-output", { schema: Schema.F
 /** Stateless fused filter: positive items are copied to `output` inside the transaction. */
 export const positives = Projection.fused({
   id: "positives",
+  params: {},
   inputs: { input },
   process: (batch) =>
     Effect.gen(function* () {
       const kept = batch.input.items.filter((item) => item > 0);
       if (kept.length > 0) yield* Streams.append(output, kept);
     }),
-});
+}).at({});
 export type Services =
   | Checkpoints
   | import("@streamsy/core").Streamsy.Wildcard

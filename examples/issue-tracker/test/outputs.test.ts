@@ -44,21 +44,21 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
               headers: { operation: "upsert" },
             },
           ]);
-          yield* Projection.run(issueRows.member({ workspaceId }));
-          yield* Projection.run(tracker.member({ workspaceId }));
+          yield* Projection.run(issueRows.at({ workspaceId }));
+          yield* Projection.run(tracker.at({ workspaceId }));
         }
         const owner = yield* Checkpoints;
-        const sqlMember = issueRows.member({ workspaceId: "live" });
-        const outputMember = tracker.member({ workspaceId: "live" });
-        const sqlBefore = yield* owner.load(sqlMember);
-        const outputBefore = yield* owner.load(outputMember);
+        const rows = issueRows.at({ workspaceId: "live" });
+        const outputs = tracker.at({ workspaceId: "live" });
+        const sqlBefore = yield* owner.load(rows);
+        const outputBefore = yield* owner.load(outputs);
         yield* (yield* Users).append({ workspaceId: "live" }, [
           { type: "user", key: "ada", headers: { operation: "delete" } },
         ]);
-        yield* Projection.run(sqlMember);
-        yield* Projection.run(outputMember);
-        expect(yield* owner.load(sqlMember)).not.toEqual(sqlBefore);
-        expect(yield* owner.load(outputMember)).not.toEqual(outputBefore);
+        yield* Projection.run(rows);
+        yield* Projection.run(outputs);
+        expect(yield* owner.load(rows)).not.toEqual(sqlBefore);
+        expect(yield* owner.load(outputs)).not.toEqual(outputBefore);
         const sql = yield* SqlClient.SqlClient;
         expect(yield* sql.unsafe("SELECT workspace_id FROM users")).toEqual([
           { workspace_id: "acme" },
@@ -97,8 +97,8 @@ test("catalog values cannot write another workspace in either projection", async
           },
         ]);
         for (const address of [
-          issueRows.member({ workspaceId: "live" }),
-          tracker.member({ workspaceId: "live" }),
+          issueRows.at({ workspaceId: "live" }),
+          tracker.at({ workspaceId: "live" }),
         ]) {
           const owner = yield* Checkpoints;
           const before = yield* owner.load(address);
@@ -132,8 +132,8 @@ test("named output replay survives a lost append reply beside the SQL projection
       Effect.gen(function* () {
         yield* createInputs("live");
         yield* (yield* Events).append({ workspaceId: "live" }, [created]);
-        const member = tracker.member({ workspaceId: "live" });
-        const failed = yield* Projection.run(member).pipe(
+        const bound = tracker.at({ workspaceId: "live" });
+        const failed = yield* Projection.run(bound).pipe(
           Addresses.patchOutputAppends(
             (append) => (id, options) =>
               append(id, options).pipe(
@@ -155,8 +155,8 @@ test("named output replay survives a lost append reply beside the SQL projection
         yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, type: "IssueStatusChanged", eventId: "e2", status: "done", sequence: 2 },
         ]);
-        yield* Projection.run(issueRows.member({ workspaceId: "live" }));
-        yield* Projection.run(member);
+        yield* Projection.run(issueRows.at({ workspaceId: "live" }));
+        yield* Projection.run(bound);
         const transitions = yield* Addresses.readOutput(tracker.outputs.transitions, "live");
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
         const board = yield* Addresses.readOutput(tracker.outputs.board, "live");
@@ -235,9 +235,7 @@ test("served route fingerprints pin address identity and reject incompatible con
         const sql = yield* SqlClient.SqlClient;
         expect(yield* sql.unsafe("SELECT * FROM streamsy_projection_v1_state")).toEqual([]);
         const owner = yield* Checkpoints;
-        expect((yield* owner.load(tracker.member({ workspaceId: "live" }))).record._tag).toBe(
-          "None",
-        );
+        expect((yield* owner.load(tracker.at({ workspaceId: "live" }))).record._tag).toBe("None");
       }),
     );
   } finally {
@@ -261,7 +259,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
       Effect.gen(function* () {
         yield* createInputs("live");
         yield* (yield* Events).append({ workspaceId: "live" }, [created]);
-        yield* Projection.run(tracker.member({ workspaceId: "live" }));
+        yield* Projection.run(tracker.at({ workspaceId: "live" }));
       }),
     );
     const response = await web.handler(new Request("http://host/document/workspaces/live/summary"));
@@ -279,7 +277,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
         yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
         ]);
-        yield* Projection.run(tracker.member({ workspaceId: "live" }));
+        yield* Projection.run(tracker.at({ workspaceId: "live" }));
         expect(
           (yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).issues[0]?.assigneeId,
         ).toBe("ada");

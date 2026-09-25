@@ -9,8 +9,8 @@ if (workspaceId === undefined || databasePath === undefined)
   throw new Error("usage: ISSUE_TRACKER_DB=<path> run-once.ts <workspaceId>");
 const runtime = ManagedRuntime.make(applicationLayer(databasePath));
 try {
-  console.log(await runtime.runPromise(Projection.run(issueRows.member({ workspaceId }))));
-  console.log(await runtime.runPromise(Projection.run(tracker.member({ workspaceId }))));
+  console.log(await runtime.runPromise(Projection.run(issueRows.at({ workspaceId }))));
+  console.log(await runtime.runPromise(Projection.run(tracker.at({ workspaceId }))));
 } finally {
   await runtime.dispose();
 }

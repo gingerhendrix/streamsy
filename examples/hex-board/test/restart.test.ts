@@ -9,12 +9,12 @@ import { Checkpoints, Projection, State } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
-import { BoardState, boardProjection, initialBoard, stepBoard } from "../src/board/fold.ts";
+import { BoardState, board as hexBoard, initialBoard, stepBoard } from "../src/board/fold.ts";
 import { moveId, MOVE_FEED_LIMIT } from "../src/board/projection.ts";
 import type { GameEvent } from "../src/domain/events.ts";
 import { fullGame, longGame } from "./fixtures.ts";
 
-const board = boardProjection("game");
+const board = hexBoard.at({ gameId: "game" });
 const params = { gameId: "game" };
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
 const sqlite = (filename: string) =>
@@ -51,7 +51,7 @@ const advance = (
     const after = yield* read;
     const pure = events.reduce(
       (state, event, index) => stepBoard(state, event, index < cut ? before.tail : after.tail),
-      initialBoard("game"),
+      initialBoard({ gameId: "game" }),
     );
     expect(after.state).toEqual(pure);
     expect(after.state.ordinal).toBe(events.length);

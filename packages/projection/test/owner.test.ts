@@ -39,6 +39,7 @@ for (const sameOwner of [true, false]) {
         let processed = false;
         const projection = Projection.outputs({
           id: `declared-${sameOwner}`,
+          params: {},
           inputs: { input: Input.at({}) },
           outputs: {
             local: Output.stream(Schema.Finite, { stream: Local.at(params) }),
@@ -51,7 +52,7 @@ for (const sameOwner of [true, false]) {
               processed = true;
               return { local: [2], foreign: [3] };
             }),
-        });
+        }).at({});
         const result = yield* Projection.run(projection).pipe(Effect.result);
         expect(result._tag).toBe(sameOwner ? "Success" : "Failure");
         expect(processed).toBe(sameOwner);
@@ -103,13 +104,14 @@ for (const method of [
         };
         const projection = Projection.fused({
           id: method,
+          params: {},
           inputs: { input: Input.at({}) },
           process: () =>
             Effect.gen(function* () {
               yield* own.append(params, [2]);
               yield* writes[method];
             }),
-        });
+        }).at({});
         const result = yield* Projection.run(projection).pipe(Effect.result);
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure")
@@ -142,6 +144,7 @@ test("a value output on a foreign State owner fails before processing", async ()
       let processed = false;
       const projection = Projection.outputs({
         id: "foreign-state",
+        params: {},
         inputs: { input: Input.at({}) },
         outputs: { total: Output.value(Schema.Finite) },
         process: () =>
@@ -149,7 +152,7 @@ test("a value output on a foreign State owner fails before processing", async ()
             processed = true;
             return { state: 1 };
           }),
-      });
+      }).at({});
       const result = yield* Projection.run({ ...projection }).pipe(
         Effect.provide(foreignState),
         Effect.result,
@@ -168,10 +171,11 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
       yield* seed;
       const projection = Projection.stream({
         id: "foreign-pinned",
+        params: {},
         inputs: { input: Input.at({}) },
         output: Foreign.at(params),
         process: () => Effect.succeed([1]),
-      });
+      }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") expect(result.failure.reason).toBe("unsupported-composition");

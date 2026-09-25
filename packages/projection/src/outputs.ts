@@ -2,13 +2,26 @@
 import { Effect, Option, Schema } from "effect";
 import { ownerOf } from "@streamsy/core/internal/memory";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
+import type { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
+import {
+  addressesOf,
+  declare,
+  resolveOutputs,
+  type Addresses,
+  type Common,
+  type Declaration,
+  type DecodedParams,
+  type Inputs,
+  type OutputsWithin,
+} from "./declaration.ts";
 import type * as Output from "./output.ts";
+import type { RoutedMap } from "./output-internal.ts";
 import { ProjectionFault } from "./fault.ts";
 import { loadState, type Initial, type OutputFold } from "./fold.ts";
 import { bind, rowsAddress, type Bound } from "./output-source.ts";
 import { State } from "./state.ts";
-import type { Unit } from "./unit.ts";
+import { withParams, type Unit } from "./unit.ts";
 
 /** Normalized stream-form declaration consumed by the pinned kernel. */
 export interface Outputs<Inputs extends InputMap, E, R, OR = never> {
@@ -21,51 +34,103 @@ export interface Outputs<Inputs extends InputMap, E, R, OR = never> {
   readonly streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
 }
-const initialValue = <A>(initial: Initial<A>, params: Record<string, string>): A =>
+const initialValue = <A, P>(initial: Initial<A, P>, params: P): A =>
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Initial explicitly accepts a params factory.
-  typeof initial === "function"
-    ? (initial as (params: Record<string, string>) => A)(params)
-    : initial;
+  typeof initial === "function" ? (initial as (params: P) => A)(params) : initial;
 
 export interface OutputsDefinition<
-  Inputs extends InputMap,
-  D extends Output.Map,
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  D extends RoutedMap,
   Result extends Output.Result<D>,
   E,
   R,
-> {
-  readonly id: string;
-  readonly version?: number;
-  readonly generation?: number;
-  readonly params?: Record<string, string>;
-  readonly inputs: Inputs;
-  readonly outputs: D;
+> extends Common<C, I> {
+  readonly outputs: D & OutputsWithin<C, D>;
   readonly process: (
-    | ((batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Result, E, R>)
-    | OutputFold<Inputs, Output.StateOf<D>, Result, E, R>
+    | ((
+        batch: Slices<Addresses<I>>,
+        unit: Unit<StreamRoute.Params<C>>,
+      ) => Effect.Effect<Result, E, R>)
+    | OutputFold<Addresses<I>, Output.StateOf<D>, Result, E, R, StreamRoute.Params<C>>
   ) &
     (Exclude<keyof Result, keyof Output.Result<D>> extends never
       ? unknown
       : { readonly invalidOutputKeys: never });
 }
 
+/** Checks that do not depend on params run when the projection is declared. */
+const checkDeclarations = (outputs: RoutedMap, fold: boolean) => {
+  const values = Object.values(outputs).filter((output) => output._tag === "Value");
+  if (values.length > 1) throw new RangeError("A projection may declare at most one value output");
+  if ("state" in outputs) throw new RangeError("The output name state is reserved for fold state");
+  if (fold && values.length === 0)
+    throw new RangeError("An output fold requires an Output.value declaration");
+};
+
 export function outputs<
-  Inputs extends InputMap,
-  const D extends Output.Map,
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  const D extends RoutedMap,
   Result extends Output.Result<D>,
   E,
   R,
 >(
-  definition: OutputsDefinition<Inputs, D, Result, E, R>,
-): Outputs<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
-  readonly outputs: Bound<D, {}>;
+  definition: OutputsDefinition<C, I, D, Result, E, R>,
+): Declaration<C, Outputs<Addresses<I>, E | ProjectionFault, R | State, Output.Services<D>>> & {
+  readonly outputs: Bound<D, StreamRoute.Params<C>>;
 } {
+  checkDeclarations(definition.outputs, "_tag" in definition.process);
+  const declaration = declare(definition, ({ decoded, ...key }) =>
+    bindOutputs(
+      {
+        ...key,
+        inputs: addressesOf(definition.inputs, decoded),
+        outputs: resolveOutputs(definition.outputs, decoded),
+        process: definition.process as BoundDefinition<InputMap, any, E, R>["process"],
+      },
+      decoded,
+    ),
+  );
+  const keyAt = (params: StreamRoute.Params<C>) => {
+    const bound = declaration.at(params);
+    return {
+      id: bound.id,
+      version: bound.version,
+      generation: bound.generation,
+      params: bound.params,
+      outputs: resolveOutputs(definition.outputs, params),
+    };
+  };
+  // Struct owns exactly the codec keys and their decoded parameter types.
+  const schema = Schema.Struct(definition.params) as StreamRoute.PathSchema<StreamRoute.Params<C>>;
+  return {
+    ...declaration,
+    outputs: bind(definition.outputs, definition.id, schema, keyAt),
+  } as Declaration<C, Outputs<Addresses<I>, E | ProjectionFault, R | State, Output.Services<D>>> & {
+    readonly outputs: Bound<D, StreamRoute.Params<C>>;
+  };
+}
+
+interface BoundDefinition<Inputs extends InputMap, Result, E, R> {
+  readonly id: string;
+  readonly version: number;
+  readonly generation: number;
+  readonly params: Record<string, string>;
+  readonly inputs: Inputs;
+  readonly outputs: Output.Map;
+  readonly process:
+    | ((batch: Slices<Inputs>, unit: Unit<any>) => Effect.Effect<Result, E, R>)
+    | OutputFold<Inputs, unknown, Result, E, R, any>;
+}
+
+/** Internal: the value `.at(params)` returns. Params are already encoded and decoded. */
+const bindOutputs = <Inputs extends InputMap, Result, E, R>(
+  definition: BoundDefinition<Inputs, Result, E, R>,
+  decoded: DecodedParams,
+): Outputs<Inputs, E | ProjectionFault, R | State, any> => {
   const streams: Record<string, Streamsy.Address<unknown, unknown>> = {};
-  const values = Object.values(definition.outputs).filter((output) => output._tag === "Value");
-  if (values.length > 1) throw new RangeError("A projection may declare at most one value output");
-  if ("state" in definition.outputs)
-    throw new RangeError("The output name state is reserved for fold state");
-  const value = values[0];
+  const value = Object.values(definition.outputs).find((output) => output._tag === "Value");
   for (const [name, output] of Object.entries(definition.outputs)) {
     if (output._tag === "Value") continue;
     streams[name] =
@@ -82,43 +147,29 @@ export function outputs<
   if (ids.some((id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
   const handler = definition.process;
-  if ("_tag" in handler && value === undefined)
-    throw new RangeError("An output fold requires an Output.value declaration");
   const key = {
     id: definition.id,
-    version: definition.version ?? 1,
-    generation: definition.generation ?? 1,
-    params: definition.params ?? {},
+    version: definition.version,
+    generation: definition.generation,
+    params: definition.params,
   };
-  const result: Outputs<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
-    readonly outputs: Bound<D, {}>;
-  } = {
+  const result: Outputs<Inputs, E | ProjectionFault, R | State, any> = {
     _tag: "Outputs",
     ...key,
     inputs: definition.inputs,
-    outputs: bind(definition.outputs, definition.id, Schema.Struct({}), () => ({
-      ...key,
-      outputs: definition.outputs,
-    })),
-    // SAFETY: each normalized address retains the key of its declaration in D.
-    streams: streams as Outputs<
-      Inputs,
-      E | ProjectionFault,
-      R | State,
-      Output.Services<D>
-    >["streams"],
+    streams,
     process: (batch, unit) =>
       Effect.gen(function* () {
         let result: Result;
         if ("_tag" in handler) {
           const previous = yield* loadState(key, value!.schema);
           const next = handler.step(
-            Option.isSome(previous) ? previous.value : initialValue(handler.initial, key.params),
+            Option.isSome(previous) ? previous.value : initialValue(handler.initial, decoded),
             batch,
-            unit,
+            withParams(unit, decoded),
           );
           result = Effect.isEffect(next) ? yield* next : next;
-        } else result = yield* handler(batch, unit);
+        } else result = yield* handler(batch, withParams(unit, decoded));
         const items: Record<string, ReadonlyArray<unknown>> = {};
         for (const [name, output] of Object.entries(definition.outputs)) {
           if (output._tag === "Value") continue;
@@ -166,7 +217,7 @@ export function outputs<
     // Declaration copies must retain the dynamic State lookup; this is not a wire ownership claim.
     enumerable: true,
   });
-}
+};
 
 const StateOwner = Symbol.for("@streamsy/projection/internal/StateOwner");
 /** Private normalized metadata; the public Outputs declaration does not gain a required field. */

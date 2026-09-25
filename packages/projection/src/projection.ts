@@ -1,22 +1,30 @@
 import { Effect } from "effect";
 import type { Streamsy } from "@streamsy/core";
-import type { Entry, InputMap, Slices } from "./batch.ts";
+import type { StreamRoute } from "@streamsy/core/protocol";
+import type { Entry, InputMap, ItemOf, Slices } from "./batch.ts";
+import {
+  addressesOf,
+  declare,
+  isDeclaration,
+  type AddressOf,
+  type Addresses,
+  type Common,
+  type Declaration,
+  type Input,
+  type Inputs,
+  type OneWithin,
+} from "./declaration.ts";
+import type { TargetServices } from "./output-internal.ts";
 import type { Identity, ProjectionKey } from "./checkpoint.ts";
 import { entries } from "./read.ts";
 import type { Outputs } from "./outputs.ts";
-import type { Unit } from "./unit.ts";
+import { withParams, type Unit } from "./unit.ts";
 export { pass, run } from "./run.ts";
 export { follow } from "./follow.ts";
-export { family } from "./family.ts";
 export { watch } from "./watch.ts";
 export type { Progress } from "./run.ts";
 export type { FollowOptions } from "./follow.ts";
-export type {
-  Family,
-  FamilyDefinition,
-  FusedFamilyDefinition,
-  PinnedFamilyDefinition,
-} from "./family.ts";
+export type { Declaration } from "./declaration.ts";
 export type { WatchOptions } from "./watch.ts";
 
 /**
@@ -61,51 +69,70 @@ export type Projection<
   OR = unknown,
 > = Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>;
 
-interface Common {
-  readonly id: string;
-  readonly version?: number;
-  readonly generation?: number;
-  readonly params?: Record<string, string>;
+export interface FusedDefinition<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  E,
+  R,
+> extends Common<C, I> {
+  readonly process: (
+    batch: Slices<Addresses<I>>,
+    unit: Unit<StreamRoute.Params<C>>,
+  ) => Effect.Effect<void, E, R>;
 }
-export interface FusedDefinition<Inputs extends InputMap, E, R> extends Common {
-  readonly inputs: Inputs;
-  readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
+export interface StreamDefinition<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  Out extends Input,
+  E,
+  R,
+> extends Common<C, I> {
+  readonly output: Out & OneWithin<C, Out>;
+  readonly process: (
+    batch: Slices<Addresses<I>>,
+    unit: Unit<StreamRoute.Params<C>>,
+  ) => Effect.Effect<ReadonlyArray<ItemOf<AddressOf<Out>>>, E, R>;
 }
-export interface StreamDefinition<Inputs extends InputMap, O, E, R, OR = never> extends Common {
-  readonly inputs: Inputs;
-  readonly output: Streamsy.Address<O, OR>;
-  readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
-}
-const common = (definition: Common) => ({
-  id: definition.id,
-  version: definition.version ?? 1,
-  generation: definition.generation ?? 1,
-  params: definition.params ?? {},
-});
 
-/** Inert: acquires no service. Defaults are generation 1 and no params. */
-export function fused<Inputs extends InputMap, E, R>(
-  definition: FusedDefinition<Inputs, E, R>,
-): Fused<Inputs, E, R> {
-  return {
+/** Inert: acquires no service. Defaults are version 1 and generation 1. */
+export function fused<C extends StreamRoute.ParamCodecs, I extends Inputs, E, R>(
+  definition: FusedDefinition<C, I, E, R>,
+): Declaration<C, Fused<Addresses<I>, E, R>> {
+  return declare(definition, ({ decoded, ...key }) => ({
     _tag: "Fused",
-    ...common(definition),
-    inputs: definition.inputs,
-    process: definition.process,
-  };
+    ...key,
+    inputs: addressesOf(definition.inputs, decoded),
+    process: (batch, unit) => definition.process(batch, withParams(unit, decoded)),
+  }));
 }
 
 /** Inert stream form with a declared output on the checkpoint owner. */
-export function stream<Inputs extends InputMap, O, E, R, OR>(
-  definition: StreamDefinition<Inputs, O, E, R, OR>,
-): Stream<Inputs, O, E, R, OR> {
-  return {
-    _tag: "Stream",
-    ...common(definition),
-    output: definition.output,
-    inputs: definition.inputs,
-    process: definition.process,
-  };
+export function stream<
+  C extends StreamRoute.ParamCodecs,
+  I extends Inputs,
+  Out extends Input,
+  E,
+  R,
+>(
+  definition: StreamDefinition<C, I, Out, E, R>,
+): Declaration<
+  C,
+  Stream<Addresses<I>, ItemOf<AddressOf<Out>>, E, R, TargetServices<AddressOf<Out>>>
+> {
+  return declare(definition, ({ decoded, ...key }) => {
+    const output: Input = definition.output;
+    return {
+      _tag: "Stream",
+      ...key,
+      // SAFETY: a declaration resolves to its own address type; a fixed address is kept.
+      output: (isDeclaration(output) ? output.at(decoded) : output) as Streamsy.Address<
+        ItemOf<AddressOf<Out>>,
+        TargetServices<AddressOf<Out>>
+      >,
+      inputs: addressesOf(definition.inputs, decoded),
+      process: (batch, unit) => definition.process(batch, withParams(unit, decoded)),
+    };
+  });
 }
 
 export type { Identity };
@@ -129,16 +156,17 @@ export function each<
   Result extends Readonly<Record<string, ReadonlyArray<unknown>>>,
   E,
   R,
+  P = Record<string, string>,
 >(
-  handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<Result, E, R>,
-): (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Result, E, R>;
-export function each<Inputs extends InputMap, E, R>(
-  handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<unknown, E, R>,
-): (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
-export function each<Inputs extends InputMap, E, R>(
-  handle: (entry: Entry<Inputs>, unit: Unit) => Effect.Effect<unknown, E, R>,
-): (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<any, E, R> {
-  return (batch: Slices<Inputs>, unit: Unit) =>
+  handle: (entry: Entry<Inputs>, unit: Unit<P>) => Effect.Effect<Result, E, R>,
+): (batch: Slices<Inputs>, unit: Unit<P>) => Effect.Effect<Result, E, R>;
+export function each<Inputs extends InputMap, E, R, P = Record<string, string>>(
+  handle: (entry: Entry<Inputs>, unit: Unit<P>) => Effect.Effect<unknown, E, R>,
+): (batch: Slices<Inputs>, unit: Unit<P>) => Effect.Effect<void, E, R>;
+export function each<Inputs extends InputMap, E, R, P>(
+  handle: (entry: Entry<Inputs>, unit: Unit<P>) => Effect.Effect<unknown, E, R>,
+): (batch: Slices<Inputs>, unit: Unit<P>) => Effect.Effect<any, E, R> {
+  return (batch: Slices<Inputs>, unit: Unit<P>) =>
     Effect.gen(function* () {
       const combined: Record<string, unknown[]> = {};
       for (const entry of items(batch)) {

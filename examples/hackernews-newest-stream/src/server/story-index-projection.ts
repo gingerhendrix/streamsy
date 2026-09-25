@@ -4,8 +4,9 @@ import { HackerNewsStory } from "../state-schema.ts";
 import { hackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
 
 /** The output name is the browser's Durable State collection type. */
-export const hackerNewsStoryIndex = Projection.outputs({
+export const storyIndex = Projection.outputs({
   id: "hn-story-index",
+  params: {},
   generation: 1,
   inputs: { input: hackerNewsSource },
   outputs: {
@@ -18,5 +19,6 @@ export const hackerNewsStoryIndex = Projection.outputs({
       ),
     }),
 });
+export const hackerNewsStoryIndex = storyIndex.at({});
 
-export const hackerNewsTarget = hackerNewsStoryIndex.outputs["hn-story"].address({});
+export const hackerNewsTarget = storyIndex.outputs["hn-story"].address({});

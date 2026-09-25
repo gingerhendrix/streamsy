@@ -5,12 +5,12 @@ import * as BunStorage from "@streamsy/storage/bun";
 import { Cause, Context, Effect, Exit, Fiber, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { Projection } from "@streamsy/projection";
-import { tracker, outputFamilies, Board, LabelCounts, Transitions } from "./outputs.ts";
+import { tracker, outputStreams, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
 import { routes } from "./streams.ts";
 
-export const streams = Streamsy.group(...Object.values(routes), ...outputFamilies);
+export const streams = Streamsy.group(...Object.values(routes), ...outputStreams);
 export const hostLayer = (filename: string) => {
   const host = ProjectionSqlite.layer.pipe(
     Layer.provideMerge(BunStorage.layer({ client: { filename } }, streams)),
@@ -52,26 +52,26 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
       if (workspaces.length > 0) {
         const addresses = workspaces.map((workspaceId) => ({ workspaceId }));
         for (const params of addresses) {
-          const sqlMember = issueRows.member(params);
-          const outputMember = tracker.member(params);
+          const rows = issueRows.at(params);
+          const outputs = tracker.at(params);
           // Startup and background failures are isolated to their address.
-          yield* Projection.run(sqlMember).pipe(
+          yield* Projection.run(rows).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
                 ? Effect.failCause(cause)
-                : Effect.logError("projection startup failed", Projection.key(sqlMember), cause),
+                : Effect.logError("projection startup failed", Projection.key(rows), cause),
             ),
           );
-          yield* Projection.run(outputMember).pipe(
+          yield* Projection.run(outputs).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
                 ? Effect.failCause(cause)
-                : Effect.logError("projection startup failed", Projection.key(outputMember), cause),
+                : Effect.logError("projection startup failed", Projection.key(outputs), cause),
             ),
           );
           const watched = [
-            { key: Projection.key(sqlMember), fiber: yield* Projection.watch(sqlMember) },
-            { key: Projection.key(outputMember), fiber: yield* Projection.watch(outputMember) },
+            { key: Projection.key(rows), fiber: yield* Projection.watch(rows) },
+            { key: Projection.key(outputs), fiber: yield* Projection.watch(outputs) },
           ];
           yield* Effect.forEach(
             watched,

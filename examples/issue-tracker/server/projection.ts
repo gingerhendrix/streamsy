@@ -75,7 +75,7 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
       );
   });
 
-export const issueRows = Projection.family({
+export const issueRows = Projection.fused({
   id: "issue-rows",
   params: { workspaceId: Identifier },
   inputs: {
@@ -115,8 +115,7 @@ export const issueRows = Projection.family({
           const table = entry.input;
           const idColumn =
             table === "projects" ? "project_id" : table === "users" ? "user_id" : "label_id";
-          // The stream codec guarantees this parameter on every address.
-          const workspaceId = unit.params.workspaceId!;
+          const workspaceId = unit.params.workspaceId;
           if (!("value" in item)) {
             yield* sql.unsafe(`DELETE FROM ${table} WHERE workspace_id=? AND ${idColumn}=?`, [
               workspaceId,

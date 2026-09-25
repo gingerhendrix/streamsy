@@ -23,12 +23,13 @@ export const PendingUnit = Schema.Struct({
 });
 export interface PendingUnit extends Schema.Schema.Type<typeof PendingUnit> {}
 
-export interface Unit {
+/** `params` holds the decoded values the declaration was bound with. Keys use the encoded strings. */
+export interface Unit<P = Record<string, string>> {
   readonly projectionId: string;
   /** The declared version; defaults to 1. */
   readonly version: number;
   readonly generation: number;
-  readonly params: Record<string, string>;
+  readonly params: P;
   /** Only the inputs that contributed items; a retry reproduces exactly these. */
   readonly ranges: Record<string, Range>;
   readonly key: string;
@@ -72,3 +73,12 @@ export const unitOf = (
     canonicalRanges(ranges),
   ]),
 });
+
+const Encoded = Symbol.for("@streamsy/projection/internal/EncodedParams");
+/** The handler view of a kernel unit. The encoded params stay reachable for state keys. */
+export const withParams = <P>(unit: Unit, params: P): Unit<P> =>
+  Object.defineProperty({ ...unit, params }, Encoded, { value: unit.params });
+/** A unit built without `withParams` already carries encoded params. */
+export const encodedParams = (unit: Unit<unknown>): Record<string, string> =>
+  // SAFETY: withParams stores the kernel's encoded record; other units are kernel units.
+  (Encoded in unit ? unit[Encoded] : unit.params) as Record<string, string>;

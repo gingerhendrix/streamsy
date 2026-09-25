@@ -4,7 +4,7 @@ import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/
 import { Context, Effect, Layer, ManagedRuntime, Schedule, Schema, Stream } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
 import { sourceDelete, sourceUpsert } from "../../src/server/source-change.ts";
-import { hackerNewsStoryIndex } from "../../src/server/story-index-projection.ts";
+import { hackerNewsStoryIndex, storyIndex } from "../../src/server/story-index-projection.ts";
 import { storyProjectionLayer } from "../../src/server/projection.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 import { DemoStreams, demoStreamsLayer } from "../../src/server/streams.ts";
@@ -66,7 +66,7 @@ describe("Hacker News story index projection", () => {
   });
 
   test("declares one rows output keyed by story id", () => {
-    expect(hackerNewsStoryIndex.outputs["hn-story"]).toMatchObject({ _tag: "Rows", key: "id" });
+    expect(storyIndex.outputs["hn-story"]).toMatchObject({ _tag: "Rows", key: "id" });
     expect(Object.keys(hackerNewsStoryIndex.streams)).toEqual(["hn-story"]);
   });
 

@@ -12,7 +12,7 @@ export const BoardState = Schema.Struct({
 });
 export type BoardState = typeof BoardState.Type;
 
-export const initialBoard = (gameId: string): BoardState => ({
+export const initialBoard = ({ gameId }: { readonly gameId: string }): BoardState => ({
   ordinal: 0,
   board: initialProjection(gameId),
 });
@@ -22,18 +22,17 @@ export const stepBoard = (state: BoardState, event: GameEvent, through: string):
   board: projectEvent(state.board, event, through, state.ordinal),
 });
 
-export const boardProjection = (gameId: string) =>
-  Projection.fused({
-    id: "hex-board",
-    params: { gameId },
-    inputs: { input: GameEvents.at({ gameId }) },
-    process: Projection.fold(BoardState, initialBoard(gameId), (state, { item }, unit) =>
-      stepBoard(state, item, unit.ranges.input.nextOffset),
-    ),
-  });
-
 export class GameEvents extends Streamsy.json<GameEvents>()(
   "HexBoard/GameEvents",
   "games/:gameId/events",
   { params: { gameId: Schema.String }, schema: GameEvent },
 ) {}
+
+export const board = Projection.fused({
+  id: "hex-board",
+  params: { gameId: Schema.String },
+  inputs: { input: GameEvents },
+  process: Projection.fold(BoardState, initialBoard, (state, { item }, unit) =>
+    stepBoard(state, item, unit.ranges.input.nextOffset),
+  ),
+});

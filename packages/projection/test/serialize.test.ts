@@ -27,6 +27,7 @@ test("two calls on one key run in sequence without a token conflict", () =>
       let calls = 0;
       const projection = Projection.fused({
         id: "serialized-one",
+        params: {},
         inputs: { input },
         process: () =>
           Effect.gen(function* () {
@@ -36,7 +37,7 @@ test("two calls on one key run in sequence without a token conflict", () =>
               yield* Deferred.await(release);
             }
           }),
-      });
+      }).at({});
       const first = yield* Projection.run(projection).pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
       const second = yield* Projection.run(projection).pipe(Effect.forkScoped);
@@ -64,7 +65,7 @@ test("different keys can run together", () =>
         });
         return Projection.stream({
           id: "serialized-two",
-          params: { name },
+          params: { name: Schema.String },
           inputs: { input },
           output,
           process: () =>
@@ -79,7 +80,7 @@ test("different keys can run together", () =>
               () => Deferred.await(both).pipe(Effect.as([1])),
               () => Effect.sync(() => (active -= 1)),
             ),
-        });
+        }).at({ name });
       };
       yield* Effect.all([Projection.run(make("a")), Projection.run(make("b"))], {
         concurrency: "unbounded",
@@ -97,6 +98,7 @@ test("a failing handler releases the permit", () =>
       let fail = true;
       const projection = Projection.fused({
         id: "serialized-failure",
+        params: {},
         inputs: { input },
         process: () =>
           Effect.suspend(() => {
@@ -106,7 +108,7 @@ test("a failing handler releases the permit", () =>
             }
             return Effect.void;
           }),
-      });
+      }).at({});
       expect((yield* Projection.run(projection).pipe(Effect.result))._tag).toBe("Failure");
       expect((yield* Projection.run(projection)).status).toBe("caught-up");
     }),
@@ -122,6 +124,7 @@ test("follow and run share the permit and release it after interruption", () =>
       let calls = 0;
       const projection = Projection.fused({
         id: "follow-permit",
+        params: {},
         inputs: { input },
         process: () =>
           Effect.gen(function* () {
@@ -131,7 +134,7 @@ test("follow and run share the permit and release it after interruption", () =>
               return yield* Effect.never;
             }
           }),
-      });
+      }).at({});
       const follower = yield* Projection.follow(projection);
       yield* Deferred.await(entered);
       const request = yield* Projection.run(projection).pipe(Effect.forkScoped);

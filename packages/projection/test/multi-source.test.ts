@@ -31,6 +31,7 @@ const setup = Effect.gen(function* () {
 const recorder = (inputs: Inputs, id = "multi") => {
   const seen: Array<{ readonly entry: Entry<Inputs>; readonly unit: Unit }> = [];
   const projection = Projection.fused({
+    params: {},
     id,
     inputs,
     process: Projection.each<Inputs, never, never>((entry, unit) =>
@@ -38,7 +39,7 @@ const recorder = (inputs: Inputs, id = "multi") => {
         seen.push({ entry, unit });
       }),
     ),
-  });
+  }).at({});
   return { projection, seen };
 };
 const tags = (seen: ReadonlyArray<{ readonly entry: Entry<Inputs> }>) =>
@@ -88,6 +89,7 @@ test("one closed input stays in the batch while the other continues", () =>
         [];
       const projection = Projection.fused({
         id: "closing",
+        params: {},
         inputs: { a, b },
         process: (batch) =>
           Effect.sync(() => {
@@ -96,7 +98,7 @@ test("one closed input stays in the batch while the other continues", () =>
               b: { closed: batch.b.closed, items: batch.b.items.length },
             });
           }),
-      });
+      }).at({});
       const first = yield* Projection.run(projection);
       expect(first.status).toBe("caught-up");
       expect(batches).toEqual([{ a: { closed: true, items: 3 }, b: { closed: false, items: 1 } }]);
@@ -155,6 +157,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
       let overlapped = false;
       const projection = Projection.fused({
         id: "sequenced",
+        params: {},
         inputs: { b, a },
         process: (batch, unit) =>
           Effect.gen(function* () {
@@ -174,7 +177,7 @@ test("items keeps declaration order and each runs one entry at a time", () =>
               }),
             )(batch, unit);
           }),
-      });
+      }).at({});
       yield* Projection.run(projection);
       expect(order).toEqual(["b:x", "a:1", "a:2", "a:3"]);
       expect(overlapped).toBe(false);

@@ -38,9 +38,10 @@ for (const [name, host] of hosts) {
           const input = FamilyFixture.json("aba-input", { schema: Schema.Finite });
           const projection = Projection.fused({
             id: `aba-${name}-${serialized}`,
+            params: {},
             inputs: { input },
             process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
-          });
+          }).at({});
           yield* Streams.create(input);
           yield* Streams.append(input, [2, 3]);
           yield* Projection.run(projection);
@@ -112,9 +113,10 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
       const input = FamilyFixture.json("queued-input", { schema: Schema.Finite });
       const projection = Projection.fused({
         id: "queued-forget",
+        params: {},
         inputs: { input },
         process: () => Effect.void,
-      });
+      }).at({});
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       const reader = yield* StreamsReader;

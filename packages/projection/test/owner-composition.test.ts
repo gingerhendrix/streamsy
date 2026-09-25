@@ -36,13 +36,14 @@ test("a fused projection reads remote input and writes on its SQLite checkpoint 
       yield* source.append(params, [1, 2, 3]);
       const projection = Projection.fused({
         id: "mixed-double",
+        params: {},
         inputs: { input: Source.at(params) },
         process: (batch) =>
           output.append(
             params,
             batch.input.items.map((n) => n * 2),
           ),
-      });
+      }).at({});
       const first = yield* Projection.run(projection);
       expect(first.items).toBe(3);
       expect(
@@ -62,9 +63,10 @@ test("watch watches the input's feed even when checkpoints have a different owne
       yield* source.append(params, [1], { close: true });
       const projection = Projection.fused({
         id: "mixed-watch",
+        params: {},
         inputs: { input: Source.at(params) },
         process: () => Effect.void,
-      });
+      }).at({});
       const fiber = yield* Projection.watch(projection);
       expect((yield* Fiber.join(fiber)).status).toBe("source-closed");
     }).pipe(Effect.provide(host), Effect.scoped),
@@ -79,9 +81,10 @@ test("watch rejects a stream rebound without its matching feed", async () => {
     Effect.gen(function* () {
       const projection = Projection.fused({
         id: "rebound-feed",
+        params: {},
         inputs: { input: Source.at({ name: "watch" }) },
         process: () => Effect.void,
-      });
+      }).at({});
       const fiber = yield* Projection.watch(projection).pipe(Effect.provide(alternate));
       const result = yield* Fiber.join(fiber).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
@@ -117,9 +120,10 @@ test("a custom stream wire cannot establish the owner of a fused write", async (
       yield* output.create(params);
       const projection = Projection.fused({
         id: "unowned-write",
+        params: {},
         inputs: { input: Source.at(params) },
         process: () => output.append(params, [2]),
-      });
+      }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {

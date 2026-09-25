@@ -12,7 +12,7 @@ import {
   readBoard,
 } from "../scripts/support.ts";
 
-test("a member fault at startup leaves HTTP and other workspaces available", async () => {
+test("a workspace fault at startup leaves HTTP and other workspaces available", async () => {
   const scratch = await scratchDirectory("tracker-startup-fault");
   let server: ReturnType<typeof startServer> | undefined;
   try {

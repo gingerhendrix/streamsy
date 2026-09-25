@@ -6,11 +6,11 @@ import { expect, test } from "bun:test";
 import { Layer } from "effect";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import type {
-  Family,
-  FamilyDefinition,
-  FusedFamilyDefinition,
+  Declaration,
+  FusedDefinition,
+  OutputsDefinition,
+  StreamDefinition,
   WatchOptions,
-  PinnedFamilyDefinition,
   RunOptions,
   StateApi,
 } from "@streamsy/projection";
@@ -21,10 +21,10 @@ import manifest from "../package.json";
 type PublicHelperTypes =
   | StateApi
   | Checkpoint.EncodedStore
-  | Family
-  | FamilyDefinition
-  | FusedFamilyDefinition<any, any, any, any>
-  | PinnedFamilyDefinition<any, any, any, any, any>
+  | Declaration<any, any>
+  | FusedDefinition<any, any, any, any>
+  | StreamDefinition<any, any, any, any, any>
+  | OutputsDefinition<any, any, any, any, any, any>
   | WatchOptions
   | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
@@ -60,7 +60,7 @@ test("built public entries and declared files exist", () => {
   expect(Projection.pass).toBeFunction();
   expect(Projection.stream).toBeFunction();
   expect(Projection.follow).toBeFunction();
-  expect(Projection.family).toBeFunction();
+  expect("family" in Projection).toBe(false);
   expect(Projection.watch).toBeFunction();
   expect(Projection.items).toBeFunction();
   expect(Projection.each).toBeFunction();
@@ -103,7 +103,6 @@ test("root exports stay explicit", () => {
   expect(Object.keys(Projection).sort()).toEqual([
     "State",
     "each",
-    "family",
     "fold",
     "follow",
     "forget",

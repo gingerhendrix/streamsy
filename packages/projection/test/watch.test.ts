@@ -61,13 +61,14 @@ test("an append runs a fused projection and commits its write with the checkpoin
       let calls = 0;
       const projection = Projection.fused({
         id: "change-fused",
+        params: {},
         inputs: { input },
         process: (batch) =>
           Streams.append(output, batch.input.items).pipe(
             Effect.tap(() => Effect.sync(() => (calls += 1))),
             Effect.tap(() => Deferred.succeed(handled, undefined)),
           ),
-      });
+      }).at({});
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Deferred.await(handled);
@@ -97,6 +98,7 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
       let calls = 0;
       const projection = Projection.stream({
         id: "change-coalesce",
+        params: {},
         inputs: { input },
         output,
         process: (batch) =>
@@ -108,7 +110,7 @@ test("changes during an in-flight run coalesce to one follow-up run", () =>
             } else yield* Deferred.succeed(second, undefined);
             return batch.input.items;
           }),
-      });
+      }).at({});
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Deferred.await(entered);
@@ -139,13 +141,14 @@ test("a limited wake drains the backlog before waiting for another change", () =
       const drained = yield* Deferred.make<void>();
       const projection = Projection.fused({
         id: "change-limit",
+        params: {},
         inputs: { input },
         process: (batch) =>
           Effect.gen(function* () {
             seen.push(...batch.input.items);
             if (seen.length === 3) yield* Deferred.succeed(drained, undefined);
           }),
-      });
+      }).at({});
       const fiber = yield* Projection.watch(projection, { limit: 1 });
       yield* Deferred.await(drained);
       yield* Projection.run(projection);
@@ -168,9 +171,10 @@ test("an invalid limit fails before a watcher fiber is created", () =>
       });
       const projection = Projection.fused({
         id: "change-invalid-limit",
+        params: {},
         inputs: { input },
         process: () => Effect.void,
-      });
+      }).at({});
       const result = yield* Projection.watch(projection, { limit: 0 }).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
@@ -186,9 +190,10 @@ test("an ownership probe reports a gone input as unavailable history", () =>
       const input = FamilyFixture.json("change-probe-failure", { schema: Schema.Finite });
       const projection = Projection.fused({
         id: "change-probe-failure",
+        params: {},
         inputs: { input },
         process: () => Effect.void,
-      });
+      }).at({});
       const reader = yield* StreamsReader;
       const fiber = yield* Projection.watch(projection).pipe(
         FamilyFixture.provideReader({
@@ -221,6 +226,7 @@ test("watch and a serialized request share the same key lock", () =>
       let calls = 0;
       const projection = Projection.stream({
         id: "change-request",
+        params: {},
         inputs: { input },
         output,
         process: (batch) =>
@@ -229,7 +235,7 @@ test("watch and a serialized request share the same key lock", () =>
             Effect.andThen(Deferred.await(release)),
             Effect.as(batch.input.items),
           ),
-      });
+      }).at({});
       const watcher = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Deferred.await(entered);
@@ -249,13 +255,13 @@ test("a stream watches its fixed address set independently", () =>
       const seen: Array<string> = [];
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
-      const family = Projection.family({
+      const declared = Projection.fused({
         id: "change-stream",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute1 },
         process: (_batch, unit) =>
           Effect.gen(function* () {
-            const workspaceId = unit.params.workspaceId ?? "";
+            const workspaceId = unit.params.workspaceId;
             seen.push(workspaceId);
             yield* Deferred.succeed(workspaceId === "a" ? a : b, undefined);
           }),
@@ -264,7 +270,9 @@ test("a stream watches its fixed address set independently", () =>
       const bRef = WatchRoute1.at({ workspaceId: "b" });
       yield* Streams.create(aRef);
       yield* Streams.create(bRef);
-      const fibers = yield* Projection.watch(family, [{ workspaceId: "a" }, { workspaceId: "b" }]);
+      const fibers = yield* Effect.forEach(["a", "b"], (workspaceId) =>
+        Projection.watch(declared.at({ workspaceId })),
+      );
       yield* Streams.append(aRef, [1]);
       yield* Deferred.await(a);
       expect(seen).toEqual(["a"]);
@@ -278,14 +286,14 @@ test("a stream watches its fixed address set independently", () =>
 test("closing the caller scope interrupts every stream address fiber", () =>
   run(
     Effect.gen(function* () {
-      const family = Projection.family({
+      const declared = Projection.fused({
         id: "change-stream-scope",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute2 },
         process: () => Effect.void,
       });
       const fibers = yield* Effect.scoped(
-        Projection.watch(family, [{ workspaceId: "a" }, { workspaceId: "b" }]),
+        Effect.forEach(["a", "b"], (workspaceId) => Projection.watch(declared.at({ workspaceId }))),
       );
       for (const fiber of fibers) expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
     }),
@@ -298,9 +306,10 @@ test("a closed and drained input ends its watcher", () =>
       yield* Streams.create(input);
       const projection = Projection.fused({
         id: "change-closed",
+        params: {},
         inputs: { input },
         process: () => Effect.void,
-      });
+      }).at({});
       const fiber = yield* Projection.watch(projection);
       yield* Streams.append(input, [1]);
       yield* Streams.append(input, [], { close: true });
@@ -315,9 +324,10 @@ test("closing the caller scope ends the watcher fiber", () =>
       yield* Streams.create(input);
       const projection = Projection.fused({
         id: "change-scope",
+        params: {},
         inputs: { input },
         process: () => Effect.void,
-      });
+      }).at({});
       const fiber = yield* Effect.scoped(Projection.watch(projection));
       expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
     }),

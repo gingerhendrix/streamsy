@@ -24,10 +24,11 @@ class numbers extends Streamsy.json<numbers>()("state.test/numbers", "state/:nam
 const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
 const total = Projection.fused({
   id: "state-total",
+  params: {},
   version: 2,
   inputs: { input },
   process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
-});
+}).at({});
 const sqliteProtocol = (filename = ":memory:") =>
   Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
 const sqlite = (filename = ":memory:") => FamilyFixture.withFamilies(sqliteProtocol(filename));
@@ -70,12 +71,13 @@ for (const [name, host] of hosts) {
           yield* Streams.append(input, [7, 11]);
           const failing = Projection.fused({
             id: total.id,
+            params: {},
             version: total.version,
             inputs: { input },
             process: Projection.fold(Schema.Finite, 0, (sum, { item }) =>
               item === 11 ? Effect.fail("second item") : Effect.succeed(sum + item),
             ),
-          });
+          }).at({});
           const failure = yield* Projection.run(failing).pipe(Effect.result);
           expect(failure._tag).toBe("Failure");
           expect(yield* checkpoints.load(total)).toEqual(before);
@@ -101,6 +103,7 @@ for (const [name, host] of hosts) {
           yield* Streams.append(input, [7]);
           const saveThenFail = Projection.fused({
             id: total.id,
+            params: {},
             version: total.version,
             inputs: { input },
             process: () =>
@@ -109,7 +112,7 @@ for (const [name, host] of hosts) {
                 yield* state.save(total, "999");
                 return yield* Effect.fail("after save");
               }),
-          });
+          }).at({});
           const failed = yield* Projection.run(saveThenFail).pipe(Effect.result);
           expect(failed._tag).toBe("Failure");
           expect(yield* checkpoints.load(total)).toEqual(before);
@@ -241,10 +244,11 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       yield* seed;
       const invalid = Projection.fused({
         id: total.id,
+        params: {},
         version: total.version,
         inputs: { input },
         process: Projection.fold(Schema.Finite, 0, () => Infinity),
-      });
+      }).at({});
       const failed = yield* Projection.run(invalid).pipe(Effect.result);
       if (failed._tag === "Failure")
         expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "invalid-record" });
@@ -256,14 +260,14 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
 
 test("stream state rows are separate and initial factory receives params only on first use", async () => {
   const calls: string[] = [];
-  const family = Projection.family({
+  const declared = Projection.fused({
     id: "state-stream",
     params: { name: Schema.String },
     inputs: { numbers },
     process: Projection.fold(
       Schema.Finite,
       (params) => {
-        calls.push(params.name!);
+        calls.push(params.name);
         return params.name === "a" ? 10 : 20;
       },
       (sum, { item }) => sum + item,
@@ -272,13 +276,13 @@ test("stream state rows are separate and initial factory receives params only on
   await Effect.runPromise(
     Effect.gen(function* () {
       for (const name of ["a", "b"]) {
-        const member = family.member({ name });
-        yield* Streams.create(member.inputs.numbers);
-        yield* Streams.append(member.inputs.numbers, [1]);
-        yield* Projection.run(member);
-        yield* Streams.append(member.inputs.numbers, [2]);
-        yield* Projection.run(member);
-        expect(yield* Projection.loadState(member, Schema.Finite)).toEqual(
+        const bound = declared.at({ name });
+        yield* Streams.create(bound.inputs.numbers);
+        yield* Streams.append(bound.inputs.numbers, [1]);
+        yield* Projection.run(bound);
+        yield* Streams.append(bound.inputs.numbers, [2]);
+        yield* Projection.run(bound);
+        expect(yield* Projection.loadState(bound, Schema.Finite)).toEqual(
           Option.some(name === "a" ? 13 : 23),
         );
       }
@@ -291,6 +295,7 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
   const words = FamilyFixture.json("state-words", { schema: Schema.String });
   const projection = Projection.fused({
     id: "tagged",
+    params: {},
     inputs: { input, words },
     process: Projection.fold(
       Schema.String,
@@ -298,7 +303,7 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
       (value, entry) =>
         value + (entry.input === "input" ? entry.item.toFixed(0) : entry.item.toUpperCase()),
     ),
-  });
+  }).at({});
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
@@ -386,6 +391,7 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
       let starts = 0;
       const counted = Projection.fused({
         id: "counted",
+        params: {},
         inputs: { input },
         process: Projection.fold(
           Schema.Finite,
@@ -395,7 +401,7 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
           },
           (sum, { item }) => sum + item,
         ),
-      });
+      }).at({});
       const run = Projection.run(counted).pipe(
         Effect.provideService(State, {
           ...state,

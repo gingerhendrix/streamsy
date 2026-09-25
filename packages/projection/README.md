@@ -31,6 +31,7 @@ const doubled = StreamAddress.json("doubled", { schema: Schema.Finite });
 
 const projection = Projection.fused({
   id: "doubled",
+  params: {},
   inputs: { input: numbers },
   process: (batch) =>
     Streams.append(
@@ -39,11 +40,18 @@ const projection = Projection.fused({
     ),
 });
 
-const run = Projection.run(projection, { limit: 10 });
+const run = Projection.run(projection.at({}), { limit: 10 });
 ```
 
 `inputs: { input: numbers }` declares one named input; the handler reads `batch.input.items`.
 Declare several with `inputs: { orders, refunds }` and read one slice per name.
+
+Every constructor takes `params` codecs and returns a declaration. `projection.at(params)`
+binds it, and runners take the bound value. An input or output that names a stream
+declaration is resolved with the same params. A fixed address is used as it is.
+A projection with no parameters uses `params: {}` and `.at({})`. The handler reads
+the decoded values from `unit.params`. See
+[Streams](https://streamsy.dev/docs/projections/projections#streams).
 
 `Projection.State` provides one encoded value per key in the checkpoint transaction.
 `Projection.fold(schema, initial, step)` loads, folds, and saves that value once per pass.
@@ -55,12 +63,9 @@ generation, and retirement rules.
 
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
-`Projection.family(definition)` declares routed members once; see
-[Streams](https://streamsy.dev/docs/projections/projections#streams).
 `Projection.run(projection, options)` runs one caller at a time per canonical key;
 see [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
-`Projection.watch` runs a projection, or an explicit array of family members, from
-same-owner storage change feeds; see
+`Projection.watch` runs a bound projection from same-owner storage change feeds; see
 [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
 
 [src/examples/minimal.ts](src/examples/minimal.ts) is the complete version of
@@ -79,6 +84,7 @@ import { Effect } from "effect";
 
 const totals = Projection.stream({
   id: "totals",
+  params: {},
   inputs: { input: numbers },
   output: StreamAddress.json("totals", { schema: Schema.Finite }),
   process: (batch) => Effect.succeed([batch.input.items.reduce((sum, n) => sum + n, 0)]),
@@ -87,7 +93,7 @@ const totals = Projection.stream({
 
 ## Outputs
 
-`Projection.outputs({ id, inputs, outputs, process })` declares several pinned outputs.
+`Projection.outputs({ id, params, inputs, outputs, process })` declares several pinned outputs.
 Import `Output` from the package root:
 
 - `Output.stream(schema, { stream })` appends typed JSON items. The option is an id

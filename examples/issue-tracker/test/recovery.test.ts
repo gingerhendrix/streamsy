@@ -74,11 +74,11 @@ const collect = Effect.gen(function* () {
 const run = (failOn: number | undefined) =>
   Effect.gen(function* () {
     yield* seed;
-    const member = tracker.member({ workspaceId: "live" });
-    if (failOn === undefined) yield* Projection.run(member);
+    const bound = tracker.at({ workspaceId: "live" });
+    if (failOn === undefined) yield* Projection.run(bound);
     else {
       let calls = 0;
-      const r = yield* Projection.run(member).pipe(
+      const r = yield* Projection.run(bound).pipe(
         Addresses.patchOutputAppends(
           (append) => (id, o) =>
             ++calls === failOn
@@ -92,7 +92,7 @@ const run = (failOn: number | undefined) =>
       expect(r._tag).toBe("Failure");
     }
     yield* more;
-    yield* Projection.run(member);
+    yield* Projection.run(bound);
     return yield* collect;
   });
 test("stop between outputs recovers to the same outputs as a clean run", async () => {

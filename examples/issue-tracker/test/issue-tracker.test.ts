@@ -43,7 +43,7 @@ test("the fused handler writes application rows through the SQLite host", async 
       Effect.gen(function* () {
         yield* createInputs("live");
         yield* (yield* Events).append({ workspaceId: "live" }, [created]);
-        const result = yield* Projection.run(issueRows.member({ workspaceId: "live" }));
+        const result = yield* Projection.run(issueRows.at({ workspaceId: "live" }));
         const sql = yield* SqlClient.SqlClient;
         const rows = yield* sql.unsafe<{ readonly status: string }>("SELECT status FROM issues");
         expect(result.items).toBe(1);
@@ -68,7 +68,7 @@ test("the change trigger stays alive beside the request trigger on one key", asy
           title: "Both",
           status: "todo",
         });
-        yield* Projection.run(issueRows.member({ workspaceId: "live" }), { limit: 5 });
+        yield* Projection.run(issueRows.at({ workspaceId: "live" }), { limit: 5 });
         const sql = yield* SqlClient.SqlClient;
         yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },
@@ -106,7 +106,7 @@ test("catalog state upserts and deletes a row", async () => {
           { workspaceId: "live" },
           DurableState.changes(ref, { offset: ZERO_OFFSET }, [DurableState.upsert("user", ada)]),
         );
-        yield* Projection.run(issueRows.member({ workspaceId: "live" }));
+        yield* Projection.run(issueRows.at({ workspaceId: "live" }));
         const sql = yield* SqlClient.SqlClient;
         const afterUpsert = yield* sql.unsafe<{ readonly n: number }>(
           "SELECT COUNT(*) AS n FROM users",
@@ -116,7 +116,7 @@ test("catalog state upserts and deletes a row", async () => {
           { workspaceId: "live" },
           DurableState.changes(ref, { offset: "1" }, [DurableState.remove("user", ada)]),
         );
-        yield* Projection.run(issueRows.member({ workspaceId: "live" }));
+        yield* Projection.run(issueRows.at({ workspaceId: "live" }));
         const afterDelete = yield* sql.unsafe<{ readonly n: number }>(
           "SELECT COUNT(*) AS n FROM users",
         );

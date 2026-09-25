@@ -162,9 +162,10 @@ test("identity mismatch on inputs stops without reset", () =>
       yield* Streams.create(other);
       const changed = Projection.fused({
         id: positives.id,
+        params: {},
         inputs: { input: other },
         process: () => Effect.void,
-      });
+      }).at({});
       const failed = fault(yield* failure(Projection.run(changed)));
       expect(failed.phase).toBe("load");
       expect(failed.reason).toBe("identity-mismatch");
@@ -317,6 +318,7 @@ test("two competing passes on one memory host: the second conflicts and output i
       const loaded = yield* Deferred.make<void>();
       const gated = Projection.fused({
         id: positives.id,
+        params: {},
         inputs: { input },
         process: (batch, unit) =>
           Effect.gen(function* () {
@@ -324,7 +326,7 @@ test("two competing passes on one memory host: the second conflicts and output i
             yield* Deferred.await(release);
             yield* positives.process(batch, unit);
           }),
-      });
+      }).at({});
       const first = yield* Effect.forkChild(Projection.pass(gated));
       yield* Deferred.await(inside);
       const observing = Checkpoints.of({
@@ -354,6 +356,7 @@ test("interruption inside the transaction rolls back the output append and the c
       const release = yield* Deferred.make<void>();
       const blocking = Projection.fused({
         id: positives.id,
+        params: {},
         inputs: { input },
         process: (batch, unit) =>
           positives
@@ -362,7 +365,7 @@ test("interruption inside the transaction rolls back the output append and the c
               Effect.andThen(Deferred.succeed(appended, undefined)),
               Effect.andThen(Deferred.await(release)),
             ),
-      });
+      }).at({});
       const fiber = yield* Effect.forkChild(Projection.run(blocking));
       yield* Deferred.await(appended);
       yield* Fiber.interrupt(fiber);
@@ -385,9 +388,10 @@ test("handler failure rolls back the output append and the checkpoint", () =>
       class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
       const failing = Projection.fused({
         id: positives.id,
+        params: {},
         inputs: { input },
         process: (batch, unit) => positives.process(batch, unit).pipe(Effect.andThen(new Boom())),
-      });
+      }).at({});
       const failed = yield* failure(Projection.run(failing));
       expect(Option.getOrThrow(failed)).toBeInstanceOf(Boom);
       const stored = yield* inspect;
@@ -397,10 +401,15 @@ test("handler failure rolls back the output append and the checkpoint", () =>
   ));
 
 test("version one keeps existing record keys and version two starts a fresh key", () => {
-  const definition = { id: "versioned", inputs: { input }, process: () => Effect.void };
-  const original = Projection.fused(definition);
-  const one = Projection.fused({ ...definition, version: 1 });
-  const two = Projection.fused({ ...definition, version: 2 });
+  const definition = {
+    id: "versioned",
+    params: {},
+    inputs: { input },
+    process: () => Effect.void,
+  };
+  const original = Projection.fused(definition).at({});
+  const one = Projection.fused({ ...definition, version: 1 }).at({});
+  const two = Projection.fused({ ...definition, version: 2 }).at({});
   expect(recordKey(Projection.key(original))).toBe(
     '["streamsy.projection.v1","versioned","1","{}"]',
   );
@@ -418,9 +427,10 @@ test("run without a limit drains more than one hundred server pages", () =>
       );
       const projection = Projection.fused({
         id: "uncapped",
+        params: {},
         inputs: { input },
         process: () => Effect.void,
-      });
+      }).at({});
       const result = yield* Projection.run(projection);
       expect(result.status).toBe("caught-up");
       expect(result.units).toBe(101);
@@ -437,6 +447,7 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
       const output = FamilyFixture.json("versioned-output", { schema: Schema.Finite });
       const projection = Projection.stream({
         id: "versioned-stream",
+        params: {},
         version: 7,
         inputs: { input },
         output,
@@ -445,7 +456,7 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
             versions.push(unit.version);
             return batch.input.items;
           }),
-      });
+      }).at({});
       const owner = yield* Checkpoints;
       let saves = 0;
       const failed = yield* Projection.run(projection).pipe(

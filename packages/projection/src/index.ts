@@ -1,15 +1,9 @@
 export * as Projection from "./projection.ts";
 export type { Fused, FusedDefinition, Stream, StreamDefinition } from "./projection.ts";
+export type { Declaration } from "./declaration.ts";
 export type { FollowOptions } from "./follow.ts";
 export type { RunOptions } from "./read.ts";
 export type { WatchOptions } from "./watch.ts";
-export type {
-  Family,
-  FamilyDefinition,
-  FusedFamilyDefinition,
-  PinnedFamilyDefinition,
-  NamedFamilyDefinition,
-} from "./family.ts";
 export type { Entry, InputMap, ItemOf, Slice, Slices } from "./batch.ts";
 export type { Progress } from "./run.ts";
 export type { Range, Unit } from "./unit.ts";

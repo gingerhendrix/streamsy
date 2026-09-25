@@ -8,7 +8,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
 import { issueRows } from "./projection.ts";
 import { WorkspaceSummary } from "../domain/outputs.ts";
-import { tracker, outputFamilies } from "./outputs.ts";
+import { tracker, outputStreams } from "./outputs.ts";
 import { routes } from "./streams.ts";
 import { transact } from "./state.ts";
 
@@ -65,8 +65,8 @@ export const app = (workspaces: ReadonlyArray<string>) => {
           return json({ error: "Concurrent command conflict" }, { status: 409 });
         return json({ error: "Internal server error" }, { status: 500 });
       }
-      yield* Projection.run(issueRows.member({ workspaceId }));
-      yield* Projection.run(tracker.member({ workspaceId }));
+      yield* Projection.run(issueRows.at({ workspaceId }));
+      yield* Projection.run(tracker.at({ workspaceId }));
       const sql = yield* SqlClient.SqlClient;
       const rows = yield* sql.unsafe<{
         readonly issueId: string;
@@ -106,7 +106,7 @@ export const app = (workspaces: ReadonlyArray<string>) => {
     }
     if (resource !== "status") return json({ error: "Not found" }, { status: 404 });
     const checkpoints = yield* Checkpoints;
-    const loaded = yield* checkpoints.load(Projection.key(issueRows.member({ workspaceId })));
+    const loaded = yield* checkpoints.load(Projection.key(issueRows.at({ workspaceId })));
     return json({
       workspaceId,
       offsets: Option.match(loaded.record, {
@@ -123,7 +123,7 @@ export const app = (workspaces: ReadonlyArray<string>) => {
     ),
   );
   return Layer.mergeAll(
-    Http.routes(Streamsy.group(...Object.values(routes), ...outputFamilies), {
+    Http.routes(Streamsy.group(...Object.values(routes), ...outputStreams), {
       prefix: "/streams",
       access: "read",
     }),

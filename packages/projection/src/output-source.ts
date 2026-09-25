@@ -8,13 +8,6 @@ import type { ProjectionKey } from "./checkpoint.ts";
 import { loadState } from "./fold.ts";
 import type { State } from "./state.ts";
 
-export type Fixed<D extends RoutedMap> = {
-  readonly [K in keyof D]: D[K] extends Output.Stream<infer A, any>
-    ? Output.Stream<A, Streamsy.Address<A, TargetServices<D[K]["stream"]>>>
-    : D[K] extends Output.Rows<infer A, any>
-      ? Output.Rows<A, Streamsy.Address<unknown, TargetServices<D[K]["stream"]>>>
-      : D[K];
-};
 type Collection<Name extends string, A> = {
   readonly [K in Name]: {
     readonly schema: Schema.Codec<A, unknown, never, never>;
@@ -68,7 +61,7 @@ export function bind<D extends RoutedMap, P>(
   declarations: D,
   id: string,
   paramSchema: StreamRoute.PathSchema<P>,
-  member: (params: P) => ProjectionKey & { readonly outputs: Output.Map },
+  keyAt: (params: P) => ProjectionKey & { readonly outputs: Output.Map },
 ): Bound<D, P> {
   const sources = Object.fromEntries(
     Object.entries(declarations).map(([name, declaration]) => {
@@ -82,10 +75,10 @@ export function bind<D extends RoutedMap, P>(
             resolve: (params: P) =>
               Effect.gen(function* () {
                 const key = yield* Effect.try({
-                  try: () => member(params),
+                  try: () => keyAt(params),
                   catch: () => ({
                     _tag: "ValueUnavailable" as const,
-                    detail: "Cannot resolve projection member",
+                    detail: "Cannot resolve projection params",
                   }),
                 });
                 const value = yield* loadState(key, declaration.schema).pipe(
@@ -104,7 +97,7 @@ export function bind<D extends RoutedMap, P>(
           },
         ];
       const address = (params: P) => {
-        const output = member(params).outputs[name]!;
+        const output = keyAt(params).outputs[name]!;
         if (output._tag === "Value") throw new TypeError("Expected a stream output");
         return output._tag === "Stream" ? output.stream : rowsAddress(name, output);
       };

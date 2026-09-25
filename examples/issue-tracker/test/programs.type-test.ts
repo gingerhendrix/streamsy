@@ -20,10 +20,10 @@ type Outputs = Board | LabelCounts | Transitions;
 type RequestServices<R> = R extends HttpRouter.Request<"Requires", infer S> ? S : R;
 type AppR = RequestServices<Layer.Services<ReturnType<typeof app>>>;
 type OutputR = RequestServices<Layer.Services<typeof outputRoutes>>;
-const sqlRun = (address: ReturnType<typeof issueRows.member>) => Projection.run(address);
-const outputRun = (address: ReturnType<typeof tracker.member>) => Projection.run(address);
-const sqlWatch = (address: ReturnType<typeof issueRows.member>) => Projection.watch(address);
-const outputWatch = (address: ReturnType<typeof tracker.member>) => Projection.watch(address);
+const sqlRun = (address: ReturnType<typeof issueRows.at>) => Projection.run(address);
+const outputRun = (address: ReturnType<typeof tracker.at>) => Projection.run(address);
+const sqlWatch = (address: ReturnType<typeof issueRows.at>) => Projection.watch(address);
+const outputWatch = (address: ReturnType<typeof tracker.at>) => Projection.watch(address);
 export type Checks = [
   Assert<
     Same<Effect.Services<ReturnType<typeof sqlRun>>, Checkpoints | Inputs | SqlClient.SqlClient>
@@ -76,9 +76,9 @@ export type Checks = [
   // Handlers retain their SQL/State requirements. Runners add declared streams and checkpoints.
   Assert<
     Same<
-      Effect.Services<ReturnType<ReturnType<typeof issueRows.member>["process"]>>,
+      Effect.Services<ReturnType<ReturnType<typeof issueRows.at>["process"]>>,
       SqlClient.SqlClient
     >
   >,
-  Assert<Same<Effect.Services<ReturnType<ReturnType<typeof tracker.member>["process"]>>, State>>,
+  Assert<Same<Effect.Services<ReturnType<ReturnType<typeof tracker.at>["process"]>>, State>>,
 ];

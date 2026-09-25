@@ -97,6 +97,7 @@ test("a write to the second input wakes a two-input follower", () =>
       const woke = yield* Deferred.make<void>();
       const projection = Projection.fused({
         id: "wake",
+        params: {},
         inputs: { a, b },
         process: (batch) =>
           Effect.gen(function* () {
@@ -106,7 +107,7 @@ test("a write to the second input wakes a two-input follower", () =>
             );
             if (batch.b.items.length > 0) yield* Deferred.succeed(woke, undefined);
           }),
-      });
+      }).at({});
       const parked = yield* Deferred.make<void>();
       let hints = 0;
       const fiber = yield* withReader(
@@ -150,13 +151,14 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       yield* Streams.append(b, [2]);
       const projection = Projection.fused({
         id: "closed-open",
+        params: {},
         inputs: { a, b },
         process: (batch) =>
           Streams.append(
             target,
             Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
           ),
-      });
+      }).at({});
       let reads = 0;
       let hints = 0;
       const fiber = yield* withReader(
@@ -241,10 +243,11 @@ for (const point of ["read", "append"] as const) {
         });
         const projection = Projection.stream({
           id: `retry-${point}`,
+          params: {},
           inputs: { input },
           output,
           process: (batch) => Effect.succeed(batch.input.items),
-        });
+        }).at({});
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
           FamilyFixture.provideReader({
             ...reader,
@@ -309,13 +312,14 @@ test("follow does not retry non-storage faults or handler failures", () =>
         let calls = 0;
         const projection = Projection.fused({
           id: "terminal",
+          params: {},
           inputs: { input },
           process: () =>
             Effect.suspend(() => {
               calls += 1;
               return Effect.fail(error);
             }),
-        });
+        }).at({});
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(3) });
         const result = yield* Fiber.join(fiber).pipe(Effect.result);
         expect(result._tag).toBe("Failure");
@@ -383,10 +387,11 @@ test("follow resets a finite retry budget after a successful cycle between outag
       let reads = 0;
       const projection = Projection.stream({
         id: "separate-outages",
+        params: {},
         inputs: { input },
         output,
         process: (batch) => Effect.succeed(batch.input.items),
-      });
+      }).at({});
       const fiber = yield* withReader(
         Projection.follow(projection, { retry: Schedule.recurs(1) }),
         (reader) => ({

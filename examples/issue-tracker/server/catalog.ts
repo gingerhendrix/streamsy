@@ -6,15 +6,15 @@ export class CatalogWorkspaceMismatch extends Schema.TaggedError<CatalogWorkspac
 ) {}
 
 export const checkCatalogWorkspace = (
-  memberWorkspace: string,
+  addressWorkspace: string,
   valueWorkspace: string,
   collection: string,
   key: string,
 ) =>
-  memberWorkspace === valueWorkspace
+  addressWorkspace === valueWorkspace
     ? Effect.void
     : Effect.fail(
         new CatalogWorkspaceMismatch({
-          message: `Catalog ${collection}/${key} names workspace ${valueWorkspace}, but address workspace is ${memberWorkspace}`,
+          message: `Catalog ${collection}/${key} names workspace ${valueWorkspace}, but address workspace is ${addressWorkspace}`,
         }),
       );

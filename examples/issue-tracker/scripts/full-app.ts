@@ -64,7 +64,7 @@ try {
           recording.catalog.labels.map((row) => DurableState.upsert("label", row)),
         ),
       );
-      yield* Projection.run(issueRows.member({ workspaceId: "acme" }));
+      yield* Projection.run(issueRows.at({ workspaceId: "acme" }));
       const sql = yield* SqlClient.SqlClient;
       for (const [table, expected] of [
         ["projects", 1],

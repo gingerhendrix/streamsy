@@ -45,7 +45,7 @@ try {
             DurableState.upsert("label", removed),
           ]),
         );
-        yield* Projection.run(tracker.member({ workspaceId: "live" }));
+        yield* Projection.run(tracker.at({ workspaceId: "live" }));
         yield* (yield* Labels).append({ workspaceId: "live" }, [
           { type: "label", key: removed.labelId, headers: { operation: "delete" } },
         ]);
@@ -61,7 +61,7 @@ try {
             occurredAt: label.updatedAt,
           },
         ]);
-        yield* Projection.run(tracker.member({ workspaceId: "live" }));
+        yield* Projection.run(tracker.at({ workspaceId: "live" }));
       }),
     );
   } finally {

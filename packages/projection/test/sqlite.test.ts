@@ -64,11 +64,12 @@ test("a handler's SQL through the shared client commits and rolls back with the 
         yield* Streams.append(input, [1, -1, 3]);
         const projection = Projection.fused({
           id: "seen",
+          params: {},
           inputs: { input },
           process: Projection.each(({ item }) =>
             sql.unsafe("INSERT INTO seen (item) VALUES (?)", [item]),
           ),
-        });
+        }).at({});
         const count = sql
           .unsafe<{ readonly n: number }>("SELECT COUNT(*) AS n FROM seen")
           .pipe(Effect.map((rows) => rows[0]?.n));
@@ -111,6 +112,7 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
         const release = yield* Deferred.make<void>();
         const blocking = Projection.fused({
           id: positives.id,
+          params: {},
           inputs: { input },
           process: (batch, unit) =>
             Effect.gen(function* () {
@@ -121,7 +123,7 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
               yield* Deferred.succeed(written, undefined);
               yield* Deferred.await(release);
             }),
-        });
+        }).at({});
         const count = sql
           .unsafe<{ readonly n: number }>("SELECT COUNT(*) AS n FROM seen")
           .pipe(Effect.map((rows) => rows[0]?.n));

@@ -17,27 +17,29 @@ class Result extends Streamsy.bytes<Result>()("ProjectionTypes/Result", "types/r
 }) {}
 const fused = Projection.fused({
   id: "types/fused",
+  params: {},
   inputs: { input: Input.at({ id: "a" }) },
   process: () => Effect.void,
-});
+}).at({});
 const pinned = Projection.stream({
   id: "types/pinned",
+  params: {},
   inputs: { input: Input.at({ id: "a" }) },
   output: Other.at({ id: "a" }),
   process: (batch) => Effect.succeed(batch.input.items.map(String)),
-});
-const family = Projection.family({
+}).at({});
+const declared = Projection.outputs({
   id: "types/named",
   params: { id: Schema.String },
   inputs: { input: Input, other: Other },
   outputs: { result: Output.stream(Schema.Finite, { stream: Result }) },
   process: (batch) => Effect.succeed({ result: batch.input.items }),
 });
-const named = family.member({ id: "a" });
+const named = declared.at({ id: "a" });
 const fusedRun = Projection.run(fused);
 const pinnedRun = Projection.run(pinned);
 const namedRun = Projection.run(named);
-const namedWatch = Projection.watch(family, [{ id: "a" }]);
+const namedWatch = Projection.watch(named);
 const namedFollow = Projection.follow(named);
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
@@ -75,16 +77,22 @@ void incomplete;
 // oxlint-enable effecttsgo/missing-effect-context
 Projection.fused({
   id: "bare",
+  params: {},
   // @ts-expect-error plain refs do not carry a stream key
   inputs: { input: StreamAddress.json("plain", { schema: Schema.Finite }) },
   process: () => Effect.void,
-});
+}).at({});
 
 // Widening loses the exact keys, but must not erase the unresolved requirement.
 // oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context -- These negative tests deliberately widen declarations.
 const widenedInputs: import("@streamsy/projection").InputMap = { input: Input.at({ id: "a" }) };
 const widened = Projection.run(
-  Projection.fused({ id: "widened", inputs: widenedInputs, process: () => Effect.void }),
+  Projection.fused({
+    id: "widened",
+    params: {},
+    inputs: widenedInputs,
+    process: () => Effect.void,
+  }).at({}),
 );
 const widenedOutput: Output.Stream<number> = Output.stream(Schema.Finite, {
   stream: Result.at({ id: "a" }),
@@ -92,10 +100,11 @@ const widenedOutput: Output.Stream<number> = Output.stream(Schema.Finite, {
 const widenedNamed = Projection.run(
   Projection.outputs({
     id: "widened-output",
+    params: {},
     inputs: { input: Input.at({ id: "a" }) },
     outputs: { result: widenedOutput },
     process: () => Effect.succeed({ result: [1] }),
-  }),
+  }).at({}),
 );
 export type WidenedChecks = [
   Assert<Same<Effect.Services<typeof widened>, unknown>>,
@@ -153,14 +162,31 @@ export type FeedChecks = [
 
 Projection.fused({
   id: "single-input-removed",
+  params: {},
   // @ts-expect-error A projection requires an inputs map.
   input: Input.at({ id: "a" }),
   process: () => Effect.void,
-});
+}).at({});
 Projection.stream({
   id: "single-stream-input-removed",
+  params: {},
   // @ts-expect-error A stream projection also requires an inputs map.
   input: Input.at({ id: "a" }),
   output: Other.at({ id: "a" }),
   process: () => Effect.succeed([]),
+}).at({});
+
+// @ts-expect-error every projection declares its params, even when there are none.
+Projection.fused({
+  id: "no-params",
+  inputs: { input: Input.at({ id: "a" }) },
+  process: () => Effect.void,
 });
+// @ts-expect-error at requires the declared params.
+declared.at({});
+// @ts-expect-error at checks the decoded param types.
+declared.at({ id: 1 });
+// oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/floating-effect -- This negative test deliberately passes an unbound declaration.
+// @ts-expect-error runners take the bound value, not the declaration.
+Projection.run(declared);
+// oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/floating-effect

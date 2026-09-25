@@ -14,7 +14,7 @@ import {
 import { NewestStoriesPoller } from "./poller/contract.ts";
 import { StoryProjection } from "./projection.ts";
 import { serveStatic } from "./static.ts";
-import { hackerNewsStoryIndex } from "./story-index-projection.ts";
+import { storyIndex } from "./story-index-projection.ts";
 import { streams } from "./streams.ts";
 
 const currentStats = Effect.gen(function* () {
@@ -23,7 +23,7 @@ const currentStats = Effect.gen(function* () {
   return { ...(yield* poller.stats), projection: yield* projection.status };
 });
 
-export const stateRoute = Serve.state(hackerNewsStoryIndex.outputs["hn-story"], streamPath);
+export const stateRoute = Serve.state(storyIndex.outputs["hn-story"], streamPath);
 
 /** The page and State route share an origin, so no CORS middleware is needed. */
 export const app = Layer.mergeAll(

@@ -32,10 +32,10 @@ export class Transitions extends Streamsy.bytes<Transitions>()(
   "issue-tracker/:workspaceId/outputs/transitions",
   { params: { workspaceId: Identifier } },
 ) {}
-export const outputFamilies = [Board, LabelCounts, Transitions] as const;
+export const outputStreams = [Board, LabelCounts, Transitions] as const;
 
-/** Named family members are Projection.outputs declarations, separate from issueRows. */
-export const tracker = Projection.family({
+/** Declared outputs for one workspace, separate from the SQL rows of issueRows. */
+export const tracker = Projection.outputs({
   id: "issue-tracker",
   params: { workspaceId: Identifier },
   inputs: routes,
@@ -46,8 +46,7 @@ export const tracker = Projection.family({
     workspace: Output.value(WorkspaceState),
   },
   process: Projection.fold(
-    // The family codec guarantees workspaceId on every member.
-    (params) => initialWorkspace(params.workspaceId!),
+    ({ workspaceId }) => initialWorkspace(workspaceId),
     (previous, batch) =>
       Effect.gen(function* () {
         const issues = new Map(previous.issues.map((row) => [row.issueId, row]));

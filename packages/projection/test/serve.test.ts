@@ -22,7 +22,7 @@ class transitions extends Streamsy.bytes<transitions>()(
   { params },
 ) {}
 const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
-const tracker = Projection.family({
+const tracker = Projection.outputs({
   id: "tracker",
   params,
   inputs: { numbers },
@@ -73,13 +73,13 @@ test("declared rows, stream and value share one memory app and their declared co
     { disableLogger: true },
   );
   try {
-    const member = tracker.member({ seat: 42 });
-    expect(member.params).toEqual({ seat: "42" });
+    const bound = tracker.at({ seat: 42 });
+    expect(bound.params).toEqual({ seat: "42" });
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* Streams.create(member.inputs.numbers);
-        yield* Streams.append(member.inputs.numbers, [2, 3]);
-        yield* Projection.run(member);
+        yield* Streams.create(bound.inputs.numbers);
+        yield* Streams.append(bound.inputs.numbers, [2, 3]);
+        yield* Projection.run(bound);
         const changes = yield* Streams.read(tracker.outputs.board.address({ seat: 42 })).pipe(
           Streams.items,
           Stream.runCollect,
@@ -161,10 +161,11 @@ const typeChecks = () => {
   Serve.state(tracker.outputs.transitions, "/board/:seat");
   const date = Projection.outputs({
     id: "date",
+    params: {},
     inputs: {},
     outputs: { date: Output.value(Schema.Struct({ date: Schema.Date })) },
     process: () => Effect.succeed({ state: { date: new Date() } }),
-  });
+  }).at({});
   // @ts-expect-error Date is not a JSON encoded value; rejected before requests
   Serve.value(date.outputs.date, "/date");
   const missingState = HttpRouter.toWebHandler(
@@ -177,23 +178,33 @@ const typeChecks = () => {
     "wrong/:other",
     { params: { other: Schema.String } },
   ) {}
-  // @ts-expect-error an output target cannot require a parameter absent from the stream
-  Projection.family({
+  Projection.outputs({
     id: "wrong",
     params,
     inputs: { numbers },
+    // @ts-expect-error an output target cannot require a parameter absent from the projection
     outputs: { events: Output.stream(Schema.Finite, { stream: wrongTarget }) },
     process: () => Effect.succeed({ events: [1] }),
   });
-  // @ts-expect-error output item types are retained through a routed identity
-  Projection.family({
+  Projection.outputs({
     id: "wrong-item",
     params,
     inputs: { numbers },
     outputs: { events: Output.stream(Schema.Finite, { stream: transitions }) },
+    // @ts-expect-error output item types are retained through a routed identity
     process: () => Effect.succeed({ events: ["bad"] }),
   });
-  const fixed = tracker.member({ seat: 42 });
+  const fixed = Projection.outputs({
+    id: "fixed",
+    params: {},
+    inputs: { numbers: numbers.at({ seat: 42 }) },
+    outputs: {
+      board: Output.rows(Card, { key: "id", stream: board.at({ seat: 42 }) }),
+      transitions: Output.stream(Schema.FiniteFromString, { stream: transitions.at({ seat: 42 }) }),
+      summary: Output.value(Schema.Struct({ total: Schema.FiniteFromString })),
+    },
+    process: Projection.fold({ total: 0 }, (state) => ({ state, board: [], transitions: [] })),
+  });
   Serve.state(fixed.outputs.board, "/board");
   Serve.stream(fixed.outputs.transitions, "/transitions");
   Serve.value(fixed.outputs.summary, "/summary");
