@@ -22,4 +22,6 @@ export const staleTerms = [
   "NotSupportedError",
   "scheduleExpiry",
   "cancelExpiry",
+  "layerRouted",
+  "Backend.make",
 ];
