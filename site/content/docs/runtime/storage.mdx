@@ -3,17 +3,17 @@ title: Storage
 description: Choose between the memory Layer, SQLite on Bun, and SQLite inside a Durable Object, and know how each one behaves.
 ---
 
-Three Layers give a program its streams: memory for one process and tests, SQLite on Bun for a server, and SQLite inside a Durable Object on Cloudflare.
+Three Layers give a program its streams: memory for one process and tests, SQLite on Bun for a server, and SQLite inside a Durable Object on Cloudflare. Each one takes options and the families it stores, as a group or as family classes.
 
-| Layer                                     | Persists            | Processes                        | Where                              |
-| ----------------------------------------- | ------------------- | -------------------------------- | ---------------------------------- |
-| `Streams.layerMemory()`                   | no                  | one                              | `@streamsy/core`                   |
-| `BunStorage.layerProtocol(...)`           | one file            | one, or several sharing the file | `@streamsy/storage/bun`            |
-| `DurableObjectStorage.layerProtocol(...)` | the object's SQLite | one object                       | `@streamsy/storage/durable-object` |
+| Layer                                        | Persists            | Processes                        | Where                              |
+| -------------------------------------------- | ------------------- | -------------------------------- | ---------------------------------- |
+| `Memory.layer(options, group)`               | no                  | one                              | `@streamsy/core`                   |
+| `BunStorage.layer(options, group)`           | one file            | one, or several sharing the file | `@streamsy/storage/bun`            |
+| `DurableObjectStorage.layer(options, group)` | the object's SQLite | one object                       | `@streamsy/storage/durable-object` |
 
 ## Memory
 
-`Streams.layerMemory(options)` holds every stream in the process. Two processes hold two unrelated stores, and disposing the Layer loses the data.
+`Memory.layer(options, group)` holds every stream of its families in the process. Two processes hold two unrelated stores, and disposing the Layer loses the data.
 
 Its commit boundary copies the whole store for every mutation, so one append
 costs linear time in the number of stored messages. This is the development
@@ -25,13 +25,14 @@ host; use SQLite for anything that grows.
 
 ```ts
 import * as BunStorage from "@streamsy/storage/bun";
+import { shop } from "./streams.ts";
 
-export const storage = BunStorage.layerProtocol({ client: { filename: "./streams.sqlite" } });
+export const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop);
 ```
 
 The file is opened in WAL mode with the driver busy timeout at zero. Streamsy retries a busy transaction itself with a bounded yielding delay, so the event loop is not blocked while it waits.
 
-`layerProtocol` exposes `SqlClient`, `CommitBoundary`, `Storage`, SQL reactivity, and the protocol reader and writer. Application SQL can share its transaction with stream mutations. `BunStorage.layer` exposes the storage services without the protocol reader and writer.
+`BunStorage.layer` exposes `SqlClient`, `CommitBoundary`, `Storage`, SQL reactivity, the family services, and a `Changes` key for each family. Application SQL can share its transaction with stream mutations. `BunStorage.layerProtocol(options)` exposes the generic protocol reader and writer instead of families, for protocol tools.
 
 The common shape is one process. The listener, a projection, and a drain run as Layers in one `Layer.launch` graph over one storage Layer value. See [HTTP](/docs/runtime/http).
 
@@ -70,8 +71,9 @@ Catching inside the body would let the other writes commit, because nested calls
 
 ```ts
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+import { shop } from "./streams.ts";
 
-const storage = DurableObjectStorage.layerProtocol({ client: { storage: ctx.storage } });
+const storage = DurableObjectStorage.layer({ client: { storage: ctx.storage } }, shop);
 ```
 
 Pass the full `ctx.storage` handle, because the driver needs the transaction API and not only `ctx.storage.sql`. The long-poll timeout defaults to 25 s here. See [Cloudflare](/docs/runtime/cloudflare).

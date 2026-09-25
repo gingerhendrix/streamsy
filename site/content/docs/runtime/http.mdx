@@ -1,28 +1,30 @@
 ---
 title: HTTP
-description: Compose HttpRouter route layers and host them on Bun or a Fetch boundary.
+description: Compose HttpRouter route layers, set per-family access, and host them on Bun or a Fetch boundary.
 ---
 
-`Http.routes` exposes the Durable Streams protocol as an Effect HttpRouter route Layer. One `prefix` controls route registration and protocol path stripping. `Http.app` remains the underlying HttpEffect.
+`Http.routes(group, { access })` exposes the Durable Streams protocol for a group of families as an Effect HttpRouter route Layer. One `prefix` controls route registration and protocol path stripping. `Http.app` is the underlying HttpEffect over the generic protocol services, for protocol tools.
 
 ```ts
 import { Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
-import { Http, StreamRoute } from "@streamsy/core";
+import { Http, StreamFamily, StreamGroup } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import * as BunStorage from "@streamsy/storage/bun";
 
-const events = StreamRoute.json("events/:seat", {
+class Events extends StreamFamily.json<Events>()("Game/Events", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
-});
+}) {}
+const game = StreamGroup.make(Events);
+
 const App = Layer.mergeAll(
-  Http.routes({ prefix: "/streams" }),
-  Serve.stream(events, "/feed/:seat"),
+  Http.routes(game, { prefix: "/streams", access: "append" }),
+  Serve.stream(Events, "/feed/:seat"),
 );
-const storage = BunStorage.layerProtocol({ client: { filename: "./streams.sqlite" } });
+const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, game);
 const Server = HttpRouter.serve(App).pipe(
   Layer.provide(storage),
   Layer.provide(listener({ port: 3000 })),
@@ -33,6 +35,20 @@ BunRuntime.runMain(Layer.launch(Server));
 The prefix defaults to `/`; `/streams/` normalizes to `/streams`. Bare prefix requests get 400 because they lack a stream id; a neighbouring path gets 404. `maxMessageSize` defaults to 1 MiB, `cacheVisibility` to `private`, and `sseDeadlineMs` to 60,000.
 
 `listener` defaults to `idleTimeout: 0`, so Bun does not close parked long polls after 10 seconds. The route handler is interruptible on the pinned Effect/Bun router: a client abort interrupts a parked long poll and releases its subscription. No extra interruptibility wrapper is needed. Closing the Layer scope stops the listener and releases storage. Bind failures remain typed `ServeError` failures. The application owns logging through the router options.
+
+## Access
+
+Each served family has one access rule:
+
+| Access   | Methods                               |
+| -------- | ------------------------------------- |
+| `read`   | GET, HEAD, OPTIONS                    |
+| `append` | GET, HEAD, POST, OPTIONS              |
+| `full`   | GET, HEAD, PUT, POST, DELETE, OPTIONS |
+
+`access` takes one rule for the whole group, or a function from a family to its rule. To set rules one by one, pass entries instead of a group: `Http.routes([{ family: Events, access: "append" }, { family: Cards, access: "read" }], { prefix })`. A method that the rule denies answers 405 with an `allow` header, and the request body is discarded. An id that no served family owns answers 404.
+
+The route Layer requires the service of every served family. A host that serves any id uses `StreamGroup.make(AnyStream)`, usually with `access: "full"`; the memory server demo and the hosted conformance fixture do that.
 
 ## Fetch boundary
 
@@ -52,16 +68,25 @@ PUT creates or forks, POST appends, GET reads, HEAD reports metadata, DELETE rem
 
 Serve routes are read-only even when mounted beneath the protocol prefix; they are not alternate writable ids. See [Serve](/docs/projections/serve) for auth, params, public errors, documents and CORS. For object hosting see [Cloudflare](/docs/runtime/cloudflare) and [Alchemy](/docs/runtime/alchemy).
 
+## Extensions
+
+`Stream-Expected-Offset` on POST is a Streamsy extension. The append runs only when the stream tail equals the header value. A miss writes nothing and answers 409 with the actual tail in `stream-next-offset`. The fetch Layer sends the header only when its `capabilities` set `expectedOffset`.
+
 ## Fetch client
 
 ```ts
+import { Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
+import { game } from "./streams.ts";
 
-const remote = Fetch.layer({
-  baseUrl: "https://streams.example.com/streams",
-  capabilities: { expectedOffset: true, producer: true },
-}).pipe(Layer.provide(FetchHttpClient.layer));
+const remote = Fetch.layer(
+  {
+    baseUrl: "https://streams.example.com/streams",
+    capabilities: { expectedOffset: true, producer: true },
+  },
+  game,
+).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
-The remote Layer supplies StreamsReader and StreamsWriter. Capabilities are assertions about the host, not discovery. Browser applications use the official Durable Streams client and state packages.
+The remote Layer provides the family services of the group, so a program runs over it without change. It provides no `Changes` keys, so `Projection.onChange` cannot run over fetch families; `Projection.follow` can. Capabilities are assertions about the host, not discovery. `Fetch.layerProtocol(options)` provides the generic reader and writer instead, for protocol tools. Browser applications use the official Durable Streams client and state packages.

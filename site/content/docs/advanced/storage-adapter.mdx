@@ -10,7 +10,7 @@ The protocol, the HTTP program, forks, expiry, producer fencing, and the project
 ## The contract
 
 ```ts
-import { Context, Effect, Option, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import { Storage, type StorageShape } from "@streamsy/core";
 
 const adapter: StorageShape = {
@@ -27,6 +27,22 @@ export const layer = Layer.succeed(Storage, adapter);
 ```
 
 `record(id)` returns the stream record, or `None`. `messages(id, window)` returns the stored messages in a window with an exclusive `after`, an inclusive `until`, and an optional limit. `producer(id, producerId)` returns the last accepted producer state. `mutate(mutation)` applies one ordered set of operations in one transaction. `changes(id)` is a level-triggered stream of change snapshots. `nextExpiry` returns the earliest indexed deadline. `capabilities` tells the protocol what the adapter can do.
+
+## Bind families to the adapter
+
+An application does not use `Storage` directly. Build the protocol over the adapter with `Protocol.layer` from `@streamsy/core/protocol`, then bind families to that graph with `provides`:
+
+```ts
+import { Layer } from "effect";
+import { provides } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
+import { layer } from "./adapter.ts";
+import { shop } from "./streams.ts";
+
+export const shopStorage = provides(Protocol.layer().pipe(Layer.provideMerge(layer)), shop);
+```
+
+`provides` also binds a `Changes` key for each family, because the graph exposes the adapter's `Storage`. Programs and `Http.routes` then use `shopStorage` as they use `Memory.layer`.
 
 Every read must return values that are independent of the caller's inputs and of the stored state, so a caller cannot mutate the store through a returned object.
 
@@ -81,22 +97,17 @@ The SQL adapter exposes `CommitBoundary.withTransaction`, which lets an applicat
 `StorageContract.run` from `@streamsy/core/testing` builds a fresh scoped Layer for every case and supplies a `TestClock`. Run it under Bun.
 
 ```ts
-import { Memory } from "@streamsy/core";
 import { StorageContract } from "@streamsy/core/testing";
+import { layer } from "./adapter.ts";
 
 StorageContract.run({
-  name: "memory chain",
-  layer: Memory.layer(),
-  expected: { fork: "chain", atomicScope: "store", wake: "push", expiryIndex: "indexed" },
-});
-StorageContract.run({
-  name: "memory copy",
-  layer: Memory.layer({ constrained: true }),
-  expected: { fork: "copy", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
+  name: "my adapter",
+  layer,
+  expected: { fork: "none", atomicScope: "stream", wake: "poll", expiryIndex: "lazy" },
 });
 ```
 
-`expected` states the capabilities, and the kit skips the cases an adapter declares it cannot do. Then run the upstream [server conformance suite](https://durablestreams.com/building-a-server) through `Http.app` over the new adapter.
+`expected` states the capabilities, and the kit skips the cases an adapter declares it cannot do. The core package runs the same kit over its memory store, in the default and the constrained mode. Then run the upstream [server conformance suite](https://durablestreams.com/building-a-server) against `Http.routes(StreamGroup.make(AnyStream), { access: "full" })` over the new adapter, as the repository's conformance hosts do.
 
 ## The shipped adapters
 

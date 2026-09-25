@@ -8,9 +8,11 @@ Alchemy separates construction from runtime. The outer generator declares resour
 ```ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
-import { Http } from "@streamsy/core";
+import { AnyStream, Http, StreamGroup } from "@streamsy/core";
 import * as Host from "@streamsy/serve/alchemy";
-import { layerProtocol } from "@streamsy/storage/durable-object";
+import * as DurableObjectStorage from "@streamsy/storage/durable-object";
+
+const streams = StreamGroup.make(AnyStream);
 
 export class Streams extends Cloudflare.DurableObject<Streams>()(
   "Streams",
@@ -18,9 +20,9 @@ export class Streams extends Cloudflare.DurableObject<Streams>()(
     const state = yield* Cloudflare.DurableObjectState;
     return Effect.suspend(() =>
       Host.objectHandlers({
-        app: Http.routes({ prefix: "/streams" }),
+        app: Http.routes(streams, { prefix: "/streams", access: "full" }),
         layer: Layer.mergeAll(
-          layerProtocol({ client: { storage: state.raw.storage } }),
+          DurableObjectStorage.layer({ client: { storage: state.raw.storage } }, streams),
           Host.alarmLayer(state.raw.storage),
         ),
       }),
@@ -28,6 +30,8 @@ export class Streams extends Cloudflare.DurableObject<Streams>()(
   }),
 ) {}
 ```
+
+This object serves any id with full access, as the hosted conformance fixture does. An application passes its own group and access rule to both `Http.routes` and the storage Layer.
 
 The helper shares one successful acquisition across fetch and alarm, closes failed attempts before retry, and releases the context when the instance scope closes. It installs mutation reconciliation and defect mapping through the common object middleware. Alarms retain failures for platform retry. The native helper installs no request logger.
 
