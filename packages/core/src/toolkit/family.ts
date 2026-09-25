@@ -13,16 +13,37 @@ import type {
   ReadNextOptions,
 } from "../protocol/options.ts";
 import type * as Group from "./group.ts";
-import * as Backend from "./backend.ts";
+import { templatesOverlap } from "./route-internal.ts";
 import * as Route from "./route.ts";
 import * as Ref from "./ref.ts";
 import * as Streams from "./streams.ts";
 
+interface Wires {
+  readonly reader: Reader<StreamsFault>;
+  readonly writer: Writer<StreamsFault>;
+}
+
+const templateOf = (route: Route.Matcher): string | undefined => {
+  if (!("template" in route)) return undefined;
+  // SAFETY: StreamRoute carries a string template; custom routes carry the empty string.
+  const template = route.template as string;
+  return template.length > 0 ? template : undefined;
+};
+
+/** Template families must have disjoint id grammars. Custom routes use declaration order. */
+function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
+  const templates = routes.flatMap((route) => {
+    const template = templateOf(route);
+    return template === undefined ? [] : [template];
+  });
+  for (const [index, template] of templates.entries())
+    for (const other of templates.slice(index + 1))
+      if (templatesOverlap(template, other))
+        throw new RangeError(`stream route templates overlap: ${template} and ${other}`);
+}
+
 /** Build a family implementation over backend values, retaining the same ownership guard. */
-export function bind<P, A, RD, RE>(
-  route: Route.StreamRoute<P, A, RD, RE>,
-  services: Backend.BackendServices,
-) {
+export function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
   const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
@@ -113,7 +134,7 @@ export type FamilyClass<
       Family<P, A, RD, RE>
     >;
     readonly at: (params: P) => ReturnType<R["ref"]> & Member<A, Self, RD, RE>;
-    readonly make: (services: Backend.BackendServices) => Family<P, A, RD, RE>;
+    readonly make: (services: Wires) => Family<P, A, RD, RE>;
   };
 
 /**
@@ -137,7 +158,7 @@ function define<Self>() {
         // SAFETY: the route returns its declared ref, including State collections; only its key is added.
         return member as ReturnType<R["ref"]> & Member<A, Self, RD, RE>;
       },
-      make: (services: Backend.BackendServices) => bind(route, services),
+      make: (services: Wires) => bind(route, services),
     });
   };
 }
@@ -253,7 +274,7 @@ export interface AnyFamily extends Context.Key<
   readonly route: Route.Matcher;
   readonly template: string;
   readonly match: (id: string) => boolean;
-  readonly make: (services: Backend.BackendServices) => {
+  readonly make: (services: Wires) => {
     readonly owner: object;
     readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
   };
@@ -272,33 +293,26 @@ export function checkFamilies(keys: ReadonlyArray<AnyFamily>): void {
     if (key.key === AnyStream.key && index !== keys.length - 1)
       throw new RangeError("AnyStream must be last");
   }
-  Backend.checkNoOverlap([
-    { backend: Backend.make("family-check"), routes: keys.map((key) => key.route) },
-  ]);
+  checkNoOverlap(keys.map((key) => key.route));
 }
 
 /**
- * Bind directly to the owning protocol graph. A routed/mixed graph cannot establish
- * family ownership for fused writes. Graphs exposing Storage also provide Changes;
- * the legacy named Backend overload retains only its family capability type.
+ * Bind families to their owning protocol graph.
+ * Graphs exposing Storage also provide Changes.
  */
-export function provides<Name extends string, const Keys extends ReadonlyArray<AnyFamily>>(
-  backend: Backend.Backend<Name>,
-  ...input: Group.Input<Keys>
-): Layer.Layer<Identifiers<Keys>, never, Backend.BackendTag<Name>>;
 export function provides<A, E, R, const Keys extends ReadonlyArray<AnyFamily>>(
   graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
   ...input: Group.Input<Keys>
 ): Layer.Layer<Identifiers<Keys> | (Storage extends A ? Changes<Identifiers<Keys>> : never), E, R>;
-export function provides<E, R, Name extends string, const Keys extends ReadonlyArray<AnyFamily>>(
-  source: Backend.Backend<Name> | Layer.Layer<StreamsReader | StreamsWriter, E, R>,
+export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
+  source: Layer.Layer<StreamsReader | StreamsWriter, E, R>,
   ...input: Group.Input<Keys>
 ) {
   const first = input[0];
   // SAFETY: Input is either the family tuple or one group containing that same tuple.
   const keys = (first !== undefined && "families" in first ? first.families : input) as Keys;
   checkFamilies(keys);
-  const bindContext = (backend: Backend.BackendServices, storage?: typeof Storage.Service) => {
+  const bindContext = (backend: Wires, storage?: typeof Storage.Service) => {
     if (
       storage !== undefined &&
       (storageOf(backend.reader) !== storage || storageOf(backend.writer) !== storage)
@@ -321,8 +335,6 @@ export function provides<E, R, Name extends string, const Keys extends ReadonlyA
     // SAFETY: each family comes from its factory; feed keys are added only for an exposed Storage.
     return context as Context.Context<Identifiers<Keys>>;
   };
-  if ("key" in source)
-    return Layer.effectContext(Effect.map(source.key, (backend) => bindContext(backend)));
   return source.pipe(
     Layer.flatMap((context) =>
       Layer.syncContext(() =>

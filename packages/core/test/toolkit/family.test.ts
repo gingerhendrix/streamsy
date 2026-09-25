@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AnyStream, provides, StreamFamily, StreamId, StreamRef } from "../../src/index.ts";
-import { Backend, Streams } from "../../src/protocol/index.ts";
+import { Streams } from "../../src/protocol/index.ts";
 
 class Notes extends StreamFamily.json<Notes>()("Notes", "notes/:user", {
   params: { user: Schema.String },
@@ -88,11 +88,8 @@ it("bindings refuse duplicate and overlapping templates and enforce AnyStream la
   expect(() => provides(graph, Notes, AnyStream)).not.toThrow();
 });
 
-it("named backends isolate families and AnyStream handles arbitrary ids", async () => {
-  const durable = Backend.make("durable");
-  const layer = provides(durable, AnyStream).pipe(
-    Layer.provide(durable.layer(Streams.layerMemory())),
-  );
+it("AnyStream handles arbitrary ids", async () => {
+  const layer = provides(Streams.layerMemory(), AnyStream);
   await Effect.runPromise(
     Effect.gen(function* () {
       const any = yield* AnyStream;

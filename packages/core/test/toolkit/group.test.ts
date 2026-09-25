@@ -10,7 +10,7 @@ import {
   StreamFamily,
   StreamGroup,
 } from "../../src/index.ts";
-import { Backend, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
+import { StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import * as Protocol from "../../src/protocol/index.ts";
 
 class Notes extends StreamFamily.json<Notes>()("Group/Notes", "notes/:user", {
@@ -61,18 +61,12 @@ it("memory families expose feeds and storage but no generic protocol keys", asyn
   }
 });
 
-it("provides accepts groups for both protocol graphs and named backends", async () => {
-  const backend = Backend.make("group-test");
-  const protocol = Protocol.layerMemory();
-  for (const host of [
-    provides(protocol, group),
-    provides(backend, group).pipe(Layer.provide(backend.layer(protocol))),
-  ]) {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* (yield* Notes).create({ user: "ann" });
-        yield* (yield* Counts).create({ user: "ann" });
-      }).pipe(Effect.provide(host)),
-    );
-  }
+it("provides accepts groups for protocol graphs", async () => {
+  const host = provides(Protocol.layerMemory(), group);
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* (yield* Notes).create({ user: "ann" });
+      yield* (yield* Counts).create({ user: "ann" });
+    }).pipe(Effect.provide(host)),
+  );
 });

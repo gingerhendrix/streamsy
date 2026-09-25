@@ -105,7 +105,6 @@ test("family namespace pins factories and backend composition helpers", () => {
 
 test("protocol subpath retains the same services and memory forms", () => {
   expect(Object.keys(Protocol).sort()).toEqual([
-    "Backend",
     "Protocol",
     "StreamRoute",
     "Streams",
