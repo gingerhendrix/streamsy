@@ -103,13 +103,6 @@ it("HTTP rejects a catch-all before a narrower access policy", () => {
   ).toThrow("AnyStream must be last");
 });
 
-it("legacy JavaScript route calls report the family migration", () => {
-  // @ts-expect-error JavaScript callers can still supply a retired options-only argument.
-  expect(() => Http.routes({ prefix: "/streams" })).toThrow("Http.routes requires families");
-  // @ts-expect-error JavaScript callers can omit the required family argument.
-  expect(() => Http.routes()).toThrow("Http.routes requires families");
-});
-
 it("a final catch-all cannot widen a declared read-only family's HTTP access", async () => {
   const edge = HttpRouter.toWebHandler(
     Http.routes([

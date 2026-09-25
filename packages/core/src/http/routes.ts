@@ -40,11 +40,7 @@ export function routes(
   input: ReadonlyArray<FamilyAccess | AnyFamily> | Group.StreamGroup,
   options: RoutesOptions | GroupRoutesOptions = {},
 ) {
-  const list = input !== undefined && "families" in input ? input.families : input;
-  if (!Array.isArray(list))
-    throw new TypeError(
-      "Http.routes requires families; raw routes are available from @streamsy/core/protocol",
-    );
+  const list = "families" in input ? input.families : input;
   const entries: ReadonlyArray<FamilyAccess> = list.map((entry: FamilyAccess | AnyFamily) => {
     if ("access" in entry) return entry;
     if (!("access" in options)) throw new TypeError("Family routes require an access policy");
