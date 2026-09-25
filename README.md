@@ -26,9 +26,9 @@ bun add @streamsy/core effect
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
-import { Streams, StreamRef } from "@streamsy/core";
+import { Streams, StreamAddress } from "@streamsy/core";
 
-const events = StreamRef.json("events", { schema: Schema.String });
+const events = StreamAddress.json("events", { schema: Schema.String });
 const program = Effect.gen(function* () {
   yield* Streams.create(events);
 

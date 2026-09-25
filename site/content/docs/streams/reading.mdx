@@ -98,7 +98,7 @@ const count = Effect.flatMap(Notes, (notes) =>
 
 ## Errors
 
-A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the family codec. A decode failure stops that read. The application picks the offset to restart from.
+A read fails with `StreamNotFound` or `StreamGone` when the stream is absent or removed, and with `DecodeFault` when a message does not match the stream codec. A decode failure stops that read. The application picks the offset to restart from.
 
 A Durable State reader accepts `insert` and `update` operations from other producers and reports both as `upsert`.
 

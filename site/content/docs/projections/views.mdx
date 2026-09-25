@@ -82,7 +82,7 @@ export const ordersForCustomer = defineView({
 });
 ```
 
-`changes(relation)` declares a relation's change stream in arrival order. The host writes those events to a stream family and publishes that family with [`Serve.stream`](/docs/projections/serve).
+`changes(relation)` declares a relation's change stream in arrival order. The host writes those events to a stream and publishes that stream with [`Serve.stream`](/docs/projections/serve).
 
 ## Check the plan
 

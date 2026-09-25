@@ -1,18 +1,18 @@
 ---
 title: Issue tracker projection
-description: SQL and named-output projection families on SQLite, with HTTP output routes.
+description: SQL and named-output projection streams on SQLite, with HTTP output routes.
 ---
 
-This issue tracker runs two workspace projection families on a persistent
+This issue tracker runs two workspace projection streams on a persistent
 SQLite host. Each member reads canonical issue facts, label membership facts,
 and three Durable State catalog streams: projects, users, and labels. The fused
 handler applies one page from each input in declaration order and advances all
 five input offsets in the same transaction as its application writes. A separate
-named `tracker` family produces board rows, label-count rows, issue transitions,
+named `tracker` stream produces board rows, label-count rows, issue transitions,
 and a private workspace fold value. A compact summary is derived from that value.
 
 `HttpRouter.serve` runs one `Layer.mergeAll` application with a scoped Bun listener,
-read-only protocol routes for the input and output families, commands, and these
+read-only protocol routes for the input and output streams, commands, and these
 output routes:
 
 | Route                                                       | Result                                                     |
@@ -29,13 +29,13 @@ State readers replay from `-1`; there is no snapshot.
 `POST /api/workspaces/:workspaceId/commands` follows the transaction recipe:
 read the issue stream, fold it, append with `expectedOffset`, then run the
 two members through `Projection.serialized` to full catch-up before reading the
-SQL result. At startup, catch-up is attempted for each member, then
+SQL result. At startup, catch-up is attempted for each address, then
 `Projection.onChange` watches the same five streams for each configured
 workspace and uses the same keyed mutexes. A scoped supervisor logs any watcher
 that completes successfully at info level and any unexpected failure at error
-level; normal shutdown interruption is ignored. Startup member failures are also
-logged with the projection key and do not stop the server or other members.
-Failed members can serve stale rows or an unavailable document. The hand trigger runs both members:
+level; normal shutdown interruption is ignored. Startup address failures are also
+logged with the projection key and do not stop the server or other addresses.
+Failed addresses can serve stale rows or an unavailable document. The hand trigger runs both addresses:
 
 ```bash
 ISSUE_TRACKER_DB=tracker.sqlite \
@@ -67,5 +67,5 @@ The HTTP smoke checks one command, restart checkpoint continuity, persisted
 rows, and one more command after resume. The Serve smoke checks all four output
 routes, key-only deletes, ETag/304, restart, and output advancement after restart.
 
-This demo has no browser or hosted deployment, keeping the SQLite family and
+This demo has no browser or hosted deployment, keeping the SQLite stream and
 its trigger rules visible on their own.

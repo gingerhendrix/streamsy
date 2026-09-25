@@ -8,35 +8,36 @@ and Cloudflare host glue and durable action delivery. Requires Effect
 import { Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
-import { Http, StreamRoute, Streams } from "@streamsy/core";
+import { Http, Streamsy, Memory } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 
-const events = StreamRoute.json("events/:seat", {
+class Events extends Streamsy.json<Events>()("Readme/Events", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
-});
+}) {}
+const streams = Streamsy.group(Events);
 const App = Layer.mergeAll(
-  Http.routes({ prefix: "/streams" }),
-  Serve.stream(events, "/feed/:seat"),
+  Http.routes(streams, { prefix: "/streams", access: "full" }),
+  Serve.stream(Events, "/feed/:seat"),
 );
 BunRuntime.runMain(
   Layer.launch(
     HttpRouter.serve(App).pipe(
-      Layer.provide(Streams.layerMemory()),
+      Layer.provide(Memory.layer({}, streams)),
       Layer.provide(listener({ port: 3000 })),
     ),
   ),
 );
 ```
 
-`Serve.stream` reads a family stream or bound `Output.stream` through `StreamsReader`.
-`Serve.state` accepts a StateRef family or bound `Output.rows` and reads changes from `-1`, with
+`Serve.stream` reads a stream or bound `Output.stream` through `StreamsReader`.
+`Serve.state` accepts a state declaration or bound `Output.rows` and reads changes from `-1`, with
 no snapshot. `Serve.document` takes a value source with a Schema and a
 `resolve(params)` Effect, including a bound `Output.value`; it serves canonical JSON with a deterministic ETag.
 Reads check outputs only: an initially absent stream answers 404 and an absent
 value answers 503 `DocumentUnavailable`. They create no stream, checkpoint or state row.
-Path parameters decode with the family's original Schema codecs. An explicit
+Path parameters decode with the stream's original Schema codecs. An explicit
 `params` Effect on stream/state can instead read a service provided by
 `HttpRouter.middleware`. Auth and on-demand projection runs are application
 middleware.
@@ -65,7 +66,7 @@ The caller owns the Layer scope. Tests or custom hosts can use Effect's
 Ten physical entries form six groups. Action's existing Sink names remain.
 State/stream recovery is `replay-from-start`; state consumers clear their local
 collection before replay. Old sink headers and snapshot reset exports are gone.
-Fingerprints cover route/member metadata and an optional `contract` revision;
+Fingerprints cover route/address metadata and an optional `contract` revision;
 change that revision when codec behavior changes without metadata changing.
 Fingerprints are change detectors, not authorization or cryptographic identities.
 

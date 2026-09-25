@@ -42,7 +42,7 @@ Create the parent directory before starting the server.
 ## How it works
 
 `server/index.ts` acquires the stream services once and shares their context with
-`HttpRouter.serve(Http.routes({ prefix: "/streams" }))`. A scoped
+`HttpRouter.serve(Http.routes(Streamsy.group(Workspaces), { prefix: "/streams", access: "read" }))`. A scoped
 `BunHttpServer.layer` retains Bun’s API routes and HTML bundling; protocol paths
 fall through to HttpRouter. API handlers submit Effects through the service
 runtime. Shutdown closes the listener runtime before the service runtime.
@@ -51,9 +51,9 @@ runtime. Shutdown closes the listener runtime before the service runtime.
 changes, validate against the resulting view, and append with
 `expectedOffset`. An `OffsetMismatch` retries the whole recipe, so parallel
 writers cannot silently overwrite one another. Project, issue, and comment
-changes share one `StreamRef.state` whose collections type both reads and
+changes share one `StreamAddress.state` whose collections type both reads and
 writes. Because the tracker appends its own events rather than projecting an
-upstream stream, each change records the workspace head read by the transaction
+upstream, each change records the workspace head read by the transaction
 as its source offset.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows

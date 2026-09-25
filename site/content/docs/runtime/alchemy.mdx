@@ -8,11 +8,11 @@ Alchemy separates construction from runtime. The outer generator declares resour
 ```ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
-import { AnyStream, Http, StreamGroup } from "@streamsy/core";
+import { Streamsy, Http } from "@streamsy/core";
 import * as Host from "@streamsy/serve/alchemy";
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
 
-const streams = StreamGroup.make(AnyStream);
+const streams = Streamsy.group(Streamsy.Wildcard);
 
 export class Streams extends Cloudflare.DurableObject<Streams>()(
   "Streams",

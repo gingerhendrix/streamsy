@@ -3,7 +3,7 @@ title: Storage
 description: Choose between the memory Layer, SQLite on Bun, and SQLite inside a Durable Object, and know how each one behaves.
 ---
 
-Three Layers give a program its streams: memory for one process and tests, SQLite on Bun for a server, and SQLite inside a Durable Object on Cloudflare. Each one takes options and the families it stores, as a group or as family classes.
+Three Layers give a program its streams: memory for one process and tests, SQLite on Bun for a server, and SQLite inside a Durable Object on Cloudflare. Each one takes options and the streams it stores, as a group.
 
 | Layer                                        | Persists            | Processes                        | Where                              |
 | -------------------------------------------- | ------------------- | -------------------------------- | ---------------------------------- |
@@ -13,7 +13,7 @@ Three Layers give a program its streams: memory for one process and tests, SQLit
 
 ## Memory
 
-`Memory.layer(options, group)` holds every stream of its families in the process. Two processes hold two unrelated stores, and disposing the Layer loses the data.
+`Memory.layer(options, group)` holds the streams in its group in the process. Two processes hold two unrelated stores, and disposing the Layer loses the data.
 
 Its commit boundary copies the whole store for every mutation, so one append
 costs linear time in the number of stored messages. This is the development
@@ -32,7 +32,7 @@ export const storage = BunStorage.layer({ client: { filename: "./streams.sqlite"
 
 The file is opened in WAL mode with the driver busy timeout at zero. Streamsy retries a busy transaction itself with a bounded yielding delay, so the event loop is not blocked while it waits.
 
-`BunStorage.layer` exposes `SqlClient`, `CommitBoundary`, `Storage`, SQL reactivity, the family services, and a `Changes` key for each family. Application SQL can share its transaction with stream mutations. `BunStorage.layerProtocol(options)` exposes the generic protocol reader and writer instead of families, for protocol tools.
+`BunStorage.layer` exposes `SqlClient`, `CommitBoundary`, `Storage`, SQL reactivity, the stream services, and a `Streamsy.ChangeFeed` key for each stream. Application SQL can share its transaction with stream mutations. `BunStorage.layerProtocol(options)` exposes the generic protocol reader and writer instead of streams, for protocol tools.
 
 The common shape is one process. The listener, a projection, and a drain run as Layers in one `Layer.launch` graph over one storage Layer value. See [HTTP](/docs/runtime/http).
 

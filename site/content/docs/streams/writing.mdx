@@ -3,7 +3,7 @@ title: Writing
 description: Append items as one atomic write, retry safely with a producer position, and guard a write with the expected offset.
 ---
 
-`append(params, items, options?)` encodes items with the family codec and writes them as one atomic append. Options close the stream, fence a producer, or make the write conditional.
+`append(params, items, options?)` encodes items with the stream codec and writes them as one atomic append. Options close the stream, fence a producer, or make the write conditional.
 
 ```ts
 import { Effect } from "effect";
@@ -18,35 +18,37 @@ const write = Effect.gen(function* () {
 
 `Appended` carries the new tail `offset`. Because reads are after-exclusive, that offset is also the next read position. `Duplicate` means this producer position was already accepted.
 
-A JSON family stores one message per item. A bytes append joins all items from one call into one stored message.
+A JSON stream stores one message per item. A bytes append joins all items from one call into one stored message.
 
 ## Durable State changes
 
-`State.changes` turns upsert and delete descriptions into the wire events for a
-member of a `StreamFamily.state` family. Each description names its collection. The helper derives the
+`DurableState.changes` turns upsert and delete descriptions into the wire events for a
+address of a `Streamsy.state` stream. Each description names its collection. The helper derives the
 key from that collection's key field, records the source `offset`, and assigns
 `txid` as `${offset}:${index}` within the append. An upsert or delete can override
 `txid` and add `timestamp` or `from`; the source offset always comes from
-`State.changes`.
+`DurableState.changes`.
 
 ```ts
 import { Effect } from "effect";
-import { State } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
 import { Workspace } from "./streams.ts";
 
 const createIssue = (offset: string, issue: { id: string; projectId: string; title: string }) =>
   Effect.gen(function* () {
     const workspace = yield* Workspace;
     const params = { workspaceId: "main" };
-    const facts = State.changes(Workspace.at(params), { offset }, [State.upsert("issue", issue)]);
+    const facts = DurableState.changes(Workspace.at(params), { offset }, [
+      DurableState.upsert("issue", issue),
+    ]);
     yield* workspace.append(params, facts);
   });
 ```
 
-A change for a collection the family does not declare, or a value that does not
+A change for a collection the stream does not declare, or a value that does not
 match that collection's schema, fails to compile.
 
-Reading the state family with `read` or `follow` returns the typed
+Reading the state stream with `read` or `follow` returns the typed
 change events; browser consumers can pass the same stream to
 `@durable-streams/state`.
 
@@ -134,7 +136,7 @@ const mutateWorkspace = (workspaceId, attempt) =>
 
 The attempt runs again after a conflict, so validation and event construction
 use the new state rather than values captured before the retry. One state
-family types the read events and the conditional append.
+stream types the read events and the conditional append.
 The tracker has no upstream source stream, so it records the workspace head it
 just read as the change's source offset. Its builders override `txid` with the
 browser UUID and add the server timestamp.
@@ -147,4 +149,4 @@ An append fails with `StreamClosed`, `OffsetMismatch`, `StaleEpoch`, `ProducerGa
 
 ## Over HTTP
 
-`POST` on the stream path appends. The host serves it only for a family with `append` or `full` access. The producer position travels in the `Producer-Id`, `Producer-Epoch`, and `Producer-Seq` headers, and the condition in `Stream-Expected-Offset`. The fetch Layer sends those headers only when its `capabilities` assert them. See [HTTP](/docs/runtime/http).
+`POST` on the stream path appends. The host serves it only for a stream with `append` or `full` access. The producer position travels in the `Producer-Id`, `Producer-Epoch`, and `Producer-Seq` headers, and the condition in `Stream-Expected-Offset`. The fetch Layer sends those headers only when its `capabilities` assert them. See [HTTP](/docs/runtime/http).

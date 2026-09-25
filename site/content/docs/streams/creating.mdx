@@ -3,7 +3,7 @@ title: Creating
 description: Create a stream with its content type and lifecycle, fork a child from a source, or remove a stream.
 ---
 
-`create(params, options?)` makes the member stream with the family content type and an optional lifecycle.
+`create(params, options?)` makes the address stream with the stream content type and an optional lifecycle.
 
 ```ts
 import { Effect } from "effect";
@@ -20,22 +20,22 @@ const ensure = Effect.gen(function* () {
 
 `closed: true` creates a closed stream. `initialData` seeds the first messages in the same write.
 
-## Durable State families
+## Durable State streams
 
-`StreamFamily.state` describes JSON streams of change events that
+`Streamsy.state` describes JSON streams of change events that
 `@durable-streams/state` can materialize. One stream holds several collections,
-each named by the `type` field on its events. Give the family a record of
+each named by the `type` field on its events. Give the stream a record of
 collections: the record key is the type, and each entry has the value schema and
 the value field used as the event key.
 
 ```ts
 import { Schema } from "effect";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 
 const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
 const Issue = Schema.Struct({ id: Schema.String, projectId: Schema.String, title: Schema.String });
 
-export class Workspace extends StreamFamily.state<Workspace>()(
+export class Workspace extends Streamsy.state<Workspace>()(
   "Tracker/Workspace",
   "workspaces/:workspaceId",
   {
@@ -48,7 +48,7 @@ export class Workspace extends StreamFamily.state<Workspace>()(
 ) {}
 ```
 
-The family reads and writes the typed change events of every collection, as a union
+The stream reads and writes the typed change events of every collection, as a union
 discriminated by `type`. Construct those changes with the `State` helpers
 described on the [Writing](/docs/streams/writing) page. A stream with one
 collection is a record with one entry.
@@ -65,7 +65,7 @@ A projection that reads its source continuously keeps the source alive. A paused
 
 A fork is a child stream that starts with a prefix of a source stream. The child has the source content type. New appends go to the child only, and the source is not changed.
 
-`fork(params, source, options?)` takes the parameters of the child, then the parameters of the source. Both are members of one family.
+`fork(params, source, options?)` takes the parameters of the child, then the parameters of the source. Both are addresses of one stream.
 
 ```ts
 import { Effect } from "effect";
@@ -84,9 +84,9 @@ const branch = Effect.gen(function* () {
 
 The child inherits every source message up to and including `forkOffset`. Without `forkOffset` the child starts empty and records where it came from. The result is `Created`, or `Exists` when the same fork was already made.
 
-Where a fork works depends on the backend. The memory Layer and SQLite share the prefix with the source by lineage. A constrained memory store copies it. A backend without fork support fails with `NotSupported`. On Cloudflare the source and the child must be placed on the same object. A family lives on one storage Layer, so a fork never crosses two backends. See [Cloudflare](/docs/runtime/cloudflare) and [Runtime](/docs/runtime/introduction).
+Where a fork works depends on the backend. The memory Layer and SQLite share the prefix with the source by lineage. A constrained memory store copies it. A backend without fork support fails with `NotSupported`. On Cloudflare the source and the child must be placed on the same object. A stream lives on one storage Layer, so a fork never crosses two backends. See [Cloudflare](/docs/runtime/cloudflare) and [Runtime](/docs/runtime/introduction).
 
-Errors you meet here: `ForkSourceNotFound` when the source is missing or outside the family, `CreateConflict` when the child id is taken with a different configuration, and `NotSupported`.
+Errors you meet here: `ForkSourceNotFound` when the source is missing or outside the stream, `CreateConflict` when the child id is taken with a different configuration, and `NotSupported`.
 
 The upstream [fork page](https://durablestreams.com/fork) describes the protocol side, including what a child inherits from the source expiry.
 
@@ -96,4 +96,4 @@ The upstream [fork page](https://durablestreams.com/fork) describes the protocol
 
 ## Over HTTP
 
-`PUT` on the stream path creates a stream. `PUT` with `Stream-Forked-From` forks one. `DELETE` removes it. The host serves these methods only for a family with `full` access. See [HTTP](/docs/runtime/http).
+`PUT` on the stream path creates a stream. `PUT` with `Stream-Forked-From` forks one. `DELETE` removes it. The host serves these methods only for a stream with `full` access. See [HTTP](/docs/runtime/http).

@@ -1,24 +1,24 @@
 ---
 title: Serve
-description: Publish stream families, Durable State changes and documents with Effect HttpRouter route layers.
+description: Publish streams, Durable State changes and documents with Effect HttpRouter route layers.
 ---
 
 `Serve.stream`, `Serve.state` and `Serve.document` return route Layers. Join them with `Layer.mergeAll`, then use `HttpRouter.serve` or `HttpRouter.toWebHandler`. See [HTTP](/docs/runtime/http) for hosting.
 
 ```ts
 import { Layer, Schema } from "effect";
-import { Http, StreamFamily, StreamGroup } from "@streamsy/core";
+import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 
-class Events extends StreamFamily.json<Events>()("Game/Events", "events/:seat", {
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
 }) {}
-class Cards extends StreamFamily.state<Cards>()("Game/Cards", "cards/:seat", {
+class Cards extends Streamsy.state<Cards>()("Game/Cards", "cards/:seat", {
   params: { seat: Schema.String },
   collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
-export const game = StreamGroup.make(Events, Cards);
+export const game = Streamsy.group(Events, Cards);
 
 export const App = Layer.mergeAll(
   Http.routes(game, { prefix: "/streams", access: "read" }),
@@ -27,31 +27,29 @@ export const App = Layer.mergeAll(
 );
 ```
 
-A Serve route requires the family it reads, so `App` requires `Events` and `Cards`. Provide them with a storage Layer for the group. The family's Schema codecs decode path parameters. Literal route parameters must equal the family parameters; widened paths are checked at registration. Invalid values get 400, and unmatched paths get the router's 404. Each Serve path owns every method: GET and HEAD read, other methods get 405 with `allow: GET, HEAD`. A Serve URL beneath the protocol prefix is not a second writable id for that stream. Duplicate route shapes fail the Layer build.
+A Serve route requires the stream it reads, so `App` requires `Events` and `Cards`. Provide them with a storage Layer for the group. The stream's Schema codecs decode path parameters. Literal route parameters must equal the stream parameters; widened paths are checked at registration. Invalid values get 400, and unmatched paths get the router's 404. Each Serve path owns every method: GET and HEAD read, other methods get 405 with `allow: GET, HEAD`. A Serve URL beneath the protocol prefix is not a second writable id for that stream. Duplicate route shapes fail the Layer build.
 
 State serves the Durable State change stream without a snapshot. A new client reads from `-1`. On `replay-from-start`, clear local rows and replay from `-1`. Replay requires retained history and grows with it. `x-streamsy-state-reset: snapshot` gets 400; no snapshot reset headers are exported.
 
 ## Serving declared outputs
 
-A named `Projection.family` accepts stream families as output targets. Pass its bound `outputs` directly to Serve; the family codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
+A named `Projection.family` accepts streams as output targets. Pass its bound `outputs` directly to Serve; the stream codecs still own path parameters. This example is exercised by `packages/projection/test/serve.test.ts`:
 
 ```ts
 import { Layer, Schema } from "effect";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };
-class Numbers extends StreamFamily.json<Numbers>()("Seats/Numbers", "numbers/:seat", {
+class Numbers extends Streamsy.json<Numbers>()("Seats/Numbers", "numbers/:seat", {
   params,
   schema: Schema.Finite,
 }) {}
-class Board extends StreamFamily.bytes<Board>()("Seats/Board", "board/:seat", { params }) {}
-class Transitions extends StreamFamily.bytes<Transitions>()(
-  "Seats/Transitions",
-  "transitions/:seat",
-  { params },
-) {}
+class Board extends Streamsy.bytes<Board>()("Seats/Board", "board/:seat", { params }) {}
+class Transitions extends Streamsy.bytes<Transitions>()("Seats/Transitions", "transitions/:seat", {
+  params,
+}) {}
 const Card = Schema.Struct({ id: Schema.String, total: Schema.FiniteFromString });
 const tracker = Projection.family({
   id: "tracker",
@@ -78,11 +76,11 @@ const OutputRoutes = Layer.mergeAll(
 );
 ```
 
-The target families supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` families and `Projection.State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
+The target streams supply only ids and the storage owner: each output declaration owns its JSON codec. Run `tracker.member({ seat: 42 })` using the projection host before reading its outputs. Provide that host's `Board` and `Transitions` streams and `Projection.State` to the route app. Serve checks outputs without probing inputs or running the projection. An initial absent stream/rows read answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Value schemas must have JSON encoded types to be served (for example, encode dates as strings).
 
 In a named family, fixed-id outputs and targets using fewer parameters share a stream across matching members, each writing with its own producer id, and Serve exposes that stream at every matching member URL.
 
-For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateRef` codec; deletes may omit `old_value`. No read creates a stream, checkpoint, or state row.
+For a fixed `Projection.outputs(...)` declaration, its `outputs` are also Serve sources, with no route parameters. Rows use the output name as their collection type and one shared `StateAddress` codec; deletes may omit `old_value`. No read creates a stream, checkpoint, or state row.
 
 ## Auth and per-request params
 
@@ -94,7 +92,7 @@ const Mine = Serve.stream(Events, "/me", {
 }).pipe(Layer.provide(SeatAuth.layer));
 ```
 
-`SeatAuth` declares that it provides `CurrentSeat`, checks the token, and either answers 401 or provides the service around its handler. The params Effect replaces the complete parameter set. Its typed failures remain router request errors for application middleware. A runnable host must satisfy the identity requirement. Protect raw protocol routes too if they expose private data; `Http.routes` serves only the families you pass, with the access rule you set. An on-demand projection run belongs in application middleware.
+`SeatAuth` declares that it provides `CurrentSeat`, checks the token, and either answers 401 or provides the service around its handler. The params Effect replaces the complete parameter set. Its typed failures remain router request errors for application middleware. A runnable host must satisfy the identity requirement. Protect raw protocol routes too if they expose private data; `Http.routes` serves only the streams in the group you pass, with the access rule you set. An on-demand projection run belongs in application middleware.
 
 ## Documents
 
@@ -137,6 +135,6 @@ const Cors = HttpRouter.cors({
 const BrowserApp = Layer.mergeAll(App, Cors);
 ```
 
-Fingerprints include the selected stream member and state collection names/keys. `options.contract` supplies an explicit revision when Schema or resolver behavior changes without metadata changing. Fingerprints do not hash functions or replace authorization.
+Fingerprints include the selected stream address and state collection names/keys. `options.contract` supplies an explicit revision when Schema or resolver behavior changes without metadata changing. Fingerprints do not hash functions or replace authorization.
 
-The current protocol uses raw encoded URL ids; Serve resolves decoded family params. Spaces and non-ASCII params can therefore identify different raw protocol ids. Prefer canonical URL-safe family segments until the core URL/id policy is unified.
+The current protocol uses raw encoded URL ids; Serve resolves decoded stream params. Spaces and non-ASCII params can therefore identify different raw protocol ids. Prefer canonical URL-safe stream segments until the core URL/id policy is unified.

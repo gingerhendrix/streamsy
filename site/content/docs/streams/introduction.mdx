@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: What a stream is, how a family names a set of streams, and how family methods report results and errors.
+description: What a stream is, how a stream names a set of streams, and how stream methods report results and errors.
 ---
 
-A stream is an ordered, append-only sequence of messages under one id. A family names a set of streams with one id template and one codec. A program acquires the family as an Effect service and calls its methods with the parameters of one member. The family encodes what you append and decodes what you read.
+A stream is an ordered, append-only sequence of messages under one id. A stream names a set of streams with one id template and one codec. A program acquires the stream as an Effect service and calls its methods with the parameters of one address. The stream encodes what you append and decodes what you read.
 
 Streamsy implements the [Durable Streams](https://durablestreams.com/) protocol. The protocol model, its six operations, and its live read modes are described at [durablestreams.com/concepts](https://durablestreams.com/concepts). This page does not restate them.
 
@@ -11,69 +11,69 @@ Streamsy implements the [Durable Streams](https://durablestreams.com/) protocol.
 
 Every message has an offset. An offset is an opaque string that sorts within one stream. `ZERO_OFFSET` is the position before the first message. Never compare an offset from one stream with an offset from another. See [PROTOCOL.md section 8](https://github.com/durable-streams/durable-streams/blob/main/PROTOCOL.md#8-offsets).
 
-## Families
+## Streams
 
 ```ts
 import { Schema } from "effect";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 
 export const Note = Schema.Struct({ id: Schema.String, text: Schema.String });
 const NoteRow = Schema.Struct({ id: Schema.String, text: Schema.String, updatedAt: Schema.String });
 
-export class Notes extends StreamFamily.json<Notes>()("Notes/Notes", "notes", {
+export class Notes extends Streamsy.json<Notes>()("Notes/Notes", "notes", {
   params: {},
   schema: Note,
 }) {}
-export class Blobs extends StreamFamily.bytes<Blobs>()("Notes/Blobs", "blobs/:blobId", {
+export class Blobs extends Streamsy.bytes<Blobs>()("Notes/Blobs", "blobs/:blobId", {
   params: { blobId: Schema.String },
   contentType: "image/png",
 }) {}
-export class NoteIndex extends StreamFamily.state<NoteIndex>()("Notes/NoteIndex", "note-index", {
+export class NoteIndex extends Streamsy.state<NoteIndex>()("Notes/NoteIndex", "note-index", {
   params: {},
   collections: { note: { schema: NoteRow, key: "id" } },
 }) {}
 ```
 
-A family class holds no resource and opens no connection. The first argument is the family name. Names are global service identities, so two classes with one name are one service. Give each name an application namespace.
+A stream class holds no resource and opens no connection. The first argument is the stream name. Names are global service identities, so two classes with one name are one service. Give each name an application namespace.
 
-| Factory                                                               | Items                                            | Upstream mode                                             |
-| --------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
-| `StreamFamily.json<Self>()(name, template, { params, schema })`       | one message per item                             | [JSON mode](https://durablestreams.com/json-mode)         |
-| `StreamFamily.bytes<Self>()(name, template, { params })`              | items joined into one message                    | [byte stream](https://durablestreams.com/concepts)        |
-| `StreamFamily.state<Self>()(name, template, { params, collections })` | Durable State change events, typed by collection | [Durable State](https://durablestreams.com/durable-state) |
-| `StreamFamily.custom<Self>()(name, { parse, ref })`                   | the items of the ref that `ref` builds           | a grammar that a template cannot express                  |
+| Factory                                                           | Items                                            | Upstream mode                                             |
+| ----------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
+| `Streamsy.json<Self>()(name, template, { params, schema })`       | one message per item                             | [JSON mode](https://durablestreams.com/json-mode)         |
+| `Streamsy.bytes<Self>()(name, template, { params })`              | items joined into one message                    | [byte stream](https://durablestreams.com/concepts)        |
+| `Streamsy.state<Self>()(name, template, { params, collections })` | Durable State change events, typed by collection | [Durable State](https://durablestreams.com/durable-state) |
+| `Streamsy.custom<Self>()(name, { parse, address })`               | the items of the address that `address` builds   | a grammar that a template cannot express                  |
 
 `bytes` also takes an optional `contentType`. The id is a path. Segments are separated by `/`. A segment cannot be empty, `.`, or `..`, and the id cannot contain `%`, `?`, `#`, or `\`. Over HTTP the id is the stream path under the host prefix, so `notes` is served at `/notes`.
 
-## Templates and members
+## Templates and addresses
 
-A template is relative. Each `:name` is exactly one segment, and there are no wildcards. The set of `:name` parameters and the keys of `params` must agree, and the compiler checks that. A template with no parameters has exactly one member, with `{}` as its parameters.
+A template is relative. Each `:name` is exactly one segment, and there are no wildcards. The set of `:name` parameters and the keys of `params` must agree, and the compiler checks that. A template with no parameters has exactly one address, with `{}` as its parameters.
 
 ```ts
 import { Option, Schema } from "effect";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 
 const OrderEvent = Schema.Struct({ type: Schema.String, orderId: Schema.String });
 
-export class OrderEvents extends StreamFamily.json<OrderEvents>()(
+export class OrderEvents extends Streamsy.json<OrderEvents>()(
   "Shop/OrderEvents",
   "orders/:orderId/events",
   { params: { orderId: Schema.String }, schema: OrderEvent },
 ) {}
 
-const member = OrderEvents.at({ orderId: "o-17" }); // member.id === "orders/o-17/events"
+const address = OrderEvents.at({ orderId: "o-17" }); // address.id === "orders/o-17/events"
 const params = OrderEvents.parse("orders/o-17/events"); // Option.some({ orderId: "o-17" })
 const owns = OrderEvents.match("notes"); // false
 ```
 
-`at(params)` returns the member: a `StreamRef` for one stream, with the family key attached. Projection inputs and outputs, `State.changes`, and Serve take members. A parameter that does not decode makes `parse` return `None`.
+`at(params)` returns the address: a `StreamAddress` for one stream, with the stream key attached. Projection inputs and outputs, `DurableState.changes`, and Serve take addresses. A parameter that does not decode makes `parse` return `None`.
 
-A state family builds Durable State members whose refs keep their collections, so `State.changes` accepts the member and stamps changes described by `State.upsert`:
+A state stream builds Durable State addresses whose refs keep their collections, so `DurableState.changes` accepts the address and stamps changes described by `DurableState.upsert`:
 
 ```ts
-import { State } from "@streamsy/core";
+import { DurableState } from "@streamsy/core";
 
-class WorkspaceOrders extends StreamFamily.state<WorkspaceOrders>()(
+class WorkspaceOrders extends Streamsy.state<WorkspaceOrders>()(
   "Shop/WorkspaceOrders",
   "workspaces/:workspaceId/orders",
   {
@@ -81,34 +81,34 @@ class WorkspaceOrders extends StreamFamily.state<WorkspaceOrders>()(
     collections: { order: { schema: OrderEvent, key: "orderId" } },
   },
 ) {}
-const changes = State.changes(
+const changes = DurableState.changes(
   WorkspaceOrders.at({ workspaceId: "acme" }),
   { offset: "source-offset" },
-  [State.upsert("order", { type: "placed", orderId: "o-17" })],
+  [DurableState.upsert("order", { type: "placed", orderId: "o-17" })],
 );
 ```
 
-The family also decides where its streams live. The storage Layer that provides a family stores all of its members, and `Placement.byRoute` uses the family to name the Durable Object that owns a stream. Both are on the [Runtime](/docs/runtime/introduction) pages.
+The stream also decides where its streams live. The storage Layer that provides a stream stores all of its addresses, and `Placement.byRoute` uses the stream to name the Durable Object that owns a stream. Both are on the [Runtime](/docs/runtime/introduction) pages.
 
 ## Groups
 
-`StreamGroup.make(...families)` lists the families that one host provides and serves. Storage Layers, `Fetch.layer`, and `Http.routes` all take a group.
+`Streamsy.group(...streams)` lists the streams that one host provides and serves. Storage Layers, `Fetch.layer`, and `Http.routes` all take a group.
 
 ```ts
-import { StreamGroup } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Blobs, NoteIndex, Notes } from "./streams.ts";
 
-export const notesApp = StreamGroup.make(Notes, Blobs, NoteIndex);
+export const notesApp = Streamsy.group(Notes, Blobs, NoteIndex);
 ```
 
-A group refuses two families with the same name, the same template, or templates that can match one id. `AnyStream` is a built-in family that owns every id. It must be the last family in a group, so it owns only the ids that no other family owns. Families from `StreamFamily.custom` cannot be checked for overlap; the first match wins.
+A group refuses two streams with the same name, the same template, or templates that can match one id. `Streamsy.Wildcard` is a built-in stream that owns every id. It must be the last stream in a group, so it owns only the ids that no other stream owns. Streams from `Streamsy.custom` cannot be checked for overlap; the first match wins.
 
 ## What you can do with a stream
 
-Acquire the family with `yield* Notes`, then call:
+Acquire the stream with `yield* Notes`, then call:
 
 - `create(params, options?)` makes the stream. See [Creating](/docs/streams/creating).
-- `fork(params, source, options?)` makes a child stream from a source member. See [Creating](/docs/streams/creating).
+- `fork(params, source, options?)` makes a child stream from a source address. See [Creating](/docs/streams/creating).
 - `append(params, items, options?)` writes items as one atomic append. See [Writing](/docs/streams/writing).
 - `read(params, options?)` returns stored batches after an offset. See [Reading](/docs/streams/reading).
 - `follow(params, options?)` reads, then waits for more. See [Reading](/docs/streams/reading).
@@ -116,7 +116,7 @@ Acquire the family with `yield* Notes`, then call:
 - `head(params)` returns the tail and the configuration without messages.
 - `remove(params)` deletes the stream. See [Creating](/docs/streams/creating).
 
-A family service reaches only the ids of its own template. It cannot read or write the streams of another family.
+A stream service reaches only the ids of its own template. It cannot read or write the streams of another stream.
 
 ## Results and errors
 
@@ -136,10 +136,10 @@ const tolerant = Effect.flatMap(Notes, (notes) =>
 );
 ```
 
-Each page names the errors you meet on that page. Infrastructure failures keep a `Fault` suffix: `StorageFault` from a local store, `TransportFault` from the fetch Layer, and `EncodeFault` or `DecodeFault` from the family codec. The full set is in the reference.
+Each page names the errors you meet on that page. Infrastructure failures keep a `Fault` suffix: `StorageFault` from a local store, `TransportFault` from the fetch Layer, and `EncodeFault` or `DecodeFault` from the stream codec. The full set is in the reference.
 
 ## Layers
 
 A program that acquires `Notes` requires the `Notes` service. A Layer provides it, and the Layer decides where the data lives: `Memory.layer({}, Notes)`, a SQLite Layer, or `Fetch.layer`. The program does not change between Layers. See [Runtime](/docs/runtime/introduction).
 
-The generic `StreamsReader` and `StreamsWriter` services, the `Streams` functions over a raw `StreamRef`, and `Protocol.layer` are on the `@streamsy/core/protocol` subpath. They are for storage adapters, protocol tests, and HTTP internals. An application uses families.
+The generic `StreamsReader` and `StreamsWriter` services, the `Streams` functions over a raw `StreamAddress`, and `Protocol.layer` are on the `@streamsy/core/protocol` subpath. They are for storage adapters, protocol tests, and HTTP internals. An application uses streams.

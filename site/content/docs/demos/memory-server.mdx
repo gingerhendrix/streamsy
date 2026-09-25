@@ -50,7 +50,7 @@ shows the expected status, headers, and body for every step. The
 
 ## How it works
 
-The server declares one group, `StreamGroup.make(AnyStream)`, so it owns every
+The server declares one group, `Streamsy.group(Streamsy.Wildcard)`, so it owns every
 stream id. `HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs over
 `Memory.layer({}, streams)` and a scoped Bun listener. Full access allows the
 create and append steps of the walkthrough. The 60-second idle timeout allows a

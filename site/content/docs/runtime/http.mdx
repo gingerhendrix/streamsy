@@ -1,24 +1,24 @@
 ---
 title: HTTP
-description: Compose HttpRouter route layers, set per-family access, and host them on Bun or a Fetch boundary.
+description: Compose HttpRouter route layers, set per-stream access, and host them on Bun or a Fetch boundary.
 ---
 
-`Http.routes(group, { access })` exposes the Durable Streams protocol for a group of families as an Effect HttpRouter route Layer. One `prefix` controls route registration and protocol path stripping. `Http.app` is the underlying HttpEffect over the generic protocol services, for protocol tools.
+`Http.routes(group, { access })` exposes the Durable Streams protocol for a group of streams as an Effect HttpRouter route Layer. One `prefix` controls route registration and protocol path stripping. `Http.app` is the underlying HttpEffect over the generic protocol services, for protocol tools.
 
 ```ts
 import { Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
-import { Http, StreamFamily, StreamGroup } from "@streamsy/core";
+import { Http, Streamsy } from "@streamsy/core";
 import { Serve } from "@streamsy/serve";
 import { listener } from "@streamsy/serve/bun";
 import * as BunStorage from "@streamsy/storage/bun";
 
-class Events extends StreamFamily.json<Events>()("Game/Events", "events/:seat", {
+class Events extends Streamsy.json<Events>()("Game/Events", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
 }) {}
-const game = StreamGroup.make(Events);
+const game = Streamsy.group(Events);
 
 const App = Layer.mergeAll(
   Http.routes(game, { prefix: "/streams", access: "append" }),
@@ -38,7 +38,7 @@ The prefix defaults to `/`; `/streams/` normalizes to `/streams`. Bare prefix re
 
 ## Access
 
-Each served family has one access rule:
+Each served stream has one access rule:
 
 | Access   | Methods                               |
 | -------- | ------------------------------------- |
@@ -46,9 +46,9 @@ Each served family has one access rule:
 | `append` | GET, HEAD, POST, OPTIONS              |
 | `full`   | GET, HEAD, PUT, POST, DELETE, OPTIONS |
 
-`access` takes one rule for the whole group, or a function from a family to its rule. To set rules one by one, pass entries instead of a group: `Http.routes([{ family: Events, access: "append" }, { family: Cards, access: "read" }], { prefix })`. A method that the rule denies answers 405 with an `allow` header, and the request body is discarded. An id that no served family owns answers 404.
+`access` takes one rule for the whole group, or a function from a stream to its rule. To set rules one by one, pass entries instead of a group: `Http.routes([{ stream: Events, access: "append" }, { stream: Cards, access: "read" }], { prefix })`. A method that the rule denies answers 405 with an `allow` header, and the request body is discarded. An id that no served stream owns answers 404.
 
-The route Layer requires the service of every served family. A host that serves any id uses `StreamGroup.make(AnyStream)`, usually with `access: "full"`; the memory server demo and the hosted conformance fixture do that.
+The route Layer requires the service of every served stream. A host that serves any id uses `Streamsy.group(Streamsy.Wildcard)`, usually with `access: "full"`; the memory server demo and the hosted conformance fixture do that.
 
 ## Fetch boundary
 
@@ -89,4 +89,4 @@ const remote = Fetch.layer(
 ).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
-The remote Layer provides the family services of the group, so a program runs over it without change. It provides no `Changes` keys, so `Projection.onChange` cannot run over fetch families; `Projection.follow` can. Capabilities are assertions about the host, not discovery. `Fetch.layerProtocol(options)` provides the generic reader and writer instead, for protocol tools. Browser applications use the official Durable Streams client and state packages.
+The remote Layer provides the stream services of the group, so a program runs over it without change. It provides no `Streamsy.ChangeFeed` keys, so `Projection.onChange` cannot run over fetch streams; `Projection.follow` can. Capabilities are assertions about the host, not discovery. `Fetch.layerProtocol(options)` provides the generic reader and writer instead, for protocol tools. Browser applications use the official Durable Streams client and state packages.

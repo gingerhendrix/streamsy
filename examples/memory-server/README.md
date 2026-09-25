@@ -87,7 +87,7 @@ values are opaque: copy the value returned by the server.
 
 ## How it works
 
-`HttpRouter.serve(Http.routes())` runs with one `Streams.layerMemory()` and a
+`HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs with one `Memory.layer({}, streams)` and a
 scoped Bun listener. The 60-second idle timeout allows a 30-second protocol long
 poll to complete. Shutdown disposes the runtime, closing the listener and store.
 

@@ -1,40 +1,39 @@
 ---
 title: Introduction
-description: A small Streamsy application from a typed stream family to a served projection, one step at a time.
+description: A small Streamsy application from a typed stream to a served projection, one step at a time.
 ---
 
 This page walks through one small application. Each step shows the call and links the guide that explains it. The program is the same on every host; only the Layer at the end changes.
 
-## 1. Declare families
+## 1. Declare streams
 
-A family class names a set of streams with one id template and one codec. The class is also the service key that a program acquires. A group lists the families that one host provides and serves.
+A stream class names a set of streams with one id template and one codec. The class is also the service key that a program acquires. A group lists the streams that one host provides and serves.
 
 ```ts
 import { Schema } from "effect";
-import { StreamFamily, StreamGroup } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 
 export const OrderEvent = Schema.Struct({ orderId: Schema.String, amount: Schema.Finite });
 export const OrderRow = Schema.Struct({ orderId: Schema.String, total: Schema.Finite });
 
-export class Orders extends StreamFamily.json<Orders>()("Shop/Orders", "orders", {
+export class Orders extends Streamsy.json<Orders>()("Shop/Orders", "orders", {
   params: {},
   schema: OrderEvent,
 }) {}
-export class OrderTotals extends StreamFamily.json<OrderTotals>()(
-  "Shop/OrderTotals",
-  "order-totals",
-  { params: {}, schema: OrderRow },
-) {}
-export class OrderEvents extends StreamFamily.json<OrderEvents>()(
+export class OrderTotals extends Streamsy.json<OrderTotals>()("Shop/OrderTotals", "order-totals", {
+  params: {},
+  schema: OrderRow,
+}) {}
+export class OrderEvents extends Streamsy.json<OrderEvents>()(
   "Shop/OrderEvents",
   "orders/:orderId/events",
   { params: { orderId: Schema.String }, schema: OrderEvent },
 ) {}
 
-export const shop = StreamGroup.make(Orders, OrderTotals, OrderEvents);
+export const shop = Streamsy.group(Orders, OrderTotals, OrderEvents);
 ```
 
-`Orders` has one member, because its template has no parameters. `OrderEvents` has one member per `orderId`. The first argument is a global service name, so give it an application namespace.
+`Orders` has one address, because its template has no parameters. `OrderEvents` has one address per `orderId`. The first argument is a global service name, so give it an application namespace.
 
 See [Streams](/docs/streams/introduction).
 
@@ -52,7 +51,7 @@ export const write = Effect.gen(function* () {
 });
 ```
 
-Every method takes the parameters of one member first. `write` requires the `Orders` service, and the compiler reports a Layer that does not provide it.
+Every method takes the parameters of one address first. `write` requires the `Orders` service, and the compiler reports a Layer that does not provide it.
 
 See [Creating](/docs/streams/creating) and [Writing](/docs/streams/writing).
 
@@ -92,7 +91,7 @@ const projection = Projection.make({
 export const catchUp = Projection.run(projection);
 ```
 
-`Orders.at({})` names one member as the projection input. The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. `catchUp` requires `Orders`, `OrderTotals`, and the `Checkpoints` service.
+`Orders.at({})` names one address as the projection input. The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. `catchUp` requires `Orders`, `OrderTotals`, and the `Checkpoints` service.
 
 See [Projections](/docs/projections/introduction).
 
@@ -150,7 +149,7 @@ const server = HttpRouter.serve(Http.routes(shop, { prefix: "/streams", access: 
 BunRuntime.runMain(Layer.launch(server));
 ```
 
-`Http.routes` serves only the families in the group. `access: "read"` allows GET and HEAD. An id that no family owns answers 404, and a write answers 405.
+`Http.routes` serves only the streams in the group. `access: "read"` allows GET and HEAD. An id that no stream owns answers 404, and a write answers 405.
 
 See [HTTP](/docs/runtime/http).
 
@@ -182,7 +181,7 @@ export const remote = Fetch.layer(
 ).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
-The remote Layer provides the same family services, so `watch` runs over it without change. A write through it needs `append` or `full` access on the host.
+The remote Layer provides the same stream services, so `watch` runs over it without change. A write through it needs `append` or `full` access on the host.
 
 See [HTTP](/docs/runtime/http).
 
@@ -195,4 +194,4 @@ See [HTTP](/docs/runtime/http).
 | `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | Cloudflare          |
 | `Fetch.layer({ baseUrl }, group)`            | remote                | any conformant host |
 
-The program does not change between Layers. To put families on different backends, merge one Layer per backend; see [Runtime](/docs/runtime/introduction). For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).
+The program does not change between Layers. To put streams on different backends, merge one Layer per backend; see [Runtime](/docs/runtime/introduction). For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).

@@ -23,11 +23,11 @@ Object.
 
 ```ts
 import { Schema } from "effect";
-import { StreamRef, Streams } from "@streamsy/core";
+import { StreamAddress, Streams } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 
-const numbers = StreamRef.json("numbers", { schema: Schema.Finite });
-const doubled = StreamRef.json("doubled", { schema: Schema.Finite });
+const numbers = StreamAddress.json("numbers", { schema: Schema.Finite });
+const doubled = StreamAddress.json("doubled", { schema: Schema.Finite });
 
 const projection = Projection.make({
   id: "doubled",
@@ -56,7 +56,7 @@ generation, and retirement rules.
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
 `Projection.family(definition)` declares routed members once; see
-[Families](https://streamsy.dev/docs/projections/projections#families).
+[Streams](https://streamsy.dev/docs/projections/projections#streams).
 `Projection.serialized(projection, options)` runs one caller at a time per canonical key;
 see [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
 `Projection.onChange` runs a projection, or an explicit array of family members, from
@@ -80,7 +80,7 @@ import { Effect } from "effect";
 const totals = Projection.stream({
   id: "totals",
   input: numbers,
-  output: StreamRef.json("totals", { schema: Schema.Finite }),
+  output: StreamAddress.json("totals", { schema: Schema.Finite }),
   process: (batch) => Effect.succeed([batch.input.items.reduce((sum, n) => sum + n, 0)]),
 });
 ```

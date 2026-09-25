@@ -10,11 +10,11 @@ bun add @streamsy/storage @streamsy/core effect
 
 ## Entries
 
-| Entry                              | Use it for                                                          |
-| ---------------------------------- | ------------------------------------------------------------------- |
-| `@streamsy/storage/bun`            | A retained SQLite file on Bun (`@effect/sql-sqlite-bun`)            |
-| `@streamsy/storage/durable-object` | SQLite inside a Cloudflare Durable Object (`@effect/sql-sqlite-do`) |
-| `@streamsy/storage`                | Any SQLite-family `SqlClient` (SQLite 3.42 or newer) you provide    |
+| Entry                              | Use it for                                                           |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `@streamsy/storage/bun`            | A retained SQLite file on Bun (`@effect/sql-sqlite-bun`)             |
+| `@streamsy/storage/durable-object` | SQLite inside a Cloudflare Durable Object (`@effect/sql-sqlite-do`)  |
+| `@streamsy/storage`                | Any SQLite-compatible `SqlClient` (SQLite 3.42 or newer) you provide |
 
 The Bun and Durable Object entries export `layer` and `layerProtocol`.
 `layerProtocol` exposes `StreamsReader`, `StreamsWriter`, `Storage`,
@@ -29,12 +29,13 @@ exports `layer` over a `SqlClient` you supply, plus `CommitBoundary`.
 import { Layer } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { BunRuntime } from "@effect/platform-bun";
-import { Http } from "@streamsy/core";
+import { Http, Streamsy } from "@streamsy/core";
 import { listener } from "@streamsy/serve/bun";
-import { layerProtocol } from "@streamsy/storage/bun";
+import { layer } from "@streamsy/storage/bun";
 
-const Server = HttpRouter.serve(Http.routes({ prefix: "/streams" })).pipe(
-  Layer.provide(layerProtocol({ client: { filename: "./streams.sqlite" } })),
+const streams = Streamsy.group(Streamsy.Wildcard);
+const Server = HttpRouter.serve(Http.routes(streams, { prefix: "/streams", access: "full" })).pipe(
+  Layer.provide(layer({ client: { filename: "./streams.sqlite" } }, streams)),
   Layer.provide(listener({ port: 3000 })),
 );
 BunRuntime.runMain(Layer.launch(Server));

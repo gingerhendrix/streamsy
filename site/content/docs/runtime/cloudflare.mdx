@@ -7,17 +7,17 @@ The Worker placement router forwards each raw protocol path to one Durable Objec
 
 ```ts
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
-import { Http, StreamGroup } from "@streamsy/core";
+import { Http, Streamsy } from "@streamsy/core";
 import { Placement, StreamsyObject, router } from "@streamsy/serve/cloudflare";
 import * as DurableObjectStorage from "@streamsy/storage/durable-object";
 import { Events } from "./streams.ts";
 
-const game = StreamGroup.make(Events);
+const game = Streamsy.group(Events);
 
 interface Env {
   readonly STREAMS: DurableObjectNamespace;
 }
-export class StreamsObject extends StreamsyObject.make<Env, StreamGroup.Services<typeof game>>({
+export class StreamsObject extends StreamsyObject.make<Env, Streamsy.Services<typeof game>>({
   app: Http.routes(game, { prefix: "/streams", access: "append" }),
   layer: (state) => DurableObjectStorage.layer({ client: { storage: state.storage } }, game),
 }) {}
@@ -28,7 +28,7 @@ export default router<Env>({
 });
 ```
 
-The second type parameter of `StreamsyObject.make` names the services that the app needs from the object Layer. `StreamGroup.Services<typeof game>` is the union of the group's family services.
+The second type parameter of `StreamsyObject.make` names the services that the app needs from the object Layer. `Streamsy.Services<typeof game>` is the union of the group's stream services.
 
 Each object lazily acquires one successful storage context and builds `HttpRouter.toWebHandler` once for that acquisition. Concurrent accesses share it. A failed acquisition closes its attempted scope, returns 503 with `retry-after: 1`, and can retry on the next access. The compiled handler and its context share ownership. Object eviction has no universal asynchronous disposal hook. Request logging is disabled in this host.
 
@@ -36,7 +36,7 @@ The host installs global mutation middleware around the application. PUT, POST a
 
 ## Placement and limits
 
-`Placement.byStream()` is the default. `Placement.byKey(fn)` groups stream paths. `Placement.byRoute([rule({ route: Events, owner: ({ seat }) => seat })])` takes a family class as the route and decodes its params before selecting an owner. The first matching rule wins. Empty or unmatched owner keys return 400; throwing placement functions return 500.
+`Placement.byStream()` is the default. `Placement.byKey(fn)` groups stream paths. `Placement.byRoute([rule({ stream: Events, owner: ({ seat }) => seat })])` takes a stream class as the route and decodes its params before selecting an owner. The first matching rule wins. Empty or unmatched owner keys return 400; throwing placement functions return 500.
 
 Fork source and child must share an object. Placement determines the transaction owner, and must remain stable while data lives under its object names. No cross-object writes are added.
 

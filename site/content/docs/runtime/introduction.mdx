@@ -7,7 +7,7 @@ Every Streamsy program is an Effect that needs a Layer. The application builds t
 
 ```ts
 import { ManagedRuntime } from "effect";
-import { Memory } from "@streamsy/core";
+import { Memory, Streamsy } from "@streamsy/core";
 import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
@@ -25,7 +25,7 @@ A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch`
 
 ## How the services fit
 
-`Storage` is the backend. A storage Layer builds the protocol over its `Storage` and binds the families that you pass to it, so a program sees only family services. It also provides a `Changes` key for each family, which `Projection.onChange` needs. `Http.routes` serves a group of families with one access rule per family. `Fetch.layer` provides the same family services from a remote host, without `Changes` keys.
+`Storage` is the backend. A storage Layer builds the protocol over its `Storage` and binds the streams that you pass to it, so a program sees only stream services. It also provides a `Streamsy.ChangeFeed` key for each stream, which `Projection.onChange` needs. `Http.routes` serves a group of streams with one access rule per stream. `Fetch.layer` provides the same stream services from a remote host, without `Streamsy.ChangeFeed` keys.
 
 | Layer                                        | Persists              | Use                 | Page                                   |
 | -------------------------------------------- | --------------------- | ------------------- | -------------------------------------- |
@@ -34,35 +34,35 @@ A script or a test uses `ManagedRuntime`, as above. A server uses `Layer.launch`
 | `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | Cloudflare          | [Cloudflare](/docs/runtime/cloudflare) |
 | `Fetch.layer({ baseUrl }, group)`            | remote                | any conformant host | [HTTP](/docs/runtime/http)             |
 
-Each Layer takes a group from `StreamGroup.make`, or the family classes directly.
+Each Layer takes a group from `Streamsy.group`.
 
-The generic `StreamsReader` and `StreamsWriter` services, `Protocol.layer`, and the `Streams` functions are on the `@streamsy/core/protocol` subpath. The SQLite storage modules and the fetch module also export `layerProtocol(options)`, which provides that generic pair without families; for memory it is `Streams.layerMemory()` on the protocol subpath. `provides(graph, group)` from `@streamsy/core` binds families to such a graph. These are for storage adapters, protocol tests, and HTTP internals.
+The generic `StreamsReader` and `StreamsWriter` services, `Protocol.layer`, and the `Streams` functions are on the `@streamsy/core/protocol` subpath. The SQLite storage modules and the fetch module also export `layerProtocol(options)`, which provides that generic pair without streams; for memory it is `Streams.layerMemory()` on the protocol subpath. `Protocol.bind(graph, group)` from `@streamsy/core/protocol` binds streams to such a graph. These are for storage adapters, protocol tests, and HTTP internals.
 
 ## Testing
 
-Application tests provide `Memory.layer({}, group)` and run the same program. `@streamsy/core/testing` has protocol-tier tools. `layerTest` and `StreamsTest` provide the generic services over a fresh memory store and let a test observe change subscriptions; bind families to them with `provides(layerTest(), group)`. `StorageContract.run` exercises a storage adapter against the contract; see [Writing a storage adapter](/docs/advanced/storage-adapter).
+Application tests provide `Memory.layer({}, group)` and run the same program. `@streamsy/core/testing` has protocol-tier tools. `layerTest` and `StreamsTest` provide the generic services over a fresh memory store and let a test observe change subscriptions; bind streams to them with `Protocol.bind(layerTest(), group)`. `StorageContract.run` exercises a storage adapter against the contract; see [Writing a storage adapter](/docs/advanced/storage-adapter).
 
 ## Several backends
 
-A family lives on the storage Layer that binds it. To put families on different backends, merge one Layer per backend:
+A stream lives on the storage Layer that binds it. To put streams on different backends, merge one Layer per backend:
 
 ```ts
 import { Layer } from "effect";
-import { Memory } from "@streamsy/core";
+import { Memory, Streamsy } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Drafts, Journal } from "./streams.ts";
 
 export const layer = Layer.merge(
-  Memory.layer({}, Drafts),
-  BunStorage.layer({ client: { filename: "./journal.sqlite" } }, Journal),
+  Memory.layer({}, Streamsy.group(Drafts)),
+  BunStorage.layer({ client: { filename: "./journal.sqlite" } }, Streamsy.group(Journal)),
 );
 ```
 
-A program that needs `Drafts` and `Journal` runs over the merged Layer. A missing family is a type error at the edge.
+A program that needs `Drafts` and `Journal` runs over the merged Layer. A missing stream is a type error at the edge.
 
-A group checks only the families it contains: two templates that can match one id fail at `StreamGroup.make`. Put every served family in one group for `Http.routes`, so the check covers all of them. An id that no family owns answers 404 over HTTP. To own every other id, put `AnyStream` last in a group. A fork stays inside one family, so it never crosses backends. A fetch Layer keeps its own `capabilities`, so set the flags on that Layer.
+A group checks only the streams it contains: two templates that can match one id fail at `Streamsy.group`. Put every served stream in one group for `Http.routes`, so the check covers all of them. An id that no stream owns answers 404 over HTTP. To own every other id, put `Streamsy.Wildcard` last in a group. A fork stays inside one stream, so it never crosses backends. A fetch Layer keeps its own `capabilities`, so set the flags on that Layer.
 
-Projections have one more rule: `Checkpoints`, fused family writes, and declared outputs must share one storage owner. See [Projections](/docs/projections/projections#several-backends).
+Projections have one more rule: `Checkpoints`, fused stream writes, and declared outputs must share one storage owner. See [Projections](/docs/projections/projections#several-backends).
 
 ## Pages
 

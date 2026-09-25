@@ -1,11 +1,11 @@
 # Issue tracker projection
 
 This SQLite example combines five workspace inputs in two checkpointed projections.
-Commands append canonical issue facts through `transact`, run both workspace members
+Commands append canonical issue facts through `transact`, run both workspace addresses
 under their keyed mutexes, and answer from SQL. Same-owner change feeds also run both
-members. Startup attempts to catch up each configured member before accepting requests.
+addresses. Startup attempts to catch up each configured address before accepting requests.
 Startup and watcher failures are logged with the projection key and do not stop other
-members or the server. A failed member can serve stale rows or a 503 document until
+addresses or the server. A failed address can serve stale rows or a 503 document until
 repaired; a terminated watcher does not automatically restart.
 
 ```bash
@@ -18,7 +18,7 @@ ISSUE_TRACKER_DB=tracker.sqlite bun run --cwd examples/issue-tracker run:once ac
 
 `PORT` defaults to `1340`. `ISSUE_TRACKER_DB` selects the SQLite file (default:
 `/tmp/streamsy-issue-tracker-<pid>.sqlite`). `ISSUE_TRACKER_WORKSPACES` is the
-comma-separated fixed member list and defaults to `acme,live`.
+comma-separated fixed address list and defaults to `acme,live`.
 
 The server composes protocol, command and declared output routes with `Layer.mergeAll`
 and runs `HttpRouter.serve` with a scoped Bun listener. The routes are:
@@ -44,7 +44,7 @@ The raw protocol routes are open in this local demo; there is no authentication.
 The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
 `issue_changes`, and `notification_drafts`. The fused `issueRows` projection writes
 those tables and its checkpoint through the same SQL transaction. The separate
-`tracker` named family constructs `Projection.outputs` members: `board` and
+`tracker` named stream constructs `Projection.outputs` addresses: `board` and
 `labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and `workspace`
 uses `Output.value`. Each stream has its own workspace-specific identity and sequence.
 `@streamsy/projection` owns only its `streamsy_projection_v1_*` tables, including the
@@ -63,8 +63,8 @@ labels and projects are catalog row counts. Count-neutral changes preserve its E
 The state row still grows with workspace size and is rewritten per unit and decoded
 per document read.
 
-Both projections apply catalog deletes, including key-only deletes, in the member's
-workspace. SQL catalog upserts use the member workspace too. A catalog value naming
+Both projections apply catalog deletes, including key-only deletes, in the address's
+workspace. SQL catalog upserts use the address workspace too. A catalog value naming
 a different workspace fails with `CatalogWorkspaceMismatch`, naming both workspaces;
 SQL writes in that unit roll back and checkpoints do not advance. Such malformed
 input requires operator repair/rebuild; valid key-only deletes do not stop progress.
