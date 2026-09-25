@@ -1,34 +1,20 @@
-import type { BunRequest } from "bun";
-import { projectInput } from "../../shared/state-schema.ts";
-import { isValidWorkspaceId } from "../config.ts";
-import { mutateWorkspace, newProject, projectUpsert } from "../state.ts";
-import type { DemoRuntime } from "../streams.ts";
-import { badRequest, invalidBody, json, readMutation } from "../utils.ts";
+import { Effect } from "effect";
+import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { IssueTrackerApi } from "../../shared/api.ts";
+import { IssueTracker } from "../issue-tracker.ts";
+import { createProject } from "../state.ts";
+import { toApiError } from "./errors.ts";
 
-export function projectRoutes(runtime: DemoRuntime) {
-  return {
-    "/api/w/:ws/projects": {
-      async POST(request: BunRequest<"/api/w/:ws/projects">): Promise<Response> {
-        const workspaceId = request.params.ws;
-        if (!isValidWorkspaceId(workspaceId)) return badRequest("Invalid workspace id");
-
-        const mutation = await readMutation(request);
-        if (mutation instanceof Response) return mutation;
-        const input = projectInput.safeParse(mutation.body);
-        if (!input.success) return invalidBody("project", input.error);
-
-        return runtime.runPromise(
-          mutateWorkspace(workspaceId, () => {
-            const project = newProject(input.data);
-            const event = projectUpsert(project, mutation.txid);
-            return {
-              event,
-              respond: ({ offset }) =>
-                json({ project, awaitOffset: offset, txid: event.headers.txid }, { status: 201 }),
-            };
-          }),
-        );
-      },
-    },
-  };
-}
+export const ProjectsLive = HttpApiBuilder.group(IssueTrackerApi, "projects", (handlers) =>
+  Effect.gen(function* () {
+    const tracker = yield* IssueTracker;
+    return handlers.handle(
+      "create",
+      Effect.fn("projects.create")(function* ({ params, payload }) {
+        const stamp = yield* tracker.stamp("proj", payload.txid);
+        const written = yield* tracker.mutate(params.ws, createProject(payload, stamp));
+        return { project: written.value, awaitOffset: written.awaitOffset, txid: stamp.txid };
+      }, Effect.mapError(toApiError)),
+    );
+  }),
+);

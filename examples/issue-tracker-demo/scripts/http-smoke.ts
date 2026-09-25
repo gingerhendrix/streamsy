@@ -1,17 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  commentSchema,
-  issueSchema,
-  mutationResultSchema,
-  projectSchema,
-  stateEventsSchema,
-  workspaceResultSchema,
-  type MutationResult,
-  type JsonValue,
-  type StateEvent,
-} from "../shared/state-schema.ts";
+import { Effect, Result, Schema } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import { HttpApiClient } from "effect/unstable/httpapi";
+import { IssueTrackerApi } from "../shared/api.ts";
+import { BadRequest, Conflict, NotFound } from "../shared/api-schema.ts";
+import { decodeStateEvents, Issue, Project, type StateEvent } from "../shared/state-schema.ts";
 
 const packageDir = resolve(import.meta.dir, "..");
 const port = 20_000 + Math.floor(Math.random() * 20_000);
@@ -35,31 +30,23 @@ function assert(condition: AssertionCondition, message: string): asserts conditi
   }
 }
 
-async function postJson(
-  path: string,
-  body: JsonValue,
-  method: "POST" | "PATCH" = "POST",
-): Promise<MutationResult> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  assert(response.ok, `${method} ${path} expected 2xx, got ${response.status}: ${text}`);
-  const payload = mutationResultSchema.safeParse(JSON.parse(text));
-  assert(payload.success, `${method} ${path} should return awaitOffset and txid: ${text}`);
-  return payload.data;
-}
+/** The typed client for the same IssueTrackerApi the server implements. */
+const api = await Effect.runPromise(
+  HttpApiClient.make(IssueTrackerApi, { baseUrl }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
 
-async function postStatus(path: string, body: JsonValue): Promise<number> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  await response.text();
-  return response.status;
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
+
+const apiErrors = { BadRequest, NotFound, Conflict };
+
+/** Run a call that must fail with the API error `tag`; return its `error` message. */
+async function expectApiError<A, E>(
+  effect: Effect.Effect<A, E>,
+  tag: keyof typeof apiErrors,
+): Promise<string> {
+  const failure = await run(Effect.flip(effect));
+  assert(Schema.is(apiErrors[tag])(failure), `expected ${tag}, got ${String(failure)}`);
+  return failure.error;
 }
 
 /** POST a raw (possibly non-JSON) body and return only the status. */
@@ -98,9 +85,9 @@ async function readStream(streamUrl: string): Promise<{ events: StateEvent[]; he
   assert(response.headers.get("stream-up-to-date") === "true", "stream read should be up to date");
   const head = response.headers.get("stream-next-offset");
   assert(head, "stream read should return a stream-next-offset header");
-  const events = stateEventsSchema.safeParse(await response.json());
-  assert(events.success, "stream read body should hold change events");
-  return { events: events.data, head };
+  const events = decodeStateEvents(await response.json());
+  assert(Result.isSuccess(events), "stream read body should hold change events");
+  return { events: [...events.success], head };
 }
 
 function findEvent(events: StateEvent[], type: string, key: string, operation: string): StateEvent {
@@ -129,56 +116,56 @@ let server = startServer();
 try {
   await waitForServer();
 
+  const main = { ws: "main" };
+
   // === 1. CRUD flow on the known workspace (/api/w/main) ===
 
   // 1a. Create a project.
-  const projectResult = await postJson("/api/w/main/projects", {
-    name: "Smoke Project",
-    description: "created by http-smoke",
-  });
-  const projectId = projectResult.project?.id;
-  assert(projectId, "create project should return a project id");
+  const projectResult = await run(
+    api.projects.create({
+      params: main,
+      payload: { name: "Smoke Project", description: "created by http-smoke" },
+    }),
+  );
+  const projectId = projectResult.project.id;
   assert(projectResult.txid, "create project should return a txid");
   assert(projectResult.awaitOffset, "create project should return an awaitOffset");
 
   // 1b. Reject an issue with an unknown projectId (validation path).
-  const badIssueStatus = await postStatus("/api/w/main/issues", {
-    projectId: "proj_does_not_exist",
-    title: "nope",
-  });
-  assert(badIssueStatus === 400, `unknown projectId should 400, got ${badIssueStatus}`);
+  const unknownProject = await expectApiError(
+    api.issues.create({
+      params: main,
+      payload: { projectId: "proj_does_not_exist", title: "nope" },
+    }),
+    "BadRequest",
+  );
+  assert(unknownProject === "Unknown projectId", `unknown projectId message: ${unknownProject}`);
 
   // 1c. Create an issue under the project.
-  const issueResult = await postJson("/api/w/main/issues", {
-    projectId,
-    title: "Smoke issue",
-  });
-  const issueId = issueResult.issue?.id;
-  assert(issueId, "create issue should return an issue id");
-  assert(issueResult.issue?.status === "open", "new issue should default to open");
+  const issueResult = await run(
+    api.issues.create({ params: main, payload: { projectId, title: "Smoke issue" } }),
+  );
+  const issueId = issueResult.issue.id;
+  assert(issueResult.issue.status === "open", "new issue should default to open");
 
   // 1d. Update the issue status (create/update flow).
-  const updateResult = await postJson(
-    `/api/w/main/issues/${encodeURIComponent(issueId)}`,
-    { status: "done" },
-    "PATCH",
+  const updateResult = await run(
+    api.issues.update({ params: { ...main, id: issueId }, payload: { status: "done" } }),
   );
-  assert(updateResult.issue?.status === "done", "issue update should set status to done");
+  assert(updateResult.issue.status === "done", "issue update should set status to done");
 
   // 1e. Comment on the issue.
-  const commentResult = await postJson("/api/w/main/comments", {
-    issueId,
-    body: "looks good",
-  });
-  const commentId = commentResult.comment?.id;
-  assert(commentId, "create comment should return a comment id");
+  const commentResult = await run(
+    api.comments.create({ params: main, payload: { issueId, body: "looks good" } }),
+  );
+  const commentId = commentResult.comment.id;
 
   // 1f. Read the durable stream and verify every mutation produced a
   //     client-readable Durable State change event.
   const { events } = await readStream(mainStreamUrl);
 
   const projectEvent = findEvent(events, "project", projectId, "upsert");
-  const projectValue = projectSchema.parse(projectEvent.value);
+  const projectValue = Schema.decodeUnknownSync(Project)(projectEvent.value);
   assert(projectValue.id === projectId, "project event value should carry the project id");
 
   findEvent(events, "issue", issueId, "upsert");
@@ -188,21 +175,21 @@ try {
       event.type === "issue" && event.key === issueId && event.headers.operation === "upsert",
   );
   assert(issueUpdate, `expected the updated issue ${issueId} as an upsert`);
-  const updatedIssue = issueSchema.parse(issueUpdate.value);
+  const updatedIssue = Schema.decodeUnknownSync(Issue)(issueUpdate.value);
   assert(updatedIssue.status === "done", "issue update event should carry status=done");
 
   const commentEvent = findEvent(events, "comment", commentId, "upsert");
-  const commentValue = commentSchema.parse(commentEvent.value);
-  assert(commentValue.issueId === issueId, "comment event value should reference its issue");
+  assert(
+    commentEvent.type === "comment" && commentEvent.value?.issueId === issueId,
+    "comment event value should reference its issue",
+  );
 
   // === 2. Shareable workspace creation ===
 
   const createWorkspace = async (): Promise<string> => {
-    const response = await fetch(`${baseUrl}/api/workspaces`, { method: "POST" });
-    assert(response.status === 201, `POST /api/workspaces expected 201, got ${response.status}`);
-    const body = workspaceResultSchema.parse(await response.json());
-    assert(/^[a-z0-9]{10}$/.test(body.id), `workspace id should be 10 base36 chars: ${body.id}`);
-    return body.id;
+    const { id } = await run(api.workspaces.create());
+    assert(/^[a-z0-9]{10}$/.test(id), `workspace id should be 10 base36 chars: ${id}`);
+    return id;
   };
 
   const workspaceId = await createWorkspace();
@@ -220,7 +207,7 @@ try {
   const starter = starterRead.events[0];
   assert(starter.type === "project", "starter event should be a project event");
   assert(starter.headers.operation === "upsert", "starter event should be an upsert");
-  const starterProject = projectSchema.parse(starter.value);
+  const starterProject = Schema.decodeUnknownSync(Project)(starter.value);
   assert(starterProject.name === "Getting started", "starter project should be 'Getting started'");
   const starterProjectId = starterProject.id;
 
@@ -235,65 +222,86 @@ try {
 
   // Validation runs against the workspace's own materialized state: an issue
   // in the new workspace referencing a main project id must 400.
-  const crossWorkspaceStatus = await postStatus(`/api/w/${workspaceId}/issues`, {
-    projectId,
-    title: "cross-workspace reference",
-  });
-  assert(
-    crossWorkspaceStatus === 400,
-    `issue referencing a main project in a shared workspace should 400, got ${crossWorkspaceStatus}`,
+  await expectApiError(
+    api.issues.create({
+      params: { ws: workspaceId },
+      payload: { projectId, title: "cross-workspace reference" },
+    }),
+    "BadRequest",
   );
 
   // And the new workspace accepts issues against its own starter project.
-  const sharedIssue = await postJson(`/api/w/${workspaceId}/issues`, {
-    projectId: starterProjectId,
-    title: "First shared issue",
-  });
-  assert(sharedIssue.issue?.id, "shared workspace issue create should return an issue id");
+  await run(
+    api.issues.create({
+      params: { ws: workspaceId },
+      payload: { projectId: starterProjectId, title: "First shared issue" },
+    }),
+  );
 
-  // === 5. Unknown and malformed workspace ids ===
+  // === 5. Unknown and malformed requests ===
 
+  // The typed client cannot send these bodies, so they stay raw fetches.
   const invalidJsonStatus = await postRawStatus("/api/w/main/projects", "{ not json");
   assert(invalidJsonStatus === 400, `invalid JSON body should 400, got ${invalidJsonStatus}`);
 
   const arrayBodyStatus = await postRawStatus("/api/w/main/projects", "[]");
   assert(arrayBodyStatus === 400, `a non-object JSON body should 400, got ${arrayBodyStatus}`);
 
-  const badTxidStatus = await postStatus("/api/w/main/projects", { name: "x", txid: "nope" });
+  const badTxidStatus = await postRawStatus("/api/w/main/projects", `{"name":"x","txid":"nope"}`);
   assert(badTxidStatus === 400, `a malformed txid should 400, got ${badTxidStatus}`);
 
-  const badFieldStatus = await postStatus("/api/w/main/projects", { name: 42 });
-  assert(badFieldStatus === 400, `a non-string project name should 400, got ${badFieldStatus}`);
-
-  const badStatusStatus = await postStatus("/api/w/main/issues", {
-    projectId,
-    title: "bad status",
-    status: "archived",
+  const badFieldResponse = await fetch(`${baseUrl}/api/w/main/projects`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: `{"name":42}`,
   });
+  assert(
+    badFieldResponse.status === 400,
+    `a non-string name should 400, got ${badFieldResponse.status}`,
+  );
+  const badField: unknown = await badFieldResponse.json();
+  assert(
+    Schema.is(Schema.Struct({ error: Schema.String }))(badField) && badField.error.includes("name"),
+    "a field error should name the field in its error message",
+  );
+
+  const badStatusStatus = await postRawStatus(
+    "/api/w/main/issues",
+    JSON.stringify({ projectId, title: "bad status", status: "archived" }),
+  );
   assert(badStatusStatus === 400, `a status outside the schema should 400, got ${badStatusStatus}`);
 
-  const unknownStatus = await postStatus("/api/w/nope12345/projects", { name: "x" });
-  assert(unknownStatus === 404, `unknown workspace should 404, got ${unknownStatus}`);
-
-  const malformedStatus = await postStatus("/api/w/-bad/projects", { name: "x" });
+  const malformedStatus = await postRawStatus("/api/w/-bad/projects", `{"name":"x"}`);
   assert(malformedStatus === 400, `malformed workspace id should 400, got ${malformedStatus}`);
+
+  await expectApiError(
+    api.projects.create({ params: { ws: "nope12345" }, payload: { name: "x" } }),
+    "NotFound",
+  );
+
+  const unknownApi = await fetch(`${baseUrl}/api/w/main/unknown`);
+  assert(unknownApi.status === 404, `unknown /api path should 404, got ${unknownApi.status}`);
+  assert(
+    Schema.is(Schema.Struct({ error: Schema.String }))(await unknownApi.json()),
+    "unknown /api path should answer a JSON error",
+  );
 
   // === 6. Contention: parallel writes converge via CAS retry ===
 
   const before = await readStream(mainStreamUrl);
   const contentionCount = 10;
-  const contentionResults = await Promise.all(
-    Array.from({ length: contentionCount }, (_, index) =>
-      postJson("/api/w/main/issues", {
-        projectId,
-        title: `Contention issue ${index + 1}`,
-      }),
+  const contentionResults = await run(
+    Effect.all(
+      Array.from({ length: contentionCount }, (_, index) =>
+        api.issues.create({
+          params: main,
+          payload: { projectId, title: `Contention issue ${index + 1}` },
+        }),
+      ),
+      { concurrency: "unbounded" },
     ),
   );
-  const contentionIds = contentionResults.map((result) => {
-    assert(result.issue?.id, "contended issue create should return an issue id");
-    return result.issue.id;
-  });
+  const contentionIds = contentionResults.map((result) => result.issue.id);
   assert(
     new Set(contentionIds).size === contentionCount,
     "contended issue creates should produce unique issues",
@@ -328,16 +336,17 @@ try {
   const restartWorkspaceId = await createWorkspace();
   const restartStreamUrl = `${baseUrl}/streams/workspace/${restartWorkspaceId}`;
   const beforeRestartIssue = await readStream(restartStreamUrl);
-  const restartProject = projectSchema.parse(beforeRestartIssue.events[0]?.value);
-  const restartIssue = await postJson(`/api/w/${restartWorkspaceId}/issues`, {
-    projectId: restartProject.id,
-    title: "Survives restart",
-  });
-  const restartIssueId = restartIssue.issue?.id;
-  assert(restartIssueId, "restart fixture should create an issue");
+  const restartProject = Schema.decodeUnknownSync(Project)(beforeRestartIssue.events[0]?.value);
+  const restartIssue = await run(
+    api.issues.create({
+      params: { ws: restartWorkspaceId },
+      payload: { projectId: restartProject.id, title: "Survives restart" },
+    }),
+  );
+  const restartIssueId = restartIssue.issue.id;
 
-  // A browser normally has a parked read when the server stops. The listener's
-  // drain interruption must still close SQLite before the process exits.
+  // A browser normally has a parked read when the server stops. The layer
+  // graph interrupts it (503), stops the listener, then closes SQLite.
   let settled = false;
   const parked = fetch(`${restartStreamUrl}?offset=now&live=long-poll`).then((response) => {
     settled = true;
@@ -346,7 +355,9 @@ try {
   await Bun.sleep(250);
   assert(!settled, "shutdown probe should have a parked long poll");
   server.kill();
-  assert((await server.exited) === 0, "parked-read shutdown should exit successfully");
+  // BunRuntime.runMain reports an interrupted main fiber with exit code 130.
+  const exitCode = await server.exited;
+  assert(exitCode === 130, `parked-read shutdown should exit 130 (interrupted), got ${exitCode}`);
   const interrupted = await parked;
   assert(interrupted.status === 503, `shutdown long-poll status ${interrupted.status}`);
   await interrupted.text();

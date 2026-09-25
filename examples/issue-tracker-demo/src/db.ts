@@ -1,10 +1,7 @@
 import { createStreamDB, type StreamDB } from "@durable-streams/state/db";
-import {
-  issueTrackerState,
-  mutationResultSchema,
-  type MutationResult,
-  type JsonValue,
-} from "../shared/state-schema.ts";
+import { Schema } from "effect";
+import { Written } from "../shared/api-schema.ts";
+import { issueTrackerState, type JsonValue } from "../shared/state-schema.ts";
 import type { Comment, Issue, IssueStatus, Project } from "../shared/types.ts";
 
 export type OptimisticAction<T> = (variables: T) => { isPersisted: { promise: Promise<unknown> } };
@@ -104,11 +101,7 @@ export function createIssueDb(workspaceId: string): IssueDb {
   });
 }
 
-async function postJson(
-  url: string,
-  body: JsonValue,
-  init: RequestInit = {},
-): Promise<MutationResult> {
+async function postJson(url: string, body: JsonValue, init: RequestInit = {}): Promise<Written> {
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetch(url, {
@@ -118,7 +111,7 @@ async function postJson(
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await response.text());
-  return mutationResultSchema.parse(await response.json());
+  return Schema.decodeUnknownSync(Written)(await response.json());
 }
 
 export async function awaitOptimisticAction<T>(

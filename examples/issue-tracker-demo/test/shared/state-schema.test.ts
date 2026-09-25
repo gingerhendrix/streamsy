@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { issueTrackerState, stateEventSchema } from "../../shared/state-schema.ts";
+import { Result } from "effect";
+import {
+  decodeStateEvents,
+  issueTrackerState,
+  type Issue,
+  type JsonValue,
+} from "../../shared/state-schema.ts";
 
 const project = {
   id: "proj_1",
@@ -13,73 +19,89 @@ const upsert = issueTrackerState.projects.upsert({
   headers: { timestamp: project.createdAt, txid: crypto.randomUUID() },
 });
 
-describe("isStateEvent", () => {
+const isStateEvent = (value: JsonValue | undefined) => Result.isSuccess(decodeStateEvents([value]));
+const validateIssue = (value: JsonValue) =>
+  issueTrackerState.issues.schema["~standard"].validate(value);
+
+describe("decodeStateEvents", () => {
   test("accepts an event built by the state schema", () => {
-    expect(stateEventSchema.safeParse(upsert).success).toBe(true);
+    expect(isStateEvent(upsert)).toBe(true);
   });
 
   test("accepts a hand-written change event appended straight to the stream", () => {
     expect(
-      stateEventSchema.safeParse({
+      isStateEvent({
         type: "project",
         key: project.id,
         value: project,
         headers: { operation: "upsert", txid: crypto.randomUUID(), timestamp: project.createdAt },
-      }).success,
+      }),
     ).toBe(true);
   });
 
-  test("preserves JSON extension fields while decoding a public stream event", () => {
-    const event = {
-      ...upsert,
-      extension: "event metadata",
-      value: { ...project, extension: "entity metadata" },
-      headers: { ...upsert.headers, extension: "header metadata" },
-    };
-
-    expect(stateEventSchema.parse(event)).toEqual(event);
+  test("accepts JSON extension fields on events, rows and headers", () => {
+    expect(
+      isStateEvent({
+        ...upsert,
+        extension: "event metadata",
+        value: { ...project, extension: "entity metadata" },
+        headers: { ...upsert.headers, extension: "header metadata" },
+      }),
+    ).toBe(true);
   });
 
   test.each([[undefined], [null], ["text"], [42], [[]]])(
     "rejects the non-object payload %p",
     (value) => {
-      expect(stateEventSchema.safeParse(value).success).toBe(false);
+      expect(isStateEvent(value)).toBe(false);
     },
   );
 
   test("rejects an unknown entity type", () => {
-    expect(stateEventSchema.safeParse({ ...upsert, type: "invoice" }).success).toBe(false);
+    expect(isStateEvent({ ...upsert, type: "invoice" })).toBe(false);
   });
 
   test("rejects a missing key", () => {
-    expect(stateEventSchema.safeParse({ ...upsert, key: undefined }).success).toBe(false);
+    expect(isStateEvent({ ...upsert, key: undefined })).toBe(false);
   });
 
   test("rejects an unknown operation", () => {
-    expect(stateEventSchema.safeParse({ ...upsert, headers: { operation: "merge" } }).success).toBe(
-      false,
-    );
+    expect(isStateEvent({ ...upsert, headers: { operation: "merge" } })).toBe(false);
   });
 
   test("rejects non-string header metadata", () => {
-    expect(
-      stateEventSchema.safeParse({ ...upsert, headers: { operation: "upsert", txid: 7 } }).success,
-    ).toBe(false);
+    expect(isStateEvent({ ...upsert, headers: { operation: "upsert", txid: 7 } })).toBe(false);
   });
 
   test("rejects a value that does not match its entity schema", () => {
-    expect(stateEventSchema.safeParse({ ...upsert, value: { ...project, name: 7 } }).success).toBe(
-      false,
-    );
+    expect(isStateEvent({ ...upsert, value: { ...project, name: 7 } })).toBe(false);
   });
 
   test("rejects a value that belongs to another entity type", () => {
-    expect(stateEventSchema.safeParse({ ...upsert, type: "issue" }).success).toBe(false);
+    expect(isStateEvent({ ...upsert, type: "issue" })).toBe(false);
   });
 
   test("rejects a malformed old_value", () => {
-    expect(stateEventSchema.safeParse({ ...upsert, old_value: { id: "proj_1" } }).success).toBe(
-      false,
-    );
+    expect(isStateEvent({ ...upsert, old_value: { id: "proj_1" } })).toBe(false);
+  });
+});
+
+describe("issueTrackerState", () => {
+  const issue: Issue = {
+    id: "issue_1",
+    projectId: project.id,
+    title: "Ship",
+    status: "open",
+    createdAt: project.createdAt,
+    updatedAt: project.createdAt,
+  };
+
+  test("checks rows with the Effect entity schemas", () => {
+    expect(validateIssue(issue)).toEqual({ value: issue });
+    expect(validateIssue({ ...issue, status: "archived" })).toHaveProperty("issues");
+  });
+
+  test("drops row fields that the entity schema does not declare", () => {
+    expect(validateIssue({ ...issue, extension: "row metadata" })).toEqual({ value: issue });
   });
 });

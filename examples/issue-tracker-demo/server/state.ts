@@ -1,10 +1,7 @@
-import { MaterializedState } from "@durable-streams/state";
-import { DurableState, ZERO_OFFSET } from "@streamsy/core";
-import { Effect, Stream } from "effect";
-import { type Comment, type Issue, type Project } from "../shared/state-schema.ts";
-import { mainWorkspaceId } from "./config.ts";
-import { appendWorkspaceEvent, Workspaces, type WorkspaceChange } from "./streams.ts";
-import { conflict, id, notFound, now, type TxId } from "./utils.ts";
+import { DurableState } from "@streamsy/core";
+import { Effect, Schema } from "effect";
+import type { Comment, Issue, Project } from "../shared/state-schema.ts";
+import type { WorkspaceChange } from "./streams.ts";
 
 /** Read-only view over one workspace's materialized state. */
 export interface WorkspaceState {
@@ -13,106 +10,135 @@ export interface WorkspaceState {
   hasProjects(): boolean;
 }
 
-function eventHeaders(txid: TxId = crypto.randomUUID()) {
-  return { timestamp: now(), txid };
-}
-type WorkspaceChangeWithHeaders = WorkspaceChange & {
-  readonly headers: ReturnType<typeof eventHeaders>;
-};
-
 /**
- * Fold one workspace from its durable stream. No materialized state survives
- * the request; the returned head is the CAS token for the exact folded view.
+ * Server-chosen values for one write: a fresh entity id, the time and the
+ * txid. A request makes one stamp, so every CAS retry writes the same values.
  */
-export const materializeWorkspace = Effect.fn("Workspace.materialize")(function* (
-  workspaceId: string,
-) {
-  const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
-  const state = new MaterializedState();
-  for (const batch of batches) for (const event of batch.items) state.apply(event);
-  return {
-    state: {
-      getProject: (projectId: string) => state.get<Project>("project", projectId),
-      getIssue: (issueId: string) => state.get<Issue>("issue", issueId),
-      hasProjects: () => state.getType("project").size > 0,
-    } satisfies WorkspaceState,
-    headOffset: batches.at(-1)?.nextOffset ?? ZERO_OFFSET,
+export interface Stamp {
+  readonly id: string;
+  readonly now: string;
+  readonly txid: string;
+}
+
+/** One validated write: the change to append and the value to answer with. */
+export interface Mutation<A> {
+  readonly change: WorkspaceChange;
+  readonly value: A;
+}
+
+export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
+  field: Schema.Literals(["projectId", "issueId"]),
+  id: Schema.String,
+}) {}
+
+export class IssueNotFound extends Schema.TaggedError<IssueNotFound>()("IssueNotFound", {
+  issueId: Schema.String,
+}) {}
+
+const headers = (stamp: Stamp) => ({ headers: { timestamp: stamp.now, txid: stamp.txid } });
+
+export const projectUpsert = (project: Project, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("project", project, headers(stamp));
+
+export const issueUpsert = (issue: Issue, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("issue", issue, headers(stamp));
+
+export const commentUpsert = (comment: Comment, stamp: Stamp): WorkspaceChange =>
+  DurableState.upsert("comment", comment, headers(stamp));
+
+// The attempts below run inside the Transact recipe. Each one validates the
+// request against freshly folded state and either returns one change or fails
+// with a typed error. They are pure, so a retry simply runs them again.
+
+export const createProject =
+  (input: Partial<Project>, stamp: Stamp) => (): Effect.Effect<Mutation<Project>> => {
+    const project = newProject(input, stamp);
+    return Effect.succeed({ change: projectUpsert(project, stamp), value: project });
   };
-});
 
-/** Outcome of one mutation attempt against freshly materialized state. */
-export type MutationAttempt =
-  | { response: Response }
-  | { event: WorkspaceChange; respond: (ack: { offset: string }) => Response };
+export const createIssue =
+  (input: Partial<Issue>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, UnknownReference> => {
+    const issue = newIssue(input, stamp);
+    if (!state.getProject(issue.projectId)) {
+      return Effect.fail(new UnknownReference({ field: "projectId", id: issue.projectId }));
+    }
+    return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
+  };
 
-/**
- * The Transact recipe: read, fold, append with `expectedOffset`, and retry
- * only an `OffsetMismatch`. Each retry rebuilds validation and the event from
- * the newly folded state, preventing a lost update across concurrent writers.
- */
-export const mutateWorkspace = (
-  workspaceId: string,
-  attempt: (state: WorkspaceState) => MutationAttempt,
-) =>
-  Effect.gen(function* () {
-    const materialized = yield* materializeWorkspace(workspaceId).pipe(
-      Effect.map((value) => ({ found: true as const, value })),
-      Effect.catchTags({
-        StreamNotFound: () => Effect.succeed({ found: false as const }),
-        StreamGone: () => Effect.succeed({ found: false as const }),
-      }),
-    );
-    if (!materialized.found) return notFound("Unknown workspace");
+export const updateIssue =
+  (issueId: string, input: Partial<Issue>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Issue>, IssueNotFound> => {
+    const previous = state.getIssue(issueId);
+    if (!previous) return Effect.fail(new IssueNotFound({ issueId }));
+    const issue = nextIssue(previous, input, stamp);
+    return Effect.succeed({ change: issueUpsert(issue, stamp), value: issue });
+  };
 
-    const outcome = attempt(materialized.value.state);
-    if ("response" in outcome) return outcome.response;
+export const createComment =
+  (input: Partial<Comment>, stamp: Stamp) =>
+  (state: WorkspaceState): Effect.Effect<Mutation<Comment>, UnknownReference> => {
+    const comment = newComment(input, stamp);
+    if (!state.getIssue(comment.issueId)) {
+      return Effect.fail(new UnknownReference({ field: "issueId", id: comment.issueId }));
+    }
+    return Effect.succeed({ change: commentUpsert(comment, stamp), value: comment });
+  };
 
-    const ack = yield* appendWorkspaceEvent(
-      workspaceId,
-      outcome.event,
-      materialized.value.headOffset,
-      materialized.value.headOffset,
-    );
-    return outcome.respond({ offset: ack.offset });
-  }).pipe(
-    Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }),
-    Effect.catchTag("OffsetMismatch", () =>
-      Effect.succeed(conflict("Concurrent updates, please retry")),
-    ),
-  );
-
-export function projectUpsert(project: Project, txid?: TxId): WorkspaceChangeWithHeaders {
-  const headers = eventHeaders(txid);
-  return { ...DurableState.upsert("project", project, { headers }), headers };
+export function newProject(input: Partial<Project>, stamp: Stamp): Project {
+  return {
+    id: input.id ?? stamp.id,
+    name: (input.name ?? "Untitled project").trim(),
+    description: (input.description ?? "").trim(),
+    createdAt: input.createdAt ?? stamp.now,
+  };
 }
 
-export function issueUpsert(issue: Issue, txid?: TxId): WorkspaceChangeWithHeaders {
-  const headers = eventHeaders(txid);
-  return { ...DurableState.upsert("issue", issue, { headers }), headers };
+export function newIssue(input: Partial<Issue>, stamp: Stamp): Issue {
+  const createdAt = input.createdAt ?? stamp.now;
+  return {
+    id: input.id ?? stamp.id,
+    projectId: input.projectId ?? "",
+    title: (input.title ?? "Untitled issue").trim(),
+    status: input.status ?? "open",
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt,
+  };
 }
 
-export function commentUpsert(comment: Comment, txid?: TxId): WorkspaceChangeWithHeaders {
-  const headers = eventHeaders(txid);
-  return { ...DurableState.upsert("comment", comment, { headers }), headers };
+export function nextIssue(previous: Issue, input: Partial<Issue>, stamp: Stamp): Issue {
+  return {
+    ...previous,
+    title: input.title === undefined ? previous.title : input.title.trim(),
+    status: input.status ?? previous.status,
+    updatedAt: input.updatedAt ?? stamp.now,
+  };
 }
 
-const appendSeedEvent = Effect.fn("Workspace.appendSeedEvent")(function* (
-  workspaceId: string,
-  event: WorkspaceChange,
-  sourceOffset: string,
-  expectedOffset?: string,
-) {
-  return yield* appendWorkspaceEvent(workspaceId, event, sourceOffset, expectedOffset);
-});
+export function newComment(input: Partial<Comment>, stamp: Stamp): Comment {
+  return {
+    id: input.id ?? stamp.id,
+    issueId: input.issueId ?? "",
+    author: (input.author ?? "you").trim() || "you",
+    body: (input.body ?? "").trim(),
+    createdAt: input.createdAt ?? stamp.now,
+  };
+}
 
-/** Ensure and seed the known demo workspace at boot. */
-export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
-  yield* (yield* Workspaces).create({ workspaceId: mainWorkspaceId });
-  const materialized = yield* materializeWorkspace(mainWorkspaceId);
-  if (materialized.state.hasProjects()) return;
+/** The first project of a new shared workspace. */
+export function starterProject(stamp: Stamp): Project {
+  return {
+    id: stamp.id,
+    name: "Getting started",
+    description: "Shared workspace — anyone with this link sees changes live.",
+    createdAt: stamp.now,
+  };
+}
 
-  const createdAt = now();
-  const initialProjects: Project[] = [
+/** The known demo workspace's first changes. */
+export function mainWorkspaceSeed(stamp: Stamp): WorkspaceChange[] {
+  const createdAt = stamp.now;
+  const projects: Project[] = [
     {
       id: "proj_streamsy",
       name: "Streamsy Demo",
@@ -126,7 +152,7 @@ export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
       createdAt,
     },
   ];
-  const initialIssues: Issue[] = [
+  const issues: Issue[] = [
     {
       id: "issue_bootstrap",
       projectId: "proj_streamsy",
@@ -152,7 +178,7 @@ export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
       updatedAt: createdAt,
     },
   ];
-  const initialComments: Comment[] = [
+  const comments: Comment[] = [
     {
       id: "comment_welcome",
       issueId: "issue_bootstrap",
@@ -161,68 +187,9 @@ export const seedMainWorkspace = Effect.fn("Workspace.seedMain")(function* () {
       createdAt,
     },
   ];
-  const events: WorkspaceChange[] = [
-    ...initialProjects.map((project) => projectUpsert(project)),
-    ...initialIssues.map((issue) => issueUpsert(issue)),
-    ...initialComments.map((comment) => commentUpsert(comment)),
+  return [
+    ...projects.map((project) => projectUpsert(project, stamp)),
+    ...issues.map((issue) => issueUpsert(issue, stamp)),
+    ...comments.map((comment) => commentUpsert(comment, stamp)),
   ];
-  let sourceOffset = materialized.headOffset;
-  for (const event of events) {
-    const ack = yield* appendSeedEvent(mainWorkspaceId, event, sourceOffset);
-    sourceOffset = ack.offset;
-  }
-});
-
-/** Seed a new shared workspace with one starter project. */
-export const seedStarterProject = Effect.fn("Workspace.seedStarter")(function* (
-  workspaceId: string,
-) {
-  const project: Project = {
-    id: id("proj"),
-    name: "Getting started",
-    description: "Shared workspace — anyone with this link sees changes live.",
-    createdAt: now(),
-  };
-  yield* appendSeedEvent(workspaceId, projectUpsert(project), ZERO_OFFSET, ZERO_OFFSET);
-});
-
-export function newProject(input: Partial<Project>): Project {
-  return {
-    id: input.id ?? id("proj"),
-    name: (input.name ?? "Untitled project").trim(),
-    description: (input.description ?? "").trim(),
-    createdAt: input.createdAt ?? now(),
-  };
-}
-
-export function newIssue(input: Partial<Issue>): Issue {
-  const timestamp = now();
-  const createdAt = input.createdAt ?? timestamp;
-  return {
-    id: input.id ?? id("issue"),
-    projectId: input.projectId ?? "",
-    title: (input.title ?? "Untitled issue").trim(),
-    status: input.status ?? "open",
-    createdAt,
-    updatedAt: input.updatedAt ?? createdAt,
-  };
-}
-
-export function nextIssue(previous: Issue, input: Partial<Issue>): Issue {
-  return {
-    ...previous,
-    title: input.title === undefined ? previous.title : input.title.trim(),
-    status: input.status ?? previous.status,
-    updatedAt: input.updatedAt ?? now(),
-  };
-}
-
-export function newComment(input: Partial<Comment>): Comment {
-  return {
-    id: input.id ?? id("comment"),
-    issueId: input.issueId ?? "",
-    author: (input.author ?? "you").trim() || "you",
-    body: (input.body ?? "").trim(),
-    createdAt: input.createdAt ?? now(),
-  };
 }

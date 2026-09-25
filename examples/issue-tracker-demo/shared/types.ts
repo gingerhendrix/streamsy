@@ -1,9 +1,1 @@
-export type {
-  Comment,
-  EntityByType,
-  EntityType,
-  Issue,
-  IssueStatus,
-  Project,
-  StateEvent,
-} from "./state-schema.ts";
+export type { Comment, Issue, IssueStatus, Project, StateEvent } from "./state-schema.ts";

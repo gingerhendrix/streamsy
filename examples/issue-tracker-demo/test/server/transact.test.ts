@@ -1,81 +1,167 @@
-import { Streamsy } from "@streamsy/core";
+import { BunCrypto } from "@effect/platform-bun";
+import { Memory, Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { expect, test } from "bun:test";
-import { Memory, ZERO_OFFSET } from "@streamsy/core";
-import { Deferred, Effect, Ref, Stream } from "effect";
-import type { Issue } from "../../shared/state-schema.ts";
-import { issueUpsert, mutateWorkspace, projectUpsert } from "../../server/state.ts";
+import { Deferred, Effect, Layer, Ref, Stream } from "effect";
+import { IssueTracker, IssueTrackerLive } from "../../server/issue-tracker.ts";
+import { createIssue, issueUpsert, projectUpsert, type Stamp } from "../../server/state.ts";
 import { appendWorkspaceEvent, Workspaces } from "../../server/streams.ts";
+import type { Issue, Project } from "../../shared/state-schema.ts";
+
+const workspaceId = "concurrent-test";
+const createdAt = "2026-09-20T00:00:00.000Z";
+const stamp = (id: string): Stamp => ({ id, now: createdAt, txid: crypto.randomUUID() });
+const project: Project = {
+  id: "proj_test",
+  name: "Concurrent project",
+  description: "",
+  createdAt,
+};
+const makeIssue = (id: string): Issue => ({
+  id,
+  projectId: project.id,
+  title: id,
+  status: "open",
+  createdAt,
+  updatedAt: createdAt,
+});
+
+/** A memory store holding one workspace with one project. */
+const seeded = Effect.gen(function* () {
+  yield* (yield* Workspaces).create({ workspaceId });
+  yield* appendWorkspaceEvent(workspaceId, projectUpsert(project, stamp(project.id)), ZERO_OFFSET);
+});
+
+const issueKeys = Effect.gen(function* () {
+  const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
+  return batches
+    .flatMap((batch) => batch.items)
+    .filter((event) => event.type === "issue")
+    .map((event) => event.key)
+    .toSorted();
+});
+
+const runWithStore = <A, E>(effect: Effect.Effect<A, E, Workspaces>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Workspaces)))));
 
 test("two concurrent Transact writers land without a lost update", async () => {
   let attempts = 0;
-  const workspaceId = "concurrent-test";
-  const project = {
-    id: "proj_test",
-    name: "Concurrent project",
-    description: "",
-    createdAt: "2026-09-20T00:00:00.000Z",
-  };
-  const makeIssue = (id: string): Issue => ({
-    id,
-    projectId: project.id,
-    title: id,
-    status: "open",
-    createdAt: project.createdAt,
-    updatedAt: project.createdAt,
-  });
-  const transact = (issue: Issue) =>
-    mutateWorkspace(workspaceId, (state) => {
-      attempts += 1;
-      expect(state.getProject(project.id)).toBeDefined();
-      if (attempts === 3) {
-        const otherId = issue.id === "issue_a" ? "issue_b" : "issue_a";
-        expect(state.getIssue(otherId)).toBeDefined();
-      }
-      return {
-        event: issueUpsert(issue),
-        respond: ({ offset }) => Response.json({ offset }),
-      };
-    });
-
-  const program = Effect.gen(function* () {
-    yield* (yield* Workspaces).create({ workspaceId });
-    yield* appendWorkspaceEvent(workspaceId, projectUpsert(project), ZERO_OFFSET);
-    const reader = yield* Workspaces;
-    const firstReads = yield* Ref.make(0);
-    const bothRead = yield* Deferred.make<void>();
-    const barrierReader = Workspaces.of({
-      ...reader,
-      read: (params, options) =>
-        Stream.unwrap(
-          Effect.gen(function* () {
-            const result = yield* reader.read(params, options).pipe(Stream.runCollect);
-            const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
-            // The memory store materializes in one read; these are the two writers' first reads.
-            if (readNumber <= 2) {
-              if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
-              yield* Deferred.await(bothRead);
-            }
-            return Stream.fromIterable(result);
-          }),
-        ),
-    });
-    const responses = yield* Effect.all(
-      [transact(makeIssue("issue_a")), transact(makeIssue("issue_b"))],
-      { concurrency: "unbounded" },
-    ).pipe(Effect.provideService(Workspaces, barrierReader));
-    const batches = yield* (yield* Workspaces).read({ workspaceId }).pipe(Stream.runCollect);
-    return { events: batches.flatMap((batch) => batch.items), responses };
-  });
-
-  const { events, responses } = await Effect.runPromise(
-    program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Workspaces)))),
+  const { keys, written } = await runWithStore(
+    Effect.gen(function* () {
+      yield* seeded;
+      const reader = yield* Workspaces;
+      const firstReads = yield* Ref.make(0);
+      const bothRead = yield* Deferred.make<void>();
+      // Hold both writers' first reads until each has folded the same head,
+      // so exactly one of the two conditional appends must lose.
+      const barrierReader = Workspaces.of({
+        ...reader,
+        read: (params, options) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const result = yield* reader.read(params, options).pipe(Stream.runCollect);
+              const readNumber = yield* Ref.updateAndGet(firstReads, (count) => count + 1);
+              if (readNumber <= 2) {
+                if (readNumber === 2) yield* Deferred.succeed(bothRead, undefined);
+                yield* Deferred.await(bothRead);
+              }
+              return Stream.fromIterable(result);
+            }),
+          ),
+      });
+      const tracker = yield* IssueTracker.pipe(
+        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+        Effect.provideService(Workspaces, barrierReader),
+      );
+      const transact = (issue: Issue) =>
+        tracker.mutate(workspaceId, (state) => {
+          attempts += 1;
+          expect(state.getProject(project.id)).toBeDefined();
+          // The third attempt is the loser's retry: it must see the winner's issue.
+          if (attempts === 3) {
+            const otherId = issue.id === "issue_a" ? "issue_b" : "issue_a";
+            expect(state.getIssue(otherId)).toBeDefined();
+          }
+          return Effect.succeed({ change: issueUpsert(issue, stamp(issue.id)), value: issue });
+        });
+      const results = yield* Effect.all(
+        [transact(makeIssue("issue_a")), transact(makeIssue("issue_b"))],
+        { concurrency: "unbounded" },
+      );
+      return { keys: yield* issueKeys, written: results };
+    }),
   );
+
   expect(attempts).toBe(3);
-  expect(responses.map((response) => response.status)).toEqual([200, 200]);
-  expect(
-    events
-      .filter((event) => event.type === "issue")
-      .map((event) => event.key)
-      .toSorted(),
-  ).toEqual(["issue_a", "issue_b"]);
+  expect(written.map(({ value }) => value.id)).toEqual(["issue_a", "issue_b"]);
+  expect(keys).toEqual(["issue_a", "issue_b"]);
+});
+
+test("a writer that loses every race answers WriteConflict after three retries", async () => {
+  let attempts = 0;
+  const { failure, keys } = await runWithStore(
+    Effect.gen(function* () {
+      yield* seeded;
+      const workspaces = yield* Workspaces;
+      const tracker = yield* IssueTracker.pipe(
+        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+      );
+      // Each attempt lets a rival writer append first, so the head the
+      // attempt folded is never the tail when its own append arrives.
+      const conflict = yield* tracker
+        .mutate(workspaceId, () =>
+          Effect.gen(function* () {
+            attempts += 1;
+            const rival = makeIssue(`issue_rival_${attempts}`);
+            yield* appendWorkspaceEvent(
+              workspaceId,
+              issueUpsert(rival, stamp(rival.id)),
+              ZERO_OFFSET,
+            );
+            const loser = makeIssue("issue_loser");
+            return { change: issueUpsert(loser, stamp(loser.id)), value: loser };
+          }).pipe(Effect.provideService(Workspaces, workspaces), Effect.orDie),
+        )
+        .pipe(Effect.flip);
+      return { failure: conflict, keys: yield* issueKeys };
+    }),
+  );
+
+  expect(failure).toMatchObject({ _tag: "WriteConflict", workspaceId });
+  expect(attempts).toBe(4);
+  expect(keys).not.toContain("issue_loser");
+  expect(keys).toHaveLength(4);
+});
+
+test("mutating an unknown workspace fails with WorkspaceNotFound", async () => {
+  const failure = await runWithStore(
+    Effect.gen(function* () {
+      const tracker = yield* IssueTracker.pipe(
+        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+      );
+      return yield* Effect.flip(
+        tracker.mutate("missing", () => Effect.die("the attempt must not run")),
+      );
+    }),
+  );
+  expect(failure).toMatchObject({ _tag: "WorkspaceNotFound", workspaceId: "missing" });
+});
+
+test("a domain failure is answered at once, not retried", async () => {
+  let attempts = 0;
+  const failure = await runWithStore(
+    Effect.gen(function* () {
+      yield* seeded;
+      const tracker = yield* IssueTracker.pipe(
+        Effect.provide(IssueTrackerLive.pipe(Layer.provide(BunCrypto.layer))),
+      );
+      return yield* Effect.flip(
+        tracker.mutate(workspaceId, (state) => {
+          attempts += 1;
+          return createIssue({ projectId: "proj_missing" }, stamp("issue_x"))(state);
+        }),
+      );
+    }),
+  );
+  expect(failure).toMatchObject({ _tag: "UnknownReference", field: "projectId" });
+  expect(attempts).toBe(1);
 });

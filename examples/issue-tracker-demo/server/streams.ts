@@ -1,8 +1,8 @@
-import { DurableState, StreamAddress, Streamsy, Memory } from "@streamsy/core";
+import { DurableState, Memory, StreamAddress, Streamsy, type StorageFault } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
-import { Effect, Schema, type Layer } from "effect";
-import { CommentCodec, IssueCodec, ProjectCodec } from "../shared/state-schema.ts";
-import { databasePath } from "./config.ts";
+import { Effect, Layer, Option, Schema } from "effect";
+import { Comment, Issue, Project } from "../shared/state-schema.ts";
+import { ServerConfig } from "./config.ts";
 
 /** One stream owns every workspace's multi-collection stream. */
 export class Workspaces extends Streamsy.state<Workspaces>()(
@@ -11,9 +11,9 @@ export class Workspaces extends Streamsy.state<Workspaces>()(
   {
     params: { workspaceId: Schema.String },
     collections: {
-      project: { schema: ProjectCodec, key: "id" },
-      issue: { schema: IssueCodec, key: "id" },
-      comment: { schema: CommentCodec, key: "id" },
+      project: { schema: Project, key: "id" },
+      issue: { schema: Issue, key: "id" },
+      comment: { schema: Comment, key: "id" },
     },
   },
 ) {}
@@ -38,12 +38,14 @@ export function appendWorkspaceEvent(
   );
 }
 
-/** Minimal runtime surface used by the Promise-native Bun route handlers. */
-export interface DemoRuntime {
-  runPromise<A, E>(effect: Effect.Effect<A, E, Workspaces>): Promise<A>;
-}
+/** SQLite when `ISSUE_TRACKER_DB` is set, otherwise a process-local memory store. */
+export const StorageLive = Layer.unwrap(
+  Effect.map(ServerConfig, ({ databasePath }) => storage(databasePath)),
+);
 
-export const applicationLayer: Layer.Layer<Workspaces, import("@streamsy/core").StorageFault> =
-  databasePath === undefined
-    ? Memory.layer({}, Streamsy.group(Workspaces))
-    : BunStorage.layer({ client: { filename: databasePath } }, Streamsy.group(Workspaces));
+function storage(databasePath: Option.Option<string>): Layer.Layer<Workspaces, StorageFault> {
+  return Option.match(databasePath, {
+    onNone: () => Memory.layer({}, Streamsy.group(Workspaces)),
+    onSome: (filename) => BunStorage.layer({ client: { filename } }, Streamsy.group(Workspaces)),
+  });
+}
