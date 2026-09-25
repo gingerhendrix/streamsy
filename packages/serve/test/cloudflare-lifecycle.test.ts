@@ -12,8 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, Layer } from "effect";
-import { Memory } from "@streamsy/core";
-import { Protocol } from "@streamsy/core/protocol";
+import { Streams } from "@streamsy/core/protocol";
 import { testHost, type TestHost, type TestHostOptions } from "./support/scoped-host.ts";
 import { Miniflare } from "miniflare";
 
@@ -629,7 +628,7 @@ test("B2 Cloudflare fork classifications are byte-parity with Bun", async () => 
   const harness = await makeHarness("worker-by-key.ts");
   const bun = await startBun({
     pathPrefix: "/streams",
-    layer: Protocol.layer().pipe(Layer.provide(Memory.layer())),
+    layer: Streams.layerMemory(),
     port: 0,
   });
   openBun.push({ stop: () => Effect.runPromise(bun.stop) });

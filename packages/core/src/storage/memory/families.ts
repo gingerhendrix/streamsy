@@ -13,13 +13,11 @@ export function layer<const Keys extends ReadonlyArray<AnyFamily>>(
   options: MemoryOptions & Protocol.ProtocolOptions,
   ...input: Group.NonEmptyInput<Keys>
 ): Layer.Layer<Storage | MemoryCommitBoundary | Identifiers<Keys> | Changes<Identifiers<Keys>>>;
-export function layer(options?: MemoryOptions): ReturnType<typeof storageLayer>;
 export function layer(
   options: MemoryOptions & Protocol.ProtocolOptions = {},
   ...input: Group.Input<ReadonlyArray<AnyFamily>>
 ) {
   const storage = storageLayer(options);
-  if (input.length === 0) return storage;
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
   return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
 }

@@ -1,8 +1,8 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- Executable Bun process boundary writes its JSON protocol to stdout. */
-import { Clock, Effect, Layer, ManagedRuntime, Option } from "effect";
+import { Clock, Effect, ManagedRuntime, Option } from "effect";
 import { ProducerId, Storage, StreamId, ZERO_OFFSET, type ProtocolError } from "@streamsy/core";
-import { Protocol, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
-import { layer } from "@streamsy/storage/bun";
+import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
+import { layerProtocol } from "@streamsy/storage/bun";
 
 const argument = (index: number, name: string): string => {
   const value = Bun.argv[index + 2];
@@ -30,10 +30,7 @@ const storageRecord = (id: StreamId) => ({
 
 const mode = argument(0, "mode");
 const filename = argument(1, "filename");
-const storageLayer = layer({ client: { filename } });
-const applicationLayer = Protocol.layer({ longPollTimeoutMs: 500 }).pipe(
-  Layer.provideMerge(storageLayer),
-);
+const applicationLayer = layerProtocol({ client: { filename }, longPollTimeoutMs: 500 });
 const runtime = ManagedRuntime.make(applicationLayer);
 
 const operation = Effect.gen(function* () {

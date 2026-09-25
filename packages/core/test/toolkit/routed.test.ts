@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema, Stream } from "effect";
-import { Protocol } from "../../src/protocol/index.ts";
+import { Streams } from "../../src/protocol/index.ts";
 import { AnyStream, Memory, StreamFamily, StreamGroup, provides } from "../../src/index.ts";
 
 class Drafts extends StreamFamily.json<Drafts>()("Bindings/Drafts", "drafts/:user", {
@@ -49,8 +49,7 @@ it("family binding shares a counted storage graph with siblings in either merge 
         builds += 1;
       }),
     );
-    const storage = Memory.layer().pipe(Layer.provideMerge(counted));
-    const protocol = Protocol.layer().pipe(Layer.provideMerge(storage));
+    const protocol = Streams.layerMemory().pipe(Layer.provideMerge(counted));
     const graph = provides(protocol, Drafts);
     const sibling = Layer.effectDiscard(Effect.void).pipe(Layer.provide(counted));
     const host = familyFirst ? Layer.merge(graph, sibling) : Layer.merge(sibling, graph);

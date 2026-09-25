@@ -12,7 +12,7 @@ import {
 } from "@streamsy/core";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
-import { layer as sqlLayer } from "../src/storage.ts";
+import { storageLayer as sqlLayer } from "../src/storage.ts";
 
 const scratch = Effect.runSync(
   Config.String("STREAMSY_STORAGE_SCRATCH").pipe(Config.withDefault("/tmp")),

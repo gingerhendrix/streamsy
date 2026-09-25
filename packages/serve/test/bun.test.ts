@@ -1,7 +1,7 @@
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web executable edge lifecycle test.
 import { expect, it, spyOn } from "bun:test";
 import { Cause, Context, Deferred, Duration, Effect, Exit, Layer, Stream } from "effect";
-import { Memory, Storage } from "@streamsy/core";
+import { Storage } from "@streamsy/core";
 import { Protocol, Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { testHost, type TestHostOptions } from "./support/scoped-host.ts";
 
@@ -30,11 +30,7 @@ const parkableLayer = (readStarted: Deferred.Deferred<void>, hold: Deferred.Defe
         ),
       );
     }),
-  ).pipe(
-    Layer.provide(
-      Protocol.layer({ longPollTimeoutMs: 30_000 }).pipe(Layer.provide(Memory.layer())),
-    ),
-  );
+  ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 30_000 })));
 
 /**
  * Start one host, seed one stream, and park a long poll on it. The probe reports
@@ -114,7 +110,7 @@ for (const shutdown of ["abort", "stop", "long-poll-abort"] as const) {
             ),
         });
       }),
-    ).pipe(Layer.provide(Memory.layer()));
+    ).pipe(Layer.provide(Streams.layerMemory()));
     const observedProtocol = Layer.effectContext(
       Effect.gen(function* () {
         const reader = yield* StreamsReader;

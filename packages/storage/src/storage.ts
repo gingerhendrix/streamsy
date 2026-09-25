@@ -628,7 +628,7 @@ const makeLayer = (
 };
 
 /** Generic SQLite-family SQL layer. Hosts supply one matching SqlClient/Reactivity graph. */
-const storageLayer = (
+export const storageLayer = (
   options: SqlStorageOptions = {},
 ): Layer.Layer<
   Storage | CommitBoundary,
@@ -644,6 +644,10 @@ export const layerWithDurableObjectTransactions = (options: SqlStorageOptions) =
 export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTestProbe) =>
   makeLayer(options, probe);
 
+/** Protocol over SQL storage. */
+export const layerProtocol = (options: SqlStorageOptions & Protocol.ProtocolOptions = {}) =>
+  Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
+
 export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   options: SqlStorageOptions & Protocol.ProtocolOptions,
   ...input: StreamGroup.NonEmptyInput<Keys>
@@ -654,13 +658,11 @@ export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
-export function layer(options?: SqlStorageOptions): ReturnType<typeof storageLayer>;
 export function layer(
   options: SqlStorageOptions & Protocol.ProtocolOptions = {},
   ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
 ) {
   const storage = storageLayer(options);
-  if (input.length === 0) return storage;
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
   return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
 }

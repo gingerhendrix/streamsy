@@ -28,7 +28,7 @@ export const layerProtocol = (options: DurableObjectProtocolOptions) =>
   Protocol.layer({
     ...options,
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,
-  }).pipe(Layer.provideMerge(layer(options)));
+  }).pipe(Layer.provideMerge(storageLayer(options)));
 
 export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   options: DurableObjectProtocolOptions,
@@ -40,13 +40,11 @@ export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
-export function layer(options: DurableObjectStorageOptions): ReturnType<typeof storageLayer>;
 export function layer(
   options: DurableObjectProtocolOptions,
   ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
 ) {
   const storage = storageLayer(options);
-  if (input.length === 0) return storage;
   const protocol = Protocol.layer({
     ...options,
     longPollTimeoutMs: options.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS,

@@ -29,7 +29,7 @@ const scope = await Effect.runPromise(Scope.make());
 try {
   const context = await Effect.runPromise(
     Layer.buildWithScope(
-      BunStorage.layer({ client: { filename: join(directory, "streamsy.sqlite") } }),
+      BunStorage.layerProtocol({ client: { filename: join(directory, "streamsy.sqlite") } }),
       scope,
     ),
   );

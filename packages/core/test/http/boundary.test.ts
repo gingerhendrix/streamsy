@@ -2,7 +2,7 @@ import { routes as protocolRoutes } from "../../src/protocol/index.ts";
 // oxlint-disable effecttsgo/async-function -- Web boundary tests use requests and response body promises.
 import { expect, it } from "bun:test";
 import { Effect, Layer } from "effect";
-import { Memory, StreamId, Storage, ZERO_OFFSET } from "@streamsy/core";
+import { StreamId, Storage, ZERO_OFFSET } from "@streamsy/core";
 import { Streams, Protocol, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { faultyStorage } from "../../src/testing/fault-injection.ts";
 import { HttpRouter } from "effect/unstable/http";
@@ -97,7 +97,7 @@ it("reads the unread body to its end when an append is rejected at ingress", asy
 for (const when of ["before", "after"] as const) {
   it(`maps ${when}-commit StorageFault to 500 without an opaque append retry`, async () => {
     const layer = Protocol.layer().pipe(
-      Layer.provide(faultyStorage(Memory.layer(), { failOn: 2, when })),
+      Layer.provide(faultyStorage(memoryStorage(), { failOn: 2, when })),
     );
     const edge = HttpRouter.toWebHandler(protocolRoutes({}).pipe(Layer.provideMerge(layer)), {
       disableLogger: true,
@@ -161,7 +161,7 @@ it("keeps long-poll transport-neutral and forwards a valid cursor", () =>
     }),
   ));
 
-const inspectedLayer = Protocol.layer().pipe(Layer.provideMerge(Memory.layer()));
+const inspectedLayer = Streams.layerMemory();
 
 it("preserves close-only sequence lowering and unpersisted fresh tuple on an already closed stream", () =>
   Effect.runPromise(
@@ -359,3 +359,5 @@ it("GET, POST and DELETE use their protocol call without extra HEAD requests", a
     await edge.dispose();
   }
 });
+
+import { layer as memoryStorage } from "../../src/storage/memory/layer.ts";

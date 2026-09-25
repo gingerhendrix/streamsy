@@ -75,20 +75,10 @@ type HostOutputs = SqlOutputs | ClientServices;
 const bunExact: Equal<Layer.Success<typeof bun>, HostOutputs | Notes | Changes<Notes>> = true;
 const bunRequirements: Equal<Layer.Services<typeof bun>, never> = true;
 const bunErrors: Equal<Layer.Error<typeof bun>, StorageFault> = true;
-const oldBun: Equal<Layer.Success<ReturnType<typeof BunStorage.layer>>, HostOutputs> = true;
-const oldSql: Equal<Layer.Success<ReturnType<typeof SqlStorage.layer>>, SqlOutputs> = true;
-const oldDo: Equal<
-  Layer.Success<ReturnType<typeof DurableObjectStorage.layer>>,
-  HostOutputs
-> = true;
 const rawSql = SqlStorage.layer({}, group);
 const sqlExact: Equal<Layer.Success<typeof rawSql>, SqlOutputs | Notes | Changes<Notes>> = true;
 const sqlRequirements: Equal<Layer.Services<typeof rawSql>, ClientServices> = true;
 const sqlErrors: Equal<Layer.Error<typeof rawSql>, StorageFault> = true;
-const mappedBun = Effect.map(Effect.succeed(options), BunStorage.layer);
-const pointFreeBun: Equal<Layer.Success<Effect.Success<typeof mappedBun>>, HostOutputs> = true;
-const mappedSql = Effect.map(Effect.succeed({}), SqlStorage.layer);
-const pointFreeSql: Equal<Layer.Success<Effect.Success<typeof mappedSql>>, SqlOutputs> = true;
 const hasFeed: Effect.Effect<void, StorageFault> = Effect.asVoid(Changes(Notes)).pipe(
   Effect.provide(bun),
 );
@@ -97,24 +87,15 @@ function exactDurable(options: DurableObjectStorage.DurableObjectStorageOptions)
   const outputs: Equal<Layer.Success<typeof host>, HostOutputs | Notes | Changes<Notes>> = true;
   const requirements: Equal<Layer.Services<typeof host>, never> = true;
   const errors: Equal<Layer.Error<typeof host>, StorageFault> = true;
-  const mapped = Effect.map(Effect.succeed(options), DurableObjectStorage.layer);
-  const pointFree: Equal<Layer.Success<Effect.Success<typeof mapped>>, HostOutputs> = true;
-  return [outputs, requirements, errors, pointFree];
+  return [outputs, requirements, errors];
 }
-// @ts-expect-error Protocol options without families must not silently fall through to storage-only.
-BunStorage.layer({ client: { filename: ":memory:" }, longPollTimeoutMs: 5 });
 void [
   bunExact,
   bunRequirements,
   bunErrors,
-  oldBun,
-  oldSql,
-  oldDo,
   sqlExact,
   sqlRequirements,
   sqlErrors,
-  pointFreeBun,
-  pointFreeSql,
   hasFeed,
   exactDurable,
 ];
