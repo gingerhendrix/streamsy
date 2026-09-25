@@ -140,5 +140,5 @@ test("a custom wire graph exposing ambient Storage is rejected during binding", 
   );
   expect(Exit.isFailure(result)).toBe(true);
   if (Exit.isFailure(result))
-    expect(String(Cause.squash(result.cause))).toContain("routed or mixed graph");
+    expect(String(Cause.squash(result.cause))).toContain("The exposed Storage does not own the protocol wires");
 });

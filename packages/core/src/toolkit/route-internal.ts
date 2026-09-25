@@ -1,8 +1,8 @@
 /**
- * Compile output shared by `StreamRoute` and the binding table.
+ * Compile output shared by `StreamRoute` and family validation.
  *
  * The public route value carries an id grammar, a typed `parse`, and a ref
- * constructor. The binding table also needs the compiled grammar, so it can
+ * constructor. Family validation also needs the compiled grammar, so it can
  * reject two templates that can both match one id. This module owns that
  * compilation and the static overlap check.
  */

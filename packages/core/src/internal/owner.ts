@@ -15,7 +15,7 @@ export class ForeignOwner extends Error {
     super(
       knownOwner
         ? `Family write to ${stream} does not share the checkpoint owner`
-        : `Cannot establish a storage owner for ${stream}; bind fused output families directly to their storage protocol graph, not a routed graph`,
+        : `Cannot establish a storage owner for ${stream}; the exposed Storage does not own the protocol wires`,
     );
   }
 }

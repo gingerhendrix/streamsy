@@ -317,9 +317,7 @@ export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
       storage !== undefined &&
       (storageOf(backend.reader) !== storage || storageOf(backend.writer) !== storage)
     )
-      throw new RangeError(
-        "Bind families to their storage protocol graph, not a routed or mixed graph",
-      );
+      throw new RangeError("The exposed Storage does not own the protocol wires");
     let context = Context.empty();
     for (const key of keys) {
       context = Context.add(context, key, key.make(backend));

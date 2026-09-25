@@ -14,9 +14,9 @@ import { compileSegments, isCanonicalIdSegment, type Segment } from "./route-int
 /**
  * Inert id family. Constructing a route acquires no service and no resource.
  *
- * A route owns one id grammar and the ref constructor for its members. The same
- * value drives two host decisions: the binding table picks the storage backend
- * for an id, and `Placement.byRoute` picks the Durable Object that owns it.
+ * A route owns one id grammar and the ref constructor for its members. A family
+ * binds the route to a storage graph, and `Placement.byRoute` picks the Durable
+ * Object that owns it.
  */
 export interface StreamRoute<
   RouteParams,
