@@ -12,7 +12,7 @@ import { input, output, positives, readAll } from "./support/scenarios.ts";
 
 type Services =
   | Checkpoints
-  | import("@streamsy/core").AnyStream
+  | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
   | Scope.Scope;

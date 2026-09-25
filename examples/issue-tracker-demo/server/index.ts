@@ -1,3 +1,4 @@
+import { Streamsy } from "@streamsy/core";
 import index from "../public/index.html";
 import { BunHttpServer } from "@effect/platform-bun";
 import * as Http from "@streamsy/core/http";
@@ -68,7 +69,7 @@ const listener = BunHttpServer.layer({
 
 const httpRuntime = ManagedRuntime.make(
   HttpRouter.serve(
-    Http.routes([{ family: Workspaces, access: "read" }], { prefix: streamPrefix }),
+    Http.routes(Streamsy.group(Workspaces), { prefix: streamPrefix, access: "read" }),
     {
       disableLogger: true,
       disableListenLog: true,

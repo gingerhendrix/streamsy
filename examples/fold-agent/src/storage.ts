@@ -1,5 +1,6 @@
+import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable example prepares its configured SQLite parent directory at the Bun edge. */
-/** Store acquisition is an example edge. One Scope owns the Sessions family and its storage. */
+/** Store acquisition is an example edge. One Scope owns the Sessions stream and its storage. */
 import { Memory } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Context, Effect, Exit, Layer, Schema, Scope } from "effect";
@@ -30,7 +31,10 @@ const closeScope = (scope: Scope.Closeable) => () =>
 export const openMemoryStore = (options: { longPollTimeoutMs?: number } = {}) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
-    const context = yield* Layer.buildWithScope(Memory.layer(options, Sessions), scope).pipe(
+    const context = yield* Layer.buildWithScope(
+      Memory.layer(options, Streamsy.group(Sessions)),
+      scope,
+    ).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
     );
     const store: StreamsyStore = { context, close: closeScope(scope) };
@@ -55,7 +59,7 @@ const openSqliteStore = (filename: string, options: StreamsyStoreOptions) =>
             ? {}
             : { longPollTimeoutMs: options.longPollTimeoutMs }),
         },
-        Sessions,
+        Streamsy.group(Sessions),
       ),
       scope,
     ).pipe(

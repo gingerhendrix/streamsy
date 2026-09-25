@@ -1,4 +1,4 @@
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Output, Projection } from "@streamsy/projection";
 import { Effect } from "effect";
 import { Identifier, foldIssue, type IssueEvent } from "../domain/issue.ts";
@@ -15,19 +15,19 @@ import {
 import { checkCatalogWorkspace } from "./catalog.ts";
 import { routes } from "./streams.ts";
 
-export class Board extends StreamFamily.bytes<Board>()(
+export class Board extends Streamsy.bytes<Board>()(
   "IssueTracker/Board",
   "issue-tracker/:workspaceId/outputs/board",
   {
     params: { workspaceId: Identifier },
   },
 ) {}
-export class LabelCounts extends StreamFamily.bytes<LabelCounts>()(
+export class LabelCounts extends Streamsy.bytes<LabelCounts>()(
   "IssueTracker/LabelCounts",
   "issue-tracker/:workspaceId/outputs/label-counts",
   { params: { workspaceId: Identifier } },
 ) {}
-export class Transitions extends StreamFamily.bytes<Transitions>()(
+export class Transitions extends Streamsy.bytes<Transitions>()(
   "IssueTracker/Transitions",
   "issue-tracker/:workspaceId/outputs/transitions",
   { params: { workspaceId: Identifier } },

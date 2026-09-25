@@ -450,7 +450,7 @@ test("named outputs reject an output that names one of their inputs", () => {
   }
 });
 
-test("Output.stream retains a member and uses its declared schema", () => {
+test("Output.stream retains an address and uses its declared schema", () => {
   const target = FamilyFixture.bytes("id-only");
   const declaration = Output.stream(Schema.Finite, { stream: target });
   const projection = Projection.outputs({
@@ -459,8 +459,8 @@ test("Output.stream retains a member and uses its declared schema", () => {
     outputs: { out: declaration },
     process: () => Effect.succeed({ out: [42] }),
   });
-  expect(Schema.encodeSync(projection.outputs.out.ref({}).codec)(42)).toBe("42");
-  expect(projection.streams.out?.family).toBe(target.family);
+  expect(Schema.encodeSync(projection.outputs.out.address({}).codec)(42)).toBe("42");
+  expect(projection.streams.out?.stream).toBe(target.stream);
   expect(projection.streams.out?.id).toBe(target.id);
   expect(Schema.encodeSync(projection.streams.out!.codec)(42)).toBe("42");
 });

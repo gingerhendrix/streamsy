@@ -841,7 +841,7 @@ test("B7 missing, soft-deleted, and expired source classifications are exact", a
   expect(await expiredResponse.text()).toBe("Source stream not found: e/expired");
 });
 
-test("B9 byKey rejects cross-family forks without changing the source", async () => {
+test("B9 byKey rejects cross-stream forks without changing the source", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   expect((await put(harness, "/streams/t1/x", "x")).status).toBe(201);
   const before = await probe(harness, "t1");
@@ -1134,10 +1134,10 @@ test(
       put(harness, "/streams/t1/y", second, "application/json"),
     ]);
     expect(concurrent.map((response) => response.status)).toEqual([201, 201]);
-    const family = await probe(harness, "t1");
-    expect(messageRowsFor(family, "t1/x")).toHaveLength(3_000);
-    expect(messageRowsFor(family, "t1/y")).toHaveLength(3_000);
-    expect(family.layerAcquisitions).toBe(1);
+    const stream = await probe(harness, "t1");
+    expect(messageRowsFor(stream, "t1/x")).toHaveLength(3_000);
+    expect(messageRowsFor(stream, "t1/y")).toHaveLength(3_000);
+    expect(stream.layerAcquisitions).toBe(1);
   },
   { timeout: 35_000 },
 );

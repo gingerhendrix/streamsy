@@ -1,24 +1,26 @@
 import { expect, it } from "bun:test";
 import { Effect, Schema, Stream } from "effect";
-import * as State from "../../src/toolkit/state.ts";
-import * as StreamRef from "../../src/toolkit/ref.ts";
+import * as DurableState from "../../src/toolkit/durable-state.ts";
+import * as StreamAddress from "../../src/toolkit/address.ts";
 import * as Streams from "../../src/toolkit/streams.ts";
 
 const Story = Schema.Struct({ id: Schema.Finite, title: Schema.String });
-const stories = StreamRef.state("stories", {
+const stories = StreamAddress.state("stories", {
   collections: { story: { schema: Story, key: "id" } },
 });
 const Slug = Schema.Struct({ slug: Schema.String, title: Schema.String });
-const slugs = StreamRef.state("slugs", { collections: { slug: { schema: Slug, key: "slug" } } });
+const slugs = StreamAddress.state("slugs", {
+  collections: { slug: { schema: Slug, key: "slug" } },
+});
 
 it("state changes round trip with Durable State wire fields and source headers", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const first = { id: 7, title: "first" };
       const second = { id: 8, title: "second" };
-      const facts = State.changes(stories, { offset: "source:4" }, [
-        State.upsert("story", first),
-        State.delete("story", second),
+      const facts = DurableState.changes(stories, { offset: "source:4" }, [
+        DurableState.upsert("story", first),
+        DurableState.remove("story", second),
       ]);
 
       yield* Streams.create(stories);
@@ -32,7 +34,7 @@ it("state changes round trip with Durable State wire fields and source headers",
         { operation: "delete", offset: "source:4", txid: "source:4:1" },
       ]);
 
-      const raw = yield* Streams.read(StreamRef.bytes("stories")).pipe(
+      const raw = yield* Streams.read(StreamAddress.bytes("stories")).pipe(
         Streams.items,
         Stream.runCollect,
       );
@@ -45,7 +47,9 @@ it("state changes round trip with Durable State wire fields and source headers",
 
 it("supports string keys and rejects empty derived keys", () => {
   expect(
-    State.changes(slugs, { offset: "source:5" }, [State.upsert("slug", { slug: "a", title: "A" })]),
+    DurableState.changes(slugs, { offset: "source:5" }, [
+      DurableState.upsert("slug", { slug: "a", title: "A" }),
+    ]),
   ).toEqual([
     {
       type: "slug",
@@ -55,8 +59,8 @@ it("supports string keys and rejects empty derived keys", () => {
     },
   ]);
   expect(() =>
-    State.changes(slugs, { offset: "source:6" }, [
-      State.upsert("slug", { slug: "", title: "empty" }),
+    DurableState.changes(slugs, { offset: "source:6" }, [
+      DurableState.upsert("slug", { slug: "", title: "empty" }),
     ]),
   ).toThrow('Invalid state key for type "slug": field "slug"');
 });
@@ -66,29 +70,29 @@ it("rejects an omitted optional key at runtime", () => {
     slug: Schema.optionalKey(Schema.String),
     title: Schema.String,
   });
-  const optionalSlugs = StreamRef.state("optional-slugs", {
+  const optionalSlugs = StreamAddress.state("optional-slugs", {
     collections: {
       // SAFETY: bypass the compile-time key constraint to cover the runtime boundary.
       slug: { schema: OptionalSlug, key: "slug" as never },
     },
   });
   expect(() =>
-    State.changes(optionalSlugs, { offset: "source:7" }, [
-      State.upsert("slug", { title: "missing" }),
+    DurableState.changes(optionalSlugs, { offset: "source:7" }, [
+      DurableState.upsert("slug", { title: "missing" }),
     ]),
   ).toThrow(TypeError);
 });
 
 it("lets a change override txid and add source headers without replacing offset", () => {
-  const facts = State.changes(stories, { offset: "source:8" }, [
-    State.upsert(
+  const facts = DurableState.changes(stories, { offset: "source:8" }, [
+    DurableState.upsert(
       "story",
       { id: 7, title: "first" },
       {
         headers: { txid: "client-uuid", timestamp: "2026-09-20T10:00:00Z" },
       },
     ),
-    State.upsert("story", { id: 8, title: "second" }),
+    DurableState.upsert("story", { id: 8, title: "second" }),
   ]);
   expect(facts.map((fact) => fact.headers)).toEqual([
     {
@@ -100,25 +104,25 @@ it("lets a change override txid and add source headers without replacing offset"
     { operation: "upsert", offset: "source:8", txid: "source:8:1" },
   ]);
   const encoded = Schema.encodeSync(stories.codec)(facts[0]!);
-  // SAFETY: `StreamRef.state` constructs a JSON ref whose codec encodes to a string.
+  // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
   const encodedText = encoded as string;
   expect(JSON.parse(encodedText).headers).toEqual(facts[0]!.headers);
 });
 
-it("writes and reads several collections through one state ref", () =>
+it("writes and reads several collections through one state address", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const Project = Schema.Struct({ id: Schema.String, name: Schema.String });
-      const workspace = StreamRef.state("workspace", {
+      const workspace = StreamAddress.state("workspace", {
         collections: {
           project: { schema: Project, key: "id" },
           story: { schema: Story, key: "id" },
         },
       });
-      const facts = State.changes(workspace, { offset: "source:9" }, [
-        State.upsert("project", { id: "p1", name: "Streamsy" }),
-        State.upsert("story", { id: 7, title: "first" }),
-        State.delete("project", { id: "p1", name: "Streamsy" }),
+      const facts = DurableState.changes(workspace, { offset: "source:9" }, [
+        DurableState.upsert("project", { id: "p1", name: "Streamsy" }),
+        DurableState.upsert("story", { id: 7, title: "first" }),
+        DurableState.remove("project", { id: "p1", name: "Streamsy" }),
       ]);
       expect(facts.map((fact) => [fact.type, fact.key, fact.headers.operation])).toEqual([
         ["project", "p1", "upsert"],
@@ -202,6 +206,6 @@ it("normalizes Durable State insert, update, and upsert operations", () => {
     value: { id: 7, title: "canonical" },
     headers: { operation: "upsert" },
   });
-  // SAFETY: `StreamRef.state` constructs a JSON ref whose codec encodes to a string.
+  // SAFETY: `StreamAddress.state` constructs a JSON address whose codec encodes to a string.
   expect(JSON.parse(encoded as string).headers.operation).toBe("upsert");
 });

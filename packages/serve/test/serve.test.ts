@@ -1,5 +1,6 @@
+import { Protocol } from "@streamsy/core/protocol";
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
-import { StreamFamily, provides } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function -- These request tests own web handler disposal at the Web boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, Schema } from "effect";
@@ -8,16 +9,18 @@ import { Streams } from "@streamsy/core/protocol";
 import { Serve } from "../src/index.ts";
 import * as Contract from "../src/contract.ts";
 
-class family extends StreamFamily.json<family>()("serve/serve.test/family", "events/:seat", {
+class stream extends Streamsy.json<stream>()("serve/serve.test/stream", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
 }) {}
-class rows extends StreamFamily.state<rows>()("serve/serve.test/rows", "rows/:seat", {
+class rows extends Streamsy.state<rows>()("serve/serve.test/rows", "rows/:seat", {
   params: { seat: Schema.String },
   collections: { cards: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
 const protocol = Streams.layerMemory();
-const storage = provides(protocol, family, rows).pipe(Layer.provideMerge(protocol));
+const storage = Protocol.bind(protocol, Streamsy.group(stream, rows)).pipe(
+  Layer.provideMerge(protocol),
+);
 class Seat extends Context.Service<Seat, { readonly seat: string }>()("test/Seat") {}
 const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
   Effect.gen(function* () {
@@ -32,9 +35,9 @@ function app() {
   return HttpRouter.toWebHandler(
     Layer.mergeAll(
       protocolRoutes(),
-      Serve.stream(family, "/feed/:seat"),
+      Serve.stream(stream, "/feed/:seat"),
       Serve.state(rows, "/state/:seat"),
-      Serve.stream(family, "/me", { params: Seat }).pipe(Layer.provide(auth.layer)),
+      Serve.stream(stream, "/me", { params: Seat }).pipe(Layer.provide(auth.layer)),
     ).pipe(HttpRouter.provideRequest(storage)),
     { disableLogger: true },
   );
@@ -71,7 +74,7 @@ test("Serve owns every method beneath the root protocol wildcard", async () => {
 test("D5 params reads the middleware seat and unauthenticated requests get 401", async () => {
   const App = Layer.mergeAll(
     protocolRoutes({ prefix: "/_seed" }),
-    Serve.stream(family, "/me", { params: Seat }),
+    Serve.stream(stream, "/me", { params: Seat }),
   ).pipe(Layer.provide(auth.layer), HttpRouter.provideRequest(storage));
   const web = HttpRouter.toWebHandler(App, { disableLogger: true });
   try {
@@ -169,13 +172,15 @@ test("document encodes canonical JSON and conditional HEAD", async () => {
 });
 
 test("path codecs transform strings; widened paths check keys at registration", async () => {
-  class numbered extends StreamFamily.json<numbered>()("serve/serve.test/numbered", "numbers/:n", {
+  class numbered extends Streamsy.json<numbered>()("serve/serve.test/numbered", "numbers/:n", {
     params: { n: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
   const path: `/${string}` = "/numbers/:n";
   const web = HttpRouter.toWebHandler(
-    Serve.stream(numbered, path).pipe(HttpRouter.provideRequest(provides(protocol, numbered))),
+    Serve.stream(numbered, path).pipe(
+      HttpRouter.provideRequest(Protocol.bind(protocol, Streamsy.group(numbered))),
+    ),
     { disableLogger: true },
   );
   try {
@@ -190,7 +195,7 @@ test("path codecs transform strings; widened paths check keys at registration", 
 
 test("duplicate route shapes fail application construction", async () => {
   const web = HttpRouter.toWebHandler(
-    Layer.mergeAll(Serve.stream(family, "/feed/:seat"), Serve.stream(family, "/feed/:seat")).pipe(
+    Layer.mergeAll(Serve.stream(stream, "/feed/:seat"), Serve.stream(stream, "/feed/:seat")).pipe(
       HttpRouter.provideRequest(storage),
     ),
     { disableLogger: true },
@@ -208,7 +213,7 @@ test("duplicate route shapes fail application construction", async () => {
   }
 });
 
-test("decoded family parameters differ from raw protocol ids for encoded segments", async () => {
+test("decoded stream parameters differ from raw protocol ids for encoded segments", async () => {
   const web = app();
   try {
     for (const value of ["w 1", "α"]) {
@@ -237,7 +242,7 @@ test("decoded family parameters differ from raw protocol ids for encoded segment
 test("CORS handles Serve preflight and exposes cursor and contract headers", async () => {
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(
-      Serve.stream(family, "/feed/:seat"),
+      Serve.stream(stream, "/feed/:seat"),
       HttpRouter.cors({
         allowedOrigins: ["https://app.example.com"],
         allowedMethods: ["GET", "HEAD", "OPTIONS"],
@@ -280,8 +285,8 @@ test("CORS handles Serve preflight and exposes cursor and contract headers", asy
   }
 });
 
-test("fingerprints bind members, collection keys, and explicit contract revisions", async () => {
-  class changed extends StreamFamily.state<changed>()("serve/serve.test/changed", "rows/:seat", {
+test("fingerprints bind addresses, collection keys, and explicit contract revisions", async () => {
+  class changed extends Streamsy.state<changed>()("serve/serve.test/changed", "rows/:seat", {
     params: { seat: Schema.String },
     collections: {
       cards: { schema: Schema.Struct({ id: Schema.String, other: Schema.String }), key: "other" },
@@ -297,7 +302,9 @@ test("fingerprints bind members, collection keys, and explicit contract revision
   ) => {
     const web = HttpRouter.toWebHandler(
       route.pipe(
-        HttpRouter.provideRequest(provides(protocol, changed).pipe(Layer.provideMerge(storage))),
+        HttpRouter.provideRequest(
+          Protocol.bind(protocol, Streamsy.group(changed)).pipe(Layer.provideMerge(storage)),
+        ),
       ),
       {
         disableLogger: true,
@@ -322,10 +329,10 @@ test("fingerprints bind members, collection keys, and explicit contract revision
 });
 
 test("read options and explicit params paths are checked at construction", () => {
-  expect(() => Serve.stream(family, "/feed/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
+  expect(() => Serve.stream(stream, "/feed/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
   expect(() => Serve.state(rows, "/state/:seat", { sseDeadlineMs: -1 })).toThrow(RangeError);
   expect(() =>
-    Serve.stream(family, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
+    Serve.stream(stream, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
   ).toThrow("must not contain path parameters");
   expect(() =>
     Serve.state(rows, "/me/:ignored", { params: Effect.succeed({ seat: "a" }) }),
@@ -334,12 +341,13 @@ test("read options and explicit params paths are checked at construction", () =>
 
 test("annotated parameter Structs retain their names and non-Struct schemas are rejected", async () => {
   const annotated = {
-    ...family.route,
-    family: family.family,
+    template: stream.template,
+    address: stream.address,
+    stream: stream,
     paramSchema: Schema.Struct({ seat: Schema.String }).annotate({ identifier: "SeatParams" }),
   };
   const path: `/${string}` = "/feed/:other";
-  expect(() => Serve.stream(annotated, path)).toThrow("Route params must equal family params");
+  expect(() => Serve.stream(annotated, path)).toThrow("Route params must equal stream params");
   const web = HttpRouter.toWebHandler(
     Layer.mergeAll(protocolRoutes(), Serve.stream(annotated, "/feed/:seat")).pipe(
       HttpRouter.provideRequest(storage),
@@ -359,10 +367,11 @@ test("annotated parameter Structs retain their names and non-Struct schemas are 
     await web.dispose();
   }
   const record = {
-    family: family.family,
-    template: family.template,
+    stream: stream,
+    template: stream.template,
     paramSchema: Schema.Record(Schema.String, Schema.String),
-    ref: (values: Readonly<Record<string, string>>) => family.ref({ seat: values.seat ?? "a" }),
+    address: (values: Readonly<Record<string, string>>) =>
+      stream.address({ seat: values.seat ?? "a" }),
   };
   expect(() => Serve.stream(record, path)).toThrow(
     "paramSchema must be a Struct of path parameters",
@@ -372,10 +381,11 @@ test("annotated parameter Structs retain their names and non-Struct schemas are 
 test("invalid state collection metadata fails at construction", () => {
   const collections = { cards: { schema: Schema.Struct({ id: Schema.String }), key: NaN } };
   const invalid = {
-    ...rows.route,
-    family: rows.family,
+    template: rows.template,
+    paramSchema: rows.paramSchema,
+    stream: rows,
     collections,
-    ref: (values: { readonly seat: string }) => ({ ...rows.ref(values), collections }),
+    address: (values: { readonly seat: string }) => ({ ...rows.address(values), collections }),
   };
   expect(() => Serve.state(invalid, "/state/:seat")).toThrow();
 });

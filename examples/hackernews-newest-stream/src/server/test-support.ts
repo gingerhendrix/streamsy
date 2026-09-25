@@ -24,11 +24,11 @@ export async function demoHarness(readLimit = 1000) {
     append: (items: readonly import("./source-change.ts").HackerNewsSourceChange[]) =>
       runtime.runPromise(Effect.flatMap(HackerNewsSource, (source) => source.append({}, items))),
     read: (
-      family: typeof HackerNewsSource | typeof HackerNewsTarget,
+      stream: typeof HackerNewsSource | typeof HackerNewsTarget,
     ): Promise<ReadonlyArray<unknown>> =>
       runtime.runPromise(
         Effect.gen(function* () {
-          const service = yield* family;
+          const service = yield* stream;
           const batches: Stream.Stream<
             Batch<unknown>,
             StreamsFault | ReadError | DecodeFault

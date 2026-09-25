@@ -1,5 +1,5 @@
 import { MaterializedState } from "@durable-streams/state";
-import { State, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Stream } from "effect";
 import { type Comment, type Issue, type Project } from "../shared/state-schema.ts";
 import { mainWorkspaceId } from "./config.ts";
@@ -83,17 +83,17 @@ export const mutateWorkspace = (
 
 export function projectUpsert(project: Project, txid?: TxId): WorkspaceChangeWithHeaders {
   const headers = eventHeaders(txid);
-  return { ...State.upsert("project", project, { headers }), headers };
+  return { ...DurableState.upsert("project", project, { headers }), headers };
 }
 
 export function issueUpsert(issue: Issue, txid?: TxId): WorkspaceChangeWithHeaders {
   const headers = eventHeaders(txid);
-  return { ...State.upsert("issue", issue, { headers }), headers };
+  return { ...DurableState.upsert("issue", issue, { headers }), headers };
 }
 
 export function commentUpsert(comment: Comment, txid?: TxId): WorkspaceChangeWithHeaders {
   const headers = eventHeaders(txid);
-  return { ...State.upsert("comment", comment, { headers }), headers };
+  return { ...DurableState.upsert("comment", comment, { headers }), headers };
 }
 
 const appendSeedEvent = Effect.fn("Workspace.appendSeedEvent")(function* (

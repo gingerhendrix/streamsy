@@ -23,12 +23,7 @@ import { resolvePlacement } from "./cloudflare/router.ts";
 export { alarm } from "./cloudflare/host-program.ts";
 export { Alarm, alarmLayer } from "./cloudflare/alarm.ts";
 export { Placement };
-export {
-  rule,
-  type FamilyRoute,
-  type OwnerRule,
-  type ErasedOwnerRule,
-} from "./cloudflare/placement.ts";
+export { rule } from "./cloudflare/placement.ts";
 
 /** An Alchemy HttpEffect; authenticate before evaluating this router. */
 export const router = (options: {

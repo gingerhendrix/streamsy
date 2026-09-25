@@ -89,7 +89,7 @@ export interface ProjectedContinent {
   name: string;
   territoryIds: string[];
   reinforcementBonus: number;
-  /** The player who currently owns every member country, if any. */
+  /** The player who currently owns every address country, if any. */
   controllerId?: string;
   palette: ContinentPalette;
 }

@@ -1,8 +1,8 @@
-import type { StreamRef, StreamFamily } from "@streamsy/core";
+import type { StreamAddress, Streamsy } from "@streamsy/core";
 
 /** Declaration order of the map is the read and item order of every pass. */
-export type InputMap = Record<string, StreamFamily.Member<unknown, unknown>>;
-export type ItemOf<Ref> = Ref extends StreamRef.StreamRef<infer A> ? A : never;
+export type InputMap = Record<string, Streamsy.Address<unknown, unknown>>;
+export type ItemOf<Address> = Address extends StreamAddress.StreamAddress<infer A> ? A : never;
 
 export interface Slice<A> {
   /** Cursor the read started after. Equal to `nextOffset` when the slice is empty. */
@@ -34,9 +34,9 @@ export const emptySlice = <A>(from: string): Slice<A> => ({
   closed: false,
 });
 
-export type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["family"]["Identifier"];
+export type InputServices<Inputs extends InputMap> = Inputs[keyof Inputs]["stream"]["Identifier"];
 
-/** Iteration preserves the union of the declared input family requirements. */
+/** Iteration preserves the union of the declared input stream requirements. */
 export const inputEntries = <Inputs extends InputMap>(inputs: Inputs) =>
-  // SAFETY: every iterated member comes from Inputs; its key is in the mapped union.
-  Object.entries(inputs) as Array<[string, StreamFamily.Member<unknown, InputServices<Inputs>>]>;
+  // SAFETY: every iterated address comes from Inputs; its key is in the mapped union.
+  Object.entries(inputs) as Array<[string, Streamsy.Address<unknown, InputServices<Inputs>>]>;

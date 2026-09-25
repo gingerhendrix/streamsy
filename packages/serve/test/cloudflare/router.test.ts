@@ -146,8 +146,8 @@ test("byRoute names the object from the route parameters", async () => {
   const handler = router({
     namespace: () => namespace,
     placement: Placement.byRoute([
-      rule({ route: journal, owner: ({ user }) => `user/${user}` }),
-      rule({ route: totals, owner: ({ user }) => `user/${user}` }),
+      rule({ stream: journal, owner: ({ user }) => `user/${user}` }),
+      rule({ stream: totals, owner: ({ user }) => `user/${user}` }),
     ]),
   });
 
@@ -169,7 +169,7 @@ test("a constrained codec reaches the owner as its decoded type", async () => {
   const handler = router({
     namespace: () => namespace,
     placement: Placement.byRoute([
-      rule({ route: orders, owner: ({ orderId }) => `order/${orderId}` }),
+      rule({ stream: orders, owner: ({ orderId }) => `order/${orderId}` }),
     ]),
   });
 
@@ -187,7 +187,7 @@ test("an unmatched path is 400 and a throwing owner is 500", async () => {
   const namespace = makeNamespace();
   const unmatched = router({
     namespace: () => namespace,
-    placement: Placement.byRoute([rule({ route: journal, owner: ({ user }) => user })]),
+    placement: Placement.byRoute([rule({ stream: journal, owner: ({ user }) => user })]),
   });
   const missing = await invoke(unmatched, new Request("https://streams.test/drafts/ann"));
   expect(missing?.status).toBe(400);
@@ -198,7 +198,7 @@ test("an unmatched path is 400 and a throwing owner is 500", async () => {
     namespace: () => namespace,
     placement: Placement.byRoute([
       rule({
-        route: journal,
+        stream: journal,
         owner: () => {
           throw new Error("defect");
         },
@@ -209,11 +209,11 @@ test("an unmatched path is 400 and a throwing owner is 500", async () => {
   expect(defect?.status).toBe(500);
 });
 
-test("byRoute routes a fork to the child's family object", async () => {
+test("byRoute routes a fork to the child's stream object", async () => {
   const namespace = makeNamespace();
   const handler = router({
     namespace: () => namespace,
-    placement: Placement.byRoute([rule({ route: journal, owner: ({ user }) => `user/${user}` })]),
+    placement: Placement.byRoute([rule({ stream: journal, owner: ({ user }) => `user/${user}` })]),
   });
 
   const response = await invoke(

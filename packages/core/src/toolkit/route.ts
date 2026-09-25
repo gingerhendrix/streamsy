@@ -8,13 +8,13 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/require-safety-comment-for-type-assertion, typescript/no-unsafe-type-assertion, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- This module is the checked boundary between an author's codec record and the decoded parameter set; every widening below is guarded by the invariant in its own comment. */
 import { Option, Schema } from "effect";
 import { StreamId } from "../schema/index.ts";
-import * as StreamRef from "./ref.ts";
+import * as StreamAddress from "./address.ts";
 import { compileSegments, isCanonicalIdSegment, type Segment } from "./route-internal.ts";
 
 /**
- * Inert id family. Constructing a route acquires no service and no resource.
+ * Inert id stream. Constructing a route acquires no service and no resource.
  *
- * A route owns one id grammar and the ref constructor for its members. A family
+ * A route owns one id grammar and the address constructor for its addresses. A stream
  * binds the route to a storage graph, and `Placement.byRoute` picks the Durable
  * Object that owns it.
  */
@@ -33,11 +33,11 @@ export interface StreamRoute<
   readonly match: (id: string) => boolean;
   /** The primitive. `None` when the id does not match or a parameter fails to decode. */
   readonly parse: (id: string) => Option.Option<RouteParams>;
-  /** Build the member ref. `parse(ref(params).id)` must be `Some(params)`. */
-  readonly ref: (params: RouteParams) => StreamRef.StreamRef<A, RD, RE>;
+  /** Build the address. `parse(address(params).id)` must be `Some(params)`. */
+  readonly address: (params: RouteParams) => StreamAddress.StreamAddress<A, RD, RE>;
 }
 
-/** The family codecs exposed to HTTP path decoding. */
+/** The stream codecs exposed to HTTP path decoding. */
 export type PathSchema<P> = Schema.Codec<
   P,
   Readonly<Record<string, string | undefined>>,
@@ -51,22 +51,26 @@ function pathSchema<C extends ParamCodecs>(codecs: C): PathSchema<Params<C>> {
   return Schema.Struct(codecs) as PathSchema<Params<C>>;
 }
 
-/** A route whose member refs retain their declared State collections. */
-export type StateRoute<P, C extends StreamRef.Collections, Template extends string = string> = Omit<
+/** A route whose address refs retain their declared State collections. */
+export type StateRoute<
+  P,
+  C extends StreamAddress.Collections,
+  Template extends string = string,
+> = Omit<
   StreamRoute<
     P,
-    StreamRef.CollectionsChange<C>,
-    StreamRef.CollectionsDecodingServices<C>,
-    StreamRef.CollectionsEncodingServices<C>,
+    StreamAddress.CollectionsChange<C>,
+    StreamAddress.CollectionsDecodingServices<C>,
+    StreamAddress.CollectionsEncodingServices<C>,
     Template
   >,
-  "ref"
+  "address"
 > & {
   readonly collections: C;
-  readonly ref: (params: P) => StreamRef.StateRef<C>;
+  readonly address: (params: P) => StreamAddress.StateAddress<C>;
 };
 
-/** The route predicate used by family validation and HTTP dispatch. */
+/** The route predicate used by stream validation and HTTP dispatch. */
 export interface Matcher {
   readonly match: (id: string) => boolean;
 }
@@ -200,19 +204,19 @@ export function json<const Template extends string, Codecs extends ParamCodecs, 
     paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
-    ref: (params) => StreamRef.json(buildId(template, segments, codecs, params), options),
+    address: (params) => StreamAddress.json(buildId(template, segments, codecs, params), options),
   };
 }
 
 export function state<
   const Template extends string,
   Codecs extends ParamCodecs,
-  const C extends StreamRef.Collections,
+  const C extends StreamAddress.Collections,
 >(
   template: Template,
   options: {
     readonly params: Codecs & ExactTemplateParams<Template, Codecs>;
-    readonly collections: C & StreamRef.ValidCollections<C>;
+    readonly collections: C & StreamAddress.ValidCollections<C>;
   },
 ): StateRoute<Params<Codecs>, C, Template> & WithPathSchema<Params<Codecs>> {
   const { segments, names } = compileSegments(template);
@@ -225,7 +229,7 @@ export function state<
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
     collections: options.collections,
-    ref: (params) => StreamRef.state(buildId(template, segments, codecs, params), options),
+    address: (params) => StreamAddress.state(buildId(template, segments, codecs, params), options),
   };
 }
 
@@ -246,23 +250,23 @@ export function bytes<const Template extends string, Codecs extends ParamCodecs>
     paramSchema: pathSchema(codecs),
     match: (id) => Option.isSome(matchTemplate(segments, codecs, id)),
     parse: (id) => matchTemplate(segments, codecs, id),
-    ref: (params) =>
-      StreamRef.bytes(buildId(template, segments, codecs, params), {
+    address: (params) =>
+      StreamAddress.bytes(buildId(template, segments, codecs, params), {
         contentType: options.contentType ?? "application/octet-stream",
       }),
   };
 }
 
-/** Escape hatch for a grammar a template cannot express, such as a regex family. */
+/** Escape hatch for a grammar a template cannot express, such as a regex stream. */
 export function custom<RouteParams, A, RD, RE>(options: {
   readonly parse: (id: string) => Option.Option<RouteParams>;
-  readonly ref: (params: RouteParams) => StreamRef.StreamRef<A, RD, RE>;
+  readonly address: (params: RouteParams) => StreamAddress.StreamAddress<A, RD, RE>;
 }): StreamRoute<RouteParams, A, RD, RE> {
   return {
     _tag: "StreamRoute",
     template: "",
     match: (id) => Option.isSome(options.parse(id)),
     parse: options.parse,
-    ref: options.ref,
+    address: options.address,
   };
 }

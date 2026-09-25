@@ -1,23 +1,23 @@
 import * as FamilyFixture from "./support/families.ts";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Exit, Fiber, Option, Schema, Stream, type Scope } from "effect";
-import { Storage, StreamGone, StreamRef } from "@streamsy/core";
+import { Storage, StreamGone, StreamAddress } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
-class WatchRoute2 extends StreamFamily.json<WatchRoute2>()(
+class WatchRoute2 extends Streamsy.json<WatchRoute2>()(
   "on-change.test/WatchRoute2",
-  "change-family-scope/:workspaceId",
+  "change-stream-scope/:workspaceId",
   {
     params: { workspaceId: Schema.String },
     schema: Schema.Finite,
   },
 ) {}
-class WatchRoute1 extends StreamFamily.json<WatchRoute1>()(
+class WatchRoute1 extends Streamsy.json<WatchRoute1>()(
   "on-change.test/WatchRoute1",
-  "change-family/:workspaceId",
+  "change-stream/:workspaceId",
   {
     params: { workspaceId: Schema.String },
     schema: Schema.Finite,
@@ -25,12 +25,14 @@ class WatchRoute1 extends StreamFamily.json<WatchRoute1>()(
 ) {}
 
 type Services =
-  | import("@streamsy/core").Changes<WatchRoute1 | WatchRoute2 | import("@streamsy/core").AnyStream>
+  | import("@streamsy/core").Streamsy.ChangeFeed<
+      WatchRoute1 | WatchRoute2 | import("@streamsy/core").Streamsy.Wildcard
+    >
   | WatchRoute2
   | WatchRoute1
   | Checkpoints
   | Storage
-  | import("@streamsy/core").AnyStream
+  | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
   | Scope.Scope;
@@ -41,8 +43,8 @@ const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
       Effect.provide(FamilyFixture.withFamilies(layerMemory(), WatchRoute1, WatchRoute2)),
     ),
   );
-const readAll = <A>(ref: StreamRef.StreamRef<A>) =>
-  Streams.read(ref).pipe(Streams.items, Stream.runCollect);
+const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
+  Streams.read(address).pipe(Streams.items, Stream.runCollect);
 
 test("an append runs a fused projection and commits its write with the checkpoint", () =>
   run(
@@ -241,14 +243,14 @@ test("onChange and a serialized request share the same key lock", () =>
     }),
   ));
 
-test("a family watches its fixed member set independently", () =>
+test("a stream watches its fixed address set independently", () =>
   run(
     Effect.gen(function* () {
       const seen: Array<string> = [];
       const a = yield* Deferred.make<void>();
       const b = yield* Deferred.make<void>();
       const family = Projection.family({
-        id: "change-family",
+        id: "change-stream",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute1 },
         process: (_batch, unit) =>
@@ -276,11 +278,11 @@ test("a family watches its fixed member set independently", () =>
     }),
   ));
 
-test("closing the caller scope interrupts every family member fiber", () =>
+test("closing the caller scope interrupts every stream address fiber", () =>
   run(
     Effect.gen(function* () {
       const family = Projection.family({
-        id: "change-family-scope",
+        id: "change-stream-scope",
         params: { workspaceId: Schema.String },
         inputs: { facts: WatchRoute2 },
         process: () => Effect.void,

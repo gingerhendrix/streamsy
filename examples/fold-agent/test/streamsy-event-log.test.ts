@@ -1,3 +1,4 @@
+import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- Bun owns Promise test callbacks and temporary SQLite fixture plumbing; effects run only at the test edge. */
 /**
  * Contract tests for the Streamsy-backed Fold EventLog over a memory Layer. Each test names a claim the example makes about durability, and
@@ -367,7 +368,7 @@ describe("Fold writer capability failures", () => {
   const streamId = "fold/sessions/recovery/events";
   const withContext = <E>(
     program: (store: StreamsyStore) => Effect.Effect<void, E, import("effect").Scope.Scope>,
-    layer: Layer.Layer<Sessions> = Memory.layer({}, Sessions),
+    layer: Layer.Layer<Sessions> = Memory.layer({}, Streamsy.group(Sessions)),
   ) =>
     Effect.runPromise(
       Effect.scoped(

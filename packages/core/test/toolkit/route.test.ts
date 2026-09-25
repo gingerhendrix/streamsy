@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { Option, Schema } from "effect";
 import { StreamId } from "../../src/schema/index.ts";
-import * as StreamRef from "../../src/toolkit/ref.ts";
+import * as StreamAddress from "../../src/toolkit/address.ts";
 import * as StreamRoute from "../../src/toolkit/route.ts";
 
 const Entry = Schema.Struct({ text: Schema.String });
@@ -12,9 +12,9 @@ it("a template route parses and builds the same id", () => {
     schema: Entry,
   });
   expect(journal.template).toBe("journal/:user");
-  const ref = journal.ref({ user: "ann" });
-  expect(ref.id).toBe(StreamId.make("journal/ann"));
-  expect(ref.contentType).toBe("application/json");
+  const address = journal.address({ user: "ann" });
+  expect(address.id).toBe(StreamId.make("journal/ann"));
+  expect(address.contentType).toBe("application/json");
   expect(Option.getOrUndefined(journal.parse("journal/ann"))).toEqual({ user: "ann" });
   for (const id of ["journal/ann", "journal", "journal/ann/notes", "drafts/ann", "journal/"])
     expect(journal.match(id)).toBe(id === "journal/ann");
@@ -26,7 +26,7 @@ it("multi-segment templates keep parameter identity", () => {
     schema: Entry,
   });
   expect(Option.getOrUndefined(log.parse("fold/sessions/s1/events"))).toEqual({ session: "s1" });
-  expect(log.ref({ session: "s1" }).id).toBe(StreamId.make("fold/sessions/s1/events"));
+  expect(log.address({ session: "s1" }).id).toBe(StreamId.make("fold/sessions/s1/events"));
   const two = StreamRoute.json("fold/sessions/:session/:kind", {
     params: { session: Schema.String, kind: Schema.String },
     schema: Entry,
@@ -46,14 +46,14 @@ it("a parameter that fails its codec is not a match", () => {
   expect(Option.isNone(order.parse("orders/0"))).toBe(true);
   expect(Option.isNone(order.parse("orders/seven"))).toBe(true);
   expect(order.match("orders/seven")).toBe(false);
-  expect(order.ref({ orderId: 7 }).id).toBe(StreamId.make("orders/7"));
+  expect(order.address({ orderId: 7 }).id).toBe(StreamId.make("orders/7"));
 });
 
 it("a built parameter must be a canonical id segment", () => {
   const upload = StreamRoute.bytes("uploads/:name", { params: { name: Schema.String } });
-  expect(upload.ref({ name: "a.png" }).id).toBe(StreamId.make("uploads/a.png"));
+  expect(upload.address({ name: "a.png" }).id).toBe(StreamId.make("uploads/a.png"));
   for (const name of ["", ".", "..", "a/b", "a%2Fb", "a?b", "a#b", "a\\b"])
-    expect(() => upload.ref({ name })).toThrow(RangeError);
+    expect(() => upload.address({ name })).toThrow(RangeError);
 });
 
 it("bytes sets the content type and defaults to octet-stream", () => {
@@ -61,10 +61,10 @@ it("bytes sets the content type and defaults to octet-stream", () => {
     params: { name: Schema.String },
     contentType: "image/png",
   });
-  expect(upload.ref({ name: "a.png" }).contentType).toBe("image/png");
-  expect(upload.ref({ name: "a.png" })._tag).toBe("Bytes");
+  expect(upload.address({ name: "a.png" }).contentType).toBe("image/png");
+  expect(upload.address({ name: "a.png" })._tag).toBe("Bytes");
   const plain = StreamRoute.bytes("blobs/:name", { params: { name: Schema.String } });
-  expect(plain.ref({ name: "a" }).contentType).toBe("application/octet-stream");
+  expect(plain.address({ name: "a" }).contentType).toBe("application/octet-stream");
 });
 
 it("a custom route wraps a grammar a template cannot express", () => {
@@ -73,7 +73,8 @@ it("a custom route wraps a grammar a template cannot express", () => {
       const match = /^fold\/sessions\/(.+)\/events$/.exec(id);
       return match?.[1] === undefined ? Option.none() : Option.some({ session: match[1] });
     },
-    ref: ({ session }) => StreamRef.json(`fold/sessions/${session}/events`, { schema: Entry }),
+    address: ({ session }) =>
+      StreamAddress.json(`fold/sessions/${session}/events`, { schema: Entry }),
   });
   expect(sessionLog.template).toBe("");
   expect(Option.getOrUndefined(sessionLog.parse("fold/sessions/s1/events"))).toEqual({
@@ -81,7 +82,7 @@ it("a custom route wraps a grammar a template cannot express", () => {
   });
   expect(sessionLog.match("fold/sessions/s1/events")).toBe(true);
   expect(sessionLog.match("fold/sessions/s1")).toBe(false);
-  expect(sessionLog.ref({ session: "s1" }).id).toBe(StreamId.make("fold/sessions/s1/events"));
+  expect(sessionLog.address({ session: "s1" }).id).toBe(StreamId.make("fold/sessions/s1/events"));
 });
 
 it("the template constructor rejects a malformed grammar", () => {
@@ -120,10 +121,10 @@ it("state routes round trip decoded params and reject bad segments", () => {
     params: { id: Schema.FiniteFromString },
     collections: { entry: { schema: Entry, key: "text" } },
   });
-  const ref = route.ref({ id: 7 });
-  expect(Object.keys(ref.collections)).toEqual(["entry"]);
-  expect(route.parse(ref.id)).toEqual(Option.some({ id: 7 }));
-  expect(ref.contentType).toBe("application/json");
+  const address = route.address({ id: 7 });
+  expect(Object.keys(address.collections)).toEqual(["entry"]);
+  expect(route.parse(address.id)).toEqual(Option.some({ id: 7 }));
+  expect(address.contentType).toBe("application/json");
   for (const id of ["catalog/no", "catalog/..", "catalog/7/extra"])
     expect(route.parse(id)).toEqual(Option.none());
 });

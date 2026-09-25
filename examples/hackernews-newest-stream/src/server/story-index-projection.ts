@@ -19,4 +19,4 @@ export const hackerNewsStoryIndex = Projection.outputs({
     }),
 });
 
-export const hackerNewsTarget = hackerNewsStoryIndex.outputs["hn-story"].ref({});
+export const hackerNewsTarget = hackerNewsStoryIndex.outputs["hn-story"].address({});

@@ -115,7 +115,7 @@ export const issueRows = Projection.family({
           const table = entry.input;
           const idColumn =
             table === "projects" ? "project_id" : table === "users" ? "user_id" : "label_id";
-          // The family codec guarantees this parameter on every member.
+          // The stream codec guarantees this parameter on every address.
           const workspaceId = unit.params.workspaceId!;
           if (!("value" in item)) {
             yield* sql.unsafe(`DELETE FROM ${table} WHERE workspace_id=? AND ${idColumn}=?`, [

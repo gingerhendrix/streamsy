@@ -1,35 +1,38 @@
-import { StreamFamily, provides } from "@streamsy/core";
+import { Protocol } from "@streamsy/core/protocol";
+import { Streamsy } from "@streamsy/core";
 import { Context, Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { Streams } from "@streamsy/core/protocol";
 import { listener } from "../src/bun.ts";
 import { Serve } from "../src/index.ts";
-class family extends StreamFamily.json<family>()("serve/serve.type-test/family", "events/:seat", {
+class stream extends Streamsy.json<stream>()("serve/serve.type-test/stream", "events/:seat", {
   params: { seat: Schema.String },
   schema: Schema.String,
 }) {}
-class state extends StreamFamily.state<state>()("serve/serve.type-test/state", "rows/:seat", {
+class state extends Streamsy.state<state>()("serve/serve.type-test/state", "rows/:seat", {
   params: { seat: Schema.String },
   collections: { rows: { schema: Schema.Struct({ id: Schema.String }), key: "id" } },
 }) {}
-Serve.stream(family, "/feed/:seat");
+Serve.stream(stream, "/feed/:seat");
 Serve.state(state, "/rows/:seat");
 // @ts-expect-error wrong parameter
-Serve.stream(family, "/feed/:wrong");
+Serve.stream(stream, "/feed/:wrong");
 // @ts-expect-error missing parameter
-Serve.stream(family, "/feed");
+Serve.stream(stream, "/feed");
 // @ts-expect-error extra parameter
-Serve.stream(family, "/feed/:seat/:extra");
+Serve.stream(stream, "/feed/:seat/:extra");
 // @ts-expect-error optional parameters are not supported
-Serve.stream(family, "/feed/:seat?");
+Serve.stream(stream, "/feed/:seat?");
 // @ts-expect-error state requires collections
-Serve.state(family, "/rows/:seat");
-// @ts-expect-error NoInfer prevents params from widening the family
-Serve.stream(family, "/me", { params: Effect.succeed({ seat: 1 }) });
+Serve.state(stream, "/rows/:seat");
+// @ts-expect-error NoInfer prevents params from widening the stream
+Serve.stream(stream, "/me", { params: Effect.succeed({ seat: 1 }) });
 class Seat extends Context.Service<Seat, { readonly seat: string }>()("Seat") {}
-const mine = Serve.stream(family, "/me", { params: Seat });
+const mine = Serve.stream(stream, "/me", { params: Seat });
 const protocol = Streams.layerMemory();
-const storage = provides(protocol, family, state).pipe(Layer.provideMerge(protocol));
+const storage = Protocol.bind(protocol, Streamsy.group(stream, state)).pipe(
+  Layer.provideMerge(protocol),
+);
 const unsafe = HttpRouter.toWebHandler(mine.pipe(HttpRouter.provideRequest(storage)));
 // @ts-expect-error no auth supplied the seat; handler requires a context
 void unsafe.handler(new Request("http://host/me"));

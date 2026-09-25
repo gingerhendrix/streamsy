@@ -1,5 +1,5 @@
 /* oxlint-disable effecttsgo/node-builtin-import -- This executable demo prepares its configured SQLite directory at the Bun edge. */
-import { Memory, StreamGroup, type Storage, type StorageFault, type Changes } from "@streamsy/core";
+import { Memory, Streamsy, type Storage, type StorageFault } from "@streamsy/core";
 import { ProjectionFault, type State, type Checkpoints } from "@streamsy/projection";
 import * as ProjectionMemory from "@streamsy/projection/memory";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
@@ -12,7 +12,7 @@ import { pollFailure } from "./poller/contract.ts";
 import { HackerNewsSource, HackerNewsTarget } from "./stream-resources.ts";
 import type { HackerNewsSourceChange } from "./source-change.ts";
 
-export const streams = StreamGroup.make(HackerNewsSource, HackerNewsTarget);
+export const streams = Streamsy.group(HackerNewsSource, HackerNewsTarget);
 
 const appendSourceBatch = Effect.fn("DemoStreams.appendSourceBatch")(function* (
   items: readonly HackerNewsSourceChange[],
@@ -61,7 +61,7 @@ const hostLayer: Layer.Layer<
   | Storage
   | HackerNewsSource
   | HackerNewsTarget
-  | Changes<HackerNewsSource | HackerNewsTarget>,
+  | Streamsy.ChangeFeed<HackerNewsSource | HackerNewsTarget>,
   ProjectionFault | StorageFault
 > = databasePath === "memory" ? memoryHost() : sqliteHostLayer;
 

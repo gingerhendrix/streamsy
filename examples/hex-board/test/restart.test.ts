@@ -1,3 +1,4 @@
+import { Streamsy } from "@streamsy/core";
 import { Memory as StorageMemory } from "@streamsy/core";
 import { GameEvents } from "../src/board/fold.ts";
 import { expect, test } from "bun:test";
@@ -17,7 +18,9 @@ const board = boardProjection("game");
 const params = { gameId: "game" };
 const split = fullGame.findIndex((event) => event.type === "AttackResolved");
 const sqlite = (filename: string) =>
-  Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layer({ client: { filename } }, GameEvents)));
+  Sqlite.layer.pipe(
+    Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
+  );
 
 const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
   Effect.gen(function* () {
@@ -98,7 +101,7 @@ for (const [name, events, cut] of [
 
 test("memory folds the same game incrementally", async () => {
   const runtime = ManagedRuntime.make(
-    Memory.layer.pipe(Layer.provideMerge(StorageMemory.layer({}, GameEvents))),
+    Memory.layer.pipe(Layer.provideMerge(StorageMemory.layer({}, Streamsy.group(GameEvents)))),
   );
   try {
     const before = await runtime.runPromise(seed().pipe(Effect.andThen(read)));

@@ -1,3 +1,4 @@
+import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Memory, ZERO_OFFSET } from "@streamsy/core";
 import { Deferred, Effect, Ref, Stream } from "effect";
@@ -67,7 +68,7 @@ test("two concurrent Transact writers land without a lost update", async () => {
   });
 
   const { events, responses } = await Effect.runPromise(
-    program.pipe(Effect.provide(Memory.layer({}, Workspaces))),
+    program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Workspaces)))),
   );
   expect(attempts).toBe(3);
   expect(responses.map((response) => response.status)).toEqual([200, 200]);

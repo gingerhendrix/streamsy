@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- Family construction is the checked bridge between route records and their mapped projection inputs; each assertion is documented at its use. */
 import { Option, Schema } from "effect";
-import { StreamRef, type StreamFamily } from "@streamsy/core";
+import { StreamAddress, type Streamsy } from "@streamsy/core";
 import { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
 import { make, stream, type Fused, type Pinned } from "./projection.ts";
@@ -14,14 +14,14 @@ import type { Unit } from "./unit.ts";
 import type { Effect } from "effect";
 
 type AnyRoute = StreamRoute.StreamRoute<any, any, never, never> &
-  StreamFamily.AnyFamily & {
-    readonly at: (params: any) => StreamFamily.Member<any, any>;
+  Streamsy.Any & {
+    readonly at: (params: any) => Streamsy.Address<any, any>;
   };
 type RouteMap = Readonly<Record<string, AnyRoute>>;
 type RouteParams<Route extends AnyRoute> =
   Route extends StreamRoute.StreamRoute<infer P, any, any, any> ? P : never;
 type RouteItem<Route extends AnyRoute> =
-  ReturnType<Route["ref"]> extends StreamRef.StreamRef<infer A> ? A : never;
+  ReturnType<Route["address"]> extends StreamAddress.StreamAddress<infer A> ? A : never;
 type FamilyParams<Codecs extends StreamRoute.ParamCodecs> = StreamRoute.Params<Codecs>;
 
 type InvalidRouteParam<Codecs extends StreamRoute.ParamCodecs, Route extends AnyRoute> = {
@@ -34,7 +34,7 @@ type InvalidRouteParam<Codecs extends StreamRoute.ParamCodecs, Route extends Any
     : Name;
 }[keyof RouteParams<Route>];
 
-type RouteRefs<Routes extends RouteMap> = {
+type RouteAddresses<Routes extends RouteMap> = {
   readonly [Name in keyof Routes]: ReturnType<Routes[Name]["at"]>;
 };
 
@@ -61,7 +61,10 @@ export interface FusedFamilyDefinition<
   E,
   R,
 > extends FamilyCommon<Codecs, Routes> {
-  readonly process: (batch: Slices<RouteRefs<Routes>>, unit: Unit) => Effect.Effect<void, E, R>;
+  readonly process: (
+    batch: Slices<RouteAddresses<Routes>>,
+    unit: Unit,
+  ) => Effect.Effect<void, E, R>;
 }
 
 export interface PinnedFamilyDefinition<
@@ -73,7 +76,7 @@ export interface PinnedFamilyDefinition<
 > extends FamilyCommon<Codecs, Routes> {
   readonly output: OutRoute & RouteWithin<Codecs, OutRoute>;
   readonly process: (
-    batch: Slices<RouteRefs<Routes>>,
+    batch: Slices<RouteAddresses<Routes>>,
     unit: Unit,
   ) => Effect.Effect<ReadonlyArray<RouteItem<OutRoute>>, E, R>;
 }
@@ -119,16 +122,16 @@ const encodeParams = <Codecs extends StreamRoute.ParamCodecs>(
   );
 };
 
-const refsOf = <Routes extends RouteMap>(
+const addressesOf = <Routes extends RouteMap>(
   routes: Routes,
   params: Readonly<Record<string, unknown>>,
-): RouteRefs<Routes> => {
+): RouteAddresses<Routes> => {
   const built: unknown = Object.fromEntries(
     Object.entries(routes).map(([name, route]) => [name, route.at(params)]),
   );
-  // The loop calls each route under its own key, so the resulting ref record
-  // has exactly the mapped `RouteRefs<Routes>` shape.
-  return built as RouteRefs<Routes>;
+  // The loop calls each route under its own key, so the resulting address record
+  // has exactly the mapped `RouteAddresses<Routes>` shape.
+  return built as RouteAddresses<Routes>;
 };
 
 type InvalidOutputParam<C extends StreamRoute.ParamCodecs, P> = {
@@ -157,8 +160,8 @@ export interface NamedFamilyDefinition<
 > extends FamilyCommon<C, Routes> {
   readonly outputs: D & OutputsWithin<C, D>;
   readonly process: (
-    | ((batch: Slices<RouteRefs<Routes>>, unit: Unit) => Effect.Effect<Result, E, R>)
-    | OutputFold<RouteRefs<Routes>, Output.StateOf<D>, Result, E, R>
+    | ((batch: Slices<RouteAddresses<Routes>>, unit: Unit) => Effect.Effect<Result, E, R>)
+    | OutputFold<RouteAddresses<Routes>, Output.StateOf<D>, Result, E, R>
   ) &
     (Exclude<keyof Result, keyof Output.Result<D>> extends never
       ? unknown
@@ -175,13 +178,13 @@ export function family<
   definition: NamedFamilyDefinition<C, Routes, D, Result, E, R>,
 ): Family<
   C,
-  Named<RouteRefs<Routes>, E | ProjectionFault, R | State, Output.Services<D>> & {
+  Named<RouteAddresses<Routes>, E | ProjectionFault, R | State, Output.Services<D>> & {
     readonly outputs: Bound<Fixed<D>, {}>;
   }
 > & { readonly outputs: Bound<D, FamilyParams<C>> };
 export function family<Codecs extends StreamRoute.ParamCodecs, Routes extends RouteMap, E, R>(
   definition: FusedFamilyDefinition<Codecs, Routes, E, R>,
-): Family<Codecs, Fused<RouteRefs<Routes>, E, R>>;
+): Family<Codecs, Fused<RouteAddresses<Routes>, E, R>>;
 export function family<
   Codecs extends StreamRoute.ParamCodecs,
   Routes extends RouteMap,
@@ -190,7 +193,10 @@ export function family<
   R,
 >(
   definition: PinnedFamilyDefinition<Codecs, Routes, OutRoute, E, R>,
-): Family<Codecs, Pinned<RouteRefs<Routes>, RouteItem<OutRoute>, E, R, OutRoute["Identifier"]>>;
+): Family<
+  Codecs,
+  Pinned<RouteAddresses<Routes>, RouteItem<OutRoute>, E, R, OutRoute["Identifier"]>
+>;
 export function family<
   Codecs extends StreamRoute.ParamCodecs,
   Routes extends RouteMap,
@@ -209,14 +215,14 @@ export function family<
         Object.entries(definition.outputs).map(([name, output]) => {
           if (output._tag === "Value") return [name, output];
           const target = output.stream;
-          if (!("ref" in target)) return [name, output];
-          const ref = target.ref(params);
+          if (!("address" in target)) return [name, output];
+          const address = target.address(params);
           return [
             name,
             {
               ...output,
-              stream: Object.assign(StreamRef.json(ref.id, { schema: output.schema }), {
-                family: target,
+              stream: Object.assign(StreamAddress.json(address.id, { schema: output.schema }), {
+                stream: target,
               }),
             },
           ];
@@ -225,7 +231,7 @@ export function family<
       return outputs({
         ...definition,
         params: encodeParams(definition.id, definition.params, params),
-        inputs: refsOf(definition.inputs, params),
+        inputs: addressesOf(definition.inputs, params),
         outputs: declarations,
         process: definition.process,
       });
@@ -236,7 +242,7 @@ export function family<
           version: definition.version,
           generation: definition.generation,
           params: encodeParams(definition.id, definition.params, params),
-          inputs: refsOf(definition.inputs, params),
+          inputs: addressesOf(definition.inputs, params),
           output: definition.output.at(params),
           process: definition.process,
         })
@@ -245,7 +251,7 @@ export function family<
           version: definition.version,
           generation: definition.generation,
           params: encodeParams(definition.id, definition.params, params),
-          inputs: refsOf(definition.inputs, params),
+          inputs: addressesOf(definition.inputs, params),
           process: definition.process,
         });
   };
@@ -265,9 +271,13 @@ export function family<
   };
   if (!("outputs" in definition)) return common;
   // The named branch above always returns a named member with the same output keys.
-  const namedMember = member as (
-    params: FamilyParams<Codecs>,
-  ) => Named<RouteRefs<Routes>, E | ProjectionFault, R | State> & { readonly outputs: Output.Map };
+  const namedMember = member as (params: FamilyParams<Codecs>) => Named<
+    RouteAddresses<Routes>,
+    E | ProjectionFault,
+    R | State
+  > & {
+    readonly outputs: Output.Map;
+  };
   // Struct owns exactly the family codec keys and their decoded parameter types.
   const schema = Schema.Struct(definition.params) as StreamRoute.PathSchema<FamilyParams<Codecs>>;
   return { ...common, outputs: bind(definition.outputs, definition.id, schema, namedMember) };

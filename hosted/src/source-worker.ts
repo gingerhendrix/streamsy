@@ -1,6 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Layer } from "effect";
-import { AnyStream, Http, StreamGroup } from "@streamsy/core";
+import { Streamsy, Http } from "@streamsy/core";
 import * as Host from "@streamsy/serve/alchemy";
 import { layer } from "@streamsy/storage/durable-object";
 import {
@@ -9,7 +9,7 @@ import {
   CONFORMANCE_LONG_POLL_TIMEOUT_MS,
 } from "./contract.ts";
 
-const streams = StreamGroup.make(AnyStream);
+const streams = Streamsy.group(Streamsy.Wildcard);
 
 /** The runtime phase alone reads raw Durable Object storage. */
 export class StreamsObject extends Cloudflare.DurableObject<StreamsObject>()(

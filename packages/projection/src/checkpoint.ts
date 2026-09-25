@@ -148,7 +148,10 @@ export interface Identity {
 }
 const identityOf = (inputs: InputMap): Record<string, string> =>
   Object.fromEntries(
-    Object.entries(inputs).map(([name, ref]) => [name, encodeKey([ref.id, ref.contentType])]),
+    Object.entries(inputs).map(([name, address]) => [
+      name,
+      encodeKey([address.id, address.contentType]),
+    ]),
   );
 const sameIdentity = (a: Record<string, string>, b: Record<string, string>): boolean => {
   const keys = Object.keys(a);

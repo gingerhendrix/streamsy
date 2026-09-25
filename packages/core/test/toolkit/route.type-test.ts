@@ -57,18 +57,18 @@ StreamRoute.bytes("uploads/:name", { params: renamed });
 const widened: string = "journal/:user";
 StreamRoute.json(widened, { params: one, schema: Entry });
 
-// The decoded parameter type flows into `ref`, so a route builds its own ref shape.
+// The decoded parameter type flows into `address`, so a route builds its own address shape.
 const journal = StreamRoute.json("journal/:user", { params: one, schema: Entry });
-const built = journal.ref({ user: "ann" });
+const built = journal.address({ user: "ann" });
 void built;
-// @ts-expect-error the ref constructor takes the decoded parameter set
-journal.ref({ account: "ann" });
+// @ts-expect-error the address constructor takes the decoded parameter set
+journal.address({ account: "ann" });
 
 const catalog = StreamRoute.state("catalog/:user", {
   params: one,
   collections: { entry: { schema: Entry, key: "text" } },
 });
-void catalog.ref({ user: "ann" }).collections.entry.schema;
+void catalog.address({ user: "ann" }).collections.entry.schema;
 StreamRoute.state("catalog/:user", {
   // @ts-expect-error template params must be exact
   params: {},

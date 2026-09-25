@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option, Stream } from "effect";
 import { checkWriteOwner, storageOf, ownerOf } from "../internal/owner.ts";
 import { Storage } from "../storage/storage.ts";
-import { Changes } from "./changes.ts";
+import { ChangeFeed } from "./changes.ts";
 import { StreamId } from "../schema/index.ts";
 import { ForkSourceNotFound } from "../protocol/errors.ts";
 import type { StreamsFault } from "../fault.ts";
@@ -12,10 +12,10 @@ import type {
   ReadOptions,
   ReadNextOptions,
 } from "../protocol/options.ts";
-import type * as Group from "./group.ts";
+
 import { templatesOverlap } from "./route-internal.ts";
 import * as Route from "./route.ts";
-import * as Ref from "./ref.ts";
+import * as StreamAddress from "./address.ts";
 import * as Streams from "./streams.ts";
 
 interface Wires {
@@ -30,7 +30,7 @@ const templateOf = (route: Route.Matcher): string | undefined => {
   return template.length > 0 ? template : undefined;
 };
 
-/** Template families must have disjoint id grammars. Custom routes use declaration order. */
+/** Template streams must have disjoint id grammars. Custom routes use declaration order. */
 function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
   const templates = routes.flatMap((route) => {
     const template = templateOf(route);
@@ -42,8 +42,8 @@ function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
         throw new RangeError(`stream route templates overlap: ${template} and ${other}`);
 }
 
-/** Build a family service over one protocol graph's wires, with the ownership guard on writes. */
-function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
+/** Build a stream service over one protocol graph's wires, with the ownership guard on writes. */
+function wireApi<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
   const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>
@@ -52,7 +52,7 @@ function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wi
     Effect.suspend(() =>
       route.match(id)
         ? run()
-        : Effect.die(new RangeError(`${id} is outside family ${route.template}`)),
+        : Effect.die(new RangeError(`${id} is outside stream ${route.template}`)),
     );
   const wire: Reader<StreamsFault> & Writer<StreamsFault> = {
     head: (id) => own(id, () => services.reader.head(id)),
@@ -87,37 +87,38 @@ function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wi
     route,
     wire,
     create: (params: P, options?: Omit<CreateOptions, "contentType">) =>
-      Streams.create(route.ref(params), options).pipe(Effect.provide(context)),
+      Streams.create(route.address(params), options).pipe(Effect.provide(context)),
     append: (
       params: P,
       items: ReadonlyArray<A>,
       options?: Omit<AppendOptions, "data" | "contentType">,
-    ) => Streams.append(route.ref(params), items, options).pipe(Effect.provide(context)),
+    ) => Streams.append(route.address(params), items, options).pipe(Effect.provide(context)),
     read: (params: P, options?: ReadOptions) =>
-      Streams.read(route.ref(params), options).pipe(Stream.provideContext(context)),
+      Streams.read(route.address(params), options).pipe(Stream.provideContext(context)),
     follow: (params: P, options?: ReadOptions) =>
-      Streams.follow(route.ref(params), options).pipe(Stream.provideContext(context)),
-    session: (params: P, options: ReadNextOptions) => wire.readNext(route.ref(params).id, options),
-    head: (params: P) => wire.head(route.ref(params).id),
-    remove: (params: P) => wire.remove(route.ref(params).id),
+      Streams.follow(route.address(params), options).pipe(Stream.provideContext(context)),
+    session: (params: P, options: ReadNextOptions) =>
+      wire.readNext(route.address(params).id, options),
+    head: (params: P) => wire.head(route.address(params).id),
+    remove: (params: P) => wire.remove(route.address(params).id),
     fork: (params: P, source: P, options?: Omit<CreateOptions, "contentType" | "forkedFrom">) =>
-      wire.fork(route.ref(params).id, route.ref(source).id, {
+      wire.fork(route.address(params).id, route.address(source).id, {
         ...options,
-        contentType: route.ref(params).contentType,
+        contentType: route.address(params).contentType,
       }),
   };
 }
-export type Family<P, A, RD = never, RE = never> = ReturnType<typeof bind<P, A, RD, RE>>;
+export type Api<P, A, RD = never, RE = never> = ReturnType<typeof wireApi<P, A, RD, RE>>;
 
-/** A concrete member retains the family key used to access its scoped wire. */
-export type Member<A, R, RD = never, RE = never> = Ref.StreamRef<A, RD, RE> & {
-  readonly family: Context.Key<
+/** An address names one stream. It holds no data. It is not an Effect `Ref`. */
+export type Address<A, R, RD = never, RE = never> = StreamAddress.StreamAddress<A, RD, RE> & {
+  readonly stream: Context.Key<
     R,
     { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
   >;
 };
 
-export type FamilyClass<
+export type Class<
   Self,
   Name extends string,
   P,
@@ -125,44 +126,37 @@ export type FamilyClass<
   RD,
   RE,
   R extends Route.StreamRoute<P, A, RD, RE>,
-> = Context.ServiceClass<Self, `@streamsy/core/Family/${Name}`, Family<P, A, RD, RE>> &
+> = Context.ServiceClass<Self, `@streamsy/core/Stream/${Name}`, Api<P, A, RD, RE>> &
   R & {
-    readonly route: R;
-    readonly family: Context.ServiceClass<
-      Self,
-      `@streamsy/core/Family/${Name}`,
-      Family<P, A, RD, RE>
-    >;
-    readonly at: (params: P) => ReturnType<R["ref"]> & Member<A, Self, RD, RE>;
-    readonly make: (services: Wires) => Family<P, A, RD, RE>;
+    readonly at: (params: P) => ReturnType<R["address"]> & Address<A, Self, RD, RE>;
   };
 
 /**
  * Names are global Context identities, including across separate providers.
- * Use an application namespace for distinct families. Reusing a name intentionally
+ * Use an application namespace for distinct streams. Reusing a name intentionally
  * aliases the service; providers cannot detect collisions in other Layer graphs.
- * AnyStream is reserved for the built-in catch-all and its intentional aliases.
+ * Wildcard is reserved for the built-in catch-all and its intentional aliases.
  */
 function define<Self>() {
   return <const Name extends string, P, A, RD, RE, R extends Route.StreamRoute<P, A, RD, RE>>(
     name: Name,
     route: R & Route.StreamRoute<P, A, RD, RE>,
-  ): FamilyClass<Self, Name, P, A, RD, RE, R> => {
-    const key: `@streamsy/core/Family/${Name}` = `@streamsy/core/Family/${name}`;
-    const service = Context.Service<Self, Family<P, A, RD, RE>>()(key);
-    return Object.assign(service, route, {
-      route,
-      family: service,
-      at: (params: P): ReturnType<R["ref"]> & Member<A, Self, RD, RE> => {
-        const member: unknown = Object.assign(route.ref(params), { family: service });
-        // SAFETY: the route returns its declared ref, including State collections; only its key is added.
-        return member as ReturnType<R["ref"]> & Member<A, Self, RD, RE>;
+  ): Class<Self, Name, P, A, RD, RE, R> => {
+    const key: `@streamsy/core/Stream/${Name}` = `@streamsy/core/Stream/${name}`;
+    const service = Context.Service<Self, Api<P, A, RD, RE>>()(key);
+    const declared = Object.defineProperty(service, metadataKey, {
+      value: { route, make: (services: Wires) => wireApi(route, services) },
+    });
+    return Object.assign(declared, route, {
+      at: (params: P): ReturnType<R["address"]> & Address<A, Self, RD, RE> => {
+        const address: unknown = Object.assign(route.address(params), { stream: service });
+        // SAFETY: the route returns its declared address, including State collections; only its key is added.
+        return address as ReturnType<R["address"]> & Address<A, Self, RD, RE>;
       },
-      make: (services: Wires) => bind(route, services),
     });
   };
 }
-export type JsonFamilyClass<
+export type JsonClass<
   Self,
   Name extends string,
   T extends string,
@@ -171,7 +165,7 @@ export type JsonFamilyClass<
   I,
   RD,
   RE,
-> = FamilyClass<
+> = Class<
   Self,
   Name,
   Route.Params<C>,
@@ -185,21 +179,21 @@ export const json =
   <const Name extends string, const T extends string, C extends Route.ParamCodecs, A, I, RD, RE>(
     name: Name,
     ...args: Parameters<typeof Route.json<T, C, A, I, RD, RE>>
-  ): JsonFamilyClass<Self, Name, T, C, A, I, RD, RE> =>
+  ): JsonClass<Self, Name, T, C, A, I, RD, RE> =>
     define<Self>()(name, Route.json<T, C, A, I, RD, RE>(...args));
-export type StateFamilyClass<
+export type StateClass<
   Self,
   Name extends string,
   T extends string,
   C extends Route.ParamCodecs,
-  Collections extends Ref.Collections,
-> = FamilyClass<
+  Collections extends StreamAddress.Collections,
+> = Class<
   Self,
   Name,
   Route.Params<C>,
-  Ref.CollectionsChange<Collections>,
-  Ref.CollectionsDecodingServices<Collections>,
-  Ref.CollectionsEncodingServices<Collections>,
+  StreamAddress.CollectionsChange<Collections>,
+  StreamAddress.CollectionsDecodingServices<Collections>,
+  StreamAddress.CollectionsEncodingServices<Collections>,
   ReturnType<typeof Route.state<T, C, Collections>>
 >;
 export const state =
@@ -208,18 +202,18 @@ export const state =
     const Name extends string,
     const T extends string,
     C extends Route.ParamCodecs,
-    const Collections extends Ref.Collections,
+    const Collections extends StreamAddress.Collections,
   >(
     name: Name,
     ...args: Parameters<typeof Route.state<T, C, Collections>>
-  ): StateFamilyClass<Self, Name, T, C, Collections> =>
+  ): StateClass<Self, Name, T, C, Collections> =>
     define<Self>()(name, Route.state<T, C, Collections>(...args));
-export type BytesFamilyClass<
+export type BytesClass<
   Self,
   Name extends string,
   T extends string,
   C extends Route.ParamCodecs,
-> = FamilyClass<
+> = Class<
   Self,
   Name,
   Route.Params<C>,
@@ -233,10 +227,10 @@ export const bytes =
   <const Name extends string, const T extends string, C extends Route.ParamCodecs>(
     name: Name,
     ...args: Parameters<typeof Route.bytes<T, C>>
-  ): BytesFamilyClass<Self, Name, T, C> =>
+  ): BytesClass<Self, Name, T, C> =>
     define<Self>()(name, Route.bytes<T, C>(...args));
 
-export type CustomFamilyClass<Self, Name extends string, P, A, RD, RE> = FamilyClass<
+export type CustomClass<Self, Name extends string, P, A, RD, RE> = Class<
   Self,
   Name,
   P,
@@ -250,68 +244,79 @@ export const custom =
   <const Name extends string, P, A, RD, RE>(
     name: Name,
     options: Parameters<typeof Route.custom<P, A, RD, RE>>[0],
-  ): CustomFamilyClass<Self, Name, P, A, RD, RE> =>
+  ): CustomClass<Self, Name, P, A, RD, RE> =>
     define<Self>()(name, Route.custom(options));
 
-export class AnyStream extends define<AnyStream>()(
-  "AnyStream",
-  Route.custom({
-    parse: (id: string) => Option.some({ id }),
-    ref: ({ id }: { readonly id: string }) => Ref.bytes(id),
-  }),
-) {}
-
-/** Class instances carry Effect's service marker; individual Self types remain on each key. */
-export interface FamilyIdentifier {
-  readonly [Context.ServiceTypeId]: typeof Context.ServiceTypeId;
-}
-
-/** The provider and HTTP boundary need only the wire and the route grammar. */
-export interface AnyFamily extends Context.Key<
-  FamilyIdentifier,
-  { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
-> {
+const metadataKey = Symbol.for("@streamsy/core/Stream/metadata");
+interface Metadata {
   readonly route: Route.Matcher;
-  readonly template: string;
-  readonly match: (id: string) => boolean;
   readonly make: (services: Wires) => {
     readonly owner: object;
     readonly wire: Reader<StreamsFault> & Writer<StreamsFault>;
   };
 }
-export type Identifiers<Keys extends ReadonlyArray<AnyFamily>> = Keys[number]["Identifier"];
+function declaration(key: Any): Metadata {
+  // SAFETY: define installs this inherited symbol on every declaration, including across package copies.
+  const value = (key as Any & { readonly [metadataKey]?: Metadata })[metadataKey];
+  if (value === undefined) throw new TypeError(`Unknown stream declaration: ${key.key}`);
+  return value;
+}
+export class Wildcard extends define<Wildcard>()(
+  "Wildcard",
+  Route.custom({
+    parse: (id: string) => Option.some({ id }),
+    address: ({ id }: { readonly id: string }) => StreamAddress.bytes(id),
+  }),
+) {}
 
-export function checkFamilies(keys: ReadonlyArray<AnyFamily>): void {
+/** Class instances carry Effect's service marker; individual Self types remain on each key. */
+export interface StreamIdentifier {
+  readonly [Context.ServiceTypeId]: typeof Context.ServiceTypeId;
+}
+
+/** The provider and HTTP boundary need only the wire and the route grammar. */
+export interface Any extends Context.Key<
+  StreamIdentifier,
+  { readonly owner: object; readonly wire: Reader<StreamsFault> & Writer<StreamsFault> }
+> {
+  readonly template: string;
+  readonly match: (id: string) => boolean;
+}
+export type Identifiers<Keys extends ReadonlyArray<Any>> = Keys[number]["Identifier"];
+
+export function checkStreams(keys: ReadonlyArray<Any>): void {
   const templates = new Set<string>();
   const names = new Set<string>();
   for (const [index, key] of keys.entries()) {
-    if (names.has(key.key)) throw new RangeError(`duplicate family name: ${key.key}`);
+    if (names.has(key.key)) throw new RangeError(`duplicate stream name: ${key.key}`);
     names.add(key.key);
     if (key.template !== "" && templates.has(key.template))
-      throw new RangeError(`duplicate family template: ${key.template}`);
+      throw new RangeError(`duplicate stream template: ${key.template}`);
     templates.add(key.template);
-    if (key.key === AnyStream.key && index !== keys.length - 1)
-      throw new RangeError("AnyStream must be last");
+    if (key.key === Wildcard.key && index !== keys.length - 1)
+      throw new RangeError("Wildcard must be last");
   }
-  checkNoOverlap(keys.map((key) => key.route));
+  checkNoOverlap(keys.map((key) => declaration(key).route));
 }
 
 /**
- * Bind families to their owning protocol graph.
- * Graphs exposing Storage also provide Changes.
+ * Bind streams to their owning protocol graph.
+ * Graphs exposing Storage also provide ChangeFeed.
  */
-export function provides<A, E, R, const Keys extends ReadonlyArray<AnyFamily>>(
+export function bind<A, E, R, const Keys extends ReadonlyArray<Any>>(
   graph: Layer.Layer<A | StreamsReader | StreamsWriter, E, R>,
-  ...input: Group.Input<Keys>
-): Layer.Layer<Identifiers<Keys> | (Storage extends A ? Changes<Identifiers<Keys>> : never), E, R>;
-export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
+  group: Group<Keys>,
+): Layer.Layer<
+  Identifiers<Keys> | (Storage extends A ? ChangeFeed<Identifiers<Keys>> : never),
+  E,
+  R
+>;
+export function bind<E, R, const Keys extends ReadonlyArray<Any>>(
   source: Layer.Layer<StreamsReader | StreamsWriter, E, R>,
-  ...input: Group.Input<Keys>
+  group: Group<Keys>,
 ) {
-  const first = input[0];
-  // SAFETY: Input is either the family tuple or one group containing that same tuple.
-  const keys = (first !== undefined && "families" in first ? first.families : input) as Keys;
-  checkFamilies(keys);
+  const keys = group.streams;
+  checkStreams(keys);
   const bindContext = (wires: Wires, storage?: typeof Storage.Service) => {
     if (
       storage !== undefined &&
@@ -320,17 +325,17 @@ export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
       throw new RangeError("The exposed Storage does not own the protocol wires");
     let context = Context.empty();
     for (const key of keys) {
-      context = Context.add(context, key, key.make(wires));
+      context = Context.add(context, key, declaration(key).make(wires));
       if (storage !== undefined)
-        context = Context.add(context, Changes(key), {
+        context = Context.add(context, ChangeFeed(key), {
           owner: ownerOf(storage),
           changes: (id) =>
             key.match(id)
               ? storage.changes(id)
-              : Stream.die(new RangeError(`${id} is outside family ${key.template}`)),
+              : Stream.die(new RangeError(`${id} is outside stream ${key.template}`)),
         });
     }
-    // SAFETY: each family comes from its factory; feed keys are added only for an exposed Storage.
+    // SAFETY: each stream comes from its factory; feed keys are added only for an exposed Storage.
     return context as Context.Context<Identifiers<Keys>>;
   };
   return source.pipe(
@@ -347,3 +352,13 @@ export function provides<E, R, const Keys extends ReadonlyArray<AnyFamily>>(
     ),
   );
 }
+
+export interface Group<Keys extends ReadonlyArray<Any> = ReadonlyArray<Any>> {
+  readonly streams: Keys;
+}
+export type Services<G extends Group> = G["streams"][number]["Identifier"];
+export function group<const Keys extends ReadonlyArray<Any>>(...keys: Keys): Group<Keys> {
+  checkStreams(keys);
+  return Object.freeze({ streams: Object.freeze(keys) });
+}
+export { ChangeFeed, type ChangeFeedApi } from "./changes.ts";

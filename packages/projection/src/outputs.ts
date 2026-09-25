@@ -1,12 +1,12 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
 import { Effect, Option, Schema } from "effect";
 import { ownerOf } from "@streamsy/core/internal/memory";
-import { StreamRef, type StreamFamily } from "@streamsy/core";
+import { StreamAddress, type Streamsy } from "@streamsy/core";
 import type { InputMap, Slices } from "./batch.ts";
 import type * as Output from "./output.ts";
 import { ProjectionFault } from "./fault.ts";
 import { loadState, type Initial, type OutputFold } from "./fold.ts";
-import { bind, rowsRef, type Bound } from "./output-source.ts";
+import { bind, rowsAddress, type Bound } from "./output-source.ts";
 import { State } from "./state.ts";
 import type { Unit } from "./unit.ts";
 
@@ -18,7 +18,7 @@ export interface Named<Inputs extends InputMap, E, R, OR = never> {
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
-  readonly streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>>;
+  readonly streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
 }
 const initialValue = <A>(initial: Initial<A>, params: Record<string, string>): A =>
@@ -50,7 +50,7 @@ export function outputs<
 }): Named<Inputs, E | ProjectionFault, R | State, Output.Services<D>> & {
   readonly outputs: Bound<D, {}>;
 } {
-  const streams: Record<string, StreamFamily.Member<unknown, unknown>> = {};
+  const streams: Record<string, Streamsy.Address<unknown, unknown>> = {};
   const values = Object.values(definition.outputs).filter((output) => output._tag === "Value");
   if (values.length > 1) throw new RangeError("A projection may declare at most one value output");
   if ("state" in definition.outputs)
@@ -60,15 +60,15 @@ export function outputs<
     if (output._tag === "Value") continue;
     streams[name] =
       output._tag === "Stream"
-        ? Object.assign(StreamRef.json(output.stream.id, { schema: output.schema }), {
-            family: output.stream.family,
+        ? Object.assign(StreamAddress.json(output.stream.id, { schema: output.schema }), {
+            stream: output.stream.stream,
           })
-        : rowsRef(name, output);
+        : rowsAddress(name, output);
   }
-  const ids = Object.values(streams).map((ref) => ref.id);
+  const ids = Object.values(streams).map((address) => address.id);
   if (new Set(ids).size !== ids.length)
     throw new RangeError("Two outputs may not name the same stream");
-  const inputIds = new Set(Object.values(definition.inputs).map((ref) => ref.id));
+  const inputIds = new Set(Object.values(definition.inputs).map((address) => address.id));
   if (ids.some((id) => inputIds.has(id)))
     throw new RangeError("An output may not name an input stream");
   const handler = definition.process;
@@ -90,7 +90,7 @@ export function outputs<
       ...key,
       outputs: definition.outputs,
     })),
-    // SAFETY: each normalized member retains the key of its declaration in D.
+    // SAFETY: each normalized address retains the key of its declaration in D.
     streams: streams as Named<
       Inputs,
       E | ProjectionFault,

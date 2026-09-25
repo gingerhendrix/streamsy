@@ -1,10 +1,4 @@
-import {
-  StorageFault,
-  provides,
-  type StreamFamily,
-  type StreamGroup,
-  type Changes,
-} from "@streamsy/core";
+import { StorageFault, type Streamsy } from "@streamsy/core";
 import { Protocol } from "@streamsy/core/protocol";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import { Database } from "bun:sqlite";
@@ -202,21 +196,18 @@ const storageLayer = (options: BunStorageOptions) => {
 export const layerProtocol = (options: BunProtocolOptions) =>
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
-export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
+export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   options: BunProtocolOptions,
-  ...input: StreamGroup.NonEmptyInput<Keys>
+  group: Streamsy.Group<Keys>,
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
-  | StreamFamily.Identifiers<Keys>
-  | Changes<StreamFamily.Identifiers<Keys>>,
+  | Streamsy.Services<Streamsy.Group<Keys>>
+  | Streamsy.ChangeFeed<Streamsy.Services<Streamsy.Group<Keys>>>,
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
-export function layer(
-  options: BunProtocolOptions,
-  ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
-) {
+export function layer(options: BunProtocolOptions, group: Streamsy.Group) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
-  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
+  return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

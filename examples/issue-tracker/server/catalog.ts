@@ -15,6 +15,6 @@ export const checkCatalogWorkspace = (
     ? Effect.void
     : Effect.fail(
         new CatalogWorkspaceMismatch({
-          message: `Catalog ${collection}/${key} names workspace ${valueWorkspace}, but member workspace is ${memberWorkspace}`,
+          message: `Catalog ${collection}/${key} names workspace ${valueWorkspace}, but address workspace is ${memberWorkspace}`,
         }),
       );

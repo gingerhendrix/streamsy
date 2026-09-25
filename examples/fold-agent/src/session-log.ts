@@ -4,13 +4,14 @@ import {
   EventLogUnavailableError,
   type LogEntry,
 } from "@humanlayer/fold-core";
-import { StreamFamily, StreamRef, ZERO_OFFSET } from "@streamsy/core";
+import { Streamsy, StreamAddress, ZERO_OFFSET } from "@streamsy/core";
 import { Effect, Option, Schema, Stream } from "effect";
 
-export class Sessions extends StreamFamily.custom<Sessions>()("Fold/Sessions", {
+export class Sessions extends Streamsy.custom<Sessions>()("Fold/Sessions", {
   parse: (id: string) =>
     /^fold\/sessions\/.+\/events$/.test(id) ? Option.some({ streamId: id }) : Option.none(),
-  ref: ({ streamId }: { streamId: string }) => StreamRef.json(streamId, { schema: Schema.Json }),
+  address: ({ streamId }: { streamId: string }) =>
+    StreamAddress.json(streamId, { schema: Schema.Json }),
 }) {}
 
 export const unavailable = (message: string, retryable = false, cause?: unknown) =>

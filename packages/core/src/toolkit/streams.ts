@@ -8,7 +8,7 @@ import type {
   ReadNextOptions,
 } from "../protocol/options.ts";
 import type { ReadResult, ReadNextResult } from "../protocol/results.ts";
-import type { StreamRef } from "./ref.ts";
+import type { StreamAddress } from "./address.ts";
 export { layerMemory } from "./layers.ts";
 
 export interface Batch<A> {
@@ -19,19 +19,24 @@ export interface Batch<A> {
 }
 
 export const create = Effect.fn("Streams.create")(function* <A, RD, RE>(
-  ref: StreamRef<A, RD, RE>,
+  address: StreamAddress<A, RD, RE>,
   options: Omit<CreateOptions, "contentType"> = {},
 ) {
-  return yield* (yield* StreamsWriter).create(ref.id, { ...options, contentType: ref.contentType });
+  return yield* (yield* StreamsWriter).create(address.id, {
+    ...options,
+    contentType: address.contentType,
+  });
 });
 export const append = Effect.fn("Streams.append")(function* <A, RD, RE>(
-  ref: StreamRef<A, RD, RE>,
+  address: StreamAddress<A, RD, RE>,
   items: ReadonlyArray<A>,
   options: Omit<AppendOptions, "data" | "contentType"> = {},
 ) {
   const encoded = yield* Effect.forEach(items, (item) =>
-    Schema.encodeEffect(ref.codec)(item).pipe(
-      Effect.mapError((cause) => new EncodeFault({ message: `Cannot encode ${ref.id}`, cause })),
+    Schema.encodeEffect(address.codec)(item).pipe(
+      Effect.mapError(
+        (cause) => new EncodeFault({ message: `Cannot encode ${address.id}`, cause }),
+      ),
     ),
   );
   const data =
@@ -39,13 +44,13 @@ export const append = Effect.fn("Streams.append")(function* <A, RD, RE>(
       ? // A close-only append is the protocol's empty body. An empty JSON array is
         // a malformed append on every transport, so it must not carry the close.
         new Uint8Array()
-      : Predicate.isTagged(ref, "Json")
+      : Predicate.isTagged(address, "Json")
         ? new TextEncoder().encode(`[${encoded.join(",")}]`)
         : concatBytes(encoded);
-  return yield* (yield* StreamsWriter).append(ref.id, {
+  return yield* (yield* StreamsWriter).append(address.id, {
     ...options,
     data,
-    contentType: ref.contentType,
+    contentType: address.contentType,
   });
 });
 function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
@@ -61,17 +66,17 @@ function concatBytes(parts: ReadonlyArray<string | Uint8Array>): Uint8Array {
   return result;
 }
 const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
-  ref: StreamRef<A, RD, RE>,
+  address: StreamAddress<A, RD, RE>,
   result: ReadResult | ReadNextResult,
 ) {
   const items = yield* Effect.forEach(result.messages, (message, index) =>
-    Schema.decodeEffect(ref.codec)(
-      Predicate.isTagged(ref, "Json") ? new TextDecoder().decode(message.data) : message.data,
+    Schema.decodeEffect(address.codec)(
+      Predicate.isTagged(address, "Json") ? new TextDecoder().decode(message.data) : message.data,
     ).pipe(
       Effect.mapError(
         (cause) =>
           new DecodeFault({
-            message: `Cannot decode ${ref.id} at read message ${index}`,
+            message: `Cannot decode ${address.id} at read message ${index}`,
             cause,
           }),
       ),
@@ -84,13 +89,16 @@ const decode = Effect.fn("Streams.decode")(function* <A, RD, RE>(
     closed: result.closed === true,
   } satisfies Batch<A>;
 });
-export function read<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOptions = {}) {
+export function read<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: ReadOptions = {}) {
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
       return Stream.paginate(options.offset, (offset) =>
         Effect.gen(function* () {
-          const batch = yield* decode(ref, yield* reader.read(ref.id, { ...options, offset }));
+          const batch = yield* decode(
+            address,
+            yield* reader.read(address.id, { ...options, offset }),
+          );
           return [[batch], batch.upToDate ? Option.none() : Option.some(batch.nextOffset)] as const;
         }),
       );
@@ -98,17 +106,17 @@ export function read<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOptions 
   );
 }
 /** Catch up, then wait one readNext at a time, filtering empty open batches. */
-export function follow<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOptions = {}) {
+export function follow<A, RD, RE>(address: StreamAddress<A, RD, RE>, options: ReadOptions = {}) {
   return Stream.unwrap(
     Effect.gen(function* () {
       const reader = yield* StreamsReader;
       return Stream.paginate({ offset: options.offset, live: false }, (state) =>
         Effect.gen(function* () {
           const batch = yield* decode(
-            ref,
+            address,
             state.live
-              ? yield* reader.readNext(ref.id, { offset: state.offset ?? "-1" })
-              : yield* reader.read(ref.id, { ...options, offset: state.offset }),
+              ? yield* reader.readNext(address.id, { offset: state.offset ?? "-1" })
+              : yield* reader.read(address.id, { ...options, offset: state.offset }),
           );
           return [
             batch.items.length > 0 || batch.closed ? [batch] : [],
@@ -124,14 +132,18 @@ export function follow<A, RD, RE>(ref: StreamRef<A, RD, RE>, options: ReadOption
 export const items = <A, E, R>(batches: Stream.Stream<Batch<A>, E, R>): Stream.Stream<A, E, R> =>
   batches.pipe(Stream.flatMap((batch) => Stream.fromIterable(batch.items)));
 export const session = Effect.fn("Streams.session")(function* <A, RD, RE>(
-  ref: StreamRef<A, RD, RE>,
+  address: StreamAddress<A, RD, RE>,
   options: ReadNextOptions,
 ) {
-  return yield* (yield* StreamsReader).readNext(ref.id, options);
+  return yield* (yield* StreamsReader).readNext(address.id, options);
 });
-export const head = Effect.fn("Streams.head")(function* <A, RD, RE>(ref: StreamRef<A, RD, RE>) {
-  return yield* (yield* StreamsReader).head(ref.id);
+export const head = Effect.fn("Streams.head")(function* <A, RD, RE>(
+  address: StreamAddress<A, RD, RE>,
+) {
+  return yield* (yield* StreamsReader).head(address.id);
 });
-export const remove = Effect.fn("Streams.remove")(function* <A, RD, RE>(ref: StreamRef<A, RD, RE>) {
-  return yield* (yield* StreamsWriter).remove(ref.id);
+export const remove = Effect.fn("Streams.remove")(function* <A, RD, RE>(
+  address: StreamAddress<A, RD, RE>,
+) {
+  return yield* (yield* StreamsWriter).remove(address.id);
 });

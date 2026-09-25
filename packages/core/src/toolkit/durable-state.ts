@@ -1,4 +1,10 @@
-import type { Collections, CollectionsChange, StateHeaders, StateKey, StateRef } from "./ref.ts";
+import type {
+  Collections,
+  CollectionsChange,
+  StateHeaders,
+  StateKey,
+  StateAddress,
+} from "./address.ts";
 
 export interface Upsert<A, Type extends string = string> {
   readonly kind: "upsert";
@@ -33,12 +39,11 @@ export const upsert = <const Type extends string, A>(
 ): Upsert<A, Type> => ({ kind: "upsert", type, value, ...options });
 
 /** Describe a delete from a collection before its key and source position are applied. */
-const remove = <const Type extends string, A>(
+export const remove = <const Type extends string, A>(
   type: Type,
   oldValue: A,
   options: { readonly headers?: ChangeHeaders } = {},
 ): Delete<A, Type> => ({ kind: "delete", type, oldValue, ...options });
-export { remove as delete };
 
 /** Read the key field of a value. `StateKey` limits the field to strings and numbers. */
 const readKey = <A, Key extends StateKey<A>>(type: string, field: Key, value: A): string => {
@@ -53,12 +58,12 @@ const readKey = <A, Key extends StateKey<A>>(type: string, field: Key, value: A)
 
 /** Stamp Durable State changes with their key, source offset, and position in this append. */
 export function changes<C extends Collections, RD, RE>(
-  ref: StateRef<C, RD, RE>,
+  address: StateAddress<C, RD, RE>,
   options: { readonly offset: string },
   entries: ReadonlyArray<Change<C>>,
 ): ReadonlyArray<CollectionsChange<C>> {
   return entries.map((entry, index): CollectionsChange<C> => {
-    const collection = ref.collections[entry.type];
+    const collection = address.collections[entry.type];
     if (collection === undefined) throw new TypeError(`Unknown state collection "${entry.type}"`);
     const value = entry.kind === "upsert" ? entry.value : entry.oldValue;
     const key = readKey(entry.type, collection.key, value);

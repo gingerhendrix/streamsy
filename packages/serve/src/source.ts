@@ -1,23 +1,24 @@
-import { Effect, Schema } from "effect";
-import type { StreamFamily, StreamId, StreamRef, StreamsFault } from "@streamsy/core";
+import { Context, Effect, Schema } from "effect";
+import type { Streamsy, StreamId, StreamAddress, StreamsFault } from "@streamsy/core";
 import type { Reader, StreamRoute } from "@streamsy/core/protocol";
 import type { CanonicalValue, PublicError } from "./contract.ts";
 
-/** Structural family consumed by Serve, including bound projection outputs. */
-export interface StreamSource<P, F = never> {
+/** Structural stream consumed by Serve, including bound projection outputs. */
+interface SourceAddress<P> {
   readonly template: string;
-  readonly family: StreamFamily.Member<unknown, F>["family"];
   readonly paramSchema?: StreamRoute.PathSchema<P>;
-  /** The id must belong to family. A mismatch is rejected by the scoped wire as a defect. */
-  readonly ref: (params: P) => { readonly id: StreamId };
+  /** The id must belong to stream. A mismatch is rejected by the scoped wire as a defect. */
+  readonly address: (params: P) => { readonly id: StreamId };
 }
-export interface StateSource<P, C extends StreamRef.Collections, F = never> extends StreamSource<
-  P,
-  F
-> {
+export type StreamSource<P, F = never> = SourceAddress<P> &
+  (
+    | Streamsy.Address<unknown, F>["stream"]
+    | { readonly stream: Streamsy.Address<unknown, F>["stream"] | Streamsy.Address<unknown, F> }
+  );
+export type StateSource<P, C extends StreamAddress.Collections, F = never> = StreamSource<P, F> & {
   readonly collections: C;
-  readonly ref: (params: P) => StreamRef.StateRef<C>;
-}
+  readonly address: (params: P) => StreamAddress.StateAddress<C>;
+};
 export type PathSource<P> = { readonly paramSchema: StreamRoute.PathSchema<P> };
 
 /** Internal resolution seam: projection-output adapters can supply their own resolver. */
@@ -37,7 +38,7 @@ export interface Source<P, R = never> {
 }
 
 export function normalize<P, F>(source: StreamSource<P, F>, path: string): Source<P, F>;
-export function normalize<P, C extends StreamRef.Collections, F>(
+export function normalize<P, C extends StreamAddress.Collections, F>(
   source: StateSource<P, C, F>,
   path: string,
   kind: "state",
@@ -53,14 +54,21 @@ export function normalize<P, F>(
       : null;
   return {
     kind,
-    wire: Effect.map(source.family, (service) => service.wire),
+    wire: Effect.map(
+      Context.isKey(source)
+        ? source
+        : Context.isKey(source.stream)
+          ? source.stream
+          : source.stream.stream,
+      (service) => service.wire,
+    ),
     template: source.template,
     paramSchema: source.paramSchema,
     resolve: (params) =>
       Effect.try({
         try: () => {
-          const ref = source.ref(params);
-          return { id: ref.id, descriptor };
+          const address = source.address(params);
+          return { id: address.id, descriptor };
         },
         catch: () => ({
           _tag: "InvalidParams" as const,
@@ -72,7 +80,7 @@ export function normalize<P, F>(
   };
 }
 
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Structural family metadata is decoded immediately through the collection descriptor Schema.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Structural stream metadata is decoded immediately through the collection descriptor Schema.
 function collectionDescriptor(value: unknown): CanonicalValue {
   const collections = Schema.decodeUnknownSync(
     Schema.Record(

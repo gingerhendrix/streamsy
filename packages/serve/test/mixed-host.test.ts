@@ -1,28 +1,28 @@
 /* oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This is the real Bun/Web host boundary. */
 import { expect, test } from "bun:test";
 import { Layer, Schema } from "effect";
-import { Http, Memory, StreamFamily, StreamGroup } from "@streamsy/core";
+import { Http, Memory, Streamsy } from "@streamsy/core";
 import * as BunStorage from "@streamsy/storage/bun";
 import { HttpRouter } from "effect/unstable/http";
 
-class MemoryFamily extends StreamFamily.json<MemoryFamily>()("MixedHost/Memory", "memory/:name", {
+class MemoryFamily extends Streamsy.json<MemoryFamily>()("MixedHost/Memory", "memory/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
-class SqliteFamily extends StreamFamily.json<SqliteFamily>()("MixedHost/Sqlite", "sqlite/:name", {
+class SqliteFamily extends Streamsy.json<SqliteFamily>()("MixedHost/Sqlite", "sqlite/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
 
-const families = StreamGroup.make(MemoryFamily, SqliteFamily);
+const streams = Streamsy.group(MemoryFamily, SqliteFamily);
 const hostLayer = Layer.merge(
-  Memory.layer({}, MemoryFamily),
-  BunStorage.layer({ client: { filename: ":memory:" } }, SqliteFamily),
+  Memory.layer({}, Streamsy.group(MemoryFamily)),
+  BunStorage.layer({ client: { filename: ":memory:" } }, Streamsy.group(SqliteFamily)),
 );
 
-test("one Http.routes host serves memory and SQLite families", async () => {
+test("one Http.routes host serves memory and SQLite streams", async () => {
   const web = HttpRouter.toWebHandler(
-    Http.routes(families, { access: "full" }).pipe(HttpRouter.provideRequest(hostLayer)),
+    Http.routes(streams, { access: "full" }).pipe(HttpRouter.provideRequest(hostLayer)),
     { disableLogger: true },
   );
   const server = Bun.serve({ port: 0, fetch: (request) => web.handler(request) });

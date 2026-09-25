@@ -1,4 +1,4 @@
-import { State, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
@@ -40,9 +40,9 @@ try {
         const removed = { ...label, labelId: "remove", name: "Remove" };
         yield* (yield* Labels).append(
           { workspaceId: "live" },
-          State.changes(ref, { offset: ZERO_OFFSET }, [
-            State.upsert("label", label),
-            State.upsert("label", removed),
+          DurableState.changes(ref, { offset: ZERO_OFFSET }, [
+            DurableState.upsert("label", label),
+            DurableState.upsert("label", removed),
           ]),
         );
         yield* Projection.run(tracker.member({ workspaceId: "live" }));

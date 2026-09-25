@@ -1,5 +1,5 @@
 import * as FamilyFixture from "./support/families.ts";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 /* oxlint-disable effecttsgo/async-function, effecttsgo/strict-effect-provide -- These integration tests own the managed runtime and Web handler boundary. */
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
@@ -10,13 +10,13 @@ import * as Memory from "@streamsy/projection/memory";
 import { Serve } from "@streamsy/serve";
 
 const params = { seat: Schema.FiniteFromString };
-class numbers extends StreamFamily.json<numbers>()("serve.test/numbers", "numbers/:seat", {
+class numbers extends Streamsy.json<numbers>()("serve.test/numbers", "numbers/:seat", {
   params,
   schema: Schema.Finite,
 }) {}
-class board extends StreamFamily.bytes<board>()("serve.test/board", "board/:seat", { params }) {}
+class board extends Streamsy.bytes<board>()("serve.test/board", "board/:seat", { params }) {}
 // This identity intentionally has a different codec; Output.stream owns encoding.
-class transitions extends StreamFamily.bytes<transitions>()(
+class transitions extends Streamsy.bytes<transitions>()(
   "serve.test/transitions",
   "transitions/:seat",
   { params },
@@ -51,6 +51,8 @@ const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
 );
 
 test("declared rows, stream and value share one memory app and their declared codecs", async () => {
+  expect(tracker.outputs.board.stream).toBe(board);
+  expect(tracker.outputs.transitions.stream).toBe(transitions);
   const runtime = ManagedRuntime.make(
     FamilyFixture.withFamilies(Memory.layerMemory(), numbers, board, transitions),
   );
@@ -78,7 +80,7 @@ test("declared rows, stream and value share one memory app and their declared co
         yield* Streams.create(member.inputs.numbers);
         yield* Streams.append(member.inputs.numbers, [2, 3]);
         yield* Projection.run(member);
-        const changes = yield* Streams.read(tracker.outputs.board.ref({ seat: 42 })).pipe(
+        const changes = yield* Streams.read(tracker.outputs.board.address({ seat: 42 })).pipe(
           Streams.items,
           Stream.runCollect,
         );
@@ -91,7 +93,7 @@ test("declared rows, stream and value share one memory app and their declared co
           },
           { type: "board", key: "old", headers: { operation: "delete" } },
         ]);
-        const items = yield* Streams.read(tracker.outputs.transitions.ref({ seat: 42 })).pipe(
+        const items = yield* Streams.read(tracker.outputs.transitions.address({ seat: 42 })).pipe(
           Streams.items,
           Stream.runCollect,
         );
@@ -147,9 +149,9 @@ test("declared rows, stream and value share one memory app and their declared co
 
 // Compile-only probes: bad routes must never reach registration.
 const typeChecks = () => {
-  // @ts-expect-error route params must equal family params
+  // @ts-expect-error route params must equal stream params
   Serve.state(tracker.outputs.board, "/board/:wrong");
-  // @ts-expect-error missing family parameter
+  // @ts-expect-error missing stream parameter
   Serve.stream(tracker.outputs.transitions, "/transitions");
   // @ts-expect-error extra route parameter
   Serve.document(tracker.outputs.summary, "/summary/:seat/:extra");
@@ -170,12 +172,12 @@ const typeChecks = () => {
   );
   // @ts-expect-error document resolution requires Projection.State at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
-  class wrongTarget extends StreamFamily.bytes<wrongTarget>()(
+  class wrongTarget extends Streamsy.bytes<wrongTarget>()(
     "serve.test/wrongTarget",
     "wrong/:other",
     { params: { other: Schema.String } },
   ) {}
-  // @ts-expect-error an output target cannot require a parameter absent from the family
+  // @ts-expect-error an output target cannot require a parameter absent from the stream
   Projection.family({
     id: "wrong",
     params,

@@ -1,24 +1,21 @@
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
-import { Http, StreamFamily, Memory, AnyStream } from "../../src/index.ts";
+import { Http, Streamsy, Memory } from "../../src/index.ts";
 
-class Inputs extends StreamFamily.bytes<Inputs>()("Inputs", "inputs/:id", {
+class Inputs extends Streamsy.bytes<Inputs>()("Inputs", "inputs/:id", {
   params: { id: Schema.String },
 }) {}
-class Outputs extends StreamFamily.bytes<Outputs>()("Outputs", "outputs/:id", {
+class Outputs extends Streamsy.bytes<Outputs>()("Outputs", "outputs/:id", {
   params: { id: Schema.String },
 }) {}
 
-it("HTTP chooses family ownership and access before entering the complete protocol program", async () => {
+it("HTTP chooses stream ownership and access before entering the complete protocol program", async () => {
   const edge = HttpRouter.toWebHandler(
-    Http.routes(
-      [
-        { family: Inputs, access: "full" },
-        { family: Outputs, access: "read" },
-      ],
-      { prefix: "/streams" },
-    ).pipe(HttpRouter.provideRequest(Memory.layer({}, Inputs, Outputs))),
+    Http.routes(Streamsy.group(Inputs, Outputs), {
+      prefix: "/streams",
+      access: (stream) => (stream === Inputs ? "full" : "read"),
+    }).pipe(HttpRouter.provideRequest(Memory.layer({}, Streamsy.group(Inputs, Outputs)))),
     { disableLogger: true },
   );
   const request = (path: string, method = "GET", body?: string) =>
@@ -62,12 +59,14 @@ it("HTTP chooses family ownership and access before entering the complete protoc
 });
 
 it("append access allows POST but refuses creation and deletion", async () => {
-  const families = Memory.layer({}, Inputs);
+  const streams = Memory.layer({}, Streamsy.group(Inputs));
   const seeded = Layer.effectDiscard(
     Effect.flatMap(Inputs, (inputs) => inputs.create({ id: "a" })),
-  ).pipe(Layer.provideMerge(families));
+  ).pipe(Layer.provideMerge(streams));
   const edge = HttpRouter.toWebHandler(
-    Http.routes([{ family: Inputs, access: "append" }]).pipe(HttpRouter.provideRequest(seeded)),
+    Http.routes(Streamsy.group(Inputs), { access: "append" }).pipe(
+      HttpRouter.provideRequest(seeded),
+    ),
     { disableLogger: true },
   );
   try {
@@ -96,19 +95,19 @@ it("append access allows POST but refuses creation and deletion", async () => {
 
 it("HTTP rejects a catch-all before a narrower access policy", () => {
   expect(() =>
-    Http.routes([
-      { family: AnyStream, access: "full" },
-      { family: Outputs, access: "read" },
-    ]),
-  ).toThrow("AnyStream must be last");
+    Http.routes(Streamsy.group(Streamsy.Wildcard, Outputs), {
+      access: (stream) => (stream === Streamsy.Wildcard ? "full" : "read"),
+    }),
+  ).toThrow("Wildcard must be last");
 });
 
-it("a final catch-all cannot widen a declared read-only family's HTTP access", async () => {
+it("a final catch-all cannot widen a declared read-only stream's HTTP access", async () => {
   const edge = HttpRouter.toWebHandler(
-    Http.routes([
-      { family: Outputs, access: "read" },
-      { family: AnyStream, access: "full" },
-    ]).pipe(HttpRouter.provideRequest(Memory.layer({}, Outputs, AnyStream))),
+    Http.routes(Streamsy.group(Outputs, Streamsy.Wildcard), {
+      access: (stream) => (stream === Outputs ? "read" : "full"),
+    }).pipe(
+      HttpRouter.provideRequest(Memory.layer({}, Streamsy.group(Outputs, Streamsy.Wildcard))),
+    ),
     { disableLogger: true },
   );
   try {

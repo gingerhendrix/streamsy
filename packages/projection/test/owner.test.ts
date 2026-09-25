@@ -1,33 +1,35 @@
+import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Effect, Layer, Option, Schema, Stream } from "effect";
-import { provides, StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Checkpoints, Output, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 
-class Input extends StreamFamily.json<Input>()("owner/Input", "owner/input", {
+class Input extends Streamsy.json<Input>()("owner/Input", "owner/input", {
   params: {},
   schema: Schema.Finite,
 }) {}
-class Local extends StreamFamily.json<Local>()("owner/Local", "owner/local/:id", {
+class Local extends Streamsy.json<Local>()("owner/Local", "owner/local/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
-class Foreign extends StreamFamily.json<Foreign>()("owner/Foreign", "owner/foreign/:id", {
+class Foreign extends Streamsy.json<Foreign>()("owner/Foreign", "owner/foreign/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
 const params = { id: "a" };
 const local = Memory.layerMemory();
 const foreign = Memory.layerMemory();
-const host = Layer.merge(provides(local, Input, Local), provides(foreign, Foreign)).pipe(
-  Layer.provideMerge(local),
-);
+const host = Layer.merge(
+  Protocol.bind(local, Streamsy.group(Input, Local)),
+  Protocol.bind(foreign, Streamsy.group(Foreign)),
+).pipe(Layer.provideMerge(local));
 const seed = Effect.gen(function* () {
   const input = yield* Input;
   yield* input.create({});
   yield* input.append({}, [1]);
 });
-// All tests exercise the public family methods; no internal guard is supplied by the fixture.
+// All tests exercise the public stream methods; no internal guard is supplied by the fixture.
 for (const sameOwner of [true, false]) {
   test(`declared outputs ${sameOwner ? "share their checkpoint owner" : "reject a foreign owner before any write"}`, async () => {
     await Effect.runPromise(

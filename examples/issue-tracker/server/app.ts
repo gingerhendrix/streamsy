@@ -1,3 +1,4 @@
+import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
 import { Checkpoints, Projection, type State } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
@@ -122,13 +123,10 @@ export const app = (workspaces: ReadonlyArray<string>) => {
     ),
   );
   return Layer.mergeAll(
-    Http.routes(
-      [
-        ...Object.values(routes).map((family) => ({ family, access: "read" as const })),
-        ...outputFamilies.map((family) => ({ family, access: "read" as const })),
-      ],
-      { prefix: "/streams" },
-    ),
+    Http.routes(Streamsy.group(...Object.values(routes), ...outputFamilies), {
+      prefix: "/streams",
+      access: "read",
+    }),
     outputRoutes,
     HttpRouter.add("*", "/api/workspaces/:workspaceId/:resource", api),
     HttpRouter.add(

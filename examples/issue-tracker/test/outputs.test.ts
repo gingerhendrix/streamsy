@@ -1,4 +1,4 @@
-import * as Members from "./support/members.ts";
+import * as Addresses from "./support/addresses.ts";
 import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
@@ -24,7 +24,7 @@ const created = {
   occurredAt: "2026-09-23T10:00:00Z",
 };
 
-test("key-only catalog deletes stay in the member workspace and advance both checkpoints", async () => {
+test("key-only catalog deletes stay in the address workspace and advance both checkpoints", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   try {
     await runtime.runPromise(
@@ -96,24 +96,24 @@ test("catalog values cannot write another workspace in either projection", async
             headers: { operation: "upsert" },
           },
         ]);
-        for (const member of [
+        for (const address of [
           issueRows.member({ workspaceId: "live" }),
           tracker.member({ workspaceId: "live" }),
         ]) {
           const owner = yield* Checkpoints;
-          const before = yield* owner.load(member);
+          const before = yield* owner.load(address);
           const result =
-            member._tag === "Fused"
-              ? yield* Projection.run(member).pipe(Effect.result)
-              : yield* Projection.run(member).pipe(Effect.result);
+            address._tag === "Fused"
+              ? yield* Projection.run(address).pipe(Effect.result)
+              : yield* Projection.run(address).pipe(Effect.result);
           expect(result).toMatchObject({
             _tag: "Failure",
             failure: {
               _tag: "CatalogWorkspaceMismatch",
-              message: "Catalog user/ada names workspace acme, but member workspace is live",
+              message: "Catalog user/ada names workspace acme, but address workspace is live",
             },
           });
-          expect(yield* owner.load(member)).toEqual(before);
+          expect(yield* owner.load(address)).toEqual(before);
         }
         const sql = yield* SqlClient.SqlClient;
         expect(yield* sql.unsafe("SELECT * FROM issues")).toEqual([]);
@@ -134,7 +134,7 @@ test("named output replay survives a lost append reply beside the SQL projection
         yield* (yield* Events).append({ workspaceId: "live" }, [created]);
         const member = tracker.member({ workspaceId: "live" });
         const failed = yield* Projection.run(member).pipe(
-          Members.patchOutputAppends(
+          Addresses.patchOutputAppends(
             (append) => (id, options) =>
               append(id, options).pipe(
                 Effect.andThen(
@@ -157,9 +157,9 @@ test("named output replay survives a lost append reply beside the SQL projection
         ]);
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         yield* Projection.run(member);
-        const transitions = yield* Members.readOutput(tracker.outputs.transitions, "live");
+        const transitions = yield* Addresses.readOutput(tracker.outputs.transitions, "live");
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
-        const board = yield* Members.readOutput(tracker.outputs.board, "live");
+        const board = yield* Addresses.readOutput(tracker.outputs.board, "live");
         expect(board).toHaveLength(2);
         expect(yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,
@@ -172,7 +172,7 @@ test("named output replay survives a lost append reply beside the SQL projection
   }
 });
 
-test("served route fingerprints pin member identity and reject incompatible contracts without creating data", async () => {
+test("served route fingerprints pin address identity and reject incompatible contracts without creating data", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   const services = await runtime.runPromise(Effect.context());
   const web = HttpRouter.toWebHandler(

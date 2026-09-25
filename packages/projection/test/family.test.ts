@@ -1,19 +1,19 @@
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
 import { Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { producerId } from "../src/stream-output.ts";
 
-class facts extends StreamFamily.json<facts>()("family.test/facts", "facts/:workspaceId", {
+class facts extends Streamsy.json<facts>()("family.test/facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
 }) {}
-class config extends StreamFamily.json<config>()("family.test/config", "config", {
+class config extends Streamsy.json<config>()("family.test/config", "config", {
   params: {},
   schema: Schema.String,
 }) {}
-class output extends StreamFamily.json<output>()("family.test/output", "boards/:workspaceId", {
+class output extends Streamsy.json<output>()("family.test/output", "boards/:workspaceId", {
   params: { workspaceId: Schema.String },
   schema: Schema.Finite,
 }) {}
@@ -55,7 +55,7 @@ test("member is the ordinary routed projection", () => {
 });
 
 test("number parameters encode to strings and parse back", () => {
-  class numbered extends StreamFamily.json<numbered>()("family.test/numbered", "numbered/:id", {
+  class numbered extends Streamsy.json<numbered>()("family.test/numbered", "numbered/:id", {
     params: { id: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
@@ -72,7 +72,7 @@ test("number parameters encode to strings and parse back", () => {
   );
 });
 
-class stringId extends StreamFamily.json<stringId>()("family.test/stringId", "string-id/:id", {
+class stringId extends Streamsy.json<stringId>()("family.test/stringId", "string-id/:id", {
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
@@ -84,7 +84,7 @@ Projection.family({
   process: () => Effect.void,
 });
 
-class literalId extends StreamFamily.json<literalId>()("family.test/literalId", "literal-id/:id", {
+class literalId extends Streamsy.json<literalId>()("family.test/literalId", "literal-id/:id", {
   params: { id: Schema.Literal("a") },
   schema: Schema.String,
 }) {}
@@ -96,7 +96,7 @@ Projection.family({
   process: () => Effect.void,
 });
 
-class wrong extends StreamFamily.json<wrong>()("family.test/wrong", "wrong/:projectId", {
+class wrong extends Streamsy.json<wrong>()("family.test/wrong", "wrong/:projectId", {
   params: { projectId: Schema.String },
   schema: Schema.String,
 }) {}

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { GameEvent } from "../domain/events.ts";
 import { initialProjection, projectEvent } from "./projection.ts";
@@ -32,7 +32,7 @@ export const boardProjection = (gameId: string) =>
     ),
   });
 
-export class GameEvents extends StreamFamily.json<GameEvents>()(
+export class GameEvents extends Streamsy.json<GameEvents>()(
   "HexBoard/GameEvents",
   "games/:gameId/events",
   { params: { gameId: Schema.String }, schema: GameEvent },

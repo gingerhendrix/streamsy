@@ -2,12 +2,12 @@
 import { expect, test } from "bun:test";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, Stream } from "effect";
 import * as Streams from "../../../src/toolkit/streams.ts";
-import * as StreamRef from "../../../src/toolkit/ref.ts";
+import * as StreamAddress from "../../../src/toolkit/address.ts";
 import { StreamId } from "../../../src/schema/index.ts";
 import { Storage } from "../../../src/storage/storage.ts";
 import { MemoryCommitBoundary } from "../../../src/storage/memory/boundary.ts";
 
-const sink = StreamRef.json("fused-sink", { schema: Schema.String });
+const sink = StreamAddress.json("fused-sink", { schema: Schema.String });
 const turns = Effect.forEach([1, 2, 3, 4, 5], () => Effect.yieldNow, { discard: true });
 
 for (const outcome of ["commit", "failure", "defect", "interrupt", "mutation-rejection"]) {

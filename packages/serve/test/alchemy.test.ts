@@ -73,7 +73,7 @@ test("Alchemy router shares prefix and placement failures without forwarding", a
     },
     {
       path: "/streams/other/a",
-      placement: Host.Placement.byRoute([rule({ route, owner: ({ user }) => user })]),
+      placement: Host.Placement.byRoute([rule({ stream: route, owner: ({ user }) => user })]),
       status: 400,
     },
   ];

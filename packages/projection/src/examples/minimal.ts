@@ -1,12 +1,12 @@
 import { Effect, Schema } from "effect";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Projection } from "../index.ts";
 
-export class Numbers extends StreamFamily.json<Numbers>()("Minimal/Numbers", "numbers", {
+export class Numbers extends Streamsy.json<Numbers>()("Minimal/Numbers", "numbers", {
   params: {},
   schema: Schema.Finite,
 }) {}
-export class Doubled extends StreamFamily.json<Doubled>()("Minimal/Doubled", "doubled", {
+export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "doubled", {
   params: {},
   schema: Schema.Finite,
 }) {}

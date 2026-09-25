@@ -14,15 +14,15 @@ import {
 } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { TransportFault } from "../../src/fault.ts";
-import { StreamRef, StreamId, ZERO_OFFSET } from "@streamsy/core";
+import { StreamAddress, StreamId, ZERO_OFFSET } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter } from "../../src/protocol/index.ts";
 import { HttpRouter } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
 
 const id = StreamId.make("orders/nested");
 const bytes = new TextEncoder().encode('[{"id":1},{"id":2}]');
-const ref = StreamRef.json("orders", { schema: Schema.Struct({ id: Schema.Finite }) });
-const notes = StreamRef.bytes("notes", { contentType: "text/plain" });
+const address = StreamAddress.json("orders", { schema: Schema.Struct({ id: Schema.Finite }) });
+const notes = StreamAddress.bytes("notes", { contentType: "text/plain" });
 const clock = Layer.effect(
   Clock.Clock,
   Effect.map(Clock.Clock, (live) => ({
@@ -65,44 +65,44 @@ const producer = { producerId: "p", producerEpoch: 0, producerSeq: 0 };
 const fixture = Effect.gen(function* () {
   const writer = yield* StreamsWriter;
   const results: unknown[] = [];
-  results.push(yield* Streams.create(ref));
-  results.push(yield* Streams.create(ref));
-  results.push(yield* Streams.append(ref, [{ id: 1 }, { id: 2 }]));
-  results.push(yield* Streams.append(ref, [{ id: 3 }]));
-  results.push(yield* batches(Streams.read(ref)));
-  results.push(yield* Streams.head(ref));
+  results.push(yield* Streams.create(address));
+  results.push(yield* Streams.create(address));
+  results.push(yield* Streams.append(address, [{ id: 1 }, { id: 2 }]));
+  results.push(yield* Streams.append(address, [{ id: 3 }]));
+  results.push(yield* batches(Streams.read(address)));
+  results.push(yield* Streams.head(address));
   results.push(
-    yield* Streams.session(ref, { offset: ZERO_OFFSET }).pipe(
+    yield* Streams.session(address, { offset: ZERO_OFFSET }).pipe(
       Effect.map((result) => ({ ...result, cursor: "cursor" })),
     ),
   );
-  results.push(yield* Streams.append(ref, [{ id: 4 }], { producer }));
-  results.push(yield* Streams.append(ref, [{ id: 4 }], { producer }));
-  const tail = yield* Streams.head(ref);
+  results.push(yield* Streams.append(address, [{ id: 4 }], { producer }));
+  results.push(yield* Streams.append(address, [{ id: 4 }], { producer }));
+  const tail = yield* Streams.head(address);
   results.push(
-    yield* Streams.session(ref, { offset: tail.nextOffset }).pipe(
+    yield* Streams.session(address, { offset: tail.nextOffset }).pipe(
       Effect.map((result) => ({ ...result, cursor: "cursor" })),
     ),
   );
   results.push(
-    yield* Effect.flip(Streams.append(ref, [{ id: 5 }], { expectedOffset: ZERO_OFFSET })),
+    yield* Effect.flip(Streams.append(address, [{ id: 5 }], { expectedOffset: ZERO_OFFSET })),
   );
   results.push(
-    yield* Effect.flip(writer.append(ref.id, { data: bytes, contentType: "text/plain" })),
+    yield* Effect.flip(writer.append(address.id, { data: bytes, contentType: "text/plain" })),
   );
-  results.push(yield* Streams.append(ref, [], { close: true }));
-  results.push(yield* Effect.flip(Streams.append(ref, [])));
-  results.push(yield* Effect.flip(Streams.append(ref, [{ id: 6 }])));
-  results.push(yield* batches(Streams.follow(ref)));
-  results.push(yield* Streams.remove(ref));
-  const failure = yield* Streams.read(ref).pipe(Stream.runCollect, Effect.flip);
+  results.push(yield* Streams.append(address, [], { close: true }));
+  results.push(yield* Effect.flip(Streams.append(address, [])));
+  results.push(yield* Effect.flip(Streams.append(address, [{ id: 6 }])));
+  results.push(yield* batches(Streams.follow(address)));
+  results.push(yield* Streams.remove(address));
+  const failure = yield* Streams.read(address).pipe(Stream.runCollect, Effect.flip);
   if (!Predicate.isTagged(failure, "StreamNotFound"))
     return yield* Effect.die("Expected a removed stream");
   results.push({ tag: "StreamNotFound", id: failure.id });
   return results;
 });
 
-it("every operation family returns the direct results over local HTTP", async () => {
+it("every operation stream returns the direct results over local HTTP", async () => {
   const edge = HttpRouter.toWebHandler(
     protocolRoutes({ prefix: "/streams" }).pipe(Layer.provideMerge(memory())),
     { disableLogger: true },

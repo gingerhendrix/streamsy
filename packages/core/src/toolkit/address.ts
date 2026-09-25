@@ -75,27 +75,27 @@ export type CollectionsDecodingServices<C extends Collections> =
 export type CollectionsEncodingServices<C extends Collections> =
   C[keyof C]["schema"]["EncodingServices"];
 
-/** Inert identity and codec. Constructing a ref acquires no service or resource. */
-export interface StreamRef<A, RD = never, RE = never> {
+/** Inert identity and codec. Constructing an address acquires no service or resource. */
+export interface StreamAddress<A, RD = never, RE = never> {
   readonly _tag: "Json" | "Bytes";
   readonly id: StreamId;
   readonly contentType: string;
   readonly codec: Schema.Codec<A, string | Uint8Array, RD, RE>;
 }
 
-/** A JSON ref whose items are the change events of its collections. */
-export interface StateRef<
+/** A JSON address whose items are the change events of its collections. */
+export interface StateAddress<
   C extends Collections,
   RD = CollectionsDecodingServices<C>,
   RE = CollectionsEncodingServices<C>,
-> extends StreamRef<CollectionsChange<C>, RD, RE> {
+> extends StreamAddress<CollectionsChange<C>, RD, RE> {
   readonly collections: C;
 }
 
 export function json<A, I, RD, RE>(
   id: string,
   options: { readonly schema: Schema.Codec<A, I, RD, RE> },
-): StreamRef<A, RD, RE> {
+): StreamAddress<A, RD, RE> {
   return {
     _tag: "Json",
     id: StreamId.make(id),
@@ -148,15 +148,15 @@ export function stateChange<A, I, RD, RE, const Type extends string>(options: {
 export function state<const C extends Collections>(
   id: string,
   options: { readonly collections: C & ValidCollections<C> },
-): StateRef<C> {
-  const members = Object.entries(options.collections).map(([type, collection]) =>
+): StateAddress<C> {
+  const codecs = Object.entries(options.collections).map(([type, collection]) =>
     stateChange({ schema: collection.schema, type }),
   );
-  // SAFETY: `members` holds exactly one `stateChange` codec per entry of
+  // SAFETY: `codecs` holds exactly one `stateChange` codec per entry of
   // `options.collections`, each tagged with that entry's type literal, so the
   // runtime union accepts precisely the events `CollectionsChange<C>` describes.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The invariant is stated in the comment above.
-  const schema = Schema.Union(members) as Schema.Codec<
+  const schema = Schema.Union(codecs) as Schema.Codec<
     CollectionsChange<C>,
     CollectionsEncodedChange<C>,
     CollectionsDecodingServices<C>,
@@ -172,7 +172,7 @@ export function state<const C extends Collections>(
 export function bytes(
   id: string,
   options: { readonly contentType?: string } = {},
-): StreamRef<Uint8Array> {
+): StreamAddress<Uint8Array> {
   return {
     _tag: "Bytes",
     id: StreamId.make(id),

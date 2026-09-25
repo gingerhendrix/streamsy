@@ -1,10 +1,10 @@
 import * as FamilyFixture from "./support/families.ts";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { producerId } from "../src/stream-output.ts";
 /* oxlint-disable effecttsgo/strict-effect-provide -- Bun owns the runtime boundary; each test assembles the complete routed host graph. */
 import { expect, test } from "bun:test";
 import { Context, Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
-import { StorageFault, StreamRef, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
+import { StorageFault, StreamAddress, ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import {
   Protocol,
   Streams,
@@ -21,11 +21,11 @@ import * as Memory from "@streamsy/projection/memory";
  * Inputs, outputs and checkpoints share one owner. The pinned runner still commits
  * appends and checkpoint saves separately, so crash/replay coverage remains essential.
  */
-class In extends StreamFamily.json<In>()("stream-output.test/In", "in/:name", {
+class In extends Streamsy.json<In>()("stream-output.test/In", "in/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
-class Out extends StreamFamily.json<Out>()("stream-output.test/Out", "out/:name", {
+class Out extends Streamsy.json<Out>()("stream-output.test/Out", "out/:name", {
   params: { name: Schema.String },
   schema: Schema.String,
 }) {}
@@ -45,7 +45,7 @@ type Services =
   | Out
   | PagedReader
   | Checkpoints
-  | import("@streamsy/core").AnyStream
+  | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;
 const run = <A, E>(body: Effect.Effect<A, E, Services>) =>
@@ -56,8 +56,8 @@ const fault = <A>(result: { readonly _tag: string; readonly failure?: A }): Proj
   if (!Schema.is(ProjectionFault)(result.failure)) throw new Error("Expected a ProjectionFault");
   return result.failure;
 };
-const readAll = <A>(ref: StreamRef.StreamRef<A>) =>
-  Streams.read(ref).pipe(Streams.items, Stream.runCollect);
+const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
+  Streams.read(address).pipe(Streams.items, Stream.runCollect);
 const stored = (projection: Projection.Identity) =>
   Effect.gen(function* () {
     const loaded = yield* (yield* Checkpoints).load(Projection.key(projection));
@@ -719,7 +719,7 @@ const provideReader =
       ),
     );
 
-test("output preparation reads the output family wire", () =>
+test("output preparation reads the output stream wire", () =>
   run(
     Effect.gen(function* () {
       const s = scenario("output-head-failure");

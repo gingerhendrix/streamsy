@@ -1,5 +1,6 @@
+import { Streamsy } from "@streamsy/core";
 import type { Effect, Layer } from "effect";
-import type { Changes, Storage } from "@streamsy/core";
+import type { Storage } from "@streamsy/core";
 import { Projection, type State, type Checkpoints } from "@streamsy/projection";
 import type { HttpRouter } from "effect/unstable/http";
 import type { SqlClient } from "effect/unstable/sql";
@@ -19,10 +20,10 @@ type Outputs = Board | LabelCounts | Transitions;
 type RequestServices<R> = R extends HttpRouter.Request<"Requires", infer S> ? S : R;
 type AppR = RequestServices<Layer.Services<ReturnType<typeof app>>>;
 type OutputR = RequestServices<Layer.Services<typeof outputRoutes>>;
-const sqlRun = (member: ReturnType<typeof issueRows.member>) => Projection.serialized(member);
-const outputRun = (member: ReturnType<typeof tracker.member>) => Projection.serialized(member);
-const sqlWatch = (member: ReturnType<typeof issueRows.member>) => Projection.onChange(member);
-const outputWatch = (member: ReturnType<typeof tracker.member>) => Projection.onChange(member);
+const sqlRun = (address: ReturnType<typeof issueRows.member>) => Projection.serialized(address);
+const outputRun = (address: ReturnType<typeof tracker.member>) => Projection.serialized(address);
+const sqlWatch = (address: ReturnType<typeof issueRows.member>) => Projection.onChange(address);
+const outputWatch = (address: ReturnType<typeof tracker.member>) => Projection.onChange(address);
 export type Checks = [
   Assert<
     Same<Effect.Services<ReturnType<typeof sqlRun>>, Checkpoints | Inputs | SqlClient.SqlClient>
@@ -33,13 +34,22 @@ export type Checks = [
   Assert<
     Same<
       Effect.Services<ReturnType<typeof sqlWatch>>,
-      Checkpoints | Inputs | Changes<Inputs> | SqlClient.SqlClient | import("effect").Scope.Scope
+      | Checkpoints
+      | Inputs
+      | Streamsy.ChangeFeed<Inputs>
+      | SqlClient.SqlClient
+      | import("effect").Scope.Scope
     >
   >,
   Assert<
     Same<
       Effect.Services<ReturnType<typeof outputWatch>>,
-      Checkpoints | Inputs | Changes<Inputs> | Outputs | State | import("effect").Scope.Scope
+      | Checkpoints
+      | Inputs
+      | Streamsy.ChangeFeed<Inputs>
+      | Outputs
+      | State
+      | import("effect").Scope.Scope
     >
   >,
   Assert<
@@ -63,7 +73,7 @@ export type Checks = [
     Same<AppR, HttpRouter.HttpRouter | Inputs | Outputs | State | SqlClient.SqlClient | Checkpoints>
   >,
   Assert<Same<OutputR, HttpRouter.HttpRouter | Outputs | State>>,
-  // Handlers retain their SQL/State requirements. Runners add declared families and checkpoints.
+  // Handlers retain their SQL/State requirements. Runners add declared streams and checkpoints.
   Assert<
     Same<
       Effect.Services<ReturnType<ReturnType<typeof issueRows.member>["process"]>>,

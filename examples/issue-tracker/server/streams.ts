@@ -1,9 +1,9 @@
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { LabelRow, ProjectRow, UserRow } from "../domain/catalog.ts";
 import { Identifier, IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 
 const params = { workspaceId: Identifier } as const;
-export class Events extends StreamFamily.json<Events>()(
+export class Events extends Streamsy.json<Events>()(
   "IssueTracker/Events",
   "issue-tracker/:workspaceId/issue-events",
   {
@@ -11,7 +11,7 @@ export class Events extends StreamFamily.json<Events>()(
     schema: IssueEvent,
   },
 ) {}
-export class LabelEvents extends StreamFamily.json<LabelEvents>()(
+export class LabelEvents extends Streamsy.json<LabelEvents>()(
   "IssueTracker/LabelEvents",
   "issue-tracker/:workspaceId/issue-label-events",
   {
@@ -20,7 +20,7 @@ export class LabelEvents extends StreamFamily.json<LabelEvents>()(
   },
 ) {}
 
-export class Projects extends StreamFamily.state<Projects>()(
+export class Projects extends Streamsy.state<Projects>()(
   "IssueTracker/Projects",
   "issue-tracker/:workspaceId/projects",
   {
@@ -28,7 +28,7 @@ export class Projects extends StreamFamily.state<Projects>()(
     collections: { project: { schema: ProjectRow, key: "projectId" } },
   },
 ) {}
-export class Users extends StreamFamily.state<Users>()(
+export class Users extends Streamsy.state<Users>()(
   "IssueTracker/Users",
   "issue-tracker/:workspaceId/users",
   {
@@ -36,7 +36,7 @@ export class Users extends StreamFamily.state<Users>()(
     collections: { user: { schema: UserRow, key: "userId" } },
   },
 ) {}
-export class Labels extends StreamFamily.state<Labels>()(
+export class Labels extends Streamsy.state<Labels>()(
   "IssueTracker/Labels",
   "issue-tracker/:workspaceId/labels",
   {

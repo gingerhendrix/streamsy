@@ -1,4 +1,4 @@
-import { State, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -42,26 +42,26 @@ try {
       const labelRef = Labels.at({ workspaceId: "acme" });
       yield* (yield* Projects).append(
         { workspaceId: "acme" },
-        State.changes(
+        DurableState.changes(
           projectRef,
           { offset: ZERO_OFFSET },
-          recording.catalog.projects.map((row) => State.upsert("project", row)),
+          recording.catalog.projects.map((row) => DurableState.upsert("project", row)),
         ),
       );
       yield* (yield* Users).append(
         { workspaceId: "acme" },
-        State.changes(
+        DurableState.changes(
           userRef,
           { offset: ZERO_OFFSET },
-          recording.catalog.users.map((row) => State.upsert("user", row)),
+          recording.catalog.users.map((row) => DurableState.upsert("user", row)),
         ),
       );
       yield* (yield* Labels).append(
         { workspaceId: "acme" },
-        State.changes(
+        DurableState.changes(
           labelRef,
           { offset: ZERO_OFFSET },
-          recording.catalog.labels.map((row) => State.upsert("label", row)),
+          recording.catalog.labels.map((row) => DurableState.upsert("label", row)),
         ),
       );
       yield* Projection.run(issueRows.member({ workspaceId: "acme" }));

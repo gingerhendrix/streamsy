@@ -1,9 +1,9 @@
-import * as Members from "./support/members.ts";
+import * as Addresses from "./support/addresses.ts";
 // Probe D: all three stream outputs nonempty; the unit stops after the second
 // append (labelCounts landed, transitions not). Recovery after new input must
 // give one copy of each item and match a clean run with the same unit boundaries.
 import { expect, test } from "bun:test";
-import { State, TransportFault, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
@@ -14,8 +14,8 @@ const seed = Effect.gen(function* () {
   yield* createInputs("live");
   yield* (yield* Labels).append(
     { workspaceId: "live" },
-    State.changes(Labels.at({ workspaceId: "live" }), { offset: ZERO_OFFSET }, [
-      State.upsert("label", {
+    DurableState.changes(Labels.at({ workspaceId: "live" }), { offset: ZERO_OFFSET }, [
+      DurableState.upsert("label", {
         workspaceId: "live",
         labelId: "bug",
         name: "Bug",
@@ -65,9 +65,9 @@ const more = Effect.flatMap(Events, (events) =>
 );
 const collect = Effect.gen(function* () {
   return {
-    board: yield* Members.readOutput(tracker.outputs.board, "live"),
-    counts: yield* Members.readOutput(tracker.outputs.labelCounts, "live"),
-    transitions: yield* Members.readOutput(tracker.outputs.transitions, "live"),
+    board: yield* Addresses.readOutput(tracker.outputs.board, "live"),
+    counts: yield* Addresses.readOutput(tracker.outputs.labelCounts, "live"),
+    transitions: yield* Addresses.readOutput(tracker.outputs.transitions, "live"),
     summary: yield* tracker.outputs.workspace.resolve({ workspaceId: "live" }),
   };
 });
@@ -79,7 +79,7 @@ const run = (failOn: number | undefined) =>
     else {
       let calls = 0;
       const r = yield* Projection.run(member).pipe(
-        Members.patchOutputAppends(
+        Addresses.patchOutputAppends(
           (append) => (id, o) =>
             ++calls === failOn
               ? Effect.fail(

@@ -1,15 +1,17 @@
 import { Context } from "effect";
 import type { Storage } from "../storage/storage.ts";
 
-/** A separate requirement for each family's local change feed. Distributes over family unions. */
-export type Changes<F> = F extends unknown ? ChangeFeed<F> : never;
-interface ChangeFeed<F> {
-  readonly _Changes: F;
-  readonly _tag: "StreamsyChanges";
+/** A separate requirement for each stream's local change feed. Distributes over stream unions. */
+export type ChangeFeed<F> = F extends unknown ? FeedMarker<F> : never;
+interface FeedMarker<F> {
+  readonly _ChangeFeed: F;
+  readonly _tag: "StreamsyChangeFeed";
 }
-export interface ChangesApi {
+export interface ChangeFeedApi {
   readonly owner: object;
   readonly changes: (typeof Storage.Service)["changes"];
 }
-export const Changes = <F>(family: Context.Key<F, unknown>): Context.Key<Changes<F>, ChangesApi> =>
-  Context.Service<Changes<F>, ChangesApi>(`@streamsy/core/Changes/${family.key}`);
+export const ChangeFeed = <F>(
+  stream: Context.Key<F, unknown>,
+): Context.Key<ChangeFeed<F>, ChangeFeedApi> =>
+  Context.Service<ChangeFeed<F>, ChangeFeedApi>(`@streamsy/core/ChangeFeed/${stream.key}`);

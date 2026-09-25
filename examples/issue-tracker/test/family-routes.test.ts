@@ -4,7 +4,7 @@ import { app } from "../server/app.ts";
 import { applicationLayer } from "../server/host.ts";
 import { Layer } from "effect";
 
-test("tracker streams expose declared families with host access rules", async () => {
+test("tracker streams expose declared streams with host access rules", async () => {
   const host = applicationLayer(":memory:", ["live"]);
   const web = HttpRouter.toWebHandler(
     app(["live"]).pipe(Layer.provide(host), HttpRouter.provideRequest(host)),

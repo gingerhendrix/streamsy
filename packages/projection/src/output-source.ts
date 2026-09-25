@@ -1,6 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This mapped adapter preserves each declaration's schema and name while iterating its record. */
 import { Effect, Option, type Schema } from "effect";
-import { StreamRef, type StreamFamily } from "@streamsy/core";
+import { StreamAddress, type Streamsy } from "@streamsy/core";
 import { type StreamRoute } from "@streamsy/core/protocol";
 import type * as Output from "./output.ts";
 import type { ProjectionKey } from "./checkpoint.ts";
@@ -9,15 +9,15 @@ import type { State } from "./state.ts";
 
 export type Fixed<D extends Output.RoutedMap> = {
   readonly [K in keyof D]: D[K] extends Output.Stream<infer A, any>
-    ? Output.Stream<A, StreamFamily.Member<A, Output.TargetServices<D[K]["stream"]>>>
+    ? Output.Stream<A, Streamsy.Address<A, Output.TargetServices<D[K]["stream"]>>>
     : D[K] extends Output.Rows<infer A, any>
-      ? Output.Rows<A, StreamFamily.Member<unknown, Output.TargetServices<D[K]["stream"]>>>
+      ? Output.Rows<A, Streamsy.Address<unknown, Output.TargetServices<D[K]["stream"]>>>
       : D[K];
 };
 type Collection<Name extends string, A> = {
   readonly [K in Name]: {
     readonly schema: Schema.Codec<A, unknown, never, never>;
-    readonly key: StreamRef.StateKey<A>;
+    readonly key: StreamAddress.StateKey<A>;
   };
 };
 export type Bound<D extends Output.RoutedMap, P> = {
@@ -25,27 +25,19 @@ export type Bound<D extends Output.RoutedMap, P> = {
     readonly paramSchema: StreamRoute.PathSchema<P>;
   } & (D[K] extends Output.Stream<infer A, any>
       ? {
-          readonly family: StreamFamily.Member<
-            unknown,
-            Output.TargetServices<D[K]["stream"]>
-          >["family"];
           readonly template: string;
-          readonly ref: (
+          readonly address: (
             params: P,
-          ) => StreamFamily.Member<A, Output.TargetServices<D[K]["stream"]>>;
+          ) => Streamsy.Address<A, Output.TargetServices<D[K]["stream"]>>;
         }
       : D[K] extends Output.Rows<infer A, any>
         ? {
-            readonly family: StreamFamily.Member<
-              unknown,
-              Output.TargetServices<D[K]["stream"]>
-            >["family"];
             readonly template: string;
             readonly collections: Collection<K & string, A>;
-            readonly ref: (
+            readonly address: (
               params: P,
-            ) => StreamRef.StateRef<Collection<K & string, A>> &
-              StreamFamily.Member<unknown, Output.TargetServices<D[K]["stream"]>>;
+            ) => StreamAddress.StateAddress<Collection<K & string, A>> &
+              Streamsy.Address<unknown, Output.TargetServices<D[K]["stream"]>>;
           }
         : D[K] extends Output.Value<infer A, any>
           ? {
@@ -62,15 +54,15 @@ export type Bound<D extends Output.RoutedMap, P> = {
 };
 
 /** The kernel and served readers build rows through this one protocol codec. */
-export const rowsRef = <A, R>(
+export const rowsAddress = <A, R>(
   name: string,
-  output: Output.Rows<A, StreamFamily.Member<unknown, R>>,
+  output: Output.Rows<A, Streamsy.Address<unknown, R>>,
 ) =>
   Object.assign(
-    StreamRef.state(output.stream.id, {
+    StreamAddress.state(output.stream.id, {
       collections: { [name]: { schema: output.schema, key: output.key } },
     }),
-    { family: output.stream.family },
+    { stream: output.stream.stream },
   );
 
 export function bind<D extends Output.RoutedMap, P>(
@@ -112,24 +104,21 @@ export function bind<D extends Output.RoutedMap, P>(
               }),
           },
         ];
-      const ref = (params: P) => {
+      const address = (params: P) => {
         const output = member(params).outputs[name]!;
         if (output._tag === "Value") throw new TypeError("Expected a stream output");
-        return output._tag === "Stream" ? output.stream : rowsRef(name, output);
+        return output._tag === "Stream" ? output.stream : rowsAddress(name, output);
       };
-      const family =
-        "family" in declaration.stream ? declaration.stream.family : declaration.stream;
       return [
         name,
         declaration._tag === "Rows"
           ? {
               ...common,
-              family,
               template: `${id}/${name}`,
               collections: { [name]: { schema: declaration.schema, key: declaration.key } },
-              ref,
+              address,
             }
-          : { ...common, family, template: `${id}/${name}`, ref },
+          : { ...common, template: `${id}/${name}`, address },
       ];
     }),
   );

@@ -1,23 +1,20 @@
 import { Layer } from "effect";
 import * as Protocol from "../../protocol/layer.ts";
-import { provides, type AnyFamily, type Identifiers } from "../../toolkit/family.ts";
-import type * as Group from "../../toolkit/group.ts";
-import type { Changes } from "../../toolkit/changes.ts";
+import { bind, type Any, type Identifiers } from "../../toolkit/streamsy.ts";
+import type * as Group from "../../toolkit/streamsy.ts";
+import type { ChangeFeed } from "../../toolkit/changes.ts";
 import type { Storage } from "../storage.ts";
 import type { MemoryCommitBoundary } from "./boundary.ts";
 import { layer as storageLayer, type MemoryOptions } from "./layer.ts";
 export type { MemoryOptions } from "./layer.ts";
 
-/** Memory host. Families and their feeds share the exposed storage boundary. */
-export function layer<const Keys extends ReadonlyArray<AnyFamily>>(
+/** Memory host. Streams and their feeds share the exposed storage boundary. */
+export function layer<const Keys extends ReadonlyArray<Any>>(
   options: MemoryOptions & Protocol.ProtocolOptions,
-  ...input: Group.NonEmptyInput<Keys>
-): Layer.Layer<Storage | MemoryCommitBoundary | Identifiers<Keys> | Changes<Identifiers<Keys>>>;
-export function layer(
-  options: MemoryOptions & Protocol.ProtocolOptions = {},
-  ...input: Group.Input<ReadonlyArray<AnyFamily>>
-) {
+  group: Group.Group<Keys>,
+): Layer.Layer<Storage | MemoryCommitBoundary | Identifiers<Keys> | ChangeFeed<Identifiers<Keys>>>;
+export function layer(options: MemoryOptions & Protocol.ProtocolOptions = {}, group: Group.Group) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
-  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
+  return bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

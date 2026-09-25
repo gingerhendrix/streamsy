@@ -7,7 +7,7 @@ import { layerMemory } from "@streamsy/projection/memory";
 
 type Services =
   | Checkpoints
-  | import("@streamsy/core").AnyStream
+  | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
   | Scope.Scope;

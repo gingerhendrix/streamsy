@@ -1,29 +1,33 @@
+import { Protocol } from "@streamsy/core/protocol";
 import { expect, it } from "bun:test";
 import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
-import { AnyStream, provides, StreamFamily, StreamId, StreamRef } from "../../src/index.ts";
+import { Streamsy, StreamId, StreamAddress } from "../../src/index.ts";
 import { Streams } from "../../src/protocol/index.ts";
 
-class Notes extends StreamFamily.json<Notes>()("Notes", "notes/:user", {
+class Notes extends Streamsy.json<Notes>()("Notes", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.Struct({ text: Schema.String }),
 }) {}
-class Copies extends StreamFamily.json<Copies>()("Copies", "notes/:user", {
+class Copies extends Streamsy.json<Copies>()("Copies", "notes/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
-class Overlap extends StreamFamily.bytes<Overlap>()("Overlap", "notes/:id", {
+class Overlap extends Streamsy.bytes<Overlap>()("Overlap", "notes/:id", {
   params: { id: Schema.String },
 }) {}
-class Counts extends StreamFamily.state<Counts>()("Counts", "counts/:id", {
+class Counts extends Streamsy.state<Counts>()("Counts", "counts/:id", {
   params: { id: Schema.NumberFromString },
   collections: {
     count: { schema: Schema.Struct({ id: Schema.String, count: Schema.Number }), key: "id" },
   },
 }) {}
 
-it("family statics retain their route and typed service over a protocol graph", async () => {
+it("stream statics retain their route and typed service over a protocol graph", async () => {
   expect(Notes.template).toBe("notes/:user");
-  expect(Notes.route.ref).toBe(Notes.ref);
+  expect(Notes.at({ user: "ann" }).stream.key).toBe(Notes.key);
+  expect(Notes).not.toHaveProperty("route");
+  expect(Notes).not.toHaveProperty("family");
+  expect(Notes).not.toHaveProperty("make");
   expect(Option.getOrThrow(Counts.parse("counts/4"))).toEqual({ id: 4 });
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -42,7 +46,7 @@ it("family statics retain their route and typed service over a protocol graph", 
       expect((yield* Stream.runCollect(counts.read({ id: 4 })))[0]?.items[0]).toMatchObject({
         value: { count: 3 },
       });
-    }).pipe(Effect.provide(provides(Streams.layerMemory(), Notes, Counts))),
+    }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes, Counts)))),
   );
 });
 
@@ -76,23 +80,27 @@ it("every wire operation rejects foreign ids including both fork forms", async (
         const exit = yield* Effect.exit(attempt);
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
       }
-    }).pipe(Effect.provide(provides(Streams.layerMemory(), Notes))),
+    }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes)))),
   );
 });
 
-it("bindings refuse duplicate and overlapping templates and enforce AnyStream last", () => {
+it("bindings refuse duplicate and overlapping templates and enforce Streamsy.Wildcard last", () => {
   const graph = Streams.layerMemory();
-  expect(() => provides(graph, Notes, Copies)).toThrow("duplicate family template");
-  expect(() => provides(graph, Notes, Overlap)).toThrow("overlap");
-  expect(() => provides(graph, AnyStream, Notes)).toThrow("AnyStream must be last");
-  expect(() => provides(graph, Notes, AnyStream)).not.toThrow();
+  expect(() => Protocol.bind(graph, Streamsy.group(Notes, Copies))).toThrow(
+    "duplicate stream template",
+  );
+  expect(() => Protocol.bind(graph, Streamsy.group(Notes, Overlap))).toThrow("overlap");
+  expect(() => Protocol.bind(graph, Streamsy.group(Streamsy.Wildcard, Notes))).toThrow(
+    "Wildcard must be last",
+  );
+  expect(() => Protocol.bind(graph, Streamsy.group(Notes, Streamsy.Wildcard))).not.toThrow();
 });
 
-it("AnyStream handles arbitrary ids", async () => {
-  const layer = provides(Streams.layerMemory(), AnyStream);
+it("Streamsy.Wildcard handles arbitrary ids", async () => {
+  const layer = Protocol.bind(Streams.layerMemory(), Streamsy.group(Streamsy.Wildcard));
   await Effect.runPromise(
     Effect.gen(function* () {
-      const any = yield* AnyStream;
+      const any = yield* Streamsy.Wildcard;
       yield* any.create({ id: "a/b/c" });
       yield* any.append({ id: "a/b/c" }, [new TextEncoder().encode("hello")]);
       expect((yield* Stream.runCollect(any.read({ id: "a/b/c" })))[0]?.items[0]).toEqual(
@@ -102,9 +110,9 @@ it("AnyStream handles arbitrary ids", async () => {
   );
 });
 
-// These are compiled, never executed: params and items cannot widen at the family boundary.
+// These are compiled, never executed: params and items cannot widen at the stream boundary.
 const typeChecks = (notes: Notes["Service"]) => {
-  // @ts-expect-error family params are decoded and named
+  // @ts-expect-error stream params are decoded and named
   const invalidParams = notes.append({ other: "ann" }, [{ text: "hello" }]);
   // @ts-expect-error item codec fixes the application type
   const invalidItem = notes.append({ user: "ann" }, [42]);
@@ -118,14 +126,14 @@ void typeChecks;
 const missingFamily = Effect.gen(function* () {
   yield* Notes;
   yield* Counts;
-}).pipe(Effect.provide(provides(Streams.layerMemory(), Notes)));
+}).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes))));
 // oxlint-disable effecttsgo/missing-effect-context -- This negative type test deliberately omits Counts.
 // @ts-expect-error providing Notes must leave Counts in the requirement
 const missing: Effect.Effect<void> = missingFamily;
 void missing;
 // oxlint-enable effecttsgo/missing-effect-context
 
-class Drafts extends StreamFamily.json<Drafts>()("Drafts", "drafts/:user", {
+class Drafts extends Streamsy.json<Drafts>()("Drafts", "drafts/:user", {
   params: { user: Schema.String },
   schema: Schema.Struct({ text: Schema.String }),
 }) {}
@@ -139,45 +147,60 @@ it("separate providers cannot alias classes declared with the same template", as
     Effect.gen(function* () {
       const notes = yield* Notes;
       const copies = yield* Copies;
-      expect(notes.route).toBe(Notes.route);
-      expect(copies.route).toBe(Copies.route);
-    }).pipe(Effect.provide(Layer.mergeAll(provides(graph, Notes), provides(graph, Copies)))),
+      expect(notes.route.template).toBe(Notes.template);
+      expect(copies.route.template).toBe(Copies.template);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Protocol.bind(graph, Streamsy.group(Notes)),
+          Protocol.bind(graph, Streamsy.group(Copies)),
+        ),
+      ),
+    ),
   );
 });
 
-class SameName extends StreamFamily.bytes<SameName>()("Notes", "other/:user", {
+class SameName extends Streamsy.bytes<SameName>()("Notes", "other/:user", {
   params: { user: Schema.String },
 }) {}
-class CustomA extends StreamFamily.custom<CustomA>()("CustomA", {
+class CustomA extends Streamsy.custom<CustomA>()("CustomA", {
   parse: (id: string) => (id.startsWith("custom-a/") ? Option.some({ id }) : Option.none()),
-  ref: ({ id }: { readonly id: string }) => StreamRef.bytes(id),
+  address: ({ id }: { readonly id: string }) => StreamAddress.bytes(id),
 }) {}
-class CustomB extends StreamFamily.custom<CustomB>()("CustomB", {
+class CustomB extends Streamsy.custom<CustomB>()("CustomB", {
   parse: (id: string) => (id.startsWith("custom-b/") ? Option.some({ id }) : Option.none()),
-  ref: ({ id }: { readonly id: string }) => StreamRef.bytes(id),
+  address: ({ id }: { readonly id: string }) => StreamAddress.bytes(id),
 }) {}
 
 it("stable names define service identity and duplicate names are refused", () => {
-  expect(Notes.key).toBe("@streamsy/core/Family/Notes");
+  expect(Notes.key).toBe("@streamsy/core/Stream/Notes");
   expect(SameName.key).toBe(Notes.key);
-  expect(() => provides(Streams.layerMemory(), Notes, SameName)).toThrow("duplicate family name");
-  expect(() => provides(Streams.layerMemory(), CustomA, CustomB)).not.toThrow();
-  expect(() => provides(Streams.layerMemory(), CustomA, AnyStream)).not.toThrow();
-  expect(Notes.at({ user: "ann" }).family.key).toBe(Notes.key);
-  expect(Notes.at({ user: "ann" }).id).toBe(Notes.ref({ user: "ann" }).id);
+  expect(() => Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes, SameName))).toThrow(
+    "duplicate stream name",
+  );
+  expect(() =>
+    Protocol.bind(Streams.layerMemory(), Streamsy.group(CustomA, CustomB)),
+  ).not.toThrow();
+  expect(() =>
+    Protocol.bind(Streams.layerMemory(), Streamsy.group(CustomA, Streamsy.Wildcard)),
+  ).not.toThrow();
+  expect(Notes.at({ user: "ann" }).stream.key).toBe(Notes.key);
+  expect(Notes.at({ user: "ann" }).id).toBe(Notes.address({ user: "ann" }).id);
 });
 
-it("AnyStream ordering follows stable identity across class aliases", () => {
-  class AnyAgain extends AnyStream {}
-  expect(() => provides(Streams.layerMemory(), AnyAgain, Notes)).toThrow("AnyStream must be last");
+it("Streamsy.Wildcard ordering follows stable identity across class aliases", () => {
+  class AnyAgain extends Streamsy.Wildcard {}
+  expect(() => Protocol.bind(Streams.layerMemory(), Streamsy.group(AnyAgain, Notes))).toThrow(
+    "Wildcard must be last",
+  );
 });
 
-it("provides a scoped feed with the family's owner", async () => {
-  const { Changes } = await import("../../src/index.ts");
+it("provides a scoped feed with the stream's owner", async () => {
+  const { Streamsy } = await import("../../src/index.ts");
   await Effect.runPromise(
     Effect.gen(function* () {
       const notes = yield* Notes;
-      const feed = yield* Changes(Notes);
+      const feed = yield* Streamsy.ChangeFeed(Notes);
       expect(feed.owner).toBe(notes.owner);
       yield* notes.create({ user: "ann" });
       const snapshots = yield* feed
@@ -188,12 +211,12 @@ it("provides a scoped feed with the family's owner", async () => {
         .changes(StreamId.make("foreign/id"))
         .pipe(Stream.runDrain, Effect.exit);
       expect(Exit.isFailure(foreign)).toBe(true);
-    }).pipe(Effect.provide(provides(Streams.layerMemory(), Notes))),
+    }).pipe(Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Notes)))),
   );
 });
 
 it("does not expose a feed when the graph hides Storage", async () => {
-  const { Changes } = await import("../../src/index.ts");
+  const { Streamsy } = await import("../../src/index.ts");
   const { StreamsReader, StreamsWriter } = await import("../../src/protocol/index.ts");
   const protocol = Layer.effectContext(
     Effect.context<
@@ -203,9 +226,9 @@ it("does not expose a feed when the graph hides Storage", async () => {
   ).pipe(Layer.provide(Streams.layerMemory()));
   await Effect.runPromise(
     Effect.gen(function* () {
-      expect(Option.isNone(yield* Effect.serviceOption(Changes(Notes)))).toBe(true);
+      expect(Option.isNone(yield* Effect.serviceOption(Streamsy.ChangeFeed(Notes)))).toBe(true);
       yield* (yield* Notes).create({ user: "ann" });
-    }).pipe(Effect.provide(provides(protocol, Notes))),
+    }).pipe(Effect.provide(Protocol.bind(protocol, Streamsy.group(Notes)))),
   );
 });
 
@@ -215,7 +238,7 @@ it("rejects a graph whose exposed Storage does not own the protocol wires", asyn
   const other = Streams.layerMemory();
   const mixed = Layer.merge(first, Layer.effect(Storage, Storage).pipe(Layer.provide(other)));
   const result = await Effect.runPromiseExit(
-    Effect.void.pipe(Effect.provide(provides(mixed, Notes))),
+    Effect.void.pipe(Effect.provide(Protocol.bind(mixed, Streamsy.group(Notes)))),
   );
   expect(Exit.isFailure(result)).toBe(true);
   if (Exit.isFailure(result))
@@ -238,7 +261,7 @@ it("spreading a protocol writer does not copy its ownership claim", async () => 
     ),
   );
   const result = await Effect.runPromiseExit(
-    Effect.void.pipe(Effect.provide(provides(graph, Notes))),
+    Effect.void.pipe(Effect.provide(Protocol.bind(graph, Streamsy.group(Notes)))),
   );
   expect(Exit.isFailure(result)).toBe(true);
 });

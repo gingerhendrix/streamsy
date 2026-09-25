@@ -1,6 +1,6 @@
 import { Effect, Layer, Schema, SchemaAST, Result } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Http, Offset, type StreamRef } from "@streamsy/core";
+import { Http, Offset, type StreamAddress } from "@streamsy/core";
 import { StreamsReader, type StreamRoute } from "@streamsy/core/protocol";
 import * as Contract from "./contract.ts";
 import {
@@ -53,17 +53,17 @@ export function stream<P, F, E, R>(
 ): RouteLayer<F | R, E> {
   return readRoute(normalize(source, path), path, options);
 }
-export function state<P, C extends StreamRef.Collections, F, const Path extends `/${string}`>(
+export function state<P, C extends StreamAddress.Collections, F, const Path extends `/${string}`>(
   source: StateSource<P, C, F> & PathSource<P>,
   path: Path & ExactPath<Path, NoInfer<P>>,
   options?: ReadOptions,
 ): RouteLayer<F>;
-export function state<P, C extends StreamRef.Collections, F, E, R>(
+export function state<P, C extends StreamAddress.Collections, F, E, R>(
   source: StateSource<P, C, F>,
   path: `/${string}`,
   options: ParamsOptions<NoInfer<P>, E, R>,
 ): RouteLayer<F | R, E>;
-export function state<P, C extends StreamRef.Collections, F, E, R>(
+export function state<P, C extends StreamAddress.Collections, F, E, R>(
   source: StateSource<P, C, F>,
   path: `/${string}`,
   options: ReadOptions | ParamsOptions<P, E, R> = {},
@@ -83,7 +83,7 @@ function params<P>(schema: StreamRoute.PathSchema<P> | undefined, path: string) 
     throw new TypeError("paramSchema must be a Struct of path parameters");
   const fields = encoded.propertySignatures.map((field) => String(field.name));
   if (fields.toSorted().join("\0") !== names.toSorted().join("\0"))
-    throw new TypeError("Route params must equal family params");
+    throw new TypeError("Route params must equal stream params");
   return HttpRouter.schemaPathParams(schema).pipe(
     Effect.mapError(() => ({
       _tag: "InvalidParams" as const,

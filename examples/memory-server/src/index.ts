@@ -1,11 +1,11 @@
 /* oxlint-disable effecttsgo/global-console, effecttsgo/process-env -- This executable owns the HTTP listener and process configuration. */
-import { AnyStream, Memory, StreamGroup } from "@streamsy/core";
+import { Streamsy, Memory } from "@streamsy/core";
 import * as Http from "@streamsy/core/http";
 import { listener } from "@streamsy/serve/bun";
 import { Cause, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/unstable/http";
 
-const streams = StreamGroup.make(AnyStream);
+const streams = Streamsy.group(Streamsy.Wildcard);
 const port = parseInt(process.env.PORT ?? "1337", 10);
 const runtime = ManagedRuntime.make(
   HttpRouter.serve(Http.routes(streams, { access: "full" }), {

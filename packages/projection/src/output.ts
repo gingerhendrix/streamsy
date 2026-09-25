@@ -1,5 +1,5 @@
 import { Schema, type Effect } from "effect";
-import { StreamRef, type StreamFamily } from "@streamsy/core";
+import { StreamAddress, type Streamsy } from "@streamsy/core";
 
 export interface Upsert<A> {
   readonly _tag: "Upsert";
@@ -13,26 +13,26 @@ export const upsert = <A>(row: A): Upsert<A> => ({ _tag: "Upsert", row });
 export const remove = (key: string | number): Remove => ({ _tag: "Remove", key });
 export type Change<A> = Upsert<A> | Remove;
 
-export interface Stream<A, Identity = StreamFamily.Member<A, unknown>> {
+export interface Stream<A, Identity = Streamsy.Address<A, unknown>> {
   readonly _tag: "Stream";
   readonly schema: Schema.Codec<A, unknown, never, never>;
   readonly stream: Identity;
 }
-export interface Rows<A, Identity = StreamFamily.Member<unknown, unknown>> {
+export interface Rows<A, Identity = Streamsy.Address<unknown, unknown>> {
   readonly _tag: "Rows";
   readonly schema: Schema.Codec<A, unknown, never, never>;
-  readonly key: StreamRef.StateKey<A>;
+  readonly key: StreamAddress.StateKey<A>;
   readonly stream: Identity;
 }
 export interface Value<A, I = unknown> {
   readonly _tag: "Value";
   readonly schema: Schema.Codec<A, I, never, never>;
 }
-/** Output declarations own their codec and retain the target family key. */
-export type Target<P> = StreamFamily.AnyFamily & {
-  readonly ref: (params: P) => { readonly id: string };
+/** Output declarations own their codec and retain the target stream key. */
+export type Target<P> = Streamsy.Any & {
+  readonly address: (params: P) => { readonly id: string };
 };
-export type TargetServices<T> = T extends { readonly family: { readonly Identifier: infer R } }
+export type TargetServices<T> = T extends { readonly stream: { readonly Identifier: infer R } }
   ? R
   : T extends { readonly Identifier: infer R }
     ? R
@@ -46,26 +46,26 @@ export function stream<A, I, T extends Target<any>>(
 ): Stream<A, T>;
 export function stream<A, I, R>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly stream: StreamFamily.Member<unknown, R> },
-): Stream<A, StreamFamily.Member<A, R>>;
+  options: { readonly stream: Streamsy.Address<unknown, R> },
+): Stream<A, Streamsy.Address<A, R>>;
 export function stream<A, I, R>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly stream: Target<any> | StreamFamily.Member<unknown, R> },
-): Stream<A, Target<any> | StreamFamily.Member<A, R>> {
+  options: { readonly stream: Target<any> | Streamsy.Address<unknown, R> },
+): Stream<A, Target<any> | Streamsy.Address<A, R>> {
   const target = options.stream;
   return {
     _tag: "Stream",
     schema,
     stream:
-      "ref" in target
+      "address" in target
         ? target
-        : Object.assign(StreamRef.json(target.id, { schema }), { family: target.family }),
+        : Object.assign(StreamAddress.json(target.id, { schema }), { stream: target.stream }),
   };
 }
 /** The output name is the Durable State collection type. Deletes need only a key. */
-export function rows<A, I, T extends Target<any> | StreamFamily.Member<unknown, any>>(
+export function rows<A, I, T extends Target<any> | Streamsy.Address<unknown, any>>(
   schema: Schema.Codec<A, I, never, never>,
-  options: { readonly key: StreamRef.StateKey<A>; readonly stream: T },
+  options: { readonly key: StreamAddress.StateKey<A>; readonly stream: T },
 ): Rows<A, T> {
   return { _tag: "Rows", schema, key: options.key, stream: options.stream };
 }

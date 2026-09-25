@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { StreamFamily } from "@streamsy/core";
+import type { Streamsy } from "@streamsy/core";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { Identity, ProjectionKey } from "./checkpoint.ts";
 import { entries } from "./read.ts";
@@ -21,10 +21,10 @@ export type {
 export type { OnChangeOptions } from "./on-change.ts";
 
 /**
- * The handler runs inside the checkpoint owner's transaction. Family writes are checked
+ * The handler runs inside the checkpoint owner's transaction. Stream writes are checked
  * individually before they execute. Other side effects, including SQL on another client,
  * and ambient Streams.* / StreamsWriter writes are outside this guard. Bind fused output
- * families directly to their storage protocol graph. Binding fails when the exposed
+ * streams directly to their storage protocol graph. Binding fails when the exposed
  * Storage does not own the protocol wires. Declared outputs are checked together before the first write. The owner reference is inherited
  * by nested runs and forked fibers; cross-owner nested runs and detached writes are unsupported.
  */
@@ -51,7 +51,7 @@ export interface Pinned<
   readonly generation: number;
   readonly params: Record<string, string>;
   readonly inputs: Inputs;
-  readonly output: StreamFamily.Member<O, OR>;
+  readonly output: Streamsy.Address<O, OR>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
 export type Projection<
@@ -74,22 +74,22 @@ export interface FusedDefinition<Inputs extends InputMap, E, R> extends Common {
 }
 /** Sugar for one input: the slice is `batch.input`. */
 export interface SingleFusedDefinition<A, E, R, IR = never> extends Common {
-  readonly input: StreamFamily.Member<A, IR>;
+  readonly input: Streamsy.Address<A, IR>;
   readonly process: (
-    batch: Slices<{ readonly input: StreamFamily.Member<A, IR> }>,
+    batch: Slices<{ readonly input: Streamsy.Address<A, IR> }>,
     unit: Unit,
   ) => Effect.Effect<void, E, R>;
 }
 export interface PinnedDefinition<Inputs extends InputMap, O, E, R, OR = never> extends Common {
   readonly inputs: Inputs;
-  readonly output: StreamFamily.Member<O, OR>;
+  readonly output: Streamsy.Address<O, OR>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
 export interface SinglePinnedDefinition<A, O, E, R, IR = never, OR = never> extends Common {
-  readonly input: StreamFamily.Member<A, IR>;
-  readonly output: StreamFamily.Member<O, OR>;
+  readonly input: Streamsy.Address<A, IR>;
+  readonly output: Streamsy.Address<O, OR>;
   readonly process: (
-    batch: Slices<{ readonly input: StreamFamily.Member<A, IR> }>,
+    batch: Slices<{ readonly input: Streamsy.Address<A, IR> }>,
     unit: Unit,
   ) => Effect.Effect<ReadonlyArray<O>, E, R>;
 }
@@ -104,13 +104,13 @@ const common = (definition: Common) => ({
 /** Inert: acquires no service. Defaults are generation 1 and no params. */
 export function make<A, E, R, IR>(
   definition: SingleFusedDefinition<A, E, R, IR>,
-): Fused<{ readonly input: StreamFamily.Member<A, IR> }, E, R>;
+): Fused<{ readonly input: Streamsy.Address<A, IR> }, E, R>;
 export function make<Inputs extends InputMap, E, R>(
   definition: FusedDefinition<Inputs, E, R>,
 ): Fused<Inputs, E, R>;
 export function make<Inputs extends InputMap, A, E, R, IR>(
   definition: FusedDefinition<Inputs, E, R> | SingleFusedDefinition<A, E, R, IR>,
-): Fused<Inputs, E, R> | Fused<{ readonly input: StreamFamily.Member<A, IR> }, E, R> {
+): Fused<Inputs, E, R> | Fused<{ readonly input: Streamsy.Address<A, IR> }, E, R> {
   const base = { _tag: "Fused", ...common(definition) } as const;
   return "inputs" in definition
     ? { ...base, inputs: definition.inputs, process: definition.process }
@@ -120,15 +120,13 @@ export function make<Inputs extends InputMap, A, E, R, IR>(
 /** Inert stream form with a declared output on the checkpoint owner. */
 export function stream<A, O, E, R, IR, OR>(
   definition: SinglePinnedDefinition<A, O, E, R, IR, OR>,
-): Pinned<{ readonly input: StreamFamily.Member<A, IR> }, O, E, R, OR>;
+): Pinned<{ readonly input: Streamsy.Address<A, IR> }, O, E, R, OR>;
 export function stream<Inputs extends InputMap, O, E, R, OR>(
   definition: PinnedDefinition<Inputs, O, E, R, OR>,
 ): Pinned<Inputs, O, E, R, OR>;
 export function stream<Inputs extends InputMap, A, O, E, R, IR, OR>(
   definition: PinnedDefinition<Inputs, O, E, R, OR> | SinglePinnedDefinition<A, O, E, R, IR, OR>,
-):
-  | Pinned<Inputs, O, E, R, OR>
-  | Pinned<{ readonly input: StreamFamily.Member<A, IR> }, O, E, R, OR> {
+): Pinned<Inputs, O, E, R, OR> | Pinned<{ readonly input: Streamsy.Address<A, IR> }, O, E, R, OR> {
   const base = { _tag: "Stream", ...common(definition), output: definition.output } as const;
   return "inputs" in definition
     ? { ...base, inputs: definition.inputs, process: definition.process }

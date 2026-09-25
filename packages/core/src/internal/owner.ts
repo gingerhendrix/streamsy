@@ -4,7 +4,7 @@ import type { Reader, Writer } from "../protocol/tags.ts";
 import type { StreamsFault } from "../fault.ts";
 import type { Storage } from "../storage/storage.ts";
 
-/** Private bridge: a family guard dies with this sentinel; the fused runner translates it. */
+/** Private bridge: a stream guard dies with this sentinel; the fused runner translates it. */
 const ForeignOwnerType = Symbol.for("@streamsy/core/internal/ForeignOwner");
 export class ForeignOwner extends Error {
   readonly [ForeignOwnerType] = true;
@@ -14,7 +14,7 @@ export class ForeignOwner extends Error {
   ) {
     super(
       knownOwner
-        ? `Family write to ${stream} does not share the checkpoint owner`
+        ? `Stream write to ${stream} does not share the checkpoint owner`
         : `Cannot establish a storage owner for ${stream}; the exposed Storage does not own the protocol wires`,
     );
   }

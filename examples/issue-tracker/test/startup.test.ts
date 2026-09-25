@@ -1,6 +1,7 @@
+import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
-import { applicationLayer, createInputs, hostLayer, families } from "../server/host.ts";
+import { applicationLayer, createInputs, hostLayer, streams } from "../server/host.ts";
 import { Users } from "../server/streams.ts";
 import {
   scratchDirectory,
@@ -64,8 +65,8 @@ test("a member fault at startup leaves HTTP and other workspaces available", asy
   }
 });
 
-test("the host runtime exposes only families, feeds and application storage services", async () => {
-  const { Storage, Changes } = await import("@streamsy/core");
+test("the host runtime exposes only streams, feeds and application storage services", async () => {
+  const { Storage } = await import("@streamsy/core");
   const { Checkpoints, State } = await import("@streamsy/projection");
   const { SqlClient } = await import("effect/unstable/sql");
   await Effect.runPromise(
@@ -79,10 +80,12 @@ test("the host runtime exposes only families, feeds and application storage serv
             Checkpoints.key,
             State.key,
             SqlClient.SqlClient.key,
-            ...families.families.map((family) => family.key),
-            ...families.families.map(
-              (family) =>
-                Changes<import("@streamsy/core").StreamGroup.Services<typeof families>>(family).key,
+            ...streams.streams.map((stream) => stream.key),
+            ...streams.streams.map(
+              (stream) =>
+                Streamsy.ChangeFeed<import("@streamsy/core").Streamsy.Services<typeof streams>>(
+                  stream,
+                ).key,
             ),
           ].sort(),
         );

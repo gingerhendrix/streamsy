@@ -1,13 +1,13 @@
 import { Board, LabelCounts, Transitions } from "../../server/outputs.ts";
 import { expect } from "bun:test";
 import { Effect, Schema } from "effect";
-import type { StreamFamily, StreamId } from "@streamsy/core";
+import type { Streamsy, StreamId } from "@streamsy/core";
 
-/** Read one output member through its family wire and decode with the output codec. Fixtures fit one page. */
+/** Read one output address through its stream wire and decode with the output codec. Fixtures fit one page. */
 export const readOutput = <A, RD, RE, R>(
   output: {
-    readonly family: StreamFamily.Member<unknown, R>["family"];
-    readonly ref: (params: { readonly workspaceId: string }) => {
+    readonly stream: Streamsy.Address<unknown, R>["stream"];
+    readonly address: (params: { readonly workspaceId: string }) => {
       readonly id: StreamId;
       readonly codec: Schema.Codec<A, string | Uint8Array, RD, RE>;
     };
@@ -15,11 +15,11 @@ export const readOutput = <A, RD, RE, R>(
   workspaceId: string,
 ) =>
   Effect.gen(function* () {
-    const ref = output.ref({ workspaceId });
-    const result = yield* (yield* output.family).wire.read(ref.id);
+    const address = output.address({ workspaceId });
+    const result = yield* (yield* output.stream).wire.read(address.id);
     expect(result.upToDate).toBe(true);
     return yield* Effect.forEach(result.messages, (message) =>
-      Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+      Schema.decodeEffect(address.codec)(new TextDecoder().decode(message.data)),
     );
   });
 

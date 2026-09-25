@@ -15,8 +15,8 @@ export const foldEvents = (items: ReadonlyArray<IssueEvent>): Map<string, IssueR
 
 export const transact = (workspaceId: string, command: CommandRequest) =>
   Effect.gen(function* () {
-    const family = yield* Events;
-    const batches = yield* family.read({ workspaceId }).pipe(Stream.runCollect);
+    const stream = yield* Events;
+    const batches = yield* stream.read({ workspaceId }).pipe(Stream.runCollect);
     const items = batches.flatMap((batch) => batch.items);
     const rows = foldEvents(items);
     const head = batches.at(-1)?.nextOffset ?? ZERO_OFFSET;
@@ -49,6 +49,6 @@ export const transact = (workspaceId: string, command: CommandRequest) =>
               status: previous!.status,
               assigneeId: command.assigneeId,
             };
-    const ack = yield* family.append({ workspaceId }, [event], { expectedOffset: head });
+    const ack = yield* stream.append({ workspaceId }, [event], { expectedOffset: head });
     return { event, ack };
   }).pipe(Effect.retry({ times: 3, while: (error) => error._tag === "OffsetMismatch" }));

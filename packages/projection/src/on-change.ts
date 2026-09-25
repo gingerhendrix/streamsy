@@ -2,7 +2,7 @@ import { Checkpoints } from "./checkpoint.ts";
 import type { Named } from "./outputs.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- The overload implementation erases member parameter, success, error, and service types after the public overloads have checked them; runtime dispatch is by the Family tag. */
 import { Effect, Fiber, Queue, Stream, type Scope } from "effect";
-import { Changes, type StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { type StreamRoute } from "@streamsy/core/protocol";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import type { Family } from "./family.ts";
@@ -18,12 +18,12 @@ type AnyProjection =
   | Fused<InputMap, unknown, unknown>
   | Pinned<InputMap, unknown, unknown, unknown, unknown>
   | Named<InputMap, unknown, unknown, unknown>;
-type RuntimeInputs = Record<string, StreamFamily.Member<unknown, StreamFamily.FamilyIdentifier>>;
-type RuntimeServices = Checkpoints | StreamFamily.FamilyIdentifier;
+type RuntimeInputs = Record<string, Streamsy.Address<unknown, Streamsy.Any["Identifier"]>>;
+type RuntimeServices = Checkpoints | Streamsy.Any["Identifier"];
 type RuntimeProjection =
   | Fused<RuntimeInputs, ProjectionFault, RuntimeServices>
-  | Pinned<RuntimeInputs, unknown, ProjectionFault, RuntimeServices, StreamFamily.FamilyIdentifier>
-  | Named<RuntimeInputs, ProjectionFault, RuntimeServices, StreamFamily.FamilyIdentifier>;
+  | Pinned<RuntimeInputs, unknown, ProjectionFault, RuntimeServices, Streamsy.Any["Identifier"]>
+  | Named<RuntimeInputs, ProjectionFault, RuntimeServices, Streamsy.Any["Identifier"]>;
 type FamilyParams<F> = F extends Family<infer Codecs, any> ? StreamRoute.Params<Codecs> : never;
 type FamilyMember<F> = F extends Family<any, infer Member> ? Member : never;
 type MemberError<Member> =
@@ -36,11 +36,11 @@ type MemberError<Member> =
         : never;
 type MemberRequirements<Member> =
   Member extends Fused<infer _Inputs, infer _E, infer R>
-    ? R | InputServices<_Inputs> | Changes<InputServices<_Inputs>>
+    ? R | InputServices<_Inputs> | Streamsy.ChangeFeed<InputServices<_Inputs>>
     : Member extends Pinned<infer _Inputs, infer _Output, infer _E, infer R, infer OR>
-      ? R | OR | InputServices<_Inputs> | Changes<InputServices<_Inputs>>
+      ? R | OR | InputServices<_Inputs> | Streamsy.ChangeFeed<InputServices<_Inputs>>
       : Member extends Named<infer Inputs, infer _E, infer R, infer OR>
-        ? R | OR | InputServices<Inputs> | Changes<InputServices<Inputs>>
+        ? R | OR | InputServices<Inputs> | Streamsy.ChangeFeed<InputServices<Inputs>>
         : never;
 
 const watch = <Inputs extends InputMap, O, E, R, OR = never>(
@@ -49,7 +49,7 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
 ): Effect.Effect<
   Progress,
   E | ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs> | Changes<InputServices<Inputs>>
+  R | OR | Checkpoints | InputServices<Inputs> | Streamsy.ChangeFeed<InputServices<Inputs>>
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -59,19 +59,19 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
       });
       const closed = new Set<string>();
       const inputs = inputEntries(projection.inputs);
-      yield* Effect.forEach(inputs, ([name, ref]) =>
+      yield* Effect.forEach(inputs, ([name, address]) =>
         Effect.gen(function* () {
-          const { owner, wire: reader } = yield* ref.family;
-          const feed = yield* Changes(ref.family);
-          // Independent Layer overrides can replace a family without replacing its feed.
+          const { owner, wire: reader } = yield* address.stream;
+          const feed = yield* Streamsy.ChangeFeed(address.stream);
+          // Independent Layer overrides can replace a stream without replacing its feed.
           if (feed.owner !== owner)
             return yield* new ProjectionFault({
               phase: "read",
               reason: "unsupported-composition",
               input: name,
-              message: `The change feed of ${ref.id} belongs to a different owner`,
+              message: `The change feed of ${address.id} belongs to a different owner`,
             });
-          yield* reader.head(ref.id).pipe(
+          yield* reader.head(address.id).pipe(
             Effect.as(true),
             Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
             Effect.mapError((cause) =>
@@ -80,14 +80,14 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
                     phase: "read",
                     reason: "history-unavailable",
                     input: name,
-                    message: `Required history of ${ref.id} is unavailable`,
+                    message: `Required history of ${address.id} is unavailable`,
                     cause,
                   })
                 : new ProjectionFault({
                     phase: "read",
                     reason: "storage-failure",
                     input: name,
-                    message: `Cannot inspect ${ref.id}`,
+                    message: `Cannot inspect ${address.id}`,
                     cause,
                   }),
             ),
@@ -95,8 +95,10 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
           return undefined;
         }),
       );
-      const subscriptions = inputs.map(([name, ref]) =>
-        Stream.unwrap(Effect.map(Changes(ref.family), (feed) => feed.changes(ref.id))).pipe(
+      const subscriptions = inputs.map(([name, address]) =>
+        Stream.unwrap(
+          Effect.map(Streamsy.ChangeFeed(address.stream), (feed) => feed.changes(address.id)),
+        ).pipe(
           Stream.takeUntil((snapshot) => snapshot.closed),
           Stream.runForEach((snapshot) =>
             Effect.gen(function* () {
@@ -110,7 +112,7 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
                 phase: "read",
                 reason: "storage-failure",
                 input: name,
-                message: `Cannot watch ${ref.id}`,
+                message: `Cannot watch ${address.id}`,
                 cause,
               }),
           ),
@@ -130,7 +132,7 @@ const watch = <Inputs extends InputMap, O, E, R, OR = never>(
   );
 
 /**
- * Watches each input through its family change-feed capability.
+ * Watches each input through its stream change-feed capability.
  * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
  * failures surface as `read / storage-failure`.
  */
@@ -140,10 +142,15 @@ export function onChange<Inputs extends InputMap, O, E, R, OR = never>(
 ): Effect.Effect<
   Fiber.Fiber<Progress, E | ProjectionFault>,
   ProjectionFault,
-  R | OR | Checkpoints | InputServices<Inputs> | Changes<InputServices<Inputs>> | Scope.Scope
+  | R
+  | OR
+  | Checkpoints
+  | InputServices<Inputs>
+  | Streamsy.ChangeFeed<InputServices<Inputs>>
+  | Scope.Scope
 >;
 export function onChange<F extends Family<any, any>>(
-  family: F,
+  stream: F,
   members: ReadonlyArray<FamilyParams<F>>,
   options?: OnChangeOptions,
 ): Effect.Effect<

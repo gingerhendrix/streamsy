@@ -1,5 +1,5 @@
 import * as FamilyFixture from "./support/families.ts";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ import { serialized, hasLock } from "../src/serialized.ts";
 import { forget } from "../src/forget.ts";
 import { recordKey } from "@streamsy/projection/checkpoint";
 
-class numbers extends StreamFamily.json<numbers>()("state.test/numbers", "state/:name", {
+class numbers extends Streamsy.json<numbers>()("state.test/numbers", "state/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
@@ -39,7 +39,11 @@ const hosts: ReadonlyArray<
   readonly [
     string,
     Layer.Layer<
-      Checkpoints | State | import("@streamsy/core").AnyStream | StreamsReader | StreamsWriter,
+      | Checkpoints
+      | State
+      | import("@streamsy/core").Streamsy.Wildcard
+      | StreamsReader
+      | StreamsWriter,
       StorageFault | ProjectionFault
     >,
   ]
@@ -249,10 +253,10 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
   );
 });
 
-test("family state rows are separate and initial factory receives params only on first use", async () => {
+test("stream state rows are separate and initial factory receives params only on first use", async () => {
   const calls: string[] = [];
   const family = Projection.family({
-    id: "state-family",
+    id: "state-stream",
     params: { name: Schema.String },
     inputs: { numbers },
     process: Projection.fold(

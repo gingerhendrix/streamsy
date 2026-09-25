@@ -1,6 +1,6 @@
 import * as FamilyFixture from "./families.ts";
 import { Effect, Schema, Stream } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 
@@ -19,7 +19,7 @@ export const positives = Projection.make({
 });
 export type Services =
   | Checkpoints
-  | import("@streamsy/core").AnyStream
+  | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;
 
@@ -28,8 +28,8 @@ export const initialize = Effect.gen(function* () {
   yield* Streams.create(output);
   yield* Streams.append(input, [1, -1, 3]);
 });
-export const readAll = <A>(ref: StreamRef.StreamRef<A>) =>
-  Streams.read(ref).pipe(Streams.items, Stream.runCollect);
+export const readAll = <A>(address: StreamAddress.StreamAddress<A>) =>
+  Streams.read(address).pipe(Streams.items, Stream.runCollect);
 export const inspect = Effect.gen(function* () {
   const owner = yield* Checkpoints;
   return {

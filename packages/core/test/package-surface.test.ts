@@ -7,7 +7,7 @@ import * as InternalMemory from "@streamsy/core/internal/memory";
 import manifest from "../package.json";
 
 test("public roots expose application tools and isolate internals", () => {
-  expect(Object.keys(Root.State)).toEqual(["changes", "delete", "upsert"]);
+  expect(Object.keys(Root.DurableState)).toEqual(["changes", "remove", "upsert"]);
   expect(Object.keys(Root)).not.toContain("MemoryCommitBoundary");
   expect(Object.keys(Protocol.Protocol)).not.toContain("create");
   expect(Object.keys(Protocol.Protocol)).not.toContain("expireIfNeeded");
@@ -34,14 +34,12 @@ test("public roots expose application tools and isolate internals", () => {
 
 test("root exports stay explicit", () => {
   expect(Object.keys(Root).sort()).toEqual([
-    "AnyStream",
     "AppendConflict",
     "ChangeSnapshot",
-    "Changes",
     "CreateConflict",
     "DecodeFault",
+    "DurableState",
     "EncodeFault",
-    "Fold",
     "ForkSourceNotFound",
     "Http",
     "InvalidAppendRequest",
@@ -65,39 +63,36 @@ test("root exports stay explicit", () => {
     "ProducerState",
     "RecordPatch",
     "StaleEpoch",
-    "State",
     "Storage",
     "StorageCapabilities",
     "StorageFault",
     "StoredMessage",
+    "StreamAddress",
     "StreamBusy",
     "StreamClosed",
     "StreamConfig",
-    "StreamFamily",
     "StreamGone",
-    "StreamGroup",
     "StreamId",
     "StreamLifecycle",
     "StreamNotFound",
     "StreamRecord",
-    "StreamRef",
+    "Streamsy",
     "TransportFault",
     "ZERO_OFFSET",
     "compare",
     "isProtocolError",
-    "provides",
   ]);
   expect(Object.keys(Protocol.StreamRoute).sort()).toEqual(["bytes", "custom", "json", "state"]);
 });
 
-test("family namespace pins factories and graph composition helpers", () => {
-  expect(Object.keys(Root.StreamFamily).sort()).toEqual([
-    "AnyStream",
+test("stream namespace pins factories and graph composition helpers", () => {
+  expect(Object.keys(Root.Streamsy).sort()).toEqual([
+    "ChangeFeed",
+    "Wildcard",
     "bytes",
-    "checkFamilies",
     "custom",
+    "group",
     "json",
-    "provides",
     "state",
   ]);
 });
@@ -124,6 +119,6 @@ test("protocol subpath exposes protocol services and tools", () => {
   ]);
 });
 
-test("Fetch exposes separate family and protocol layer constructors", () => {
+test("Fetch exposes separate stream and protocol layer constructors", () => {
   expect(Object.keys(Fetch).sort()).toEqual(["TransportFault", "layer", "layerProtocol"]);
 });

@@ -1,17 +1,18 @@
+import { Protocol } from "@streamsy/core/protocol";
 import { expect, test } from "bun:test";
 import { Cause, Context, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
-import { Storage, provides, StreamFamily } from "@streamsy/core";
+import { Storage, Streamsy } from "@streamsy/core";
 import { StreamsReader, StreamsWriter } from "@streamsy/core/protocol";
 import * as BunStorage from "@streamsy/storage/bun";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 
-class Source extends StreamFamily.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
+class Source extends Streamsy.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
-class Output extends StreamFamily.json<Output>()("OwnerComposition/Output", "sqlite/output/:name", {
+class Output extends Streamsy.json<Output>()("OwnerComposition/Output", "sqlite/output/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
@@ -19,9 +20,10 @@ const memory = Memory.layerMemory();
 const sqlite = Sqlite.layer.pipe(
   Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: ":memory:" } })),
 );
-const host = Layer.merge(provides(memory, Source), provides(sqlite, Output)).pipe(
-  Layer.provideMerge(sqlite),
-);
+const host = Layer.merge(
+  Protocol.bind(memory, Streamsy.group(Source)),
+  Protocol.bind(sqlite, Streamsy.group(Output)),
+).pipe(Layer.provideMerge(sqlite));
 
 test("a fused projection reads remote input and writes on its SQLite checkpoint owner", async () => {
   await Effect.runPromise(
@@ -69,8 +71,8 @@ test("onChange watches the input's feed even when checkpoints have a different o
   );
 });
 
-test("onChange rejects a family rebound without its matching feed", async () => {
-  const alternate = provides(Memory.layerMemory(), Source).pipe(
+test("onChange rejects a stream rebound without its matching feed", async () => {
+  const alternate = Protocol.bind(Memory.layerMemory(), Streamsy.group(Source)).pipe(
     Layer.flatMap((context) => Layer.succeed(Source, Context.get(context, Source))),
   );
   await Effect.runPromise(
@@ -101,8 +103,10 @@ const unowned = Layer.effectContext(
   }),
 ).pipe(Layer.provide(memoryGraph));
 
-test("a custom family wire cannot establish the owner of a fused write", async () => {
-  const unownedHost = provides(unowned, Source, Output).pipe(Layer.provideMerge(memoryGraph));
+test("a custom stream wire cannot establish the owner of a fused write", async () => {
+  const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
+    Layer.provideMerge(memoryGraph),
+  );
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
@@ -136,7 +140,7 @@ test("a custom wire graph exposing ambient Storage is rejected during binding", 
   );
   const mixed = Layer.merge(unowned, storageOnly);
   const result = await Effect.runPromiseExit(
-    Effect.void.pipe(Effect.provide(provides(mixed, Source, Output))),
+    Effect.void.pipe(Effect.provide(Protocol.bind(mixed, Streamsy.group(Source, Output)))),
   );
   expect(Exit.isFailure(result)).toBe(true);
   if (Exit.isFailure(result))

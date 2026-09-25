@@ -1,5 +1,5 @@
-import { provides, type AnyFamily, type Identifiers } from "../toolkit/family.ts";
-import type * as Group from "../toolkit/group.ts";
+import { bind, type Any, type Identifiers } from "../toolkit/streamsy.ts";
+import type * as Group from "../toolkit/streamsy.ts";
 import { Context, Effect, Fiber, Layer, Scope } from "effect";
 import { HttpClient, type HttpClientRequest } from "effect/unstable/http";
 import { StreamId } from "../schema/index.ts";
@@ -137,12 +137,12 @@ export const layerProtocol = (options: Options) =>
     }),
   );
 
-/** Remote families have no local Changes feed. */
-export function layer<const Keys extends ReadonlyArray<AnyFamily>>(
+/** Remote streams have no local change feed. */
+export function layer<const Keys extends ReadonlyArray<Any>>(
   options: Options,
-  ...input: Group.NonEmptyInput<Keys>
+  group: Group.Group<Keys>,
 ): Layer.Layer<Identifiers<Keys>, TransportFault, HttpClient.HttpClient>;
-export function layer(options: Options, ...input: Group.Input<ReadonlyArray<AnyFamily>>) {
+export function layer(options: Options, group: Group.Group) {
   const protocol = layerProtocol(options);
-  return provides(protocol, ...input);
+  return bind(protocol, group);
 }

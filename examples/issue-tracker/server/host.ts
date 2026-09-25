@@ -1,4 +1,4 @@
-import { StreamGroup, Changes } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import { Checkpoints, State } from "@streamsy/projection";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
@@ -10,27 +10,27 @@ import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
 import { routes } from "./streams.ts";
 
-export const families = StreamGroup.make(...Object.values(routes), ...outputFamilies);
+export const streams = Streamsy.group(...Object.values(routes), ...outputFamilies);
 export const hostLayer = (filename: string) => {
   const host = ProjectionSqlite.layer.pipe(
-    Layer.provideMerge(BunStorage.layer({ client: { filename } }, families)),
+    Layer.provideMerge(BunStorage.layer({ client: { filename } }, streams)),
   );
   return Layer.effectContext(
     Effect.context<
       | Checkpoints
       | State
       | SqlClient.SqlClient
-      | StreamGroup.Services<typeof families>
-      | Changes<StreamGroup.Services<typeof families>>
+      | Streamsy.Services<typeof streams>
+      | Streamsy.ChangeFeed<Streamsy.Services<typeof streams>>
     >().pipe(
       Effect.map(
         Context.pick(
           Checkpoints,
           State,
           SqlClient.SqlClient,
-          ...families.families,
-          ...families.families.map((family) =>
-            Changes<StreamGroup.Services<typeof families>>(family),
+          ...streams.streams,
+          ...streams.streams.map((stream) =>
+            Streamsy.ChangeFeed<Streamsy.Services<typeof streams>>(stream),
           ),
         ),
       ),
@@ -50,11 +50,11 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
       yield* prepareSchema;
       yield* Effect.forEach(workspaces, createInputs, { discard: true });
       if (workspaces.length > 0) {
-        const members = workspaces.map((workspaceId) => ({ workspaceId }));
-        for (const params of members) {
+        const addresses = workspaces.map((workspaceId) => ({ workspaceId }));
+        for (const params of addresses) {
           const sqlMember = issueRows.member(params);
           const outputMember = tracker.member(params);
-          // Startup and background failures are isolated to their member.
+          // Startup and background failures are isolated to their address.
           yield* Projection.serialized(sqlMember).pipe(
             Effect.catchCause((cause) =>
               Cause.hasInterruptsOnly(cause)
@@ -114,5 +114,5 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
 export const createInputs = (workspaceId: string) =>
   Effect.gen(function* () {
     const inputs = yield* Effect.all(Object.values(routes));
-    for (const family of inputs) yield* family.create({ workspaceId });
+    for (const stream of inputs) yield* stream.create({ workspaceId });
   });

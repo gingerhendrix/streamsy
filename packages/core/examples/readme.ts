@@ -1,7 +1,7 @@
 import { Effect, Schema, Stream } from "effect";
-import { Memory, StreamFamily } from "@streamsy/core";
+import { Memory, Streamsy } from "@streamsy/core";
 
-class Events extends StreamFamily.json<Events>()("Readme/Events", "events", {
+class Events extends Streamsy.json<Events>()("Readme/Events", "events", {
   params: {},
   schema: Schema.String,
 }) {}
@@ -11,4 +11,4 @@ const program = Effect.gen(function* () {
   yield* events.append({}, ["hello"]);
   return yield* events.read({}).pipe(Stream.runCollect);
 });
-await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Events))));
+await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Streamsy.group(Events)))));

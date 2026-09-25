@@ -4,8 +4,8 @@ import {
   compare,
   type ReadMessage,
   type ReadResult,
-  type StreamRef,
-  type StreamFamily,
+  type StreamAddress,
+  type Streamsy,
 } from "@streamsy/core";
 import {
   inputEntries,
@@ -41,23 +41,23 @@ export interface Read<A> {
 /** One bounded read after `from`; retain input history and never reuse a deleted stream id. */
 export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
   input: string,
-  ref: StreamFamily.Member<A, R>,
+  address: Streamsy.Address<A, R>,
   from: string,
 ): Effect.fn.Return<Read<A>, ProjectionFault, R> {
-  const { wire: reader } = yield* ref.family;
+  const { wire: reader } = yield* address.stream;
   const historyUnavailable = () =>
     new ProjectionFault({
       phase: "read",
       reason: "history-unavailable",
       input,
-      message: `Required history of ${ref.id} after ${from} is unavailable`,
+      message: `Required history of ${address.id} after ${from} is unavailable`,
     });
   const storageFailure = (cause: unknown) =>
     new ProjectionFault({
       phase: "read",
       reason: "storage-failure",
       input,
-      message: `Cannot read ${ref.id}`,
+      message: `Cannot read ${address.id}`,
       cause,
     });
   if (Option.isNone(Schema.decodeOption(Offset)(from)))
@@ -67,7 +67,7 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       input,
       message: `Stored offset for ${input} is not a valid offset`,
     });
-  const result = yield* reader.read(ref.id, { offset: from }).pipe(
+  const result = yield* reader.read(address.id, { offset: from }).pipe(
     Effect.catchTags({
       InvalidReadRequest: (cause) =>
         new ProjectionFault({
@@ -90,9 +90,9 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
       phase: "read",
       reason: "invalid-source",
       input,
-      message: `Read of ${ref.id} did not advance past ${from}`,
+      message: `Read of ${address.id} did not advance past ${from}`,
     });
-  const items = yield* decodeMessages(input, ref, result.messages);
+  const items = yield* decodeMessages(input, address, result.messages);
   return {
     slice: {
       from,
@@ -107,12 +107,12 @@ export const readSlice = Effect.fn("Projection.readSlice")(function* <A, R>(
 /** Decode failure is an input fault: the stored bytes do not match the declared codec. */
 const decodeMessages = <A>(
   input: string,
-  ref: StreamRef.StreamRef<A>,
+  address: StreamAddress.StreamAddress<A>,
   messages: ReadonlyArray<ReadMessage>,
 ) =>
   Effect.forEach(messages, (message, index) =>
-    Schema.decodeEffect(ref.codec)(
-      Predicate.isTagged(ref, "Json") ? new TextDecoder().decode(message.data) : message.data,
+    Schema.decodeEffect(address.codec)(
+      Predicate.isTagged(address, "Json") ? new TextDecoder().decode(message.data) : message.data,
     ).pipe(
       Effect.mapError(
         () =>
@@ -120,7 +120,7 @@ const decodeMessages = <A>(
             phase: "read",
             reason: "invalid-source",
             input,
-            message: `Cannot decode ${ref.id} at read message ${index}`,
+            message: `Cannot decode ${address.id} at read message ${index}`,
           }),
       ),
     ),
@@ -129,22 +129,22 @@ const decodeMessages = <A>(
 /** Re-read server pages, retaining the pinned count and checking the boundary where available. */
 export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
   input: string,
-  ref: StreamFamily.Member<A, R>,
+  address: Streamsy.Address<A, R>,
   range: PinnedRange,
 ): Effect.fn.Return<Read<A>, ProjectionFault, R> {
-  const { wire: reader } = yield* ref.family;
+  const { wire: reader } = yield* address.stream;
   const unreproducible = (detail: string) =>
     new ProjectionFault({
       phase: "pin",
       reason: "range-unreproducible",
       input,
-      message: `Pinned range of ${ref.id} after ${range.from} cannot be reproduced: ${detail}`,
+      message: `Pinned range of ${address.id} after ${range.from} cannot be reproduced: ${detail}`,
     });
   let messages: Array<ReadMessage> = [];
   let cursor = range.from;
   let last: ReadResult | undefined;
   while (messages.length < range.count) {
-    const page = yield* reader.read(ref.id, { offset: cursor }).pipe(
+    const page = yield* reader.read(address.id, { offset: cursor }).pipe(
       Effect.catchTags({
         InvalidReadRequest: (cause) =>
           new ProjectionFault({
@@ -161,7 +161,7 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
             phase: "pin",
             reason: "storage-failure",
             input,
-            message: `Cannot read ${ref.id}`,
+            message: `Cannot read ${address.id}`,
             cause,
           }),
         TransportFault: (cause) =>
@@ -169,7 +169,7 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
             phase: "pin",
             reason: "storage-failure",
             input,
-            message: `Cannot read ${ref.id}`,
+            message: `Cannot read ${address.id}`,
             cause,
           }),
       }),
@@ -193,7 +193,7 @@ export const reproduce = Effect.fn("Projection.reproduce")(function* <A, R>(
   return {
     slice: {
       from: range.from,
-      items: yield* decodeMessages(input, ref, messages),
+      items: yield* decodeMessages(input, address, messages),
       nextOffset: range.nextOffset,
       upToDate: last.upToDate && cursor === range.nextOffset,
       closed: last.closed && cursor === range.nextOffset,
@@ -213,8 +213,8 @@ export const readInputs = Effect.fn("Projection.readInputs")(function* <Inputs e
 ): Effect.fn.Return<Pass<Inputs>, ProjectionFault, InputServices<Inputs>> {
   const slices: Record<string, Slice<unknown>> = {};
   let items = 0;
-  for (const [name, ref] of inputEntries(inputs)) {
-    const read = yield* readSlice(name, ref, offsets[name] ?? "");
+  for (const [name, address] of inputEntries(inputs)) {
+    const read = yield* readSlice(name, address, offsets[name] ?? "");
     slices[name] = read.slice;
     items += read.slice.items.length;
   }

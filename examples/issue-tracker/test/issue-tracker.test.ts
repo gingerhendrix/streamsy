@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { State, ZERO_OFFSET } from "@streamsy/core";
+import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -104,7 +104,7 @@ test("catalog state upserts and deletes a row", async () => {
         };
         yield* (yield* Users).append(
           { workspaceId: "live" },
-          State.changes(ref, { offset: ZERO_OFFSET }, [State.upsert("user", ada)]),
+          DurableState.changes(ref, { offset: ZERO_OFFSET }, [DurableState.upsert("user", ada)]),
         );
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         const sql = yield* SqlClient.SqlClient;
@@ -114,7 +114,7 @@ test("catalog state upserts and deletes a row", async () => {
         expect(afterUpsert[0]?.n).toBe(1);
         yield* (yield* Users).append(
           { workspaceId: "live" },
-          State.changes(ref, { offset: "1" }, [State.delete("user", ada)]),
+          DurableState.changes(ref, { offset: "1" }, [DurableState.remove("user", ada)]),
         );
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         const afterDelete = yield* sql.unsafe<{ readonly n: number }>(

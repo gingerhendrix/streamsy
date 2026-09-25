@@ -1,10 +1,7 @@
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Layer, Option, Predicate, Schema, type Stream } from "effect";
 import {
-  provides,
-  type StreamFamily,
-  type StreamGroup,
-  type Changes,
+  type Streamsy,
   ChangeSnapshot,
   type MessageWindow,
   Offset,
@@ -627,7 +624,7 @@ const makeLayer = (
   );
 };
 
-/** Generic SQLite-family SQL layer. Hosts supply one matching SqlClient/Reactivity graph. */
+/** Generic SQLite-stream SQL layer. Hosts supply one matching SqlClient/Reactivity graph. */
 export const storageLayer = (
   options: SqlStorageOptions = {},
 ): Layer.Layer<
@@ -648,21 +645,21 @@ export const layerWithTestProbe = (options: SqlStorageOptions, probe: BoundaryTe
 export const layerProtocol = (options: SqlStorageOptions & Protocol.ProtocolOptions = {}) =>
   Protocol.layer(options).pipe(Layer.provideMerge(storageLayer(options)));
 
-export function layer<const Keys extends ReadonlyArray<StreamFamily.AnyFamily>>(
+export function layer<const Keys extends ReadonlyArray<Streamsy.Any>>(
   options: SqlStorageOptions & Protocol.ProtocolOptions,
-  ...input: StreamGroup.NonEmptyInput<Keys>
+  group: Streamsy.Group<Keys>,
 ): Layer.Layer<
   | Layer.Success<ReturnType<typeof storageLayer>>
-  | StreamFamily.Identifiers<Keys>
-  | Changes<StreamFamily.Identifiers<Keys>>,
+  | Streamsy.Services<Streamsy.Group<Keys>>
+  | Streamsy.ChangeFeed<Streamsy.Services<Streamsy.Group<Keys>>>,
   Layer.Error<ReturnType<typeof storageLayer>>,
   Layer.Services<ReturnType<typeof storageLayer>>
 >;
 export function layer(
   options: SqlStorageOptions & Protocol.ProtocolOptions = {},
-  ...input: StreamGroup.Input<ReadonlyArray<StreamFamily.AnyFamily>>
+  group: Streamsy.Group,
 ) {
   const storage = storageLayer(options);
   const protocol = Protocol.layer(options).pipe(Layer.provideMerge(storage));
-  return provides(protocol, ...input).pipe(Layer.provideMerge(storage));
+  return Protocol.bind(protocol, group).pipe(Layer.provideMerge(storage));
 }

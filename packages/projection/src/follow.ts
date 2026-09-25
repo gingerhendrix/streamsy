@@ -1,7 +1,7 @@
 import { Checkpoints } from "./checkpoint.ts";
 import type { Named } from "./outputs.ts";
 import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
-import { ZERO_OFFSET, type StreamFamily } from "@streamsy/core";
+import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
 import type { Fused, Pinned } from "./projection.ts";
@@ -35,27 +35,27 @@ export const defaultRetry = Schedule.exponential("200 millis").pipe(
  */
 const hint = Effect.fn("Projection.wake")(function* <R>(
   input: string,
-  ref: StreamFamily.Member<unknown, R>,
+  address: Streamsy.Address<unknown, R>,
   offset: string,
   interval: number,
 ) {
-  const { wire: reader } = yield* ref.family;
+  const { wire: reader } = yield* address.stream;
   const historyUnavailable = () =>
     new ProjectionFault({
       phase: "read",
       reason: "history-unavailable",
       input,
-      message: `Required history of ${ref.id} after ${offset} is unavailable`,
+      message: `Required history of ${address.id} after ${offset} is unavailable`,
     });
   const storageFailure = (cause: unknown) =>
     new ProjectionFault({
       phase: "read",
       reason: "storage-failure",
       input,
-      message: `Cannot wait on ${ref.id}`,
+      message: `Cannot wait on ${address.id}`,
       cause,
     });
-  return yield* reader.readNext(ref.id, { offset }).pipe(
+  return yield* reader.readNext(address.id, { offset }).pipe(
     Effect.flatMap((result) =>
       result.closed && result.messages.length === 0 ? Effect.never : Effect.void,
     ),
@@ -75,7 +75,7 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
           phase: "read",
           reason: "unsupported-composition",
           input,
-          message: `${ref.id} does not support ${error.feature}`,
+          message: `${address.id} does not support ${error.feature}`,
         }),
       StorageFault: storageFailure,
       TransportFault: storageFailure,
@@ -115,8 +115,8 @@ export const follow = Effect.fn("Projection.follow")(function* <
     });
   const wake = (result: Progress) =>
     Effect.raceAllFirst(
-      inputEntries(projection.inputs).map(([name, ref]) =>
-        hint(name, ref, result.record.inputs[name] ?? ZERO_OFFSET, interval),
+      inputEntries(projection.inputs).map(([name, address]) =>
+        hint(name, address, result.record.inputs[name] ?? ZERO_OFFSET, interval),
       ),
     );
   const cycle = run(projection, options).pipe(

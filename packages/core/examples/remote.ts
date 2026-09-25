@@ -1,9 +1,9 @@
 import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 import * as Fetch from "@streamsy/core/fetch";
 
-class Orders extends StreamFamily.json<Orders>()("Remote/Orders", "orders", {
+class Orders extends Streamsy.json<Orders>()("Remote/Orders", "orders", {
   params: {},
   schema: Schema.Struct({ id: Schema.String }),
 }) {}
@@ -11,7 +11,7 @@ export const remote = Fetch.layer(
   {
     baseUrl: "https://streams.example.com/streams",
   },
-  Orders,
+  Streamsy.group(Orders),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 export const program = Effect.gen(function* () {
   const orders = yield* Orders;

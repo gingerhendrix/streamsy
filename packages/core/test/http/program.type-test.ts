@@ -30,7 +30,7 @@ void raw;
 const failure: Failure = new Error("closed");
 void failure;
 
-type Contains<Set, Member> = [Member] extends [Set] ? true : false;
+type Contains<Set, Address> = [Address] extends [Set] ? true : false;
 type Exactly<Set, All> = [All] extends [Set] ? ([Set] extends [All] ? true : false) : false;
 
 const requiresRequest: Contains<Requirements, HttpServerRequest.HttpServerRequest> = true;

@@ -1,6 +1,6 @@
+import { Protocol } from "@streamsy/core/protocol";
 import { routes as protocolRoutes } from "@streamsy/core/protocol";
-import { provides } from "@streamsy/core";
-import { StreamFamily } from "@streamsy/core";
+import { Streamsy } from "@streamsy/core";
 // oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- This test owns a real Bun listener and its Web client boundary.
 import { expect, test } from "bun:test";
 import { Cause, Context, Deferred, Effect, Exit, Layer, Schema } from "effect";
@@ -44,8 +44,8 @@ test.each([false, true])(
             );
           }),
         ).pipe(Layer.provide(Streams.layerMemory({ longPollTimeoutMs: 500 })));
-        class family extends StreamFamily.json<family>()(
-          "serve/serve-abort.test/family",
+        class stream extends Streamsy.json<stream>()(
+          "serve/serve-abort.test/stream",
           "events/:seat",
           {
             params: { seat: Schema.String },
@@ -53,16 +53,18 @@ test.each([false, true])(
           },
         ) {}
         const route = control
-          ? HttpRouter.add("GET", "/feed/:seat", Http.read(family.ref({ seat: "a" }).id), {
+          ? HttpRouter.add("GET", "/feed/:seat", Http.read(stream.address({ seat: "a" }).id), {
               uninterruptible: true,
             })
-          : Serve.stream(family, "/feed/:seat");
+          : Serve.stream(stream, "/feed/:seat");
         const context = yield* Layer.build(
           HttpRouter.serve(Layer.mergeAll(protocolRoutes(), route), {
             disableLogger: true,
             disableListenLog: true,
           }).pipe(
-            Layer.provide(provides(protocol, family).pipe(Layer.provideMerge(protocol))),
+            Layer.provide(
+              Protocol.bind(protocol, Streamsy.group(stream)).pipe(Layer.provideMerge(protocol)),
+            ),
             Layer.provideMerge(listener({ port: 0 })),
           ),
         );

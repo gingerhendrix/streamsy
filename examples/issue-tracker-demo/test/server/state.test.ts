@@ -63,7 +63,7 @@ describe("newComment", () => {
   });
 });
 
-test("workspace family ids match the public stream URL contract", () => {
+test("workspace stream ids match the public stream URL contract", () => {
   for (const workspaceId of ["main", "abc123test", "concurrent-test"])
     expect(workspaceStreamId(workspaceId)).toBe(Workspaces.at({ workspaceId }).id);
 });

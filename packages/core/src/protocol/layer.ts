@@ -61,3 +61,5 @@ export const layer = (
       );
     }),
   );
+
+export { bind } from "../toolkit/streamsy.ts";

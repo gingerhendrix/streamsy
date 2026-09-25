@@ -1,17 +1,18 @@
+import { Protocol } from "@streamsy/core/protocol";
 import * as Fetch from "@streamsy/core/fetch";
 import { Effect, Schema, type Scope } from "effect";
-import { Changes, StreamFamily, StreamRef, provides } from "@streamsy/core";
+import { Streamsy, StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Output, Projection, State, type ProjectionFault } from "@streamsy/projection";
-class Input extends StreamFamily.json<Input>()("ProjectionTypes/Input", "types/input/:id", {
+class Input extends Streamsy.json<Input>()("ProjectionTypes/Input", "types/input/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
 }) {}
-class Other extends StreamFamily.json<Other>()("ProjectionTypes/Other", "types/other/:id", {
+class Other extends Streamsy.json<Other>()("ProjectionTypes/Other", "types/other/:id", {
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
-class Result extends StreamFamily.bytes<Result>()("ProjectionTypes/Result", "types/result/:id", {
+class Result extends Streamsy.bytes<Result>()("ProjectionTypes/Result", "types/result/:id", {
   params: { id: Schema.String },
 }) {}
 const fused = Projection.make({
@@ -47,7 +48,13 @@ export type Checks = [
   Assert<
     Same<
       Effect.Services<typeof namedWatch>,
-      Input | Other | Changes<Input | Other> | Result | State | Checkpoints | Scope.Scope
+      | Input
+      | Other
+      | Streamsy.ChangeFeed<Input | Other>
+      | Result
+      | State
+      | Checkpoints
+      | Scope.Scope
     >
   >,
   Assert<
@@ -58,16 +65,18 @@ export type Checks = [
   >,
   Assert<Same<Extract<Effect.Services<typeof namedRun>, StreamsReader | StreamsWriter>, never>>,
 ];
-const missing = namedRun.pipe(Effect.provide(provides(Streams.layerMemory(), Input, Other)));
+const missing = namedRun.pipe(
+  Effect.provide(Protocol.bind(Streams.layerMemory(), Streamsy.group(Input, Other))),
+);
 // oxlint-disable effecttsgo/missing-effect-context -- This negative test deliberately omits Result.
-// @ts-expect-error the declared output family must be provided.
+// @ts-expect-error the declared output stream must be provided.
 const incomplete: Effect.Effect<unknown, ProjectionFault, Checkpoints | State> = missing;
 void incomplete;
 // oxlint-enable effecttsgo/missing-effect-context
 Projection.make({
   id: "bare",
-  // @ts-expect-error plain refs do not carry a family key
-  input: StreamRef.json("plain", { schema: Schema.Finite }),
+  // @ts-expect-error plain refs do not carry a stream key
+  input: StreamAddress.json("plain", { schema: Schema.Finite }),
   process: () => Effect.void,
 });
 
@@ -100,19 +109,21 @@ void cannotRunWidened;
 void cannotRunWidenedOutput;
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/missing-effect-context
 
-// oxlint-disable effecttsgo/missing-effect-context -- Negative tests deliberately omit Changes<Input>.
+// oxlint-disable effecttsgo/missing-effect-context -- Negative tests deliberately omit Streamsy.ChangeFeed<Input>.
 // The protocol-only graph deliberately hides Storage and cannot satisfy a feed requirement.
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   Streams.layerMemory();
-const withoutFeed = Projection.onChange(fused).pipe(Effect.provide(provides(protocolOnly, Input)));
-// @ts-expect-error onChange requires Changes<Input> on a host without a feed.
+const withoutFeed = Projection.onChange(fused).pipe(
+  Effect.provide(Protocol.bind(protocolOnly, Streamsy.group(Input))),
+);
+// @ts-expect-error onChange requires Streamsy.ChangeFeed<Input> on a host without a feed.
 const missingFeed: Effect.Effect<unknown, ProjectionFault, Checkpoints | Scope.Scope> = withoutFeed;
 void missingFeed;
 
 const fetchWatch = Projection.onChange(fused).pipe(
-  Effect.provide(Fetch.layer({ baseUrl: "https://example.test" }, Input)),
+  Effect.provide(Fetch.layer({ baseUrl: "https://example.test" }, Streamsy.group(Input))),
 );
-// @ts-expect-error Fetch supplies the family, but cannot supply its local Changes capability.
+// @ts-expect-error Fetch supplies the stream, but cannot supply its local Streamsy.ChangeFeed capability.
 const missingFetchFeed: Effect.Effect<
   unknown,
   ProjectionFault | import("@streamsy/core").TransportFault,
@@ -123,11 +134,16 @@ void missingFetchFeed;
 // oxlint-enable effecttsgo/missing-effect-context
 
 export type FeedChecks = [
-  Assert<Same<Effect.Services<typeof withoutFeed>, Changes<Input> | Checkpoints | Scope.Scope>>,
+  Assert<
+    Same<
+      Effect.Services<typeof withoutFeed>,
+      Streamsy.ChangeFeed<Input> | Checkpoints | Scope.Scope
+    >
+  >,
   Assert<
     Same<
       Effect.Services<typeof fetchWatch>,
-      | Changes<Input>
+      | Streamsy.ChangeFeed<Input>
       | Checkpoints
       | Scope.Scope
       | import("effect/unstable/http/HttpClient").HttpClient

@@ -1,24 +1,25 @@
+import { Protocol } from "@streamsy/core/protocol";
 import { expect, it } from "bun:test";
 import { Effect, Layer, Schema, Stream } from "effect";
 import { Streams } from "../../src/protocol/index.ts";
-import { AnyStream, Memory, StreamFamily, StreamGroup, provides } from "../../src/index.ts";
+import { Streamsy, Memory } from "../../src/index.ts";
 
-class Drafts extends StreamFamily.json<Drafts>()("Bindings/Drafts", "drafts/:user", {
+class Drafts extends Streamsy.json<Drafts>()("Bindings/Drafts", "drafts/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
-class Journal extends StreamFamily.json<Journal>()("Bindings/Journal", "journal/:user", {
+class Journal extends Streamsy.json<Journal>()("Bindings/Journal", "journal/:user", {
   params: { user: Schema.String },
   schema: Schema.String,
 }) {}
 
-it("declared families and AnyStream share one store for declared and arbitrary ids", async () => {
-  const host = Memory.layer({}, StreamGroup.make(Drafts, Journal, AnyStream));
+it("declared streams and Streamsy.Wildcard share one store for declared and arbitrary ids", async () => {
+  const host = Memory.layer({}, Streamsy.group(Drafts, Journal, Streamsy.Wildcard));
   await Effect.runPromise(
     Effect.gen(function* () {
       const drafts = yield* Drafts;
       const journal = yield* Journal;
-      const any = yield* AnyStream;
+      const any = yield* Streamsy.Wildcard;
       yield* drafts.create({ user: "ann" });
       yield* drafts.append({ user: "ann" }, ["draft"]);
       yield* journal.create({ user: "ann" });
@@ -41,7 +42,7 @@ it("declared families and AnyStream share one store for declared and arbitrary i
   );
 });
 
-it("family binding shares a counted storage graph with siblings in either merge order", async () => {
+it("stream binding shares a counted storage graph with siblings in either merge order", async () => {
   for (const familyFirst of [true, false]) {
     let builds = 0;
     const counted = Layer.effectDiscard(
@@ -50,7 +51,7 @@ it("family binding shares a counted storage graph with siblings in either merge 
       }),
     );
     const protocol = Streams.layerMemory().pipe(Layer.provideMerge(counted));
-    const graph = provides(protocol, Drafts);
+    const graph = Protocol.bind(protocol, Streamsy.group(Drafts));
     const sibling = Layer.effectDiscard(Effect.void).pipe(Layer.provide(counted));
     const host = familyFirst ? Layer.merge(graph, sibling) : Layer.merge(sibling, graph);
     await Effect.runPromise(

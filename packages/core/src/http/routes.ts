@@ -1,8 +1,8 @@
 import { Effect, type Layer } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StreamsReader, StreamsWriter } from "../protocol/tags.ts";
-import { checkFamilies, type AnyFamily, type Identifiers } from "../toolkit/family.ts";
-import type * as Group from "../toolkit/group.ts";
+import { checkStreams, type Any, type Identifiers } from "../toolkit/streamsy.ts";
+import type * as Group from "../toolkit/streamsy.ts";
 import { app, type HttpOptions } from "./program.ts";
 import { requestUrl } from "./route.ts";
 import { streamPath } from "./stream-path-service.ts";
@@ -15,41 +15,26 @@ type RouteLayer<R> = Layer.Layer<
   HttpRouter.HttpRouter | HttpRouter.Request.From<"Requires", Exclude<R, HttpRouter.Provided>>
 >;
 
-export interface RoutesOptions extends Omit<HttpOptions, "pathPrefix"> {
-  readonly prefix?: `/${string}`;
-}
-export interface FamilyAccess<F extends AnyFamily = AnyFamily> {
-  readonly family: F;
+export interface Access<S extends Any = Any> {
+  readonly stream: S;
   /** append permits POST; full also permits PUT and DELETE. */
   readonly access: "read" | "append" | "full";
 }
-/** Bare family lists and groups require an explicit host access policy. */
-export interface GroupRoutesOptions extends RoutesOptions {
-  readonly access: FamilyAccess["access"] | ((family: AnyFamily) => FamilyAccess["access"]);
+export interface RoutesOptions extends Omit<HttpOptions, "pathPrefix"> {
+  readonly prefix?: `/${string}`;
+  readonly access: Access["access"] | ((stream: Any) => Access["access"]);
 }
-export function routes<const Keys extends ReadonlyArray<AnyFamily>>(
-  group: Group.StreamGroup<Keys> | Keys,
-  options: GroupRoutesOptions,
-): RouteLayer<Identifiers<Keys>>;
-export function routes<const Entries extends ReadonlyArray<FamilyAccess>>(
-  entries: Entries,
-  options?: RoutesOptions,
-): RouteLayer<Identifiers<{ readonly [K in keyof Entries]: Entries[K]["family"] }>>;
 /** One prefix controls both route registration and protocol path stripping. */
-export function routes(
-  input: ReadonlyArray<FamilyAccess | AnyFamily> | Group.StreamGroup,
-  options: RoutesOptions | GroupRoutesOptions = {},
-) {
-  const list = "families" in input ? input.families : input;
-  const entries: ReadonlyArray<FamilyAccess> = list.map((entry: FamilyAccess | AnyFamily) => {
-    if ("access" in entry) return entry;
-    if (!("access" in options)) throw new TypeError("Family routes require an access policy");
-    return {
-      family: entry,
-      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The typed host policy is a literal or a callback, not external input.
-      access: typeof options.access === "function" ? options.access(entry) : options.access,
-    };
-  });
+export function routes<const Keys extends ReadonlyArray<Any>>(
+  group: Group.Group<Keys>,
+  options: RoutesOptions,
+): RouteLayer<Identifiers<Keys>>;
+export function routes(group: Group.Group, options: RoutesOptions) {
+  const entries: ReadonlyArray<Access> = group.streams.map((stream) => ({
+    stream,
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- The typed host policy is a literal or a callback, not external input.
+    access: typeof options.access === "function" ? options.access(stream) : options.access,
+  }));
   const settings = options;
   const prefix = settings.prefix?.replace(/\/$/, "") || "/";
   if (!prefix.startsWith("/") || /[?:#*]/.test(prefix) || prefix.includes("//")) {
@@ -57,12 +42,12 @@ export function routes(
   }
   const path = streamPath(prefix);
   const program = app({ ...settings, pathPrefix: prefix });
-  checkFamilies(entries.map((entry) => entry.family));
+  checkStreams(entries.map((entry) => entry.stream));
   const handler = Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = requestUrl(request);
     const id = url === undefined ? undefined : path.strip(url.pathname);
-    const entry = entries.find(({ family }) => id !== undefined && family.match(id));
+    const entry = entries.find(({ stream }) => id !== undefined && stream.match(id));
     if (entry === undefined) {
       yield* discardRequestBody(request);
       return HttpServerResponse.empty({ status: 404, headers: securityHeaders });
@@ -80,7 +65,7 @@ export function routes(
         headers: { ...securityHeaders, allow },
       });
     }
-    const service = yield* entry.family;
+    const service = yield* entry.stream;
     const response = yield* program.pipe(
       Effect.provideService(StreamsReader, service.wire),
       Effect.provideService(StreamsWriter, service.wire),

@@ -1,8 +1,8 @@
 import { Effect, Schema, Stream } from "effect";
-import { StreamRef } from "@streamsy/core";
+import { StreamAddress } from "@streamsy/core";
 import { Streams } from "@streamsy/core/protocol";
 
-const events = StreamRef.json("events", {
+const events = StreamAddress.json("events", {
   schema: Schema.Struct({ text: Schema.String }),
 });
 const program = Effect.gen(function* () {

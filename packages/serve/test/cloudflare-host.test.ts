@@ -568,7 +568,7 @@ test("byStream isolates objects and reuses the same object identity", async () =
   expect((await probe(harness, "a")).layerAcquisitions).toBe(1);
 });
 
-test("byKey co-locates same-family forks and returns 404 for cross-family forks", async () => {
+test("byKey co-locates same-stream forks and returns 404 for cross-stream forks", async () => {
   const harness = await makeHarness("worker-by-key.ts");
   expect((await create(harness, "/streams/t1/x")).status).toBe(201);
   const same = await dispatch(harness, "/streams/t1/y", {

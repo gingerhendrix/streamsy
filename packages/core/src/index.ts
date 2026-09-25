@@ -36,13 +36,9 @@ export type {
   HeadResult,
 } from "./protocol/results.ts";
 export * from "./protocol/errors.ts";
-export * as StreamRef from "./toolkit/ref.ts";
-export * as State from "./toolkit/state.ts";
-export * as Fold from "./toolkit/fold.ts";
+export * as StreamAddress from "./toolkit/address.ts";
+export * as DurableState from "./toolkit/durable-state.ts";
 export * as Producer from "./toolkit/producer.ts";
 export * as Http from "./http/index.ts";
 export type { Batch } from "./toolkit/streams.ts";
-export * as StreamFamily from "./toolkit/family.ts";
-export { Changes, type ChangesApi } from "./toolkit/changes.ts";
-export { AnyStream, provides } from "./toolkit/family.ts";
-export * as StreamGroup from "./toolkit/group.ts";
+export * as Streamsy from "./streamsy.ts";

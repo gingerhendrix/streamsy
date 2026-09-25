@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { Producer, type StreamFamily } from "@streamsy/core";
+import { Producer, type Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import {
   inputEntries,
@@ -24,14 +24,14 @@ export const producerId = (id: string, version: number, params: Record<string, s
 
 /** Append one unit under its pinned tuple; appended and duplicate are one outcome. */
 const appendPinned = Effect.fn("Projection.appendPinned")(function* <O, R>(
-  output: StreamFamily.Member<O, R>,
+  output: Streamsy.Address<O, R>,
   items: ReadonlyArray<O>,
   position: Producer.Position,
 ) {
   const pin = (reason: ProjectionFault["reason"], message: string, cause?: unknown) =>
     new ProjectionFault({ phase: "pin", reason, message, cause });
-  const { wire } = yield* output.family;
-  return yield* Producer.append(output, items, position).pipe(
+  const { wire } = yield* output.stream;
+  return yield* Streams.append(output, items, { producer: position }).pipe(
     Effect.provideService(StreamsWriter, wire),
     Effect.catchTags({
       EncodeFault: () =>
@@ -99,10 +99,10 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     });
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
-  const streams: Readonly<Record<string, StreamFamily.Member<unknown, OR>>> =
+  const streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>> =
     projection._tag === "Stream" ? { stream: projection.output } : projection.streams;
   for (const output of Object.values(streams)) {
-    const service = yield* output.family;
+    const service = yield* output.stream;
     if (service.owner !== owner.owner)
       return yield* new ProjectionFault({
         phase: "load",
@@ -124,11 +124,11 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   let count = 0;
   if (pending !== undefined) {
     const slices: Record<string, Slice<unknown>> = {};
-    for (const [name, ref] of inputEntries(projection.inputs)) {
+    for (const [name, address] of inputEntries(projection.inputs)) {
       const range = pending.ranges[name];
       if (range === undefined) slices[name] = emptySlice(before.record.inputs[name] ?? "");
       else {
-        const read = yield* reproduce(name, ref, range);
+        const read = yield* reproduce(name, address, range);
         slices[name] = read.slice;
         count += read.slice.items.length;
       }
@@ -192,7 +192,7 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
   if (pending === undefined && Object.keys(seqs).length > 0) {
     for (const [name, output] of Object.entries(streams)) {
       if (seqs[name] === undefined) continue;
-      const { wire } = yield* output.family;
+      const { wire } = yield* output.stream;
       const head = yield* wire.head(output.id).pipe(
         Effect.catchTag("StreamNotFound", () =>
           Streams.create(output).pipe(
