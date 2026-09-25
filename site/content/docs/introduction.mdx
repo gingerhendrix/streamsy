@@ -1,31 +1,40 @@
 ---
 title: Introduction
-description: A small Streamsy application from a typed ref to a served projection, one step at a time.
+description: A small Streamsy application from a typed stream family to a served projection, one step at a time.
 ---
 
 This page walks through one small application. Each step shows the call and links the guide that explains it. The program is the same on every host; only the Layer at the end changes.
 
-## 1. Declare refs
+## 1. Declare families
 
-A `StreamRef` names a stream and its codec. A `StreamRoute` names a family of streams with one id template. Both are plain values.
+A family class names a set of streams with one id template and one codec. The class is also the service key that a program acquires. A group lists the families that one host provides and serves.
 
 ```ts
 import { Schema } from "effect";
-import { StreamRef, StreamRoute } from "@streamsy/core";
+import { StreamFamily, StreamGroup } from "@streamsy/core";
 
 export const OrderEvent = Schema.Struct({ orderId: Schema.String, amount: Schema.Finite });
 export const OrderRow = Schema.Struct({ orderId: Schema.String, total: Schema.Finite });
 
-export const orders = StreamRef.json("orders", { schema: OrderEvent });
-export const orderTotals = StreamRef.json("order-totals", { schema: OrderRow });
-export const orderIndex = StreamRef.state("order-index", {
-  collections: { order: { schema: OrderRow, key: "orderId" } },
-});
-export const orderEvents = StreamRoute.json("orders/:orderId/events", {
-  params: { orderId: Schema.String },
+export class Orders extends StreamFamily.json<Orders>()("Shop/Orders", "orders", {
+  params: {},
   schema: OrderEvent,
-});
+}) {}
+export class OrderTotals extends StreamFamily.json<OrderTotals>()(
+  "Shop/OrderTotals",
+  "order-totals",
+  { params: {}, schema: OrderRow },
+) {}
+export class OrderEvents extends StreamFamily.json<OrderEvents>()(
+  "Shop/OrderEvents",
+  "orders/:orderId/events",
+  { params: { orderId: Schema.String }, schema: OrderEvent },
+) {}
+
+export const shop = StreamGroup.make(Orders, OrderTotals, OrderEvents);
 ```
+
+`Orders` has one member, because its template has no parameters. `OrderEvents` has one member per `orderId`. The first argument is a global service name, so give it an application namespace.
 
 See [Streams](/docs/streams/introduction).
 
@@ -33,15 +42,17 @@ See [Streams](/docs/streams/introduction).
 
 ```ts
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core";
-import { orders } from "./refs.ts";
+import { Orders } from "./streams.ts";
 
-const write = Effect.gen(function* () {
-  yield* Streams.create(orders);
-  const appended = yield* Streams.append(orders, [{ orderId: "o-17", amount: 40 }]);
+export const write = Effect.gen(function* () {
+  const orders = yield* Orders;
+  yield* orders.create({});
+  const appended = yield* orders.append({}, [{ orderId: "o-17", amount: 40 }]);
   return appended.offset;
 });
 ```
+
+Every method takes the parameters of one member first. `write` requires the `Orders` service, and the compiler reports a Layer that does not provide it.
 
 See [Creating](/docs/streams/creating) and [Writing](/docs/streams/writing).
 
@@ -49,12 +60,13 @@ See [Creating](/docs/streams/creating) and [Writing](/docs/streams/writing).
 
 ```ts
 import { Effect, Stream } from "effect";
-import { Streams } from "@streamsy/core";
-import { orders } from "./refs.ts";
+import { Orders } from "./streams.ts";
 
-const watch = Streams.follow(orders).pipe(
-  Streams.items,
-  Stream.runForEach((event) => Effect.log(`${event.orderId}: ${event.amount}`)),
+const watch = Effect.flatMap(Orders, (orders) =>
+  orders.follow({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runForEach((event) => Effect.log(`${event.orderId}: ${event.amount}`)),
+  ),
 );
 ```
 
@@ -64,22 +76,23 @@ See [Reading](/docs/streams/reading).
 
 ```ts
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { orders, orderTotals } from "./refs.ts";
+import { Orders, OrderTotals } from "./streams.ts";
 
 const projection = Projection.make({
   id: "order-totals",
-  input: orders,
+  input: Orders.at({}),
   process: Projection.each(({ item }) =>
-    Streams.append(orderTotals, [{ orderId: item.orderId, total: item.amount }]),
+    Effect.flatMap(OrderTotals, (totals) =>
+      totals.append({}, [{ orderId: item.orderId, total: item.amount }]),
+    ),
   ),
 });
 
-const catchUp = Projection.run(projection);
+export const catchUp = Projection.run(projection);
 ```
 
-The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. The `Checkpoints` service comes from `@streamsy/projection/memory` or `@streamsy/projection/sqlite`, beside the Layer of step 5.
+`Orders.at({})` names one member as the projection input. The handler runs inside the checkpoint transaction, so each unit's appends and its checkpoint commit together. `Projection.run` repeats until the input is caught up or the unit limit is reached. `catchUp` requires `Orders`, `OrderTotals`, and the `Checkpoints` service.
 
 See [Projections](/docs/projections/introduction).
 
@@ -89,16 +102,32 @@ Start with the memory Layer. Swap it for SQLite when the data has to survive a r
 
 ```ts
 import { Effect } from "effect";
-import { Streams } from "@streamsy/core";
+import { Memory } from "@streamsy/core";
+import { shop } from "./streams.ts";
 import { write } from "./write.ts";
 
-await Effect.runPromise(write.pipe(Effect.provide(Streams.layerMemory())));
+await Effect.runPromise(write.pipe(Effect.provide(Memory.layer({}, shop))));
+```
+
+`Checkpoints` comes from `@streamsy/projection/memory` or `@streamsy/projection/sqlite`, over the same storage Layer:
+
+```ts
+import { Effect, Layer } from "effect";
+import { Memory } from "@streamsy/core";
+import * as ProjectionMemory from "@streamsy/projection/memory";
+import { catchUp } from "./projection.ts";
+import { shop } from "./streams.ts";
+
+const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, shop)));
+
+await Effect.runPromise(catchUp.pipe(Effect.provide(host)));
 ```
 
 ```ts
 import * as BunStorage from "@streamsy/storage/bun";
+import { shop } from "./streams.ts";
 
-const storage = BunStorage.layerProtocol({ client: { filename: "./streams.sqlite" } });
+export const storage = BunStorage.layer({ client: { filename: "./streams.sqlite" } }, shop);
 ```
 
 See [Runtime](/docs/runtime/introduction).
@@ -111,14 +140,17 @@ import { HttpRouter } from "effect/unstable/http";
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun";
 import { Http } from "@streamsy/core";
 import { storage } from "./storage.ts";
+import { shop } from "./streams.ts";
 
-const server = HttpRouter.serve(Http.routes({ prefix: "/streams" })).pipe(
+const server = HttpRouter.serve(Http.routes(shop, { prefix: "/streams", access: "read" })).pipe(
   Layer.provide(storage),
   Layer.provide(BunHttpServer.layer({ port: 3000, idleTimeout: 0 })),
 );
 
 BunRuntime.runMain(Layer.launch(server));
 ```
+
+`Http.routes` serves only the families in the group. `access: "read"` allows GET and HEAD. An id that no family owns answers 404, and a write answers 405.
 
 See [HTTP](/docs/runtime/http).
 
@@ -139,23 +171,28 @@ See [Alchemy](/docs/runtime/alchemy).
 import { Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as Fetch from "@streamsy/core/fetch";
+import { shop } from "./streams.ts";
 
-export const remote = Fetch.layer({
-  baseUrl: "https://streamsy-app.example.workers.dev/streams",
-  capabilities: { expectedOffset: true, producer: true },
-}).pipe(Layer.provide(FetchHttpClient.layer));
+export const remote = Fetch.layer(
+  {
+    baseUrl: "https://streamsy-app.example.workers.dev/streams",
+    capabilities: { expectedOffset: true, producer: true },
+  },
+  shop,
+).pipe(Layer.provide(FetchHttpClient.layer));
 ```
+
+The remote Layer provides the same family services, so `watch` runs over it without change. A write through it needs `append` or `full` access on the host.
 
 See [HTTP](/docs/runtime/http).
 
 ## Choosing a Layer
 
-| Layer                                     | Persists              | Use                               |
-| ----------------------------------------- | --------------------- | --------------------------------- |
-| `Streams.layerMemory()`                   | no                    | one process, tests                |
-| `BunStorage.layerProtocol(...)`           | SQLite file           | Bun host                          |
-| `DurableObjectStorage.layerProtocol(...)` | Durable Object SQLite | Cloudflare                        |
-| `Streams.layerRouted(bindings)`           | per backend           | several backends behind one Layer |
-| `Fetch.layer({ baseUrl })`                | remote                | any conformant host               |
+| Layer                                        | Persists              | Use                 |
+| -------------------------------------------- | --------------------- | ------------------- |
+| `Memory.layer({}, group)`                    | no                    | one process, tests  |
+| `BunStorage.layer(options, group)`           | SQLite file           | Bun host            |
+| `DurableObjectStorage.layer(options, group)` | Durable Object SQLite | Cloudflare          |
+| `Fetch.layer({ baseUrl }, group)`            | remote                | any conformant host |
 
-The program does not change between Layers. For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).
+The program does not change between Layers. To put families on different backends, merge one Layer per backend; see [Runtime](/docs/runtime/introduction). For the protocol itself, start with the upstream [quickstart](https://durablestreams.com/quickstart).

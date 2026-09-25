@@ -65,7 +65,7 @@ function Home() {
           {[
             [
               "@streamsy/core",
-              "Protocol services, typed streams, storage contract and memory Layer.",
+              "Typed stream families, HTTP routes, storage contract and memory Layer.",
             ],
             ["@streamsy/storage", "SQLite storage for Bun and Durable Objects."],
             ["@streamsy/projection", "Checkpointed projections over one or more streams."],

@@ -1,28 +1,37 @@
 ---
 title: Streamsy
-description: An Effect implementation of the Durable Streams protocol, with typed refs, projections, and hosts for Bun and Cloudflare.
+description: An Effect implementation of the Durable Streams protocol, with typed stream families, projections, and hosts for Bun and Cloudflare.
 ---
 
-Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol. It gives you typed refs over streams, projections from one stream into another, and hosts for Bun and Cloudflare.
+Streamsy is an Effect implementation of the [Durable Streams](https://durablestreams.com/) protocol. It gives you typed stream families, projections from one stream into another, and hosts for Bun and Cloudflare.
 
 ```ts
 import { Effect, Schema, Stream } from "effect";
-import { StreamRef, Streams } from "@streamsy/core";
+import { Memory, StreamFamily } from "@streamsy/core";
 
-const notes = StreamRef.json("notes", { schema: Schema.Struct({ text: Schema.String }) });
+class Notes extends StreamFamily.json<Notes>()("App/Notes", "notes", {
+  params: {},
+  schema: Schema.Struct({ text: Schema.String }),
+}) {}
 
 const program = Effect.gen(function* () {
-  yield* Streams.create(notes);
-  yield* Streams.append(notes, [{ text: "hello" }]);
-  return yield* Streams.read(notes).pipe(Streams.items, Stream.runCollect);
+  const notes = yield* Notes;
+  yield* notes.create({});
+  yield* notes.append({}, [{ text: "hello" }]);
+  return yield* notes.read({}).pipe(
+    Stream.flatMap((batch) => Stream.fromIterable(batch.items)),
+    Stream.runCollect,
+  );
 });
 
-await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
+await Effect.runPromise(program.pipe(Effect.provide(Memory.layer({}, Notes))));
 ```
+
+A family class is the service key. The program acquires it, and the Layer decides where its streams live.
 
 ## Packages
 
-- `@streamsy/core`: refs, routes, the `Streams` functions, the protocol, the HTTP program, and the memory Layer.
+- `@streamsy/core`: stream families and groups, the memory Layer, the HTTP routes, and the fetch Layer. The generic protocol services are on the `@streamsy/core/protocol` subpath.
 - `@streamsy/storage`: SQLite storage for Bun and for Durable Objects.
 - `@streamsy/serve`: HttpRouter routes, Bun and Cloudflare hosts, and action delivery.
 - `@streamsy/projection`: checkpointed projections over one or more streams.
@@ -30,7 +39,7 @@ await Effect.runPromise(program.pipe(Effect.provide(Streams.layerMemory())));
 
 ## Where to go
 
-- [Introduction](/docs/introduction): one small application from a ref to a served projection.
+- [Introduction](/docs/introduction): one small application from a family to a served projection.
 - [Streams](/docs/streams/introduction): create, read, write, and fork.
 - [Runtime](/docs/runtime/introduction): Layers, storage, and hosts.
 
