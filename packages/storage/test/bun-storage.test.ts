@@ -1,10 +1,10 @@
 import { StorageContract } from "@streamsy/core/testing";
 import { Layer } from "effect";
-import { layer } from "@streamsy/storage/bun";
+import { layerProtocol } from "@streamsy/storage/bun";
 
 StorageContract.run({
   name: "official Bun SQLite Storage contract",
-  layer: layer({
+  layer: layerProtocol({
     client: { filename: ":memory:", disableWAL: true, busyTimeout: "50 millis" },
     repairIntervalMs: 1_000,
   }).pipe(Layer.orDie),

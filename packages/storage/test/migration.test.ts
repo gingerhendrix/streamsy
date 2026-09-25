@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { Cause, Config, Context, Effect, Exit, Layer, Option, Scope } from "effect";
 import { Storage, StorageFault, StreamId } from "@streamsy/core";
 import * as SqlClientTag from "effect/unstable/sql/SqlClient";
-import { layer as bunLayer } from "@streamsy/storage/bun";
+import { layerProtocol } from "@streamsy/storage/bun";
 import { sharedSqlClientLayer } from "../src/boundary.ts";
 import { migrate } from "../src/migrations.ts";
 import {
@@ -24,7 +24,7 @@ const acquire = (path: string) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
     const context = yield* Layer.build(
-      bunLayer({ client: { filename: path, busyTimeout: "50 millis" } }),
+      layerProtocol({ client: { filename: path, busyTimeout: "50 millis" } }),
     ).pipe(Scope.provide(scope));
     return { scope, storage: Context.get(context, Storage) };
   });
@@ -52,7 +52,7 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
     const missing = filename(label);
     expect(await Bun.file(missing).exists()).toBe(false);
     const exit = await Effect.runPromise(
-      Effect.scoped(Layer.build(bunLayer({ client: { filename: missing, ...options } }))).pipe(
+      Effect.scoped(Layer.build(layerProtocol({ client: { filename: missing, ...options } }))).pipe(
         Effect.exit,
       ),
     );
@@ -71,7 +71,9 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   const missingParent = `${scratch}/missing-parent-${process.pid}-${crypto.randomUUID()}`;
   const unopenable = `${missingParent}/storage.sqlite`;
   const unopenableExit = await Effect.runPromise(
-    Effect.scoped(Layer.build(bunLayer({ client: { filename: unopenable } }))).pipe(Effect.exit),
+    Effect.scoped(Layer.build(layerProtocol({ client: { filename: unopenable } }))).pipe(
+      Effect.exit,
+    ),
   );
   expect(Exit.isFailure(unopenableExit)).toBe(true);
   if (Exit.isSuccess(unopenableExit)) throw new Error("Expected unopenable acquisition to fail");
@@ -91,9 +93,9 @@ test("public Bun acquisition preserves explicit create and readonly open modes",
   writable.close(false);
   const before = new Uint8Array(await Bun.file(readonly).arrayBuffer());
   const readonlyExit = await Effect.runPromise(
-    Effect.scoped(Layer.build(bunLayer({ client: { filename: readonly, readonly: true } }))).pipe(
-      Effect.exit,
-    ),
+    Effect.scoped(
+      Layer.build(layerProtocol({ client: { filename: readonly, readonly: true } })),
+    ).pipe(Effect.exit),
   );
   expect(Exit.isSuccess(readonlyExit)).toBe(true);
   const after = new Uint8Array(await Bun.file(readonly).arrayBuffer());
