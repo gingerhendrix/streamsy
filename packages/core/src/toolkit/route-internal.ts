@@ -69,7 +69,7 @@ export function compileSegments<const Template extends string>(
  * or a parameter on at least one side. A parameter is treated as matching any
  * segment, so a codec-constrained parameter can report an overlap it would
  * never actually match. A custom route carries no template and is never
- * checked; the binding table orders those and the first match wins.
+ * checked; HTTP dispatch uses declaration order and the first match wins.
  */
 export function templatesOverlap(left: string, right: string): boolean {
   if (left.length === 0 || right.length === 0) return false;

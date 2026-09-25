@@ -66,7 +66,7 @@ export type StateRoute<P, C extends StreamRef.Collections, Template extends stri
   readonly ref: (params: P) => StreamRef.StateRef<C>;
 };
 
-/** The minimal shape any consumer needs. The binding table reads only this. */
+/** The route predicate used by family validation and HTTP dispatch. */
 export interface Matcher {
   readonly match: (id: string) => boolean;
 }

@@ -219,7 +219,9 @@ it("rejects a graph whose exposed Storage does not own the protocol wires", asyn
   );
   expect(Exit.isFailure(result)).toBe(true);
   if (Exit.isFailure(result))
-    expect(String(Cause.squash(result.cause))).toContain("The exposed Storage does not own the protocol wires");
+    expect(String(Cause.squash(result.cause))).toContain(
+      "The exposed Storage does not own the protocol wires",
+    );
 });
 
 it("spreading a protocol writer does not copy its ownership claim", async () => {

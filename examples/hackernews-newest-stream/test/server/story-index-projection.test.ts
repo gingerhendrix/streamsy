@@ -4,8 +4,7 @@ import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/
 import { Context, Effect, Layer, ManagedRuntime, Schedule, Schema, Stream } from "effect";
 import { afterEach, describe, expect, test } from "bun:test";
 import { sourceDelete, sourceUpsert } from "../../src/server/source-change.ts";
-import { hackerNewsSource } from "../../src/server/stream-resources.ts";
-import { hackerNewsStoryIndex, hackerNewsTarget } from "../../src/server/story-index-projection.ts";
+import { hackerNewsStoryIndex } from "../../src/server/story-index-projection.ts";
 import { storyProjectionLayer } from "../../src/server/projection.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 import { DemoStreams, demoStreamsLayer } from "../../src/server/streams.ts";

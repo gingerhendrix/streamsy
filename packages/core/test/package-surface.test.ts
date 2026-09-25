@@ -6,7 +6,7 @@ import * as Http from "@streamsy/core/http";
 import * as InternalMemory from "@streamsy/core/internal/memory";
 import manifest from "../package.json";
 
-test("public roots omit internal composition and obsolete aliases", () => {
+test("public roots expose application tools and isolate internals", () => {
   expect(Object.keys(Root.State)).toEqual(["changes", "delete", "upsert"]);
   expect(Object.keys(Root)).not.toContain("MemoryCommitBoundary");
   expect(Object.keys(Protocol.Protocol)).not.toContain("create");
@@ -90,7 +90,7 @@ test("root exports stay explicit", () => {
   expect(Object.keys(Protocol.StreamRoute).sort()).toEqual(["bytes", "custom", "json", "state"]);
 });
 
-test("family namespace pins factories and backend composition helpers", () => {
+test("family namespace pins factories and graph composition helpers", () => {
   expect(Object.keys(Root.StreamFamily).sort()).toEqual([
     "AnyStream",
     "bytes",

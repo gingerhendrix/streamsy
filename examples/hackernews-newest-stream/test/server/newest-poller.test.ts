@@ -5,7 +5,6 @@ import { describe, expect, test } from "bun:test";
 import type { HnStory } from "../../src/state-schema.ts";
 import { type HackerNewsApi } from "../../src/server/poller/contract.ts";
 import { makeNewestStoriesPoller } from "../../src/server/poller/poller.ts";
-import { hackerNewsSource } from "../../src/server/stream-resources.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 
 describe("NewestStoriesPoller", () => {
