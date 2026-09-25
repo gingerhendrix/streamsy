@@ -24,8 +24,9 @@ to `.data/hackernews.sqlite`; `memory` selects a process-local host.
 `HN_NEWEST_LIMIT` defaults to 50, `HN_POLL_INTERVAL_MS` to 60000, and
 `HN_PROJECTION_LIMIT` to 10 checkpoint transactions per pass.
 
-`HttpRouter.serve` hosts the page, State route, raw `/streams` protocol routes,
-and status/poll API on one scoped Bun listener. They share an origin and need
+`HttpRouter.serve` hosts the page, State route, read-only raw `/streams` protocol
+routes for the source and target families, and status/poll API on one scoped Bun
+listener. Raw writes answer 405; only the server appends. They share an origin and need
 no CORS middleware. `GET /api/status` reports poll counters, projection health
 and checkpoint progress. `POST /api/poll` only polls; the change watcher projects
 its source append.
@@ -42,11 +43,13 @@ membership stays fixed during downtime.
 
 ## The projection
 
-The output declaration is:
+The source and the target are two custom families, `HackerNewsSource` and
+`HackerNewsTarget`. Each one owns exactly one member, at its configured stream
+id. The output declaration is:
 
 ```ts
 outputs: {
-  "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: targetStreamId }),
+  "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: HackerNewsTarget.at({}) }),
 },
 ```
 

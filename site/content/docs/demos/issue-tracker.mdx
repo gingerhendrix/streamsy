@@ -12,7 +12,8 @@ named `tracker` family produces board rows, label-count rows, issue transitions,
 and a private workspace fold value. A compact summary is derived from that value.
 
 `HttpRouter.serve` runs one `Layer.mergeAll` application with a scoped Bun listener,
-protocol routes, commands, and these output routes:
+read-only protocol routes for the input and output families, commands, and these
+output routes:
 
 | Route                                                       | Result                                                     |
 | ----------------------------------------------------------- | ---------------------------------------------------------- |

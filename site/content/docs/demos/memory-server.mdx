@@ -50,9 +50,12 @@ shows the expected status, headers, and body for every step. The
 
 ## How it works
 
-`HttpRouter.serve(Http.routes())` runs with one `Streams.layerMemory()` and a
-scoped Bun listener. The 60-second idle timeout allows a 30-second protocol long
-poll to complete. Shutdown disposes the runtime, closing the listener and store.
+The server declares one group, `StreamGroup.make(AnyStream)`, so it owns every
+stream id. `HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs over
+`Memory.layer({}, streams)` and a scoped Bun listener. Full access allows the
+create and append steps of the walkthrough. The 60-second idle timeout allows a
+30-second protocol long poll to complete. Shutdown disposes the runtime, closing
+the listener and store.
 
 Run the offline proof with:
 

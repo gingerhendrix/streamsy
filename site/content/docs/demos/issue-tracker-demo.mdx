@@ -31,17 +31,19 @@ bun run --cwd examples/issue-tracker-demo smoke:http
 ```
 
 It drives project, issue, comment, sharing, isolation, validation and contention
-flows, probes a direct conditional-write conflict, and restarts the server over
-the same SQLite file.
+flows. It checks that raw PUT, POST and DELETE on a workspace stream answer 405
+and leave the stream unchanged, and that an undeclared stream path answers 404.
+Then it restarts the server over the same SQLite file.
 
 ## The transaction recipe
 
-`HttpRouter.serve(Http.routes({ prefix: "/streams" }))` uses the already-acquired
-stream services. A scoped `BunHttpServer.layer` retains the Bun API routes and
-HTML bundling. Shutdown closes the listener before disposing the services.
+`HttpRouter.serve(Http.routes([{ family: Workspaces, access: "read" }], { prefix: "/streams" }))`
+serves the workspace streams read-only over the already-acquired family service.
+A scoped `BunHttpServer.layer` retains the Bun API routes and HTML bundling.
+Shutdown closes the listener before disposing the services.
 Promise-native Bun routes call `runtime.runPromise` with `mutateWorkspace`.
-That named recipe reads and writes the workspace through one `StreamRef.state`
-with project, issue, and comment collections. It folds every batch into
+That named recipe reads and writes the workspace through the `Workspaces` state
+family, with project, issue, and comment collections. It folds every batch into
 `MaterializedState`, then appends with the head as `expectedOffset`.
 
 Only `OffsetMismatch` is retried. The retry repeats the read, validation and
