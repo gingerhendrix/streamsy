@@ -5,16 +5,16 @@ import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { State, TransportFault, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Effect, ManagedRuntime, Stream } from "effect";
+import { Effect, Schema, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
-import { Events, LabelEvents, labelStream, refs } from "../server/streams.ts";
+import { Events, LabelEvents, Labels } from "../server/streams.ts";
 const at = "2026-09-23T10:00:00Z";
 const seed = Effect.gen(function* () {
-  yield* createInputs(refs("live"));
-  yield* Members.append(
-    labelStream("live"),
-    State.changes(labelStream("live"), { offset: ZERO_OFFSET }, [
+  yield* createInputs("live");
+  yield* (yield* Labels).append(
+    { workspaceId: "live" },
+    State.changes(Labels.at({ workspaceId: "live" }), { offset: ZERO_OFFSET }, [
       State.upsert("label", {
         workspaceId: "live",
         labelId: "bug",
@@ -24,7 +24,7 @@ const seed = Effect.gen(function* () {
       }),
     ]),
   );
-  yield* Members.append(Events.at({ workspaceId: "live" }), [
+  yield* (yield* Events).append({ workspaceId: "live" }, [
     {
       type: "IssueCreated",
       eventId: "e1",
@@ -37,7 +37,7 @@ const seed = Effect.gen(function* () {
       occurredAt: at,
     },
   ]);
-  yield* Members.append(LabelEvents.at({ workspaceId: "live" }), [
+  yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
     {
       type: "LabelAttached",
       eventId: "a1",
@@ -50,24 +50,48 @@ const seed = Effect.gen(function* () {
     },
   ]);
 });
-const more = Members.append(Events.at({ workspaceId: "live" }), [
-  {
-    type: "IssueStatusChanged",
-    eventId: "e2",
-    workspaceId: "live",
-    issueId: "i1",
-    status: "done",
-    sequence: 1,
-    occurredAt: at,
-  },
-]);
+const more = Effect.flatMap(Events, (events) =>
+  events.append({ workspaceId: "live" }, [
+    {
+      type: "IssueStatusChanged",
+      eventId: "e2",
+      workspaceId: "live",
+      issueId: "i1",
+      status: "done",
+      sequence: 1,
+      occurredAt: at,
+    },
+  ]),
+);
 const collect = Effect.gen(function* () {
-  const read = <A, R>(ref: import("@streamsy/core").StreamFamily.Member<A, R>) =>
-    Members.read(ref).pipe(Members.items, Stream.runCollect);
   return {
-    board: yield* read(tracker.outputs.board.ref({ workspaceId: "live" })),
-    counts: yield* read(tracker.outputs.labelCounts.ref({ workspaceId: "live" })),
-    transitions: yield* read(tracker.outputs.transitions.ref({ workspaceId: "live" })),
+    board: yield* Effect.gen(function* () {
+      const output = tracker.outputs.board;
+      const ref = output.ref({ workspaceId: "live" });
+      const result = yield* (yield* output.family).wire.read(ref.id);
+      expect(result.upToDate).toBe(true);
+      return yield* Effect.forEach(result.messages, (message) =>
+        Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+      );
+    }),
+    counts: yield* Effect.gen(function* () {
+      const output = tracker.outputs.labelCounts;
+      const ref = output.ref({ workspaceId: "live" });
+      const result = yield* (yield* output.family).wire.read(ref.id);
+      expect(result.upToDate).toBe(true);
+      return yield* Effect.forEach(result.messages, (message) =>
+        Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+      );
+    }),
+    transitions: yield* Effect.gen(function* () {
+      const output = tracker.outputs.transitions;
+      const ref = output.ref({ workspaceId: "live" });
+      const result = yield* (yield* output.family).wire.read(ref.id);
+      expect(result.upToDate).toBe(true);
+      return yield* Effect.forEach(result.messages, (message) =>
+        Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+      );
+    }),
     summary: yield* tracker.outputs.workspace.resolve({ workspaceId: "live" }),
   };
 });

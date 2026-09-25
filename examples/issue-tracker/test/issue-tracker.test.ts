@@ -1,4 +1,3 @@
-import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { State, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
@@ -7,7 +6,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { foldIssue, type IssueEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
-import { Events, refs, userStream } from "../server/streams.ts";
+import { Events, Users } from "../server/streams.ts";
 import { transact } from "../server/state.ts";
 import { scratchDirectory, startServer, stopServer, waitForServer } from "../scripts/support.ts";
 
@@ -42,8 +41,8 @@ test("the fused handler writes application rows through the SQLite host", async 
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
-        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* createInputs("live");
+        yield* (yield* Events).append({ workspaceId: "live" }, [created]);
         const result = yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         const sql = yield* SqlClient.SqlClient;
         const rows = yield* sql.unsafe<{ readonly status: string }>("SELECT status FROM issues");
@@ -71,7 +70,7 @@ test("the change trigger stays alive beside the request trigger on one key", asy
         });
         yield* Projection.serialized(issueRows.member({ workspaceId: "live" }), { limit: 5 });
         const sql = yield* SqlClient.SqlClient;
-        yield* Members.append(Events.at({ workspaceId: "live" }), [
+        yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, eventId: "change-2", issueId: "change-only", sequence: 1 },
         ]);
         let count = 0;
@@ -95,16 +94,16 @@ test("catalog state upserts and deletes a row", async () => {
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
-        const ref = userStream("live");
+        yield* createInputs("live");
+        const ref = Users.at({ workspaceId: "live" });
         const ada = {
           userId: "ada",
           workspaceId: "live",
           name: "Ada",
           updatedAt: "2026-09-20T10:00:00.000Z",
         };
-        yield* Members.append(
-          ref,
+        yield* (yield* Users).append(
+          { workspaceId: "live" },
           State.changes(ref, { offset: ZERO_OFFSET }, [State.upsert("user", ada)]),
         );
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
@@ -113,8 +112,8 @@ test("catalog state upserts and deletes a row", async () => {
           "SELECT COUNT(*) AS n FROM users",
         );
         expect(afterUpsert[0]?.n).toBe(1);
-        yield* Members.append(
-          ref,
+        yield* (yield* Users).append(
+          { workspaceId: "live" },
           State.changes(ref, { offset: "1" }, [State.delete("user", ada)]),
         );
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));

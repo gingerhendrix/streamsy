@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { Streams } from "@streamsy/core/protocol";
 import { testHost, type TestHost, type TestHostOptions } from "./support/scoped-host.ts";
 import { Miniflare } from "miniflare";

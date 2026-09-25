@@ -3,7 +3,7 @@ import { Projection } from "@streamsy/projection";
 import { Effect, ManagedRuntime } from "effect";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
-import { Labels, LabelEvents, labelStream, refs } from "../server/streams.ts";
+import { Labels, LabelEvents } from "../server/streams.ts";
 import {
   post,
   readBoard,
@@ -28,8 +28,8 @@ try {
   try {
     await producer.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
-        const ref = labelStream("live");
+        yield* createInputs("live");
+        const ref = Labels.at({ workspaceId: "live" });
         const label = {
           workspaceId: "live",
           labelId: "keep",

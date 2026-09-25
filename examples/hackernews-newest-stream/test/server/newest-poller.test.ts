@@ -1,3 +1,4 @@
+import { HackerNewsSource } from "../../src/server/stream-resources.ts";
 /* oxlint-disable effecttsgo/async-function -- This Bun scenario exercises the demo's Promise compatibility edges through one explicit ManagedRuntime. */
 import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
@@ -38,10 +39,10 @@ describe("NewestStoriesPoller", () => {
 
     try {
       await runtime.runPromise(poller.pollNow);
-      const sourceAfterFirst = await h.read(hackerNewsSource.id);
+      const sourceAfterFirst = await h.read(HackerNewsSource);
 
       await runtime.runPromise(poller.pollNow);
-      expect(await h.read(hackerNewsSource.id)).toEqual(sourceAfterFirst);
+      expect(await h.read(HackerNewsSource)).toEqual(sourceAfterFirst);
       expect(await runtime.runPromise(poller.stats)).toMatchObject({
         lastStoryCount: 2,
         lastFetchedNewStories: 0,

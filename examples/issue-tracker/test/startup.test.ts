@@ -1,8 +1,7 @@
-import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { Context, Effect, Layer, ManagedRuntime, Option } from "effect";
 import { applicationLayer, createInputs, hostLayer, families } from "../server/host.ts";
-import { refs, userStream } from "../server/streams.ts";
+import { Users } from "../server/streams.ts";
 import {
   scratchDirectory,
   startServer,
@@ -20,8 +19,8 @@ test("a member fault at startup leaves HTTP and other workspaces available", asy
     try {
       await producer.runPromise(
         Effect.gen(function* () {
-          yield* createInputs(refs("acme"));
-          yield* Members.append(userStream("acme"), [
+          yield* createInputs("acme");
+          yield* (yield* Users).append({ workspaceId: "acme" }, [
             {
               type: "user",
               key: "ada",

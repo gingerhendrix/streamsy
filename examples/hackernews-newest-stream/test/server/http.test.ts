@@ -34,7 +34,7 @@ test("served rows read only outputs, replay pages, and resume at the cursor", as
       ),
     ).toMatchObject({ _tag: "StreamNotFound" });
     const row = story(101, 1_700_000_030, "First");
-    await h.append(hackerNewsSource.id, [sourceUpsert(row)]);
+    await h.append([sourceUpsert(row)]);
     await h.runtime.runPromise(Projection.run(hackerNewsStoryIndex));
     const initial = await read();
     expect(initial.status).toBe(200);
@@ -44,7 +44,7 @@ test("served rows read only outputs, replay pages, and resume at the cursor", as
       Schema.decodeUnknownSync(Schema.Array(HackerNewsStateChange))(await initial.json()),
     ).toEqual([{ type: "hn-story", key: "101", value: row, headers: { operation: "upsert" } }]);
     const cursor = initial.headers.get("stream-next-offset")!;
-    await h.append(hackerNewsSource.id, [sourceDelete(row)]);
+    await h.append([sourceDelete(row)]);
     await h.runtime.runPromise(Projection.run(hackerNewsStoryIndex));
     await h.runtime.runPromise(Effect.flatMap(HackerNewsSource, (source) => source.remove({})));
     const suffix = await read(`offset=${cursor}`);
@@ -106,7 +106,7 @@ test("merged app keeps API and State routes ahead of the static fallback", async
     expect(await unknown.json()).toEqual({ error: "Not found" });
 
     const row = story(101, 1_700_000_030, "Routed story");
-    await h.append(hackerNewsSource.id, [sourceUpsert(row)]);
+    await h.append([sourceUpsert(row)]);
     await h.runtime.runPromise(Projection.run(hackerNewsStoryIndex));
     const state = await web.handler(new Request("http://host/state/newest?offset=-1"));
     expect(state.status).toBe(200);

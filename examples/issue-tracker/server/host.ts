@@ -8,7 +8,7 @@ import { Projection } from "@streamsy/projection";
 import { tracker, outputFamilies, Board, LabelCounts, Transitions } from "./outputs.ts";
 import { issueRows } from "./projection.ts";
 import { prepareSchema } from "./schema.ts";
-import { refs, routes } from "./streams.ts";
+import { routes } from "./streams.ts";
 
 export const families = StreamGroup.make(...Object.values(routes), ...outputFamilies);
 export const hostLayer = (filename: string) => {
@@ -48,7 +48,7 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
     ApplicationReady,
     Effect.gen(function* () {
       yield* prepareSchema;
-      yield* createInputs(workspaces.flatMap(refs));
+      yield* Effect.forEach(workspaces, createInputs, { discard: true });
       if (workspaces.length > 0) {
         const members = workspaces.map((workspaceId) => ({ workspaceId }));
         for (const params of members) {
@@ -111,12 +111,8 @@ export const applicationLayer = (filename: string, workspaces: ReadonlyArray<str
 };
 
 /** Create declared inputs; a mismatched existing config stops startup. */
-export const createInputs = (inputs: ReturnType<typeof refs>) =>
+export const createInputs = (workspaceId: string) =>
   Effect.gen(function* () {
-    const families = yield* Effect.all(Object.values(routes));
-    for (const ref of inputs) {
-      const family = families.find((family) => family.route.match(ref.id));
-      if (family === undefined) return yield* Effect.die(new RangeError(`Unknown input ${ref.id}`));
-      yield* family.wire.create(ref.id, { contentType: ref.contentType });
-    }
+    const inputs = yield* Effect.all(Object.values(routes));
+    for (const family of inputs) yield* family.create({ workspaceId });
   });

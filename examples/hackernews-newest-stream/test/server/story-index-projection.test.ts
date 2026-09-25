@@ -45,15 +45,15 @@ describe("Hacker News story index projection", () => {
     const h = await harness();
     const first = story(101, 1_700_000_030, "First title");
     const second = story(102, 1_700_000_020, "Second title");
-    await h.append(hackerNewsSource.id, [sourceUpsert(first), sourceUpsert(second)]);
+    await h.append([sourceUpsert(first), sourceUpsert(second)]);
 
     expect(await run(h)).toMatchObject({ status: "caught-up", units: 1, items: 2 });
 
     const updated = story(101, 1_700_000_030, "Updated title");
-    await h.append(hackerNewsSource.id, [sourceUpsert(updated), sourceDelete(second)]);
+    await h.append([sourceUpsert(updated), sourceDelete(second)]);
     await run(h);
 
-    const facts = (await h.read(hackerNewsTarget.id)).filter(isStoryFact);
+    const facts = (await h.read(HackerNewsTarget)).filter(isStoryFact);
     expect(facts.map((fact) => [fact.key, fact.headers.operation])).toEqual([
       ["101", "upsert"],
       ["102", "upsert"],
@@ -73,14 +73,14 @@ describe("Hacker News story index projection", () => {
 
   test("resumes a bounded run at the next durable source boundary", async () => {
     const h = await harness(1);
-    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+    await h.append([sourceUpsert(story(101, 1_700_000_030, "First"))]);
     expect(await run(h, { limit: 1 })).toMatchObject({
       status: "limit-reached",
       units: 1,
       items: 1,
     });
 
-    await h.append(hackerNewsSource.id, [sourceUpsert(story(102, 1_700_000_020, "Second"))]);
+    await h.append([sourceUpsert(story(102, 1_700_000_020, "Second"))]);
 
     expect(await run(h, { limit: 1 })).toMatchObject({
       status: "limit-reached",
@@ -88,22 +88,22 @@ describe("Hacker News story index projection", () => {
       items: 1,
     });
     expect(await run(h)).toMatchObject({ status: "caught-up", units: 0, items: 0 });
-    const facts = (await h.read(hackerNewsTarget.id)).filter(isStoryFact);
+    const facts = (await h.read(HackerNewsTarget)).filter(isStoryFact);
     expect(facts.map((fact) => fact.key)).toEqual(["101", "102"]);
   });
 
   test("does not duplicate output when projection orchestration restarts", async () => {
     const h = await harness();
-    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+    await h.append([sourceUpsert(story(101, 1_700_000_030, "First"))]);
     await run(h);
-    const before = await h.read(hackerNewsTarget.id);
+    const before = await h.read(HackerNewsTarget);
 
     // A copy of the same declaration restores progress through its checkpoint identity.
     const restarted = { ...hackerNewsStoryIndex };
     const result = await Effect.runPromise(
       Projection.run(restarted, limits).pipe(Effect.provide(h.clientLayer)),
     );
-    const after = await h.read(hackerNewsTarget.id);
+    const after = await h.read(HackerNewsTarget);
 
     expect(result).toMatchObject({ status: "caught-up", units: 0, items: 0 });
     expect(after).toEqual(before);
@@ -156,7 +156,7 @@ describe("Hacker News story index projection", () => {
 
   test("limit-reached at one item per pass, then resumes to caught-up", async () => {
     const h = await harness(1);
-    await h.append(hackerNewsSource.id, [
+    await h.append([
       sourceUpsert(story(101, 1_700_000_030, "First")),
       sourceUpsert(story(102, 1_700_000_020, "Second")),
     ]);
@@ -166,12 +166,10 @@ describe("Hacker News story index projection", () => {
       units: 1,
       items: 1,
     });
-    expect((await h.read(hackerNewsTarget.id)).filter(isStoryFact).map((f) => f.key)).toEqual([
-      "101",
-    ]);
+    expect((await h.read(HackerNewsTarget)).filter(isStoryFact).map((f) => f.key)).toEqual(["101"]);
 
     expect(await run(h)).toMatchObject({ status: "caught-up", units: 1, items: 1 });
-    expect((await h.read(hackerNewsTarget.id)).filter(isStoryFact).map((f) => f.key)).toEqual([
+    expect((await h.read(HackerNewsTarget)).filter(isStoryFact).map((f) => f.key)).toEqual([
       "101",
       "102",
     ]);
@@ -179,7 +177,7 @@ describe("Hacker News story index projection", () => {
 
   test("a competing checkpoint save fails token-conflict without advancing", async () => {
     const h = await harness();
-    await h.append(hackerNewsSource.id, [sourceUpsert(story(101, 1_700_000_030, "First"))]);
+    await h.append([sourceUpsert(story(101, 1_700_000_030, "First"))]);
     const context = await h.runtime.runPromise(
       Effect.context<Checkpoints | State | HackerNewsSource | HackerNewsTarget>(),
     );
@@ -204,10 +202,10 @@ describe("Hacker News story index projection", () => {
     expect(failed).toBeInstanceOf(ProjectionFault);
     expect(failed).toMatchObject({ phase: "pin", reason: "token-conflict" });
 
-    expect(await h.read(hackerNewsTarget.id)).toHaveLength(1);
+    expect(await h.read(HackerNewsTarget)).toHaveLength(1);
     expect((await loadRecord(h)).token).toBe("2");
     expect(await run(h)).toMatchObject({ status: "caught-up", units: 0, items: 0 });
-    expect(await h.read(hackerNewsTarget.id)).toHaveLength(1);
+    expect(await h.read(HackerNewsTarget)).toHaveLength(1);
   });
 
   test("a missing source fails the read naming the input", async () => {

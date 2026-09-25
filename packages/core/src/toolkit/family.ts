@@ -43,7 +43,7 @@ function checkNoOverlap(routes: ReadonlyArray<Route.Matcher>): void {
 }
 
 /** Build a family implementation over backend values, retaining the same ownership guard. */
-export function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
+function bind<P, A, RD, RE>(route: Route.StreamRoute<P, A, RD, RE>, services: Wires) {
   const storage = storageOf(services.writer);
   const owner = storage === undefined ? services.writer : ownerOf(storage);
   const write = <A, E>(id: string, run: () => Effect.Effect<A, E>) =>

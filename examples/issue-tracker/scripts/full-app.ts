@@ -6,17 +6,7 @@ import recording from "./recordings/acme.json";
 import { IssueEvent, IssueLabelEvent } from "../domain/issue.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { issueRows } from "../server/projection.ts";
-import {
-  Projects,
-  Users,
-  Labels,
-  Events,
-  LabelEvents,
-  labelStream,
-  projectStream,
-  refs,
-  userStream,
-} from "../server/streams.ts";
+import { Projects, Users, Labels, Events, LabelEvents } from "../server/streams.ts";
 import {
   post,
   readBoard,
@@ -38,7 +28,7 @@ try {
   const producer = ManagedRuntime.make(applicationLayer(scratch.database));
   await producer.runPromise(
     Effect.gen(function* () {
-      yield* createInputs(refs("acme"));
+      yield* createInputs("acme");
       yield* (yield* Events).append(
         { workspaceId: "acme" },
         Schema.decodeUnknownSync(Schema.Array(IssueEvent))(recording.issueEvents),
@@ -47,9 +37,9 @@ try {
         { workspaceId: "acme" },
         Schema.decodeUnknownSync(Schema.Array(IssueLabelEvent))(recording.issueLabelEvents),
       );
-      const projectRef = projectStream("acme");
-      const userRef = userStream("acme");
-      const labelRef = labelStream("acme");
+      const projectRef = Projects.at({ workspaceId: "acme" });
+      const userRef = Users.at({ workspaceId: "acme" });
+      const labelRef = Labels.at({ workspaceId: "acme" });
       yield* (yield* Projects).append(
         { workspaceId: "acme" },
         State.changes(

@@ -3,14 +3,14 @@ import { expect, test } from "bun:test";
 import { TransportFault } from "@streamsy/core";
 import { Checkpoints, Projection } from "@streamsy/projection";
 import { contractFingerprint } from "@streamsy/serve/contract";
-import { Effect, Layer, ManagedRuntime, Stream } from "effect";
+import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { outputRoutes } from "../server/app.ts";
 import { tracker } from "../server/outputs.ts";
 import { issueRows } from "../server/projection.ts";
-import { Events, refs, userStream } from "../server/streams.ts";
+import { Events, Users } from "../server/streams.ts";
 
 const created = {
   type: "IssueCreated" as const,
@@ -30,8 +30,8 @@ test("key-only catalog deletes stay in the member workspace and advance both che
     await runtime.runPromise(
       Effect.gen(function* () {
         for (const workspaceId of ["live", "acme"]) {
-          yield* createInputs(refs(workspaceId));
-          yield* Members.append(userStream(workspaceId), [
+          yield* createInputs(workspaceId);
+          yield* (yield* Users).append({ workspaceId: workspaceId }, [
             {
               type: "user",
               key: "ada",
@@ -52,7 +52,7 @@ test("key-only catalog deletes stay in the member workspace and advance both che
         const outputMember = tracker.member({ workspaceId: "live" });
         const sqlBefore = yield* owner.load(sqlMember);
         const outputBefore = yield* owner.load(outputMember);
-        yield* Members.append(userStream("live"), [
+        yield* (yield* Users).append({ workspaceId: "live" }, [
           { type: "user", key: "ada", headers: { operation: "delete" } },
         ]);
         yield* Projection.run(sqlMember);
@@ -81,9 +81,9 @@ test("catalog values cannot write another workspace in either projection", async
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
-        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
-        yield* Members.append(userStream("live"), [
+        yield* createInputs("live");
+        yield* (yield* Events).append({ workspaceId: "live" }, [created]);
+        yield* (yield* Users).append({ workspaceId: "live" }, [
           {
             type: "user",
             key: "ada",
@@ -130,8 +130,8 @@ test("named output replay survives a lost append reply beside the SQL projection
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
-        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* createInputs("live");
+        yield* (yield* Events).append({ workspaceId: "live" }, [created]);
         const member = tracker.member({ workspaceId: "live" });
         const failed = yield* Projection.run(member).pipe(
           Members.patchOutputAppends(
@@ -152,19 +152,30 @@ test("named output replay survives a lost append reply beside the SQL projection
         );
         expect(failed._tag).toBe("Failure");
         // Advancing SQL and input history must not change reproduction of the pinned range.
-        yield* Members.append(Events.at({ workspaceId: "live" }), [
+        yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, type: "IssueStatusChanged", eventId: "e2", status: "done", sequence: 2 },
         ]);
         yield* Projection.run(issueRows.member({ workspaceId: "live" }));
         yield* Projection.run(member);
-        const transitions = yield* Members.read(
-          tracker.outputs.transitions.ref({ workspaceId: "live" }),
-        ).pipe(Members.items, Stream.runCollect);
+        const transitions = yield* Effect.gen(function* () {
+          const output = tracker.outputs.transitions;
+          const ref = output.ref({ workspaceId: "live" });
+          const result = yield* (yield* output.family).wire.read(ref.id);
+          expect(result.upToDate).toBe(true);
+          return yield* Effect.forEach(result.messages, (message) =>
+            Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+          );
+        });
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
-        const board = yield* Members.read(tracker.outputs.board.ref({ workspaceId: "live" })).pipe(
-          Members.items,
-          Stream.runCollect,
-        );
+        const board = yield* Effect.gen(function* () {
+          const output = tracker.outputs.board;
+          const ref = output.ref({ workspaceId: "live" });
+          const result = yield* (yield* output.family).wire.read(ref.id);
+          expect(result.upToDate).toBe(true);
+          return yield* Effect.forEach(result.messages, (message) =>
+            Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+          );
+        });
         expect(board).toHaveLength(2);
         expect(yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,
@@ -264,8 +275,8 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
-        yield* Members.append(Events.at({ workspaceId: "live" }), [created]);
+        yield* createInputs("live");
+        yield* (yield* Events).append({ workspaceId: "live" }, [created]);
         yield* Projection.run(tracker.member({ workspaceId: "live" }));
       }),
     );
@@ -281,7 +292,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     expect(etag).not.toBeNull();
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* Members.append(Events.at({ workspaceId: "live" }), [
+        yield* (yield* Events).append({ workspaceId: "live" }, [
           { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
         ]);
         yield* Projection.run(tracker.member({ workspaceId: "live" }));

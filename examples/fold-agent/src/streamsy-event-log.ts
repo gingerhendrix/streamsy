@@ -16,14 +16,7 @@ import {
 import { StreamNotFound, StreamGone } from "@streamsy/core";
 import { Context, Effect, Layer, Schema, Semaphore, Stream } from "effect";
 import type { StreamsyStore } from "./storage.ts";
-import {
-  Sessions,
-  corrupt,
-  decodeLog,
-  readHistory,
-  sessionRef,
-  unavailable,
-} from "./session-log.ts";
+import { Sessions, corrupt, decodeLog, readHistory, unavailable } from "./session-log.ts";
 
 export type StreamsyEventLogMode = "create" | "resume";
 export interface StreamsyEventLogOptions {
@@ -52,18 +45,17 @@ const toFoldError = (error: { readonly _tag: string; readonly message?: string }
 /** Export the typed constructor for tests, avoiding casts through Fold's unknown-error descriptor. */
 export const makeEventLog = (options: StreamsyEventLogOptions) =>
   Effect.gen(function* () {
-    const ref = sessionRef(options.streamId);
     const sessions = yield* Sessions;
-    const params = { streamId: ref.id };
+    const params = { streamId: options.streamId };
     const ids = Context.get(yield* Layer.build(layerLiveIdFactory), Ids);
     if (options.mode === "create") {
       const result = yield* sessions.create(params);
       if (result._tag === "Exists")
         return yield* unavailable(
-          `Stream ${ref.id} already exists or is unavailable: ${result._tag}`,
+          `Stream ${params.streamId} already exists or is unavailable: ${result._tag}`,
         );
     }
-    const history = yield* readHistory(ref);
+    const history = yield* readHistory(params);
     const decoded = yield* decodeLog(history.items);
     if (options.mode === "resume" && decoded.length === 0)
       return yield* unavailable("Cannot resume a log with no Fold entries");
@@ -101,7 +93,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
     );
     const entries: EventLogService["entries"] = (fromSeq = 0) =>
       Stream.unwrap(
-        readHistory(ref).pipe(
+        readHistory(params).pipe(
           Effect.flatMap((log) => decodeLog(log.items)),
           Effect.map((log) => Stream.fromIterable(log.filter((entry) => entry.seq >= fromSeq))),
           Effect.mapError(toFoldError),
@@ -140,7 +132,7 @@ export const makeEventLog = (options: StreamsyEventLogOptions) =>
 export const streamsyEventLog = (options: StreamsyEventLogOptions) =>
   eventLogSource(makeEventLog(options));
 export const readFoldLog = (store: StreamsyStore, streamId: string) =>
-  readHistory(sessionRef(streamId)).pipe(
+  readHistory({ streamId }).pipe(
     Effect.flatMap((log) => decodeLog(log.items)),
     Effect.provide(store.context),
     Effect.mapError(toFoldError),

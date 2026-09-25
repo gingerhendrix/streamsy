@@ -1,18 +1,10 @@
-import * as Members from "./support/members.ts";
 import { expect, test } from "bun:test";
 import { Projection } from "@streamsy/projection";
-import { Effect, ManagedRuntime, Schema, Stream } from "effect";
+import { Effect, ManagedRuntime, Schema } from "effect";
 import { initialWorkspace, type WorkspaceState } from "../domain/outputs.ts";
 import { applicationLayer, createInputs } from "../server/host.ts";
 import { tracker } from "../server/outputs.ts";
-import {
-  Events,
-  LabelEvents,
-  labelStream,
-  projectStream,
-  refs,
-  userStream,
-} from "../server/streams.ts";
+import { Events, LabelEvents, Labels, Projects, Users } from "../server/streams.ts";
 
 // Pre-index full-scan builders are an oracle for wire payloads and ordering.
 const cards = (state: WorkspaceState) =>
@@ -48,13 +40,13 @@ test("indexed touched-key output matches full scans byte for byte across catalog
   try {
     await runtime.runPromise(
       Effect.gen(function* () {
-        yield* createInputs(refs("live"));
+        yield* createInputs("live");
         const phases = [
           Effect.gen(function* () {
-            yield* Members.append(labelStream("live"), [
+            yield* (yield* Labels).append({ workspaceId: "live" }, [
               { type: "label", key: "bug", value: label, headers: { operation: "upsert" } },
             ]);
-            yield* Members.append(LabelEvents.at({ workspaceId: "live" }), [
+            yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
               {
                 ...common,
                 type: "LabelAttached",
@@ -66,7 +58,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               },
             ]);
           }),
-          Members.append(Events.at({ workspaceId: "live" }), [
+          (yield* Events).append({ workspaceId: "live" }, [
             {
               ...common,
               type: "IssueCreated",
@@ -89,13 +81,13 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             },
           ]),
           Effect.gen(function* () {
-            yield* Members.append(projectStream("live"), [
+            yield* (yield* Projects).append({ workspaceId: "live" }, [
               { type: "project", key: "p1", value: project, headers: { operation: "upsert" } },
             ]);
-            yield* Members.append(userStream("live"), [
+            yield* (yield* Users).append({ workspaceId: "live" }, [
               { type: "user", key: "ada", value: user, headers: { operation: "upsert" } },
             ]);
-            yield* Members.append(Events.at({ workspaceId: "live" }), [
+            yield* (yield* Events).append({ workspaceId: "live" }, [
               {
                 ...common,
                 type: "IssueAssigned",
@@ -108,7 +100,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             ]);
           }),
           Effect.gen(function* () {
-            yield* Members.append(userStream("live"), [
+            yield* (yield* Users).append({ workspaceId: "live" }, [
               {
                 type: "user",
                 key: "ada",
@@ -116,7 +108,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 headers: { operation: "upsert" },
               },
             ]);
-            yield* Members.append(projectStream("live"), [
+            yield* (yield* Projects).append({ workspaceId: "live" }, [
               {
                 type: "project",
                 key: "p1",
@@ -124,7 +116,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
                 headers: { operation: "upsert" },
               },
             ]);
-            yield* Members.append(LabelEvents.at({ workspaceId: "live" }), [
+            yield* (yield* LabelEvents).append({ workspaceId: "live" }, [
               {
                 ...common,
                 type: "LabelDetached",
@@ -145,7 +137,7 @@ test("indexed touched-key output matches full scans byte for byte across catalog
               },
             ]);
           }),
-          Members.append(labelStream("live"), [
+          (yield* Labels).append({ workspaceId: "live" }, [
             { type: "label", key: "bug", headers: { operation: "delete" } },
             {
               type: "label",
@@ -155,13 +147,13 @@ test("indexed touched-key output matches full scans byte for byte across catalog
             },
           ]),
           Effect.gen(function* () {
-            yield* Members.append(labelStream("live"), [
+            yield* (yield* Labels).append({ workspaceId: "live" }, [
               { type: "label", key: "bug", headers: { operation: "delete" } },
             ]);
-            yield* Members.append(projectStream("live"), [
+            yield* (yield* Projects).append({ workspaceId: "live" }, [
               { type: "project", key: "p1", headers: { operation: "delete" } },
             ]);
-            yield* Members.append(userStream("live"), [
+            yield* (yield* Users).append({ workspaceId: "live" }, [
               { type: "user", key: "ada", headers: { operation: "delete" } },
             ]);
           }),
@@ -211,12 +203,28 @@ test("indexed touched-key output matches full scans byte for byte across catalog
           }
           // Before the first issue, board is correctly absent; label counts already exist.
           if (expectedBoard.length > 0) {
-            const actual = yield* Members.read(boardRef).pipe(Members.items, Stream.runCollect);
+            const actual = yield* Effect.gen(function* () {
+              const output = tracker.outputs.board;
+              const ref = output.ref({ workspaceId: "live" });
+              const result = yield* (yield* output.family).wire.read(ref.id);
+              expect(result.upToDate).toBe(true);
+              return yield* Effect.forEach(result.messages, (message) =>
+                Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+              );
+            });
             expect(actual.map((item) => Schema.encodeSync(boardRef.codec)(item))).toEqual(
               expectedBoard,
             );
           }
-          const actual = yield* Members.read(countsRef).pipe(Members.items, Stream.runCollect);
+          const actual = yield* Effect.gen(function* () {
+            const output = tracker.outputs.labelCounts;
+            const ref = output.ref({ workspaceId: "live" });
+            const result = yield* (yield* output.family).wire.read(ref.id);
+            expect(result.upToDate).toBe(true);
+            return yield* Effect.forEach(result.messages, (message) =>
+              Schema.decodeEffect(ref.codec)(new TextDecoder().decode(message.data)),
+            );
+          });
           expect(actual.map((item) => Schema.encodeSync(countsRef.codec)(item))).toEqual(
             expectedCounts,
           );
