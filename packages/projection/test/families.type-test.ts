@@ -3,9 +3,6 @@ import { Effect, Schema, type Scope } from "effect";
 import { Changes, StreamFamily, StreamRef, provides } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
 import { Checkpoints, Output, Projection, State, type ProjectionFault } from "@streamsy/projection";
-// @ts-expect-error Host is no longer a public projection requirement.
-import type { Host } from "@streamsy/projection";
-export type RemovedHost = Host;
 class Input extends StreamFamily.json<Input>()("ProjectionTypes/Input", "types/input/:id", {
   params: { id: Schema.String },
   schema: Schema.Finite,
@@ -63,7 +60,7 @@ export type Checks = [
 ];
 const missing = namedRun.pipe(Effect.provide(provides(Streams.layerMemory(), Input, Other)));
 // oxlint-disable effecttsgo/missing-effect-context -- This negative test deliberately omits Result.
-// @ts-expect-error the declared output family must still be provided.
+// @ts-expect-error the declared output family must be provided.
 const incomplete: Effect.Effect<unknown, ProjectionFault, Checkpoints | State> = missing;
 void incomplete;
 // oxlint-enable effecttsgo/missing-effect-context
@@ -108,7 +105,7 @@ void cannotRunWidenedOutput;
 const protocolOnly: import("effect").Layer.Layer<StreamsReader | StreamsWriter> =
   Streams.layerMemory();
 const withoutFeed = Projection.onChange(fused).pipe(Effect.provide(provides(protocolOnly, Input)));
-// @ts-expect-error onChange still requires Changes<Input> on a host without a feed.
+// @ts-expect-error onChange requires Changes<Input> on a host without a feed.
 const missingFeed: Effect.Effect<unknown, ProjectionFault, Checkpoints | Scope.Scope> = withoutFeed;
 void missingFeed;
 

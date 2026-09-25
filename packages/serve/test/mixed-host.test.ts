@@ -20,7 +20,7 @@ const hostLayer = Layer.merge(
   BunStorage.layer({ client: { filename: ":memory:" } }, SqliteFamily),
 );
 
-test("one Http.app host serves routed memory and SQLite families", async () => {
+test("one Http.routes host serves memory and SQLite families", async () => {
   const web = HttpRouter.toWebHandler(
     Http.routes(families, { access: "full" }).pipe(HttpRouter.provideRequest(hostLayer)),
     { disableLogger: true },

@@ -7,11 +7,11 @@ import { Checkpoints, Projection } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 
-class Source extends StreamFamily.json<Source>()("routed.test/Source", "memory/source/:name", {
+class Source extends StreamFamily.json<Source>()("OwnerComposition/Source", "memory/source/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
-class Output extends StreamFamily.json<Output>()("routed.test/Output", "sqlite/output/:name", {
+class Output extends StreamFamily.json<Output>()("OwnerComposition/Output", "sqlite/output/:name", {
   params: { name: Schema.String },
   schema: Schema.Finite,
 }) {}
@@ -33,7 +33,7 @@ test("a fused projection reads remote input and writes on its SQLite checkpoint 
       yield* output.create(params);
       yield* source.append(params, [1, 2, 3]);
       const projection = Projection.make({
-        id: "routed-double",
+        id: "mixed-double",
         input: Source.at(params),
         process: (batch) =>
           output.append(
@@ -59,7 +59,7 @@ test("onChange watches the input's feed even when checkpoints have a different o
       yield* source.create(params);
       yield* source.append(params, [1], { close: true });
       const projection = Projection.make({
-        id: "routed-watch",
+        id: "mixed-watch",
         input: Source.at(params),
         process: () => Effect.void,
       });
@@ -89,7 +89,7 @@ test("onChange rejects a family rebound without its matching feed", async () => 
   );
 });
 
-const legacyStorage = Memory.layerMemory();
+const memoryGraph = Memory.layerMemory();
 // A custom adapter that copies protocol methods loses private storage-owner metadata.
 const unowned = Layer.effectContext(
   Effect.gen(function* () {
@@ -99,20 +99,20 @@ const unowned = Layer.effectContext(
       Context.add(StreamsWriter, { ...writer }),
     );
   }),
-).pipe(Layer.provide(legacyStorage));
+).pipe(Layer.provide(memoryGraph));
 
 test("a custom family wire cannot establish the owner of a fused write", async () => {
-  const legacyHost = provides(unowned, Source, Output).pipe(Layer.provideMerge(legacyStorage));
+  const unownedHost = provides(unowned, Source, Output).pipe(Layer.provideMerge(memoryGraph));
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
       const output = yield* Output;
-      const params = { name: "legacy" };
+      const params = { name: "orders" };
       yield* source.create(params);
       yield* source.append(params, [1]);
       yield* output.create(params);
       const projection = Projection.make({
-        id: "legacy-routed",
+        id: "unowned-write",
         input: Source.at(params),
         process: () => output.append(params, [2]),
       });
@@ -126,12 +126,12 @@ test("a custom family wire cannot establish the owner of a fused write", async (
         (yield* Stream.runCollect(output.read(params))).flatMap((batch) => batch.items),
       ).toEqual([]);
       expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
-    }).pipe(Effect.provide(legacyHost)),
+    }).pipe(Effect.provide(unownedHost)),
   );
 });
 
 test("a custom wire graph exposing ambient Storage is rejected during binding", async () => {
-  const storageOnly = legacyStorage.pipe(
+  const storageOnly = memoryGraph.pipe(
     Layer.flatMap((context) => Layer.succeed(Storage, Context.get(context, Storage))),
   );
   const mixed = Layer.merge(unowned, storageOnly);

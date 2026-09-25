@@ -59,7 +59,7 @@ const memoryExact: Equal<
 > = true;
 const memoryRequirements: Equal<Layer.Services<typeof memory>, never> = true;
 const memoryErrors: Equal<Layer.Error<typeof memory>, never> = true;
-const legacyFetch: Equal<
+const protocolFetch: Equal<
   Layer.Success<ReturnType<typeof Fetch.layerProtocol>>,
   StreamsReader | StreamsWriter
 > = true;
@@ -78,7 +78,7 @@ void [
   memoryExact,
   memoryRequirements,
   memoryErrors,
-  legacyFetch,
+  protocolFetch,
   pointFreeFetch,
   hasFeed,
   emptyExact,
