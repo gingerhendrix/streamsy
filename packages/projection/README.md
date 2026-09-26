@@ -22,48 +22,44 @@ Object.
 ## Define and run
 
 ```ts
-import { Schema } from "effect";
-import { StreamAddress, Streams } from "@streamsy/core";
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
 
-const numbers = StreamAddress.json("numbers", { schema: Schema.Finite });
-const doubled = StreamAddress.json("doubled", { schema: Schema.Finite });
+class Numbers extends Streamsy.json<Numbers>()("Readme/Numbers", "numbers", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+class Doubled extends Streamsy.json<Doubled>()("Readme/Doubled", "doubled", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
 
 const projection = Projection.atomic({
   id: "doubled",
   params: {},
-  inputs: { input: numbers },
+  inputs: { input: Numbers },
   process: (batch) =>
-    Streams.append(
-      doubled,
-      batch.input.items.map((n) => n * 2),
+    Effect.flatMap(Doubled, (output) =>
+      output.append(
+        {},
+        batch.input.items.map((n) => n * 2),
+      ),
     ),
 });
 
 const run = Projection.run(projection.at({}), { limit: 10 });
 ```
 
-`inputs: { input: numbers }` declares one named input; the handler reads `batch.input.items`.
-Declare several with `inputs: { orders, refunds }` and read one slice per name.
+`inputs: { input: Numbers }` declares one named input; the handler reads `batch.input.items`.
+Declare several with `inputs: { orders: Orders, refunds: Refunds }` and read one slice per name.
 
 Every constructor takes `params` codecs and returns a declaration. `projection.at(params)`
 binds it, and runners take the bound value. An input or output that names a stream
 declaration is resolved with the same params. A fixed address is used as it is.
 A projection with no parameters uses `params: {}` and `.at({})`. The handler reads
 the decoded values from `unit.params`. See
-[Streams](https://streamsy.dev/docs/projections/projections#streams).
-
-`Projection.State` provides one encoded value per key in the checkpoint transaction.
-A declaration with `state: { schema, initial }` owns that value. An atomic projection
-with `state:` gives `fold: (state, entry, unit) => next`, which loads, folds, and saves
-the value once per pass.
-`Projection.read(projection)` returns `{ state, offsets }`: the typed state and the input
-offsets it is at, read in one transaction. `Progress.offsets` from `run` and `pass` gives the
-same offsets.
-`Projection.forget(projection)` takes the serialized permit, deletes state and checkpoint rows,
-and retires the process lock after its existing callers drain.
-See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
-generation, and retirement rules.
+[Parameters](https://streamsy.dev/docs/projections/projections#parameters).
 
 `Projection.each(handle)` builds a handler that runs once per item.
 `Projection.follow(projection, options)` keeps running as new items arrive.
@@ -75,51 +71,99 @@ see [Triggers](https://streamsy.dev/docs/projections/projections#triggers).
 [src/examples/minimal.ts](src/examples/minimal.ts) is the complete version of
 this example; the package tests execute it.
 
-## Stream output
+## State
 
-Atomic is for SQL and side effects; outputs is the declared-output form.
-A `Projection.outputs` declaration with one `Output.stream` works across backends,
-including through the fetch Layer.
-The output stream is created when absent. Existing outputs are used as they
-are; gone or closed outputs fail with `pin / invalid-output`. The handler must
-be deterministic on its inputs.
+Both forms take `state: { schema, initial }`. `initial` is a value, or a function of
+the decoded params, used only when no state is saved yet. The state is saved in the
+same transaction as the checkpoint.
+
+An atomic projection with `state:` gives a `fold` step in place of `process`.
+The unit loads the state once, folds each item in order, and saves it once:
 
 ```ts
-import { Effect } from "effect";
-import { Output } from "@streamsy/projection";
-
-const totals = Projection.outputs({
-  id: "totals",
+const total = Projection.atomic({
+  id: "running-total",
   params: {},
-  inputs: { input: numbers },
-  outputs: {
-    output: Output.stream(Schema.Finite, {
-      stream: StreamAddress.json("totals", { schema: Schema.Finite }),
-    }),
-  },
-  process: (batch) =>
-    Effect.succeed({ output: [batch.input.items.reduce((sum, n) => sum + n, 0)] }),
+  inputs: { input: Numbers },
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) => sum + item,
+}).at({});
+
+const program = Effect.gen(function* () {
+  yield* Projection.run(total);
+  const { state, offsets } = yield* Projection.read(total);
 });
 ```
 
+`Projection.read(projection)` returns `{ state, offsets }`: the typed state and the
+offset of each input that it is at, read in one transaction. `Progress.offsets` from
+`run` and `pass` gives the same offsets.
+`Projection.forget(projection)` takes the serialized permit, deletes state and checkpoint rows,
+and retires the process lock after its existing callers drain.
+
+The state is one value, and each unit rewrites all of it. Keep it small: a counter,
+a summary, or up to a few hundred rows. Put large row sets in application tables
+through the shared `SqlClient` in an atomic projection. Keyed state is planned.
+See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
+size, generation, and retirement rules.
+
+## Read, decide, append
+
+To validate a command against current state, run the projection, read it, decide,
+and append to its input with `expectedOffset: offsets.input`. If another writer
+moved the tail, the append writes nothing and fails with `OffsetMismatch`. Retry
+the whole step a bounded number of times:
+
+```ts
+const command = Effect.gen(function* () {
+  yield* Projection.run(total);
+  const { state, offsets } = yield* Projection.read(total);
+  if (state >= 100) return "full";
+  const numbers = yield* Numbers;
+  yield* numbers.append({}, [1], { expectedOffset: offsets.input });
+  return "added";
+}).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
+```
+
+See [Read, decide, append](https://streamsy.dev/docs/projections/projections#read-decide-append).
+
 ## Outputs
 
-`Projection.outputs({ id, params, inputs, outputs, state?, process })` declares several pinned outputs.
-Import `Output` from the package root:
+`Projection.outputs({ id, params, inputs, outputs, state?, process })` declares pinned
+outputs. Import `Output` from the package root:
 
 - `Output.stream(schema, { stream })` appends typed JSON items. The option is an id
   or `{ readonly id: string }`; only the id is used, and the declared schema owns encoding.
 - `Output.rows(schema, { key, stream })` appends `Output.upsert(row)` and
   `Output.remove(key)` changes. The output name is the collection type; the kernel owns no rows table.
-- `state: { schema, initial }` declares the state. It is not an output.
+
+```ts
+import { Output } from "@streamsy/projection";
+
+class Totals extends Streamsy.json<Totals>()("Readme/Totals", "totals", {
+  params: {},
+  schema: Schema.Finite,
+}) {}
+
+const totals = Projection.outputs({
+  id: "totals",
+  params: {},
+  inputs: { input: Numbers },
+  outputs: { output: Output.stream(Schema.Finite, { stream: Totals }) },
+  process: (batch) =>
+    Effect.succeed({ output: [batch.input.items.reduce((sum, n) => sum + n, 0)] }),
+});
+```
 
 The handler returns an Effect of `{ <outputName>: [...] }`, with every
-stream/rows output present (use `[]` to skip one). With `state:`, the handler is
+output present (use `[]` to skip one). With `state:`, the handler is
 `(state, batch, unit)`: it gets the prior state first and returns the next state
 in the reserved `state` result key. `state` cannot name an output.
 `Projection.each` concatenates keyed arrays returned by each item's Effect.
 The declaration's `state` field is a source for `Serve.value`.
 
+The output streams are created when absent. Existing outputs are used as they
+are; gone or closed outputs fail with `pin / invalid-output`.
 Each output has its own sequence. Recovery reprocesses the pinned inputs from
 the previous state and resends all pinned outputs; state and checkpoint commit
 together at settle. Processing must be deterministic. There is no atomicity
@@ -131,36 +175,49 @@ See [Outputs](https://streamsy.dev/docs/projections/projections#outputs) for a c
 
 ## Choose a host
 
-In memory:
-
-```ts
-import { layerMemory } from "@streamsy/projection/memory";
-const program = run.pipe(Effect.provide(layerMemory()));
-```
-
-On Bun SQLite, share one storage Layer between the protocol and the projection:
+In memory, build the projection services over the memory stream Layer:
 
 ```ts
 import { Layer } from "effect";
+import { Memory, Streamsy } from "@streamsy/core";
+import * as ProjectionMemory from "@streamsy/projection/memory";
+
+const streams = Streamsy.group(Numbers, Doubled);
+const host = ProjectionMemory.layer.pipe(Layer.provideMerge(Memory.layer({}, streams)));
+const program = run.pipe(Effect.provide(host));
+```
+
+On Bun SQLite, share one storage Layer between the streams and the projection:
+
+```ts
 import * as BunStorage from "@streamsy/storage/bun";
 import * as ProjectionSqlite from "@streamsy/projection/sqlite";
 
 const host = ProjectionSqlite.layer.pipe(
-  Layer.provideMerge(BunStorage.layerProtocol({ client: { filename: "streams.sqlite" } })),
+  Layer.provideMerge(BunStorage.layer({ client: { filename: "streams.sqlite" } }, streams)),
 );
 const program = run.pipe(Effect.provide(host));
 ```
 
-Inside a Durable Object, swap `BunStorage.layerProtocol(...)` for
-`DurableObjectStorage.layerProtocol({ client: { storage: ctx.storage } })` from
+Inside a Durable Object, swap `BunStorage.layer(...)` for
+`DurableObjectStorage.layer({ client: { storage: ctx.storage } }, streams)` from
 `@streamsy/storage/durable-object`, and keep one runtime for the object's
 lifetime.
 
-An atomic handler's writes are exactly-once only when they go through the same
-storage as the checkpoint: `Streams.append` on the same Layer, or SQL on the
-shared `SqlClient`. Writes anywhere else are at-least-once; use `unit.key` as
-an idempotency key for those. The key is stable across pinned outputs
-retries; an atomic retry re-reads and may see a longer input range.
+## Guarantees
+
+| Effect                                                                                           | Guarantee                                                 |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| SQL on the shared `SqlClient` and stream appends on the checkpoint owner, in `Projection.atomic` | Exactly once, with the checkpoint                         |
+| The `state:` value, in either form                                                               | Exactly once, with the checkpoint                         |
+| Outputs on the checkpoint owner, in `Projection.outputs`                                         | Effectively once, through the producer tuple              |
+| An output or atomic stream write on another storage owner                                        | Refused with `unsupported-composition` before it runs     |
+| A call to another system inside the handler                                                      | At least once. A rollback or a recovery repeats the call. |
+
+For calls to another system, use `unit.key` as an idempotency key. The key is
+stable across pinned outputs retries; an atomic retry re-reads and may see a
+longer input range. See
+[Guarantees](https://streamsy.dev/docs/projections/projections#guarantees).
 
 ## Good to know
 
@@ -192,6 +249,32 @@ jittered exponential backoff from 200 ms, capped at 30 s; `retry` accepts a `Sch
 Each successful cycle resets the schedule; a finite budget counts consecutive failed cycles.
 
 Full reference: [streamsy.dev/docs/projections](https://streamsy.dev/docs/projections).
+
+## Migrating from 0.4.0
+
+| 0.4.0                                               | Now                                                                                                  |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| The `fused` constructor                             | `Projection.atomic`                                                                                  |
+| `Projection.stream`                                 | `Projection.outputs` with one `Output.stream`                                                        |
+| `loadState(projection, schema)`                     | `Projection.read(projection)`, which returns `{ state, offsets }`                                    |
+| `record` on `Progress` (`record.inputs`)            | `offsets` on `Progress`                                                                              |
+| The two-argument `fold(initial, step)` in `process` | `state: { schema, initial }` and `fold: (state, entry, unit) => next` on the declaration             |
+| A `value` output in `outputs`                       | `state: { schema, initial }`, and the handler `(state, batch, unit)` returns `{ state, ...outputs }` |
+| `Serve.value` on a bound `value` output             | `Serve.value(declaration.state, path)`                                                               |
+
+In `@streamsy/serve`, the value contract header is now `x-streamsy-value-contract`
+(`VALUE_CONTRACT_HEADER`), and its options type is `ValueOptions`. The old names
+used `document` in place of `value`. Update CORS `allowedHeaders` and
+`exposedHeaders`. A client that sends a fingerprint kept from 0.4.0 gets one 409
+`ContractChanged` and refetches.
+
+**Warning.** A checkpoint written by `Projection.stream` keeps its producer
+position under the output name `stream`. Suppose you move that projection to
+`Projection.outputs` with the same `id`, `version` and `generation`, and name
+the output something else, such as `output`. The new output restarts its
+producer sequence at 0 under the same producer id, and the server drops its
+appends as duplicates, with no error. Name the output `stream`, or declare a
+new `generation`.
 
 ## License
 

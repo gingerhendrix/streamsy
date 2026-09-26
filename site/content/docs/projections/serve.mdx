@@ -99,6 +99,8 @@ const Mine = Serve.stream(Events, "/me", {
 
 A value source declares `id`, `paramSchema`, a JSON-encoded `schema`, and `resolve(params)`, an Effect that reads application services. `Serve.value(source, path)` encodes canonical JSON and computes an ETag from those exact bytes. Conditional GET and HEAD support strong and weak validators. Its default cache policy is `private, max-age=0, must-revalidate`. Missing values fail internally with `ValueUnavailable` and return 503 `DocumentUnavailable`.
 
+A projection declaration with `state:` gives `declaration.state`, a value source over the saved state, as in `Serve.value(tracker.state, "/summary/:seat")` above. It answers 503 until the projection has saved its first unit, where `Projection.read` gives the initial value. Its fingerprint is sent in the `x-streamsy-value-contract` header.
+
 The Cloudflare and Alchemy hosts reconcile alarms after PUT, POST and DELETE, including rejected requests such as a Serve 405; see [Cloudflare](/docs/runtime/cloudflare).
 
 ## Browser contract and CORS

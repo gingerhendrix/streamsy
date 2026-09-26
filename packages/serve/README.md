@@ -70,6 +70,13 @@ Fingerprints cover route/address metadata and an optional `contract` revision;
 change that revision when codec behavior changes without metadata changing.
 Fingerprints are change detectors, not authorization or cryptographic identities.
 
+The value contract header is `x-streamsy-value-contract` (`VALUE_CONTRACT_HEADER`
+in `/contract`), and `Serve.value` options are `ValueOptions`. In 0.4.0, both
+names used `document` in place of `value`, and the value fingerprint changed with
+them. Update CORS header lists when you upgrade. A projection's served state is
+`Serve.value(declaration.state, path)`; see the
+[@streamsy/projection README](../projection/README.md#migrating-from-040).
+
 Guides: [Serve](https://streamsy.dev/docs/projections/serve),
 [HTTP](https://streamsy.dev/docs/runtime/http),
 [Cloudflare](https://streamsy.dev/docs/runtime/cloudflare),

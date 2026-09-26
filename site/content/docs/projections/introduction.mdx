@@ -8,9 +8,9 @@ A projection is a named, typed, checkpointed consumer of one or more input strea
 The kernel is one pass, repeated: restore the checkpoint, read every input in declaration order, run the handler over one unit, commit the checkpoint. `@streamsy/projection` ships two forms of that pass.
 
 - `Projection.atomic` is the atomic form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint. A stream write to a stream on another storage owner fails before it runs.
-- `Projection.outputs` with one `Output.stream` is the stream-output form. The handler returns items, the kernel pins the unit's input ranges in the checkpoint, then appends the items to an output stream under a producer tuple. A retry reproduces the pinned ranges and sends the same tuple, so the output sees each unit once. The output stream must share the checkpoint owner; the runner checks that before any write.
+- `Projection.outputs` is the declared-output form. The handler returns items for named outputs: `Output.stream` for typed items and `Output.rows` for Durable State changes. The kernel pins the unit's input ranges in the checkpoint, then appends each output under its own producer tuple. A retry reproduces the pinned ranges and sends the same tuples, so each output sees each unit once. The output streams must share the checkpoint owner; the runner checks that before any write. See [Outputs](/docs/projections/projections#outputs).
 
-`Projection.outputs` is the named stream form: `Output.stream` and `Output.rows`, with optional `state:`. Each stream/rows output has its own producer sequence; the state settles with the checkpoint. See [Outputs](/docs/projections/projections#outputs).
+Both forms take the optional `state:` and are read with `Projection.read`, which returns the state and the input offsets it is at. The [guarantees table](/docs/projections/projections#guarantees) lists what each form promises.
 
 ## Inputs, unit, checkpoint
 

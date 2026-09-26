@@ -107,6 +107,22 @@ Each output has its own sequence. An empty output gets no append and consumes no
 
 The producer id always includes the version: `id/v<version>[/canonicalParamsJson]`, including version 1. A new version or generation should write to a new event stream. Named outputs do not add cross-partition transactional writes, dynamic fan-in, or keyed fan-out. Per-item identity still depends on the input batch; `limit: 1` limits units, not items. Use a source event identity for an item-stable external idempotency key.
 
+## Guarantees
+
+What a unit does to the world decides how many times it takes effect.
+
+| Effect                                                                                                | Guarantee                                                                                         |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| SQL through the shared `SqlClient` and stream appends on the checkpoint owner, in `Projection.atomic` | Exactly once. The writes commit or roll back with the checkpoint.                                 |
+| The `state:` value, in either kind                                                                    | Exactly once. It is saved in the same transaction as the checkpoint.                              |
+| Stream and rows outputs on the checkpoint owner, in `Projection.outputs`                              | Effectively once. A retry sends the same producer tuple, and the server drops the duplicate.      |
+| A declared output on another storage owner                                                            | Refused with `load / unsupported-composition` before the first read. Nothing is written.          |
+| A stream write on another storage owner, in `Projection.atomic`                                       | Refused with `process / unsupported-composition` before the write runs. The unit commits nothing. |
+| A call to another system inside the handler, including SQL on another client                          | At least once. A rollback or a recovery runs the handler again, and the call repeats.             |
+| The [action sink](/docs/projections/action-sink) (outbox and drain)                                   | At least once. Once in effect, if the receiver checks the idempotency key.                        |
+
+`Projection.read` reads the state and its offsets in one transaction, so the two always match. See [State](#state).
+
 ## Running
 
 `Projection.run` repeats passes until an empty pass reports `caught-up`, every input is closed and drained (`source-closed`), or the unit limit is reached (`limit-reached`). `Projection.pass` runs one unit. Both return a `Progress` with `status`, `units`, `items`, and `offsets`, the accepted offset of each input; a non-empty pass reports `progress`.
@@ -204,7 +220,7 @@ The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request a
 
 ## Parameters
 
-A declaration owns its parameter codecs and names streams as its inputs and outputs. Each input and output stream must declare a subset of the projection parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `at` encodes every parameter to strings for the checkpoint key and producer id, and returns the bound projection over the matching stream addresses. The handler and a `fold` initial function read the decoded values. A stream that declares fewer names is shared by every binding, and `parse` on it returns only that subset. `parse` tries input streams in declaration order and returns the decoded subset from the first match. Output streams and fixed addresses are not parsed.
+A declaration owns its parameter codecs and names streams as its inputs and outputs. Each input and output stream must declare a subset of the projection parameter names, and a shared name must have the same decoded type; a mismatch is a type error. `at` encodes every parameter to strings for the checkpoint key and producer id, and returns the bound projection over the matching stream addresses. The handler and a `state.initial` function read the decoded values. A stream that declares fewer names is shared by every binding, and `parse` on it returns only that subset. `parse` tries input streams in declaration order and returns the decoded subset from the first match. Output streams and fixed addresses are not parsed.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -241,7 +257,7 @@ The package keeps no list of bound params. Bind each one and watch it; `Effect.f
 
 Use `Projection.forget(bound)` when a bound projection is retired, after stopping its live triggers; see [State](#state).
 
-Serve reads outputs without checking inputs. An initial read of an absent output stream answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Reads create no stream, checkpoint, or state row. Without on-demand run middleware, a bound projection that never ran keeps answering 503 on its document until it runs. See the complete [issue tracker projection](/docs/demos/issue-tracker).
+Serve reads outputs without checking inputs. An initial read of an absent output stream answers 404; an absent persisted value answers 503 `DocumentUnavailable`. Reads create no stream, checkpoint, or state row. Without on-demand run middleware, a bound projection that never ran keeps answering 503 on its value until it runs. See the complete [issue tracker projection](/docs/demos/issue-tracker).
 
 ## State
 
@@ -273,13 +289,25 @@ const program = Effect.gen(function* () {
 });
 ```
 
-`Projection.read(projection)` reads the state row and the checkpoint row in one transaction and returns `{ state, offsets }`. `offsets` has one entry per input: the offset the state is at. Before the first unit, `state` is the initial value and each offset is the start of its input. The initial value is used only when the row is absent; it may also be a function of the decoded params.
+`fold: (state, entry, unit) => next` is the step. It gets one entry, as `Projection.items` gives it, and may return the next value or an Effect of it. An atomic projection with `state:` gives `fold` and no `process`.
 
-`State.save` and `State.remove` are correct only inside the owner transaction, through `Checkpoints.withTransaction`. An atomic handler is already inside it. Both shipped Layers provide `State` with `Checkpoints`, so a handler failure, interruption, or checkpoint token conflict rolls back the state and checkpoint together.
+`Projection.read(projection)` reads the state row and the checkpoint row in one transaction and returns `{ state, offsets }`. `offsets` has one entry per input, keyed by input name: the offset the state is at. Before the first unit, `state` is the initial value and each offset is the start of its input. The initial value is used only when the row is absent; it may also be a function of the decoded params. A projection without `state:` reads as `{ state: undefined, offsets }`.
+
+`Progress.offsets` from `run` and `pass` gives the same offsets. After `run` returns `caught-up`, `progress.offsets` equals `Projection.read(projection).offsets`, unless another runner accepted a unit in between.
+
+An outputs projection declares state the same way. Its handler is `(state, batch, unit)` and returns an Effect of `{ state, ...outputs }`; see the `tracker` example in [Outputs](#outputs). The runner saves the returned state with the checkpoint after every output append settles. A recovery reprocesses the pinned inputs from the state before the unit. The declaration's `state` field is a source for `Serve.value`; see [Serve](/docs/projections/serve).
+
+The runner, `Projection.read`, and `Projection.forget` use the `State` service. Its `load`, `save`, and `remove` methods are internal: `save` and `remove` are correct only inside the owner transaction, through `Checkpoints.withTransaction`. Both shipped Layers provide `State` with `Checkpoints`, so a handler failure, interruption, or checkpoint token conflict rolls back the state and checkpoint together.
 
 There is one row per key, and every save overwrites it. There is no history, compaction, or cadence option. Restoring a checkpoint does not read the state row; `fold` or `Projection.read` reads it explicitly. A state schema change is a new generation.
 
-Fold state is for the value a handler needs between passes. Row sets belong in application tables through the shared `SqlClient`; the kernel keeps the cut. An Effect step can write those rows and return the next fold value inside the atomic transaction:
+### Size
+
+The state is one value. Each unit decodes the whole value, and saves the whole value again. This suits small values: a counter, a summary, or a set of up to a few hundred rows. The cost of a unit grows with the size of the value, not with the size of the batch.
+
+Large row sets belong in application tables in an atomic projection, through the shared `SqlClient`; the kernel keeps the cut. The [issue tracker](/docs/demos/issue-tracker) keeps every issue of a workspace in one value, so it is past this size. Keyed state, which saves only the changed rows, is planned.
+
+An Effect step can write those rows and return the next state inside the atomic transaction:
 
 ```ts
 import { SqlClient } from "effect/unstable/sql";
@@ -309,6 +337,49 @@ Forgetting does not delete streams. Do not forget a stream-form projection while
 Layer authors must provide `State` from the same store and owner transaction as `Checkpoints` for atomic projections. `fromStore` and `stateFromStore` from `@streamsy/projection/checkpoint`, given one `EncodedStore`, build the two services over that store. This is a Layer-author rule, not a runtime check.
 
 The [hex board demo](/docs/demos/hex-board) is the worked example, including restart and rollback evidence and the state-size measurement: a 21,599 B final encoded row, with a 22,944 B maximum in the measured game.
+
+## Read, decide, append
+
+A command that must see the current state before it writes can use a projection as its view. Run the projection, read its state and offsets, decide, then append to the input stream with `expectedOffset`. The append succeeds only if the stream tail is still the offset the state is at.
+
+```ts
+import { Effect, Schema } from "effect";
+import { Streamsy } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
+
+class Seats extends Streamsy.json<Seats>()("Venue/Seats", "seats", {
+  params: {},
+  schema: Schema.Struct({ seat: Schema.String }),
+}) {}
+
+const taken = Projection.atomic({
+  id: "taken-seats",
+  params: {},
+  inputs: { input: Seats },
+  state: { schema: Schema.Array(Schema.String), initial: [] },
+  fold: (seats, { item }) => [...seats, item.seat],
+}).at({});
+
+const reserve = (seat: string) =>
+  Effect.gen(function* () {
+    yield* Projection.run(taken);
+    const { state, offsets } = yield* Projection.read(taken);
+    if (state.includes(seat)) return { _tag: "Rejected" as const };
+    const seats = yield* Seats;
+    const appended = yield* seats.append({}, [{ seat }], { expectedOffset: offsets.input });
+    return { _tag: "Reserved" as const, offset: appended.offset };
+  }).pipe(Effect.retry({ while: (error) => error._tag === "OffsetMismatch", times: 5 }));
+```
+
+1. `Projection.run` brings the state up to the stream tail. Do not give it a `limit`: a run that stops early leaves the offsets behind the tail, and every append fails.
+2. `Projection.read` gives the state and the offset it is at, from one transaction.
+3. The decision reads only `state`. A rejection writes nothing.
+4. The append passes `expectedOffset: offsets.input`. If another writer appended after the read, the tail moved, the append writes nothing, and it fails with `OffsetMismatch`.
+5. The retry runs all four steps again, so the decision uses the new state. Retry only `OffsetMismatch`, and bound the number of retries.
+
+The append target must be the input that `offsets.input` names. The offset of one stream says nothing about the tail of another stream. See [Conditional writes](/docs/streams/writing#conditional-writes) for `expectedOffset` on its own.
+
+The Hacker News poller in [`examples/hackernews-newest-stream/src/server/poller/`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/hackernews-newest-stream/src/server/poller) is the working example. Its projection folds the served story rows into one state value. Each poll runs the projection, reads the rows and their offset, compares them with the fetched newest stories, and appends the changes with `expectedOffset`. It retries a moved tail a bounded number of times. See the [Hacker News newest demo](/docs/demos/hackernews-newest-stream).
 
 ## Checkpoints and generations
 
