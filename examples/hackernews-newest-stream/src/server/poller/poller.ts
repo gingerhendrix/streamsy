@@ -1,7 +1,7 @@
 import { Deferred, Effect, Layer, Option, Ref, Schedule } from "effect";
 import { DurableState } from "@streamsy/core";
 import { Projection, type Checkpoints, type State } from "@streamsy/projection";
-import { newestRows, StoryRows, applyChange } from "../newest-rows.ts";
+import { newestRows, applyChange } from "../newest-rows.ts";
 import { HackerNewsStories, storiesAddress } from "../stories.ts";
 import { liveHackerNewsApi } from "../hnews.ts";
 import { errorMessage, nowIso } from "../util.ts";
@@ -52,13 +52,10 @@ export function makeNewestStoriesPoller(
         };
         for (let attempt = 0; ; attempt++) {
           const outcome = yield* Effect.gen(function* () {
-            const progress = yield* Projection.run(newestRows);
-            // The initial projection record supplies ZERO_OFFSET for a fresh store.
-            const token = progress.record.inputs.input;
-            const rows = Option.getOrElse(
-              yield* Projection.loadState(newestRows, StoryRows),
-              () => ({}),
-            );
+            yield* Projection.run(newestRows);
+            // One read gives the rows and the offset they are at; a fresh store gives ZERO_OFFSET.
+            const { state: rows, offsets } = yield* Projection.read(newestRows);
+            const token = offsets.input;
             const changes = diffNewest(rows, fetched);
             const events = DurableState.changes(storiesAddress, { offset: token }, changes);
             const offset =

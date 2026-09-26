@@ -18,5 +18,6 @@ export const newestRows = Projection.atomic({
   id: "hn-newest-rows",
   params: {},
   inputs: { input: storiesAddress },
-  process: Projection.fold(StoryRows, {}, (rows, { item }) => applyChange(rows, item)),
+  state: { schema: StoryRows, initial: {} },
+  fold: (rows, { item }) => applyChange(rows, item),
 }).at({});

@@ -54,8 +54,12 @@ the decoded values from `unit.params`. See
 [Streams](https://streamsy.dev/docs/projections/projections#streams).
 
 `Projection.State` provides one encoded value per key in the checkpoint transaction.
-`Projection.fold(schema, initial, step)` loads, folds, and saves that value once per pass.
-`Projection.loadState(projection, schema)` reads the typed value as an `Option`.
+A declaration with `state: { schema, initial }` owns that value. An atomic projection
+with `state:` gives `fold: (state, entry, unit) => next`, which loads, folds, and saves
+the value once per pass.
+`Projection.read(projection)` returns `{ state, offsets }`: the typed state and the input
+offsets it is at, read in one transaction. `Progress.offsets` from `run` and `pass` gives the
+same offsets.
 `Projection.forget(projection)` takes the serialized permit, deletes state and checkpoint rows,
 and retires the process lock after its existing callers drain.
 See [State](https://streamsy.dev/docs/projections/projections#state) for transaction,
@@ -100,21 +104,21 @@ const totals = Projection.outputs({
 
 ## Outputs
 
-`Projection.outputs({ id, params, inputs, outputs, process })` declares several pinned outputs.
+`Projection.outputs({ id, params, inputs, outputs, state?, process })` declares several pinned outputs.
 Import `Output` from the package root:
 
 - `Output.stream(schema, { stream })` appends typed JSON items. The option is an id
   or `{ readonly id: string }`; only the id is used, and the declared schema owns encoding.
 - `Output.rows(schema, { key, stream })` appends `Output.upsert(row)` and
   `Output.remove(key)` changes. The output name is the collection type; the kernel owns no rows table.
-- `Output.value(schema)` declares the fold state. At most one value is allowed.
+- `state: { schema, initial }` declares the state. It is not an output.
 
-The handler returns an Effect of `{ state?, <outputName>: [...] }`, with every
-stream/rows output present (use `[]` to skip one). A value uses the reserved
-`state` result key. `Projection.fold(initial, (state, batch, unit) => result)`
-loads that value and runs once per batch; the result may also be an Effect.
+The handler returns an Effect of `{ <outputName>: [...] }`, with every
+stream/rows output present (use `[]` to skip one). With `state:`, the handler is
+`(state, batch, unit)`: it gets the prior state first and returns the next state
+in the reserved `state` result key. `state` cannot name an output.
 `Projection.each` concatenates keyed arrays returned by each item's Effect.
-The three-argument atomic `fold(schema, initial, step)` is unchanged.
+The declaration's `state` field is a source for `Serve.value`.
 
 Each output has its own sequence. Recovery reprocesses the pinned inputs from
 the previous state and resends all pinned outputs; state and checkpoint commit

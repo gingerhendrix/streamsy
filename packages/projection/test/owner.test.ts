@@ -134,7 +134,7 @@ for (const method of [
   });
 }
 
-test("a value output on a foreign State owner fails before processing", async () => {
+test("declared state on a foreign State owner fails before processing", async () => {
   const foreignState = Layer.effect(Projection.State, Projection.State).pipe(
     Layer.provide(Layer.fresh(foreign)),
   );
@@ -146,7 +146,8 @@ test("a value output on a foreign State owner fails before processing", async ()
         id: "foreign-state",
         params: {},
         inputs: { input: Input.at({}) },
-        outputs: { total: Output.value(Schema.Finite) },
+        outputs: {},
+        state: { schema: Schema.Finite, initial: 0 },
         process: () =>
           Effect.sync(() => {
             processed = true;

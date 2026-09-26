@@ -4,7 +4,7 @@ description: A complete board folded into transactional state, with SQLite resta
 ---
 
 The slim `examples/hex-board` package proves persisted fold state. It replays
-canonical game events into a board and a move ordinal. `Projection.fold` saves
+canonical game events into a board and a move ordinal. Its `fold` step saves
 one state row in the same transaction as the checkpoint; a restarted runtime
 reads both and resumes from that cut.
 
@@ -19,12 +19,11 @@ const board = Projection.atomic({
   id: "hex-board",
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },
-  process: Projection.fold(BoardState, initialBoard, (state, { item }, unit) =>
-    stepBoard(state, item, unit.ranges.input.nextOffset),
-  ),
+  state: { schema: BoardState, initial: initialBoard },
+  fold: (state, { item }, unit) => stepBoard(state, item, unit.ranges.input.nextOffset),
 });
 
-const current = Projection.loadState(board.at({ gameId: "game" }), BoardState);
+const { state, offsets } = yield * Projection.read(board.at({ gameId: "game" }));
 ```
 
 `ranges.input` is present in an atomic single-input pass, because an empty read never reaches the handler.

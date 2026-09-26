@@ -1,8 +1,8 @@
 import { Streamsy } from "@streamsy/core";
 import { Http } from "@streamsy/core";
-import { Checkpoints, Projection, type State } from "@streamsy/projection";
+import { Projection, type State } from "@streamsy/projection";
 import { Serve } from "@streamsy/serve";
-import { Effect, Layer, Option, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { SqlClient } from "effect/unstable/sql";
 import { CommandRequest } from "../shared/api.ts";
@@ -18,10 +18,10 @@ export const workspaceSummary: Serve.ValueSource<
   State
 > = {
   id: "issue-tracker/summary",
-  paramSchema: tracker.outputs.workspace.paramSchema,
+  paramSchema: tracker.state.paramSchema,
   schema: WorkspaceSummary,
   resolve: (params) =>
-    tracker.outputs.workspace.resolve(params).pipe(
+    tracker.state.resolve(params).pipe(
       Effect.map((state) => ({
         workspaceId: state.workspaceId,
         issueCount: state.issueCount,
@@ -105,15 +105,8 @@ export const app = (workspaces: ReadonlyArray<string>) => {
       return json({ workspaceId, rows });
     }
     if (resource !== "status") return json({ error: "Not found" }, { status: 404 });
-    const checkpoints = yield* Checkpoints;
-    const loaded = yield* checkpoints.load(Projection.key(issueRows.at({ workspaceId })));
-    return json({
-      workspaceId,
-      offsets: Option.match(loaded.record, {
-        onNone: () => ({}),
-        onSome: (record) => record.inputs,
-      }),
-    });
+    const { offsets } = yield* Projection.read(issueRows.at({ workspaceId }));
+    return json({ workspaceId, offsets });
   }).pipe(
     Effect.tapError((error) => Effect.logError(error)),
     Effect.catch(() =>

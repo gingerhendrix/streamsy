@@ -32,7 +32,6 @@ export const board = Projection.atomic({
   id: "hex-board",
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },
-  process: Projection.fold(BoardState, initialBoard, (state, { item }, unit) =>
-    stepBoard(state, item, unit.ranges.input.nextOffset),
-  ),
+  state: { schema: BoardState, initial: initialBoard },
+  fold: (state, { item }, unit) => stepBoard(state, item, unit.ranges.input.nextOffset),
 });

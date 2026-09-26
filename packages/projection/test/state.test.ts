@@ -1,6 +1,6 @@
 import { runKernel, run as runWithPermit } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
-import { Streamsy } from "@streamsy/core";
+import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +27,8 @@ const total = Projection.atomic({
   params: {},
   version: 2,
   inputs: { input },
-  process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
+  state: { schema: Schema.Finite, initial: 0 },
+  fold: (sum, { item }) => sum + item,
 }).at({});
 const sqliteProtocol = (filename = ":memory:") =>
   Sqlite.layer.pipe(Layer.provideMerge(BunStorage.layerProtocol({ client: { filename } })));
@@ -62,10 +63,9 @@ for (const [name, host] of hosts) {
           yield* State;
           yield* seed;
           expect((yield* Projection.run(total)).items).toBe(2);
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
-          expect(yield* Projection.loadState({ ...total, version: 1 }, Schema.Finite)).toEqual(
-            Option.none(),
-          );
+          expect((yield* Projection.read(total)).state).toBe(5);
+          expect(yield* (yield* State).load({ ...total, version: 1 })).toEqual(Option.none());
+          expect((yield* Projection.read({ ...total, version: 1 })).state).toBe(0);
           const checkpoints = yield* Checkpoints;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7, 11]);
@@ -74,16 +74,16 @@ for (const [name, host] of hosts) {
             params: {},
             version: total.version,
             inputs: { input },
-            process: Projection.fold(Schema.Finite, 0, (sum, { item }) =>
+            state: { schema: Schema.Finite, initial: 0 },
+            fold: (sum, { item }) =>
               item === 11 ? Effect.fail("second item") : Effect.succeed(sum + item),
-            ),
           }).at({});
           const failure = yield* Projection.run(failing).pipe(Effect.result);
           expect(failure._tag).toBe("Failure");
           expect(yield* checkpoints.load(total)).toEqual(before);
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
+          expect((yield* Projection.read(total)).state).toBe(5);
           expect((yield* Projection.run(total)).items).toBe(2);
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(23));
+          expect((yield* Projection.read(total)).state).toBe(23);
         }),
       );
     } finally {
@@ -116,7 +116,7 @@ for (const [name, host] of hosts) {
           const failed = yield* Projection.run(saveThenFail).pipe(Effect.result);
           expect(failed._tag).toBe("Failure");
           expect(yield* checkpoints.load(total)).toEqual(before);
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
+          expect((yield* Projection.read(total)).state).toBe(5);
         }),
       );
     } finally {
@@ -146,7 +146,7 @@ for (const [name, host] of hosts) {
           if (failed._tag === "Failure")
             expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
           expect(yield* owner.load(total)).toEqual(before);
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
+          expect((yield* Projection.read(total)).state).toBe(5);
         }),
       );
     } finally {
@@ -167,7 +167,11 @@ for (const [name, host] of hosts) {
           expect(hasLock(recordKey(total))).toBe(false);
           const checkpoints = yield* Checkpoints;
           expect(yield* checkpoints.load(total)).toEqual({ record: Option.none(), token: "0" });
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.none());
+          expect(yield* (yield* State).load(total)).toEqual(Option.none());
+          expect(yield* Projection.read(total)).toEqual({
+            state: 0,
+            offsets: { input: ZERO_OFFSET },
+          });
           yield* Projection.forget(total);
           yield* Projection.forget({ ...total, id: "never-ran" });
           expect((yield* Projection.run(total)).items).toBe(2);
@@ -197,7 +201,7 @@ for (const [name, host] of hosts) {
           expect(result._tag).toBe("Failure");
           expect(hasLock(recordKey(total))).toBe(true);
           expect(yield* checkpoints.load(total)).toEqual(before);
-          expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(5));
+          expect((yield* Projection.read(total)).state).toBe(5);
           yield* forget(total);
         }),
       );
@@ -219,9 +223,7 @@ test("SQLite file restart retains folded state and reads zero new items", async 
   const second = ManagedRuntime.make(sqlite(filename));
   try {
     expect((await second.runPromise(Projection.run(total))).items).toBe(0);
-    expect(await second.runPromise(Projection.loadState(total, Schema.Finite))).toEqual(
-      Option.some(5),
-    );
+    expect((await second.runPromise(Projection.read(total))).state).toBe(5);
   } finally {
     await second.dispose();
     rmSync(directory, { recursive: true });
@@ -235,7 +237,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       const checkpoints = yield* Checkpoints;
       for (const encoded of ["{broken", '"not a number"']) {
         yield* checkpoints.withTransaction(state.save(total, encoded));
-        const failed = yield* Projection.loadState(total, Schema.Finite).pipe(Effect.result);
+        const failed = yield* Projection.read(total).pipe(Effect.result);
         expect(failed._tag).toBe("Failure");
         if (failed._tag === "Failure")
           expect(failed.failure).toMatchObject({ phase: "load", reason: "invalid-record" });
@@ -247,7 +249,8 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
         params: {},
         version: total.version,
         inputs: { input },
-        process: Projection.fold(Schema.Finite, 0, () => Infinity),
+        state: { schema: Schema.Finite, initial: 0 },
+        fold: () => Infinity,
       }).at({});
       const failed = yield* Projection.run(invalid).pipe(Effect.result);
       if (failed._tag === "Failure")
@@ -264,14 +267,14 @@ test("stream state rows are separate and initial factory receives params only on
     id: "state-stream",
     params: { name: Schema.String },
     inputs: { numbers },
-    process: Projection.fold(
-      Schema.Finite,
-      (params) => {
+    state: {
+      schema: Schema.Finite,
+      initial: (params) => {
         calls.push(params.name);
         return params.name === "a" ? 10 : 20;
       },
-      (sum, { item }) => sum + item,
-    ),
+    },
+    fold: (sum, { item }) => sum + item,
   });
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -282,9 +285,7 @@ test("stream state rows are separate and initial factory receives params only on
         yield* Projection.run(bound);
         yield* Streams.append(bound.inputs.numbers, [2]);
         yield* Projection.run(bound);
-        expect(yield* Projection.loadState(bound, Schema.Finite)).toEqual(
-          Option.some(name === "a" ? 13 : 23),
-        );
+        expect((yield* Projection.read(bound)).state).toBe(name === "a" ? 13 : 23);
       }
       expect(calls).toEqual(["a", "b"]);
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
@@ -297,12 +298,9 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
     id: "tagged",
     params: {},
     inputs: { input, words },
-    process: Projection.fold(
-      Schema.String,
-      "",
-      (value, entry) =>
-        value + (entry.input === "input" ? entry.item.toFixed(0) : entry.item.toUpperCase()),
-    ),
+    state: { schema: Schema.String, initial: "" },
+    fold: (value, entry) =>
+      value + (entry.input === "input" ? entry.item.toFixed(0) : entry.item.toUpperCase()),
   }).at({});
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -310,7 +308,7 @@ test("tagged multi-input fold narrows items and follows declaration order", asyn
       yield* Streams.create(words);
       yield* Streams.append(words, ["a"]);
       yield* Projection.run(projection);
-      expect(yield* Projection.loadState(projection, Schema.String)).toEqual(Option.some("23A"));
+      expect((yield* Projection.read(projection)).state).toBe("23A");
     }).pipe(Effect.provide(FamilyFixture.withFamilies(Memory.layerMemory(), numbers))),
   );
 });
@@ -372,7 +370,7 @@ test("SQLite competing commit during the read window preserves the winner's stat
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure")
           expect(result.failure).toMatchObject({ phase: "checkpoint", reason: "token-conflict" });
-        expect(yield* Projection.loadState(total, Schema.Finite)).toEqual(Option.some(12));
+        expect((yield* Projection.read(total)).state).toBe(12);
         expect((yield* owner.load(total)).token).toBe("2");
       }),
     );
@@ -393,14 +391,14 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
         id: "counted",
         params: {},
         inputs: { input },
-        process: Projection.fold(
-          Schema.Finite,
-          () => {
+        state: {
+          schema: Schema.Finite,
+          initial: () => {
             starts += 1;
             return 0;
           },
-          (sum, { item }) => sum + item,
-        ),
+        },
+        fold: (sum, { item }) => sum + item,
       }).at({});
       const run = Projection.run(counted).pipe(
         Effect.provideService(State, {

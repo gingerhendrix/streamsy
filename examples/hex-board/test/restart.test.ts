@@ -9,7 +9,7 @@ import { Checkpoints, Projection, State } from "@streamsy/projection";
 import * as Memory from "@streamsy/projection/memory";
 import * as Sqlite from "@streamsy/projection/sqlite";
 import * as BunStorage from "@streamsy/storage/bun";
-import { BoardState, board as hexBoard, initialBoard, stepBoard } from "../src/board/fold.ts";
+import { type BoardState, board as hexBoard, initialBoard, stepBoard } from "../src/board/fold.ts";
 import { moveId, MOVE_FEED_LIMIT } from "../src/board/projection.ts";
 import type { GameEvent } from "../src/domain/events.ts";
 import { fullGame, longGame } from "./fixtures.ts";
@@ -29,13 +29,14 @@ const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
     expect((yield* Projection.run(board)).items).toBe(cut);
   });
 const snapshot = Effect.gen(function* () {
-  const state = Option.getOrThrow(yield* Projection.loadState(board, BoardState));
+  const { state, offsets } = yield* Projection.read(board);
   const checkpoint = yield* (yield* Checkpoints).load(board);
-  return { state, checkpoint, encoded: yield* (yield* State).load(board) };
+  return { state, offsets, checkpoint, encoded: yield* (yield* State).load(board) };
 });
 const read = Effect.gen(function* () {
-  const { state, checkpoint, encoded } = yield* snapshot;
+  const { state, offsets, checkpoint, encoded } = yield* snapshot;
   const tail = (yield* (yield* GameEvents).head(params)).nextOffset;
+  expect(offsets.input).toBe(tail);
   expect(Option.getOrThrow(checkpoint.record).inputs.input).toBe(tail);
   expect(state.board.sourceThroughOffset).toBe(tail);
   return { state, checkpoint, tail, encoded };

@@ -33,9 +33,43 @@ const atomicRun = Projection.run(atomic);
 const namedRun = Projection.run(named);
 const namedWatch = Projection.watch(named);
 const namedFollow = Projection.follow(named);
+const Totals = Schema.Struct({ sum: Schema.Finite, words: Schema.Array(Schema.String) });
+const folded = Projection.atomic({
+  id: "types/folded",
+  params: { id: Schema.String },
+  inputs: { input: Input, other: Other },
+  state: { schema: Totals, initial: { sum: 0, words: [] } },
+  fold: (totals, entry) =>
+    entry.input === "input"
+      ? { ...totals, sum: totals.sum + entry.item }
+      : { ...totals, words: [...totals.words, entry.item] },
+});
+const foldedRead = Projection.read(folded.at({ id: "a" }));
+const statefulOutputs = Projection.outputs({
+  id: "types/stateful-outputs",
+  params: { id: Schema.String },
+  inputs: { input: Input },
+  outputs: { result: Output.stream(Schema.Finite, { stream: Result }) },
+  state: { schema: Schema.Finite, initial: ({ id }) => id.length },
+  process: (count, batch) =>
+    Effect.succeed({ state: count + batch.input.items.length, result: batch.input.items }),
+});
+const statefulRead = Projection.read(statefulOutputs.at({ id: "a" }));
+const statelessRead = Projection.read(named);
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
+type SuccessOf<T> = T extends Effect.Effect<infer A, any, any> ? A : never;
 export type Checks = [
+  Assert<Same<SuccessOf<typeof foldedRead>["state"], typeof Totals.Type>>,
+  Assert<Same<keyof SuccessOf<typeof foldedRead>["offsets"], "input" | "other">>,
+  Assert<Same<SuccessOf<typeof foldedRead>["offsets"]["other"], string>>,
+  Assert<Same<SuccessOf<typeof statefulRead>["state"], number>>,
+  Assert<Same<keyof SuccessOf<typeof statefulRead>["offsets"], "input">>,
+  Assert<Same<SuccessOf<typeof statelessRead>["state"], undefined>>,
+  Assert<Same<keyof SuccessOf<typeof statelessRead>["offsets"], "input" | "other">>,
+  Assert<Same<keyof SuccessOf<typeof namedRun>["offsets"], "input" | "other">>,
+  Assert<Same<Effect.Services<typeof foldedRead>, Checkpoints | State>>,
+  Assert<Same<typeof statefulOutputs.state.id, string>>,
   Assert<Same<Effect.Services<typeof atomicRun>, Input | Checkpoints>>,
   Assert<Same<Effect.Services<typeof namedRun>, Input | Other | Result | State | Checkpoints>>,
   Assert<
@@ -181,3 +215,37 @@ declared.at({ id: 1 });
 // @ts-expect-error runners take the bound value, not the declaration.
 Projection.run(declared);
 // oxlint-enable effecttsgo/any-unknown-in-error-context, effecttsgo/floating-effect
+
+// @ts-expect-error fold needs a state: field
+Projection.atomic({
+  id: "fold-without-state",
+  params: {},
+  inputs: { input: Input.at({ id: "a" }) },
+  fold: (sum: number) => sum,
+});
+// @ts-expect-error an atomic projection with state: takes fold, not process
+Projection.atomic({
+  id: "state-without-fold",
+  params: {},
+  inputs: { input: Input.at({ id: "a" }) },
+  state: { schema: Schema.Finite, initial: 0 },
+  process: () => Effect.void,
+});
+Projection.atomic({
+  id: "fold-returns-wrong-state",
+  params: {},
+  inputs: { input: Input.at({ id: "a" }) },
+  state: { schema: Schema.Finite, initial: 0 },
+  // @ts-expect-error the step returns the declared state type
+  fold: () => "wrong",
+});
+Projection.outputs({
+  id: "state-arg-without-state",
+  params: {},
+  inputs: { input: Input.at({ id: "a" }) },
+  outputs: {},
+  // @ts-expect-error without state: the handler gets no state argument
+  process: (_state: number, _batch: string) => Effect.succeed({}),
+});
+// @ts-expect-error a stateless declaration has no state source
+void declared.state;

@@ -68,7 +68,7 @@ const collect = Effect.gen(function* () {
     board: yield* Addresses.readOutput(tracker.outputs.board, "live"),
     counts: yield* Addresses.readOutput(tracker.outputs.labelCounts, "live"),
     transitions: yield* Addresses.readOutput(tracker.outputs.transitions, "live"),
-    summary: yield* tracker.outputs.workspace.resolve({ workspaceId: "live" }),
+    summary: yield* tracker.state.resolve({ workspaceId: "live" }),
   };
 });
 const run = (failOn: number | undefined) =>

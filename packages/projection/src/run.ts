@@ -8,14 +8,23 @@ import { ProjectionFault } from "./fault.ts";
 import type { Atomic, Projection } from "./projection.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passStream } from "./stream-output.ts";
+import type { Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
 
-export interface Progress {
+export interface Progress<Inputs extends InputMap = InputMap> {
   readonly status: "progress" | "caught-up" | "source-closed" | "limit-reached";
   readonly units: number;
   readonly items: number;
-  readonly record: Pick<CheckpointRecord, "identity" | "inputs">;
+  /** The accepted offset of each input after this call. */
+  readonly offsets: Offsets<Inputs>;
 }
+
+/** Internal: the offsets of a record, typed by the declared inputs. */
+export const offsetsOf = <Inputs extends InputMap>(record: {
+  readonly inputs: Record<string, string>;
+}): Offsets<Inputs> =>
+  // SAFETY: a restored or advanced record has one offset for every declared input.
+  record.inputs as Offsets<Inputs>;
 
 /** One atomic unit: restore, read every input, then process and checkpoint in the owner transaction. */
 export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
@@ -25,11 +34,15 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
 >(
   projection: Atomic<Inputs, E, R>,
   options: RunOptions = {},
-): Effect.fn.Return<Progress, E | ProjectionFault, R | Checkpoints | InputServices<Inputs>> {
+): Effect.fn.Return<
+  Progress<Inputs>,
+  E | ProjectionFault,
+  R | Checkpoints | InputServices<Inputs>
+> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
   const before = yield* restore(projection, owner);
-  const empty = { units: 0, items: 0, record: before.record };
+  const empty = { units: 0, items: 0, offsets: offsetsOf<Inputs>(before.record) };
   const read = yield* readInputs(projection.inputs, before.record.inputs);
   const slices = Object.values<Slice<unknown>>(read.slices);
   const closed = slices.every((slice) => slice.closed);
@@ -79,7 +92,7 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
     status: "progress",
     units: 1,
     items: read.items,
-    record,
+    offsets: offsetsOf<Inputs>(record),
   };
 });
 
@@ -87,7 +100,11 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
 export const pass = <Inputs extends InputMap, E, R, OR = never>(
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
+): Effect.Effect<
+  Progress<Inputs>,
+  E | ProjectionFault,
+  R | OR | Checkpoints | InputServices<Inputs>
+> =>
   projection._tag === "Atomic" ? passAtomic(projection, options) : passStream(projection, options);
 
 /**
@@ -103,12 +120,16 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
 >(
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
+): Effect.fn.Return<
+  Progress<Inputs>,
+  E | ProjectionFault,
+  R | OR | Checkpoints | InputServices<Inputs>
+> {
   yield* validateOptions(options);
   const cap = options.limit ?? Number.POSITIVE_INFINITY;
   let units = 0;
   let items = 0;
-  let result: Progress;
+  let result: Progress<Inputs>;
   do {
     result = yield* pass(projection);
     units += result.units;
@@ -123,5 +144,8 @@ export type { Projection };
 export const run = <Inputs extends InputMap, E, R, OR = never>(
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
-  withPermit(projection, runKernel(projection, options));
+): Effect.Effect<
+  Progress<Inputs>,
+  E | ProjectionFault,
+  R | OR | Checkpoints | InputServices<Inputs>
+> => withPermit(projection, runKernel(projection, options));

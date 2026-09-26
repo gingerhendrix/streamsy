@@ -45,8 +45,8 @@ The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
 `issue_changes`, and `notification_drafts`. The atomic `issueRows` projection writes
 those tables and its checkpoint through the same SQL transaction. The separate
 `tracker` named stream constructs `Projection.outputs` addresses: `board` and
-`labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and `workspace`
-uses `Output.value`. Each stream has its own workspace-specific identity and sequence.
+`labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and the workspace
+value is the declared `state:`. Each stream has its own workspace-specific identity and sequence.
 `@streamsy/projection` owns only its `streamsy_projection_v1_*` tables, including the
 persisted value. The command path still reads facts rather than Projection.State.
 

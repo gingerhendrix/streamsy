@@ -41,7 +41,7 @@ state, and normalized source changes. It returns the next operator state,
 row changes, and current rows without I/O. The host owns input delivery and
 persistence.
 
-For fold state between projection passes, use `Projection.fold` from
+For fold state between projection passes, declare `state:` on a projection from
 `@streamsy/projection`. Persist row sets in application tables through the
 shared `SqlClient`; see the
 [State guide](https://streamsy.dev/docs/projections/projections#state).

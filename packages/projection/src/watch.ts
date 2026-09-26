@@ -15,7 +15,7 @@ const watchLoop = <Inputs extends InputMap, E, R, OR = never>(
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: WatchOptions,
 ): Effect.Effect<
-  Progress,
+  Progress<Inputs>,
   E | ProjectionFault,
   R | OR | Checkpoints | InputServices<Inputs> | Streamsy.ChangeFeed<InputServices<Inputs>>
 > =>
@@ -108,7 +108,7 @@ export const watch = <Inputs extends InputMap, E, R, OR = never>(
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: WatchOptions = {},
 ): Effect.Effect<
-  Fiber.Fiber<Progress, E | ProjectionFault>,
+  Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
   ProjectionFault,
   | R
   | OR

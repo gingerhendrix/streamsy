@@ -61,6 +61,11 @@ const checks = [
     ["packages/**", "examples/**", "hosted/**", "site/content/docs/**"],
   ),
   scan(
+    "CheckpointRecord stays out of the projection root entry",
+    String.raw`\bCheckpointRecord\b`,
+    ["packages/projection/src/index.ts", "packages/projection/src/projection.ts"],
+  ),
+  scan(
     "examples and hosted use streams",
     String.raw`@streamsy/core/protocol\b|\bStreams(?:Reader|Writer)\b|\blayerProtocol\b|\bHttp\.app\b|core/src/(?:protocol|toolkit/streams)`,
     [

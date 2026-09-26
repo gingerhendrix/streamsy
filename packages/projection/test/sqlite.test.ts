@@ -46,7 +46,7 @@ test("Bun SQLite fuses the handler's append and the checkpoint, including rollba
     expect(result.stored.output).toEqual([1, 3]);
     expect(result.stored.loaded.token).toBe("3");
     expect(Option.map(result.stored.loaded.record, (record) => record.inputs)).toEqual(
-      Option.some(result.final.record.inputs),
+      Option.some(result.final.offsets),
     );
   } finally {
     await runtime.dispose();

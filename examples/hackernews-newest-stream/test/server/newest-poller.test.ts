@@ -2,11 +2,11 @@
 import { expect, test } from "bun:test";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Context, Deferred, Effect, Fiber, Option } from "effect";
+import { Context, Deferred, Effect, Fiber } from "effect";
 import { diffNewest } from "../../src/server/poller/reconcile.ts";
 import { makeNewestStoriesPoller } from "../../src/server/poller/poller.ts";
 import type { HackerNewsApi } from "../../src/server/poller/contract.ts";
-import { newestRows, StoryRows } from "../../src/server/newest-rows.ts";
+import { newestRows } from "../../src/server/newest-rows.ts";
 import { HackerNewsStories, storiesAddress } from "../../src/server/stories.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 
@@ -76,9 +76,7 @@ test("unchanged polls append nothing; a fresh poller deletes a downtime departur
       lastDeletes: 1,
     });
     await h.runtime.runPromise(Projection.run(newestRows));
-    expect(
-      Option.getOrThrow(await h.runtime.runPromise(Projection.loadState(newestRows, StoryRows))),
-    ).toEqual({ "102": b });
+    expect((await h.runtime.runPromise(Projection.read(newestRows))).state).toEqual({ "102": b });
   } finally {
     await h.close();
   }
@@ -156,11 +154,9 @@ for (const exhaust of [false, true]) {
           ]);
           expect(events[1]?.headers.offset).toBe(expectedOffsets[1]);
           await h.runtime.runPromise(Projection.run(newestRows));
-          expect(
-            Option.getOrThrow(
-              await h.runtime.runPromise(Projection.loadState(newestRows, StoryRows)),
-            ),
-          ).toEqual({ "101": a });
+          expect((await h.runtime.runPromise(Projection.read(newestRows))).state).toEqual({
+            "101": a,
+          });
         }
       } finally {
         await h.close();

@@ -6,9 +6,17 @@ import { expect, test } from "bun:test";
 import { Layer } from "effect";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import type {
+  AtomicDeclaration,
   AtomicDefinition,
+  AtomicStateDefinition,
   Declaration,
+  Offsets,
+  OutputsDeclaration,
   OutputsDefinition,
+  Snapshot,
+  StateDefinition,
+  StateSource,
+  Step,
   WatchOptions,
   RunOptions,
   StateApi,
@@ -22,7 +30,15 @@ type PublicHelperTypes =
   | Checkpoint.EncodedStore
   | Declaration<any, any>
   | AtomicDefinition<any, any, any, any>
-  | OutputsDefinition<any, any, any, any, any, any>
+  | AtomicStateDefinition<any, any, any, any, any, any>
+  | AtomicDeclaration<any, any, any, any, any, any>
+  | OutputsDefinition<any, any, any, any, any, any, any, any>
+  | OutputsDeclaration<any, any, any, any, any, any, any>
+  | Snapshot<any, any>
+  | Offsets<any>
+  | StateDefinition<any, any, any>
+  | StateSource<any, any, any>
+  | Step<any, any, any, any, any>
   | WatchOptions
   | RunOptions;
 const acceptsPublicHelperTypes = (value: PublicHelperTypes): void => void value;
@@ -34,9 +50,10 @@ test("built public entries and declared files exist", () => {
   expect(Root.State).toBe(Projection.State);
   expect(Root.State.key).toBe("@streamsy/projection/State");
   expect(Projection.outputs).toBeFunction();
-  expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert", "value"]);
-  expect(Projection.fold).toBeFunction();
-  expect(Projection.loadState).toBeFunction();
+  expect(Object.keys(Root.Output).sort()).toEqual(["remove", "rows", "stream", "upsert"]);
+  expect(Projection.read).toBeFunction();
+  expect("fold" in Projection).toBe(false);
+  expect("loadState" in Projection).toBe(false);
   expect(Projection.forget).toBeFunction();
   expect(Checkpoint.fromStore).toBeFunction();
   expect(Checkpoint.CheckpointRecord).toBeDefined();
@@ -103,14 +120,13 @@ test("root exports stay explicit", () => {
     "State",
     "atomic",
     "each",
-    "fold",
     "follow",
     "forget",
     "items",
     "key",
-    "loadState",
     "outputs",
     "pass",
+    "read",
     "run",
     "watch",
   ]);

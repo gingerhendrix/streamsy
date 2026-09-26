@@ -49,16 +49,17 @@ const tracker = Projection.outputs({
   outputs: {
     board: Output.rows(Card, { key: "issueId", stream: FamilyFixture.bytes("board") }),
     transitions: Output.stream(Schema.Finite, { stream: FamilyFixture.bytes("transitions") }),
-    summary: Output.value(Schema.Finite),
   },
-  process: Projection.fold(0, (state, batch) => {
-    const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-    return {
-      state: next,
-      board: [Output.upsert({ issueId: "total", total: next }), Output.remove("old")],
-      transitions: [next],
-    };
-  }),
+  state: { schema: Schema.Finite, initial: 0 },
+  process: (state, batch) =>
+    Effect.sync(() => {
+      const next = state + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      return {
+        state: next,
+        board: [Output.upsert({ issueId: "total", total: next }), Output.remove("old")],
+        transitions: [next],
+      };
+    }),
 }).at({});
 
 for (const [name, host] of hosts) {
@@ -118,7 +119,7 @@ for (const [name, host] of hosts) {
         yield* Streams.create(numbers);
         yield* Streams.append(numbers, [1, 2, 3]);
         yield* Projection.run(tracker);
-        expect(yield* Projection.loadState(tracker, Schema.Finite)).toEqual(Option.some(6));
+        expect((yield* Projection.read(tracker)).state).toBe(6);
         expect(
           yield* readAll(FamilyFixture.json("transitions", { schema: Schema.Finite })),
         ).toEqual([6]);
@@ -204,12 +205,14 @@ for (const [name, host] of hosts) {
           id: "recover",
           params: {},
           inputs: { input },
-          outputs: { ...declarations, total: Output.value(Schema.Finite) },
-          process: Projection.fold(0, (state, batch) => {
-            states.push(state);
-            const next = state + batch.input.items.reduce((sum, n) => sum + n, 0);
-            return { state: next, a: [next], b: [next] };
-          }),
+          outputs: declarations,
+          state: { schema: Schema.Finite, initial: 0 },
+          process: (state, batch) =>
+            Effect.sync(() => {
+              states.push(state);
+              const next = state + batch.input.items.reduce((sum, n) => sum + n, 0);
+              return { state: next, a: [next], b: [next] };
+            }),
         }).at({});
         const writer = yield* StreamsWriter;
         const failed = yield* Projection.run(projection).pipe(
@@ -231,7 +234,7 @@ for (const [name, host] of hosts) {
         expect(failed._tag).toBe("Failure");
         expect(yield* readAll(a)).toEqual([1]);
         expect(yield* readAll(b)).toEqual([]);
-        expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.none());
+        expect(yield* (yield* Projection.State).load(projection)).toEqual(Option.none());
         const pinned = yield* (yield* Checkpoints).load(projection);
         expect(Option.getOrThrow(pinned.record).pending?.seqs).toEqual({ a: 0, b: 0 });
         yield* Streams.append(input, [2]);
@@ -253,7 +256,7 @@ for (const [name, host] of hosts) {
         expect(states).toEqual([0, 0, 1]);
         expect(yield* readAll(a)).toEqual([1, 3]);
         expect(yield* readAll(b)).toEqual([1, 3]);
-        expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(3));
+        expect((yield* Projection.read(projection)).state).toBe(3);
         // Fail another unit after state exists: its pin must retain that prior value.
         yield* Streams.append(input, [4]);
         yield* Projection.run(projection).pipe(
@@ -272,12 +275,12 @@ for (const [name, host] of hosts) {
           }),
           Effect.result,
         );
-        expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(3));
+        expect((yield* Projection.read(projection)).state).toBe(3);
         yield* Projection.run(projection);
         expect(states).toEqual([0, 0, 1, 3, 3]);
         expect(yield* readAll(a)).toEqual([1, 3, 7]);
         expect(yield* readAll(b)).toEqual([1, 3, 7]);
-        expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(7));
+        expect((yield* Projection.read(projection)).state).toBe(7);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 
@@ -289,8 +292,9 @@ for (const [name, host] of hosts) {
           id: "atomic-state",
           params: {},
           inputs: { input },
-          outputs: { total: Output.value(Schema.Finite) },
-          process: Projection.fold(0, (state, batch) => ({ state: state + batch.input.items[0]! })),
+          outputs: {},
+          state: { schema: Schema.Finite, initial: 0 },
+          process: (state, batch) => Effect.succeed({ state: state + batch.input.items[0]! }),
         }).at({});
         const state = yield* Projection.State;
         const failed = yield* Projection.run(projection).pipe(
@@ -321,9 +325,9 @@ for (const [name, host] of hosts) {
         if (failed._tag === "Failure")
           expect(failed.failure).toMatchObject({ phase: "checkpoint", reason: "storage-failure" });
         expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
-        expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.none());
+        expect(yield* (yield* Projection.State).load(projection)).toEqual(Option.none());
         yield* Projection.run(projection);
-        expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(1));
+        expect((yield* Projection.read(projection)).state).toBe(1);
       }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
     ));
 
@@ -360,7 +364,7 @@ for (const [name, host] of hosts) {
     ));
 }
 
-test("multiple values and the reserved state name fail at declaration; duplicate streams fail at at", () => {
+test("the reserved state name fails at declaration; duplicate streams fail at at", () => {
   expect(() =>
     Projection.outputs({
       id: "bad",
@@ -370,15 +374,6 @@ test("multiple values and the reserved state name fail at declaration; duplicate
       process: () => Effect.succeed({ a: [], b: [] }),
     }).at({}),
   ).toThrow("same stream");
-  expect(() =>
-    Projection.outputs({
-      id: "bad",
-      params: {},
-      inputs: { input },
-      outputs: { a: Output.value(Schema.Finite), b: Output.value(Schema.Finite) },
-      process: () => Effect.succeed({ state: 0 }),
-    }),
-  ).toThrow("one value");
   expect(() =>
     Projection.outputs({
       id: "bad",
@@ -428,16 +423,18 @@ const checkTypes = () => {
     id: "type",
     params: {},
     inputs: { input },
-    outputs: { ...declarations, total: Output.value(Schema.Finite) },
-    // @ts-expect-error fold output keys are checked too
-    process: Projection.fold(0, (state) => ({ state, a: [], b: [], wrong: [] })),
+    outputs: declarations,
+    state: { schema: Schema.Finite, initial: 0 },
+    // @ts-expect-error output keys are checked with state too
+    process: (state) => Effect.succeed({ state, a: [], b: [], wrong: [] }),
   }).at({});
   Projection.outputs({
     id: "type",
     params: {},
     inputs: { input },
-    outputs: { total: Output.value(Schema.Finite) },
-    // @ts-expect-error raw handlers must match the declared value schema
+    outputs: {},
+    state: { schema: Schema.Finite, initial: 0 },
+    // @ts-expect-error the returned state must match the declared state schema
     process: () => Effect.succeed({ state: "bad" }),
   }).at({});
   Projection.outputs({

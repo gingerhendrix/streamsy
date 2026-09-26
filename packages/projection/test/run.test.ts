@@ -82,7 +82,7 @@ test("a non-empty pass is progress even when its read is up to date", () =>
       expect(empty.status).toBe("caught-up");
       expect(empty.units).toBe(0);
       expect(empty.items).toBe(0);
-      expect(empty.record).toEqual(full.record);
+      expect(empty.offsets).toEqual(full.offsets);
     }),
   ));
 
@@ -110,11 +110,11 @@ test("zero-output unit advances the checkpoint without output progress", () =>
       const first = yield* Projection.pass(positives);
       const second = yield* Projection.pass(positives);
       expect(second.items).toBe(1);
-      expect(second.record.inputs.input).not.toBe(first.record.inputs.input);
+      expect(second.offsets.input).not.toBe(first.offsets.input);
       const stored = yield* inspect;
       expect(stored.output).toEqual([1]);
       expect(stored.loaded.token).toBe("2");
-      expect(Option.getOrThrow(stored.loaded.record).inputs).toEqual(second.record.inputs);
+      expect(Option.getOrThrow(stored.loaded.record).inputs).toEqual(second.offsets);
     }),
     1,
   ));

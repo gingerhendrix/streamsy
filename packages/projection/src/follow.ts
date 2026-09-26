@@ -100,7 +100,7 @@ export const follow = Effect.fn("Projection.follow")(function* <
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
-  Fiber.Fiber<Progress, E | ProjectionFault>,
+  Fiber.Fiber<Progress<Inputs>, E | ProjectionFault>,
   ProjectionFault,
   R | OR | Checkpoints | InputServices<Inputs> | Scope.Scope
 > {
@@ -112,10 +112,10 @@ export const follow = Effect.fn("Projection.follow")(function* <
       reason: "invalid-options",
       message: "repairIntervalMs must be a positive safe integer",
     });
-  const wake = (result: Progress) =>
+  const wake = (result: Progress<Inputs>) =>
     Effect.raceAllFirst(
       inputEntries(projection.inputs).map(([name, address]) =>
-        hint(name, address, result.record.inputs[name] ?? ZERO_OFFSET, interval),
+        hint(name, address, result.offsets[name] ?? ZERO_OFFSET, interval),
       ),
     );
   const cycle = run(projection, options).pipe(

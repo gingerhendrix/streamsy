@@ -29,16 +29,17 @@ const tracker = Projection.outputs({
   outputs: {
     board: Output.rows(Card, { key: "id", stream: board }),
     transitions: Output.stream(Schema.FiniteFromString, { stream: transitions }),
-    summary: Output.value(Schema.Struct({ total: Schema.FiniteFromString })),
   },
-  process: Projection.fold({ total: 0 }, (state, batch) => {
-    const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-    return {
-      state: { total },
-      board: [Output.upsert({ id: "total", total }), Output.remove("old")],
-      transitions: [total],
-    };
-  }),
+  state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
+  process: (state, batch) =>
+    Effect.sync(() => {
+      const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      return {
+        state: { total },
+        board: [Output.upsert({ id: "total", total }), Output.remove("old")],
+        transitions: [total],
+      };
+    }),
 });
 class Seat extends Context.Service<Seat, { readonly seat: number }>()("join/Seat") {}
 const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
@@ -50,7 +51,7 @@ const auth = HttpRouter.middleware<{ provides: Seat }>()((handler) =>
   }),
 );
 
-test("declared rows, stream and value share one memory app and their declared codecs", async () => {
+test("declared rows, stream and state share one memory app and their declared codecs", async () => {
   expect(tracker.outputs.board.stream).toBe(board);
   expect(tracker.outputs.transitions.stream).toBe(transitions);
   const runtime = ManagedRuntime.make(
@@ -60,7 +61,7 @@ test("declared rows, stream and value share one memory app and their declared co
   const App = Layer.mergeAll(
     Serve.state(tracker.outputs.board, "/board/:seat"),
     Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
-    Serve.value(tracker.outputs.summary, "/summary/:seat"),
+    Serve.value(tracker.state, "/summary/:seat"),
     Serve.stream(tracker.outputs.transitions, "/me", { params: Seat }).pipe(
       Layer.provide(auth.layer),
     ),
@@ -154,7 +155,7 @@ const typeChecks = () => {
   // @ts-expect-error missing stream parameter
   Serve.stream(tracker.outputs.transitions, "/transitions");
   // @ts-expect-error extra route parameter
-  Serve.value(tracker.outputs.summary, "/summary/:seat/:extra");
+  Serve.value(tracker.state, "/summary/:seat/:extra");
   // @ts-expect-error decoded params retain the number codec
   Serve.stream(tracker.outputs.transitions, "/me", { params: Effect.succeed({ seat: "42" }) });
   // @ts-expect-error a stream declaration does not supply rows collections
@@ -163,15 +164,14 @@ const typeChecks = () => {
     id: "date",
     params: {},
     inputs: {},
-    outputs: { date: Output.value(Schema.Struct({ date: Schema.Date })) },
-    process: () => Effect.succeed({ state: { date: new Date() } }),
-  }).at({});
+    outputs: {},
+    state: { schema: Schema.Struct({ date: Schema.Date }), initial: { date: new Date(0) } },
+    process: (state) => Effect.succeed({ state }),
+  });
   // @ts-expect-error Date is not a JSON encoded value; rejected before requests
-  Serve.value(date.outputs.date, "/date");
-  const missingState = HttpRouter.toWebHandler(
-    Serve.value(tracker.outputs.summary, "/summary/:seat"),
-  );
-  // @ts-expect-error document resolution requires Projection.State at the request boundary
+  Serve.value(date.state, "/date");
+  const missingState = HttpRouter.toWebHandler(Serve.value(tracker.state, "/summary/:seat"));
+  // @ts-expect-error value resolution requires Projection.State at the request boundary
   void missingState.handler(new Request("http://host/summary/42"));
   class wrongTarget extends Streamsy.bytes<wrongTarget>()(
     "serve.test/wrongTarget",
@@ -201,12 +201,12 @@ const typeChecks = () => {
     outputs: {
       board: Output.rows(Card, { key: "id", stream: board.at({ seat: 42 }) }),
       transitions: Output.stream(Schema.FiniteFromString, { stream: transitions.at({ seat: 42 }) }),
-      summary: Output.value(Schema.Struct({ total: Schema.FiniteFromString })),
     },
-    process: Projection.fold({ total: 0 }, (state) => ({ state, board: [], transitions: [] })),
+    state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
+    process: (state) => Effect.succeed({ state, board: [], transitions: [] }),
   });
   Serve.state(fixed.outputs.board, "/board");
   Serve.stream(fixed.outputs.transitions, "/transitions");
-  Serve.value(fixed.outputs.summary, "/summary");
+  Serve.value(fixed.state, "/summary");
 };
 void typeChecks;

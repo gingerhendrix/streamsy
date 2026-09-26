@@ -63,12 +63,8 @@ test("key-only catalog deletes stay in the address workspace and advance both ch
         expect(yield* sql.unsafe("SELECT workspace_id FROM users")).toEqual([
           { workspace_id: "acme" },
         ]);
-        expect((yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).users).toEqual(
-          [],
-        );
-        expect(
-          (yield* tracker.outputs.workspace.resolve({ workspaceId: "acme" })).users,
-        ).toHaveLength(1);
+        expect((yield* tracker.state.resolve({ workspaceId: "live" })).users).toEqual([]);
+        expect((yield* tracker.state.resolve({ workspaceId: "acme" })).users).toHaveLength(1);
       }),
     );
   } finally {
@@ -161,7 +157,7 @@ test("named output replay survives a lost append reply beside the SQL projection
         expect(transitions.map((event) => event.eventId)).toEqual(["e1", "e2"]);
         const board = yield* Addresses.readOutput(tracker.outputs.board, "live");
         expect(board).toHaveLength(2);
-        expect(yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).toMatchObject({
+        expect(yield* tracker.state.resolve({ workspaceId: "live" })).toMatchObject({
           issueCount: 1,
           doneCount: 1,
         });
@@ -278,9 +274,9 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
           { ...created, type: "IssueAssigned", eventId: "e2", assigneeId: "ada", sequence: 2 },
         ]);
         yield* Projection.run(tracker.at({ workspaceId: "live" }));
-        expect(
-          (yield* tracker.outputs.workspace.resolve({ workspaceId: "live" })).issues[0]?.assigneeId,
-        ).toBe("ada");
+        expect((yield* tracker.state.resolve({ workspaceId: "live" })).issues[0]?.assigneeId).toBe(
+          "ada",
+        );
       }),
     );
     expect(

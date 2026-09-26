@@ -2,8 +2,7 @@
 import { expect, test } from "bun:test";
 import { DurableState, ZERO_OFFSET } from "@streamsy/core";
 import { Projection } from "@streamsy/projection";
-import { Option } from "effect";
-import { applyChange, newestRows, StoryRows } from "../../src/server/newest-rows.ts";
+import { applyChange, newestRows } from "../../src/server/newest-rows.ts";
 import { HackerNewsStories, storiesAddress } from "../../src/server/stories.ts";
 import { demoHarness, story } from "../../src/server/test-support.ts";
 
@@ -31,7 +30,7 @@ test("applyChange replaces upserts and removes rows without mutating its input",
 test("fold resumes across pages, accepts the tail, and writes no extra stream events", async () => {
   const h = await demoHarness(1);
   try {
-    expect((await h.runtime.runPromise(Projection.run(newestRows))).record.inputs.input).toBe(
+    expect((await h.runtime.runPromise(Projection.run(newestRows))).offsets.input).toBe(
       ZERO_OFFSET,
     );
     const first = story(101, 30, "first");
@@ -49,10 +48,11 @@ test("fold resumes across pages, accepts the tail, and writes no extra stream ev
       DurableState.upsert("hn-story", { ...second, title: "updated" }),
     ]);
     const progress = await h.runtime.runPromise(Projection.run({ ...newestRows }));
-    expect(progress.record.inputs.input).toBe(ack.offset);
-    expect(
-      Option.getOrThrow(await h.runtime.runPromise(Projection.loadState(newestRows, StoryRows))),
-    ).toEqual({ "102": { ...second, title: "updated" } });
+    expect(progress.offsets.input).toBe(ack.offset);
+    expect(await h.runtime.runPromise(Projection.read(newestRows))).toEqual({
+      state: { "102": { ...second, title: "updated" } },
+      offsets: { input: ack.offset },
+    });
     expect(await h.runtime.runPromise(Projection.run(newestRows))).toMatchObject({
       items: 0,
       units: 0,

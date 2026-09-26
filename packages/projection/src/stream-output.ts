@@ -14,7 +14,7 @@ import { ProjectionFault } from "./fault.ts";
 import { stateOwner as outputStateOwner, type Outputs } from "./outputs.ts";
 import type { Processed } from "./output.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
-import type { Progress } from "./run.ts";
+import { offsetsOf, type Progress } from "./run.ts";
 import { canonicalParams, unitOf } from "./unit.ts";
 
 /** The pinned tuple identity: the params join the id so two parameterisations never share a sequence. */
@@ -84,7 +84,11 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
 >(
   projection: Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
-): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
+): Effect.fn.Return<
+  Progress<Inputs>,
+  E | ProjectionFault,
+  R | OR | Checkpoints | InputServices<Inputs>
+> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
   const stateOwner = yield* outputStateOwner(projection);
@@ -142,7 +146,7 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
           : "caught-up",
         units: 0,
         items: 0,
-        record: before.record,
+        offsets: offsetsOf<Inputs>(before.record),
       };
   }
   const ranges = pending?.ranges ?? rangesOf(batch);
@@ -257,5 +261,5 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
         if (processed.saveState !== undefined) yield* processed.saveState;
       }),
     );
-  return { status: "progress", units: 1, items: count, record };
+  return { status: "progress", units: 1, items: count, offsets: offsetsOf<Inputs>(record) };
 });

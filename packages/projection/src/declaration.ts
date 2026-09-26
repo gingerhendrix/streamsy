@@ -99,11 +99,10 @@ export const addressesOf = <I extends Inputs>(inputs: I, params: DecodedParams):
   return built as Addresses<I>;
 };
 
-/** Resolves each declared output target once. Fixed addresses and values are kept. */
+/** Resolves each declared output target once. Fixed addresses are kept. */
 export const resolveOutputs = (declarations: RoutedMap, params: DecodedParams): Output.Map =>
   Object.fromEntries(
     Object.entries(declarations).map(([name, output]) => {
-      if (output._tag === "Value") return [name, output];
       const target = output.stream;
       if (!("address" in target)) return [name, output];
       const address = target.address(params);

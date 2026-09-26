@@ -58,21 +58,22 @@ const tracker = Projection.outputs({
   outputs: {
     board: Output.rows(Card, { key: "id", stream: Board }),
     transitions: Output.stream(Schema.FiniteFromString, { stream: Transitions }),
-    summary: Output.value(Schema.Struct({ total: Schema.FiniteFromString })),
   },
-  process: Projection.fold({ total: 0 }, (state, batch) => {
-    const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
-    return {
-      state: { total },
-      board: [Output.upsert({ id: "total", total }), Output.remove("old")],
-      transitions: [total],
-    };
-  }),
+  state: { schema: Schema.Struct({ total: Schema.FiniteFromString }), initial: { total: 0 } },
+  process: (state, batch) =>
+    Effect.sync(() => {
+      const total = state.total + batch.numbers.items.reduce((sum, n) => sum + n, 0);
+      return {
+        state: { total },
+        board: [Output.upsert({ id: "total", total }), Output.remove("old")],
+        transitions: [total],
+      };
+    }),
 });
 const OutputRoutes = Layer.mergeAll(
   Serve.state(tracker.outputs.board, "/board/:seat"),
   Serve.stream(tracker.outputs.transitions, "/transitions/:seat"),
-  Serve.value(tracker.outputs.summary, "/summary/:seat"),
+  Serve.value(tracker.state, "/summary/:seat"),
 );
 ```
 

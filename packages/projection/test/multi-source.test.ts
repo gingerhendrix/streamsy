@@ -70,7 +70,7 @@ test("each input contributes one server page per pass", () =>
       const first = yield* Projection.pass(projection);
       expect(first.items).toBe(3);
       expect(tags(seen)).toEqual(["a:1#0", "a:2#1", "b:x#2"]);
-      expect(first.record.inputs.b).not.toBe(ZERO_OFFSET);
+      expect(first.offsets.b).not.toBe(ZERO_OFFSET);
       expect(Object.keys(seen[0]?.unit.ranges ?? {})).toEqual(["a", "b"]);
       const second = yield* Projection.pass(projection);
       expect(second.items).toBe(1);
@@ -121,7 +121,7 @@ test("a single-input projection stores a one-key inputs map", () =>
       const loaded = yield* (yield* Checkpoints).load(Projection.key(positives));
       const record = Option.getOrThrow(loaded.record);
       expect(Object.keys(record.inputs)).toEqual(["input"]);
-      expect(record.inputs).toEqual(result.record.inputs);
+      expect(record.inputs).toEqual(result.offsets);
       expect(Object.keys(record.identity.inputs)).toEqual(["input"]);
       expect(record.pending).toBeUndefined();
       expect(record.adapters).toEqual({});

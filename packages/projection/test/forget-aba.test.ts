@@ -40,7 +40,8 @@ for (const [name, host] of hosts) {
             id: `aba-${name}-${serialized}`,
             params: {},
             inputs: { input },
-            process: Projection.fold(Schema.Finite, 0, (sum, { item }) => sum + item),
+            state: { schema: Schema.Finite, initial: 0 },
+            fold: (sum, { item }) => sum + item,
           }).at({});
           yield* Streams.create(input);
           yield* Streams.append(input, [2, 3]);
@@ -89,18 +90,18 @@ for (const [name, host] of hosts) {
             yield* Deferred.succeed(release, undefined);
             expect((yield* Fiber.join(a)).items).toBe(1);
             yield* Fiber.join(forget);
-            expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.none());
+            expect(yield* (yield* Projection.State).load(projection)).toEqual(Option.none());
             yield* Projection.run(projection);
-            expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(12));
+            expect((yield* Projection.read(projection)).state).toBe(12);
           } else {
             yield* Fiber.join(forget);
             yield* Projection.run(projection);
             expect((yield* (yield* Checkpoints).load(projection)).token).toBe("1");
-            expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(12));
+            expect((yield* Projection.read(projection)).state).toBe(12);
             yield* Deferred.succeed(release, undefined);
             yield* Fiber.join(a);
             // The old token 1 matches the fresh token 1: another process must be drained separately.
-            expect(yield* Projection.loadState(projection, Schema.Finite)).toEqual(Option.some(19));
+            expect((yield* Projection.read(projection)).state).toBe(19);
           }
         }).pipe(Effect.provide(FamilyFixture.withFamilies(host))),
       ));

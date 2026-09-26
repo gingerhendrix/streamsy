@@ -1,12 +1,11 @@
 import type { TargetServices, RoutedMap } from "./output-internal.ts";
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This mapped adapter preserves each declaration's schema and name while iterating its record. */
-import { Effect, Option, type Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import { type StreamRoute } from "@streamsy/core/protocol";
 import type * as Output from "./output.ts";
 import type { ProjectionKey } from "./checkpoint.ts";
-import { loadState } from "./fold.ts";
-import type { State } from "./state.ts";
+import { State, decodeState, type StateDefinition, type StateSchema } from "./state.ts";
 
 type Collection<Name extends string, A> = {
   readonly [K in Name]: {
@@ -31,18 +30,51 @@ export type Bound<D extends RoutedMap, P> = {
             ) => StreamAddress.StateAddress<Collection<K & string, A>> &
               Streamsy.Address<unknown, TargetServices<D[K]["stream"]>>;
           }
-        : D[K] extends Output.Value<infer A, any>
-          ? {
-              readonly id: string;
-              readonly resolve: (
-                params: P,
-              ) => Effect.Effect<
-                A,
-                { readonly _tag: "ValueUnavailable"; readonly detail: string },
-                State
-              >;
-            }
-          : never);
+        : never);
+};
+
+/** The declared state as a source for `Serve.value`. It fails while the row is absent. */
+export interface StateSource<A, I, P> {
+  readonly id: string;
+  readonly paramSchema: StreamRoute.PathSchema<P>;
+  readonly schema: StateSchema<A, I>;
+  readonly resolve: (
+    params: P,
+  ) => Effect.Effect<A, { readonly _tag: "ValueUnavailable"; readonly detail: string }, State>;
+}
+
+export const stateSource = <A, I, P>(
+  definition: { readonly id: string; readonly params: StreamRoute.ParamCodecs },
+  state: StateDefinition<A, I, P>,
+  at: (params: P) => ProjectionKey,
+): StateSource<A, I, P> => {
+  const unavailable = (detail: string) => ({ _tag: "ValueUnavailable" as const, detail });
+  return {
+    id: `${definition.id}/state`,
+    // Struct owns exactly the codec keys and their decoded parameter types.
+    paramSchema: Schema.Struct(definition.params) as StreamRoute.PathSchema<P>,
+    schema: state.schema,
+    resolve: (params) =>
+      Effect.gen(function* () {
+        const bound = yield* Effect.try({
+          try: () => at(params),
+          catch: () => unavailable("Cannot resolve projection params"),
+        });
+        const key: ProjectionKey = {
+          id: bound.id,
+          version: bound.version,
+          generation: bound.generation,
+          params: bound.params,
+        };
+        const value = yield* Effect.flatMap(State, (store) => store.load(key)).pipe(
+          Effect.flatMap((encoded) => decodeState(key, state.schema, encoded)),
+          Effect.mapError(() => unavailable("Cannot read projection state")),
+        );
+        return Option.isSome(value)
+          ? value.value
+          : yield* Effect.fail(unavailable("Projection state is absent"));
+      }),
+  };
 };
 
 /** The kernel and served readers build rows through this one protocol codec. */
@@ -63,42 +95,11 @@ export function bind<D extends RoutedMap, P>(
   paramSchema: StreamRoute.PathSchema<P>,
   keyAt: (params: P) => ProjectionKey & { readonly outputs: Output.Map },
 ): Bound<D, P> {
-  const sources = Object.fromEntries(
+  const sources: Readonly<Record<string, unknown>> = Object.fromEntries(
     Object.entries(declarations).map(([name, declaration]) => {
       const common = { ...declaration, paramSchema };
-      if (declaration._tag === "Value")
-        return [
-          name,
-          {
-            ...common,
-            id: `${id}/${name}`,
-            resolve: (params: P) =>
-              Effect.gen(function* () {
-                const key = yield* Effect.try({
-                  try: () => keyAt(params),
-                  catch: () => ({
-                    _tag: "ValueUnavailable" as const,
-                    detail: "Cannot resolve projection params",
-                  }),
-                });
-                const value = yield* loadState(key, declaration.schema).pipe(
-                  Effect.mapError(() => ({
-                    _tag: "ValueUnavailable" as const,
-                    detail: "Cannot read projection state",
-                  })),
-                );
-                return Option.isSome(value)
-                  ? value.value
-                  : yield* Effect.fail({
-                      _tag: "ValueUnavailable" as const,
-                      detail: "Projection state is absent",
-                    });
-              }),
-          },
-        ];
       const address = (params: P) => {
         const output = keyAt(params).outputs[name]!;
-        if (output._tag === "Value") throw new TypeError("Expected a stream output");
         return output._tag === "Stream" ? output.stream : rowsAddress(name, output);
       };
       return [

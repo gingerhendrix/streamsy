@@ -66,7 +66,7 @@ failure; check `lastPollError` for the result.
 
 - `src/server/stories.ts`: the fixed `Streamsy.state` declaration and change types.
 - `src/server/poller/poller.ts`: fetch, projection run, CAS retry loop and coalescing gate.
-- `src/server/newest-rows.ts`: `Projection.atomic`, `Projection.fold` and pure `applyChange`.
+- `src/server/newest-rows.ts`: `Projection.atomic` with `state:` and `fold`, and pure `applyChange`.
 - `src/server/poller/reconcile.ts`: pure `diffNewest`, stable ordering and unchanged-write suppression.
 - `src/server/http.ts`: State, status, poll and static routes.
 - `src/server/streams.ts`: shared SQLite stream/projection host, memory option and boot creation.

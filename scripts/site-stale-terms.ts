@@ -60,6 +60,13 @@ export const retiredProjectionNames = [
   "DocumentOptions",
   "DOCUMENT_CONTRACT_HEADER",
   "x-streamsy-document-contract",
+  // Phase 2: one place for state and one read.
+  "Projection.loadState",
+  "Projection.fold",
+  "OutputFold",
+  "Output.value",
+  "progress.record",
+  "Pick<CheckpointRecord",
 ];
 retiredCoreNames.push(...retiredProjectionNames);
 staleTerms.push(...retiredCoreNames);
