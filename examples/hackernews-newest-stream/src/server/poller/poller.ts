@@ -1,8 +1,6 @@
-import { Deferred, Effect, Layer, Option, Ref, Schedule } from "effect";
-import { DurableState } from "@streamsy/core";
-import { Projection, type Checkpoints, type State } from "@streamsy/projection";
-import { newestRows, applyChange } from "../newest-rows.ts";
-import { HackerNewsStories, storiesAddress } from "../stories.ts";
+import { Deferred, Effect, Layer, Option, Predicate, Ref, Schedule } from "effect";
+import type { Checkpoints, State } from "@streamsy/projection";
+import type { HackerNewsStories } from "../stories.ts";
 import { liveHackerNewsApi } from "../hnews.ts";
 import { errorMessage, nowIso } from "../util.ts";
 import {
@@ -13,7 +11,7 @@ import {
   type PollerConfig,
   type PollStats,
 } from "./contract.ts";
-import { diffNewest } from "./reconcile.ts";
+import { reconcileNewest } from "./reconcile.ts";
 
 type PollClaim = {
   readonly owner: boolean;
@@ -31,6 +29,15 @@ export function makeNewestStoriesPoller(
 
     const patchCounters = (patch: Partial<PollCounters>) =>
       Ref.update(countersRef, (counters) => ({ ...counters, ...patch }));
+    // Up to three retries after `OffsetMismatch`, so at most four appends per pass.
+    const conflictRetries = Schedule.recurs(3).pipe(
+      Schedule.tap(() =>
+        Ref.update(countersRef, (counters) => ({
+          ...counters,
+          totalConflictsRetried: counters.totalConflictsRetried + 1,
+        })),
+      ),
+    );
 
     const runPoll = Effect.fn("NewestStoriesPoller.runPoll")(function* () {
       yield* patchCounters({
@@ -45,43 +52,24 @@ export function makeNewestStoriesPoller(
           0,
           config.limit,
         );
-        // Fetch once; every CAS retry reuses this result and re-reads durable rows.
+        // Fetch once; every retry reuses this result and reads the durable rows again.
         const fetched = {
           newestIds: new Set(newestIds),
           stories: yield* api.fetchStoriesById(newestIds),
         };
-        for (let attempt = 0; ; attempt++) {
-          const outcome = yield* Effect.gen(function* () {
-            yield* Projection.run(newestRows);
-            // One read gives the rows and the offset they are at; a fresh store gives ZERO_OFFSET.
-            const { state: rows, offsets } = yield* Projection.read(newestRows);
-            const token = offsets.input;
-            const changes = diffNewest(rows, fetched);
-            const events = DurableState.changes(storiesAddress, { offset: token }, changes);
-            const offset =
-              events.length === 0
-                ? token
-                : (yield* (yield* HackerNewsStories).append({}, events, { expectedOffset: token }))
-                    .offset;
-            yield* patchCounters({
-              lastOffset: offset,
-              lastStoryCount: Object.keys(events.reduce(applyChange, rows)).length,
-              lastUpserts: changes.filter((change) => change.kind === "upsert").length,
-              lastDeletes: changes.filter((change) => change.kind === "delete").length,
-            });
-            return true;
-          }).pipe(
-            Effect.catchTag("OffsetMismatch", (error) =>
-              attempt === 3
-                ? Effect.fail(error)
-                : Ref.update(countersRef, (counters) => ({
-                    ...counters,
-                    totalConflictsRetried: counters.totalConflictsRetried + 1,
-                  })).pipe(Effect.as(false)),
-            ),
-          );
-          if (outcome) break;
-        }
+        // A retry runs, reads and decides again, so the diff uses the new rows.
+        const { rows, changes, offset } = yield* reconcileNewest(fetched).pipe(
+          Effect.retry({
+            schedule: conflictRetries,
+            while: Predicate.isTagged("OffsetMismatch"),
+          }),
+        );
+        yield* patchCounters({
+          lastOffset: offset,
+          lastStoryCount: Object.keys(rows).length,
+          lastUpserts: changes.filter((change) => change.kind === "upsert").length,
+          lastDeletes: changes.filter((change) => change.kind === "delete").length,
+        });
       });
 
       yield* pass.pipe(

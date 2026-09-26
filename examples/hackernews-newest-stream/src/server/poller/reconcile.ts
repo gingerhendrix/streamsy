@@ -1,12 +1,34 @@
+import { Effect } from "effect";
 import { DurableState } from "@streamsy/core";
+import { Projection } from "@streamsy/projection";
 import { newestStorySort, type HnStory } from "../../state-schema.ts";
-import type { StoryRows } from "../newest-rows.ts";
-import type { StoryChange } from "../stories.ts";
+import { applyChange, newestRows, type StoryRows } from "../newest-rows.ts";
+import { HackerNewsStories, storiesAddress, type StoryChange } from "../stories.ts";
 
 export type FetchResult = {
   readonly newestIds: ReadonlySet<number>;
   readonly stories: readonly HnStory[];
 };
+
+/**
+ * One pass of read, decide, append. Fails with `OffsetMismatch` when another
+ * writer appended after the read; the caller retries the whole pass.
+ */
+export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(function* (
+  fetched: FetchResult,
+) {
+  // Run to the tail. A run with a limit would leave the offset behind the tail.
+  yield* Projection.run(newestRows);
+  // The rows and the offset they are at, from one transaction.
+  const { state: rows, offsets } = yield* Projection.read(newestRows);
+  const changes = diffNewest(rows, fetched);
+  // No change appends nothing, so it does not check the tail.
+  if (changes.length === 0) return { rows, changes, offset: offsets.input };
+  const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+  const stories = yield* HackerNewsStories;
+  const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });
+  return { rows: events.reduce(applyChange, rows), changes, offset: appended.offset };
+});
 
 /** Keep known rows on item-fetch failures while their ids remain in the newest set. */
 export function diffNewest(previous: StoryRows, fetched: FetchResult): readonly StoryChange[] {
