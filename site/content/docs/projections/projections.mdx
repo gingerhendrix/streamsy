@@ -379,7 +379,7 @@ const reserve = (seat: string) =>
 
 The append target must be the input that `offsets.input` names. The offset of one stream says nothing about the tail of another stream. See [Conditional writes](/docs/streams/writing#conditional-writes) for `expectedOffset` on its own.
 
-The Hacker News poller in [`examples/hackernews-newest-stream/src/server/poller/`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/hackernews-newest-stream/src/server/poller) is the working example. Its projection folds the served story rows into one state value. Each poll runs the projection, reads the rows and their offset, compares them with the fetched newest stories, and appends the changes with `expectedOffset`. It retries a moved tail a bounded number of times. See the [Hacker News newest demo](/docs/demos/hackernews-newest-stream).
+The Hacker News poller in [`examples/hackernews-newest-stream/src/server/poller/`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/hackernews-newest-stream/src/server/poller) is the working example. Its projection folds the served story rows into one state value. `reconcileNewest` in `reconcile.ts` is one pass of the recipe: it runs the projection, reads the rows and their offset, compares them with the fetched newest stories, and appends the changes with `expectedOffset`. `poller.ts` retries the pass on `OffsetMismatch` up to three times. See the [Hacker News newest demo](/docs/demos/hackernews-newest-stream).
 
 ## Checkpoints and generations
 

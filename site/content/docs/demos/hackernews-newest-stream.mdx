@@ -1,12 +1,18 @@
 ---
 title: Hacker News newest
-description: Follow a declared rows output through Serve.state and a Durable Streams browser client.
+description: A poller that runs a projection, reads its state and offsets, and appends with expectedOffset.
 ---
 
-The server polls Hacker News into a JSON source stream. `Projection.outputs`
-produces one `Output.rows`, and `Serve.state` publishes it at `/state/newest`.
-The React browser reads from `-1` into TanStack DB through `createStreamDB`, then
-follows live upserts and key-only deletes.
+The server polls Hacker News and writes one Durable State stream,
+`hackernews/newest`. An atomic projection folds that stream into the current
+story rows. Before each append, the poller runs the projection, reads the rows
+and the offset they are at, compares them with the fetched stories, and appends
+the changes with `expectedOffset`. `Serve.state` publishes the stream at
+`/state/newest`. The React browser reads from `-1` into TanStack DB through
+`createStreamDB`, then follows live upserts and deletes.
+
+The poller is the working example of the
+[read, decide, append](/docs/projections/projections#read-decide-append) recipe.
 
 ## Run locally
 
@@ -21,57 +27,120 @@ bun run --cwd examples/hackernews-newest-stream dev
 Open http://localhost:1339. `dev` builds the browser; `dev:api` runs the server
 with any existing browser build. `PORT` selects another port. `HN_DB` defaults
 to `.data/hackernews.sqlite`; `memory` selects a process-local host.
-`HN_NEWEST_LIMIT` defaults to 50, `HN_POLL_INTERVAL_MS` to 60000, and
-`HN_PROJECTION_LIMIT` to 10 checkpoint transactions per pass.
+`HN_NEWEST_LIMIT` defaults to 50 and `HN_POLL_INTERVAL_MS` to 60000.
 
-`HttpRouter.serve` hosts the page, State route, read-only raw `/streams` protocol
-routes for the source and target streams, and status/poll API on one scoped Bun
-listener. Raw writes answer 405; only the server appends. They share an origin and need
-no CORS middleware. `GET /api/status` reports poll counters, projection health
-and checkpoint progress. `POST /api/poll` only polls; the change watcher projects
-its source append.
+`HttpRouter.serve` hosts the page, the State route and the status and poll API
+on one scoped Bun listener. They share an origin and need no CORS middleware.
+There are no raw `/streams` routes; only the server appends. `GET /api/status`
+reports the poll counters and the last offset. `POST /api/poll` runs one pass,
+or joins the pass that is running.
 
 ```bash
 curl -i 'http://localhost:1339/state/newest?offset=-1'
 bun run smoke:hackernews
 ```
 
-The offline smoke uses the actual browser collection factory with local HN
-fixtures. It checks live existing-key upserts, key-only deletes, fresh-session
-replay, and checkpoint/output continuity across a SQLite restart. Its newest
-membership stays fixed during downtime.
+The offline smoke uses the real browser collection factory with local HN
+fixtures. It checks live upserts on existing keys, deletes, replay in a fresh
+session, and a SQLite restart during which a story leaves the newest set.
 
 ## The projection
 
-The source and the target are two custom streams, `HackerNewsSource` and
-`HackerNewsTarget`. Each one owns exactly one address, at its configured stream
-id. The output declaration is:
+The stream has one collection, `hn-story`, keyed by `id`. The projection folds
+it into one state value, a record of rows by key. From
+`src/server/newest-rows.ts`:
 
 ```ts
-outputs: {
-  "hn-story": Output.rows(HackerNewsStory, { key: "id", stream: HackerNewsTarget.at({}) }),
-},
+export const StoryRows = Schema.Record(Schema.String, HackerNewsStory);
+
+export const newestRows = Projection.atomic({
+  id: "hn-newest-rows",
+  params: {},
+  inputs: { input: storiesAddress },
+  state: { schema: StoryRows, initial: {} },
+  fold: (rows, { item }) => applyChange(rows, item),
+}).at({});
 ```
 
-The raw handler returns an Effect of `{ "hn-story": [...] }`, containing
-`Output.upsert(story)` and `Output.remove(key)`. The kernel encodes and pins the
-changes. The served route is:
+`applyChange` is a pure function. An upsert sets the row at its key, and a
+delete removes it. The state row and the checkpoint commit in one transaction.
+The newest set holds about 50 rows, so one state value is small enough. See
+[State](/docs/projections/projections#state) for when to use application tables
+in its place.
+
+The projection has no outputs. The stream that it reads is the stream that the
+browser follows.
+
+## Read, decide, append
+
+Each pass fetches the newest ids and their stories once. `reconcileNewest` in
+`src/server/poller/reconcile.ts` then does one pass of the recipe:
 
 ```ts
-Serve.state(storyIndex.outputs["hn-story"], "/state/newest");
+export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(function* (
+  fetched: FetchResult,
+) {
+  // Run to the tail. A run with a limit would leave the offset behind the tail.
+  yield* Projection.run(newestRows);
+  // The rows and the offset they are at, from one transaction.
+  const { state: rows, offsets } = yield* Projection.read(newestRows);
+  const changes = diffNewest(rows, fetched);
+  // No change appends nothing, so it does not check the tail.
+  if (changes.length === 0) return { rows, changes, offset: offsets.input };
+  const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+  const stories = yield* HackerNewsStories;
+  const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });
+  return { rows: events.reduce(applyChange, rows), changes, offset: appended.offset };
+});
 ```
 
-Source, rows output, checkpoint and `Projection.State` share one Bun SQLite
-host. The application creates only the input; a nonempty projection output
-creates the target. Before that, an initial State read answers 404 without
-creating data. `Projection.watch` and the poller have scoped lifetimes.
+`diffNewest` is the decision. It deletes rows whose ids left the newest set,
+and upserts new or changed stories. An unchanged story gives no change. If a
+story fetch fails, the row stays while its id is still in the newest set.
+
+The poller in `src/server/poller/poller.ts` retries the whole pass on
+`OffsetMismatch`, up to three times. It does not fetch from Hacker News again:
+
+```ts
+const pass = Effect.gen(function* () {
+  // ... fetch the newest ids and their stories once, into `fetched` ...
+  // A retry runs, reads and decides again, so the diff uses the new rows.
+  const { rows, changes, offset } = yield* reconcileNewest(fetched).pipe(
+    Effect.retry({
+      schedule: conflictRetries,
+      while: Predicate.isTagged("OffsetMismatch"),
+    }),
+  );
+  // ... record the counters ...
+});
+```
+
+`conflictRetries` is `Schedule.recurs(3)` with a tap that counts each retry in
+the status counters. After the last retry, status records the error and the
+next scheduled poll tries again. Other errors are not retried.
+
+## Serving
+
+The State route serves the stream itself:
+
+```ts
+export const stateRoute = Serve.state(HackerNewsStories, streamPath);
+```
+
+The stream, the checkpoint and the state row share one Bun SQLite file. The app
+creates the stream at boot, so the first `GET /state/newest?offset=-1` returns
+200 with an empty array before the first poll. The poller has a scoped
+lifetime. There is no background watcher: the projection runs only when the
+poller asks for it.
 
 ## Replay figure
 
-Batch D2 measured Bun 1.4.2 on Linux x64, SQLite and warm loopback HTTP. Every
-poll changed all 50 stories: a worst-case workload, not typical HN traffic.
-Each milestone used five fresh sessions and retained 50 current rows. Bytes
-are uncompressed JSON bodies across all pages; timings are medians.
+Batch D2 measured Bun 1.4.2 on Linux x64, SQLite and warm loopback HTTP, on the
+earlier two-stream version of this demo. That version served one change per
+changed story, as this one does. Every poll changed all 50 stories: a
+worst-case workload, not typical HN traffic. Each milestone used five fresh
+sessions and retained 50 current rows. Bytes are uncompressed JSON bodies
+across all pages; timings are medians.
 
 | Polls | Retained changes | Pages | Body bytes | Raw replay | TanStack preload |
 | ----- | ---------------- | ----- | ---------- | ---------- | ---------------- |
@@ -81,9 +150,7 @@ are uncompressed JSON bodies across all pages; timings are medians.
 Raw replay includes HTTP, decoding and Map application. TanStack preload runs
 on Bun; these are not browser or WAN latency figures. At one poll per minute,
 1,000 polls span about 16 hours 40 minutes. The same worst case is about 17.7 MB
-of replay after one day. Server-side snapshots remain a follow-up; the proposed
-trigger is before a rows route runs for about a day without reset, or retains
-more than about 100 changes per current row. That scope decision remains open.
+of replay after one day. Server-side snapshots remain a follow-up.
 
 ## Limits
 
@@ -92,15 +159,15 @@ must remain available. A retention cap alone loses rows. After a server reset,
 reload the page to open a fresh collection from `-1`; automatic reopening is
 not implemented.
 
-The `@durable-streams/state` 0.3.1 binding merges an upsert on a known key. Fields
-omitted by a later row keep their old browser values, live and on replay.
+The `@durable-streams/state` 0.3.1 binding merges an upsert on a known key.
+Fields omitted by a later row keep their old browser values, live and on
+replay.
 
-The poller's newest-set cache is in memory. A restart publishes fresh upserts
-for current stories. A previously emitted story that leaves the set during
-downtime stays in the served rows and on the page for good. Poller membership
-recovery is a separate follow-up; the restart smoke does not prove it.
+A pass with no changes appends nothing, so it does not check the tail. The next
+poll reconciles later writes. `expectedOffset` refuses a stale append, but it
+does not order the Hacker News fetches of two processes by freshness. Steady
+contention can use up the three retries.
 
-Use a fresh database for the phase-5 declaration: earlier checkpoint/output
-formats are not migrated. `HN_DB=memory` starts fresh after every restart.
-The demo has no hosted deployment; see [Cloudflare](/docs/runtime/cloudflare)
-for the host path.
+Use a fresh database: earlier stream and checkpoint formats are not migrated.
+`HN_DB=memory` starts fresh after every restart. The demo has no hosted
+deployment; see [Cloudflare](/docs/runtime/cloudflare) for the host path.

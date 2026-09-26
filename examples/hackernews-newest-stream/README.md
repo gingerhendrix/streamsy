@@ -1,30 +1,66 @@
 # Hacker News newest stream demo
 
 A Bun server polls Hacker News and writes one Durable State stream,
-`hackernews/newest`. Before each append, an on-demand projection folds the stream
-into current rows. The poller diffs those rows against the fetch, then appends
-changes with `expectedOffset` set to the projection's accepted input offset.
-`Serve.state` publishes the stream at `/state/newest`. The React browser replays
-from `-1` into TanStack DB through `createStreamDB`, then follows live changes.
+`hackernews/newest`. An atomic projection, `newestRows`, folds the stream into
+the current story rows. Before each append, the poller runs the projection,
+reads the rows and the offset they are at, diffs them against the fetch, and
+appends the changes with `expectedOffset: offsets.input`. `Serve.state`
+publishes the stream at `/state/newest`. The React browser replays from `-1`
+into TanStack DB through `createStreamDB`, then follows live changes.
+
+The poller is the working example of the "Read, decide, append" recipe in the
+[projections docs](https://streamsy.dev/docs/projections/projections#read-decide-append).
 
 ```text
-HN API --fetch--> poller --diff--> append(expectedOffset = token) --> hackernews/newest
-                  ^                                                       |     |
-                  | rows + token                                          |     +--> Serve.state /state/newest --> browser
-                  +---- Projection.run(newestRows) <-- fold ---------------+
+HN API --fetch--> poller --diff--> append(expectedOffset: offsets.input) --> hackernews/newest
+                  ^                                                           |     |
+                  | Projection.read: state + offsets                          |     +--> Serve.state /state/newest --> browser
+                  +---- Projection.run(newestRows) <-- fold -------------------+
 ```
 
-The collection is `hn-story`, keyed by `id`. SQLite keeps the stream, projection
-checkpoint and fold state in one file. The fold state and checkpoint commit in
-one transaction. About 50 rows live in fold state because this set is small and
-bounded; the projections docs advise application tables for large row sets.
+The collection is `hn-story`, keyed by `id`. The projection declares its state
+on the declaration and gives a fold step:
+
+```ts
+export const newestRows = Projection.atomic({
+  id: "hn-newest-rows",
+  params: {},
+  inputs: { input: storiesAddress },
+  state: { schema: StoryRows, initial: {} },
+  fold: (rows, { item }) => applyChange(rows, item),
+}).at({});
+```
+
+SQLite keeps the stream, the projection checkpoint and the state row in one
+file. The state row and the checkpoint commit in one transaction. About 50 rows
+live in one state value because this set is small and bounded; the projections
+docs advise application tables for large row sets.
+
+One pass of the recipe is `reconcileNewest` in `src/server/poller/reconcile.ts`:
+
+```ts
+export const reconcileNewest = Effect.fn("NewestStoriesPoller.reconcile")(function* (
+  fetched: FetchResult,
+) {
+  // Run to the tail. A run with a limit would leave the offset behind the tail.
+  yield* Projection.run(newestRows);
+  // The rows and the offset they are at, from one transaction.
+  const { state: rows, offsets } = yield* Projection.read(newestRows);
+  const changes = diffNewest(rows, fetched);
+  // No change appends nothing, so it does not check the tail.
+  if (changes.length === 0) return { rows, changes, offset: offsets.input };
+  const events = DurableState.changes(storiesAddress, { offset: offsets.input }, changes);
+  const stories = yield* HackerNewsStories;
+  const appended = yield* stories.append({}, events, { expectedOffset: offsets.input });
+```
 
 Each pass fetches the newest ids and all their stories once. Unchanged stories
 produce no writes. Departed ids produce deletes, including ids that left during
-server downtime. An `OffsetMismatch` triggers up to three retries, each running
-the projection and rebuilding the diff from durable rows without refetching HN.
-After the retry limit, status records the error and the next poll tries again.
-There is no background projection watcher or in-memory story cache.
+server downtime. An `OffsetMismatch` triggers up to three retries of the whole
+pass. Each retry runs the projection, reads again and rebuilds the diff from
+durable rows without refetching HN. After the retry limit, status records the
+error and the next poll tries again. There is no background projection watcher
+or in-memory story cache.
 
 ## Run it
 
@@ -65,9 +101,9 @@ failure; check `lastPollError` for the result.
 ## Where to look
 
 - `src/server/stories.ts`: the fixed `Streamsy.state` declaration and change types.
-- `src/server/poller/poller.ts`: fetch, projection run, CAS retry loop and coalescing gate.
-- `src/server/newest-rows.ts`: `Projection.atomic` with `state:` and `fold`, and pure `applyChange`.
-- `src/server/poller/reconcile.ts`: pure `diffNewest`, stable ordering and unchanged-write suppression.
+- `src/server/poller/poller.ts`: fetch, retry on `OffsetMismatch`, status counters and coalescing gate.
+- `src/server/newest-rows.ts`: `Projection.atomic` with `state:` and `fold:`, and pure `applyChange`.
+- `src/server/poller/reconcile.ts`: `reconcileNewest` (run, read, decide, append) and pure `diffNewest`, with stable ordering and unchanged-write suppression.
 - `src/server/http.ts`: State, status, poll and static routes.
 - `src/server/streams.ts`: shared SQLite stream/projection host, memory option and boot creation.
 - `src/server/index.ts`: scoped listener, poll schedule and shared application layers.
@@ -109,14 +145,14 @@ is still newest. A later successful fetch can update it; departure from the
 newest id set deletes it. HN's id list and item responses are separate requests,
 so a poll is not an atomic HN snapshot.
 
-The projection run and fold-state load are separate reads. If another process
-advances the stream between them, CAS rejects a stale append and the poller
-retries. A no-change pass appends nothing and does not validate the tail;
-subsequent polls reconcile later writes. CAS prevents stale writes, but does
-not order different processes' HN fetches by freshness. Persistent contention
-can exhaust the three retries. Projection checkpoint conflicts and other
-operational errors are recorded for the next scheduled pass, not retried as
-append conflicts.
+`Projection.read` gives the rows and their offset from one transaction. If
+another process appends after the read, `expectedOffset` refuses the stale
+append and the poller retries. A no-change pass appends nothing and does not
+check the tail; later polls reconcile later writes. `expectedOffset` prevents
+stale writes, but does not order the HN fetches of different processes by
+freshness. Steady contention can use up the three retries. Projection
+checkpoint conflicts and other operational errors are recorded for the next
+scheduled pass, not retried as append conflicts.
 
 An old `.data/hackernews.sqlite` holds the two old streams; this demo starts
 clean under the new stream id `hackernews/newest`. There is no migration or

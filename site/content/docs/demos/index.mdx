@@ -6,11 +6,11 @@ description: Runnable examples of Streamsy's HTTP edge and projection toolkit.
 [Memory server](/docs/demos/memory-server) is the smallest HTTP host: a Bun
 server, one process-local memory store, and a six-step `curl` walkthrough.
 
-[Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories, appends
-source changes, wakes a declared-output `@streamsy/projection` through the
-same-owner change feed, and serves State facts to a live browser collection.
-Its offline smoke proves the change wake and checkpoint resume across a process
-restart.
+[Hacker News newest](/docs/demos/hackernews-newest-stream) polls stories into one
+State stream and serves it to a live browser collection. Before each append, the
+poller runs an atomic projection, reads its rows and offsets with
+`Projection.read`, and appends the diff with `expectedOffset`. Its offline smoke
+covers replay, live changes, and a departure during a SQLite restart.
 
 [Issue tracker](/docs/demos/issue-tracker-demo) is a complete stream-backed
 application: Promise-native Bun routes transact against workspace streams, and
