@@ -2,13 +2,13 @@ import * as FamilyFixture from "./families.ts";
 import { Effect, Schema, Stream } from "effect";
 import { StreamAddress } from "@streamsy/core";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import { Checkpoints, Projection, ProjectionFault, type State } from "@streamsy/projection";
 
 export const input = FamilyFixture.json("projection-input", { schema: Schema.Finite });
 export const output = FamilyFixture.json("projection-output", { schema: Schema.Finite });
 
-/** Stateless fused filter: positive items are copied to `output` inside the transaction. */
-export const positives = Projection.fused({
+/** Stateless atomic filter: positive items are copied to `output` inside the transaction. */
+export const positives = Projection.atomic({
   id: "positives",
   params: {},
   inputs: { input },
@@ -20,6 +20,7 @@ export const positives = Projection.fused({
 }).at({});
 export type Services =
   | Checkpoints
+  | State
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;

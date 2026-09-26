@@ -118,7 +118,7 @@ const Cors = HttpRouter.cors({
     "x-streamsy-state-contract",
     "x-streamsy-stream-version",
     "x-streamsy-stream-contract",
-    "x-streamsy-document-contract",
+    "x-streamsy-value-contract",
   ],
   exposedHeaders: [
     "stream-next-offset",
@@ -129,7 +129,7 @@ const Cors = HttpRouter.cors({
     "x-streamsy-state-contract",
     "x-streamsy-stream-version",
     "x-streamsy-stream-contract",
-    "x-streamsy-document-contract",
+    "x-streamsy-value-contract",
   ],
 });
 const BrowserApp = Layer.mergeAll(App, Cors);

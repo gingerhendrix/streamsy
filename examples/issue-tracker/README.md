@@ -5,7 +5,7 @@ Commands append canonical issue facts through `transact`, run both workspace add
 under their keyed mutexes, and answer from SQL. Same-owner change feeds also run both
 addresses. Startup attempts to catch up each configured address before accepting requests.
 Startup and watcher failures are logged with the projection key and do not stop other
-addresses or the server. A failed address can serve stale rows or a 503 document until
+addresses or the server. A failed address can serve stale rows or a 503 summary until
 repaired; a terminated watcher does not automatically restart.
 
 ```bash
@@ -32,7 +32,7 @@ and runs `HttpRouter.serve` with a scoped Bun listener. The routes are:
 | `/state/workspaces/:workspaceId/issues?offset=-1`           | `board` Durable State changes, keyed by `issueId` |
 | `/state/workspaces/:workspaceId/label-counts?offset=-1`     | `labelCounts` changes, keyed by `labelId`         |
 | `/feed/workspaces/:workspaceId/issue-transitions?offset=-1` | Accepted issue facts, retaining their event ids   |
-| `/document/workspaces/:workspaceId/summary`                 | Compact counts, with ETag and conditional 304     |
+| `/workspaces/:workspaceId/summary`                          | Compact counts, with ETag and conditional 304     |
 
 The old `/api/.../issues` and `/api/.../changes` reads are replaced by the board and
 transition routes. State readers start at `-1`, apply upserts/deletes, and follow
@@ -42,7 +42,7 @@ and missing summary values return 503, including workspaces outside the runner l
 The raw protocol routes are open in this local demo; there is no authentication.
 
 The application owns `issues`, `issue_labels`, `projects`, `users`, `labels`,
-`issue_changes`, and `notification_drafts`. The fused `issueRows` projection writes
+`issue_changes`, and `notification_drafts`. The atomic `issueRows` projection writes
 those tables and its checkpoint through the same SQL transaction. The separate
 `tracker` named stream constructs `Projection.outputs` addresses: `board` and
 `labelCounts` use `Output.rows`, `transitions` uses `Output.stream`, and `workspace`
@@ -61,7 +61,7 @@ to the server. A `Serve.ValueSource` wrapper serves only `WorkspaceSummary`:
 `workspaceId`, `issueCount`, `doneCount`, `labelCount`, and `projectCount`. Counts of
 labels and projects are catalog row counts. Count-neutral changes preserve its ETag.
 The state row still grows with workspace size and is rewritten per unit and decoded
-per document read.
+per summary read.
 
 Both projections apply catalog deletes, including key-only deletes, in the address's
 workspace. SQL catalog upserts use the address workspace too. A catalog value naming
@@ -73,5 +73,5 @@ The named fold uses only the pinned batch and prior value, never mutable SQL row
 SQL and output checkpoints are independent, and there is no atomicity across outputs
 or across the two projections. A command can be accepted before projection failure;
 this demo does not add command idempotency. The new `smoke:issue-tracker-serve` script
-(package-local `smoke:serve`) checks rows, a key-only delete, transitions, document
+(package-local `smoke:serve`) checks rows, a key-only delete, transitions, summary
 ETags/304, restart on the same SQLite file, and another command after restart. Client bindings remain a later slice.

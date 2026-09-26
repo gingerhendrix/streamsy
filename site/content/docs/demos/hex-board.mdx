@@ -15,7 +15,7 @@ class GameEvents extends Streamsy.json<GameEvents>()(
   { params: { gameId: Schema.String }, schema: GameEvent },
 ) {}
 
-const board = Projection.fused({
+const board = Projection.atomic({
   id: "hex-board",
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },
@@ -27,7 +27,7 @@ const board = Projection.fused({
 const current = Projection.loadState(board.at({ gameId: "game" }), BoardState);
 ```
 
-`ranges.input` is present in a fused single-input pass, because an empty read never reaches the handler.
+`ranges.input` is present in an atomic single-input pass, because an empty read never reaches the handler.
 
 `BoardState` contains the next move ordinal and the schema-typed board. Every
 event in a unit shares its source watermark, while move ids use distinct

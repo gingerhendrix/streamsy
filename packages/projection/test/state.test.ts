@@ -22,7 +22,7 @@ class numbers extends Streamsy.json<numbers>()("state.test/numbers", "state/:nam
 }) {}
 
 const input = FamilyFixture.json("state-input", { schema: Schema.Finite });
-const total = Projection.fused({
+const total = Projection.atomic({
   id: "state-total",
   params: {},
   version: 2,
@@ -69,7 +69,7 @@ for (const [name, host] of hosts) {
           const checkpoints = yield* Checkpoints;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7, 11]);
-          const failing = Projection.fused({
+          const failing = Projection.atomic({
             id: total.id,
             params: {},
             version: total.version,
@@ -101,7 +101,7 @@ for (const [name, host] of hosts) {
           const checkpoints = yield* Checkpoints;
           const before = yield* checkpoints.load(total);
           yield* Streams.append(input, [7]);
-          const saveThenFail = Projection.fused({
+          const saveThenFail = Projection.atomic({
             id: total.id,
             params: {},
             version: total.version,
@@ -242,7 +242,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
       }
       yield* Projection.forget(total);
       yield* seed;
-      const invalid = Projection.fused({
+      const invalid = Projection.atomic({
         id: total.id,
         params: {},
         version: total.version,
@@ -260,7 +260,7 @@ test("invalid JSON and schema-invalid state fail typed reads; invalid encoding r
 
 test("stream state rows are separate and initial factory receives params only on first use", async () => {
   const calls: string[] = [];
-  const declared = Projection.fused({
+  const declared = Projection.atomic({
     id: "state-stream",
     params: { name: Schema.String },
     inputs: { numbers },
@@ -293,7 +293,7 @@ test("stream state rows are separate and initial factory receives params only on
 
 test("tagged multi-input fold narrows items and follows declaration order", async () => {
   const words = FamilyFixture.json("state-words", { schema: Schema.String });
-  const projection = Projection.fused({
+  const projection = Projection.atomic({
     id: "tagged",
     params: {},
     inputs: { input, words },
@@ -389,7 +389,7 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
       let loads = 0;
       let saves = 0;
       let starts = 0;
-      const counted = Projection.fused({
+      const counted = Projection.atomic({
         id: "counted",
         params: {},
         inputs: { input },

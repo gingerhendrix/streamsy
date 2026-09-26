@@ -13,7 +13,6 @@ import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "
 import { ProjectionFault } from "./fault.ts";
 import { stateOwner as outputStateOwner, type Outputs } from "./outputs.ts";
 import type { Processed } from "./output.ts";
-import type { Stream } from "./projection.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import type { Progress } from "./run.ts";
 import { canonicalParams, unitOf } from "./unit.ts";
@@ -79,18 +78,16 @@ const asPin = (fault: ProjectionFault): ProjectionFault =>
 /** One pinned unit, with independent tuple sequences and one atomic settle save. */
 export const passStream = Effect.fn("Projection.passStream")(function* <
   Inputs extends InputMap,
-  O,
   E,
   R,
   OR,
 >(
-  projection: Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+  projection: Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
-  const stateOwner =
-    projection._tag === "Outputs" ? yield* outputStateOwner(projection) : undefined;
+  const stateOwner = yield* outputStateOwner(projection);
   if (stateOwner !== undefined && stateOwner !== owner.owner)
     return yield* new ProjectionFault({
       phase: "load",
@@ -99,8 +96,7 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     });
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
-  const streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>> =
-    projection._tag === "Stream" ? { stream: projection.output } : projection.streams;
+  const streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>> = projection.streams;
   for (const output of Object.values(streams)) {
     const service = yield* output.stream;
     if (service.owner !== owner.owner)
@@ -157,10 +153,7 @@ export const passStream = Effect.fn("Projection.passStream")(function* <
     projection.params,
     ranges,
   );
-  const processed: Processed =
-    projection._tag === "Stream"
-      ? { items: { stream: yield* projection.process(batch, unit) } }
-      : yield* projection.process(batch, unit);
+  const processed: Processed = yield* projection.process(batch, unit);
   const seqs: Record<string, number> =
     pending === undefined
       ? Object.fromEntries(

@@ -36,7 +36,7 @@ test("the fold keeps the newest sequence when an older fact arrives later", () =
   expect(foldIssue(first, older)).toBe(first);
 });
 
-test("the fused handler writes application rows through the SQLite host", async () => {
+test("the atomic handler writes application rows through the SQLite host", async () => {
   const runtime = ManagedRuntime.make(applicationLayer(":memory:"));
   try {
     await runtime.runPromise(
@@ -143,7 +143,7 @@ test("an unknown workspace is a 404 and creates nothing", async () => {
       "/feed/workspaces/missing/issue-transitions",
     ])
       expect((await fetch(`${baseUrl}${path}?offset=-1`)).status).toBe(404);
-    expect((await fetch(`${baseUrl}/document/workspaces/missing/summary`)).status).toBe(503);
+    expect((await fetch(`${baseUrl}/workspaces/missing/summary`)).status).toBe(503);
     expect((await fetch(`${baseUrl}/api/workspaces/live/commands`)).status).toBe(404);
     const stream = await fetch(`${baseUrl}/streams/issue-tracker/missing/issue-events?offset=-1`);
     expect(stream.status).toBe(404);

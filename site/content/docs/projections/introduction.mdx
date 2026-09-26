@@ -3,12 +3,12 @@ title: Introduction
 description: What a projection is, the two kinds of stream it connects, and the pages that cover each part.
 ---
 
-A projection is a named, typed, checkpointed consumer of one or more input streams. It reads a slice of each input, runs an Effect handler over that unit, and commits a checkpoint so a restart resumes where it stopped. A fused handler can keep optional fold state through [`Projection.fold` and State](/docs/projections/projections#state), in the same owner transaction as the checkpoint.
+A projection is a named, typed, checkpointed consumer of one or more input streams. It reads a slice of each input, runs an Effect handler over that unit, and commits a checkpoint so a restart resumes where it stopped. An atomic handler can keep optional fold state through [`Projection.fold` and State](/docs/projections/projections#state), in the same owner transaction as the checkpoint.
 
 The kernel is one pass, repeated: restore the checkpoint, read every input in declaration order, run the handler over one unit, commit the checkpoint. `@streamsy/projection` ships two forms of that pass.
 
-- `Projection.fused` is the fused form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint. A stream write to a stream on another storage owner fails before it runs.
-- `Projection.stream` is the stream-output form. The handler returns items, the kernel pins the unit's input ranges in the checkpoint, then appends the items to an output stream under a producer tuple. A retry reproduces the pinned ranges and sends the same tuple, so the output sees each unit once. The output stream must share the checkpoint owner; the runner checks that before any write.
+- `Projection.atomic` is the atomic form. The handler runs inside the checkpoint owner's transaction, so writes through that owner, a stream on the same storage or SQL through the shared client, commit or roll back together with the checkpoint. A stream write to a stream on another storage owner fails before it runs.
+- `Projection.outputs` with one `Output.stream` is the stream-output form. The handler returns items, the kernel pins the unit's input ranges in the checkpoint, then appends the items to an output stream under a producer tuple. A retry reproduces the pinned ranges and sends the same tuple, so the output sees each unit once. The output stream must share the checkpoint owner; the runner checks that before any write.
 
 `Projection.outputs` is the named stream form: `Output.stream`, `Output.rows`, and at most one `Output.value`. Each stream/rows output has its own producer sequence; the value settles with the checkpoint. See [Outputs](/docs/projections/projections#outputs).
 
@@ -53,7 +53,7 @@ export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "double
   schema: Schema.Finite,
 }) {}
 
-/** A stateless fused map inside the checkpoint transaction. */
+/** A stateless atomic map inside the checkpoint transaction. */
 export const minimal = Effect.gen(function* () {
   const numbers = yield* Numbers;
   const doubled = yield* Doubled;
@@ -61,7 +61,7 @@ export const minimal = Effect.gen(function* () {
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
   return yield* Projection.run(
-    Projection.fused({
+    Projection.atomic({
       id: "doubled",
       params: {},
       inputs: { input: Numbers },

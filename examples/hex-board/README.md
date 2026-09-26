@@ -1,6 +1,6 @@
 # Hex board
 
-A fused `Projection.fold` keeps a complete Hex Domination board and the next
+An atomic `Projection.fold` keeps a complete Hex Domination board and the next
 move ordinal in one schema-encoded state row. The SQLite Layer commits that row
 with its checkpoint. Read it with `Projection.loadState(board, BoardState)`.
 

@@ -11,7 +11,7 @@ export class Doubled extends Streamsy.json<Doubled>()("Minimal/Doubled", "double
   schema: Schema.Finite,
 }) {}
 
-/** A stateless fused map inside the checkpoint transaction. */
+/** A stateless atomic map inside the checkpoint transaction. */
 export const minimal = Effect.gen(function* () {
   const numbers = yield* Numbers;
   const doubled = yield* Doubled;
@@ -19,7 +19,7 @@ export const minimal = Effect.gen(function* () {
   yield* doubled.create({});
   yield* numbers.append({}, [1, 2, 3]);
   return yield* Projection.run(
-    Projection.fused({
+    Projection.atomic({
       id: "doubled",
       params: {},
       inputs: { input: Numbers },

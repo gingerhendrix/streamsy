@@ -13,7 +13,14 @@ import {
   type Reader,
   type Writer,
 } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, ProjectionFault, type Unit } from "@streamsy/projection";
+import {
+  Checkpoints,
+  Output,
+  Projection,
+  ProjectionFault,
+  type State,
+  type Unit,
+} from "@streamsy/projection";
 import { type CheckpointRecord } from "@streamsy/projection/checkpoint";
 import * as Memory from "@streamsy/projection/memory";
 
@@ -45,6 +52,7 @@ type Services =
   | Out
   | PagedReader
   | Checkpoints
+  | State
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter;
@@ -129,20 +137,23 @@ const failingAppends = (count: number) => {
   return { outcomes, patch };
 };
 
-/** A stream projection that doubles numbers into strings; both refs are unique per scenario. */
+/** An outputs projection that doubles numbers into strings; both refs are unique per scenario. */
 const scenario = (name: string) => {
   const input = In.at({ name });
   const output = Out.at({ name });
   const seen: Array<{ readonly items: ReadonlyArray<number>; readonly unit: Unit }> = [];
-  const doubled = Projection.stream({
+  const definition = {
     id: `doubled-${name}`,
     params: {},
     inputs: { input },
-    output,
+    outputs: { output: Output.stream(Schema.String, { stream: output }) },
+  };
+  const doubled = Projection.outputs({
+    ...definition,
     process: (batch, unit) =>
       Effect.sync(() => {
         seen.push({ items: batch.input.items, unit });
-        return batch.input.items.map((n) => String(n * 2));
+        return { output: batch.input.items.map((n) => String(n * 2)) };
       }),
   }).at({});
   const initialize = Effect.gen(function* () {
@@ -150,13 +161,13 @@ const scenario = (name: string) => {
     yield* Streams.create(output);
     yield* Streams.append(input, [1, 2, 3]);
   });
-  return { input, output, doubled, seen, initialize };
+  return { input, output, definition, doubled, seen, initialize };
 };
 const pinnedRecord = (record: CheckpointRecord | undefined) => {
   if (record?.pending === undefined) throw new Error("Expected a pinned unit");
   return {
     pending: record.pending,
-    stream: record.adapters.outputs?.stream,
+    output: record.adapters.outputs?.output,
     inputs: record.inputs,
   };
 };
@@ -188,9 +199,9 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       const before = yield* stored(s.doubled);
       const pinned = pinnedRecord(before.record);
       expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seqs.stream).toBe(0);
+      expect(pinned.pending.seqs.output).toBe(0);
       expect(pinned.pending.ranges.input?.count).toBe(3);
-      expect(pinned.stream).toEqual({ epoch: 1, nextSeq: 0 });
+      expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
 
       const appends = failingAppends(0);
       const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
@@ -202,7 +213,7 @@ test("crash after append and before the checkpoint settles by Duplicate without 
       const after = yield* stored(s.doubled);
       expect(after.record?.pending).toBeUndefined();
       expect(after.record?.inputs.input).toBe(pinned.pending.ranges.input?.nextOffset ?? "");
-      expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
       expect(after.token).toBe("2");
       // The retry processed exactly the pinned range under the same unit key.
       expect(s.seen.map((entry) => entry.items)).toEqual([
@@ -237,7 +248,7 @@ test("a competing save between the append and the settle fails in phase checkpoi
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       const before = yield* stored(s.doubled);
       expect(before.token).toBe("2");
-      expect(pinnedRecord(before.record).pending.seqs.stream).toBe(0);
+      expect(pinnedRecord(before.record).pending.seqs.output).toBe(0);
 
       const appends = failingAppends(0);
       const settled = yield* withWriter(Projection.run(s.doubled), appends.patch);
@@ -247,7 +258,7 @@ test("a competing save between the append and the settle fails in phase checkpoi
       const after = yield* stored(s.doubled);
       expect(after.token).toBe("3");
       expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
     }),
   ));
 
@@ -267,9 +278,9 @@ test("the first pin stores the stream epoch before the append; a crash there set
       const before = yield* stored(s.doubled);
       expect(before.token).toBe("1");
       const pinned = pinnedRecord(before.record);
-      expect(pinned.stream).toEqual({ epoch: 1, nextSeq: 0 });
+      expect(pinned.output).toEqual({ epoch: 1, nextSeq: 0 });
       expect(pinned.inputs.input).toBe(ZERO_OFFSET);
-      expect(pinned.pending.seqs.stream).toBe(0);
+      expect(pinned.pending.seqs.output).toBe(0);
       expect(pinned.pending.ranges.input?.from).toBe(ZERO_OFFSET);
       expect(pinned.pending.ranges.input?.count).toBe(3);
       expect(pinned.pending.ranges.input?.nextOffset).not.toBe(ZERO_OFFSET);
@@ -280,7 +291,7 @@ test("the first pin stores the stream epoch before the append; a crash there set
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6"]);
       const after = yield* stored(s.doubled);
       expect(after.record?.pending).toBeUndefined();
-      expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
+      expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
     }),
   ));
 
@@ -289,13 +300,13 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
     Effect.gen(function* () {
       const input = In.at({ name: "evens" });
       const output = Out.at({ name: "evens" });
-      const evens = Projection.stream({
+      const evens = Projection.outputs({
         id: "evens",
         params: {},
         inputs: { input },
-        output,
+        outputs: { output: Output.stream(Schema.String, { stream: output }) },
         process: (batch) =>
-          Effect.succeed(batch.input.items.filter((n) => n % 2 === 0).map(String)),
+          Effect.succeed({ output: batch.input.items.filter((n) => n % 2 === 0).map(String) }),
       }).at({});
       yield* Streams.create(input);
       yield* Streams.create(output);
@@ -307,14 +318,14 @@ test("an empty-output unit writes no pin and consumes no seq", () =>
       const afterEmpty = yield* stored(evens);
       expect(afterEmpty.token).toBe("1");
       expect(afterEmpty.record?.pending).toBeUndefined();
-      expect(afterEmpty.record?.adapters.outputs?.stream).toBeUndefined();
+      expect(afterEmpty.record?.adapters.outputs?.output).toBeUndefined();
       expect(afterEmpty.record?.inputs.input).not.toBe(ZERO_OFFSET);
 
       yield* Streams.append(input, [4]);
       yield* withWriter(Projection.run(evens), recording.patch);
       expect(recording.positions).toEqual([{ epoch: 1, seq: 0 }]);
       expect(yield* readAll(output)).toEqual(["4"]);
-      expect((yield* stored(evens)).record?.adapters.outputs?.stream).toEqual({
+      expect((yield* stored(evens)).record?.adapters.outputs?.output).toEqual({
         epoch: 1,
         nextSeq: 1,
       });
@@ -395,13 +406,12 @@ test("two competing passes with one loaded token: the second pin fails before an
       yield* s.initialize;
       const gate = yield* Deferred.make<void>();
       const reading = yield* Deferred.make<void>();
-      const late = Projection.stream({
-        ...s.doubled,
-        params: {},
+      const late = Projection.outputs({
+        ...s.definition,
         process: (batch) =>
           Deferred.succeed(reading, undefined).pipe(
             Effect.andThen(Deferred.await(gate)),
-            Effect.as(batch.input.items.map((n) => String(n * 2))),
+            Effect.as({ output: batch.input.items.map((n) => String(n * 2)) }),
           ),
       }).at({});
       const appends = failingAppends(0);
@@ -439,12 +449,11 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
         const runner = (name: string, role: "leads" | "follows") =>
           withWriter(
             Projection.pass(
-              Projection.stream({
-                ...s.doubled,
-                params: {},
+              Projection.outputs({
+                ...s.definition,
                 process: (batch) =>
                   (role === "follows" ? Deferred.succeed(loaded, undefined) : Effect.void).pipe(
-                    Effect.as(batch.input.items.map((n) => String(n * 2))),
+                    Effect.as({ output: batch.input.items.map((n) => String(n * 2)) }),
                   ),
               }).at({}),
             ),
@@ -476,7 +485,7 @@ for (const order of ["first-then-second", "second-then-first"] as const) {
         const after = yield* stored(s.doubled);
         expect(after.token).toBe(String(Number(pinToken) + 1));
         expect(after.record?.pending).toBeUndefined();
-        expect(after.record?.adapters.outputs?.stream).toEqual({ epoch: 1, nextSeq: 1 });
+        expect(after.record?.adapters.outputs?.output).toEqual({ epoch: 1, nextSeq: 1 });
       }),
     ));
 }
@@ -488,7 +497,11 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       yield* s.initialize;
       const recording = recordingAppends();
       yield* withWriter(Projection.run(s.doubled), recording.patch);
-      const second = Projection.stream({ ...s.doubled, params: {}, generation: 2 }).at({});
+      const second = Projection.outputs({
+        ...s.definition,
+        generation: 2,
+        process: (batch) => Effect.succeed({ output: batch.input.items.map((n) => String(n * 2)) }),
+      }).at({});
       const again = yield* withWriter(Projection.run(second), recording.patch);
       expect(again.items).toBe(3);
       expect(recording.positions).toEqual([
@@ -496,7 +509,7 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
         { epoch: 2, seq: 0 },
       ]);
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
-      expect((yield* stored(second)).record?.adapters.outputs?.stream).toEqual({
+      expect((yield* stored(second)).record?.adapters.outputs?.output).toEqual({
         epoch: 2,
         nextSeq: 1,
       });
@@ -510,7 +523,7 @@ test("generation 2 appends at seq 0 in epoch 2; a later generation 1 runner fail
       expect(recording.positions[2]).toEqual({ epoch: 1, seq: 1 });
       expect(yield* readAll(s.output)).toEqual(["2", "4", "6", "2", "4", "6"]);
       // The pin stays until a new generation takes over; nothing advanced.
-      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs.stream).toBe(1);
+      expect(pinnedRecord((yield* stored(s.doubled)).record).pending.seqs.output).toBe(1);
     }),
   ));
 
@@ -527,7 +540,7 @@ test("a stored stream epoch that is not the generation fails load/stale-epoch", 
         {
           identity: current.record.identity,
           inputs: current.record.inputs,
-          adapters: { outputs: { stream: { epoch: 7, nextSeq: 1 } } },
+          adapters: { outputs: { output: { epoch: 7, nextSeq: 1 } } },
         },
         current.token,
       );
@@ -548,15 +561,17 @@ test("a two-input pending unit reproduces both ranges", () =>
         readonly b: ReadonlyArray<number>;
         readonly unit: Unit;
       }> = [];
-      const pair = Projection.stream({
+      const pair = Projection.outputs({
         id: "pair",
         params: {},
         inputs: { a, b },
-        output,
+        outputs: { output: Output.stream(Schema.String, { stream: output }) },
         process: (batch, unit) =>
           Effect.sync(() => {
             seen.push({ a: batch.a.items, b: batch.b.items, unit });
-            return Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`);
+            return {
+              output: Projection.items(batch).map((entry) => `${entry.input}:${entry.item}`),
+            };
           }),
       }).at({});
       yield* Streams.create(a);

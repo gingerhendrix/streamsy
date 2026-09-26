@@ -25,7 +25,7 @@ const host = Layer.merge(
   Protocol.bind(sqlite, Streamsy.group(Output)),
 ).pipe(Layer.provideMerge(sqlite));
 
-test("a fused projection reads remote input and writes on its SQLite checkpoint owner", async () => {
+test("an atomic projection reads remote input and writes on its SQLite checkpoint owner", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const source = yield* Source;
@@ -34,7 +34,7 @@ test("a fused projection reads remote input and writes on its SQLite checkpoint 
       yield* source.create(params);
       yield* output.create(params);
       yield* source.append(params, [1, 2, 3]);
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "mixed-double",
         params: {},
         inputs: { input: Source.at(params) },
@@ -61,7 +61,7 @@ test("watch watches the input's feed even when checkpoints have a different owne
       const params = { name: "watch" };
       yield* source.create(params);
       yield* source.append(params, [1], { close: true });
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "mixed-watch",
         params: {},
         inputs: { input: Source.at(params) },
@@ -79,7 +79,7 @@ test("watch rejects a stream rebound without its matching feed", async () => {
   );
   await Effect.runPromise(
     Effect.gen(function* () {
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "rebound-feed",
         params: {},
         inputs: { input: Source.at({ name: "watch" }) },
@@ -106,7 +106,7 @@ const unowned = Layer.effectContext(
   }),
 ).pipe(Layer.provide(memoryGraph));
 
-test("a custom stream wire cannot establish the owner of a fused write", async () => {
+test("a custom stream wire cannot establish the owner of an atomic write", async () => {
   const unownedHost = Protocol.bind(unowned, Streamsy.group(Source, Output)).pipe(
     Layer.provideMerge(memoryGraph),
   );
@@ -118,7 +118,7 @@ test("a custom stream wire cannot establish the owner of a fused write", async (
       yield* source.create(params);
       yield* source.append(params, [1]);
       yield* output.create(params);
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "unowned-write",
         params: {},
         inputs: { input: Source.at(params) },

@@ -4,7 +4,7 @@ import { Duration, Schedule, Effect, type Fiber, type Scope } from "effect";
 import { ZERO_OFFSET, type Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Stream } from "./projection.ts";
+import type { Atomic } from "./projection.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run, type Progress } from "./run.ts";
 
@@ -93,12 +93,11 @@ const hint = Effect.fn("Projection.wake")(function* <R>(
  */
 export const follow = Effect.fn("Projection.follow")(function* <
   Inputs extends InputMap,
-  O,
   E,
   R,
   OR = never,
 >(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: FollowOptions = {},
 ): Effect.fn.Return<
   Fiber.Fiber<Progress, E | ProjectionFault>,

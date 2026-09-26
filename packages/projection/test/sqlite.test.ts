@@ -62,7 +62,7 @@ test("a handler's SQL through the shared client commits and rolls back with the 
         yield* sql.unsafe("CREATE TABLE seen (item INTEGER NOT NULL)");
         yield* Streams.create(input);
         yield* Streams.append(input, [1, -1, 3]);
-        const projection = Projection.fused({
+        const projection = Projection.atomic({
           id: "seen",
           params: {},
           inputs: { input },
@@ -110,7 +110,7 @@ test("interruption inside the Bun SQLite transaction rolls back the handler's SQ
         yield* initialize;
         const written = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
-        const blocking = Projection.fused({
+        const blocking = Projection.atomic({
           id: positives.id,
           params: {},
           inputs: { input },

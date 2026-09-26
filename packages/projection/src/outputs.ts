@@ -23,7 +23,7 @@ import { bind, rowsAddress, type Bound } from "./output-source.ts";
 import { State } from "./state.ts";
 import { withParams, type Unit } from "./unit.ts";
 
-/** Normalized stream-form declaration consumed by the pinned kernel. */
+/** Normalized outputs declaration consumed by the pinned kernel. */
 export interface Outputs<Inputs extends InputMap, E, R, OR = never> {
   readonly _tag: "Outputs";
   readonly id: string;

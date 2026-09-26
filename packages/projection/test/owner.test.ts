@@ -78,7 +78,7 @@ for (const method of [
   "wire.fork",
   "wire.remove",
 ] as const) {
-  test(`fused ${method} rejects a foreign owner and rolls back prior local writes`, async () => {
+  test(`atomic ${method} rejects a foreign owner and rolls back prior local writes`, async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* seed;
@@ -102,7 +102,7 @@ for (const method of [
           "wire.fork": other.wire.fork(target.id, ref.id),
           "wire.remove": other.wire.remove(ref.id),
         };
-        const projection = Projection.fused({
+        const projection = Projection.atomic({
           id: method,
           params: {},
           inputs: { input: Input.at({}) },
@@ -169,12 +169,12 @@ test("a pinned stream on a foreign owner fails before pinning or creating it", a
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* seed;
-      const projection = Projection.stream({
+      const projection = Projection.outputs({
         id: "foreign-pinned",
         params: {},
         inputs: { input: Input.at({}) },
-        output: Foreign.at(params),
-        process: () => Effect.succeed([1]),
+        outputs: { output: Output.stream(Schema.Finite, { stream: Foreign.at(params) }) },
+        process: () => Effect.succeed({ output: [1] }),
       }).at({});
       const result = yield* Projection.run(projection).pipe(Effect.result);
       expect(result._tag).toBe("Failure");

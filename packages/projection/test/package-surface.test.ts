@@ -6,10 +6,9 @@ import { expect, test } from "bun:test";
 import { Layer } from "effect";
 import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
 import type {
+  AtomicDefinition,
   Declaration,
-  FusedDefinition,
   OutputsDefinition,
-  StreamDefinition,
   WatchOptions,
   RunOptions,
   StateApi,
@@ -22,8 +21,7 @@ type PublicHelperTypes =
   | StateApi
   | Checkpoint.EncodedStore
   | Declaration<any, any>
-  | FusedDefinition<any, any, any, any>
-  | StreamDefinition<any, any, any, any, any>
+  | AtomicDefinition<any, any, any, any>
   | OutputsDefinition<any, any, any, any, any, any>
   | WatchOptions
   | RunOptions;
@@ -55,10 +53,11 @@ test("built public entries and declared files exist", () => {
     "CheckpointRecord",
   ])
     expect(Object.keys(Root)).not.toContain(name);
-  expect(Projection.fused).toBeFunction();
+  expect(Projection.atomic).toBeFunction();
   expect(Projection.run).toBeFunction();
   expect(Projection.pass).toBeFunction();
-  expect(Projection.stream).toBeFunction();
+  expect("stream" in Projection).toBe(false);
+  expect("fused" in Projection).toBe(false);
   expect(Projection.follow).toBeFunction();
   expect("family" in Projection).toBe(false);
   expect(Projection.watch).toBeFunction();
@@ -102,18 +101,17 @@ test("root exports stay explicit", () => {
   ]);
   expect(Object.keys(Projection).sort()).toEqual([
     "State",
+    "atomic",
     "each",
     "fold",
     "follow",
     "forget",
-    "fused",
     "items",
     "key",
     "loadState",
     "outputs",
     "pass",
     "run",
-    "stream",
     "watch",
   ]);
 });

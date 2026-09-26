@@ -3,14 +3,14 @@ title: Projections
 description: Define a projection over one or more inputs, run it with checkpoints, and recover it by generation.
 ---
 
-`Projection.fused`, `Projection.stream`, and `Projection.outputs` build inert declarations. None acquires a service. `declaration.at(params)` binds one; `run`, `pass`, or `follow` executes the bound value, and every accepted unit commits its checkpoint through the `Checkpoints` service.
+`Projection.atomic` and `Projection.outputs` build inert declarations. None acquires a service. `declaration.at(params)` binds one; `run`, `pass`, or `follow` executes the bound value, and every accepted unit commits its checkpoint through the `Checkpoints` service.
 
 ```ts
 import { Effect } from "effect";
 import { Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
 
-export const orderTotals = Projection.fused({
+export const orderTotals = Projection.atomic({
   id: "order-totals",
   params: {},
   inputs: { input: Orders },
@@ -25,22 +25,22 @@ export const orderTotalsProjection = orderTotals.at({});
 
 A definition has an `id`, a `version` (default 1), a `generation` (default 1), its `params` codecs, its inputs, and a `process` handler. `params: {}` declares no parameters, and `.at({})` binds it. An input is a stream declaration such as `Orders`, which `.at(params)` resolves with the same params, or a fixed address such as `Orders.at({})`. Use `inputs: { input: Orders }` for one input and read `batch.input.items`. With several inputs, declare `inputs: { orders: Orders, refunds: Refunds }` and read one slice per name.
 
-`process(batch, unit)` is an Effect. It may use any service in its requirements. A runner requires the handler's services, the stream service of every input, and `Checkpoints`. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection (`projectionId`, `version`, `generation`, and the decoded `params`), the non-empty `ranges` keyed by input, and a `key` that is stable across pinned stream-form retries. A fused retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
+`process(batch, unit)` is an Effect. It may use any service in its requirements. A runner requires the handler's services, the stream service of every input, and `Checkpoints`. `batch` holds one `Slice` per declared input, with `from`, `items`, `nextOffset`, `upToDate`, and `closed`. `unit` names the projection (`projectionId`, `version`, `generation`, and the decoded `params`), the non-empty `ranges` keyed by input, and a `key` that is stable across pinned outputs retries. An atomic retry re-reads and may see a longer input range; account for that when using `unit.key` as an idempotency key outside the transaction.
 
 `Projection.items(batch)` flattens a batch into `{ input, item, index }` entries in declaration order, then stream order. `Projection.each(handle)` builds a handler that runs `handle(entry, unit)` once per entry, one at a time.
 
 ## The two forms
 
-The fused form, `Projection.fused`, runs the handler inside the checkpoint owner's transaction. A stream append to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back.
+The atomic form, `Projection.atomic`, runs the handler inside the checkpoint owner's transaction. A stream append to a stream on the same storage and SQL through the shared `SqlClient` commit with the checkpoint; a handler failure or interruption rolls all of it back.
 
-Each stream write in a fused handler is checked before it runs. A write to a stream on another storage owner fails with `process / unsupported-composition`, and the unit commits nothing. Side effects outside stream services, such as SQL on another client or a call to an external service, are not checked and are at-least-once.
+Each stream write in an atomic handler is checked before it runs. A write to a stream on another storage owner fails with `process / unsupported-composition`, and the unit commits nothing. Side effects outside stream services, such as SQL on another client or a call to an external service, are not checked and are at-least-once.
 
-Fused is for SQL and side effects; `Projection.stream` is the declared-output form. The handler returns the items to append. The output stream must share the checkpoint owner. The runner checks every declared output before it processes, pins, or creates anything, and a foreign output fails with `load / unsupported-composition`. Before a non-empty result is appended, the output is created when absent; gone or closed outputs fail with `pin / invalid-output`. An empty result advances the checkpoint without creating the output.
+Atomic is for SQL and side effects; `Projection.outputs` is the declared-output form. With one `Output.stream`, the handler returns the items to append under that output name. The output stream must share the checkpoint owner. The runner checks every declared output before it processes, pins, or creates anything, and a foreign output fails with `load / unsupported-composition`. Before a non-empty result is appended, the output is created when absent; gone or closed outputs fail with `pin / invalid-output`. An empty result advances the checkpoint without creating the output.
 
 ```ts
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Output, Projection } from "@streamsy/projection";
 import { Orders } from "./streams.ts";
 
 export class Amounts extends Streamsy.json<Amounts>()("Shop/Amounts", "amounts", {
@@ -48,12 +48,12 @@ export class Amounts extends Streamsy.json<Amounts>()("Shop/Amounts", "amounts",
   schema: Schema.Finite,
 }) {}
 
-export const amounts = Projection.stream({
+export const amounts = Projection.outputs({
   id: "amounts",
   params: {},
   inputs: { input: Orders },
-  output: Amounts,
-  process: (batch) => Effect.succeed(batch.input.items.map((event) => event.amount)),
+  outputs: { output: Output.stream(Schema.Finite, { stream: Amounts }) },
+  process: (batch) => Effect.succeed({ output: batch.input.items.map((event) => event.amount) }),
 });
 ```
 
@@ -208,7 +208,7 @@ A declaration owns its parameter codecs and names streams as its inputs and outp
 ```ts
 import { Effect, Schema } from "effect";
 import { Streamsy } from "@streamsy/core";
-import { Projection } from "@streamsy/projection";
+import { Output, Projection } from "@streamsy/projection";
 
 class Facts extends Streamsy.json<Facts>()("Shop/Facts", "facts/:workspaceId", {
   params: { workspaceId: Schema.String },
@@ -219,12 +219,12 @@ class Totals extends Streamsy.json<Totals>()("Shop/Totals", "totals/:workspaceId
   schema: totalSchema,
 }) {}
 
-const ordersByWorkspace = Projection.stream({
+const ordersByWorkspace = Projection.outputs({
   id: "order-totals",
   params: { workspaceId: Schema.String },
   inputs: { facts: Facts },
-  output: Totals,
-  process: (batch) => Effect.succeed(toTotals(batch.facts.items)),
+  outputs: { output: Output.stream(totalSchema, { stream: Totals }) },
+  process: (batch) => Effect.succeed({ output: toTotals(batch.facts.items) }),
 });
 
 const bound = ordersByWorkspace.at({ workspaceId: "ws-42" });
@@ -244,7 +244,7 @@ Serve reads outputs without checking inputs. An initial read of an absent output
 
 ## State
 
-`Projection.State` keeps one encoded value per projection key beside its checkpoint. `Projection.fold` loads that value once at the start of the fused handler, folds every tagged item in declaration order and then stream order, and saves once at the end of the pass.
+`Projection.State` keeps one encoded value per projection key beside its checkpoint. `Projection.fold` loads that value once at the start of the atomic handler, folds every tagged item in declaration order and then stream order, and saves once at the end of the pass.
 
 ```ts
 import { Effect, Schema } from "effect";
@@ -260,7 +260,7 @@ const program = Effect.gen(function* () {
   const numbers = yield* Numbers;
   yield* numbers.create({});
   yield* numbers.append({}, [1, 2, 3]);
-  const total = Projection.fused({
+  const total = Projection.atomic({
     id: "running-total",
     params: {},
     inputs: { input: Numbers },
@@ -273,16 +273,16 @@ const program = Effect.gen(function* () {
 
 `loadState(projection, schema)` decodes the stored value as an `Option`; it opens no transaction and returns `None` when the row is absent. `fold` uses its initial value only when the row is absent; that value may also be a function of the decoded params.
 
-`State.save` and `State.remove` are correct only inside the owner transaction, through `Checkpoints.withTransaction`. A fused handler is already inside it. Both shipped Layers provide `State` with `Checkpoints`, so a handler failure, interruption, or checkpoint token conflict rolls back the state and checkpoint together.
+`State.save` and `State.remove` are correct only inside the owner transaction, through `Checkpoints.withTransaction`. An atomic handler is already inside it. Both shipped Layers provide `State` with `Checkpoints`, so a handler failure, interruption, or checkpoint token conflict rolls back the state and checkpoint together.
 
 There is one row per key, and every save overwrites it. There is no history, compaction, or cadence option. Restoring a checkpoint does not read the state row; `fold` or `loadState` reads it explicitly. A state schema change is a new generation.
 
-Fold state is for the value a handler needs between passes. Row sets belong in application tables through the shared `SqlClient`; the kernel keeps the cut. An Effect step can write those rows and return the next fold value inside the fused transaction:
+Fold state is for the value a handler needs between passes. Row sets belong in application tables through the shared `SqlClient`; the kernel keeps the cut. An Effect step can write those rows and return the next fold value inside the atomic transaction:
 
 ```ts
 import { SqlClient } from "effect/unstable/sql";
 
-const orderRows = Projection.fused({
+const orderRows = Projection.atomic({
   id: "order-rows",
   params: {},
   inputs: { input: Orders },
@@ -304,13 +304,13 @@ The application creates and migrates `order_totals`; this snippet uses the `Orde
 
 Forgetting does not delete streams. Do not forget a stream-form projection while keeping its output stream: its producer sequence restarts. Delete the output first, or use a new generation instead of forgetting.
 
-Layer authors must provide `State` from the same store and owner transaction as `Checkpoints` for fused projections. `fromStore` and `stateFromStore` from `@streamsy/projection/checkpoint`, given one `EncodedStore`, build the two services over that store. This is a Layer-author rule, not a runtime check.
+Layer authors must provide `State` from the same store and owner transaction as `Checkpoints` for atomic projections. `fromStore` and `stateFromStore` from `@streamsy/projection/checkpoint`, given one `EncodedStore`, build the two services over that store. This is a Layer-author rule, not a runtime check.
 
 The [hex board demo](/docs/demos/hex-board) is the worked example, including restart and rollback evidence and the state-size measurement: a 21,599 B final encoded row, with a 22,944 B maximum in the measured game.
 
 ## Checkpoints and generations
 
-The `Checkpoints` service holds the records and owns the transaction. `@streamsy/projection/memory` exports `layer` over the memory owner that `Memory.layer` retains. Its `layerMemory(options)` builds a protocol-tier memory graph with checkpoints, for protocol tests. `@streamsy/projection/sqlite` exports `layer` over the `CommitBoundary` and `SqlClient` of a storage Layer, so a checkpoint and a fused handler's writes commit together. The package root imports no SQL driver.
+The `Checkpoints` service holds the records and owns the transaction. `@streamsy/projection/memory` exports `layer` over the memory owner that `Memory.layer` retains. Its `layerMemory(options)` builds a protocol-tier memory graph with checkpoints, for protocol tests. `@streamsy/projection/sqlite` exports `layer` over the `CommitBoundary` and `SqlClient` of a storage Layer, so a checkpoint and an atomic handler's writes commit together. The package root imports no SQL driver.
 
 ```ts
 import { Effect, Layer } from "effect";
@@ -342,4 +342,4 @@ Every input must retain its history after the accepted offset, and the stream fo
 
 ## Several backends
 
-A projection can read its inputs from any backend, including a fetch Layer, because it only reads them. Its `Checkpoints`, its fused stream writes, and its declared outputs must share one storage owner. Provide `Checkpoints` from the storage Layer that holds the output streams. A write or a declared output on another owner fails with `unsupported-composition` before it runs. See [Runtime](/docs/runtime/introduction) for hosts with several backends.
+A projection can read its inputs from any backend, including a fetch Layer, because it only reads them. Its `Checkpoints`, its atomic stream writes, and its declared outputs must share one storage owner. Provide `Checkpoints` from the storage Layer that holds the output streams. A write or a declared output on another owner fails with `unsupported-composition` before it runs. See [Runtime](/docs/runtime/introduction) for hosts with several backends.

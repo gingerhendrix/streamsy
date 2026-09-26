@@ -11,10 +11,10 @@ A projection reads batches from its input streams, hands one unit at a time to
 your handler, and commits a checkpoint after each unit. On restart it resumes
 from the checkpoint. Two forms are shipped:
 
-- **fused**: the handler's local writes and the checkpoint commit in one
+- **atomic**: the handler's local writes and the checkpoint commit in one
   transaction, so each unit is applied exactly once;
-- **stream**: the handler returns items, and the kernel appends them to an
-  output stream under a producer tuple, so a retry lands the same unit once.
+- **outputs**: the handler returns items, and the kernel appends them to
+  output streams under a producer tuple, so a retry lands the same unit once.
 
 The same kernel runs in memory, in Bun SQLite, and inside a SQLite Durable
 Object.
@@ -29,7 +29,7 @@ import { Projection } from "@streamsy/projection";
 const numbers = StreamAddress.json("numbers", { schema: Schema.Finite });
 const doubled = StreamAddress.json("doubled", { schema: Schema.Finite });
 
-const projection = Projection.fused({
+const projection = Projection.atomic({
   id: "doubled",
   params: {},
   inputs: { input: numbers },
@@ -73,21 +73,28 @@ this example; the package tests execute it.
 
 ## Stream output
 
-Fused is for SQL and side effects; stream is the declared-output form.
-`Projection.stream` works across backends, including through the fetch Layer.
+Atomic is for SQL and side effects; outputs is the declared-output form.
+A `Projection.outputs` declaration with one `Output.stream` works across backends,
+including through the fetch Layer.
 The output stream is created when absent. Existing outputs are used as they
 are; gone or closed outputs fail with `pin / invalid-output`. The handler must
 be deterministic on its inputs.
 
 ```ts
 import { Effect } from "effect";
+import { Output } from "@streamsy/projection";
 
-const totals = Projection.stream({
+const totals = Projection.outputs({
   id: "totals",
   params: {},
   inputs: { input: numbers },
-  output: StreamAddress.json("totals", { schema: Schema.Finite }),
-  process: (batch) => Effect.succeed([batch.input.items.reduce((sum, n) => sum + n, 0)]),
+  outputs: {
+    output: Output.stream(Schema.Finite, {
+      stream: StreamAddress.json("totals", { schema: Schema.Finite }),
+    }),
+  },
+  process: (batch) =>
+    Effect.succeed({ output: [batch.input.items.reduce((sum, n) => sum + n, 0)] }),
 });
 ```
 
@@ -107,7 +114,7 @@ stream/rows output present (use `[]` to skip one). A value uses the reserved
 `state` result key. `Projection.fold(initial, (state, batch, unit) => result)`
 loads that value and runs once per batch; the result may also be an Effect.
 `Projection.each` concatenates keyed arrays returned by each item's Effect.
-The three-argument fused `fold(schema, initial, step)` is unchanged.
+The three-argument atomic `fold(schema, initial, step)` is unchanged.
 
 Each output has its own sequence. Recovery reprocesses the pinned inputs from
 the previous state and resends all pinned outputs; state and checkpoint commit
@@ -145,11 +152,11 @@ Inside a Durable Object, swap `BunStorage.layerProtocol(...)` for
 `@streamsy/storage/durable-object`, and keep one runtime for the object's
 lifetime.
 
-A fused handler's writes are exactly-once only when they go through the same
+An atomic handler's writes are exactly-once only when they go through the same
 storage as the checkpoint: `Streams.append` on the same Layer, or SQL on the
 shared `SqlClient`. Writes anywhere else are at-least-once; use `unit.key` as
-an idempotency key for those. The key is stable across pinned stream-form
-retries; a fused retry re-reads and may see a longer input range.
+an idempotency key for those. The key is stable across pinned outputs
+retries; an atomic retry re-reads and may see a longer input range.
 
 ## Good to know
 
@@ -171,7 +178,7 @@ retries; a fused retry re-reads and may see a longer input range.
 - SQLite adds `streamsy_projection_v1_records` and `streamsy_projection_v1_state`.
 
 Layer authors use `@streamsy/projection/checkpoint` for the record and store
-contracts. A fused projection needs a real owner transaction. The memory
+contracts. An atomic projection needs a real owner transaction. The memory
 checkpoint Layer must share the stream Layer graph. Input history, including
 pending pinned ranges, must remain readable.
 

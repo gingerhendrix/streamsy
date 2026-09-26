@@ -59,7 +59,7 @@ export interface CheckpointsApi {
     body: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProjectionFault, R>;
 }
-/** One host owner supplies the record store and the transaction the fused handler joins. */
+/** One host owner supplies the record store and the transaction the atomic handler joins. */
 export class Checkpoints extends Context.Service<Checkpoints, CheckpointsApi>()(
   "@streamsy/projection/Checkpoints",
 ) {}

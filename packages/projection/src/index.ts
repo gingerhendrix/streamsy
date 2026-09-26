@@ -1,5 +1,5 @@
 export * as Projection from "./projection.ts";
-export type { Fused, FusedDefinition, Stream, StreamDefinition } from "./projection.ts";
+export type { Atomic, AtomicDefinition } from "./projection.ts";
 export type { Declaration } from "./declaration.ts";
 export type { FollowOptions } from "./follow.ts";
 export type { RunOptions } from "./read.ts";

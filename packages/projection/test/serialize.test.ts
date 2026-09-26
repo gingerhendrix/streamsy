@@ -2,11 +2,12 @@ import * as FamilyFixture from "./support/families.ts";
 import { expect, test } from "bun:test";
 import { Deferred, Effect, Fiber, Schema, type Scope } from "effect";
 import { Streams, type StreamsReader, type StreamsWriter } from "@streamsy/core/protocol";
-import { Checkpoints, Projection } from "@streamsy/projection";
+import { Checkpoints, Output, Projection, type State } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 
 type Services =
   | Checkpoints
+  | State
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
@@ -25,7 +26,7 @@ test("two calls on one key run in sequence without a token conflict", () =>
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "serialized-one",
         params: {},
         inputs: { input },
@@ -63,11 +64,11 @@ test("different keys can run together", () =>
         const output = FamilyFixture.json(`serialized-two-output-${name}`, {
           schema: Schema.Finite,
         });
-        return Projection.stream({
+        return Projection.outputs({
           id: "serialized-two",
           params: { name: Schema.String },
           inputs: { input },
-          output,
+          outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
           process: () =>
             Effect.acquireUseRelease(
               Effect.gen(function* () {
@@ -77,7 +78,7 @@ test("different keys can run together", () =>
                 });
                 if (active === 2) yield* Deferred.succeed(both, undefined);
               }),
-              () => Deferred.await(both).pipe(Effect.as([1])),
+              () => Deferred.await(both).pipe(Effect.as({ output: [1] })),
               () => Effect.sync(() => (active -= 1)),
             ),
         }).at({ name });
@@ -96,7 +97,7 @@ test("a failing handler releases the permit", () =>
       yield* Streams.create(input);
       yield* Streams.append(input, [1]);
       let fail = true;
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "serialized-failure",
         params: {},
         inputs: { input },
@@ -122,7 +123,7 @@ test("follow and run share the permit and release it after interruption", () =>
       yield* Streams.append(input, [1], { close: true });
       const entered = yield* Deferred.make<void>();
       let calls = 0;
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "follow-permit",
         params: {},
         inputs: { input },

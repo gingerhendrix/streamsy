@@ -297,7 +297,7 @@ export interface ValueSource<P, A, R = never, RE = never> {
   readonly schema: Schema.Codec<A, Contract.CanonicalValue, never, RE>;
   readonly resolve: (params: P) => Effect.Effect<A, ValueUnavailable, R>;
 }
-export interface DocumentOptions {
+export interface ValueOptions {
   readonly cache?: {
     readonly visibility: "private" | "public";
     readonly maxAgeSeconds: number;
@@ -308,7 +308,7 @@ export interface DocumentOptions {
 export function value<P, A, R, RE, const Path extends `/${string}`>(
   source: ValueSource<P, A, R, RE>,
   path: Path & ExactPath<Path, NoInfer<P>>,
-  options: DocumentOptions = {},
+  options: ValueOptions = {},
 ): RouteLayer<R | RE> {
   const selected = params(source.paramSchema, path);
   const cache = options.cache ?? { visibility: "private", maxAgeSeconds: 0, mustRevalidate: true };
@@ -316,13 +316,13 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
     throw new RangeError("Invalid cache age");
   const cacheControl = `${cache.visibility}, max-age=${cache.maxAgeSeconds}${cache.mustRevalidate ? ", must-revalidate" : ""}`;
   const fingerprint = Contract.contractFingerprint({
-    kind: "document",
+    kind: "value",
     source: source.id,
     route: path,
     cache: cacheControl,
     contract: options.contract ?? null,
   });
-  const headers = { ...Http.securityHeaders, [Contract.DOCUMENT_CONTRACT_HEADER]: fingerprint };
+  const headers = { ...Http.securityHeaders, [Contract.VALUE_CONTRACT_HEADER]: fingerprint };
   return HttpRouter.add<
     never,
     HttpServerRequest.HttpServerRequest | HttpRouter.RouteContext | R | RE
@@ -341,8 +341,8 @@ export function value<P, A, R, RE, const Path extends `/${string}`>(
       if (request.method !== "GET" && request.method !== "HEAD") return methodResponse();
       const decoded = yield* selected;
       if (
-        request.headers[Contract.DOCUMENT_CONTRACT_HEADER] !== undefined &&
-        request.headers[Contract.DOCUMENT_CONTRACT_HEADER] !== fingerprint
+        request.headers[Contract.VALUE_CONTRACT_HEADER] !== undefined &&
+        request.headers[Contract.VALUE_CONTRACT_HEADER] !== fingerprint
       )
         return errorResponse(
           { _tag: "ContractChanged", route: path, recovery: "refetch" },

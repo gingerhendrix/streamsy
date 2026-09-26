@@ -75,7 +75,7 @@ const applyIssue = (sql: SqlClient.SqlClient, event: IssueEvent) =>
       );
   });
 
-export const issueRows = Projection.fused({
+export const issueRows = Projection.atomic({
   id: "issue-rows",
   params: { workspaceId: Identifier },
   inputs: {

@@ -12,7 +12,7 @@ import { tracker, outputStreams } from "./outputs.ts";
 import { routes } from "./streams.ts";
 import { transact } from "./state.ts";
 
-export const summaryDocument: Serve.ValueSource<
+export const workspaceSummary: Serve.ValueSource<
   { readonly workspaceId: string },
   WorkspaceSummary,
   State
@@ -36,7 +36,7 @@ export const outputRoutes = Layer.mergeAll(
   Serve.state(tracker.outputs.board, "/state/workspaces/:workspaceId/issues"),
   Serve.state(tracker.outputs.labelCounts, "/state/workspaces/:workspaceId/label-counts"),
   Serve.stream(tracker.outputs.transitions, "/feed/workspaces/:workspaceId/issue-transitions"),
-  Serve.value(summaryDocument, "/document/workspaces/:workspaceId/summary", {
+  Serve.value(workspaceSummary, "/workspaces/:workspaceId/summary", {
     contract: "compact-summary-v1",
   }),
 );

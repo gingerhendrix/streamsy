@@ -103,7 +103,7 @@ test("catalog values cannot write another workspace in either projection", async
           const owner = yield* Checkpoints;
           const before = yield* owner.load(address);
           const result =
-            address._tag === "Fused"
+            address._tag === "Atomic"
               ? yield* Projection.run(address).pipe(Effect.result)
               : yield* Projection.run(address).pipe(Effect.result);
           expect(result).toMatchObject({
@@ -212,20 +212,20 @@ test("served route fingerprints pin address identity and reject incompatible con
       const other = await web.handler(new Request(url.replace("/live/", "/acme/")));
       expect(other.headers.get(header)).not.toBe(response.headers.get(header));
     }
-    const document = await web.handler(new Request("http://host/document/workspaces/live/summary"));
-    expect(document.status).toBe(503);
-    expect(document.headers.get("x-streamsy-document-contract")).toBe(
+    const value = await web.handler(new Request("http://host/workspaces/live/summary"));
+    expect(value.status).toBe(503);
+    expect(value.headers.get("x-streamsy-value-contract")).toBe(
       contractFingerprint({
-        kind: "document",
+        kind: "value",
         source: "issue-tracker/summary",
-        route: "/document/workspaces/:workspaceId/summary",
+        route: "/workspaces/:workspaceId/summary",
         cache: "private, max-age=0, must-revalidate",
         contract: "compact-summary-v1",
       }),
     );
     const rejected = await web.handler(
-      new Request("http://host/document/workspaces/live/summary", {
-        headers: { "x-streamsy-document-contract": "outdated" },
+      new Request("http://host/workspaces/live/summary", {
+        headers: { "x-streamsy-value-contract": "outdated" },
       }),
     );
     expect(rejected.status).toBe(409);
@@ -262,7 +262,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
         yield* Projection.run(tracker.at({ workspaceId: "live" }));
       }),
     );
-    const response = await web.handler(new Request("http://host/document/workspaces/live/summary"));
+    const response = await web.handler(new Request("http://host/workspaces/live/summary"));
     expect(await response.json()).toEqual({
       workspaceId: "live",
       issueCount: 1,
@@ -286,7 +286,7 @@ test("compact summary excludes fold rows and keeps its ETag across a count-neutr
     expect(
       (
         await web.handler(
-          new Request("http://host/document/workspaces/live/summary", {
+          new Request("http://host/workspaces/live/summary", {
             headers: { "if-none-match": etag! },
           }),
         )

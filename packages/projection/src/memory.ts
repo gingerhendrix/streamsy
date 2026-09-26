@@ -25,6 +25,6 @@ export const layer = Layer.effectContext(
   }),
 );
 
-/** A single graph retains the real reader, writer and fused memory owner. */
+/** A single graph retains the real reader, writer and atomic memory owner. */
 export const layerMemory = (options: Parameters<typeof Streams.layerMemory>[0] = {}) =>
   layer.pipe(Layer.provideMerge(Streams.layerMemory(options)));

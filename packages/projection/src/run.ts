@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Projection, Stream } from "./projection.ts";
+import type { Atomic, Projection } from "./projection.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passStream } from "./stream-output.ts";
 import { unitOf } from "./unit.ts";
@@ -17,13 +17,13 @@ export interface Progress {
   readonly record: Pick<CheckpointRecord, "identity" | "inputs">;
 }
 
-/** One fused unit: restore, read every input, then process and checkpoint in the owner transaction. */
-export const passFused = Effect.fn("Projection.passFused")(function* <
+/** One atomic unit: restore, read every input, then process and checkpoint in the owner transaction. */
+export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
   Inputs extends InputMap,
   E,
   R,
 >(
-  projection: Fused<Inputs, E, R>,
+  projection: Atomic<Inputs, E, R>,
   options: RunOptions = {},
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
@@ -84,11 +84,11 @@ export const passFused = Effect.fn("Projection.passFused")(function* <
 });
 
 /** One unit under the strategy the declaration carries. */
-export const pass = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+export const pass = <Inputs extends InputMap, E, R, OR = never>(
+  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
 ): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
-  projection._tag === "Fused" ? passFused(projection, options) : passStream(projection, options);
+  projection._tag === "Atomic" ? passAtomic(projection, options) : passStream(projection, options);
 
 /**
  * Internal kernel without a permit. Call only while holding the permit or simulating
@@ -97,12 +97,11 @@ export const pass = <Inputs extends InputMap, O, E, R, OR = never>(
  */
 export const runKernel = Effect.fn("Projection.runKernel")(function* <
   Inputs extends InputMap,
-  O,
   E,
   R,
   OR = never,
 >(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
 ): Effect.fn.Return<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> {
   yield* validateOptions(options);
@@ -121,8 +120,8 @@ export const runKernel = Effect.fn("Projection.runKernel")(function* <
 export type { Projection };
 
 /** Runs one projection at a time for this canonical key across hosts in the current process. */
-export const run = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+export const run = <Inputs extends InputMap, E, R, OR = never>(
+  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: RunOptions = {},
 ): Effect.Effect<Progress, E | ProjectionFault, R | OR | Checkpoints | InputServices<Inputs>> =>
   withPermit(projection, runKernel(projection, options));

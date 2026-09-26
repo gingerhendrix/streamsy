@@ -78,7 +78,7 @@ import { Effect } from "effect";
 import { Projection } from "@streamsy/projection";
 import { Orders, OrderTotals } from "./streams.ts";
 
-const projection = Projection.fused({
+const projection = Projection.atomic({
   id: "order-totals",
   params: {},
   inputs: { input: Orders },

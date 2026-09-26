@@ -15,7 +15,7 @@ const storageFailure = (phase: ProjectionFault["phase"], message: string) => (ca
 /**
  * Checkpoints over the host's `CommitBoundary` and shared `SqlClient`. The
  * package-owned tables are created additively at acquisition and never reset; a
- * fused handler's SQL and stream writes on the same client join the owner
+ * atomic handler's SQL and stream writes on the same client join the owner
  * transaction the checkpoint commits in. Neither SQL driver is imported here.
  */
 export const layer = Layer.effectContext(

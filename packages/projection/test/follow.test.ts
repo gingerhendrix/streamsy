@@ -6,12 +6,13 @@ import { Duration, Deferred, Effect, Fiber, Layer, Schema, Schedule, type Scope 
 import { TestClock } from "effect/testing";
 import { TransportFault, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, StreamsWriter, type Reader } from "@streamsy/core/protocol";
-import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import { Checkpoints, Output, Projection, ProjectionFault, type State } from "@streamsy/projection";
 import { layerMemory } from "@streamsy/projection/memory";
 import { input, output, positives, readAll } from "./support/scenarios.ts";
 
 type Services =
   | Checkpoints
+  | State
   | import("@streamsy/core").Streamsy.Wildcard
   | StreamsReader
   | StreamsWriter
@@ -95,7 +96,7 @@ test("a write to the second input wakes a two-input follower", () =>
       yield* Streams.create(target);
       yield* Streams.append(a, [1]);
       const woke = yield* Deferred.make<void>();
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "wake",
         params: {},
         inputs: { a, b },
@@ -149,7 +150,7 @@ test("a closed and drained input beside an open one does not wake every cycle", 
       yield* Streams.create(target);
       yield* Streams.append(a, [1], { close: true });
       yield* Streams.append(b, [2]);
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "closed-open",
         params: {},
         inputs: { a, b },
@@ -241,12 +242,12 @@ for (const point of ["read", "append"] as const) {
           operation: point,
           message: "lost reply",
         });
-        const projection = Projection.stream({
+        const projection = Projection.outputs({
           id: `retry-${point}`,
           params: {},
           inputs: { input },
-          output,
-          process: (batch) => Effect.succeed(batch.input.items),
+          outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+          process: (batch) => Effect.succeed({ output: batch.input.items }),
         }).at({});
         const fiber = yield* Projection.follow(projection, { retry: Schedule.recurs(1) }).pipe(
           FamilyFixture.provideReader({
@@ -310,7 +311,7 @@ test("follow does not retry non-storage faults or handler failures", () =>
         "handler-error",
       ] as const) {
         let calls = 0;
-        const projection = Projection.fused({
+        const projection = Projection.atomic({
           id: "terminal",
           params: {},
           inputs: { input },
@@ -385,12 +386,12 @@ test("follow resets a finite retry budget after a successful cycle between outag
       yield* Streams.append(input, [1]);
       const parked = yield* Deferred.make<void>();
       let reads = 0;
-      const projection = Projection.stream({
+      const projection = Projection.outputs({
         id: "separate-outages",
         params: {},
         inputs: { input },
-        output,
-        process: (batch) => Effect.succeed(batch.input.items),
+        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+        process: (batch) => Effect.succeed({ output: batch.input.items }),
       }).at({});
       const fiber = yield* withReader(
         Projection.follow(projection, { retry: Schedule.recurs(1) }),

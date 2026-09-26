@@ -17,7 +17,7 @@ application: Promise-native Bun routes transact against workspace streams, and
 the browser replays each workspace directly into StreamDB.
 
 [Issue tracker projection](/docs/demos/issue-tracker) feeds five workspace
-inputs into fused SQL and named-output stream addresses, serves rows, transitions
+inputs into atomic SQL and named-output stream addresses, serves rows, transitions
 and a compact document, and serializes request and change triggers by address key.
 
 [Hex board](/docs/demos/hex-board) keeps a complete board as fold state in the

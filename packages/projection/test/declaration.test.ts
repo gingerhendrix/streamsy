@@ -1,7 +1,7 @@
 import { Streamsy } from "@streamsy/core";
 import { expect, test } from "bun:test";
 import { Effect, Option, Schema } from "effect";
-import { Projection } from "@streamsy/projection";
+import { Output, Projection } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { emptySlice } from "../src/batch.ts";
 import { producerId } from "../src/stream-output.ts";
@@ -21,21 +21,21 @@ class output extends Streamsy.json<output>()("declaration.test/output", "boards/
 }) {}
 
 test("a declaration binds declared inputs and keeps fixed addresses", () => {
-  const board = Projection.stream({
+  const board = Projection.outputs({
     id: "board",
     params: { workspaceId: Schema.String },
     inputs: { facts, config: config.at({}) },
-    output,
-    process: (batch) => Effect.succeed(batch.facts.items),
+    outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
+    process: (batch) => Effect.succeed({ output: batch.facts.items }),
   });
   const bound = board.at({ workspaceId: "ws-42" });
 
-  expect(bound._tag).toBe("Stream");
+  expect(bound._tag).toBe("Outputs");
   expect(bound.params).toEqual({ workspaceId: "ws-42" });
   expect(bound.inputs.facts.id).toBe(facts.at({ workspaceId: "ws-42" }).id);
   expect(bound.inputs.facts.stream.key).toBe(facts.key);
   expect(bound.inputs.config.id).toBe(config.at({}).id);
-  expect(bound.output.id).toBe(output.at({ workspaceId: "ws-42" }).id);
+  expect(bound.streams.output?.id).toBe(output.at({ workspaceId: "ws-42" }).id);
   expect(board.at({ workspaceId: "ws-7" }).inputs.config).toBe(bound.inputs.config);
   expect(Option.getOrThrow(board.parse("facts/ws-42"))).toEqual({
     workspaceId: "ws-42",
@@ -47,19 +47,19 @@ test("a declaration binds declared inputs and keeps fixed addresses", () => {
 
 // Golden strings recorded at febad922, before declarations replaced families.
 test("record keys and producer ids match the values before declarations", () => {
-  const fixed = Projection.fused({
+  const fixed = Projection.atomic({
     id: "hex-board",
     params: {},
     inputs: { config },
     process: () => Effect.void,
   }).at({});
-  const coded = Projection.fused({
+  const coded = Projection.atomic({
     id: "hex-board",
     params: { gameId: Schema.String },
     inputs: { config },
     process: () => Effect.void,
   }).at({ gameId: "game" });
-  const versioned = Projection.fused({
+  const versioned = Projection.atomic({
     id: "issue-tracker",
     version: 2,
     generation: 3,
@@ -88,7 +88,7 @@ test("the handler unit carries decoded params and the unit key stays encoded", a
     schema: Schema.String,
   }) {}
   const seen: Array<{ readonly id: number; readonly key: string }> = [];
-  const declared = Projection.fused({
+  const declared = Projection.atomic({
     id: "units",
     params: { id: Schema.FiniteFromString },
     inputs: { numbered },
@@ -106,7 +106,7 @@ test("number parameters encode to strings and parse back", () => {
     params: { id: Schema.FiniteFromString },
     schema: Schema.String,
   }) {}
-  const declared = Projection.fused({
+  const declared = Projection.atomic({
     id: "numbered",
     params: { id: Schema.FiniteFromString },
     inputs: { numbered },
@@ -123,7 +123,7 @@ class stringId extends Streamsy.json<stringId>()("declaration.test/stringId", "s
   params: { id: Schema.String },
   schema: Schema.String,
 }) {}
-Projection.fused({
+Projection.atomic({
   id: "incompatible-codec",
   params: { id: Schema.FiniteFromString },
   // @ts-expect-error the stream's decoded parameter must be assignable to the projection parameter
@@ -135,7 +135,7 @@ class literalId extends Streamsy.json<literalId>()("declaration.test/literalId",
   params: { id: Schema.Literal("a") },
   schema: Schema.String,
 }) {}
-Projection.fused({
+Projection.atomic({
   id: "narrow-route-codec",
   params: { id: Schema.String },
   // @ts-expect-error the projection parameter must also be assignable to the stream's decoded parameter
@@ -147,7 +147,7 @@ class wrong extends Streamsy.json<wrong>()("declaration.test/wrong", "wrong/:pro
   params: { projectId: Schema.String },
   schema: Schema.String,
 }) {}
-Projection.fused({
+Projection.atomic({
   id: "invalid",
   params: { workspaceId: Schema.String },
   // @ts-expect-error a stream cannot require a parameter absent from the projection

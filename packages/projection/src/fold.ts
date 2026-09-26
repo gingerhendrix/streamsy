@@ -1,4 +1,4 @@
-/* oxlint-disable typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- The overload arity selects the two-argument output descriptor or the three-argument fused fold; assertions only recover types checked by those overloads. */
+/* oxlint-disable typescript/no-unsafe-type-assertion, anti-slop/require-safety-comment-for-type-assertion -- The overload arity selects the two-argument output descriptor or the three-argument atomic fold; assertions only recover types checked by those overloads. */
 import { Effect, Option, Schema } from "effect";
 import type { Entry, InputMap, Slices } from "./batch.ts";
 import type { ProjectionKey } from "./checkpoint.ts";
@@ -37,7 +37,7 @@ export const loadState = <A, I>(
     return Option.some(value);
   });
 
-/** A stream-form fold runs once per reproduced batch; the kernel saves its state at settle. */
+/** An outputs fold runs once per reproduced batch; the kernel saves its state at settle. */
 export interface OutputFold<Inputs extends InputMap, A, Result, E, R, P = Record<string, string>> {
   readonly _tag: "OutputFold";
   readonly initial: Initial<A, P>;
@@ -58,7 +58,7 @@ export function fold<
   initial: Initial<A, P>,
   step: (state: A, batch: Slices<Inputs>, unit: Unit<P>) => Result | Effect.Effect<Result, E, R>,
 ): OutputFold<Inputs, A, Result, E, R, P>;
-/** Loads once, folds in unit order, and saves once inside the fused handler's transaction. */
+/** Loads once, folds in unit order, and saves once inside the atomic handler's transaction. */
 export function fold<Inputs extends InputMap, A, I, P = Record<string, string>>(
   schema: StateSchema<A, I>,
   initial: Initial<A, P>,

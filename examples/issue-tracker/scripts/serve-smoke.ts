@@ -121,22 +121,22 @@ try {
         (afterRestartCommand ? "serve-1,serve-2,serve-3" : "serve-1,serve-2"),
       "transitions duplicated or missing",
     );
-    const response = await fetch(`${baseUrl}/document/workspaces/live/summary`);
-    assert(response.status === 200, "document unavailable");
+    const response = await fetch(`${baseUrl}/workspaces/live/summary`);
+    assert(response.status === 200, "summary unavailable");
     const summary: WorkspaceSummary = await response.json();
     assert(
       summary.issueCount === 1 && summary.doneCount === (afterRestartCommand ? 0 : 1),
       "summary incorrect",
     );
     const etag = response.headers.get("etag");
-    assert(etag !== null, "document has no ETag");
+    assert(etag !== null, "summary has no ETag");
     assert(
       (
-        await fetch(`${baseUrl}/document/workspaces/live/summary`, {
+        await fetch(`${baseUrl}/workspaces/live/summary`, {
           headers: { "if-none-match": etag },
         })
       ).status === 304,
-      "document revalidation failed",
+      "summary revalidation failed",
     );
     return etag;
   };
@@ -144,15 +144,15 @@ try {
   await stopServer(server);
   server = startServer(port, scratch.database);
   await waitForServer(baseUrl);
-  assert((await check()) === etag, "document changed on restart");
+  assert((await check()) === etag, "summary changed on restart");
   await post(baseUrl, "/api/workspaces/live/commands", {
     type: "status",
     commandId: "serve-3",
     issueId: "smoke",
     status: "todo",
   });
-  assert((await check(true)) !== etag, "document ETag did not advance");
-  const advanced = await fetch(`${baseUrl}/document/workspaces/live/summary`, {
+  assert((await check(true)) !== etag, "summary ETag did not advance");
+  const advanced = await fetch(`${baseUrl}/workspaces/live/summary`, {
     headers: { "if-none-match": etag },
   });
   assert(

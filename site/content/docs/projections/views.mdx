@@ -124,7 +124,7 @@ Pass `result.state` as `state` on the next call. Omitting it starts from empty s
 
 ## Persisted state and rows
 
-For a projection's fold state between passes, use [`Projection.fold` and State](/docs/projections/projections#state). State holds one encoded value per projection key. Persist row sets in application tables through the shared `SqlClient`, with a fused `Projection.fused` handler so those writes and the checkpoint share a transaction.
+For a projection's fold state between passes, use [`Projection.fold` and State](/docs/projections/projections#state). State holds one encoded value per projection key. Persist row sets in application tables through the shared `SqlClient`, with a `Projection.atomic` handler so those writes and the checkpoint share a transaction.
 
 A host integrating the engine owns the encoding and persistence of operator state, application rows, and any change history it needs. The pure engine does not acquire a database, advance projection checkpoints, or wire itself into a runner. Choose a new projection generation when changing the plan requires rebuilding derived data.
 

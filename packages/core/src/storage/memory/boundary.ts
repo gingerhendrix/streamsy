@@ -3,7 +3,7 @@ import { attachOwner } from "../../internal/owner.ts";
 import { copyState, type State } from "./state.ts";
 
 /**
- * Internal fused-host seam. Encoded records are owned by the caller.
+ * Internal atomic-host seam. Encoded records are owned by the caller.
  * Nested calls join (no savepoints); failure must escape the outer body to roll back.
  * Bodies stay on the owner fiber and must not wait for their own post-commit wakes.
  * Each outer transaction copies the host state; intended for bounded memory hosts.

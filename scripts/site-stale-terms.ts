@@ -49,4 +49,17 @@ export const retiredCoreNames = [
   "Projection.family",
   ".member(",
 ];
+
+/** Retired names from the batch 4 renames: projection kinds and value serving. */
+export const retiredProjectionNames = [
+  "Projection.fused",
+  "FusedDefinition",
+  '"Fused"',
+  "Projection.stream(",
+  "StreamDefinition",
+  "DocumentOptions",
+  "DOCUMENT_CONTRACT_HEADER",
+  "x-streamsy-document-contract",
+];
+retiredCoreNames.push(...retiredProjectionNames);
 staleTerms.push(...retiredCoreNames);

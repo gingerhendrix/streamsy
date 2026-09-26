@@ -36,7 +36,7 @@ for (const [name, host] of hosts) {
       Effect.runPromise(
         Effect.gen(function* () {
           const input = FamilyFixture.json("aba-input", { schema: Schema.Finite });
-          const projection = Projection.fused({
+          const projection = Projection.atomic({
             id: `aba-${name}-${serialized}`,
             params: {},
             inputs: { input },
@@ -111,7 +111,7 @@ test("forget retains the shared semaphore while an existing waiter starts its ru
   Effect.runPromise(
     Effect.gen(function* () {
       const input = FamilyFixture.json("queued-input", { schema: Schema.Finite });
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "queued-forget",
         params: {},
         inputs: { input },

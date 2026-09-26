@@ -4,7 +4,7 @@ import { Deferred, Effect, Exit, Fiber, Option, Schema } from "effect";
 import { ZERO_OFFSET, type StreamsFault } from "@streamsy/core";
 import { Streams, StreamsReader, type Reader } from "@streamsy/core/protocol";
 import { MemoryCommitBoundary } from "@streamsy/core/internal/memory";
-import { Checkpoints, Projection, ProjectionFault } from "@streamsy/projection";
+import { Checkpoints, Output, Projection, ProjectionFault } from "@streamsy/projection";
 import { recordKey } from "@streamsy/projection/checkpoint";
 import { layerMemory } from "@streamsy/projection/memory";
 import { minimal, Numbers, Doubled } from "../src/examples/minimal.ts";
@@ -53,7 +53,7 @@ const withRead = <A, E, R>(
     );
   });
 
-test("fresh ordered run, fused rollback and restart without repeated output", () =>
+test("fresh ordered run, atomic rollback and restart without repeated output", () =>
   run(
     Effect.gen(function* () {
       const result = yield* composition;
@@ -160,7 +160,7 @@ test("identity mismatch on inputs stops without reset", () =>
       const before = yield* inspect;
       const other = FamilyFixture.json("elsewhere", { schema: Schema.Finite });
       yield* Streams.create(other);
-      const changed = Projection.fused({
+      const changed = Projection.atomic({
         id: positives.id,
         params: {},
         inputs: { input: other },
@@ -316,7 +316,7 @@ test("two competing passes on one memory host: the second conflicts and output i
       const inside = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const loaded = yield* Deferred.make<void>();
-      const gated = Projection.fused({
+      const gated = Projection.atomic({
         id: positives.id,
         params: {},
         inputs: { input },
@@ -354,7 +354,7 @@ test("interruption inside the transaction rolls back the output append and the c
       yield* initialize;
       const appended = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      const blocking = Projection.fused({
+      const blocking = Projection.atomic({
         id: positives.id,
         params: {},
         inputs: { input },
@@ -386,7 +386,7 @@ test("handler failure rolls back the output append and the checkpoint", () =>
     Effect.gen(function* () {
       yield* initialize;
       class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
-      const failing = Projection.fused({
+      const failing = Projection.atomic({
         id: positives.id,
         params: {},
         inputs: { input },
@@ -407,9 +407,9 @@ test("version one keeps existing record keys and version two starts a fresh key"
     inputs: { input },
     process: () => Effect.void,
   };
-  const original = Projection.fused(definition).at({});
-  const one = Projection.fused({ ...definition, version: 1 }).at({});
-  const two = Projection.fused({ ...definition, version: 2 }).at({});
+  const original = Projection.atomic(definition).at({});
+  const one = Projection.atomic({ ...definition, version: 1 }).at({});
+  const two = Projection.atomic({ ...definition, version: 2 }).at({});
   expect(recordKey(Projection.key(original))).toBe(
     '["streamsy.projection.v1","versioned","1","{}"]',
   );
@@ -425,7 +425,7 @@ test("run without a limit drains more than one hundred server pages", () =>
         input,
         Array.from({ length: 101 }, (_, n) => n),
       );
-      const projection = Projection.fused({
+      const projection = Projection.atomic({
         id: "uncapped",
         params: {},
         inputs: { input },
@@ -445,16 +445,16 @@ test("stream units retain the declared version on a fresh pass and pinned retry"
       yield* initialize;
       const versions: number[] = [];
       const output = FamilyFixture.json("versioned-output", { schema: Schema.Finite });
-      const projection = Projection.stream({
+      const projection = Projection.outputs({
         id: "versioned-stream",
         params: {},
         version: 7,
         inputs: { input },
-        output,
+        outputs: { output: Output.stream(Schema.Finite, { stream: output }) },
         process: (batch, unit) =>
           Effect.sync(() => {
             versions.push(unit.version);
-            return batch.input.items;
+            return { output: batch.input.items };
           }),
       }).at({});
       const owner = yield* Checkpoints;

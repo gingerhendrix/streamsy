@@ -4,7 +4,7 @@ import type { Storage } from "@streamsy/core";
 import { Projection, type State, type Checkpoints } from "@streamsy/projection";
 import type { HttpRouter } from "effect/unstable/http";
 import type { SqlClient } from "effect/unstable/sql";
-import type { app, outputRoutes, summaryDocument } from "../server/app.ts";
+import type { app, outputRoutes, workspaceSummary } from "../server/app.ts";
 import type { checkCatalogWorkspace } from "../server/catalog.ts";
 import type { applicationLayer, hostLayer, createInputs } from "../server/host.ts";
 import type { tracker, Board, LabelCounts, Transitions } from "../server/outputs.ts";
@@ -66,7 +66,7 @@ export type Checks = [
   Assert<Same<Effect.Services<ReturnType<typeof createInputs>>, Inputs>>,
   Assert<Same<Effect.Services<ReturnType<typeof checkCatalogWorkspace>>, never>>,
   Assert<Same<Effect.Services<typeof prepareSchema>, SqlClient.SqlClient>>,
-  Assert<Same<Effect.Services<ReturnType<typeof summaryDocument.resolve>>, State>>,
+  Assert<Same<Effect.Services<ReturnType<typeof workspaceSummary.resolve>>, State>>,
   Assert<Same<Layer.Services<ReturnType<typeof applicationLayer>>, never>>,
   Assert<Same<Layer.Services<ReturnType<typeof hostLayer>>, never>>,
   Assert<

@@ -53,7 +53,7 @@ export const canonicalRanges = (ranges: Record<string, Range>): string =>
     ),
   );
 
-/** The key is stable across stream-form retries; fused retries may read a longer tail. */
+/** The key is stable across outputs retries; atomic retries may read a longer tail. */
 export const unitOf = (
   projectionId: string,
   version: number,

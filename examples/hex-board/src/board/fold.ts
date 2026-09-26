@@ -28,7 +28,7 @@ export class GameEvents extends Streamsy.json<GameEvents>()(
   { params: { gameId: Schema.String }, schema: GameEvent },
 ) {}
 
-export const board = Projection.fused({
+export const board = Projection.atomic({
   id: "hex-board",
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },

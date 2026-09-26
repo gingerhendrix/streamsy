@@ -62,7 +62,7 @@ A program that needs `Drafts` and `Journal` runs over the merged Layer. A missin
 
 A group checks only the streams it contains: two templates that can match one id fail at `Streamsy.group`. Put every served stream in one group for `Http.routes`, so the check covers all of them. An id that no stream owns answers 404 over HTTP. To own every other id, put `Streamsy.Wildcard` last in a group. A fork stays inside one stream, so it never crosses backends. A fetch Layer keeps its own `capabilities`, so set the flags on that Layer.
 
-Projections have one more rule: `Checkpoints`, fused stream writes, and declared outputs must share one storage owner. See [Projections](/docs/projections/projections#several-backends).
+Projections have one more rule: `Checkpoints`, atomic stream writes, and declared outputs must share one storage owner. See [Projections](/docs/projections/projections#several-backends).
 
 ## Pages
 

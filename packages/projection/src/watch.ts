@@ -4,15 +4,15 @@ import { Effect, Fiber, Queue, Stream as EffectStream, type Scope } from "effect
 import { Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
-import type { Fused, Stream } from "./projection.ts";
+import type { Atomic } from "./projection.ts";
 import { validateOptions, type RunOptions } from "./read.ts";
 import { run } from "./run.ts";
 import type { Progress } from "./run.ts";
 
 export interface WatchOptions extends RunOptions {}
 
-const watchLoop = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+const watchLoop = <Inputs extends InputMap, E, R, OR = never>(
+  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: WatchOptions,
 ): Effect.Effect<
   Progress,
@@ -104,8 +104,8 @@ const watchLoop = <Inputs extends InputMap, O, E, R, OR = never>(
  * Once watched, an input that is gone surfaces as `read / history-unavailable`; other head
  * failures surface as `read / storage-failure`.
  */
-export const watch = <Inputs extends InputMap, O, E, R, OR = never>(
-  projection: Fused<Inputs, E, R> | Stream<Inputs, O, E, R, OR> | Outputs<Inputs, E, R, OR>,
+export const watch = <Inputs extends InputMap, E, R, OR = never>(
+  projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
   options: WatchOptions = {},
 ): Effect.Effect<
   Fiber.Fiber<Progress, E | ProjectionFault>,
