@@ -102,7 +102,9 @@ const lint = (args: Array<string>): Array<Diagnostic> => {
 const normalise = (filename: string): string => filename.replace(/^\.\//, "");
 
 const isEffectCode = (code: string): boolean =>
-  code.startsWith("effecttsgo(") || code.startsWith("anti-slop-effect(");
+  code.startsWith("effecttsgo(") ||
+  code.startsWith("anti-slop-effect(") ||
+  code.startsWith("effect-idioms(");
 
 const failures: Array<string> = [];
 const check = (ok: boolean, message: string): void => {

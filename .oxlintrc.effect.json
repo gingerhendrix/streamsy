@@ -15,13 +15,27 @@
   // limited to Effect diagnostics.
   "rules": {
     "no-underscore-dangle": "off",
-    "anti-slop-effect/no-service-constructor-imports": "error"
+    "anti-slop-effect/no-service-constructor-imports": "error",
+    "effect-idioms/no-tag-comparison": "warn",
+    "effect-idioms/no-tag-destructure": "warn",
+    "effect-idioms/no-tag-literal": "warn",
+    "effect-idioms/no-tag-switch": "warn"
   },
   "overrides": [
     {
       "files": ["packages/storage/test/support/do-worker.ts"],
       "rules": {
         "anti-slop-effect/no-service-constructor-imports": "off"
+      }
+    },
+    {
+      // Tests and test support assert encoded wire shapes, so they name `_tag` directly.
+      "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "**/src/testing/**"],
+      "rules": {
+        "effect-idioms/no-tag-comparison": "off",
+        "effect-idioms/no-tag-destructure": "off",
+        "effect-idioms/no-tag-literal": "off",
+        "effect-idioms/no-tag-switch": "off"
       }
     }
   ],
@@ -32,6 +46,10 @@
     {
       "name": "anti-slop-effect",
       "specifier": "./tools/oxlint/anti-slop/effect/index.ts"
+    },
+    {
+      "name": "effect-idioms",
+      "specifier": "./tools/oxlint/effect-idioms/index.ts"
     }
   ]
 }
