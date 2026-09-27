@@ -6,8 +6,20 @@ import type { StreamId } from "../schema/index.ts";
 import { generateCursor } from "../policy/cursor-generator.ts";
 import * as SseEvents from "./sse-event-encoder.ts";
 import type { SseControlData } from "./sse-event-encoder.ts";
+import { concatBytes } from "./message-body-codec.ts";
 
 const events = SseEvents;
+
+/** Each connection's deadline is `deadlineMs` scaled by a factor from 0.9 to 1.1. */
+export const DEADLINE_JITTER = 0.1;
+
+/**
+ * Spread `deadlineMs` by up to `DEADLINE_JITTER` either way, from one draw `r`
+ * in [0, 1). Connections opened together then do not all close together.
+ */
+export function jitterDeadline(deadlineMs: number, r: number): number {
+  return Math.round(deadlineMs * (1 - DEADLINE_JITTER + 2 * DEADLINE_JITTER * r));
+}
 
 /** Pull-based batches are unbounded in message count, like readNext and toolkit follow. */
 export function sse(
@@ -48,20 +60,27 @@ export function sse(
           : { streamNextOffset: currentOffset, streamCursor: currentCursor };
         if (!result.closed && result.upToDate) control.upToDate = true;
         chunks.push(events.controlEvent(control));
-        return { chunks, done: result.closed === true };
+        // One chunk per batch: the deadline merge below can then end the body only
+        // between batches, never between a data event and the control event that
+        // moves the client's offset past it.
+        const frame = concatBytes(chunks.map((data) => ({ data })));
+        return { frames: [frame], done: result.closed === true };
       }).pipe(
         Effect.catchTags({
-          StreamNotFound: () => Effect.succeed({ chunks: [], done: true }),
-          StreamGone: () => Effect.succeed({ chunks: [], done: true }),
-          NotSupported: () => Effect.succeed({ chunks: [], done: true }),
+          StreamNotFound: () => Effect.succeed({ frames: [], done: true }),
+          StreamGone: () => Effect.succeed({ frames: [], done: true }),
+          NotSupported: () => Effect.succeed({ frames: [], done: true }),
         }),
       ),
     ).pipe(
       Stream.takeUntil((batch) => batch.done),
-      Stream.flatMap((batch) => Stream.fromIterable(batch.chunks)),
-      Stream.merge(Stream.fromEffect(Effect.sleep(deadlineMs)).pipe(Stream.drain), {
-        haltStrategy: "either",
-      }),
+      Stream.flatMap((batch) => Stream.fromIterable(batch.frames)),
+      Stream.merge(
+        Stream.fromEffect(
+          Random.next.pipe(Effect.flatMap((r) => Effect.sleep(jitterDeadline(deadlineMs, r)))),
+        ).pipe(Stream.drain),
+        { haltStrategy: "either" },
+      ),
     );
   });
   const headers = new Headers({

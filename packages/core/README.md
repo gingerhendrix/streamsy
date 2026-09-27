@@ -91,7 +91,10 @@ unpersisted tuple.
 
 `Http.routes(streams, { access: "read", sseDeadlineMs })`, `Http.app`, and `Http.read` accept an SSE lifetime in
 milliseconds. It defaults to 60,000 and closes the body normally at the
-deadline. Host-forced interruption and client cancellation remain owned by
+deadline. Each connection draws its own deadline from 90 to 110 percent of
+this value, so connections opened together do not all close together. Each SSE
+batch goes out as one chunk, so the body ends only after a whole batch and its
+control event. Host-forced interruption and client cancellation remain owned by
 the host. Read results include `contentType`; a fetch long poll returning 204
 without Content-Type resolves it with HEAD.
 
