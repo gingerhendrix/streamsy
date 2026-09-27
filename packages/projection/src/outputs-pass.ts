@@ -11,8 +11,9 @@ import {
 } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
-import { stateOwner as outputStateOwner, type Outputs } from "./outputs.ts";
+import type { Outputs } from "./outputs.ts";
 import type { Processed } from "./output.ts";
+import { checkStateOwner } from "./state.ts";
 import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
 import { offsetsOf, type Progress } from "./run.ts";
 import { canonicalParams, unitOf } from "./unit.ts";
@@ -91,13 +92,7 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
 > {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
-  const stateOwner = yield* outputStateOwner(projection);
-  if (stateOwner !== undefined && stateOwner !== owner.owner)
-    return yield* new ProjectionFault({
-      phase: "load",
-      reason: "unsupported-composition",
-      message: "Output state does not share the checkpoint owner",
-    });
+  yield* checkStateOwner(projection, owner);
   const before = yield* restore(projection, owner);
   const { identity, adapters } = before.record;
   const streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>> = projection.streams;

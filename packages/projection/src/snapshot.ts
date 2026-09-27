@@ -1,11 +1,10 @@
 import { Effect, Option } from "effect";
-import { ownerOf } from "@streamsy/core/internal/memory";
 import type { InputMap } from "./batch.ts";
 import { Checkpoints, restore } from "./checkpoint.ts";
-import { ProjectionFault } from "./fault.ts";
+import type { ProjectionFault } from "./fault.ts";
 import type { Outputs } from "./outputs.ts";
 import type { Atomic } from "./projection.ts";
-import { State, decodeState } from "./state.ts";
+import { State, checkStateOwner, decodeState } from "./state.ts";
 
 /** The accepted offset of each input, keyed by input name. The next pass reads after these. */
 export type Offsets<Inputs extends InputMap> = { readonly [K in keyof Inputs]: string };
@@ -29,12 +28,7 @@ export const read = Effect.fn("Projection.read")(function* <Inputs extends Input
   const owner = yield* Checkpoints;
   const store = yield* State;
   const declared = projection.state;
-  if (declared !== undefined && ownerOf(store) !== owner.owner)
-    return yield* new ProjectionFault({
-      phase: "load",
-      reason: "unsupported-composition",
-      message: "Projection state does not share the checkpoint owner",
-    });
+  yield* checkStateOwner(projection, owner);
   const [restored, encoded] = yield* owner.withTransaction(
     Effect.all([
       restore(projection, owner),

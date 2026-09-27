@@ -8,6 +8,7 @@ import { ProjectionFault } from "./fault.ts";
 import type { Atomic, Projection } from "./projection.ts";
 import { readInputs, validateOptions, type RunOptions } from "./read.ts";
 import { passOutputs } from "./outputs-pass.ts";
+import { checkStateOwner } from "./state.ts";
 import type { Offsets } from "./snapshot.ts";
 import { unitOf } from "./unit.ts";
 
@@ -41,6 +42,7 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
 > {
   yield* validateOptions(options);
   const owner = yield* Checkpoints;
+  yield* checkStateOwner(projection, owner);
   const before = yield* restore(projection, owner);
   const empty = { units: 0, items: 0, offsets: offsetsOf<Inputs>(before.record) };
   const read = yield* readInputs(projection.inputs, before.record.inputs);

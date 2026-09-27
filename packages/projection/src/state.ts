@@ -1,6 +1,11 @@
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { Context, Effect, Option, Schema } from "effect";
-import { recordKey, type EncodedStore, type ProjectionKey } from "./checkpoint.ts";
+import {
+  recordKey,
+  type CheckpointsApi,
+  type EncodedStore,
+  type ProjectionKey,
+} from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
 
 export interface StateApi {
@@ -23,6 +28,26 @@ export const stateFromStore = (store: EncodedStore): StateApi =>
     },
     ownerOf(store),
   );
+
+/**
+ * The state row must commit in the checkpoint owner's transaction. A projection with
+ * `state:` and a `State` service from another owner fails with
+ * `load / unsupported-composition` before it reads or processes.
+ */
+export const checkStateOwner = Effect.fnUntraced(function* (
+  projection: { readonly id: string; readonly state?: unknown },
+  checkpoints: CheckpointsApi,
+) {
+  if (projection.state === undefined) return;
+  // The declaration type requires State whenever `state:` is set.
+  const store = yield* Effect.serviceOption(State);
+  if (Option.isNone(store) || ownerOf(store.value) === checkpoints.owner) return;
+  return yield* new ProjectionFault({
+    phase: "load",
+    reason: "unsupported-composition",
+    message: `State of ${projection.id} does not share the checkpoint owner`,
+  });
+});
 
 export type StateSchema<A, I = unknown> = Schema.Codec<A, I, never, never>;
 /** A value, or a function of the decoded params the projection was bound with. */

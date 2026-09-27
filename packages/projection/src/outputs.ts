@@ -1,6 +1,5 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
 import { Effect, Schema } from "effect";
-import { ownerOf } from "@streamsy/core/internal/memory";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
@@ -236,19 +235,5 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
         return { items, saveState: store.save(key, encoded) };
       }),
   };
-  return Object.defineProperty(result, StateOwner, {
-    value: state === undefined ? Effect.succeed(undefined) : Effect.map(State, ownerOf),
-    // Declaration copies must retain the dynamic State lookup; this is not a wire ownership claim.
-    enumerable: true,
-  });
-};
-
-const StateOwner = Symbol.for("@streamsy/projection/internal/StateOwner");
-/** Private normalized metadata; the public Outputs declaration does not gain a required field. */
-export const stateOwner = <Inputs extends InputMap, E, R, OR>(
-  projection: Outputs<Inputs, E, R, OR>,
-): Effect.Effect<object | undefined, never, R> => {
-  if (!(StateOwner in projection)) return Effect.succeed(undefined);
-  // SAFETY: outputs attaches an owner lookup whose State requirement is already included in R.
-  return projection[StateOwner] as Effect.Effect<object | undefined, never, R>;
+  return result;
 };

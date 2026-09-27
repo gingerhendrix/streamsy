@@ -166,6 +166,42 @@ test("declared state on a foreign State owner fails before processing", async ()
   );
 });
 
+test("atomic state on a foreign State owner fails before folding", async () => {
+  const foreignState = Layer.effect(Projection.State, Projection.State).pipe(
+    Layer.provide(Layer.fresh(foreign)),
+  );
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* seed;
+      let folded = false;
+      const projection = Projection.atomic({
+        id: "foreign-atomic-state",
+        params: {},
+        inputs: { input: Input.at({}) },
+        state: { schema: Schema.Finite, initial: 0 },
+        fold: (sum, { item }) => {
+          folded = true;
+          return sum + item;
+        },
+      }).at({});
+      const attempts = [
+        Effect.asVoid(Projection.run(projection)),
+        Effect.asVoid(Projection.read(projection)),
+      ];
+      for (const attempt of attempts) {
+        const result = yield* attempt.pipe(Effect.provide(foreignState), Effect.result);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure.phase).toBe("load");
+          expect(result.failure.reason).toBe("unsupported-composition");
+        }
+      }
+      expect(folded).toBe(false);
+      expect((yield* (yield* Checkpoints).load(projection)).token).toBe("0");
+    }).pipe(Effect.provide(host)),
+  );
+});
+
 test("a pinned stream on a foreign owner fails before pinning or creating it", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {

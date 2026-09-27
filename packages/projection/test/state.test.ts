@@ -1,3 +1,4 @@
+import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
 import { runKernel, run as runWithPermit } from "../src/run.ts";
 import * as FamilyFixture from "./support/families.ts";
 import { Streamsy, ZERO_OFFSET } from "@streamsy/core";
@@ -401,19 +402,25 @@ test("fold performs one load and save per nonempty pass and skips the initial fa
         fold: (sum, { item }) => sum + item,
       }).at({});
       const run = Projection.run(counted).pipe(
-        Effect.provideService(State, {
-          ...state,
-          load: (key) =>
-            Effect.suspend(() => {
-              loads += 1;
-              return state.load(key);
-            }),
-          save: (key, value) =>
-            Effect.suspend(() => {
-              saves += 1;
-              return state.save(key, value);
-            }),
-        }),
+        Effect.provideService(
+          State,
+          attachOwner(
+            {
+              ...state,
+              load: (key) =>
+                Effect.suspend(() => {
+                  loads += 1;
+                  return state.load(key);
+                }),
+              save: (key, value) =>
+                Effect.suspend(() => {
+                  saves += 1;
+                  return state.save(key, value);
+                }),
+            },
+            ownerOf(state),
+          ),
+        ),
       );
       yield* run;
       yield* Streams.append(input, [7, 11]);
