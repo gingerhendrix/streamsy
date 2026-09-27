@@ -17,8 +17,6 @@
     "test/cloudflare/**/*",
     "test/cloudflare-host.test.ts",
     "test/cloudflare-lifecycle.test.ts",
-    "test/cloudflare-usage.test.ts",
-    "test/support/cloudflare-usage.ts",
     "test/alchemy.test.ts",
     "test/alchemy-runtime.test.ts"
   ]
