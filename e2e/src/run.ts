@@ -134,7 +134,7 @@ const initialReport = (identity: RunIdentity, measurementConfigured: boolean): E
   conformance: pending(),
   measurement: measurementConfigured
     ? unavailable<MeasurementEvidence>("Measurement configured but not reached")
-    : unavailable<MeasurementEvidence>("No fake measurement configuration was supplied"),
+    : unavailable<MeasurementEvidence>("This run does not measure latency or throughput"),
   destroyFirst: pending(),
   destroySecond: pending(),
   gone: pending(),
