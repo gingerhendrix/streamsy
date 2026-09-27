@@ -1,5 +1,5 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This constructor erases declaration-specific types only after the mapped public signature checks them. */
-import { Effect, Schema } from "effect";
+import { Data, Effect, Predicate, Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
@@ -43,6 +43,9 @@ export interface Outputs<Inputs extends InputMap, E, R, OR = never, S = unknown>
   readonly streams: Readonly<Record<string, Streamsy.Address<unknown, OR>>>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<Output.Processed, E, R>;
 }
+
+/** The outputs projection constructor. It owns the `Outputs` tag. */
+const OutputsProjection = Data.TaggedClass("Outputs");
 
 type OnlyDeclared<Result, Allowed> =
   Exclude<keyof Result, Allowed> extends never ? unknown : { readonly invalidOutputKeys: never };
@@ -170,12 +173,11 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
   const streams: Record<string, Streamsy.Address<unknown, unknown>> = {};
   const state = definition.state;
   for (const [name, output] of Object.entries(definition.outputs)) {
-    streams[name] =
-      output._tag === "Stream"
-        ? Object.assign(StreamAddress.json(output.stream.id, { schema: output.schema }), {
-            stream: output.stream.stream,
-          })
-        : rowsAddress(name, output);
+    streams[name] = Predicate.isTagged(output, "Stream")
+      ? Object.assign(StreamAddress.json(output.stream.id, { schema: output.schema }), {
+          stream: output.stream.stream,
+        })
+      : rowsAddress(name, output);
   }
   const ids = Object.values(streams).map((address) => address.id);
   if (new Set(ids).size !== ids.length)
@@ -190,8 +192,9 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
     generation: definition.generation,
     params: definition.params,
   };
-  const result: Outputs<Inputs, E | ProjectionFault, R | State, any> = {
-    _tag: "Outputs",
+  const result: Outputs<Inputs, E | ProjectionFault, R | State, any> = new OutputsProjection<
+    Omit<Outputs<Inputs, E | ProjectionFault, R | State, any>, "_tag">
+  >({
     ...key,
     inputs: definition.inputs,
     state,
@@ -212,25 +215,24 @@ const bindOutputs = <Inputs extends InputMap, Result, E, R>(
               reason: "invalid-output",
               message: `Missing output array ${name}`,
             });
-          items[name] =
-            output._tag === "Stream"
-              ? entries
-              : entries.map((change: Output.Change<any>) =>
-                  change._tag === "Upsert"
-                    ? {
-                        type: name,
-                        key: String(change.row[output.key]),
-                        value: change.row,
-                        headers: { operation: "upsert" },
-                      }
-                    : { type: name, key: String(change.key), headers: { operation: "delete" } },
-                );
+          items[name] = Predicate.isTagged(output, "Stream")
+            ? entries
+            : entries.map((change: Output.Change<any>) =>
+                Predicate.isTagged(change, "Upsert")
+                  ? {
+                      type: name,
+                      key: String(change.row[output.key]),
+                      value: change.row,
+                      headers: { operation: "upsert" },
+                    }
+                  : { type: name, key: String(change.key), headers: { operation: "delete" } },
+              );
         }
         if (state === undefined) return { items };
         const encoded = yield* encodeState(key, state.schema, (result as { state: unknown }).state);
         const store = yield* State;
         return { items, saveState: store.save(key, encoded) };
       }),
-  };
+  });
   return result;
 };

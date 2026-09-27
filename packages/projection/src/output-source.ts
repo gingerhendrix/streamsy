@@ -1,6 +1,6 @@
 /* oxlint-disable typescript/no-explicit-any, typescript/no-unsafe-type-assertion, anti-slop/no-unsafe-dictionary-type, anti-slop/require-safety-comment-for-type-assertion -- This mapped adapter preserves each declaration's schema and name while iterating its record. */
 import type { TargetServices, RoutedMap } from "./output-internal.ts";
-import { Schema } from "effect";
+import { Predicate, Schema } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import { type StreamRoute } from "@streamsy/core/protocol";
 import type * as Output from "./output.ts";
@@ -55,11 +55,11 @@ export function bind<D extends RoutedMap, P>(
       const common = { ...declaration, paramSchema };
       const address = (params: P) => {
         const output = keyAt(params).outputs[name]!;
-        return output._tag === "Stream" ? output.stream : rowsAddress(name, output);
+        return Predicate.isTagged(output, "Stream") ? output.stream : rowsAddress(name, output);
       };
       return [
         name,
-        declaration._tag === "Rows"
+        Predicate.isTagged(declaration, "Rows")
           ? {
               ...common,
               template: `${id}/${name}`,

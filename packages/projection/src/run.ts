@@ -1,7 +1,7 @@
 import { withPermit } from "./serialize.ts";
 import type { Outputs } from "./outputs.ts";
 import { CurrentOwner, isForeignOwner } from "@streamsy/core/internal/memory";
-import { Effect } from "effect";
+import { Effect, Predicate } from "effect";
 import type { InputServices, InputMap, Slice } from "./batch.ts";
 import { Checkpoints, advance, rangesOf, restore, type CheckpointRecord } from "./checkpoint.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -96,7 +96,7 @@ export const pass = <Inputs extends InputMap, E, R, OR = never>(
   Progress<Inputs>,
   E | ProjectionFault,
   R | OR | Checkpoints | InputServices<Inputs>
-> => (projection._tag === "Atomic" ? passAtomic(projection) : passOutputs(projection));
+> => (Predicate.isTagged(projection, "Atomic") ? passAtomic(projection) : passOutputs(projection));
 
 /**
  * Internal kernel without a permit. Call only while holding the permit or simulating

@@ -1,19 +1,20 @@
 import type { Target, TargetServices, RoutedMap } from "./output-internal.ts";
-import { Schema, type Effect } from "effect";
+import { Data, Schema, type Effect } from "effect";
 import { StreamAddress, type Streamsy } from "@streamsy/core";
 import type { ProjectionFault } from "./fault.ts";
 
-export interface Upsert<A> {
-  readonly _tag: "Upsert";
-  readonly row: A;
+export type Change<A> = Data.TaggedEnum<{
+  Upsert: { readonly row: A };
+  Remove: { readonly key: string | number };
+}>;
+interface ChangeDefinition extends Data.TaggedEnum.WithGenerics<1> {
+  readonly taggedEnum: Change<this["A"]>;
 }
-export interface Remove {
-  readonly _tag: "Remove";
-  readonly key: string | number;
-}
-export const upsert = <A>(row: A): Upsert<A> => ({ _tag: "Upsert", row });
-export const remove = (key: string | number): Remove => ({ _tag: "Remove", key });
-export type Change<A> = Upsert<A> | Remove;
+const Changes = Data.taggedEnum<ChangeDefinition>();
+export type Upsert<A> = Data.TaggedEnum.Value<Change<A>, "Upsert">;
+export type Remove = Data.TaggedEnum.Value<Change<never>, "Remove">;
+export const upsert = <A>(row: A): Upsert<A> => Changes.Upsert({ row });
+export const remove = (key: string | number): Remove => Changes.Remove({ key });
 
 export interface Stream<A, Identity = Streamsy.Address<A, unknown>> {
   readonly _tag: "Stream";
@@ -29,6 +30,10 @@ export interface Rows<A, Identity = Streamsy.Address<unknown, unknown>> {
 export type Services<D extends RoutedMap> = {
   [K in keyof D]: D[K] extends { readonly stream: infer T } ? TargetServices<T> : never;
 }[keyof D];
+/** The declaration constructors. Each class owns the `_tag` of one output kind. */
+const StreamDeclaration = Data.TaggedClass("Stream");
+const RowsDeclaration = Data.TaggedClass("Rows");
+
 export function stream<A, I, T extends Target<any>>(
   schema: Schema.Codec<A, I, never, never>,
   options: { readonly stream: T },
@@ -42,21 +47,24 @@ export function stream<A, I, R>(
   options: { readonly stream: Target<any> | Streamsy.Address<unknown, R> },
 ): Stream<A, Target<any> | Streamsy.Address<A, R>> {
   const target = options.stream;
-  return {
-    _tag: "Stream",
+  return new StreamDeclaration<Omit<Stream<A, Target<any> | Streamsy.Address<A, R>>, "_tag">>({
     schema,
     stream:
       "address" in target
         ? target
         : Object.assign(StreamAddress.json(target.id, { schema }), { stream: target.stream }),
-  };
+  });
 }
 /** The output name is the Durable State collection type. Deletes need only a key. */
 export function rows<A, I, T extends Target<any> | Streamsy.Address<unknown, any>>(
   schema: Schema.Codec<A, I, never, never>,
   options: { readonly key: StreamAddress.StateKey<A>; readonly stream: T },
 ): Rows<A, T> {
-  return { _tag: "Rows", schema, key: options.key, stream: options.stream };
+  return new RowsDeclaration<Omit<Rows<A, T>, "_tag">>({
+    schema,
+    key: options.key,
+    stream: options.stream,
+  });
 }
 
 // The mapped public result recovers each declaration's item type before runtime erasure.

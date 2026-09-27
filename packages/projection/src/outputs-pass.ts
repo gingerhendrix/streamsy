@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Predicate } from "effect";
 import { Producer, type Streamsy } from "@streamsy/core";
 import { Streams, StreamsWriter } from "@streamsy/core/protocol";
 import {
@@ -196,7 +196,8 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
             new ProjectionFault({
               phase: "pin",
               reason:
-                cause._tag === "StorageFault" || cause._tag === "TransportFault"
+                Predicate.isTagged(cause, "StorageFault") ||
+                Predicate.isTagged(cause, "TransportFault")
                   ? "storage-failure"
                   : "invalid-output",
               message: `Cannot prepare output ${output.id}`,

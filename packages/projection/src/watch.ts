@@ -1,6 +1,6 @@
 import { Checkpoints } from "./checkpoint.ts";
 import type { Outputs } from "./outputs.ts";
-import { Effect, Fiber, Queue, Stream as EffectStream, type Scope } from "effect";
+import { Effect, Fiber, Predicate, Queue, Stream as EffectStream, type Scope } from "effect";
 import { Streamsy } from "@streamsy/core";
 import { inputEntries, type InputServices, type InputMap } from "./batch.ts";
 import { ProjectionFault } from "./fault.ts";
@@ -43,7 +43,7 @@ const watchLoop = <Inputs extends InputMap, E, R, OR = never>(
             Effect.as(true),
             Effect.catchTag("StreamNotFound", () => Effect.succeed(false)),
             Effect.mapError((cause) =>
-              cause._tag === "StreamGone"
+              Predicate.isTagged(cause, "StreamGone")
                 ? new ProjectionFault({
                     phase: "read",
                     reason: "history-unavailable",

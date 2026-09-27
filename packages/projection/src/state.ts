@@ -1,5 +1,5 @@
 import { attachOwner, ownerOf } from "@streamsy/core/internal/memory";
-import { Context, Effect, Option, Schema } from "effect";
+import { Context, Data, Effect, Option, Schema } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import {
   recordKey,
@@ -142,12 +142,15 @@ export interface StateSource<A, I, P> {
   ) => Effect.Effect<A, { readonly _tag: "ValueUnavailable"; readonly detail: string }, State>;
 }
 
+type ValueUnavailable = Data.TaggedEnum<{ ValueUnavailable: { readonly detail: string } }>;
+const { ValueUnavailable } = Data.taggedEnum<ValueUnavailable>();
+
 export const stateSource = <A, I, P>(
   definition: { readonly id: string; readonly params: StreamRoute.ParamCodecs },
   state: StateDefinition<A, I, P>,
   at: (params: P) => ProjectionKey,
 ): StateSource<A, I, P> => {
-  const unavailable = (detail: string) => ({ _tag: "ValueUnavailable" as const, detail });
+  const unavailable = (detail: string) => ValueUnavailable({ detail });
   return {
     id: `${definition.id}/state`,
     // SAFETY: Struct owns exactly the codec keys and their decoded parameter types.

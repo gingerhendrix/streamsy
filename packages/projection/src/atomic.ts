@@ -1,4 +1,4 @@
-import type { Effect } from "effect";
+import { Data, type Effect } from "effect";
 import type { StreamRoute } from "@streamsy/core/protocol";
 import type { InputMap, Slices } from "./batch.ts";
 import {
@@ -37,6 +37,9 @@ export interface Atomic<Inputs extends InputMap, E, R, S = unknown> {
   readonly state?: BoundState<S>;
   readonly process: (batch: Slices<Inputs>, unit: Unit) => Effect.Effect<void, E, R>;
 }
+/** The atomic projection constructor. It owns the `Atomic` tag. */
+const AtomicProjection = Data.TaggedClass("Atomic");
+
 export interface AtomicDefinition<
   C extends StreamRoute.ParamCodecs,
   I extends Inputs,
@@ -104,13 +107,12 @@ export function atomic<E, R>(
     const bound = state === undefined ? undefined : bindState(state, decoded);
     const handler: AtomicHandler<E | ProjectionFault, R | State> =
       bound === undefined || fold === undefined ? process! : foldHandler(key, bound, fold);
-    return {
-      _tag: "Atomic" as const,
+    return new AtomicProjection<Omit<Atomic<InputMap, E | ProjectionFault, R | State>, "_tag">>({
       ...key,
       inputs: addressesOf(definition.inputs, decoded),
       state: bound,
       process: (batch: Slices<InputMap>, unit: Unit) => handler(batch, withParams(unit, decoded)),
-    };
+    });
   });
   return state === undefined
     ? declaration
