@@ -162,7 +162,7 @@ export interface WorkerdRunnerLifecycle<I extends WorkerdDisposable> {
 }
 
 /**
- * Shared lifecycle used by the real Vitest hooks and by deterministic ownership tests.
+ * Shared lifecycle used by the real Vitest hooks.
  * Registration precedes construction, and an unresolved instance keeps its root owned.
  */
 export const createWorkerdRunnerLifecycle = <I extends WorkerdDisposable>(

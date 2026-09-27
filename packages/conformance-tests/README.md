@@ -9,7 +9,6 @@ bun run --cwd packages/conformance-tests test:memory       # memory Layer on Bun
 bun run --cwd packages/conformance-tests test:sqlite       # Bun SQLite
 bun run --cwd packages/conformance-tests test:workerd      # Durable Object SQLite in local Miniflare
 bun run --cwd packages/conformance-tests test:fetch        # the fetch Layer against a Bun host
-bun run --cwd packages/conformance-tests test:workerd:ownership
 ```
 
 `test:workerd` builds `dist/worker/worker.js` from the public package exports

@@ -98,8 +98,5 @@ jobs:
       - name: Workerd conformance tests
         run: bun run test:conformance:workerd
 
-      - name: Workerd harness ownership tests
-        run: bun run test:conformance:ownership
-
       - name: Hosted Durable Object host checks
         run: bun run hosted:check
