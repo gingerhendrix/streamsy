@@ -27,13 +27,11 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
   R,
 >(
   projection: Atomic<Inputs, E, R>,
-  options: RunOptions = {},
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
   R | Checkpoints | InputServices<Inputs>
 > {
-  yield* validateOptions(options);
   const owner = yield* Checkpoints;
   yield* checkStateOwner(projection, owner);
   const before = yield* restore(projection, owner);
@@ -94,13 +92,11 @@ export const passAtomic = Effect.fn("Projection.passAtomic")(function* <
 /** One unit under the strategy the declaration carries. */
 export const pass = <Inputs extends InputMap, E, R, OR = never>(
   projection: Atomic<Inputs, E, R> | Outputs<Inputs, E, R, OR>,
-  options: RunOptions = {},
 ): Effect.Effect<
   Progress<Inputs>,
   E | ProjectionFault,
   R | OR | Checkpoints | InputServices<Inputs>
-> =>
-  projection._tag === "Atomic" ? passAtomic(projection, options) : passOutputs(projection, options);
+> => (projection._tag === "Atomic" ? passAtomic(projection) : passOutputs(projection));
 
 /**
  * Internal kernel without a permit. Call only while holding the permit or simulating

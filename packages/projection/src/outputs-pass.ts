@@ -14,7 +14,7 @@ import { ProjectionFault } from "./fault.ts";
 import type { Outputs } from "./outputs.ts";
 import type { Processed } from "./output.ts";
 import { checkStateOwner } from "./state.ts";
-import { readInputs, reproduce, validateOptions, type RunOptions } from "./read.ts";
+import { readInputs, reproduce } from "./read.ts";
 import type { Progress } from "./run.ts";
 import { offsetsOf } from "./snapshot.ts";
 import { canonicalParams, unitOf } from "./unit.ts";
@@ -85,13 +85,11 @@ export const passOutputs = Effect.fn("Projection.passOutputs")(function* <
   OR,
 >(
   projection: Outputs<Inputs, E, R, OR>,
-  options: RunOptions = {},
 ): Effect.fn.Return<
   Progress<Inputs>,
   E | ProjectionFault,
   R | OR | Checkpoints | InputServices<Inputs>
 > {
-  yield* validateOptions(options);
   const owner = yield* Checkpoints;
   yield* checkStateOwner(projection, owner);
   const before = yield* restore(projection, owner);
