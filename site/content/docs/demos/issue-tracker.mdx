@@ -4,7 +4,7 @@ description: SQL and named-output projection streams on SQLite, with HTTP output
 ---
 
 This issue tracker runs two workspace projection streams on a persistent
-SQLite host. Each member reads canonical issue facts, label membership facts,
+SQLite host. Each projection reads canonical issue facts, label membership facts,
 and three Durable State catalog streams: projects, users, and labels. The atomic
 handler applies one page from each input in declaration order and advances all
 five input offsets in the same transaction as its application writes. A separate

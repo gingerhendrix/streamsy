@@ -216,7 +216,7 @@ await Effect.runPromise(hand.pipe(Effect.provide(host)));
 
 `Projection.run` allows one process-local runner per canonical projection key. `watch` and `follow` use it, so overlapping requests use the same permit without a token conflict. A second process is not fenced and is still detected by the checkpoint token.
 
-The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request and change triggers sharing a key. [Hacker News newest](/docs/demos/hackernews-newest-stream) demonstrates a change wake driving a declared-output projection.
+The [issue tracker projection](/docs/demos/issue-tracker) demonstrates request and change triggers sharing a key. [Hacker News newest](/docs/demos/hackernews-newest-stream) runs a projection with `Projection.run` before each append, reads its rows with `Projection.read`, decides the diff, and appends it with `expectedOffset`.
 
 ## Parameters
 
