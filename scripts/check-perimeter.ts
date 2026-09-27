@@ -47,7 +47,6 @@ const scan = (label: string, pattern: string, globs: Array<string> = []): boolea
   for (const finding of findings) console.log(finding);
   return passed;
 };
-const historical = ["!parked/**"];
 const authored = ["packages/*/src/**", "!*.test.ts"];
 // These are existing published Bun test registration kits, not live runtime owners.
 const testKits = ["packages/core/src/testing/storage-contract.ts"];
@@ -78,17 +77,15 @@ const checks = [
   scan(
     "no parked paths in live inputs",
     String.raw`(?:^|[^\w-])(?:parked/|examples/(?:issue-tracker-projections|risk-demo)(?:/|["']))`,
-    [...historical, "!.oxlintrc.json", "!.oxfmtrc.json", "!scripts/check-perimeter.ts"],
+    ["!scripts/check-perimeter.ts"],
   ),
   scan(
     "no retired package imports",
     String.raw`@streamsy/(?:http-client|state|streams|tanstack-db|sinks|core/json|derive)\b`,
-    historical,
   ),
   scan(
     "no legacy storage entry imports",
     String.raw`@streamsy/storage/(?:fs|sqlite|durable-object/(?:adapter|storage))\b`,
-    historical,
   ),
   scan(
     "no retired core APIs",

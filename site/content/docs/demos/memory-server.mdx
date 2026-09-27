@@ -52,21 +52,34 @@ shows the expected status, headers, and body for every step. The
 
 The server declares one group, `Streamsy.group(Streamsy.Wildcard)`, so it owns every
 stream id. `HttpRouter.serve(Http.routes(streams, { access: "full" }))` runs over
-`Memory.layer({}, streams)` and a scoped Bun listener. Full access allows the
-create and append steps of the walkthrough. The 60-second idle timeout allows a
-30-second protocol long poll to complete. Shutdown disposes the runtime, closing
-the listener and store.
+`Memory.layer({}, streams)` and a scoped Bun listener. Lines marked `// ...` are left out.
 
-Run the offline proof with:
-
-```bash
-bun run --cwd examples/memory-server smoke:http
+```ts title="src/index.ts"
+const streams = Streamsy.group(Streamsy.Wildcard);
+// ...
+const runtime = ManagedRuntime.make(
+  HttpRouter.serve(Http.routes(streams, { access: "full" }), {
+    disableLogger: true,
+    disableListenLog: true,
+  }).pipe(
+    Layer.provide(Memory.layer({}, streams)),
+    Layer.provideMerge(
+      listener({ port, hostname: "::", idleTimeout: 60, gracefulShutdownTimeout: 1000 }),
+    ),
+  ),
+);
 ```
 
-It drives all six flows against a child process, restarts that process, and
-confirms the earlier stream is absent.
+Full access allows the create and append steps of the walkthrough. The 60-second idle
+timeout allows a 30-second protocol long poll to complete. Shutdown disposes the runtime,
+closing the listener and store. The example README also has an offline smoke test that
+runs all six flows against a child process.
+
+See [HTTP runtime](/docs/runtime/http) and [Memory](/docs/runtime/storage#memory).
 
 ## Limits
 
-The memory store is process-local. Restarting the server starts a fresh store;
-this demo does not provide persistent storage or make a hosted claim.
+- The memory store is process-local. A restart starts with an empty store.
+- The server gives full access to every stream id, with no authentication. Use it only on
+  your own machine.
+- The demo has no persistent storage and no hosted deployment.

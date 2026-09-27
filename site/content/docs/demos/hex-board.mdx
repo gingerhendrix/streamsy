@@ -1,64 +1,159 @@
 ---
 title: Hex board
-description: A complete board folded into transactional state, with SQLite restart evidence.
+description: Replay a strategy game into a complete board that survives a restart, with no board tables of your own.
 ---
 
-The slim `examples/hex-board` package proves persisted fold state. It replays
-canonical game events into a board and a move ordinal. Its `fold` step saves
-one state row in the same transaction as the checkpoint; a restarted runtime
-reads both and resumes from that cut.
+This demo replays the events of a hex strategy game into the full board: players, territories, the current turn, the combat in progress and the last 40 moves. The board is one fold value. The projection saves it in the same SQLite transaction as its checkpoint, so a restarted process reads the board and resumes from the same point. The demo has no server and no UI, so this page has no screenshot. Its tests are the demo.
 
-```ts
-class GameEvents extends Streamsy.json<GameEvents>()(
+The full source is in [`examples/hex-board`](https://github.com/gingerhendrix/streamsy/tree/effect/examples/hex-board).
+
+## Run it
+
+From the repository root:
+
+```bash
+bun install --frozen-lockfile
+bun run build
+bun run --cwd examples/hex-board test
+```
+
+The tests use a SQLite file in a temporary folder and also run the same fold on the memory host.
+
+## Architecture
+
+![Architecture diagram. A test runtime appends game events to the GameEvents stream. The board projection folds each event with stepBoard. The SQLite file holds the state row and the checkpoint. Projection.read returns the board to the test. A restarted runtime on the same file finds no new items and resumes.](/docs/demos/hex-board-architecture.svg)
+
+Each number in the diagram is also a section number below.
+
+| Step | What happens                                              | Streamsy feature                             | File                   |
+| ---- | --------------------------------------------------------- | -------------------------------------------- | ---------------------- |
+| 1    | One stream for each game holds its events                 | `Streamsy.json`                              | `src/board/fold.ts`    |
+| 2    | An atomic projection folds each event into the board      | `Projection.atomic` with `state` and `fold`  | `src/board/fold.ts`    |
+| 3    | The SQLite host commits the state row with the checkpoint | `ProjectionSqlite.layer`, `BunStorage.layer` | `test/restart.test.ts` |
+| 4    | The test runs the projection and reads the board          | `Projection.run`, `Projection.read`          | `test/restart.test.ts` |
+| 5    | A new runtime on the same file resumes from the saved cut | Checkpoint and state on restart              | `test/restart.test.ts` |
+
+The code below is from the demo. Lines marked `// ...` are left out.
+
+## 1. Declare the game event stream
+
+Each game has one JSON stream of game events.
+
+```ts title="src/board/fold.ts"
+export class GameEvents extends Streamsy.json<GameEvents>()(
   "HexBoard/GameEvents",
   "games/:gameId/events",
   { params: { gameId: Schema.String }, schema: GameEvent },
 ) {}
+```
 
-const board = Projection.atomic({
+See [Streams](/docs/streams/introduction).
+
+## 2. Fold each event into the board
+
+`BoardState` holds the board and the next move ordinal. `stepBoard` applies one event. The projection declares `state` with a schema and an initial value, and `fold` calls `stepBoard` once for each item.
+
+```ts title="src/board/fold.ts"
+/** The next move ordinal survives restart independently of page boundaries. */
+export const BoardState = Schema.Struct({
+  ordinal: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  board: ProjectionStateSchema,
+});
+export type BoardState = typeof BoardState.Type;
+
+export const initialBoard = ({ gameId }: { readonly gameId: string }): BoardState => ({
+  ordinal: 0,
+  board: initialProjection(gameId),
+});
+
+export const stepBoard = (state: BoardState, event: GameEvent, through: string): BoardState => ({
+  ordinal: state.ordinal + 1,
+  board: projectEvent(state.board, event, through, state.ordinal),
+});
+// ...
+export const board = Projection.atomic({
   id: "hex-board",
   params: { gameId: Schema.String },
   inputs: { input: GameEvents },
   state: { schema: BoardState, initial: initialBoard },
   fold: (state, { item }, unit) => stepBoard(state, item, unit.ranges.input.nextOffset),
 });
-
-const { state, offsets } = yield * Projection.read(board.at({ gameId: "game" }));
 ```
 
-`ranges.input` is present in an atomic single-input pass, because an empty read never reaches the handler.
+`unit.ranges.input` is always present here. The projection has one input, and an empty read never reaches the handler. Every event in a unit gets the same source offset, the end of the unit. Each move gets its own ordinal, and the ordinal is part of the state, so move ids stay unique after a restart.
 
-`BoardState` contains the next move ordinal and the schema-typed board. Every
-event in a unit shares its source watermark, while move ids use distinct
-ordinals that survive restart. The recent-move feed is capped at 40 entries.
-The package has no output stream, metadata row, server or UI.
+See [State](/docs/projections/projections#state).
 
-Run the evidence from the repository root:
+## 3. Commit state with the checkpoint
 
-```sh
-bun run build
-bun run --cwd examples/hex-board test
+The test host puts the stream storage and the projection tables in one SQLite file. After each unit the projection writes the encoded board and the new checkpoint in one transaction.
+
+```ts title="test/restart.test.ts"
+const sqlite = (filename: string) =>
+  Sqlite.layer.pipe(
+    Layer.provideMerge(BunStorage.layer({ client: { filename } }, Streamsy.group(GameEvents))),
+  );
 ```
 
-The SQLite tests cover the 12-event victory game, split after 5 events, and
-the 450-event four-player game, split after 400 events. Both reopen the same
-file and check zero new items, identical state and a checkpoint at the input
-tail, then resume and match a pure fold. The long case checks the exact 40 move
-ids and ordinal after restart. A contradictory resolution saves neither state
-nor checkpoint. Memory, aggregate-equivalence and schema round-trip tests run
-alongside them.
+The demo creates no tables. The state row and the checkpoint go into the `streamsy_projection_v1_` tables that the projection layer owns.
 
-State-size measurement (Bun 1.4.2, file-backed WAL, 3,005 generated events): encoded row
-21,599 B final / 22,944 B maximum; state-upsert transaction mean FULL/NORMAL
-0.549/0.046 ms at one event per unit, 0.581/0.049 ms at 32 events per unit.
-A separate local split measured checkpoint-only commits at 0.4258/0.0098 ms
-FULL/NORMAL and checkpoint plus state at 0.5280/0.0597 ms: the marginal state-row
-cost is about 0.1022/0.0499 ms. At FULL most of the commit cost is the WAL fsync
-that every checkpoint commit pays.
-The state-upsert-only timings exclude encoding and checkpoint writes; the full
-projection transaction means were 1.340/0.760 ms and 7.547/5.462 ms respectively.
+See [Bun SQLite](/docs/runtime/storage#bun-sqlite).
 
-See [projection state](/docs/projections/projections#state) for ownership,
-transaction and generation rules. Application row sets belong in application
-tables through the shared SQL client; this demo deliberately measures a whole
-board stored as one fold value.
+## 4. Run and read the board
+
+The test appends the first part of a game and runs the projection to the end of the stream. `Projection.read` then returns the state and the input offsets that it matches.
+
+```ts title="test/restart.test.ts"
+const seed = (events: readonly GameEvent[] = fullGame, cut = split) =>
+  Effect.gen(function* () {
+    yield* (yield* GameEvents).create(params);
+    yield* (yield* GameEvents).append(params, events.slice(0, cut));
+    expect((yield* Projection.run(board)).items).toBe(cut);
+  });
+const snapshot = Effect.gen(function* () {
+  const { state, offsets } = yield* Projection.read(board);
+  const checkpoint = yield* (yield* Checkpoints).load(board);
+  return { state, offsets, checkpoint, encoded: yield* (yield* State).load(board) };
+});
+```
+
+See [Running](/docs/projections/projections#running).
+
+## 5. Restart and resume
+
+The test closes the first runtime and opens a second one on the same file. The first run finds no new items, and the board and checkpoint are the same as before. The test then appends the rest of the game and checks the result against a pure fold of all the events.
+
+```ts title="test/restart.test.ts"
+      const second = ManagedRuntime.make(sqlite(filename));
+      try {
+        expect((await second.runPromise(Projection.run(board))).items).toBe(0);
+        expect(await second.runPromise(read)).toEqual(before);
+        await second.runPromise(advance(before, events, cut));
+      // ...
+```
+
+The SQLite tests split two games: the 12-event victory game after 5 events, during an attack, and a 450-event four-player game after 400 events. The long case also checks the exact 40 move ids and the ordinal. Another test appends an attack result that does not match the game. The fold fails, and neither the state nor the checkpoint moves.
+
+See [Checkpoints and generations](/docs/projections/projections#checkpoints-and-generations).
+
+## Limits
+
+- The board is one value. Each unit writes all of it again. Row sets that grow belong in application tables through the shared SQL client.
+- The demo has no output stream, server or UI.
+- The two game logs are fixed inputs. The [example README](https://github.com/gingerhendrix/streamsy/tree/effect/examples/hex-board) says how they were made.
+
+### Measurements
+
+Bun 1.4.2, file-backed WAL, 3,005 generated events. The encoded state row was 21,599 B at the end and 22,944 B at most. FULL and NORMAL are the SQLite `synchronous` settings.
+
+| Measure                                         | FULL            | NORMAL          |
+| ----------------------------------------------- | --------------- | --------------- |
+| State upsert, 1 event per unit                  | 0.549 ms        | 0.046 ms        |
+| State upsert, 32 events per unit                | 0.581 ms        | 0.049 ms        |
+| Full projection transaction, 1 event per unit   | 1.340 ms        | 0.760 ms        |
+| Full projection transaction, 32 events per unit | 7.547 ms        | 5.462 ms        |
+| Checkpoint only                                 | 0.4258 ms       | 0.0098 ms       |
+| Checkpoint and state                            | 0.5280 ms       | 0.0597 ms       |
+| Added cost of the state row                     | about 0.1022 ms | about 0.0499 ms |
+
+The state upsert times leave out encoding and the checkpoint write. The last three rows come from a separate local run. At FULL most of the commit cost is the WAL fsync that every checkpoint commit pays.

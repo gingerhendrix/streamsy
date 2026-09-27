@@ -23,3 +23,7 @@ and a compact value, and serializes request and change triggers by address key.
 
 [Hex board](/docs/demos/hex-board) keeps a complete board as fold state in the
 checkpoint transaction, with SQLite restart and failed-step persistence tests.
+
+[Fold agent](/docs/demos/fold-agent) stores an agent's session log in one
+stream. Each append names the observed tail with `expectedOffset`, so a second
+process that writes the same session fences the first one.

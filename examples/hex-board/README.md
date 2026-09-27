@@ -25,9 +25,10 @@ and `streamsy_projection_v1_records` supplied by the projection Layer.
 
 ## Fixtures
 
-Both JSON logs were generated once from the historical `risk-demo` package
-under the repository’s `parked` → `examples` directory, using `test/testkit.ts`,
-`src/application/legal-actions.ts`, and its pure domain modules. Replaying them needs no command service, bot, random
+Both JSON logs were generated once from the historical `risk-demo` package,
+using `test/testkit.ts`, `src/application/legal-actions.ts`, and its pure
+domain modules. That package is no longer in the tree. Its last version is at
+commit `75fba28b`, in the `risk-demo` folder of that commit's parked examples. Replaying them needs no command service, bot, random
 source or map generator. These are generated games, not captured live games.
 `full.json` contains the 12-event victory driver log: two players (`p1`, `p2`),
 `rngSeed=7`, `mapSeed=projection-equivalence`, a 400-decision cap, and a

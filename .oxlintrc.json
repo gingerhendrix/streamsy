@@ -40,8 +40,7 @@
     ".pi/**",
     ".roo/**",
     ".windsurf/**",
-    "tools/oxlint/anti-slop/**",
-    "parked/**"
+    "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [
     {
