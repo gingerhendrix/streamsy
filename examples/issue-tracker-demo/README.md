@@ -5,13 +5,10 @@ reads the workspace stream from the beginning, folds it into Durable State,
 validates the mutation, and appends one conditional change. The browser replays
 that same stream into TanStack DB with `@durable-streams/state/db`.
 
-```mermaid
-flowchart LR
-  Route[HttpApi handler] --> Recipe[read, fold, conditional append]
-  Recipe --> Stream[workspace stream]
-  Stream --> StreamDB[createStreamDB in browser]
-  StreamDB --> React[React live queries]
-```
+![Architecture diagram: browser actions post to an HttpApi handler, IssueTracker.mutate reads, folds and appends to the workspace stream, Http.routes serves the stream read-only, and createStreamDB follows it in the browser.](../../site/public/docs/demos/issue-tracker-demo-architecture.svg)
+
+The [guide](https://streamsy.dev/docs/demos/issue-tracker-demo) explains each
+numbered step with excerpts from this folder.
 
 ## Run it
 
@@ -62,8 +59,8 @@ schemas in `shared/state-schema.ts` type the stream collections on the server
 and, through `Schema.toStandardSchemaV1`, the StreamDB collections in the
 browser.
 
-`IssueTracker.mutate` is the Transact recipe: read the workspace, fold its State
-changes, validate against the resulting view, and append with
+`IssueTracker.mutate` is the read, fold, append recipe: read the workspace,
+fold its State changes, validate against the resulting view, and append with
 `expectedOffset`. A `Schedule` retries the whole recipe on an `OffsetMismatch`
 only, so parallel writers cannot silently overwrite one another; after three
 retries the API answers 409. The validation rules in `server/state.ts` return
@@ -71,7 +68,7 @@ the change to append or a typed error, and the handlers map those errors to
 400, 404 or 409. Project, issue, and comment changes share one
 `StreamAddress.state` whose collections type both reads and writes. Because the
 tracker appends its own events rather than projecting an upstream, each change
-records the workspace head read by the transaction as its source offset.
+records the workspace head read by the recipe as its source offset.
 
 The server keeps no workspace cache. In the browser, `createStreamDB` follows
 the public workspace stream and exposes projects, issues, and comments as
@@ -91,7 +88,7 @@ The offline HTTP smoke calls the API through an `HttpApiClient` built from
 ten concurrent writers landing with the exact event count and no duplicates,
 raw probes for bodies the typed client cannot send, raw stream writes (405), a
 shutdown with a parked read, and a SQLite process restart. The in-process
-transaction tests use a read barrier to force a CAS conflict and prove that the
+recipe tests use a read barrier to force a CAS conflict and prove that the
 losing writer retries against the new state, and a writer that loses every race
 to prove the 409 after three retries.
 
